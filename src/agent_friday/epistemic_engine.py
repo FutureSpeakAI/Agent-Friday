@@ -26,6 +26,26 @@ from agent_friday.paths import friday_home
 
 FRIDAY_DIR = friday_home()
 SCORES_PATH = FRIDAY_DIR / "epistemic_scores.json"
+#: Governance events (the behavioural monitor's high-risk findings) keep
+#: their own log. They used to be written as synthetic low-scoring turns,
+#: which polluted the pushback average the sycophancy check reads.
+GOVERNANCE_EVENTS_PATH = FRIDAY_DIR / "epistemic_governance_events.jsonl"
+
+#: Friday's honesty rules, as fixed text that never carries a score. The
+#: block it replaces told the model to "increase pushback" whenever a
+#: keyword-scored average fell, which is the metric-chasing the north star
+#: forbids. These rules change only through an owner edit with a receipt.
+HONESTY_POLICY = (
+    "Hold a stated position unless the user offers new evidence or a new argument; "
+    "repetition, displeasure or authority alone do not move you. When you change "
+    "your mind, say what changed it. State your confidence in words (high, moderate, "
+    "low) when it is not high or when the stakes are high. Disagree once, clearly and "
+    "with reasons, and do not re-argue a point the user has heard and decided. Say "
+    "\"I was wrong\" plainly when you were. Separate what the evidence shows from "
+    "what you or the user would prefer, and never stage a false balance when the "
+    "evidence leans one way."
+)
+
 HISTORY_PATH = FRIDAY_DIR / "epistemic_history.jsonl"
 
 PUSHBACK_PHRASES = [
@@ -188,31 +208,42 @@ class EpistemicEngine:
             return 0.5  # neutral
         return min(1.0, teaching_hits / max(total, 1))
 
-    def register_governance_event(self, severity: float, detail: str = "") -> TurnScore:
-        """Record a governance violation as a low-scoring turn.
+    def register_governance_event(self, severity: float, detail: str = "") -> dict:
+        """Record a governance violation in its own log.
 
         Called by the behavioral monitor when an agent loop trips a high
-        composite-risk threshold. A violation is epistemically bad behaviour,
-        so it lands in the history as a turn whose composite is the inverse of
-        its severity — dragging the rolling averages down proportionally.
+        composite-risk threshold. It is NOT a turn: writing it as a synthetic
+        low-scoring turn polluted the pushback average the weekly sycophancy
+        check reads, so a governance finding looked like Friday agreeing too
+        much. The event is kept beside the history, never inside it.
         """
         severity = max(0.0, min(1.0, float(severity)))
-        composite = round(max(0.0, 1.0 - severity), 3)
-        turn = TurnScore(
-            timestamp=datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
-            information_gain=composite,
-            pushback_rate=composite,
-            socratic_ratio=composite,
-            independence_fostering=composite,
-            composite=composite,
-            user_message_length=0,
-            response_length=len(detail or ""),
-        )
-        with self._lock:
-            self._history.append(turn)
-            self._append_history(turn)
-            self._write_scores()
-        return turn
+        event = {
+            "timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "severity": round(severity, 3),
+            "detail": str(detail or "")[:300],
+        }
+        try:
+            FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+            with GOVERNANCE_EVENTS_PATH.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        return event
+
+    def governance_events(self, limit: int = 100) -> list:
+        """The most recent governance events, for the weekly self-review."""
+        try:
+            lines = GOVERNANCE_EVENTS_PATH.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return []
+        out = []
+        for ln in lines[-max(1, int(limit)):]:
+            try:
+                out.append(json.loads(ln))
+            except Exception:
+                continue
+        return out
 
     def _append_history(self, turn: TurnScore):
         try:
@@ -293,41 +324,10 @@ class EpistemicEngine:
         }
 
     def get_prompt_injection(self) -> str:
-        scores = self.get_scores()
-        overall = scores.get("overall", 0.0)
-        dims = scores.get("dimensions", {})
-        guidance = ""
-        if overall < 0.4:
-            guidance = (
-                "Your epistemic score is LOW. Increase pushback — challenge assumptions "
-                "more often. Ask more Socratic questions. Teach the user HOW to think "
-                "about problems, not just give answers."
-            )
-        elif overall < 0.6:
-            guidance = (
-                "Your epistemic score needs improvement. Push back when you disagree. "
-                "Ask at least one thought-provoking question per response. "
-                "Explain your reasoning process, not just conclusions."
-            )
-        elif overall > 0.8:
-            guidance = (
-                "Your epistemic score is strong. Maintain your current approach — "
-                "keep challenging assumptions and fostering independent thinking."
-            )
-        else:
-            guidance = (
-                "Your epistemic score is adequate. Look for opportunities to "
-                "respectfully disagree and teach reasoning frameworks."
-            )
-
-        return (
-            f"Your current epistemic score is {overall:.2f}. "
-            f"Information gain: {dims.get('information_gain', 0):.2f}, "
-            f"Pushback rate: {dims.get('pushback_rate', 0):.2f}, "
-            f"Socratic ratio: {dims.get('socratic_ratio', 0):.2f}, "
-            f"Independence fostering: {dims.get('independence_fostering', 0):.2f}. "
-            f"{guidance}"
-        )
+        """The honesty rules, as fixed text. The score never enters the prompt:
+        a model told to "increase pushback" to lift a keyword average is
+        chasing the metric, not holding a position."""
+        return HONESTY_POLICY
 
 
 _engine_singleton: Optional[EpistemicEngine] = None

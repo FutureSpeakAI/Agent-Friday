@@ -3189,6 +3189,25 @@ except Exception:
 CAREER_OPS_DIR = HOME / 'Projects' / 'career-ops' / 'data'
 WIKI_DIR_FRIDAY = HOME / ".friday" / "wiki"
 
+def _honesty_rules_text() -> str:
+    """Friday's fixed honesty rules, registered gate-exempt once (no user data)."""
+    try:
+        from agent_friday.epistemic_engine import HONESTY_POLICY as _text
+    except Exception:
+        return ""
+    if _text not in _TOOLS_BLOCK_REGISTERED_HONESTY:
+        try:
+            from agent_friday.services.egress_gate import register_trusted_text as _reg
+            _reg(_text)
+        except Exception:
+            pass
+        _TOOLS_BLOCK_REGISTERED_HONESTY.add(_text)
+    return _text
+
+
+_TOOLS_BLOCK_REGISTERED_HONESTY = set()
+
+
 def _people_trust_allowed(provider) -> bool:
     """People trust is assembled for a local model only (trust/people.py)."""
     try:
@@ -3684,18 +3703,11 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             sources_consulted.append('wiki')
             _retrieved += len(wiki_results)
 
-    if 'epistemic' in needs:
-        try:
-            from agent_friday.epistemic_engine import get_epistemic_engine
-            _ee = get_epistemic_engine()
-            add(f"\n== EPISTEMIC STATE ==\n{_ee.get_prompt_injection()}", _T1)
-        except Exception:
-            if 'epistemic' in vault:
-                add(
-                    f"\n== EPISTEMIC STATE ==\n"
-                    f"Independence score: {vault['epistemic'].get('overall', 0.72)}",
-                    _T1,
-                )
+    # Honesty rules: fixed text, the same bytes whatever any score says. The
+    # block this replaces carried the epistemic score and told the model to
+    # increase pushback when it fell (the metric-chasing the north star
+    # forbids); the fallback leaked the score too.
+    add("\n== HONESTY ==\n" + _honesty_rules_text(), _T1)
 
     # Layer 2.5: Project context files (.friday-context.md / AGENTS.md)
     # Hermes-inspired: drop a context file in any project directory and Friday
