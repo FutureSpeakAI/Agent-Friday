@@ -73,6 +73,44 @@ def test_publishing_is_not_a_tool_and_the_tools_are_internal():
     assert "media_show" in voice_engine._VOICE_SHARED_TOOLS and "media_turn" in voice_engine._VOICE_SHARED_TOOLS
 
 
+def test_media_play_is_internal_because_it_acts_only_on_the_owners_screen_and_files(home, monkeypatch):
+    """governance/action_gate.py classes media_play INTERNAL on one premise: it
+    reads the owner's index and local transcript and sends one navigate message
+    to the owner's own desktop, and nothing else leaves the handler. If that
+    stops being true this fails, and the class is decided again."""
+    import json
+    import socket
+    import struct
+    import subprocess
+    import wave
+    from pathlib import Path
+    from agent_friday.governance import action_gate
+    from agent_friday.services import agent
+    assert action_gate.known("media_play")
+    assert action_gate.classify("media_play", {"query": "low tide"})[0] == action_gate.INTERNAL
+    assert "media_play" in agent.CLAUDE_TOOL_HANDLERS
+    assert agent.TOOL_RINGS["media_play"] == 1, "ring 1: it steers the screen, so a turn that came in by phone (ring 0 only) cannot"
+    with wave.open(str(Path(core.CREATIONS_DIR) / "friday-music-low-tide.wav"), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+        w.writeframes(struct.pack("<h", 0) * 800)
+    mi.reindex()
+
+    def files():
+        base = Path(core.FRIDAY_DIR).parent
+        return sorted((str(p.relative_to(base)), p.stat().st_size, p.stat().st_mtime_ns) for p in base.rglob("*") if p.is_file())
+
+    def refuse(*a, **k):
+        raise AssertionError("media_play reached outside this PC")
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    before, sent_before = files(), len(home)
+    out = json.loads(mt._tool_media_play({"query": "low tide"}))
+    assert out["status"] == "playing" and out["card"]["title"] == "Low tide"
+    assert len(home) == sent_before + 1 and home[-1]["type"] == "navigate" and home[-1]["workspace"] == "media", "one message, to the owner's own desktop"
+    assert files() == before, "it writes no file"
+
+
 def test_media_tools_stay_out_of_the_always_on_catalogue():
     """The always-on catalogue has a latency budget (tests/unit/test_latency_budget.py).
     Media's tools are the workspace's own: registered to run anywhere, sent only
