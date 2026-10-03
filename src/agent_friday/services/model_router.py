@@ -1135,6 +1135,24 @@ def announce_tool(name, args=None):
 #: prefix-cache acceptance, and it is measured, not assumed.
 TIMINGS_SINK = _contextvars.ContextVar("friday_timings_sink", default=None)
 
+# How long a local call waits for a seat that answers 503 "Loading model"
+# before giving up. llama-server answers that way from the moment it binds
+# its port until the weights are read: 11.9 s median, 31.3 s p90 for the 27B.
+# Routines used to take the 503 as a failed call and degrade (the 07:00
+# edition shipped degraded against a still-loading seat); a seat that says it
+# is loading is a seat that will answer, so the transport waits, bounded, and
+# every caller above it inherits the patience.
+SEAT_LOADING_WAIT_S = 180.0
+SEAT_LOADING_POLL_S = 2.0
+
+
+def _body_says_loading(resp) -> bool:
+    try:
+        text = (resp.text or "")[:2000].lower()
+    except Exception:
+        return False
+    return "loading model" in text or "loading" in text and "model" in text
+
 AUTO_ROUTER_MODEL = "openrouter/auto"
 
 #: The cost-priority knob, in OpenRouter's own vocabulary. Their default is
@@ -1953,6 +1971,25 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                     r = requests.post(f"{base_url}/chat/completions",
                                       headers=headers, json=payload,
                                       timeout=timeout_s)
+            # 503 "Loading model" from a seat we serve ourselves: wait for it.
+            # Not for a cloud 503 (that is the fallback chain's business) and
+            # not past SEAT_LOADING_WAIT_S, after which the 503 raises as
+            # before and the caller's own handling takes over.
+            if r.status_code == 503 and local_bypass and _body_says_loading(r):
+                _deadline = _t0 + SEAT_LOADING_WAIT_S
+                while r.status_code == 503 and _time.time() < _deadline:
+                    _health(False, int((_time.time() - _t0) * 1000), status=503)
+                    try:
+                        r.close()
+                    except Exception:
+                        pass
+                    _time.sleep(SEAT_LOADING_POLL_S)
+                    r = requests.post(f"{base_url}/chat/completions",
+                                      headers=headers,
+                                      json=(dict(payload, stream=True) if _want_stream else payload),
+                                      timeout=timeout_s, stream=_want_stream)
+                    if r.status_code == 503 and not _body_says_loading(r):
+                        break
             try:
                 if r.status_code >= 400:
                     # requests' str() is "400 Client Error: Bad Request for
