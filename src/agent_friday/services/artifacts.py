@@ -444,13 +444,23 @@ def absorb_fenced(cid: str, text: str, settings: dict | None = None) -> tuple[st
 
 # ── what the model is told ──────────────────────────────────────────────────
 
-def diff_between(cid: str, aid: str, v_from: int, v_to: int, settings: dict | None = None) -> str:
+def diff_between(cid: str, aid: str, v_from: int, v_to: int, settings: dict | None = None,
+                 redact: bool = False) -> str:
+    """The unified diff of two versions, whole. With `redact` it is the copy the
+    model is shown: each version has a key block or token withheld from its WHOLE
+    text (services/credential_paths) before the two are compared, so a changed
+    line in the middle of a key, which a diff shows with no armor around it and a
+    "+" or "-" in front of it, never appears."""
     a = get(cid, aid, version=v_from, settings=settings)
     b = get(cid, aid, version=v_to, settings=settings)
     if a is None or b is None:
         return ""
+    ta, tb = _text_of(a["content"]), _text_of(b["content"])
+    if redact:
+        from agent_friday.services import credential_paths as _cred
+        ta, tb = _cred.redact_secrets(ta), _cred.redact_secrets(tb)
     return "".join(difflib.unified_diff(
-        _text_of(a["content"]).splitlines(True), _text_of(b["content"]).splitlines(True),
+        ta.splitlines(True), tb.splitlines(True),
         fromfile="v%d" % int(v_from), tofile="v%d" % int(v_to)))
 
 
@@ -475,7 +485,9 @@ def context_block(cid: str, settings: dict | None = None) -> str:
             by_user = [v for v in versions(cid, aid, settings=settings)
                        if v["version"] > seen and v.get("author") == "you"]
             if by_user:
-                d = diff_between(cid, aid, max(seen, 1), cur, settings=settings)
+                # Nothing of a key rides in the prompt (read_file's rule): the model
+                # is shown the redacted copy of the diff.
+                d = diff_between(cid, aid, max(seen, 1), cur, settings=settings, redact=True)
                 dl = d.splitlines()
                 if len(dl) > _DIFF_LINES_SHOWN:
                     dl = dl[:_DIFF_LINES_SHOWN] + ["... (%d more lines)" % (len(dl) - _DIFF_LINES_SHOWN)]
