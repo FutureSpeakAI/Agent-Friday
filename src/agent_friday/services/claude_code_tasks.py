@@ -1,9 +1,9 @@
 """A Claude Code session launched from Friday runs under Friday's approval gates.
 
-The Code workspace used to start ``claude --dangerously-skip-permissions`` in
-a console window: every action inside that session bypassed the approval
-cards, the cLaws check and the receipts that govern Friday's own tools. The
-rule now is one card per task, and nothing in the session runs without it:
+A Claude Code session started from the Code workspace is governed like
+Friday's own tools: the approval cards, the cLaws check and the receipts
+apply to every action inside it. One card per task, and nothing in the
+session runs without it:
 
 1. A launch request raises ONE approval card for the task ("Run Claude Code
    in <folder> for this task"). Nothing starts until the owner approves it;
@@ -11,7 +11,7 @@ rule now is one card per task, and nothing in the session runs without it:
 2. Approval mints a scoped grant (``vibe:<task id>``, bounded uses and
    expiry) and starts the session with a per-task Claude Code settings file
    whose PreToolUse hook (``claude_code_gate_hook.py``) asks Friday about
-   every tool call. The session never carries ``--dangerously-skip-permissions``.
+   every tool call. The session never starts with permission checks skipped.
 3. The gate route answers each call from the grant through
    ``action_gate.authorize`` (which checks the cLaws and writes the signed
    receipt), after Friday's own refusals: a command aimed at Friday's local

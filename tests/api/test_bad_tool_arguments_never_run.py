@@ -87,6 +87,7 @@ def test_good_arguments_still_run(ran):
 def test_execute_tool_refuses_arguments_that_do_not_fit_the_registry_schema(monkeypatch):
     seen = []
     monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, "fixture_tool", lambda inp: seen.append(inp) or "ran")
+    monkeypatch.setitem(ag.TOOL_RINGS, "fixture_tool", 0)   # declared read-only (undeclared tools are denied)
     monkeypatch.setattr(ag, "CLAUDE_TOOLS", list(ag.CLAUDE_TOOLS) + [{
         "name": "fixture_tool", "description": "fixture",
         "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}])
@@ -98,6 +99,9 @@ def test_execute_tool_refuses_arguments_that_do_not_fit_the_registry_schema(monk
 def test_execute_tool_runs_when_the_arguments_fit(monkeypatch):
     seen = []
     monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, "fixture_tool", lambda inp: seen.append(inp) or "ran")
+    monkeypatch.setitem(ag.TOOL_RINGS, "fixture_tool", 0)   # declared read-only (undeclared tools are denied)
+    from agent_friday.governance import action_gate as _gate   # and internal (an outward tool cards)
+    monkeypatch.setattr(_gate, "INTERNAL_TOOLS", frozenset(_gate.INTERNAL_TOOLS) | {"fixture_tool"})
     monkeypatch.setattr(ag, "CLAUDE_TOOLS", list(ag.CLAUDE_TOOLS) + [{
         "name": "fixture_tool", "description": "fixture",
         "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}])
