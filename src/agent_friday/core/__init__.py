@@ -2682,6 +2682,21 @@ DEFAULT_SETTINGS = {
     # fastest engine measured and checked on this PC, else laya's own fp32.
     # "torch-fp32" | "torch-int8" | "onnx-int8" pin one.
     "laya_runtime": "auto",
+    # How hard a local reasoning seat thinks (services/reasoning_policy, read
+    # by the model router's local payload). "auto" lets the turn's shape
+    # decide; "medium" | "xhigh" | "none" pin one effort on every turn;
+    # "default" sends nothing and leaves the model to its own. Declared here
+    # because `_load_settings_raw` keeps only declared keys: a value written
+    # to settings.json for an undeclared key is dropped on every read.
+    "local_reasoning_effort": "auto",
+    # What "auto" may do with a Laya 2 turn-shape verdict. `deep_xhigh` lets a
+    # deep coding or analysis turn think at xhigh. `reflex_thinking_off` lets
+    # a reflex-shaped turn the brain still answers skip thinking; it ships
+    # off until the strict tool-call harness holds within 2 points on those
+    # shapes with thinking off. With both as shipped, an ordinary turn sends
+    # `medium`, as before.
+    "local_reasoning_effort_policy": {"reflex_thinking_off": False,
+                                      "deep_xhigh": True},
     # ── Creative policy (services/creative_policy.py) ──
     # What Friday refuses to generate, written down where the user can read
     # and set it. Before this existed there was nothing legible for a seat to

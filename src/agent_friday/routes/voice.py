@@ -2378,6 +2378,15 @@ if sock is not None:
         def _generate(user_text, on_delta, cancel):
             from agent_friday.services.model_router import TIMINGS_SINK
             _timings.clear()
+            # Laya 2 tier 1 in shadow on the spoken turn, exactly as on a typed
+            # one (routes/chat.py): a budgeted verdict logged without the words,
+            # carried as advice for the seat's reasoning effort and nothing else.
+            _turn_shape = None
+            try:
+                from agent_friday.services import reflex_turn as _reflex
+                _turn_shape = _reflex.shadow(user_text)
+            except Exception:
+                _turn_shape = None
             _tok = TIMINGS_SINK.set(lambda t: _timings.update(t or {}))
             # A local voice turn is Friday's own: her presence label.
             from agent_friday.services import presence as _presence
@@ -2397,7 +2406,8 @@ if sock is not None:
                                      "provider": _prov,
                                      "is_voice": True,
                                      "surface": "voice-local",
-                                     "owner_text": str(user_text or "")[:4000]},
+                                     "owner_text": str(user_text or "")[:4000],
+                                     "turn_shape": _turn_shape},
                         workspace=settings.get("active_workspace") or "",
                         on_text_delta=on_delta,
                     )

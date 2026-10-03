@@ -1374,8 +1374,15 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
                  provider=None, fallback_models=None, stream=None,
-                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False):
+                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False,
+                 turn_shape=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
+
+    ``turn_shape`` is Laya 2's tier-1 verdict for this turn (services/
+    reflex_turn), or None. It only chooses the local seat's reasoning effort
+    (services/reasoning_policy); a caller that carries it in
+    ``session_ctx["turn_shape"]`` need not pass it twice, and a per-round
+    override in ``_over`` outranks both.
 
     Two configuration paths:
 
@@ -1728,18 +1735,27 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # this codebase was passing anything at all.
             #
             # Settable, because the right default is a product decision and
-            # because a hard task genuinely wants the depth: set
+            # because a hard task genuinely wants the depth: pin
             # `local_reasoning_effort` to "xhigh" to restore the old
-            # behaviour, or "off" to disable thinking outright. Only applied
-            # to seats we serve ourselves, and never over an explicit caller.
+            # behaviour, or "off" to disable thinking outright. On "auto" the
+            # turn's shape decides (services/reasoning_policy): a deep turn
+            # thinks at xhigh, a reflex-shaped one may think not at all once
+            # the harness gate has passed, and every other turn keeps medium.
+            # Only applied to seats we serve ourselves, and never over an
+            # explicit caller.
             if local_bypass and not _no_think and "reasoning_effort" not in payload:
                 try:
-                    _eff = ((_load_settings() or {}).get(
-                        "local_reasoning_effort") or "medium").strip().lower()
-                    if _eff in ("off", "none", "disabled"):
+                    from agent_friday.services import reasoning_policy as _rp
+                    _shape = _over.get("turn_shape")
+                    if _shape is None:
+                        _shape = (turn_shape if turn_shape is not None
+                                  else (session_ctx or {}).get("turn_shape"))
+                    _eff = _rp.reasoning_effort_for_turn(_shape, _load_settings() or {})
+                    if _eff == "none":
                         payload.setdefault("chat_template_kwargs", {})[
                             "enable_thinking"] = False
-                    elif _eff not in ("default", "auto", ""):
+                        payload["reasoning_effort"] = "none"
+                    elif _eff:
                         payload["reasoning_effort"] = _eff
                 except Exception:
                     pass

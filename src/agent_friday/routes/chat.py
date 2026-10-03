@@ -1240,6 +1240,21 @@ def chat():
                 # Compression is best-effort — never block a chat on it.
                 print(f"  [HEADROOM] skipped: {_ce}")
 
+        # ── Laya 2 tier 1, in shadow: the turn's shape before the brain. ──
+        # Scores the message against the synthetic prototypes within a
+        # 50 ms budget and logs the verdict (never the text) to
+        # runtime/laya2/reflex_shadow.jsonl. The verdict rides in the session
+        # context as ADVICE for the local seat's reasoning effort
+        # (services/reasoning_policy); nothing on the governance path reads it
+        # and no route is taken on it. A missing or slow encoder yields a
+        # degraded verdict, which changes nothing downstream.
+        _turn_shape = None
+        try:
+            from agent_friday.services import reflex_turn as _reflex
+            _turn_shape = _reflex.shadow(message, _conversation_id)
+        except Exception:
+            _turn_shape = None
+
         # ── Model Routing: decide local vs cloud BEFORE building the prompt. ──
         # The routing decision drives the whole privacy posture downstream:
         #   • route.is_local       → True for Ollama (on-device)
@@ -1585,6 +1600,9 @@ def chat():
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "provider": _provider,
+            # Laya 2's tier-1 verdict for this turn (or None): read only by
+            # the local payload's reasoning-effort choice.
+            "turn_shape": _turn_shape,
             # Which conversation this turn belongs to. An approval card raised
             # here carries it, so services/approval_executor can report the
             # outcome back into this chat when the owner approves the card
