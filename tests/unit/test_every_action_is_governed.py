@@ -242,19 +242,19 @@ def test_an_outward_background_action_needs_a_scoped_unexpired_grant(monkeypatch
                         lambda inp: ran.append(1) or "ok")
     bg = {"authenticated": True, "is_background_task": True, "task_id": "t1",
           "schedule_id": "daily-digest"}
-    agent._execute_tool("create_calendar_event", {"title": "x"}, session_ctx=bg)
+    agent._execute_tool("create_calendar_event", {"title": "x", "start": "2026-10-03T10:00:00"}, session_ctx=bg)
     assert not ran, "a scheduled job took an outward action with no grant"
 
     action_gate.create_grant(tools=["create_calendar_event"], scope="other-job",
                              expires_in_seconds=60)
-    agent._execute_tool("create_calendar_event", {"title": "y"}, session_ctx=bg)
+    agent._execute_tool("create_calendar_event", {"title": "y", "start": "2026-10-03T10:00:00"}, session_ctx=bg)
     assert not ran, "a grant for another job was honoured"
 
     action_gate.create_grant(tools=["create_calendar_event"], scope="daily-digest",
                              expires_in_seconds=60, max_uses=1)
-    agent._execute_tool("create_calendar_event", {"title": "z"}, session_ctx=bg)
+    agent._execute_tool("create_calendar_event", {"title": "z", "start": "2026-10-03T10:00:00"}, session_ctx=bg)
     assert ran == [1]
-    agent._execute_tool("create_calendar_event", {"title": "z2"}, session_ctx=bg)
+    agent._execute_tool("create_calendar_event", {"title": "z2", "start": "2026-10-03T10:00:00"}, session_ctx=bg)
     assert ran == [1], "a one-use grant was used twice"
 
 
@@ -271,13 +271,13 @@ def test_it_fails_closed(monkeypatch):
     action_gate.verify_claws()
     pin = Path(action_gate._gov_dir()) / "claws.pin.json"
     pin.write_text(json.dumps({"claws_hmac": "0" * 64}), encoding="utf-8")
-    out = agent._execute_tool("create_calendar_event", {"title": "a"}, session_ctx=bg)
+    out = agent._execute_tool("create_calendar_event", {"title": "a", "start": "2026-10-03T10:00:00"}, session_ctx=bg)
     assert not ran and "cLaws" in out
     action_gate.repin_claws()
 
     # The receipt cannot be written.
     monkeypatch.setattr(action_gate, "_receipt", lambda e: (_ for _ in ()).throw(OSError("disk full")))
-    out = agent._execute_tool("create_calendar_event", {"title": "b"}, session_ctx=bg)
+    out = agent._execute_tool("create_calendar_event", {"title": "b", "start": "2026-10-03T10:00:00"}, session_ctx=bg)
     assert not ran and "receipt" in out
     monkeypatch.undo()
     monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "create_calendar_event",
@@ -285,7 +285,7 @@ def test_it_fails_closed(monkeypatch):
 
     # The classifier itself throws.
     monkeypatch.setattr(action_gate, "classify", lambda *a: 1 / 0)
-    agent._execute_tool("create_calendar_event", {"title": "c"}, session_ctx=bg)
+    agent._execute_tool("create_calendar_event", {"title": "c", "start": "2026-10-03T10:00:00"}, session_ctx=bg)
     assert not ran
 
     # Laya configured but not available: a connector "read" runs only if its
@@ -353,6 +353,6 @@ def test_a_held_action_is_not_announced_as_happening(monkeypatch):
     monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "create_calendar_event", lambda inp: "ok")
     monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "search_wiki", lambda inp: "ok")
     bg = {"authenticated": True, "is_background_task": True, "task_id": "t-announce"}
-    agent._execute_tool("create_calendar_event", {"title": "x"}, session_ctx=bg)
+    agent._execute_tool("create_calendar_event", {"title": "x", "start": "2026-10-03T10:00:00"}, session_ctx=bg)
     agent._execute_tool("search_wiki", {"query": "x"}, session_ctx=bg)
     assert said == ["search_wiki"]
