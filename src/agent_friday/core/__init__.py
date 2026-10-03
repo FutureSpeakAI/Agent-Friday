@@ -2163,6 +2163,8 @@ DEFAULT_SETTINGS = {
     # The four News routines write on the local model (news_engine.local_news_run).
     "news_local_only": True,
     "news_local_area": "",
+    # Hours a story stays eligible for each routine's edition (news_seen).
+    "news_edition_window_hours": {"front_page": 36, "briefing": 36},
     "news_local_sources": [],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
@@ -2307,6 +2309,9 @@ DEFAULT_SETTINGS = {
     # ── Privacy / Context Log ──
     "context_logging_enabled": True,       # master switch for the append-only event log
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
+    # Full tool output kept on disk when a result is cut (services/tool_output.py);
+    # day folders older than this are deleted. 0 = keep forever.
+    "tool_output_retention_days": 7,
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
     "off_record_stops_storage": True,      # off-record writes nothing about the conversation to disk (receipts and governance logs keep only tool, class, decision and time)
@@ -2328,7 +2333,8 @@ DEFAULT_SETTINGS = {
     # it and its routes answer "not enabled". `federation` holds the
     # Marketplace, positrons, peer federation, federated compute and
     # defederation. Buying stays refused whatever this says.
-    "held_features": {"federation": False},
+    # trust_agents: the trust graph's agent kind (schema only; both off).
+    "held_features": {"federation": False, "trust_agents": False},
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
     # `decision_backend` (which scorer answers Friday's typed judgments) is
     # declared once, with the approval-gate block further down.
@@ -2534,6 +2540,11 @@ DEFAULT_SETTINGS = {
     "podcasts": {
         "enabled_for_routines": {"front_page": True, "briefing": True,
                                  "weekly": True, "editorial": True},
+        # Who is on each show: "solo" (Friday alone) or "duo" (two hosts).
+        # "any" is every episode not made by a routine. Recommended values;
+        # podcast_engine.RECOMMENDED_FORMAT is the same table.
+        "format": {"briefing": "solo", "front_page": "solo", "editorial": "solo",
+                   "weekly": "duo", "any": "duo"},
         "length": {"front_page": "short", "briefing": "short",
                    "weekly": "standard", "editorial": "standard"},
         "hosts": {"a": {"name": "Friday", "voice": "af_heart"},

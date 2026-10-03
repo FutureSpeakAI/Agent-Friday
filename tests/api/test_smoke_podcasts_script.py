@@ -70,7 +70,7 @@ def deployed(tmp_path, monkeypatch, client):
 
 def test_the_smoke_check_passes_on_a_working_deployment(deployed):
     said = []
-    assert smoke.run("http://smoke", 1, 60, fetcher=deployed, say=said.append) is True
+    assert smoke.run("http://smoke", 1, 60, fetcher=deployed, say=said.append) is True, [s for s in said if s.startswith("FAIL")]
     assert said[-1] == "ALL PASSED"
     assert not [s for s in said if s.startswith("FAIL")]
 

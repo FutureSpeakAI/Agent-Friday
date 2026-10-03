@@ -301,7 +301,10 @@ def test_preloaded_email_schema_saves_one_scripted_discovery_round(monkeypatch, 
         opening = tool_catalogue.opening_set(ag.CLAUDE_TOOLS, pilot=ticket)
         assert baseline_names.issubset({t["name"] for t in opening})
         loader = next(t for t in opening if t["name"] == "load_tools")
-        assert all(t["name"] in loader["description"] for t in ag.CLAUDE_TOOLS)
+        # The loader's description is fixed (it never lists the tools); every
+        # tool is reachable through it by name or by query.
+        assert loader["description"] == tool_catalogue.LOADER_DESCRIPTION
+        assert "query" in loader["input_schema"]["properties"]
         def send(convo, tools):
             names = {t["function"]["name"] for t in tools}
             if any(m.get("role") == "tool" and "Synthetic email result" in m.get("content", "") for m in convo):

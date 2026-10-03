@@ -32,6 +32,13 @@ _CURRENT_SURFACE: ContextVar = ContextVar("friday_tool_surface", default="")
 _CURRENT_MODEL: ContextVar = ContextVar("friday_tool_model", default="")
 #: Whose key the turn runs on ("mine" or a guest key's label).
 _CURRENT_KEY_PROFILE: ContextVar = ContextVar("friday_tool_key_profile", default="")
+#: The provider the running tool loop talks to, set by the loop itself
+#: (the Anthropic loop is always cloud; the OpenAI-format loop names its
+#: provider), and the provider a handler may ask about during one call.
+#: A handler that hands out a person's record asks this, and treats
+#: "unknown" as "not local": people trust stays home (trust/people.py).
+_LOOP_PROVIDER: ContextVar = ContextVar("friday_loop_provider", default=None)
+_CURRENT_PROVIDER: ContextVar = ContextVar("friday_tool_provider", default=None)
 import subprocess
 import shutil
 import base64
@@ -550,8 +557,12 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
-    {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Extracts real text from PDF and .docx files (never raw bytes). Returns up to 500000 chars.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute or home-relative path, e.g. ~/Projects/foo/bar.py or ~/wiki/notes.md"}}, "required": ["path"]}},
+    {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Extracts real text from PDF and .docx files (never raw bytes). Returns one page at a time: up to 2,000 lines or 8,192 characters, whichever comes first; a partial page ends with the line range shown and the offset to continue from.",
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "Absolute or home-relative path, e.g. ~/Projects/foo/bar.py or ~/wiki/notes.md"},
+         "offset": {"type": "integer", "description": "1-based line to start from (default 1). Use the offset a previous page named to continue."},
+         "limit": {"type": "integer", "description": "Maximum lines to return (default and ceiling 2,000)."}},
+         "required": ["path"]}},
     {"name": "search_files", "description": "Find files by name on the local filesystem — the tool for 'find my resume in Downloads' or 'what's the latest report in Documents'. Searches Documents, Downloads, Desktop, and Friday's creations by default (configurable in Settings). Never searches the vault. Set content_query to also search inside extractable text (md/txt now; PDF/docx once read; hollow for other binary formats). Returns paths, names, sizes, and modified times, newest first by default.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "Filename substring/fuzzy match, e.g. 'resume' or 'cv'. Leave blank to list a root's newest files."},
@@ -968,6 +979,28 @@ def _suggest_near_miss(p: Path) -> str:
     return ""
 
 
+#: The whole-file redaction of the last few files read, keyed by path and
+#: version (mtime, size), so paging a large file does not redact it per page.
+_REDACTED_CACHE: dict = {}
+_REDACTED_CACHE_MAX = 8
+
+
+def _redacted_once(p, text: str) -> str:
+    from agent_friday.services import credential_paths as _cred
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size, len(text))
+    except OSError:
+        return _cred.redact_secrets(text)
+    hit = _REDACTED_CACHE.get(key)
+    if hit is None:
+        hit = _cred.redact_secrets(text)
+        if len(_REDACTED_CACHE) >= _REDACTED_CACHE_MAX:
+            _REDACTED_CACHE.pop(next(iter(_REDACTED_CACHE)))
+        _REDACTED_CACHE[key] = hit
+    return hit
+
+
 def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
     if not raw:
@@ -1004,11 +1037,20 @@ def _tool_read_file(inp):
     # stays withheld. Registration must happen on the exact string that will
     # actually reach the gate, which is only known after the scrub hook runs.
     _log_context("file_read", {"path": str(p), "bytes": len(text)})
-    limit = 500_000
-    out = text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
+    # Key material pasted inside an otherwise ordinary file never reaches the
+    # model, and it is withheld from the WHOLE text before it is paged: a page
+    # that starts or ends inside a key block (or a one-line window the model
+    # asks for by offset) would otherwise show a fragment no redactor can
+    # recognise on its own. Offsets therefore count lines of the withheld text.
+    text = _redacted_once(p, text)
+    # One page per call, and a partial page says where the next one starts.
+    # The ceiling here is the executor's, so a file read is never cut twice.
+    page, info = _tool_output.window_lines(text, offset=(inp or {}).get("offset") or 1,
+                                           limit=(inp or {}).get("limit"))
+    out = page + _tool_output.page_note(info)
     if result.truncated:
         out += "\n...[extraction truncated to the first pages of this document]"
-    # Key material pasted inside an otherwise ordinary file never reaches the model.
+    # And once more on what goes out (the page note and the truncation line).
     return _cred.redact_secrets(out)
 
 
@@ -1207,17 +1249,21 @@ def _tool_query_trust_graph(inp):
     # Defined in services/misc_engine.py — an UPPER layer — so it must be
     # imported lazily at call time (module-level would be circular).
     from agent_friday.services.misc_engine import _load_trust_graph
+    from agent_friday.trust import people as _tp
     graph = _load_trust_graph()
     people = graph.get('people') or {}
     items = people.values() if isinstance(people, dict) else people
+    # People trust stays home: the full record (dimensions, evidence, saved
+    # intelligence, notes) goes only to a loop that is KNOWN local. A cloud
+    # loop, or one whose provider is unknown, gets role, confirmed
+    # relationship and contact channel.
+    _local = _tp.loop_is_local(_CURRENT_PROVIDER.get())
     for p in items:
         if not isinstance(p, dict):
             continue
-        if (p.get('name') or '').strip().lower() == name:
-            return json.dumps(p, default=str)[:100_000]
         aliases = [str(a).lower() for a in (p.get('aliases') or [])]
-        if name in aliases:
-            return json.dumps(p, default=str)[:100_000]
+        if (p.get('name') or '').strip().lower() == name or name in aliases:
+            return json.dumps(_tp.view_for_loop(p, local=_local), default=str)[:100_000]
     return f"No trust-graph entry found for {name!r}."
 
 
@@ -2139,6 +2185,11 @@ def _tool_run_command(inp):
     bad = blocked_command_token(cmd)
     if bad is not None:
         return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
+    # Never a second copy of the local model while one is already answering.
+    from agent_friday.services import seat_guard as _seat_guard
+    _second = _seat_guard.second_seat_refusal(cmd)
+    if _second:
+        return _second
     # The governance check already refuses these; this is the backstop.
     from agent_friday.governance.action_gate import classify_command
     if classify_command(cmd)[0] == "forbidden":
@@ -2154,7 +2205,13 @@ def _tool_run_command(inp):
         # Whatever the command printed, key blocks and vendor tokens are
         # withheld: the path scan above is best-effort, this is the backstop.
         out = _cred.redact_secrets(out)
-        return out[:100_000] if out else f"(exit {proc.returncode}, no output)"
+        # The executor keeps the END of a command's output (where the error
+        # is), names what was cut and saves the whole text; this is only a
+        # sanity ceiling against a runaway printer.
+        if len(out) > 1_000_000:
+            out = (f"[first {len(out) - 1_000_000:,} chars of {len(out):,} dropped]\n"
+                   + out[-1_000_000:])
+        return out if out else f"(exit {proc.returncode}, no output)"
     except subprocess.TimeoutExpired:
         return "Command timed out after 300s."
     except Exception as e:
@@ -8949,7 +9006,11 @@ except Exception as _mte:  # never let optional deps break the agent import
 # this computer. See services/podcast_tools.py.
 try:
     from agent_friday.services import podcast_tools as _podcast_tools
-    _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
+    from agent_friday.services import media_diet as _media_diet
+    _media_diet.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
+    from agent_friday.services import news_discuss as _news_discuss
+    _news_discuss.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
     from agent_friday.services import media_card_tools as _media_card_tools
     _media_card_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
 except Exception as _pte:  # never let optional deps break the agent import
@@ -9776,6 +9837,8 @@ def _task_log_tool(session_ctx, name, args):
 
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
+from agent_friday.services import tool_args as _tool_args
+from agent_friday.services import tool_output as _tool_output
 
 #: Verb prefixes a model habitually invents in front of a tool's real name.
 #: Example: a seat calls `mcp_higgsfield_get_balance` when the registered
@@ -9851,6 +9914,21 @@ def _restore_placeholders(value, pii_lookup):
     return value
 
 
+def _schema_for_tool(name):
+    """The registered input schema for a tool, or None when it has none.
+
+    Looks in the always-on registry and every workspace's extras, so a tool
+    that is sent on demand is checked the same way as a resident one.
+    """
+    found = _tool_args.schema_for(name, CLAUDE_TOOLS)
+    if found is None:
+        for extra in WORKSPACE_TOOLS.values():
+            found = _tool_args.schema_for(name, extra)
+            if found is not None:
+                break
+    return found
+
+
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -9866,138 +9944,155 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     voice surface's own helpers). It runs through exactly the same chain;
     there is no other way to invoke a tool handler.
     """
-    # Whose key this turn runs on, for the handlers that write receipts (§4.7).
-    _kp_tok = _CURRENT_KEY_PROFILE.set(str((session_ctx or {}).get('key_profile') or ''))
+    handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
+    if not handler:
+        resolved, suggestions = _resolve_tool_name(name)
+        if resolved:
+            print(f"  [tools] '{name}' is not registered; resolved to "
+                  f"'{resolved}' (unambiguous match)")
+            name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
+        else:
+            # A bare "Unknown tool: x" is a dead end: it says the call failed
+            # but not what would work, and a dead end is where invented
+            # results come from. Name the near misses and state plainly that
+            # nothing ran, so the honest next move is obvious.
+            hint = ("Closest registered tools: "
+                    + ", ".join(suggestions)) if suggestions else \
+                   "No similarly-named tool is registered."
+            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so "
+                    f"nothing ran and no result was produced. {hint} "
+                    f"Retry with an exact name from your tool list, or tell "
+                    f"the user you could not do it. Do not describe an "
+                    f"outcome: there isn't one.")
+
+    # Arguments are checked against the tool's own schema before any gate
+    # sees them. A call that does not fit never runs: the model gets back
+    # what was wrong and what it sent, and no receipt says the tool ran.
+    # (A tool passed with handler= and no registered schema is not checked.)
+    _checked, _arg_error = _tool_args.check(
+        name, tool_input if tool_input is not None else {}, _schema_for_tool(name))
+    if _arg_error:
+        _receipts.record(name, ok=False, denied=True, detail="invalid arguments")
+        return _arg_error
+    tool_input = _checked
+
+    ctx = _hooks.HookContext(
+        tool_name=name,
+        input=_restore_placeholders(tool_input or {}, pii_lookup),
+        session_ctx=session_ctx,
+        pii_lookup=pii_lookup,
+    )
+    ctx.meta["t_start"] = _time.time()
+
+    # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
+    # A DENY short-circuits; the deny message is what the model sees as the result.
+    verdict = _hooks.run_pre_hooks(ctx)
+    if verdict.action == "deny":
+        _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
+        return verdict.reason
+
+    # Say what is about to happen BEFORE it happens, and only once it will
+    # happen: derived from the tool actually being invoked, after every gate
+    # has allowed it, so the narration cannot describe work that is not
+    # occurring -- including an action waiting on an approval card.
     try:
-        handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
-        if not handler:
-            resolved, suggestions = _resolve_tool_name(name)
-            if resolved:
-                print(f"  [tools] '{name}' is not registered; resolved to "
-                      f"'{resolved}' (unambiguous match)")
-                name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
-            else:
-                # A bare "Unknown tool: x" is a dead end: it says the call failed
-                # but not what would work, and a dead end is where invented
-                # results come from. Name the near misses and state plainly that
-                # nothing ran, so the honest next move is obvious.
-                hint = ("Closest registered tools: "
-                        + ", ".join(suggestions)) if suggestions else \
-                       "No similarly-named tool is registered."
-                return (f"TOOL CALL FAILED — no tool named '{name}' exists, so "
-                        f"nothing ran and no result was produced. {hint} "
-                        f"Retry with an exact name from your tool list, or tell "
-                        f"the user you could not do it. Do not describe an "
-                        f"outcome: there isn't one.")
+        from agent_friday.services.model_router import announce_tool
+        announce_tool(name, ctx.input)
+    except Exception:
+        pass
 
-        ctx = _hooks.HookContext(
-            tool_name=name,
-            input=_restore_placeholders(tool_input or {}, pii_lookup),
-            session_ctx=session_ctx,
-            pii_lookup=pii_lookup,
-        )
-        ctx.meta["t_start"] = _time.time()
-
-        # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
-        # A DENY short-circuits; the deny message is what the model sees as the result.
-        verdict = _hooks.run_pre_hooks(ctx)
-        if verdict.action == "deny":
-            _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
-            return verdict.reason
-
-        # Say what is about to happen BEFORE it happens, and only once it will
-        # happen: derived from the tool actually being invoked, after every gate
-        # has allowed it, so the narration cannot describe work that is not
-        # occurring -- including an action waiting on an approval card.
+    try:
+        # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
+        # tool that spawns background work had no way to say where that work
+        # should report - and everything it had to say went to Main, which is
+        # where explanations go to be unread. Set around the call rather than
+        # threaded through sixty handler signatures; a ContextVar because
+        # tasks run in threads and a module global would cross-talk.
+        _tok = _CURRENT_CONVERSATION.set(
+            ((session_ctx or {}).get("conversation_id")
+             or (session_ctx or {}).get("conversation")) or None)
+        # Provenance of this call's arguments, for any approval card the
+        # handler raises (the email card is created inside draft_email).
+        _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
+        _ktok = _taint_mod.CURRENT_KEY.set(_taint_mod.ledger_key(session_ctx))
+        # The owner's decision behind this call, as the hooks established it
+        # (approved card, grant, or a chat yes to exactly this call). A handler
+        # whose action needs one checks it again before acting.
+        from agent_friday.governance import action_gate as _gate_mod
+        _dtok = _gate_mod.DECIDED.set(ctx.meta.get("owner_decided"))
+        _sc = session_ctx or {}
+        _owner_tok = _CURRENT_OWNER_TEXT.set(
+            "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
+            else str(_sc.get("owner_text") or ""))
+        _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
+        # Whose key this turn runs on, for the handlers that write receipts
+        # (salon spec §4.7).
+        _kp_tok = _CURRENT_KEY_PROFILE.set(str(_sc.get("key_profile") or ""))
+        # The loop that is running knows what it talks to; the session's
+        # provider is the ROUTED intent, built once and stale after a
+        # local-to-cloud fallback. The loop wins; the session only fills in
+        # for a call made outside any loop (voice helpers).
+        _prov_tok = _CURRENT_PROVIDER.set(_LOOP_PROVIDER.get() or _sc.get("provider"))
         try:
-            from agent_friday.services.model_router import announce_tool
-            announce_tool(name, ctx.input)
+            _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
+            _cred_paths.REFUSED.set(False)
+            result = handler(ctx.input)
+            _refused = _cred_paths.REFUSED.get()
+        finally:
+            _CURRENT_PROVIDER.reset(_prov_tok)
+            _CURRENT_SURFACE.reset(_surface_tok)
+            _CURRENT_KEY_PROFILE.reset(_kp_tok)
+            _CURRENT_OWNER_TEXT.reset(_owner_tok)
+            _gate_mod.DECIDED.reset(_dtok)
+            _taint_mod.CURRENT_KEY.reset(_ktok)
+            _taint_mod.CURRENT.reset(_ttok)
+            _CURRENT_CONVERSATION.reset(_tok)
+        if not isinstance(result, str):
+            result = json.dumps(result, default=str)
+    except Exception as e:
+        traceback.print_exc()
+        _receipts.record(name, ok=False, detail=str(e))
+        return ExceptionText(f"Tool error ({name}): {e}")
+
+    # Receipt written only after the handler actually returned. This is the
+    # only place one is created, so a receipt cannot exist for a call that did
+    # not happen — which is what makes an unbacked claim detectable later.
+    # A credential refusal raised by the handler itself is a denial, not a read.
+    if _refused:
+        _receipt_credential_refusal(name, ctx.input, "refused by the handler")
+        _receipts.record(name, ok=False, denied=True, detail=result)
+    else:
+        _receipts.record(name, ok=True)
+
+    # Cap result size to prevent token explosion in the model context window.
+    # The cut keeps the part that matters for the kind of tool (start of a
+    # file, end of a command, both ends of a page), names the window shown
+    # and the way to get the rest, and keeps the full text on disk. See
+    # services/tool_output.py.
+    if isinstance(result, str):
+        result = _tool_output.clip_result(name, result)
+
+    # ── Every date in a tool result carries a code-computed weekday, so
+    # the model never derives one itself. ──
+    if isinstance(result, str):
+        try:
+            from agent_friday.services.clock import annotate_weekdays
+            result = annotate_weekdays(result)
         except Exception:
             pass
 
-        try:
-            # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
-            # tool that spawns background work had no way to say where that work
-            # should report - and everything it had to say went to Main, which is
-            # where explanations go to be unread. Set around the call rather than
-            # threaded through sixty handler signatures; a ContextVar because
-            # tasks run in threads and a module global would cross-talk.
-            _tok = _CURRENT_CONVERSATION.set(
-                ((session_ctx or {}).get("conversation_id")
-                 or (session_ctx or {}).get("conversation")) or None)
-            # Provenance of this call's arguments, for any approval card the
-            # handler raises (the email card is created inside draft_email).
-            _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
-            _ktok = _taint_mod.CURRENT_KEY.set(_taint_mod.ledger_key(session_ctx))
-            # The owner's decision behind this call, as the hooks established it
-            # (approved card, grant, or a chat yes to exactly this call). A handler
-            # whose action needs one checks it again before acting.
-            from agent_friday.governance import action_gate as _gate_mod
-            _dtok = _gate_mod.DECIDED.set(ctx.meta.get("owner_decided"))
-            _sc = session_ctx or {}
-            _owner_tok = _CURRENT_OWNER_TEXT.set(
-                "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
-                else str(_sc.get("owner_text") or ""))
-            _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
-            try:
-                _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
-                _cred_paths.REFUSED.set(False)
-                result = handler(ctx.input)
-                _refused = _cred_paths.REFUSED.get()
-            finally:
-                _CURRENT_SURFACE.reset(_surface_tok)
-                _CURRENT_OWNER_TEXT.reset(_owner_tok)
-                _gate_mod.DECIDED.reset(_dtok)
-                _taint_mod.CURRENT_KEY.reset(_ktok)
-                _taint_mod.CURRENT.reset(_ttok)
-                _CURRENT_CONVERSATION.reset(_tok)
-            if not isinstance(result, str):
-                result = json.dumps(result, default=str)
-        except Exception as e:
-            traceback.print_exc()
-            _receipts.record(name, ok=False, detail=str(e))
-            return ExceptionText(f"Tool error ({name}): {e}")
-
-        # Receipt written only after the handler actually returned. This is the
-        # only place one is created, so a receipt cannot exist for a call that did
-        # not happen — which is what makes an unbacked claim detectable later.
-        # A credential refusal raised by the handler itself is a denial, not a read.
-        if _refused:
-            _receipt_credential_refusal(name, ctx.input, "refused by the handler")
-            _receipts.record(name, ok=False, denied=True, detail=result)
-        else:
-            _receipts.record(name, ok=True)
-
-        # Cap result size to prevent token explosion in the model context window.
-        # The voice path already caps at 8 KB; apply the same limit uniformly here.
-        _TOOL_RESULT_MAX = 8192
-        if isinstance(result, str) and len(result) > _TOOL_RESULT_MAX:
-            result = result[:_TOOL_RESULT_MAX] + f"\n[truncated — {len(result)} chars total]"
-
-        # ── Every date in a tool result carries a code-computed weekday, so
-        # the model never derives one itself. ──
-        if isinstance(result, str):
-            try:
-                from agent_friday.services.clock import annotate_weekdays
-                result = annotate_weekdays(result)
-            except Exception:
-                pass
-
-        # ── PostToolUse chain — audit log, PII scrub, cost attribution. ──
-        return _hooks.run_post_hooks(ctx, result)
+    # ── PostToolUse chain — audit log, PII scrub, cost attribution. ──
+    return _hooks.run_post_hooks(ctx, result)
 
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    #  BUILT-IN LIFECYCLE HOOKS (Part B). Refactored out of _execute_tool's former
-    #  hard-coded gate sequence into named, reorderable, per-settings-toggleable
-    #  hooks. This is behaviour-preserving — same checks, same order — but the chain
-    #  is now extensible (skills can register their own) and visible in Settings.
-    #  Built-ins occupy priority 0–99; user/skill hooks default to 100 so they run
-    #  after the critical gates and can only tighten, never loosen, governance.
-    # ═══════════════════════════════════════════════════════════════════════════
-    finally:
-        _CURRENT_KEY_PROFILE.reset(_kp_tok)
-
+# ═══════════════════════════════════════════════════════════════════════════
+#  BUILT-IN LIFECYCLE HOOKS (Part B). Refactored out of _execute_tool's former
+#  hard-coded gate sequence into named, reorderable, per-settings-toggleable
+#  hooks. This is behaviour-preserving — same checks, same order — but the chain
+#  is now extensible (skills can register their own) and visible in Settings.
+#  Built-ins occupy priority 0–99; user/skill hooks default to 100 so they run
+#  after the critical gates and can only tighten, never loosen, governance.
+# ═══════════════════════════════════════════════════════════════════════════
 
 def _creations_write_preapproved(name, inp) -> bool:
     """write_file into the creations folders is project work, not persistent
@@ -11594,7 +11689,16 @@ def _guest_auth_failed(guest, exc):
                        "Settings \u2192 Accounts & Keys, or say \"use my key\"." % (guest["label"], status or name))
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None):
+def _call_claude_agent(*args, **kwargs):
+    """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
+    _tok = _LOOP_PROVIDER.set("anthropic")
+    try:
+        return _call_claude_agent_run(*args, **kwargs)
+    finally:
+        _LOOP_PROVIDER.reset(_tok)
+
+
+def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -11770,6 +11874,17 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     _rounds_left = int(_round_cap) if _round_cap else None
     _loop_guard = _tb.LoopGuard() if _tb.loop_guard_enabled() else None
 
+    # ── Fewer tools up front, on the cloud too. ──
+    # Every schema on every round was ~46k tokens a call. The cloud now gets
+    # the same opening set as the local seat (the resident tools plus the
+    # loader) and loads the rest by name or query through `load_tools`; a
+    # tool called without its schema still runs and its schema arrives for
+    # the next round (see services/tool_catalogue.py).
+    from agent_friday.services import tool_catalogue as _TC
+    _all_tools = tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
+    _sent_tools = (_TC.opening_set(_all_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
+                   if _TC.enabled() and _all_tools else list(_all_tools))
+
     # ── Per-task cloud tally. ──
     # ADVISORY: it warns, it does not stop. See prompt_cache.task_budget for the
     # measurement that demoted it from a ceiling. At the
@@ -11865,7 +11980,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 "model": model or ANTHROPIC_MODEL_DEFAULT,
                 "max_tokens": max_tokens,
                 "messages": convo,
-                "tools": tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id")),
+                "tools": _sent_tools,
             }
             _sys = safe_system
             if _steer_inject:
@@ -12086,6 +12201,31 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 _orb_safe(process_update, orb_id, label=f"{tu.name}…")
                 _t_tool = _time.time()
 
+                # `load_tools`: the schemas asked for (by name or by query)
+                # join the next request. Nothing executes and no gate is
+                # involved: this is a description being handed over.
+                if tu.name == _TC.LOADER_NAME:
+                    _a = tu.input if isinstance(tu.input, dict) else {}
+                    _want = _a.get("names") or []
+                    if isinstance(_want, str):
+                        _want = [_want]
+                    _new, _msg = _TC.expand(_all_tools, _want, _sent_tools,
+                                            query=str(_a.get("query") or ""))
+                    if _new:
+                        _sent_tools = list(_sent_tools) + list(_new)
+                    tool_trace.append({"name": tu.name, "input": _a, "result": _msg})
+                    _rtrace.tool_finished(tu.name, _a, _msg)
+                    tool_results.append({"type": "tool_result", "tool_use_id": tu.id,
+                                         "content": _msg})
+                    continue
+                # A tool called without its schema still runs (dispatch is by
+                # name); the schema arrives for the next round so a second
+                # attempt is well-formed.
+                if _TC.enabled() and tu.name not in {_TC._name_of(t) for t in _sent_tools}:
+                    _late, _ = _TC.expand(_all_tools, [tu.name], _sent_tools)
+                    if _late:
+                        _sent_tools = list(_sent_tools) + list(_late)
+
                 # ── Zero-trust continuous vault authorization ──────────
                 # Gate every tool call through vault check_action before
                 # execution. If the provider can't see the data, deny.
@@ -12216,7 +12356,25 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 #  Ollama. Only called when the model router selects a local model.
 # ══════════════════════════════════════════════════════════════
 
-def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
+# The wrapper above only sets the loop-provider ContextVar; its signature is
+# the real one's (inspect.signature follows __wrapped__).
+_call_claude_agent.__wrapped__ = _call_claude_agent_run
+
+
+def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
+    """The shared OpenAI-format loop. It names its provider for the run so a
+    handler can tell a local seat from the cloud: a loopback seat we serve
+    ourselves is LOCAL whatever dialect it speaks (`seat='local'`). See
+    _oai_agentic_loop_run."""
+    _tok = _LOOP_PROVIDER.set("local" if kw.get("seat") == "local" else provider)
+    try:
+        return _oai_agentic_loop_run(convo, oai_tools, send_fn, provider=provider,
+                                     model=model, **kw)
+    finally:
+        _LOOP_PROVIDER.reset(_tok)
+
+
+def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                       pii_lookup=None, session_ctx=None, max_iters=None, orb=None,
                       meter_provider=None, orb_id=None, seat=None,
                       catalogue_all=None, max_tokens=None):
@@ -12693,14 +12851,19 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             if tname == _TC.LOADER_NAME:
                 _pilot_call((session_ctx or {}).get("_laya_pilot"),
                             "increment", "loader_calls")
+                _query = ""
                 try:
                     _raw0 = fn.get("arguments")
                     _a = (json.loads(_raw0) if isinstance(_raw0, str)
                           else (_raw0 or {}))
                     _want = _a.get("names") or []
+                    if isinstance(_want, str):
+                        _want = [_want]
+                    _query = str(_a.get("query") or "")
                 except Exception:
                     _want = []
-                _new, _msg = _TC.expand(_catalogue_all or [], _want, oai_tools)
+                _new, _msg = _TC.expand(_catalogue_all or [], _want, oai_tools,
+                                        query=_query)
                 if _new:
                     try:
                         from agent_friday.routing.model_router import (
@@ -12736,17 +12899,60 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             # Dispatch uses /api/chat so num_ctx takes effect (the
             # OpenAI-compatible endpoint silently discards `options`), which
             # is why the object shape must be handled here.
+            #
+            # And when the string is NOT JSON, the call does not run with
+            # {}: the model is told exactly what it sent and that nothing
+            # happened, and the schema is pulled in so the retry fits.
             _raw = fn.get("arguments")
-            if isinstance(_raw, dict):
-                targs = _raw
-            elif isinstance(_raw, str) and _raw.strip():
-                try:
-                    targs = json.loads(_raw)
-                except Exception:
-                    targs = {}
-            else:
-                targs = {}
             _t_tool = _time.time()
+            targs = _tool_args.parse(_raw)
+            _arg_error = None
+            if isinstance(targs, _tool_args.ParseFailure):
+                _arg_error = targs.message(tname)
+                targs = {}
+            else:
+                _schema = _tool_args.schema_for(tname, oai_tools)
+                if _schema is None and _catalogue_all:
+                    _schema = _tool_args.schema_for(tname, _catalogue_all)
+                if _schema is None:
+                    _schema = _schema_for_tool(tname)
+                targs, _arg_error = _tool_args.check(tname, targs, _schema)
+            if _arg_error:
+                if _catalogue_all and tname != _TC.LOADER_NAME:
+                    _known = {(t.get("function") or t).get("name")
+                              for t in (oai_tools or [])}
+                    if tname not in _known:
+                        _late, _ = _TC.expand(_catalogue_all, [tname], oai_tools)
+                        if _late:
+                            try:
+                                from agent_friday.routing.model_router import (
+                                    anthropic_to_openai_tools as _a2o)
+                                oai_tools = (oai_tools or []) + _a2o(_late)
+                            except Exception:
+                                pass
+                _receipts.record(tname, ok=False, denied=True, detail="invalid arguments")
+                tool_trace.append({"name": tname, "input": _raw if isinstance(_raw, (str, dict)) else str(_raw),
+                                   "result": _arg_error})
+                _rtrace.tool_finished(tname, {"raw": str(_raw)[:300]}, _arg_error)
+                _tool_ms = int((_time.time() - _t_tool) * 1000)
+                _orb_tool_trace(orb_id, tname, {"raw": str(_raw)[:300]}, _arg_error, _tool_ms)
+                _ledger_tool_call(tname, _arg_error, _tool_ms, orb_id, session_ctx)
+                # The same bad call, sent again and again, is a loop like any
+                # other: the guard sees it before the error goes back, or a model
+                # that keeps resending the same arguments is never stopped.
+                _loop_hit = (_loop_guard.observe(tname, _raw if isinstance(_raw, dict)
+                                                 else {"raw": str(_raw)[:300]})
+                             if _loop_guard is not None else None)
+                if _loop_hit:
+                    _pilot_outcome(session_ctx, "error")
+                    _orb(status='error', label='Loop detected', progress=1.0)
+                    _led_done()
+                    return _tb.limit_message("loop", detail=_loop_hit,
+                                             used=_round,
+                                             model=str(model or "")), tool_trace
+                convo.append({"role": "tool", "tool_call_id": tcid,
+                              "content": _arg_error})
+                continue
 
             # ── Zero-trust continuous vault authorization. ──
             # ONLY vault-tier (TIER_2/TIER_3) data is gated here; the provider
@@ -12867,6 +13073,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
 #  soft limit, compress older turns into a dense summary block
 #  while keeping recent turns verbatim.
 # ══════════════════════════════════════════════════════════════
+
+# The wrapper above only sets the loop-provider ContextVar; its signature is
+# the real one's (inspect.signature follows __wrapped__).
+_oai_agentic_loop.__wrapped__ = _oai_agentic_loop_run
+
 
 _TRAJ_CHAR_LIMIT = 2_000_000   # ~500K tokens; Opus 4.8 has 1M ctx — only compress at this threshold
 _TRAJ_KEEP_VERBATIM = 20       # keep last 20 turn-pairs (~40 messages) verbatim

@@ -178,7 +178,12 @@ class TestVibeCodePresets:
 
 
 class TestVibeCodeLaunch:
-    """Launch MUST be fully mocked — _run_claude_terminal is patched to no-op."""
+    """A launch request raises one approval card per task and starts nothing.
+
+    _run_claude_terminal is patched to no-op by _block_subprocess, and the
+    route must not reach it anyway: the session starts only from an approved
+    card's decision hook (services/claude_code_tasks).
+    """
 
     def test_launch_no_tasks_returns_400(self, client):
         resp = client.post("/api/vibe-code/launch", json={"tasks": []})
@@ -188,15 +193,16 @@ class TestVibeCodeLaunch:
         resp = client.post("/api/vibe-code/launch", json={})
         assert resp.status_code == 400
 
-    def test_launch_single_task_returns_launched_ids(self, client):
-        # _run_claude_terminal is no-op'd by _block_subprocess; no CMD opens.
+    def test_launch_single_task_raises_one_card_and_launches_nothing(self, client):
         resp = client.post("/api/vibe-code/launch",
                            json={"tasks": ["Write some tests"]})
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["status"] == "ok"
-        assert isinstance(data["launched"], list)
-        assert len(data["launched"]) == 1
+        assert data["launched"] == []
+        assert len(data["pending"]) == 1
+        assert data["pending"][0]["approval_id"]
+        assert data["pending"][0]["status"] == "awaiting_approval"
 
     def test_launch_multiple_tasks(self, client):
         resp = client.post("/api/vibe-code/launch",
@@ -204,22 +210,25 @@ class TestVibeCodeLaunch:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["count"] == 3
-        assert len(data["launched"]) == 3
+        assert len(data["pending"]) == 3
 
     def test_launch_ids_are_unique_strings(self, client):
         resp = client.post("/api/vibe-code/launch",
                            json={"tasks": ["T1", "T2"]})
-        ids = resp.get_json()["launched"]
+        ids = [p["id"] for p in resp.get_json()["pending"]]
         assert len(set(ids)) == 2
         assert all(isinstance(i, str) for i in ids)
 
     def test_launched_ids_appear_in_status(self, client):
         resp = client.post("/api/vibe-code/launch",
                            json={"tasks": ["Status check task"]})
-        tid = resp.get_json()["launched"][0]
+        tid = resp.get_json()["pending"][0]["id"]
         status = client.get("/api/vibe-code/status").get_json()
-        known_ids = [t["id"] for t in status["terminals"]]
-        assert tid in known_ids
+        by_id = {t["id"]: t for t in status["terminals"]}
+        assert tid in by_id
+        assert by_id[tid]["status"] == "awaiting_approval"
+        assert "token" not in by_id[tid] or by_id[tid].get("token") in (None, ""), \
+            "the per-task gate token must not be served to the page"
 
 
 class TestVibeCodeStatus:
@@ -240,11 +249,12 @@ class TestVibeCodeStop:
         resp = client.post("/api/vibe-code/stop", json={"id": "nonexistent-id"})
         assert resp.status_code == 404
 
-    def test_stop_known_id_returns_ok(self, client):
-        # Launch first (no-op, safe)
-        launch = client.post("/api/vibe-code/launch",
-                             json={"tasks": ["Stopme task"]}).get_json()
-        tid = launch["launched"][0]
+    def test_stop_known_id_returns_ok(self, client, monkeypatch):
+        # A launch raises a card and starts nothing, so register a session directly.
+        import agent_friday.core as core
+        tid = "stopme-test"
+        monkeypatch.setitem(core.VIBE_TERMINALS, tid,
+                            {"id": tid, "task": "Stopme task", "status": "running", "pid": 99999})
         resp = client.post("/api/vibe-code/stop", json={"id": tid})
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "ok"
@@ -258,10 +268,12 @@ class TestVibeCodeClear:
         assert data["status"] == "ok"
         assert "removed" in data
 
-    def test_clear_removes_stopped_terminals(self, client):
-        # Launch then stop to make a 'stopped' terminal
-        tid = client.post("/api/vibe-code/launch",
-                          json={"tasks": ["Clear me"]}).get_json()["launched"][0]
+    def test_clear_removes_stopped_terminals(self, client, monkeypatch):
+        # A launch raises a card and starts nothing, so register a session, then stop it.
+        import agent_friday.core as core
+        tid = "clearme-test"
+        monkeypatch.setitem(core.VIBE_TERMINALS, tid,
+                            {"id": tid, "task": "Clear me", "status": "running", "pid": 99999})
         client.post("/api/vibe-code/stop", json={"id": tid})
         before = client.get("/api/vibe-code/status").get_json()["terminals"]
         before_ids = [t["id"] for t in before]

@@ -443,8 +443,13 @@ class TestAnalyzeFetch:
         assert summary["articles"] == 0
 
     def test_correction_detection(self, graph):
+        # A correction counts when it corrects an article the source ran.
+        graph.analyze_fetch([self._make_article(
+            "example.com", title="Council approves riverside housing plan",
+            url="https://example.com/riverside")], [])
         pool = [self._make_article(
-            "example.com", title="Correction: earlier article had errors"
+            "example.com", title="Correction: council riverside housing plan vote",
+            url="https://example.com/riverside-correction"
         )]
         summary = graph.analyze_fetch(pool, [])
         assert summary["corrections"] >= 1

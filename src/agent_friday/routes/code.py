@@ -32,6 +32,7 @@ from agent_friday.core import (
     VIBE_TERMINALS,
     _POPEN_FLAGS,
 )  # noqa: E501
+from agent_friday.services import claude_code_tasks as _cct  # registers the card's decision hook
 from agent_friday.services.code_engine import (
     CODE_PLANS_DIR,
     CODE_PROCESSES,
@@ -48,7 +49,6 @@ from agent_friday.services.code_engine import (
     _projects_root,
     _repo_path,
     _repo_tree,
-    _run_claude_terminal,
     _safe_project_path,
     adopt_or_reap_vibe_terminals,
 )  # noqa: E501
@@ -83,7 +83,14 @@ if not os.environ.get("FRIDAY_TESTING"):
 
 @code_bp.route('/api/vibe-code/launch', methods=['POST'])
 def vibe_code_launch():
-    """Launch Claude Code terminals with tasks."""
+    """Ask to run Claude Code for each task: one approval card per task.
+
+    Nothing starts here. Approving a card mints the task's grant and starts
+    its session under Friday's gate (services/claude_code_tasks); denying it
+    runs nothing. `pending` lists the tasks waiting on their cards; `launched`
+    is kept for older callers and is always empty, because a launch is never
+    the result of this request alone.
+    """
     data = request.get_json(silent=True) or {}
     tasks = data.get('tasks', [])
     cwd = os.path.normpath(os.path.expanduser(data.get('cwd', str(HOME / 'Projects'))))
@@ -91,31 +98,39 @@ def vibe_code_launch():
     if not tasks:
         return jsonify({"status": "error", "message": "No tasks provided"}), 400
 
-    launched = []
+    pending = []
     for task_desc in tasks:
         tid = str(uuid.uuid4())[:12]
-        VIBE_TERMINALS[tid] = {
-            'id': tid,
-            'task': task_desc,
-            'status': 'launching',
-            'cwd': cwd,
-            'pid': None,
-            'started': datetime.now().isoformat(),
-            'stopped': None,
-            'log_file': None
-        }
-        thread = threading.Thread(target=_run_claude_terminal, args=(tid, task_desc, cwd), daemon=True)
-        thread.start()
-        launched.append(tid)
+        rec = _cct.request(tid, str(task_desc), cwd, requested_by="owner")
+        pending.append({"id": tid, "approval_id": rec.get("approval_id"),
+                        "status": VIBE_TERMINALS.get(tid, {}).get('status')})
 
-    core._persist_vibe_terminals()
-    return jsonify({"status": "ok", "launched": launched, "count": len(launched)})
+    return jsonify({"status": "ok", "launched": [], "pending": pending,
+                    "count": len(pending),
+                    "message": "Approve the card for each task in Friday to start it; "
+                               "nothing runs until then."})
+
+
+@code_bp.route('/api/vibe-code/gate', methods=['POST'])
+def vibe_code_gate():
+    """One tool call from a Friday-launched Claude Code session asks whether
+    it may run. Answered from the task's grant through the action gate; the
+    per-task token is the credential and only loopback may ask."""
+    if request.remote_addr not in ("127.0.0.1", "::1", "localhost"):
+        return jsonify({"decision": "deny", "reason": "the gate answers this machine only"}), 403
+    data = request.get_json(silent=True) or {}
+    out = _cct.gate(str(data.get('task_id') or ''), str(data.get('token') or ''),
+                    str(data.get('tool_name') or ''), data.get('tool_input'))
+    return jsonify(out)
 
 
 @code_bp.route('/api/vibe-code/status')
 def vibe_code_status():
     """Return status of all tracked terminals."""
-    terminals = list(VIBE_TERMINALS.values())
+    # The per-task gate token is the session's credential; the page never
+    # needs it.
+    terminals = [{k: v for k, v in t.items() if k != 'token'}
+                 for t in VIBE_TERMINALS.values()]
     # Try to read last lines of logs
     for t in terminals:
         if t.get('log_file') and os.path.exists(t['log_file']):

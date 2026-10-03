@@ -627,12 +627,29 @@ Serve a cached audio file.
 ## Vibe Code (Coding Terminal)
 
 ### `POST /api/vibe-code/launch`
-Launch a coding terminal session.
+Ask to run Claude Code for each task. Nothing starts here: the route raises
+one approval card per task. Approving a card mints a scoped grant and starts
+that task's session under Friday's gate (every action inside it is checked
+through a per-task hook; the session never skips permissions). Denying runs
+nothing.
 
 **Request:**
 ```json
-{ "task": "Build a React dashboard", "cwd": "C:\\Projects\\app" }
+{ "tasks": ["Build a React dashboard"], "cwd": "C:\\Projects\\app" }
 ```
+
+**Response:**
+```json
+{ "status": "ok", "launched": [], "count": 1,
+  "pending": [{ "id": "…", "approval_id": "…", "status": "awaiting_approval" }] }
+```
+
+### `POST /api/vibe-code/gate`
+Loopback only. A Friday-launched Claude Code session asks whether one tool
+call may run: `{ "task_id", "token", "tool_name", "tool_input" }` →
+`{ "decision": "allow" | "deny", "reason" }`. Answered from the task's grant
+through the action gate (cLaws check, signed receipt), after Friday's own
+refusals; a used-up grant raises a renewal card.
 
 ### `GET /api/vibe-code/status`
 Get status of all vibe code terminals.

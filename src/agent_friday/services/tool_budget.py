@@ -363,8 +363,8 @@ def _surface_override(kept: list, dropped: list) -> str:
 
     THE CRUX OF THIS MODULE, and the part it was missing.
 
-    `FRIDAY_SYSTEM_PROMPT` names ~35 tools in its "== AVAILABLE TOOLS =="
-    section, tells the model to "use these tools proactively", and — for the
+    The system prompt's generated "== TOOLS ==" section names the resident
+    tools, tells the model to act by calling tools, and — for the
     browser and file tools — that it must NEVER say it cannot do those things
     ("you can, and these tools are how"). That block is a COMPILE-TIME
     CONSTANT. It knows nothing about trimming and never has.
@@ -398,7 +398,7 @@ def _surface_override(kept: list, dropped: list) -> str:
         return (
             head +
             "You have NO callable tools this turn. Every tool named in the "
-            "'== AVAILABLE TOOLS ==' section above is unavailable here, "
+            "'== TOOLS ==' section above is unavailable here, "
             "including the browser, file and calendar tools that section says "
             "you must never deny. Do not announce, promise or describe any "
             "action that needs a tool. Answer from what is already in this "
@@ -406,7 +406,7 @@ def _surface_override(kept: list, dropped: list) -> str:
             "this seat.\n")
     body = [head,
             "This seat could not hold the whole toolbox, so the "
-            "'== AVAILABLE TOOLS ==' list above is NOT accurate for this "
+            "'== TOOLS ==' list above is NOT accurate for this "
             "turn. What follows is.\n"]
     if len(dropped) <= len(kept):
         body.append("These %d tools are NOT loaded and CANNOT be called, "

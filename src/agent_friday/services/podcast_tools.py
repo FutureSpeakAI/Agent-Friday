@@ -119,10 +119,16 @@ def line_at(ep: dict, t: float) -> tuple[int, dict | None]:
 # ── tools ───────────────────────────────────────────────────────────────────
 
 def _latest_ready(routine: str = "") -> dict | None:
-    for ep in pe.list_episodes(routine=routine, limit=50):
-        if ep.get("status") == "ready":
-            return ep
-    return None
+    """The newest READY episode, by when it was finished, across every show;
+    "news" is any News routine's; a named show narrows it to that show."""
+    eps = [e for e in pe.list_episodes(limit=500) if e.get("status") == "ready"]
+    routine = (routine or "").strip()
+    if routine == "news":
+        eps = [e for e in eps if (e.get("attached") or {}).get("routine")]
+    elif routine and routine != "any":
+        eps = [e for e in eps if (e.get("attached") or {}).get("routine") == routine]
+    eps.sort(key=lambda e: e.get("finished_at") or e.get("updated_at") or e.get("created_at") or 0, reverse=True)
+    return eps[0] if eps else None
 
 
 def _tool_make_podcast(inp):
@@ -174,6 +180,20 @@ def _tool_make_podcast(inp):
                        "" if len(refs) == 1 else "s",
                        " It's private, so it stays on this PC." if ep["privacy"] == "private" else "")),
     })
+
+
+def _tool_podcast_format(inp):
+    """Read or set who is on each show: Friday alone (solo) or two hosts (duo)."""
+    inp = inp or {}
+    routine = str(inp.get("routine") or "").strip()
+    fmt = str(inp.get("format") or "").strip().lower()
+    if fmt:
+        try:
+            pe.set_format(routine if routine != "any" else "", fmt)
+        except pe.PodcastRefused as e:
+            return json.dumps({"status": "error", "message": str(e)})
+    return json.dumps({"status": "ok", "formats": pe.formats(),
+                       "message": ("%s is now %s." % (routine or "any", fmt)) if fmt else ""})
 
 
 def _tool_podcast_list(inp):
@@ -294,6 +314,12 @@ TOOLS = [
          "voice": {"type": "string", "enum": ["local", "cloud"],
                    "description": "local (default). cloud only if the owner asks and has switched cloud voices on."},
      }}},
+    {"name": "podcast_format",
+     "description": ("Who is on each show: solo (Friday alone) or duo (two hosts). No "
+                     "format: read all, with the recommended one. With routine and format: set it."),
+     "input_schema": {"type": "object", "properties": {
+         "routine": {"type": "string", "enum": ["briefing", "front_page", "editorial", "weekly", "any"]},
+         "format": {"type": "string", "enum": ["solo", "duo"]}}}},
     {"name": "podcast_list",
      "description": "List podcast episodes, newest first: title, status, length, chapters, privacy. Filter by routine (front_page, briefing, weekly, editorial). Read them back as sentences, not a table.",
      "input_schema": {"type": "object", "properties": {
@@ -301,13 +327,15 @@ TOOLS = [
          "limit": {"type": "integer"}}}},
     {"name": "podcast_play",
      "description": (
-         "Control a podcast on the owner's screen: play (an episode id, or a routine's "
-         "latest), pause, resume, stop, next_chapter, previous_chapter, seek. On "
-         "no_desktop, ask them to open Friday's window."),
+         "Control a podcast on the owner's screen: play (an episode id, or the latest: the "
+         "newest finished episode of any show), pause, resume, stop, next_chapter, "
+         "previous_chapter, seek. On no_desktop, ask them to open Friday's window."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(PLAY_OPS)},
          "episode_id": {"type": "string"},
-         "routine": {"type": "string", "enum": ["front_page", "briefing", "weekly", "editorial"]},
+         "routine": {"type": "string", "enum": ["front_page", "briefing", "weekly", "editorial", "news"],
+                     "description": ("Set only when the user names a show (\"the Briefing\"); "
+                                     "\"news\" for any News show; leave out for the latest of all.")},
          "seconds": {"type": "number"}}, "required": ["action"]}},
     {"name": "podcast_source",
      "description": (
@@ -321,21 +349,33 @@ TOOLS = [
 
 #: make_podcast writes an episode on this computer (ring 1). Listing and
 #: source lookup only read (ring 0). Playing steers the owner's own screen,
-#: like navigate_to (ring 1).
-RINGS = {"make_podcast": 1, "podcast_list": 0, "podcast_play": 1, "podcast_source": 0}
+#: like navigate_to (ring 1). podcast_format changes the owner's own podcast
+#: setting on this computer (ring 1).
+RINGS = {"make_podcast": 1, "podcast_list": 0, "podcast_play": 1, "podcast_source": 0,
+         "podcast_format": 1}
 
 HANDLERS = {
     "make_podcast": _tool_make_podcast,
     "podcast_list": _tool_podcast_list,
     "podcast_play": _tool_podcast_play,
     "podcast_source": _tool_podcast_source,
+    "podcast_format": _tool_podcast_format,
 }
 
 
-def register(claude_tools, handlers, rings):
+#: Tools whose schemas are News's own (agent.WORKSPACE_TOOLS["news"]): sent
+#: with a turn in News or loaded by name, outside the always-on catalogue and
+#: its latency budget. Their handlers and rings are registered like the rest,
+#: so voice and the loader run them wherever they are named.
+NEWS_ONLY = ("podcast_format",)
+
+
+def register(claude_tools, handlers, rings, workspace_tools=None):
     known = {t["name"] for t in claude_tools}
+    news = workspace_tools.setdefault("news", []) if workspace_tools is not None else None
     for t in TOOLS:
-        if t["name"] not in known:
-            claude_tools.append(t)
+        target = news if (news is not None and t["name"] in NEWS_ONLY) else claude_tools
+        if t["name"] not in known and t["name"] not in {x["name"] for x in target}:
+            target.append(t)
     handlers.update(HANDLERS)
     rings.update(RINGS)

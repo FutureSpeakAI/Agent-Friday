@@ -443,6 +443,16 @@ def forget(name: str) -> dict:
             # already stops new entries, but existing ones are still there.
             removed["timeline_error"] = ExceptionText(str(e)[:200])
 
+        # 6. Every other store that names a person registers with the forget
+        #    registry (research notes, learned sender signals, the trust
+        #    evidence log); a store missing from it is a bug, not a survivor.
+        try:
+            from agent_friday.services import forget_registry as _fr
+            for store, count in _fr.purge_all(names, emails).items():
+                removed[store] = count
+        except Exception as e:
+            removed["registry_error"] = ExceptionText(str(e)[:200])
+
         return {
             "name": name,
             "removed": removed,

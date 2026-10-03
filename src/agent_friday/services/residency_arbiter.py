@@ -1697,6 +1697,85 @@ class LlamaServerBackend:
         return report
 
 
+    def adopt_live(self) -> list:
+        """Adopt any healthy seat answering on a known port that this process
+        does not own, and publish it. ADOPT ONLY: nothing is killed here (who
+        to reap is a boot decision with the plan in hand).
+
+        A seat can be started outside this Arbiter (a restore by the build-hours
+        daemon, a script, an older build) after boot. Unadopted it is invisible:
+        serving() reads only owned and published seats, so the podcast engine,
+        the routines and the capability state report "no local model is
+        serving" while that seat answers chat. A seat started over its context
+        cap is left alone, as at boot."""
+        adopted = []
+        try:
+            live = survey_live_seats()
+        except Exception as e:
+            print(f"  [arbiter] adopt_live: could not survey live seats: {e}")
+            return adopted
+        with self._load_lock:
+            owned = set()
+            for _entry in list(self.procs.values()):
+                try:
+                    owned.add(int(getattr(_entry[0], "pid", 0) or 0))
+                except Exception:
+                    pass
+            for model_id, (pid, port) in live.items():
+                if model_id in self.procs or pid in owned:
+                    continue
+                over = _seat_num_ctx(pid)
+                if over and over > self.seat_cap(model_id):
+                    continue
+                self.procs[model_id] = (AdoptedProc(pid), port)
+                adopted.append(f"{model_id} on :{port} (pid {pid})")
+            if adopted:
+                _publish_endpoints(self.procs)
+        for line in adopted:
+            print(f"  [arbiter] adopted a seat started outside this process: {line}")
+        return adopted
+
+
+def adopt_live_seats() -> list:
+    """`LlamaServerBackend.adopt_live` on this process's Arbiter, if any."""
+    arb = ARBITER
+    llama = getattr(arb, "llama", None) if arb is not None else None
+    if llama is None or not hasattr(llama, "adopt_live"):
+        return []
+    try:
+        return llama.adopt_live()
+    except Exception as e:
+        print(f"  [arbiter] adopt_live failed: {e}")
+        return []
+
+
+#: How often the seat watch looks for seats started outside this process.
+SEAT_WATCH_S = 60.0
+_SEAT_WATCH = {"thread": None, "stop": None}
+
+
+def start_seat_watch(interval_s: float | None = None):
+    """Adopt seats started outside this process within `interval_s`. Once."""
+    if _SEAT_WATCH["thread"] is not None and _SEAT_WATCH["thread"].is_alive():
+        return _SEAT_WATCH["thread"]
+    stop = threading.Event()
+    period = float(interval_s if interval_s is not None else SEAT_WATCH_S)
+
+    def _run():
+        while not stop.wait(period):
+            adopt_live_seats()
+    th = threading.Thread(target=_run, daemon=True, name="arbiter-seat-watch")
+    _SEAT_WATCH.update(thread=th, stop=stop)
+    th.start()
+    return th
+
+
+def stop_seat_watch():
+    if _SEAT_WATCH["stop"] is not None:
+        _SEAT_WATCH["stop"].set()
+    _SEAT_WATCH.update(thread=None, stop=None)
+
+
 class ComfyUIBackend:
     """Image generation. Started for a lease, stopped on release."""
 
@@ -2083,6 +2162,14 @@ class Arbiter:
                 self.llama.adopt_or_reap({m for m in _wanted if m})
             except Exception as e:
                 print(f"  [arbiter] adopt/reap failed (continuing): {e}")
+            # Never under FRIDAY_TESTING, like every other background daemon: a
+            # watch a test's boot left running would outlive the test and keep
+            # adopting into whatever Arbiter the next test installs.
+            if os.environ.get("FRIDAY_TESTING") != "1":
+                try:
+                    start_seat_watch()
+                except Exception as e:
+                    print(f"  [arbiter] seat watch not started: {e}")
             try:
                 self.reconcile_daemon(evict=True)
             except Exception as e:

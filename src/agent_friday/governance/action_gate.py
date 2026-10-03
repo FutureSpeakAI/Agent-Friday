@@ -130,6 +130,10 @@ OUTWARD_TOOLS = frozenset({
     "delete_task",
     "install_package",
     "spawn_interactive_session", "send_to_session",
+    # A Claude Code session launched from the Code workspace: the launch and
+    # every action inside it are governed through a per-task grant minted by
+    # one approval card (services/claude_code_tasks.py).
+    "claude_code_launch", "claude_code_action",
     "content_schedule_post",
     # Phone (agent_friday/phone): a text reaches a person the moment it is
     # sent; a call only ever raises its own card (SELF_GATED below).
@@ -240,9 +244,16 @@ INTERNAL_TOOLS = frozenset({
     "knowledge_communities", "inspect_image", "inspect_audio", "save_output",
     "speak_text", "list_voices", "read_session_output", "load_tools",
     # Podcasts: an episode is written and spoken on this computer and saved in
-    # Friday's own folder; playing it steers the owner's own screen.
-    "make_podcast", "podcast_list", "podcast_play", "podcast_source",
+    # Friday's own folder; playing it steers the owner's own screen; the
+    # format is the owner's own podcast setting on this computer.
+    "make_podcast", "podcast_list", "podcast_play", "podcast_source", "podcast_format",
     "media_show", "media_cards", "media_turn",
+    # A media diet note only proposes: an approval card in the owner's own
+    # approvals; the rule is applied by the approved card, with a receipt.
+    "media_diet_note",
+    # Discuss reads the web through the guarded fetcher and the local model;
+    # it writes only the owner's own files (follows, notes, a queued episode).
+    "discuss_story",
     # Friday's own look: it changes only the owner's own desktop and history.
     # A step authored by a cloud model sends numbers only, through the spend
     # guard and the egress gate like any model call; it reaches no one.
@@ -852,6 +863,14 @@ def revoke_grant(grant_id: str) -> bool:
 def _scopes(ctx: dict) -> set:
     return {str(ctx[k]) for k in ("schedule_id", "task_id", "run_id", "grant_scope")
             if ctx.get(k)}
+
+
+def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
+    """Spend one use of a scoped grant for an executor that is not a tool
+    call (a Claude Code launch, a codebase task). None when nothing is live."""
+    if not tool_name or not scope:
+        return None
+    return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
 def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
