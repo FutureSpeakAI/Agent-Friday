@@ -110,6 +110,7 @@ LOCAL = [
 HARNESS = r"""
 const marked = require(MARKED_PATH);
 globalThis.marked = marked;
+function fridayName(){return 'Friday'}
 function fridayCitationize(s){return s}
 function fridayEscapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function fridayFallbackMd(s){return fridayEscapeHtml(s)}

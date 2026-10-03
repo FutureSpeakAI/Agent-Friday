@@ -10257,7 +10257,7 @@ function fridaySanitizeMarkup(html) {
       attrs += ' ' + an + '="' + esc(val) + '"';
     }
     if (name === 'img' && remote) {
-      out += '<span class="friday-remote-img" role="button" tabindex="0" data-remote-src="' + esc(remote.url) + '" data-host="' + esc(remote.host) + '" title="' + esc('Load ' + remote.url + ' — Friday asks ' + remote.host + ' for it only when you click') + '" style="display:inline-block;padding:4px 8px;border:1px dashed rgba(255,255,255,0.35);border-radius:6px;font-size:12px;cursor:pointer">Remote image blocked — click to load from ' + esc(remote.host) + '</span>';
+      out += '<span class="friday-remote-img" role="button" tabindex="0" data-remote-src="' + esc(remote.url) + '" data-host="' + esc(remote.host) + '" title="' + esc('Load ' + remote.url + ' — ' + fridayName() + ' asks ' + remote.host + ' for it only when you click') + '" style="display:inline-block;padding:4px 8px;border:1px dashed rgba(255,255,255,0.35);border-radius:6px;font-size:12px;cursor:pointer">Remote image blocked — click to load from ' + esc(remote.host) + '</span>';
       i = TAG.lastIndex;
       continue;
     }
