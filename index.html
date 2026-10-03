@@ -10166,11 +10166,73 @@ if (typeof document !== 'undefined') {
    Friday's own origin. Anything that is not a whole, allowed tag is escaped. */
 const FRIDAY_MD_TAGS = new Set('p br hr h1 h2 h3 h4 h5 h6 strong b em i u s del ins code pre blockquote ul ol li a img span div table thead tbody tfoot tr th td sup sub details summary kbd mark small'.split(' '));
 const FRIDAY_MD_ATTRS = new Set(['class', 'title', 'href', 'target', 'rel', 'src', 'alt', 'role', 'tabindex', 'style', 'colspan', 'rowspan', 'align', 'start', 'width', 'height', 'open', 'data-kw-page', 'data-kw-query']);
+/* An image loads the moment it paints, so it is the one element whose address
+   is never taken from a reply: only inline raster data and Friday's own origin
+   qualify. A remote address (https:, http:, //host, a backslash form, a
+   reference link that resolves to one) becomes a click-to-load placeholder. */
 function fridaySafeUrl(v, isImg) {
   const t = String(v).replace(/[\u0000- \u007f-\u009f]+/g, '').toLowerCase();
-  if (/^(https?:|mailto:)/.test(t)) return !(isImg && t.startsWith('mailto:'));
-  if (isImg && /^data:image\/(png|jpe?g|gif|webp);/.test(t)) return true;
-  return !/^[a-z][a-z0-9+.\-]*:/.test(t);
+  if (isImg) {
+    if (/^data:image\/(png|jpe?g|gif|webp);/.test(t)) return true;
+    return !/^[a-z][a-z0-9+.\-]*:/.test(t) && !/^[\\\/]{2}/.test(t);
+  }
+  return /^(https?:|mailto:)/.test(t) || !/^[a-z][a-z0-9+.\-]*:/.test(t);
+}
+function fridayRemoteImage(v) {
+  const t = String(v).replace(/[\u0000- \u007f-\u009f]+/g, '');
+  if (!/^(?:https?:)?[\\\/]{2}/i.test(t) && !/^https?:/i.test(t)) return null;
+  let u;
+  try {
+    u = new URL(t.replace(/\\/g, '/'), 'https://placeholder.invalid/');
+  } catch (e) {
+    return null;
+  }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname) return null;
+  return {url: u.href, host: u.hostname};
+}
+/* Click-to-load: the owner's click is the consent. The page never sets a remote
+   src; the server fetches the picture behind the SSRF guard and the page shows
+   the bytes from a blob: URL, with the host named beside it. */
+function fridayLoadRemoteImage(el) {
+  const url = el.getAttribute('data-remote-src');
+  const host = el.getAttribute('data-host') || '';
+  if (!url || el.getAttribute('data-loading')) return;
+  el.setAttribute('data-loading', '1');
+  el.textContent = 'Loading from ' + host + '…';
+  fetch('/api/remote-image', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url: url})}).then(r => r.ok ? r.blob() : r.json().then(j => {
+    throw new Error(j && j.error || 'refused');
+  }, () => {
+    throw new Error('refused');
+  })).then(blob => {
+    const objUrl = URL.createObjectURL(blob);
+    const img = document.createElement('img');
+    img.alt = 'Picture loaded from ' + host;
+    img.src = objUrl;
+    img.style.maxWidth = '100%';
+    img.style.display = 'block';
+    const cap = document.createElement('span');
+    cap.textContent = 'Loaded from ' + host + ' at your request';
+    cap.style.cssText = 'display:block;font-size:11px;opacity:.7';
+    const wrap = document.createElement('span');
+    wrap.style.display = 'block';
+    wrap.appendChild(img);
+    wrap.appendChild(cap);
+    el.replaceWith(wrap);
+  }).catch(err => {
+    el.removeAttribute('data-loading');
+    el.textContent = 'Couldn’t load from ' + host + ': ' + (err && err.message || 'failed') + ' — click to try again';
+  });
+}
+if (typeof document !== 'undefined') {
+  const remoteImgClick = e => {
+    const el = e.target && e.target.closest ? e.target.closest('.friday-remote-img[data-remote-src]') : null;
+    if (!el) return;
+    if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    fridayLoadRemoteImage(el);
+  };
+  document.addEventListener('click', remoteImgClick);
+  document.addEventListener('keydown', remoteImgClick);
 }
 function fridaySanitizeMarkup(html) {
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -10208,6 +10270,7 @@ function fridaySanitizeMarkup(html) {
       continue;
     }
     let attrs = '';
+    let remote = null;
     let a;
     ATTR.lastIndex = 0;
     while ((a = ATTR.exec(m[3])) !== null) {
@@ -10215,11 +10278,19 @@ function fridaySanitizeMarkup(html) {
       if (!FRIDAY_MD_ATTRS.has(an)) continue;
       const raw = a[2] !== undefined ? a[2] : a[3] !== undefined ? a[3] : a[4] !== undefined ? a[4] : '';
       const val = dec(raw);
-      if ((an === 'href' || an === 'src') && !fridaySafeUrl(val, an === 'src')) continue;
+      if ((an === 'href' || an === 'src') && !fridaySafeUrl(val, an === 'src')) {
+        if (an === 'src' && name === 'img') remote = fridayRemoteImage(val) || remote;
+        continue;
+      }
       if (an === 'src' && name !== 'img') continue;
       if (an === 'href' && name !== 'a') continue;
-      if (an === 'style' && /url\s*\(|expression|@import|\\|behavior|javascript/i.test(val)) continue;
+      if (an === 'style' && /\b(?:url|image-set|image|src|cross-fade|element|paint)\s*\(|expression|@import|\\|behavior|javascript/i.test(val)) continue;
       attrs += ' ' + an + '="' + esc(val) + '"';
+    }
+    if (name === 'img' && remote) {
+      out += '<span class="friday-remote-img" role="button" tabindex="0" data-remote-src="' + esc(remote.url) + '" data-host="' + esc(remote.host) + '" title="' + esc('Load ' + remote.url + ' — ' + fridayName() + ' asks ' + remote.host + ' for it only when you click') + '" style="display:inline-block;padding:4px 8px;border:1px dashed rgba(255,255,255,0.35);border-radius:6px;font-size:12px;cursor:pointer">Remote image blocked — click to load from ' + esc(remote.host) + '</span>';
+      i = TAG.lastIndex;
+      continue;
     }
     out += '<' + name + attrs + (m[4] ? ' /' : '') + '>';
     i = TAG.lastIndex;
