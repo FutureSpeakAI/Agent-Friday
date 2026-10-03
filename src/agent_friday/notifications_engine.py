@@ -17,7 +17,9 @@ Priority levels:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
 import threading
 import uuid
 from datetime import datetime
@@ -48,11 +50,22 @@ def _now_iso() -> str:
 
 #: Notifications raised off the record, in full, by id. The file keeps only a
 #: content-free stub of each (services/off_record); the words live in memory.
+#: The stub holds no field derived from the card's content: not its title or
+#: body, not its actions or target, and not its grouping, dedupe, resolve or
+#: job keys (those embed titles and ids). Those keys are stored as opaque
+#: values salted per process, so they match nothing after a restart.
 _OFF_RECORD_ITEMS: Dict[str, Dict[str, Any]] = {}
-_STUB_KEYS = ("id", "priority", "source", "kind", "actions", "target", "read",
-              "dismissed", "created_at", "dedupe_key", "chat_injected", "off_record",
-              "tier", "count", "collapse_key", "held", "quiet", "resolve_key",
-              "resolved_at", "job")
+#: Dismissals of off-the-record cards, in memory only; never in the store.
+_OFF_RECORD_LEDGER: Dict[str, Dict[str, Any]] = {}
+_STUB_KEYS = ("id", "priority", "source", "kind", "read", "dismissed", "created_at",
+              "chat_injected", "off_record", "tier", "count", "held", "quiet",
+              "resolved_at")
+_OPAQUE_KEYS = ("dedupe_key", "collapse_key", "resolve_key", "job")
+_SALT = os.urandom(16)
+
+
+def _opaque(value: Any) -> str:
+    return "off:" + hmac.new(_SALT, str(value).encode("utf-8"), hashlib.sha256).hexdigest()[:24]
 
 
 def _disk_view(n: Dict[str, Any]) -> Dict[str, Any]:
@@ -60,8 +73,9 @@ def _disk_view(n: Dict[str, Any]) -> Dict[str, Any]:
         return n
     _OFF_RECORD_ITEMS[n["id"]] = n
     stub = {k: n.get(k) for k in _STUB_KEYS if k in n}
+    stub.update({k: _opaque(n[k]) for k in _OPAQUE_KEYS if n.get(k)})
     stub.update(title="Off the record", body="", proactive_chat=False,
-                chat_message=None, meta={})
+                chat_message=None, meta={}, actions=[], target={})
     return stub
 
 
@@ -153,14 +167,18 @@ def _hidden(n: Dict[str, Any], ledger: Dict[str, Any]) -> bool:
     from agent_friday.services import notification_policy as _pol
     if _pol.is_approval(n.get("kind")):
         return False
-    hit = ledger.get(_dkey(n))
-    return bool(hit) and int(hit.get("rank") or 0) >= _rank_of(n)
+    key = _dkey(n)
+    rank = _rank_of(n)
+    return any(int((led.get(key) or {}).get("rank") or 0) >= rank
+               for led in (ledger, _OFF_RECORD_LEDGER))
 
 
 def _remember_dismissal(ledger: Dict[str, Any], n: Dict[str, Any]) -> None:
     from agent_friday.services import notification_policy as _pol
     if _pol.is_approval(n.get("kind")):
         return                              # an approval's fate is its decision
+    if n.get("off_record"):
+        ledger = _OFF_RECORD_LEDGER         # off the record: memory only
     key = _dkey(n)
     prev = int((ledger.get(key) or {}).get("rank") or 0)
     ledger[key] = {"rank": max(prev, _rank_of(n)), "at": _now_iso()}
@@ -235,7 +253,8 @@ def push(
     approval = _pol.is_approval(kind)
     t = _pol.tier_for(kind, source, priority, tier)
     if not approval and (t == _pol.LOG_ONLY or _pol.is_muted(kind, source)):
-        logged = {"title": title, "kind": kind, "source": source, "priority": priority,
+        logged = {"title": "Off the record" if _off_record_now() else title,
+                  "kind": kind, "source": source, "priority": priority,
                   "tier": _pol.LOG_ONLY, "logged": True,
                   "muted": t != _pol.LOG_ONLY, "created_at": _now_iso()}
         _log_only(logged)
@@ -243,10 +262,12 @@ def push(
     quiet = _pol.owner_in_conversation()
     key = dedupe_key if approval else _pol.collapse_key(kind, source, title, dedupe_key)
     job = _pol.job_for(job=job, meta=meta, dedupe_key=dedupe_key, resolve_key=resolve_key)
+    off = _off_record_now()
     with _LOCK:
         items, ledger = _read_store()
         probe = {"kind": kind, "source": source, "priority": priority, "tier": t,
-                 "job": job, "collapse_key": key, "dedupe_key": dedupe_key}
+                 "job": job, "collapse_key": key, "dedupe_key": dedupe_key,
+                 "off_record": off}
         if not approval and _hidden(probe, ledger):
             return dict(probe, title=title, body=body, suppressed=True, dismissed=True,
                         read=True, created_at=_now_iso())
@@ -306,15 +327,19 @@ def push(
         }
         if t == _pol.FYI:
             entry["read"] = True              # an FYI never bumps the badge
-        try:
-            from agent_friday.services import off_record as _off
-            if _off.skip("notifications"):
-                entry["off_record"] = True
-        except Exception:
-            pass
+        if off:
+            entry["off_record"] = True
         items.append(entry)
         _save(items, ledger)
         return entry
+
+
+def _off_record_now() -> bool:
+    try:
+        from agent_friday.services import off_record as _off
+        return bool(_off.skip("notifications"))
+    except Exception:
+        return False
 
 
 def _log_only(entry: Dict[str, Any]) -> None:
@@ -387,10 +412,11 @@ def resolve(resolve_key: str) -> int:
                 closed += 1
         lowered = False
         for k in keys:
-            hit = ledger.get(k)
-            if hit and int(hit.get("rank") or 0) > 1:
-                ledger[k] = dict(hit, rank=1, at=_now_iso())
-                lowered = True
+            for led in (ledger, _OFF_RECORD_LEDGER):
+                hit = led.get(k)
+                if hit and int(hit.get("rank") or 0) > 1:
+                    led[k] = dict(hit, rank=1, at=_now_iso())
+                    lowered = lowered or led is ledger
         if closed or lowered:
             _save(items, ledger)
     return closed

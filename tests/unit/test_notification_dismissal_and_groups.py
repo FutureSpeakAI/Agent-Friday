@@ -28,6 +28,7 @@ def _clean(friday_dir, monkeypatch):
         ne.NOTIF_FILE.unlink()
     monkeypatch.setattr(pol, "_LAST_TURN", [0.0])          # nobody mid-conversation
     monkeypatch.setattr(ne, "_log_only", lambda entry: None)
+    getattr(ne, "_OFF_RECORD_LEDGER", {}).clear()
     yield
     if ne.NOTIF_FILE.exists():
         ne.NOTIF_FILE.unlink()
@@ -105,6 +106,32 @@ def test_clear_all_dismissals_stick_too():
     assert ne.dismiss_all() == 1
     _restart()
     assert _fail().get("suppressed") is True and _cards() == []
+
+
+def test_an_off_record_card_writes_nothing_of_its_content_to_the_store(monkeypatch):
+    """Off the record, the store keeps a stub with no title, body, actions,
+    target, meta, or any key built from them (grouping, dedupe, resolve, job),
+    and a dismissal is remembered in memory only."""
+    from agent_friday.services import off_record
+    monkeypatch.setattr(off_record, "skip", lambda *a, **k: True)
+    # Letters only, so folding digits and lower-casing cannot disguise it.
+    word = "".join(chr(97 + int(c, 16)) for c in uuid.uuid4().hex)
+    card = ne.push(title="Lunch with " + word, body="about " + word, source="mail",
+                   kind="info", priority="low", actions=[{"label": word}],
+                   target={"url": "https://example.test/" + word}, meta={"note": word})
+    ne.push(title="Lunch with " + word, body="again", source="mail", kind="info",
+            priority="low", resolve_key="done:" + word)
+    ne.push(title="Approval needed: " + word, source="approvals", kind="approval_pending")
+    assert ne.dismiss(card["id"]) is True
+    raw = ne.NOTIF_FILE.read_bytes()
+    assert word.encode("utf-8") not in raw, "off-the-record text reached the store"
+    assert json.loads(raw.decode("utf-8"))["dismissed_jobs"] == {}, (
+        "an off-the-record dismissal was written to the store")
+    # In this process the words and the dismissal still work.
+    assert ne.push(title="Lunch with " + word, source="mail", kind="info",
+                   priority="low").get("suppressed") is True
+    assert any(word in c["title"] for c in _cards() if c["kind"] == "approval_pending")
+    assert word.encode("utf-8") not in ne.NOTIF_FILE.read_bytes()
 
 
 # ── grouping ─────────────────────────────────────────────────────────────────
