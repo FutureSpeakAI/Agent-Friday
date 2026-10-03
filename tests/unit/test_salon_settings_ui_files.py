@@ -17,7 +17,14 @@ JS = (ROOT / "static" / "friday_salon.js").read_text(encoding="utf-8")
 @pytest.mark.parametrize("html", [INDEX, APP], ids=["index", "mirror"])
 def test_the_salon_is_a_section_of_accounts_and_keys_not_a_ninth_tab(html):
     assert "id: 'salon'" not in html
-    assert "tab === 'accounts' && window.FridaySalonSettings" in html
+    # One branch per tab in SettingsWS (desktop_targets.settings_parts reads the
+    # sections per tab): the Salon is drawn inside the Accounts & Keys branch.
+    sw = html[html.index("function SettingsWS("):]
+    sw = sw[:sw.index("\nfunction ", 10)]
+    marks = [i for i in range(len(sw)) if sw.startswith("tab === 'accounts' && ", i)]
+    assert len(marks) == 1, "Settings draws Accounts & Keys from more than one branch"
+    nxt = sw.index("tab === '", marks[0] + 10)
+    assert "window.FridaySalonSettings" in sw[marks[0]:nxt]
 
 
 @pytest.mark.parametrize("html", [INDEX, APP], ids=["index", "mirror"])

@@ -10387,6 +10387,21 @@ function WsTools({
       fontSize: 12
     }
   }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("button", {
+    /* The 40 snapshots workspace_studio keeps, reachable without asking
+       Friday out loud. Beside \uD83D\uDCAC because that is where the changes it
+       lists come from. */
+    title: `Earlier versions of ${title} \u2014 review and roll back`,
+    "aria-label": `Version history for ${title}`,
+    "aria-pressed": !!histOpen,
+    onClick: e => {
+      e.stopPropagation();
+      onHistory();
+    },
+    style: {
+      fontSize: 12,
+      color: histOpen ? '#00d4ff' : undefined
+    }
+  }, "\uD83D\uDD52"), /*#__PURE__*/React.createElement("button", {
     /* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens
        its codebase chat in the salon; a native one is told plainly that
        improving it means Friday's own source, which is not built
@@ -10405,22 +10420,7 @@ function WsTools({
     style: {
       fontSize: 12
     }
-  }, "\uD83D\uDEE0\uFE0F"), /*#__PURE__*/React.createElement("button", {
-    /* The 40 snapshots workspace_studio keeps, reachable without asking
-       Friday out loud. Beside \uD83D\uDCAC because that is where the changes it
-       lists come from. */
-    title: `Earlier versions of ${title} \u2014 review and roll back`,
-    "aria-label": `Version history for ${title}`,
-    "aria-pressed": !!histOpen,
-    onClick: e => {
-      e.stopPropagation();
-      onHistory();
-    },
-    style: {
-      fontSize: 12,
-      color: histOpen ? '#00d4ff' : undefined
-    }
-  }, "\uD83D\uDD52"));
+  }, "\uD83D\uDEE0\uFE0F"));
 }
 function WsCustomizedMark({
   id
@@ -47996,7 +47996,7 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
     if (!name) return;
     const body = { title: name };
     if (template === 'existing') {
-      const path = prompt('Folder on this PC to open (Friday works on a salon branch, never on yours)');
+      const path = prompt('Folder on this PC to open (' + fridayName() + ' works on a salon branch, never on yours)');
       if (!path) return;
       body.path = path;
     } else body.template = template;
@@ -48089,7 +48089,7 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
       E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 9.5, letterSpacing: '.08em', color: 'rgba(255,255,255,0.45)', padding: '2px 8px 6px' } }, 'START FROM'),
       E(MenuItem, { onClick: () => newCodebase('static') }, 'A page or small app (HTML, CSS, JS)'),
       E(MenuItem, { onClick: () => newCodebase('react') }, 'A React app, built in the browser'),
-      E(MenuItem, { onClick: () => newCodebase('bundle') }, 'A workspace bundle for Friday'),
+      E(MenuItem, { onClick: () => newCodebase('bundle') }, 'A new workspace for the dock'),
       E(MenuItem, { onClick: () => newCodebase('existing') }, 'A folder already on this PC')) : null,
 
     E('input', {
@@ -50871,7 +50871,7 @@ function SettingsTabPrivacy({
     onChange: () => save({
       artifact_panel_enabled: s.artifact_panel_enabled === false
     }),
-    desc: "When Friday makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."
+    desc: "When " + fridayName() + " makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."
   }), /*#__PURE__*/React.createElement(StRow, {
     label: "Keep the log for",
     desc: "Older entries are deleted automatically."
@@ -55489,10 +55489,10 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
-  }), tab === 'accounts' && window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
+  }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
     s: s,
     save: save
   }), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {
@@ -61597,7 +61597,7 @@ function App() {
       fontSize: 13,
       userSelect: 'none'
     }
-  }, "|"), !shellTab && !shellChat && orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
+  }, "|"), !shellChat && !shellTab && orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
     onClick: clearOrbs,
     disabled: clearingOrbs,
     title: orbiting.length + ' orb(s) in orbit. Clears everything that has '
@@ -61746,7 +61746,7 @@ function App() {
     "aria-label": fsOn ? 'Leave fullscreen with chat' : 'Fullscreen with chat',
     "aria-pressed": !!fsOn,
     "data-testid": "fs-chat-toggle"
-  }, '⤢'), !shellTab && !shellChat && /*#__PURE__*/React.createElement("button", {
+  }, '⤢'), !shellChat && !shellTab && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       if (cameraOn) {
         setCameraControlsOpen(o => !o);

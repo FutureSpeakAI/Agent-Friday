@@ -1980,10 +1980,10 @@ function WsTools({id,title,emoji,histOpen,onHistory,onImproveNote}){
   return(<>
     <button title={`Chat with ${fridayName()} about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji)}} style={{fontSize:12}}>💬</button>
     <button title={`Talk to ${fridayName()} about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button>
-    {/* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens its codebase chat in the salon; a native one is told plainly that improving it means Friday's own source, which is not built (static/friday_bundles.js). The answer goes to the window's own line when it has one (FWin), else to a toast (the tab's bar). */}
-    <button title={`Improve ${title} in the salon`} aria-label={`Improve ${title}`} data-ws-improve={id} onClick={e=>{e.stopPropagation();if(!window.fridayImproveWorkspace)return;window.fridayImproveWorkspace(id,title).then(msg=>{if(onImproveNote)onImproveNote(msg||'');else if(msg&&window.fridayToast)window.fridayToast(msg)})}} style={{fontSize:12}}>🛠️</button>
     {/* The 40 snapshots workspace_studio keeps, reachable without asking Friday out loud. */}
     <button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} aria-pressed={!!histOpen} onClick={e=>{e.stopPropagation();onHistory()}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>
+    {/* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens its codebase chat in the salon; a native one is told plainly that improving it means Friday's own source, which is not built (static/friday_bundles.js). The answer goes to the window's own line when it has one (FWin), else to a toast (the tab's bar). */}
+    <button title={`Improve ${title} in the salon`} aria-label={`Improve ${title}`} data-ws-improve={id} onClick={e=>{e.stopPropagation();if(!window.fridayImproveWorkspace)return;window.fridayImproveWorkspace(id,title).then(msg=>{if(onImproveNote)onImproveNote(msg||'');else if(msg&&window.fridayToast)window.fridayToast(msg)})}} style={{fontSize:12}}>🛠️</button>
   </>);
 }
 function WsCustomizedMark({id}){
@@ -16648,7 +16648,7 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Conversation logging">
       <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
       <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
-      <StToggle label="Artifact panel beside the chat" value={s.artifact_panel_enabled!==false} onChange={()=>save({artifact_panel_enabled:s.artifact_panel_enabled===false})} desc="When Friday makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."/>
+      <StToggle label="Artifact panel beside the chat" value={s.artifact_panel_enabled!==false} onChange={()=>save({artifact_panel_enabled:s.artifact_panel_enabled===false})} desc={"When " + fridayName() + " makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."}/>
       <StRow label="Keep the log for" desc="Older entries are deleted automatically.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
       </StRow>
@@ -19758,10 +19758,10 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
-  }), tab === 'accounts' && window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
+  }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
     s: s,
     save: save
   }), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {
