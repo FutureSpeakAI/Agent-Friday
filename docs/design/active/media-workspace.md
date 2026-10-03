@@ -436,6 +436,22 @@ card into and why not, and the editor's menu offers only what works, naming what
 ("Not a video here: …"), never a dead button. `tests/unit/test_media_i2v.py` would fail the
 moment the menu offered a conversion with no working backend.
 
+**Turn any media into any other** (`services/media_convert.py`). The matrix (in the program
+ledger) is filled local-first with what is installed: audio, music and video → a transcript
+(timestamped text) and captions (.srt + .vtt) by the local recogniser; audio and music → a
+waveform video with the captions burned in (ffmpeg); video → its sound track and a still;
+a deck → narration (the local voice reads each slide) and a narrated video (the office tool
+renders each page, else a text card; each slide held while it is read); an image → the
+words it carries (local OCR, labelled as not a description); a document or a deck feeds the
+text-made kinds (article, read aloud, slides) with its own extracted words. Music that is
+not Friday's own is never transcribed: lyrics are somebody's work. Every conversion is a
+Media-owned card made at once in Draft with "working", an orb with real steps, then the
+file, its credential and the kept status, or a "failed" badge with the message and a notice.
+`turn_capabilities()` returns the map per menu group; the menu and the voice tool read the
+same map, so no item is offered without a working backend. Models not installed (Demucs
+for stems, a local vision model for descriptions) are listed in the ledger, not downloaded.
+`tests/unit/test_media_convert.py` is the proof.
+
 ### 4.4 Three views of the same cards
 
 **Library** (`library.html`): a rail of default views (Today, In progress, Needs you,

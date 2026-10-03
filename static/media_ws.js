@@ -988,9 +988,16 @@
     post: [['article', 'an article', 'expand it']],
     chart: [['episode', 'a data podcast', 'numbers computed first; the hosts only say computed numbers'], ['deck', 'slides', 'one chart per slide'], ['post', 'a post', 'the chart and one line']],
     code: [['page', 'a page', 'its README as a showcase page'], ['episode', 'a podcast', 'the brief, the README and the last run']],
-    audio: [], music: [], video: [['post', 'a post', 'with the clip attached']]
+    audio: [['transcript', 'a transcript', 'the words, with the time they were said'], ['captions', 'captions', 'an .srt and a .vtt file'], ['wavevideo', 'a video', 'a waveform, the captions burned in']],
+    music: [['transcript', 'a transcript', 'only for Friday\u2019s own music'], ['captions', 'captions', 'only for Friday\u2019s own music'], ['wavevideo', 'a video', 'a waveform, the captions burned in']],
+    video: [['transcript', 'a transcript', 'the words, with the time they were said'], ['captions', 'captions', 'an .srt and a .vtt file'], ['soundtrack', 'the sound track', 'the audio on its own'], ['still', 'a still', 'one frame as a picture'], ['post', 'a post', 'with the clip attached']]
   };
-  function turnGroup(kind) {
+  TURN_INTO.deck = TURN_INTO.deck.concat([['narration', 'narration', 'the local voice reads each slide'], ['deckvideo', 'a narrated video', 'each slide held while the voice reads it']]);
+  TURN_INTO.image = TURN_INTO.image.concat([['ocr', 'the words in it', 'read by local OCR; not a description']]);
+  TURN_INTO.document = [['article', 'an article', 'from the document\u2019s text'], ['audio', 'read aloud', 'one voice, kept here'], ['deck', 'slides', 'a deck from its outline']];
+  TURN_INTO.episode = TURN_INTO.episode.concat([['captions', 'captions', 'an .srt and a .vtt file'], ['wavevideo', 'a video', 'a waveform, the captions burned in']]);
+  function turnGroup(kind, c) {
+    if (kind === 'doc' && c && c.source_kind !== 'media' && !c.editable_text) return 'document';
     if (kind === 'draft' || kind === 'article' || kind === 'doc') return 'text';
     if (kind === 'imageset' || kind === 'image') return 'image';
     if (kind === 'deck' || kind === 'sheet') return 'deck';
@@ -1064,8 +1071,8 @@
     });
     const askFriday = () => { if (!ask.trim()) return; const q = ask; setAsk(''); if (window.fridaySendChat) window.fridaySendChat('About "' + c.title + '" (Media card ' + c.id + '): ' + q); else toast('Ask Friday in the chat tray: ' + q); };
     // Only what this PC can make is offered; what it cannot is named with the reason, never a dead button.
-    const caps = window.__mediaTurns || {};
-    const allTurns = TURN_INTO[turnGroup(c.kind)] || [];
+    const caps = (window.__mediaTurns && window.__mediaTurns.by_group && window.__mediaTurns.by_group[turnGroup(c.kind, c)]) || {};
+    const allTurns = TURN_INTO[turnGroup(c.kind, c)] || [];
     const turns = allTurns.filter(t => !caps[t[0]] || caps[t[0]].available);
     const missing = allTurns.filter(t => caps[t[0]] && !caps[t[0]].available);
     return h('div', { className: 'md-editor' },

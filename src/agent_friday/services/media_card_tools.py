@@ -52,7 +52,6 @@ def period(words: str, now: Optional[float] = None) -> Tuple[Optional[float], Op
     today, yesterday, this week, last week, this month, last month, a month's
     name (the most recent one that has begun), or YYYY-MM. (None, None) when
     the words name no time."""
-    import calendar
     import datetime as dt
     w = (words or "").strip().lower().replace("'s", "")
     if not w:
@@ -232,7 +231,11 @@ def _tool_media_turn(inp: Dict[str, Any]) -> str:
     kind = {"podcast": "episode", "episode": "episode", "post": "post", "page": "page", "site": "page", "article": "article",
             "draft": "draft", "slides": "deck", "deck": "deck", "read aloud": "audio", "audio": "audio", "video": "video"}.get(into)
     if not kind:
-        return json.dumps({"status": "error", "say": "Say what to turn it into: a podcast, a post, a page, an article, or slides."})
+        # the conversion matrix's own words: a transcript, captions, the sound track, a still, narration, the words in a picture
+        from agent_friday.services import media_convert as mc
+        kind = mc.resolve(c["kind"], into)
+    if not kind:
+        return json.dumps({"status": "error", "say": "Say what to turn it into: a podcast, a post, a page, an article, slides, a video, read aloud, a transcript, captions, the sound track, a still, narration, or the words in a picture."})
     res = mi.turn_into(c["id"], kind)
     if res.get("status") != "ok":
         return json.dumps({"status": res.get("status"), "say": res.get("message") or "I could not make that."})
@@ -277,7 +280,7 @@ TOOLS = [
                      "its title or id."),
      "input_schema": {"type": "object", "properties": {
          "card": {"type": "string"}, "query": {"type": "string", "description": "The card's title, in the owner's words."},
-         "into": {"type": "string", "description": "podcast | post | page | article | slides | read aloud"}},
+         "into": {"type": "string", "description": "podcast | post | page | article | slides | read aloud | video | transcript | captions | sound track | still | narration | narrated video | the words in it"}},
          "required": ["into"]}},
 ]
 #: Showing and listing read, and steer only the owner's own screen (ring 0/1);

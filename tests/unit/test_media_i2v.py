@@ -68,7 +68,7 @@ def test_the_menu_never_offers_a_conversion_with_no_working_backend(home, monkey
     the reason, and the page's menu is built from that capability. This test
     fails the moment the menu offers 'a video' unconditionally again."""
     _no_model(monkeypatch)
-    caps = mi.turn_capabilities()
+    caps = mi.turn_capabilities()["by_group"]["image"]
     assert caps["video"]["available"] is False and "Wan 2.2 TI2V 5B" in caps["video"]["reason"]
     r = mi.turn_into(home["img"]["id"], "video")
     assert r["status"] == "unavailable" and r["message"] == caps["video"]["reason"], "no card, no thread, a reason"
@@ -76,6 +76,7 @@ def test_the_menu_never_offers_a_conversion_with_no_working_backend(home, monkey
     # the page: the image group still lists 'a video', and the menu filters that list by the capability
     m = re.search(r"image: \[\['video', 'a video'", JS)
     assert m, "the image group offers a video (when it works)"
+    assert "const caps = (window.__mediaTurns && window.__mediaTurns.by_group && window.__mediaTurns.by_group[turnGroup(c.kind, c)]) || {};" in JS
     assert "const turns = allTurns.filter(t => !caps[t[0]] || caps[t[0]].available);" in JS
     assert "const missing = allTurns.filter(t => caps[t[0]] && !caps[t[0]].available);" in JS
     assert "'data-missing-turns'" in JS and "'Not ' + t[1] + ' here: ' + (caps[t[0]].reason" in JS, "what is missing is named with the reason, never a dead button"
@@ -94,7 +95,7 @@ def test_with_the_model_the_image_becomes_a_video_through_the_local_backend(home
         out.write_bytes(b"\x1aE\xdf\xa3 webm fake")
         return {"status": "ok", "files": [{"filename": out.name, "path": str(out)}], "model": lv.WAN_5B_ID, "elapsed_s": 12.5}
     monkeypatch.setattr(mi, "_VIDEO_GENERATE", fake_generate)
-    caps = mi.turn_capabilities()
+    caps = mi.turn_capabilities()["by_group"]["image"]
     assert caps["video"]["available"] is True and caps["video"]["backend"].startswith("local:")
     r = mi.turn_into(home["img"]["id"], "video")
     assert r["status"] == "ok", r

@@ -65,7 +65,7 @@ KIND_BY_SUFFIX = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image", ".svg": "image",
     ".mp4": "video", ".webm": "video", ".mov": "video",
     ".mp3": "audio", ".wav": "audio", ".m4a": "audio", ".ogg": "audio",
-    ".md": "doc", ".txt": "doc", ".pdf": "doc", ".html": "page", ".htm": "page",
+    ".md": "doc", ".txt": "doc", ".pdf": "doc", ".srt": "doc", ".vtt": "doc", ".html": "page", ".htm": "page",
     ".pptx": "deck", ".docx": "doc", ".xlsx": "sheet", ".csv": "chart",
     ".glb": "model3d", ".gltf": "model3d", ".obj": "model3d",
 }
@@ -1681,9 +1681,18 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
     c = get(card_id)
     if c is None:
         return {"status": "not_found"}
+    # a conversion of the matrix (transcript, captions, a waveform video, the sound
+    # track, a still, narration, a narrated video, the words in a picture)?
+    from agent_friday.services import media_convert as mc
+    target = mc.resolve(c["kind"], kind)
+    if target is not None:
+        return mc.convert(c, target)
     if kind not in TURNS:
         return {"status": "error", "message": "Not a kind Media can make."}
     body = c.get("body") or ""
+    if not body.strip() and c["kind"] in ("deck", "doc", "sheet", "page"):
+        body = mc.text_of(c)          # a document's or a deck's own words feed the text-made kinds
+        c = dict(c, body=body)
     title = c["title"]
     if kind == "episode":
         try:
@@ -1770,28 +1779,45 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
 #: hides what is not available and says why; the server refuses the same way.
 #: A kind not listed here is always available (it is made from text or a
 #: record this computer already has).
-def turn_capabilities() -> Dict[str, Dict[str, Any]]:
-    out: Dict[str, Dict[str, Any]] = {}
+#: The menu groups a card's kind falls into (the page's turnGroup), and the
+#: targets each group can ask for. A target not in the gated set is always
+#: available: it is made from text or a record this computer already has.
+TURN_GROUPS = {
+    "text": ("draft", "article", "doc"), "document": ("doc_file",), "image": ("image", "imageset", "chart"),
+    "audio": ("audio",), "music": ("music",), "video": ("video",), "deck": ("deck", "sheet"), "episode": ("episode",),
+    "post": ("post",), "page": ("page",), "code": ("code",),
+}
+
+
+def turn_capabilities() -> Dict[str, Any]:
+    """What this PC can turn a card into, per menu group, and why not when it
+    cannot: {"by_group": {group: {target: {available, backend, reason}}}, "backends": {...}}."""
+    from agent_friday.services import media_convert as mc
+    be = mc.backends()
+    gated: Dict[str, Dict[str, Any]] = {}
     try:
         from agent_friday.services import local_video as lv
         cap = lv.i2v_available()
-        out["video"] = {"available": bool(cap.get("available")), "backend": cap.get("backend"), "reason": cap.get("reason") or ""}
+        gated["video"] = {"available": bool(cap.get("available")), "backend": cap.get("backend"), "reason": cap.get("reason") or ""}
     except Exception as e:
-        out["video"] = {"available": False, "backend": None, "reason": "The local video backend could not be loaded (%s)." % str(e)[:120]}
-    try:
-        from agent_friday.services import podcast_render as pr
-        voices = pr.installed_voices()
-        out["audio"] = {"available": bool(voices), "backend": "local voice" if voices else None,
-                        "reason": "" if voices else "No local voice is installed on this computer."}
-    except Exception as e:
-        out["audio"] = {"available": False, "backend": None, "reason": "The local voice is not installed (%s)." % str(e)[:120]}
-    try:
-        from agent_friday.services import office_engine
-        ok = bool(office_engine.available())
-        out["deck"] = {"available": ok, "backend": "office tool" if ok else None, "reason": "" if ok else "The office tool is not installed on this computer."}
-    except Exception as e:
-        out["deck"] = {"available": False, "backend": None, "reason": "The office tool could not be loaded (%s)." % str(e)[:120]}
-    return out
+        gated["video"] = {"available": False, "backend": None, "reason": "The local video backend could not be loaded (%s)." % str(e)[:120]}
+    v = be.get("voice") or {}
+    gated["audio"] = {"available": bool(v.get("available")), "backend": v.get("name"), "reason": v.get("reason") or ""}
+    o = be.get("office") or {}
+    gated["deck"] = {"available": bool(o.get("available")), "backend": o.get("name"), "reason": o.get("reason") or ""}
+    by_group: Dict[str, Dict[str, Any]] = {}
+    for group, kinds in TURN_GROUPS.items():
+        cells: Dict[str, Any] = {}
+        for target, spec in mc.CONVERSIONS.items():
+            if any(k in spec["from"] for k in kinds):
+                cells[target] = mc.capability(target, be)
+        if group == "image":
+            cells["video"] = gated["video"]
+        if group in ("text", "document", "deck", "episode", "post", "page", "code"):
+            cells["audio"] = gated["audio"] if group != "deck" else cells.get("narration", gated["audio"])
+            cells["deck"] = gated["deck"]
+        by_group[group] = cells
+    return {"by_group": by_group, "backends": be, "gated": gated}
 
 
 #: The function that makes the clip; tests swap it. Signature: (prompt, image_path) -> local_video.generate()'s envelope.
@@ -1811,7 +1837,7 @@ def make_video(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
     the clip, its credential and the kept status land when the GPU is done.
     Never silent: no backend is a refusal with the reason; a failure is a
     "failed" badge with the message on the card and a notice to the owner."""
-    cap = turn_capabilities().get("video") or {}
+    cap = (turn_capabilities().get("gated") or {}).get("video") or {}
     if not cap.get("available"):
         return {"status": "unavailable", "message": cap.get("reason") or "Image-to-video is not available on this computer."}
     src = Path(c["path"]) if c.get("path") else None
@@ -2014,6 +2040,16 @@ def _write_media_record(cid: str, rec: Dict[str, Any]) -> Path:
     p = root / (cid.split(":")[1] + ".json")
     p.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
     return p
+
+
+def _rescan_media_records() -> None:
+    """Media's own records back into the index (after a record was written)."""
+    with _LOCK:
+        con = _connect()
+        try:
+            _scan_media_cards(con); con.commit()
+        finally:
+            con.close()
 
 
 def read_aloud(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
