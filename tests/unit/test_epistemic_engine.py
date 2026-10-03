@@ -384,14 +384,17 @@ class TestGetPromptInjection:
         out = engine.get_prompt_injection()
         assert isinstance(out, str)
 
-    def test_contains_score_value(self, engine):
-        out = engine.get_prompt_injection()
-        # Should include "0.00" or similar numeric
-        assert any(char.isdigit() for char in out)
+    def test_is_the_fixed_honesty_policy(self, engine):
+        """The injection is fixed text: the honesty rules, never a score to
+        chase (a model told to raise a keyword average is gaming the metric)."""
+        from agent_friday.epistemic_engine import HONESTY_POLICY
+        assert engine.get_prompt_injection() == HONESTY_POLICY
+        assert "Hold a stated position" in HONESTY_POLICY
 
-    def test_contains_dimension_names(self, engine):
+    def test_carries_no_score_and_no_dimension_names(self, engine):
         out = engine.get_prompt_injection()
-        assert "Information gain" in out or "information_gain" in out.lower()
+        assert "information_gain" not in out.lower() and "Information gain" not in out
+        assert not any(ch.isdigit() for ch in out), "a score has leaked into the prompt"
 
 
 if __name__ == "__main__":
