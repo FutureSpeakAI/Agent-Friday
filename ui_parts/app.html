@@ -21846,6 +21846,66 @@ function App(){
   // Clear all keeps pending approvals; "Mute this kind" sends a kind to the activity log.
   const muteNotifKind=n=>{apiFetch('/api/notifications/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:n.kind||'',source:n.source||''})}).catch(()=>{});setNotifs(prev=>prev.filter(x=>!(x.kind===n.kind&&x.source===n.source)))};
   const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id&&n.kind!=='approval_pending')dismissedNotifIds.current.add(n.id)});apiFetch('/api/notifications/clear-all',{method:'POST'}).catch(()=>{});setNotifs(prev=>prev.filter(n=>n.kind==='approval_pending'))};
+  // Cards are grouped by job, then kind, then source (the server sets each
+  // card's `group`). A group of two or more cards, and every memory-proposal
+  // group, shows as one group card; a group of one shows as its own card.
+  const notifGroupsOf = list => {
+    const m = new Map();
+    list.forEach(n => {
+      const g = n.group || n.id;
+      if (!m.has(g)) m.set(g, { key: g, memory: g === 'memory_proposals', items: [] });
+      m.get(g).items.push(n);
+    });
+    return [...m.values()].filter(g => g.memory || g.items.length > 1);
+  };
+  const notifGroupedIds = list => new Set(notifGroupsOf(list).flatMap(g => g.items.map(n => n.id)));
+  // Clear group: every card in it except a pending approval, which stays.
+  const clearNotifGroup = g => {
+    g.items.forEach(n => {
+      if (n.id && n.kind !== 'approval_pending') dismissedNotifIds.current.add(n.id);
+    });
+    apiFetch('/api/notifications/clear-group', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: g.key }) }).catch(() => {});
+    setNotifs(prev => prev.filter(n => n.group !== g.key || n.kind === 'approval_pending'));
+  };
+  // Keep or skip one memory proposal: its own approval decides it.
+  const decideMemoryItem = (n, keep) => {
+    const aid = n.meta && n.meta.approval_id;
+    if (!aid) return;
+    dismissedNotifIds.current.add(n.id);
+    setNotifs(prev => prev.filter(x => x.id !== n.id));
+    Promise.resolve(fridayDecideApproval(aid, keep ? 'approve' : 'deny')).catch(() => {});
+  };
+  const notifGroupCards = list => notifGroupsOf(list).map(g => {
+    const k = g.items.length;
+    const title = g.memory ? k + ' memory proposal' + (k === 1 ? '' : 's') + ' to keep or skip'
+      : fridayTM(g.items[0].title || 'Notifications') + ' \u00b7 ' + k + ' cards';
+    const clearable = g.items.some(n => n.kind !== 'approval_pending');
+    return React.createElement("div", { key: 'grp_' + g.key, className: "notif-group",
+      style: { padding: '8px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: 12 } },
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+        React.createElement("div", { className: "notif-group-title",
+          style: { flex: 1, minWidth: 0, fontFamily: 'Inter', fontWeight: 500, color: '#fff' } }, title),
+        clearable && React.createElement("button", { className: "notif-open-btn notif-clear-group",
+          onClick: e => { e.stopPropagation(); clearNotifGroup(g); },
+          title: "Clear this group (approvals stay)" }, "Clear group")),
+      g.items.map(n => React.createElement("div", { key: 'gi_' + n.id, className: "notif-group-item",
+        style: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, color: 'rgba(255,255,255,0.78)' } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          fridayTM(g.memory ? (n.meta && n.meta.detail) || n.body || n.title : n.title || 'Notification'),
+          n.count > 1 && React.createElement("span", { className: "notif-count",
+            style: { fontFamily: 'JetBrains Mono', fontSize: 10, color: 'rgba(255,255,255,0.55)', marginLeft: 6 } },
+            '\u00d7' + n.count)),
+        g.memory ? [
+          React.createElement("button", { key: 'keep', className: "notif-open-btn notif-keep",
+            onClick: e => { e.stopPropagation(); decideMemoryItem(n, true); } }, "Keep"),
+          React.createElement("button", { key: 'skip', className: "notif-open-btn notif-skip",
+            onClick: e => { e.stopPropagation(); decideMemoryItem(n, false); } }, "Skip")
+        ] : n.kind !== 'approval_pending' && React.createElement("button", { "aria-label": "Dismiss",
+          onClick: e => { e.stopPropagation(); clearNotif(n.id); },
+          style: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer',
+                   fontSize: 10, padding: '0 2px', lineHeight: 1 }, title: "Dismiss" }, "\u2715"))));
+  });
   const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n));_notifPost('/api/notifications/read',id)};
   useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
@@ -23297,9 +23357,10 @@ function App(){
           </div>;
         })}
       </div>}
+      {notifs.length>0&&notifGroupCards(notifs)}
       {notifs.length===0
         ?<div className="notif-empty">No new notifications</div>
-        :[...notifs].sort((a,b)=>(a.tier==='fyi')-(b.tier==='fyi')).slice(0,50).map((n,i)=>{
+        :[...notifs].filter(n=>!notifGroupedIds(notifs).has(n.id)).sort((a,b)=>(a.tier==='fyi')-(b.tier==='fyi')).slice(0,50).map((n,i)=>{
           const key=n.id||`n_${i}`;
           const isExpanded=!!notifCardExpanded[`notif_${key}`];
           const hasDetail=!!(n.detail||n.body||(n.message&&n.title&&n.message!==n.title));

@@ -152,11 +152,14 @@ class TestPush:
         assert second["id"] == first["id"]
         assert second["title"] == "Original"
 
-    def test_dedupe_key_allows_second_after_dismiss(self):
+    def test_dedupe_key_stays_dismissed_after_dismiss(self):
+        """A dismissal sticks: the same thing at the same rank is not shown
+        again (tests/unit/test_notification_dismissal_and_groups.py)."""
         first = _push(title="Original", dedupe_key="dk-2")
         dismiss(first["id"])
         second = push(title="New", dedupe_key="dk-2")
-        assert second["id"] != first["id"]
+        assert second.get("suppressed") is True
+        assert list_notifications() == []
 
     def test_meta_stored(self):
         entry = _push(meta={"custom_key": "custom_val"})
