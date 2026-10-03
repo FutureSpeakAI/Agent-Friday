@@ -130,7 +130,7 @@ def run_task(task: str, args: dict, *, wall_s: float = WALL_SECONDS,
         return _run_in_process(task, args, wall_s)
     env = {k: v for k, v in os.environ.items()
            if k.upper() in ("SYSTEMROOT", "PATH", "TEMP", "TMP", "HOME", "USERPROFILE",
-                            "LOCALAPPDATA", "APPDATA", "LANG", "LC_ALL")}
+                            "LOCALAPPDATA", "APPDATA", "LANG", "LC_ALL", "FRIDAY_LIBRARY_SELFTEST")}
     env["PYTHONPATH"] = _SRC_DIR
     env["PYTHONIOENCODING"] = "utf-8"
     env["HF_HUB_OFFLINE"] = "1"

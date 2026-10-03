@@ -74,18 +74,27 @@ def _render_page(args: dict) -> dict:
 
 _TASKS = {"pdf_info": _pdf_info, "render_page": _render_page}
 
+if os.environ.get("FRIDAY_LIBRARY_SELFTEST") == "1":
+    # Limit tests need a task that misbehaves on purpose; it exists only when
+    # the test sets this variable for the child.
+    def _selftest_sleep(args: dict) -> dict:
+        import time
+        time.sleep(float(args.get("seconds", 60)))
+        return {}
 
-def register(name: str, fn) -> None:
-    _TASKS[name] = fn
+    def _selftest_alloc(args: dict) -> dict:
+        blob = bytearray(int(args.get("mb", 2048)) * 1024 * 1024)
+        return {"n": len(blob)}
+
+    _TASKS["_selftest_sleep"] = _selftest_sleep
+    _TASKS["_selftest_alloc"] = _selftest_alloc
 
 
 def run(task: str, args: dict) -> dict:
-    if task not in _TASKS:
-        # Heavier tasks live in their own modules and register on import.
-        if task == "extract":
-            from agent_friday.services.library import extract  # noqa: F401
-        elif task == "ocr_page":
-            from agent_friday.services.library import extract  # noqa: F401
+    if task not in _TASKS and task in ("extract",):
+        # Heavier tasks live in their own modules, loaded on first use.
+        from agent_friday.services.library import extract
+        _TASKS.update(extract.TASKS)
     fn = _TASKS.get(task)
     if fn is None:
         raise ValueError(f"unknown task {task!r}")
