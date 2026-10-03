@@ -72,8 +72,12 @@ def describe_item(raw) -> dict:
     {"ok": False, "path", "error"}."""
     raw = raw if isinstance(raw, dict) else {"path": raw}
     text = str(raw.get("path") or "").strip()
-    if not text:
-        return {"ok": False, "path": "", "error": "no path given"}
+    fg = _fg()
+    # The path usually comes from a model. Network, device, web and relative
+    # paths are refused from the text alone, before anything is opened.
+    why = fg.unsafe_path_reason(text)
+    if why:
+        return {"ok": False, "path": text, "error": why}
     try:
         p = Path(text).expanduser().resolve()
     except Exception:
@@ -85,6 +89,14 @@ def describe_item(raw) -> dict:
     if want in ("file", "folder") and want != kind:
         return {"ok": False, "path": str(p),
                 "error": "that path is a %s, not a %s" % (kind, want)}
+    if kind == "folder":
+        broad = fg.too_broad_folder_reason(p)
+        if broad:
+            return {"ok": False, "path": str(p), "error": broad}
+    elif _size(p) > fg.MAX_GRANT_BYTES:
+        return {"ok": False, "path": str(p),
+                "error": "that file is over %d MB, too large to allow"
+                         % (fg.MAX_GRANT_BYTES // (1024 * 1024))}
     item = {"ok": True, "path": str(p), "type": kind}
     if kind == "folder":
         item["expiry_days"] = _days(raw.get("expiry_days"))
@@ -99,9 +111,29 @@ def describe_item(raw) -> dict:
     return item
 
 
+def _size(p: Path) -> int:
+    try:
+        return p.stat().st_size
+    except Exception:
+        return 1 << 62
+
+
 def _sha(p: Path) -> str:
+    """Content hash, reading at most MAX_GRANT_BYTES (+1 to tell it is over)."""
     import hashlib
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+    limit = _fg().MAX_GRANT_BYTES
+    h = hashlib.sha256()
+    read = 0
+    with open(p, "rb") as f:
+        while True:
+            chunk = f.read(min(1 << 20, limit + 1 - read))
+            if not chunk:
+                break
+            read += len(chunk)
+            if read > limit:
+                raise ValueError("file too large")
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _line(item: dict) -> str:
@@ -190,6 +222,10 @@ def regrant_notice(notice_id: str, *, requested_by: str = "owner") -> dict:
     n = _fg().find_notice(str(notice_id or ""))
     if n is None:
         return {"ok": False, "error": "no open notice with that id"}
+    if n.get("reason") != "retired_key" or n.get("in_ledger"):
+        # An unverified line's path is unauthenticated text; it is not offered.
+        return {"ok": False, "error": "that line could not be verified, so there "
+                                      "is no permission to offer again"}
     item = {"path": n.get("path"), "type": n.get("type") if n.get("type") in ("file", "folder") else ""}
     if n.get("type") == "folder" and n.get("expires_ts") and n.get("created_ts"):
         item["expiry_days"] = max(1.0, (n["expires_ts"] - n["created_ts"]) / 86400.0)
@@ -224,7 +260,11 @@ def apply_approved(record: dict) -> dict:
             else:
                 # The card showed this file as it was when the card was raised.
                 # If it changed since, the click did not see what would be sent.
-                if it.get("sha256") and _sha(Path(it["path"])) != it["sha256"]:
+                try:
+                    now_sha = _sha(Path(it["path"]))
+                except Exception:
+                    now_sha = None
+                if it.get("sha256") and now_sha != it["sha256"]:
                     failed.append({"path": it.get("path"),
                                    "error": "the file changed after the card was raised"})
                     continue

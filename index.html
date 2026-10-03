@@ -50541,7 +50541,7 @@ function FileAccessPanel() {
     .then(({ ok, d }) => { setMsg(ok ? 'A card is waiting for your approval.' : (d && d.message) || 'Could not offer it again.'); load(); })
     .catch(() => setMsg('Could not offer it again.'));
   const dismiss = id => post('/api/privacy/file-grants/notices/' + encodeURIComponent(id) + '/dismiss')
-    .then(({ ok, d }) => { setMsg(ok ? 'Left off. It grants nothing.' : (d && d.message) || 'Could not set it aside.'); load(); })
+    .then(({ ok, d }) => { setMsg(ok ? 'Done. Nothing else changed.' : (d && d.message) || 'Could not close that notice.'); load(); })
     .catch(() => setMsg('Could not set it aside.'));
   const rows = (data && data.rows) || [];
   const notices = (data && data.notices) || [];
@@ -50556,13 +50556,14 @@ function FileAccessPanel() {
     E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) },
       'Cloud models never see a file’s contents unless you allow that file or folder here. A file is pinned to what it holds when you allow it; a folder lasts up to 30 days. Your never-send list still applies.'),
     st.suspended ? E('div', { role: 'alert', style: { fontSize: 11, color: 'rgba(255,210,140,0.9)', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, padding: '8px 10px', marginBottom: 10, lineHeight: 1.6 } },
-      'Every file permission is paused: a line in the permissions record could not be verified. Decide about it below.') : null,
+      'Every file permission is paused: a line in the permissions record could not be verified, and it may have been a never-send mark. Permissions stay paused while it is there; nothing on this screen lifts that.') : null,
     notices.map(n => E('div', { key: n.id, className: 'card', 'data-testid': 'file-access-notice', style: { padding: 8, marginBottom: 6, border: '1px solid rgba(245,158,11,0.3)' } },
       E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } }, n.message),
       n.path ? E('div', { style: Object.assign({}, muted, { overflowWrap: 'anywhere' }) }, typeWord(n.type) + n.path) : null,
+      n.resolves ? E('div', { style: muted }, n.resolves) : null,
       E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
-        E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => regrant(n.id) }, 'Re-grant'),
-        E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => dismiss(n.id) }, 'Leave it off')))),
+        n.reason === 'retired_key' ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => regrant(n.id) }, 'Re-grant') : null,
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => dismiss(n.id) }, n.reason === 'retired_key' ? 'Leave it off' : 'Hide this notice')))),
     !data ? E('div', { style: muted }, 'Reading file permissions…')
       : rows.length === 0 ? E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, 'No file permissions. Cloud models get no file’s contents.')
       : rows.map(r => E('div', { key: r.status + ':' + r.id, className: 'card', 'data-testid': 'file-access-row', 'data-status': r.status, style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
@@ -55805,6 +55806,8 @@ function useApprovalFeed() {
 }
 // Approve or decline from any page. Exactly one decision wins (the server
 // decides under one lock); a page that lost the race is told what happened.
+// decided_by 'owner:ui' marks a click on this page: some cards (file access)
+// can be approved by nothing else.
 function fridayDecideApproval(id, decision) {
   return fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
     method: 'POST',
@@ -55812,7 +55815,8 @@ function fridayDecideApproval(id, decision) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      decision
+      decision,
+      decided_by: 'owner:ui'
     })
   }).then(r => r.json()).then(d => {
     if (d && d.ok) fridayApprovalFeed.drop(id);
@@ -63199,7 +63203,7 @@ function App() {
         if (!id) return;
         fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision: ok ? 'approve' : 'deny' })
+          body: JSON.stringify({ decision: ok ? 'approve' : 'deny', decided_by: 'owner:ui' })
         }).catch(function () {}).then(function () {
           body.classList.remove('has-approval');
         });

@@ -110,3 +110,25 @@ def test_an_old_permission_is_offered_again_only_as_an_approval_card(client, tmp
     assert card["status"] == "pending" and card["kind"] == "file_grant_request"
     assert [it["path"] for it in card["payload"]["items"]] == [str(p.resolve())]
     assert fg.list_grants() == [], "a re-grant must wait for the card"
+
+
+def test_the_reattest_route_refuses_a_line_no_known_key_signed(client, tmp_path):
+    from agent_friday.services import file_grants as fg
+    fg._secret_bytes()
+    ev = {"event": "grant_file", "id": "tampered", "type": "file",
+          "path": str(tmp_path / "cv.txt"), "sha256": "0" * 64, "created_ts": 1.0}
+    ledger = fg._ledger_path()
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps({"event": ev, "hmac": fg._hmac_hex(ev, b"a key nobody has")},
+                      sort_keys=True, separators=(",", ":"))
+    ledger.write_text(line + "\n", encoding="utf-8")
+    fg._invalidate_cache()
+    sha = hashlib.sha256(line.encode("utf-8")).hexdigest()
+
+    resp = client.post("/api/privacy/file-grants/reattest",
+                       json={"line_sha256": sha, "confirmed_by": "owner"})
+
+    assert resp.status_code == 400
+    text = ledger.read_text(encoding="utf-8")
+    assert "reattested_from" not in text and line in text
+    assert fg.status()["suspended"] is True

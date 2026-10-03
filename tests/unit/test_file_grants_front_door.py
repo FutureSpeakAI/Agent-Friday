@@ -62,6 +62,7 @@ def pushed(monkeypatch):
     class _Engine:
         def push(self, **kwargs):
             sent.append(kwargs)
+            return dict(kwargs)   # a new entry, as the engine returns one
 
     import agent_friday.services.voice_engine as ve
     monkeypatch.setattr(ve, "_notif_engine", _Engine())
@@ -178,14 +179,14 @@ def test_approving_the_card_on_screen_creates_exactly_the_listed_grants(tmp_path
     a, b = _file(tmp_path, "a.txt"), _file(tmp_path, "b.txt", "Other notes.")
     card = fgr.request_access([{"path": str(a)}, {"path": str(b)}])
 
-    rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner")
+    rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
 
     assert won and rec["status"] == "approved"
     assert {g["path"] for g in fg.list_grants()} == {str(a.resolve()), str(b.resolve())}
     assert approvals.get_approval(card["approval_id"])["consumed"] is True
 
 
-@pytest.mark.parametrize("surface", ["owner:/voice/", "owner:sms", "owner:chat", "friday"])
+@pytest.mark.parametrize("surface", ["owner", "owner:/voice/", "owner:sms", "owner:chat", "friday"])
 def test_no_surface_but_the_screen_can_approve_a_file_access_card(tmp_path, surface):
     a = _file(tmp_path)
     card = fgr.request_access([{"path": str(a)}])
@@ -275,7 +276,7 @@ def test_re_granting_the_retired_line_goes_through_the_approval_card(tmp_path, m
     out = fgr.regrant_notice(notice["id"])
     assert out["ok"] and fg.list_grants() == [], "re-grant must wait for the card"
 
-    approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner")
+    approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
 
     grants = fg.list_grants()
     assert [g["path"] for g in grants] == [str(p.resolve())]
@@ -323,19 +324,20 @@ def test_each_distinct_failure_alarms_once_not_on_every_read(tmp_path, pushed):
     assert len(pushed) == 2
 
 
-def test_dismissing_the_unverifiable_line_quarantines_it_without_re_signing(tmp_path):
+def test_hiding_the_unverifiable_notice_moves_nothing_and_keeps_the_pause(tmp_path):
     p = _file(tmp_path)
     fg._secret_bytes()
     line = _write_line(_old_grant(p), b"a key nobody has")
     notice = fg.notices()[0]
+    assert notice["reason"] == "unverified" and notice["path"] is None
+    assert "stay paused" in notice["resolves"]
 
     out = fg.resolve_notice(notice["id"], "dismissed", confirmed_by="owner:ui")
 
     assert out["ok"]
-    assert fg.status()["suspended"] is False
-    assert fg.list_grants() == []
-    q = [json.loads(x) for x in fg._quarantine_path().read_text(encoding="utf-8").splitlines()]
-    assert [r["line"] for r in q] == [line]
+    assert fg.status()["suspended"] is True
+    assert line in fg._ledger_path().read_text(encoding="utf-8")
+    assert not fg._quarantine_path().exists()
     assert not re.search(r"reattest", fg._ledger_path().read_text(encoding="utf-8"))
     assert fg.notices() == []
 

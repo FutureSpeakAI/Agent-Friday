@@ -98,9 +98,11 @@ DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 #: `decided_by` values that click carries. Any other surface (voice, a text
 #: message, a chat reply, Friday herself) may still decline one; its approve is
 #: refused and the card stays pending. A file-access card is one: a spoken
-#: "yes" must never be what lets a file's contents reach a cloud model.
+#: "yes" must never be what lets a file's contents reach a cloud model. The
+#: bare "owner" label is NOT a click: it is the default of every in-process
+#: caller, so only the explicit "owner:ui" the page sends counts.
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
-    "file_grant_request": frozenset({"owner", "owner:ui"}),
+    "file_grant_request": frozenset({"owner:ui"}),
 }
 
 

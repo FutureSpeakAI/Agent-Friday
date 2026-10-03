@@ -181,8 +181,8 @@ def regrant_file_grant_notice(notice_id):
 @control_bp.route('/api/privacy/file-grants/notices/<notice_id>/dismiss', methods=['POST'])
 @login_required
 def dismiss_file_grant_notice(notice_id):
-    """Close an old-permission question without re-granting. A line still in
-    the ledger is quarantined verbatim, never re-signed and never deleted."""
+    """Close a notice without re-granting. It moves no line, re-signs nothing
+    and lifts no suspension: it only stops the question being asked."""
     from agent_friday.services import file_grants as _fg
     out = _fg.resolve_notice(notice_id, "dismissed", confirmed_by="owner:ui")
     if not out.get("ok"):
@@ -285,7 +285,9 @@ def reattest_file_grant():
 
     Never automatic: a line is re-signed only when the user names himself as the
     confirmer. The original is quarantined verbatim rather than rewritten, so a
-    tampered line can never be laundered into a valid one.
+    tampered line can never be laundered into a valid one. Only a line that a
+    retired signing key vouches for is re-signed; a line that matches no key
+    this ledger has used is refused (400), because what it says is unknown.
     """
     from agent_friday.services import file_grants as _fg
     data = request.get_json(silent=True) or {}
@@ -309,7 +311,9 @@ def dismiss_file_grant():
     """Quarantine an unverified line WITHOUT re-signing it.
 
     For a line the user does not recognise or no longer wants. The grant does not
-    come back; the line is kept for inspection.
+    come back; the line is kept for inspection. Unless a known key vouches that
+    the line was a grant, grants stay suspended after it moves: it may have been
+    a deny.
     """
     from agent_friday.services import file_grants as _fg
     data = request.get_json(silent=True) or {}
