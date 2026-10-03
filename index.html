@@ -50327,6 +50327,9 @@ function SettingsTabPrivacy({
     title: "Privacy check",
     desc: ("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")
   }, /*#__PURE__*/React.createElement(PrivacyCheckLayers, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "File access",
+    desc: "Which files and folders cloud models may read when " + fridayName() + " opens them."
+  }, /*#__PURE__*/React.createElement(FileAccessPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Fonts"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Load fonts from Google Fonts",
@@ -50499,6 +50502,112 @@ function SettingsTabPrivacy({
 // loading" or "the download is missing". A switch reading ON while the gate is
 // in fact keyword-only would be the same class of lie the approval log exists
 // to stop.
+// Settings › Privacy › File access: which files and folders cloud models may
+// read when Friday opens them. Lists every grant with its status, adds one
+// (the Add click is the owner's approval) and removes one, all through
+// /api/privacy/file-grants. A line that grants nothing (quarantined or
+// unverified) is listed but has no Remove. An old permission that was set
+// aside shows its one question here; Re-grant raises the normal approval card.
+function FileAccessPanel() {
+  const E = React.createElement;
+  const [data, setData] = useState(null);
+  const [path, setPath] = useState('');
+  const [kind, setKind] = useState('file');
+  const [days, setDays] = useState(7);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => apiFetch('/api/privacy/file-grants').then(r => r.json()).then(setData).catch(() => setMsg('Could not read file permissions.')), []);
+  useEffect(() => { load(); }, [load]);
+  const post = (url, body) => apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(r => r.json().then(d => ({ ok: r.ok, d })));
+  const add = () => {
+    const p = (path || '').trim();
+    if (!p) { setMsg('Type the path of a file or folder.'); return; }
+    setBusy(true);
+    setMsg('');
+    const body = kind === 'folder' ? { path: p, scope: 'folder', expiry_days: days } : { path: p, scope: 'file' };
+    post('/api/privacy/file-grants', body).then(({ ok, d }) => {
+      if (ok && d && d.status === 'ok') {
+        const g = d.grant || {};
+        setMsg('Allowed: ' + (g.path || p) + (g.findings_summary ? ' (' + g.findings_summary + ')' : '') + '.');
+        setPath('');
+        load();
+      } else setMsg((d && (d.error || d.message)) || 'The permission was not created.');
+    }).catch(() => setMsg('The permission was not created.')).finally(() => setBusy(false));
+  };
+  const remove = id => post('/api/privacy/file-grants/' + encodeURIComponent(id) + '/revoke')
+    .then(() => { setMsg('Removed. Cloud models no longer get it.'); load(); }).catch(() => setMsg('Could not remove it.'));
+  const regrant = id => post('/api/privacy/file-grants/notices/' + encodeURIComponent(id) + '/regrant')
+    .then(({ ok, d }) => { setMsg(ok ? 'A card is waiting for your approval.' : (d && d.message) || 'Could not offer it again.'); load(); })
+    .catch(() => setMsg('Could not offer it again.'));
+  const dismiss = id => post('/api/privacy/file-grants/notices/' + encodeURIComponent(id) + '/dismiss')
+    .then(({ ok, d }) => { setMsg(ok ? 'Left off. It grants nothing.' : (d && d.message) || 'Could not set it aside.'); load(); })
+    .catch(() => setMsg('Could not set it aside.'));
+  const rows = (data && data.rows) || [];
+  const notices = (data && data.notices) || [];
+  const st = (data && data.status) || {};
+  const said = { valid: 'Valid', paused: 'Paused', changed: 'File changed', missing: 'File missing', expired: 'Expired', quarantined: 'Quarantined', unverified: 'Unverified' };
+  const hue = { valid: '#00ff80', paused: '#f59e0b', changed: '#f59e0b', missing: '#f59e0b', expired: 'rgba(255,255,255,0.45)', quarantined: '#ff8080', unverified: '#ff8080' };
+  const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
+  const live = r => r.status !== 'quarantined' && r.status !== 'unverified';
+  const typeWord = t => t === 'folder' ? 'Folder ' : t === 'glob' ? 'Pattern ' : 'File ';
+  const when = r => r.expires_ts ? 'until ' + new Date(r.expires_ts * 1000).toLocaleDateString() : (r.type === 'file' && live(r) ? 'pinned to the file as it was' : '');
+  return E('div', { 'data-testid': 'file-access-panel' },
+    E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) },
+      'Cloud models never see a file’s contents unless you allow that file or folder here. A file is pinned to what it holds when you allow it; a folder lasts up to 30 days. Your never-send list still applies.'),
+    st.suspended ? E('div', { role: 'alert', style: { fontSize: 11, color: 'rgba(255,210,140,0.9)', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, padding: '8px 10px', marginBottom: 10, lineHeight: 1.6 } },
+      'Every file permission is paused: a line in the permissions record could not be verified. Decide about it below.') : null,
+    notices.map(n => E('div', { key: n.id, className: 'card', 'data-testid': 'file-access-notice', style: { padding: 8, marginBottom: 6, border: '1px solid rgba(245,158,11,0.3)' } },
+      E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } }, n.message),
+      n.path ? E('div', { style: Object.assign({}, muted, { overflowWrap: 'anywhere' }) }, typeWord(n.type) + n.path) : null,
+      E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => regrant(n.id) }, 'Re-grant'),
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => dismiss(n.id) }, 'Leave it off')))),
+    !data ? E('div', { style: muted }, 'Reading file permissions…')
+      : rows.length === 0 ? E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, 'No file permissions. Cloud models get no file’s contents.')
+      : rows.map(r => E('div', { key: r.status + ':' + r.id, className: 'card', 'data-testid': 'file-access-row', 'data-status': r.status, style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+        E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5, minWidth: 0, overflowWrap: 'anywhere' } },
+          E('span', { style: { fontSize: 10, color: hue[r.status] || '#ddd', fontFamily: 'JetBrains Mono, monospace', marginRight: 6 } }, said[r.status] || r.status),
+          typeWord(r.type), E('b', null, r.path || '(path unknown)'),
+          E('div', { style: muted }, [when(r), r.summary, r.why].filter(Boolean).join(' · '))),
+        live(r) ? E('button', { className: 'settings-btn', style: { fontSize: 11, color: '#ff8080' }, onClick: () => remove(r.id) }, 'Remove') : null)),
+    E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Add'),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' } },
+      E('input', { className: 'input', 'aria-label': 'Path of a file or folder', value: path, onChange: e => setPath(e.target.value), placeholder: 'Path of a file or folder', style: { flex: 1, minWidth: 200 } }),
+      E('select', { 'aria-label': 'File or folder', value: kind, onChange: e => setKind(e.target.value), style: { fontSize: 12 } },
+        E('option', { value: 'file' }, 'File'), E('option', { value: 'folder' }, 'Folder')),
+      kind === 'folder' ? E('select', { 'aria-label': 'Lasts', value: days, onChange: e => setDays(Number(e.target.value)), style: { fontSize: 12 } },
+        [1, 7, 30].map(d => E('option', { key: d, value: d }, d === 1 ? '1 day' : d + ' days'))) : null,
+      E('button', { className: 'settings-btn', style: { fontSize: 12 }, disabled: busy, onClick: add }, busy ? 'Adding…' : 'Add')),
+    E('div', { style: Object.assign({}, muted, { marginTop: 6 }) },
+      'By voice: “what files can the cloud see?”, “let it read my CV”, “take that away”. Asking by voice puts a card on screen; only your click there allows it.'),
+    msg ? E('div', { role: 'status', style: Object.assign({}, muted, { marginTop: 6, color: '#9fd' }) }, msg) : null);
+}
+// The file-access approval card: one card for every path a turn asked for.
+// Each row is what Friday found on disk, not what was asked for. Approve
+// allows exactly the rows shown, and only this click can approve it (voice and
+// text replies can only decline it).
+function FileGrantRequestCard({ a, busy, onDecide }) {
+  const E = React.createElement;
+  const p = a.payload || {};
+  const items = p.items || [];
+  const skipped = p.skipped || [];
+  return E('div', { className: 'card', style: { marginBottom: 6, padding: 8 }, 'data-testid': 'approval-card', 'data-approval-id': a.approval_id, 'data-kind': 'file_grant_request' },
+    E('div', { style: { fontSize: 12, color: '#ddd' } }, a.title),
+    p.reason ? E('div', { style: { fontSize: 11, color: '#999', marginTop: 2 } }, 'Asked because: ' + p.reason) : null,
+    E('ul', { 'data-testid': 'file-grant-items', style: { fontSize: 11, color: '#b8c7dc', margin: '6px 0 0', padding: '0 0 0 16px', maxHeight: 220, overflowY: 'auto' } },
+      items.map((it, i) => E('li', { key: i, style: { overflowWrap: 'anywhere' } },
+        E('b', null, (it.type === 'folder' ? 'Folder ' : 'File ') + it.path),
+        it.summary ? E('div', { style: { color: '#7f93ad' } }, it.summary) : null))),
+    skipped.length ? E('div', { style: { fontSize: 10, color: '#ff8080', marginTop: 4 } },
+      'Not included: ' + skipped.map(s => (s.path || '?') + ' (' + s.error + ')').join('; ')) : null,
+    E('div', { style: { fontSize: 10, color: '#7f93ad', marginTop: 4 } }, a.description),
+    E(ApprovalProvenance, { p: a.provenance }),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: '#00ff80' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'approve') },
+        items.length === 1 ? 'Allow it' : 'Allow all ' + items.length),
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: '#ff0080' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'deny') }, 'Decline')));
+}
 // Scheduled jobs: what they may do on their own. A scheduled or background job
 // can take an outward action (change a calendar, schedule a post, run a
 // non-read command, a connector's send) only with a grant made here: named
@@ -55949,6 +56058,12 @@ function ApprovalCardBody({
   onDecide
 }) {
   // The share card has its own body: the exact payload, edit, and four choices.
+  // A file-access card lists every path it would allow; see FileGrantRequestCard.
+  if (a && a.kind === 'file_grant_request') return /*#__PURE__*/React.createElement(FileGrantRequestCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
   if (a && a.kind === 'local_context_share') return /*#__PURE__*/React.createElement(LocalContextShareCard, {
     a: a,
     busy: busy,

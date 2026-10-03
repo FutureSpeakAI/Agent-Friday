@@ -662,6 +662,10 @@ _VOICE_SHARED_TOOLS = (
     "hologram_window",
     # Call mode: "I'm on a call", "the call is over", "ask me first on calls".
     "call_mode",
+    # File access: "what files can the cloud see?", "let it read my CV",
+    # "take that away", "re-grant the old one". Asking raises the same card
+    # the panel's approvals use; the yes is a click on screen, never a word.
+    "file_access",
 )
 
 

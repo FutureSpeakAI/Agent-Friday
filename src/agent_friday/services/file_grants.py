@@ -25,7 +25,11 @@ really read, here, just now.
 WHO GRANTS. Nobody but the user, through an authenticated HTTP endpoint
 driven by UI chrome (routes/control.py). There is no grant tool anywhere in
 CLAUDE_TOOLS — no surface's model can call one. A spoken "yes" can never
-create a grant; voice can only point at a pending chip.
+create a grant; voice can only point at a pending chip. The two doors are the
+Add button in Settings › Privacy › File access and the Approve button on a
+file-access approval card (services/file_grant_requests.py). The model's
+file_access tool can raise that card; approving it is a click on screen
+(approvals.SCREEN_ONLY_KINDS).
 
 GRANULARITY. File grants are content-pinned (SHA-256 at grant time); a later
 read with a different hash is `stale` and gates normally. Folder/glob grants
@@ -43,8 +47,16 @@ parse or fails HMAC is dropped and counted. Dropped GRANT events fail safe
 (fewer grants -> normal gating). Dropped DENY events are the dangerous
 direction, so: any drop at all puts the whole ledger into SUSPENDERS MODE —
 every grant treated as absent, every deny mark still enforced from whatever
-folded cleanly, and one high-priority notification. A corrupted ledger can
-only ever tighten.
+folded cleanly, and one high-priority notification per distinct failed line
+(not one per read). A corrupted ledger can only ever tighten.
+
+RETIRED KEYS. A grant line that fails under the ledger's key but verifies
+under the session secret the ledger used before it had its own key is
+authentic but stale. It is moved aside to the quarantine file once, verbatim
+(never re-signed, never deleted), and the user is asked once whether to
+re-grant it; a re-grant is a fresh approval card. Only grant lines are moved
+this way, because removing a grant can only take access away. Every other
+failed line stays and keeps grants suspended until the user decides.
 """
 from __future__ import annotations
 
@@ -148,6 +160,95 @@ class LedgerState:
     denies: dict = field(default_factory=dict)    # id -> event dict
     suspended: bool = False
     dropped: int = 0
+    #: Grants that folded cleanly while the ledger is suspended. Shown so the
+    #: user can see and revoke them; never consulted by check_grant().
+    paused_grants: dict = field(default_factory=dict)
+
+
+#: Ledger events that can only ever ADD access. Removing one of these from the
+#: ledger can only tighten what Friday may send, which is why a line of this
+#: kind -- and only this kind -- may be moved aside without asking first.
+_GRANT_EVENTS = ("grant_file", "grant_scope")
+
+
+def _line_sha(line: str) -> str:
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()
+
+
+def _retired_keys() -> list[bytes]:
+    """Keys this ledger was signed with before it had its own signing key.
+
+    Before the ledger got `ledger_signing.key` it was signed with the session
+    secret: FRIDAY_SECRET_KEY when set, else the persisted `secret_key` file.
+    Both are READ here, never minted. A line that verifies under one of them is
+    authentic but signed with a retired key. Nothing verified this way is ever
+    honoured as a grant: such a line is only recognised so it can be moved aside
+    and the user offered a fresh grant through the normal approval.
+    """
+    import os
+    keys: list[bytes] = []
+    env = os.environ.get("FRIDAY_SECRET_KEY")
+    if env:
+        keys.append(env.encode("utf-8"))
+    try:
+        from agent_friday.paths import friday_home
+        p = friday_home() / "secret_key"
+        if p.exists():
+            v = p.read_text(encoding="utf-8").strip()
+            if v:
+                keys.append(v.encode("utf-8"))
+    except Exception:
+        pass
+    current = _SIGNING_KEY_CACHE.get("key")
+    return [k for k in dict.fromkeys(keys) if k and k != current]
+
+
+def _scan_ledger(path: Path) -> dict:
+    """Parse and verify every line, and say which failures are which.
+
+    Returns {"events": [verified events], "dropped": [line hashes that failed],
+    "retired_grants": [(line hash, event)]}. `retired_grants` are grant lines
+    that fail under the current key but verify under a retired one. They are
+    also in `dropped`: until they are moved aside they suspend grants like any
+    other failed line.
+    """
+    out: dict = {"events": [], "dropped": [], "retired_grants": []}
+    if not path.exists():
+        return out
+    key = _secret_bytes()
+    try:
+        raw = path.read_text(encoding="utf-8", errors="strict")
+    except Exception:
+        try:
+            out["dropped"].append(hashlib.sha256(path.read_bytes()).hexdigest())
+        except Exception:
+            out["dropped"].append("undecodable-ledger")
+        return out
+    retired = None
+    for raw_line in raw.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        sha = _line_sha(line)
+        try:
+            rec = json.loads(line)
+            ev = rec["event"]
+            sig = rec["hmac"]
+            if not isinstance(ev, dict) or not isinstance(sig, str):
+                raise ValueError("malformed record")
+        except Exception:
+            out["dropped"].append(sha)
+            continue
+        if hmac.compare_digest(sig, _hmac_hex(ev, key)):
+            out["events"].append(ev)
+            continue
+        out["dropped"].append(sha)
+        if ev.get("event") in _GRANT_EVENTS:
+            if retired is None:
+                retired = _retired_keys()
+            if any(hmac.compare_digest(sig, _hmac_hex(ev, k)) for k in retired):
+                out["retired_grants"].append((sha, ev))
+    return out
 
 
 def _read_verified_events(path: Path) -> tuple[list[dict], int]:
@@ -159,34 +260,8 @@ def _read_verified_events(path: Path) -> tuple[list[dict], int]:
     silently returning empty — corruption must be visible, not indistinguishable
     from "nothing was ever granted".
     """
-    if not path.exists():
-        return [], 0
-    key = _secret_bytes()
-    try:
-        raw = path.read_text(encoding="utf-8", errors="strict")
-    except Exception:
-        return [], 1
-    events: list[dict] = []
-    dropped = 0
-    for raw_line in raw.split("\n"):
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-            ev = rec["event"]
-            sig = rec["hmac"]
-            if not isinstance(ev, dict) or not isinstance(sig, str):
-                raise ValueError("malformed record")
-        except Exception:
-            dropped += 1
-            continue
-        expected = _hmac_hex(ev, key)
-        if not hmac.compare_digest(sig, expected):
-            dropped += 1
-            continue
-        events.append(ev)
-    return events, dropped
+    scan = _scan_ledger(path)
+    return scan["events"], len(scan["dropped"])
 
 
 def _fold(events: list[dict]) -> tuple[dict, dict]:
@@ -208,47 +283,176 @@ def _fold(events: list[dict]) -> tuple[dict, dict]:
     return grants, denies
 
 
-def _notify_corruption(dropped: int) -> None:
+def _push(**kwargs) -> bool:
+    """One notification. True only when it was handed to the engine."""
     try:
         from agent_friday.services.voice_engine import _notif_engine
     except Exception:
-        return
+        return False
     if not _notif_engine:
-        return
+        return False
     try:
-        _notif_engine.push(
+        _notif_engine.push(**kwargs)
+        return True
+    except Exception:
+        return False
+
+
+# ── Notices: one alarm per distinct failure ──────────────────────────────────
+#
+# The ledger is re-read whenever it changes, and a failed line fails on every
+# read. An alarm per read would repeat the same warning until it means nothing,
+# so each failure is keyed by the hash of the line that failed and alarms once.
+# The record of what has alarmed, and of the open "re-grant it?" questions,
+# lives beside the ledger. It decides only what is SAID: nothing in it can make
+# a line verify or a grant exist.
+
+_NOTICE_LOCK = threading.Lock()
+
+
+def _notices_path() -> Path:
+    return _ledger_path().parent / "file_grants.notices.json"
+
+
+def _read_notices() -> dict:
+    p = _notices_path()
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(d, dict):
+            d.setdefault("alarmed", {})
+            d.setdefault("notices", {})
+            if isinstance(d["alarmed"], dict) and isinstance(d["notices"], dict):
+                return d
+    except Exception:
+        pass
+    return {"alarmed": {}, "notices": {}}
+
+
+def _write_notices(d: dict) -> None:
+    p = _notices_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d, sort_keys=True, indent=1), encoding="utf-8", newline="\n")
+    tmp.replace(p)
+
+
+def _alarm_new_failures(dropped_shas: list[str]) -> None:
+    """Alarm once for failures not alarmed before; never for one already told."""
+    if not dropped_shas:
+        return
+    with _NOTICE_LOCK:
+        d = _read_notices()
+        new = [s for s in dropped_shas if s not in d["alarmed"]]
+        if not new:
+            return
+        sent = _push(
             title="File-permission ledger corrupted — grants suspended",
-            body=(f"{dropped} line(s) of the file-grants ledger failed to "
-                  f"verify and were dropped. Every file grant is suspended "
+            body=(f"{len(dropped_shas)} line(s) of the file-grants ledger failed "
+                  f"to verify and were dropped. Every file grant is suspended "
                   f"until this is resolved; your never-send deny marks still "
-                  f"apply. Nothing was silently un-denied."),
+                  f"apply. Nothing was silently un-denied. Settings › Privacy › "
+                  f"File access shows each line and what you can do about it."),
             priority="high", source="file_grants", kind="warning",
             dedupe_key="file_grants_ledger_corruption",
         )
+        if not sent:
+            return   # not told yet, so not marked: the next read tries again
+        now = _iso_now()
+        for s in new:
+            d["alarmed"][s] = now
+        _write_notices(d)
+
+
+def _date_label(ts) -> str:
+    import datetime as _dt
+    try:
+        t = _dt.datetime.fromtimestamp(float(ts))
     except Exception:
-        pass
+        return "an earlier date"
+    return f"{t:%b} {t.day}"
+
+
+RETIRED_KEY_WHY = ("signed with a retired key; moved aside automatically, never "
+                   "re-signed")
+
+
+def _retired_message(ev: dict) -> str:
+    return ("An old permission from %s was signed with a retired key; re-grant it?"
+            % _date_label(ev.get("created_ts")))
+
+
+def _open_retired_notice(sha: str, ev: dict) -> None:
+    """Record the one question for a line just moved aside, and say it once."""
+    with _NOTICE_LOCK:
+        d = _read_notices()
+        if sha in d["notices"]:
+            return
+        d["notices"][sha] = {
+            "reason": "retired_key", "status": "open", "opened_at": _iso_now(),
+            "path": ev.get("path"), "type": ev.get("type"),
+            "created_ts": ev.get("created_ts"), "expires_ts": ev.get("expires_ts"),
+        }
+        d["alarmed"][sha] = _iso_now()
+        _write_notices(d)
+    _push(title="An old file permission needs you",
+          body=_retired_message(ev) + " It grants nothing until you do.",
+          priority="medium", source="file_grants", kind="info",
+          target={"workspace": "settings", "tab": "privacy"},
+          dedupe_key="file_grants_retired:%s" % sha)
+
+
+def _sweep_retired_grants(found: list) -> int:
+    """Move each retired-key grant line aside, once. Returns how many moved.
+
+    Only grant lines, only ones that verify under a retired key: removing one
+    can only take access away. Deny and revoke lines, and lines that verify
+    under no key at all, stay where they are and keep grants suspended until
+    the user decides (list_unverified / dismiss_unverified)."""
+    moved = 0
+    for sha, ev in found:
+        if _quarantine_line(sha, RETIRED_KEY_WHY, "friday:retired-key-sweep"):
+            moved += 1
+            _open_retired_notice(sha, ev)
+    return moved
 
 
 def _load_state(force: bool = False) -> LedgerState:
     path = _ledger_path()
-    try:
-        mtime = path.stat().st_mtime if path.exists() else -1.0
-    except Exception:
-        mtime = -1.0
+
+    def _mtime() -> float:
+        try:
+            return path.stat().st_mtime if path.exists() else -1.0
+        except Exception:
+            return -1.0
+
+    mtime = _mtime()
     with _STATE_LOCK:
         cached = _STATE_CACHE.get("state")
         if not force and cached is not None and _STATE_CACHE.get("mtime") == mtime:
             return cached
-        events, dropped = _read_verified_events(path)
-        grants, denies = _fold(events)
+    scan = _scan_ledger(path)
+    if scan["retired_grants"]:
+        # Outside _STATE_LOCK: moving a line aside invalidates the cache.
+        try:
+            if _sweep_retired_grants(scan["retired_grants"]):
+                mtime = _mtime()
+                scan = _scan_ledger(path)
+        except Exception:
+            pass   # the line stays in the ledger: still dropped, still suspending
+    with _STATE_LOCK:
+        grants, denies = _fold(scan["events"])
+        dropped = len(scan["dropped"])
         suspended = dropped > 0
+        paused: dict = {}
         if suspended:
-            grants = {}   # suspenders mode: ALL grants suspended
-            _notify_corruption(dropped)
-        state = LedgerState(grants=grants, denies=denies, suspended=suspended, dropped=dropped)
+            paused, grants = grants, {}   # suspenders mode: ALL grants suspended
+        state = LedgerState(grants=grants, denies=denies, suspended=suspended,
+                            dropped=dropped, paused_grants=paused)
         _STATE_CACHE["mtime"] = mtime
         _STATE_CACHE["state"] = state
-        return state
+    if suspended:
+        _alarm_new_failures(scan["dropped"])
+    return state
 
 
 def _invalidate_cache() -> None:
@@ -601,24 +805,26 @@ def _quarantine_line(line_sha256: str, why: str, who: str) -> bool:
     broken.
     """
     path = _ledger_path()
-    if not path.exists():
-        return False
-    try:
-        raw = path.read_text(encoding="utf-8", errors="strict")
-    except Exception:
-        return False
-    keep, moved = [], None
-    for raw_line in raw.split("\n"):
-        line = raw_line.strip()
-        if not line:
-            continue
-        if hashlib.sha256(line.encode("utf-8")).hexdigest() == line_sha256:
-            moved = line
-            continue
-        keep.append(line)
-    if moved is None:
-        return False
+    # The read, the quarantine write and the rewrite all happen under the
+    # append lock, so a grant appended meanwhile is never lost by the rewrite.
     with _APPEND_LOCK:
+        if not path.exists():
+            return False
+        try:
+            raw = path.read_text(encoding="utf-8", errors="strict")
+        except Exception:
+            return False
+        keep, moved = [], None
+        for raw_line in raw.split("\n"):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if _line_sha(line) == line_sha256:
+                moved = line
+                continue
+            keep.append(line)
+        if moved is None:
+            return False
         q = _quarantine_path()
         q.parent.mkdir(parents=True, exist_ok=True)
         with open(q, "a", encoding="utf-8", newline="\n") as f:
@@ -695,3 +901,154 @@ def dismiss_unverified(line_sha256: str, *, confirmed_by: str) -> dict:
         return {"ok": False, "error": "no unverified line with that hash"}
     ok = _quarantine_line(line_sha256, "dismissed by the user; not re-attested", who)
     return {"ok": bool(ok), "quarantined": line_sha256 if ok else None}
+
+
+# ── What the File access panel shows ─────────────────────────────────────────
+#
+# Rows for every grant the panel can act on, each with a plain status, and the
+# open questions about lines that failed to verify. Everything read from the
+# quarantine file or from an unverified line is DISPLAY ONLY: none of it is
+# ever folded into a grant.
+
+def list_quarantined() -> list[dict]:
+    """Lines moved out of the ledger, newest last, as the panel shows them."""
+    q = _quarantine_path()
+    if not q.exists():
+        return []
+    out: list[dict] = []
+    try:
+        raw = q.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    for raw_line in raw.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+            ev = (json.loads(rec.get("line") or "") or {}).get("event") or {}
+        except Exception:
+            continue
+        if not isinstance(ev, dict):
+            ev = {}
+        out.append({
+            "id": rec.get("line_sha256"), "status": "quarantined",
+            "event": ev.get("event"), "type": ev.get("type"), "path": ev.get("path"),
+            "created_ts": ev.get("created_ts"), "expires_ts": ev.get("expires_ts"),
+            "why": rec.get("why"), "quarantined_at": rec.get("quarantined_at"),
+        })
+    return out
+
+
+def _signing_key_born() -> float | None:
+    try:
+        return _signing_key_path().stat().st_mtime
+    except Exception:
+        return None
+
+
+def notices() -> list[dict]:
+    """The open "re-grant it?" questions, one per failed grant line.
+
+    Two kinds. A line that verified under a retired key has already been moved
+    aside (reason "retired_key", in_ledger False). A grant line that verifies
+    under no key stays in the ledger and keeps grants suspended until the user
+    re-grants or sets it aside (in_ledger True). Neither grants anything.
+    """
+    d = _read_notices()["notices"]
+    out: list[dict] = []
+    for sha, n in d.items():
+        if n.get("status") != "open":
+            continue
+        ev = {"created_ts": n.get("created_ts")}
+        out.append({"id": sha, "reason": n.get("reason") or "retired_key",
+                    "in_ledger": False, "path": n.get("path"), "type": n.get("type"),
+                    "created_ts": n.get("created_ts"),
+                    "expires_ts": n.get("expires_ts"),
+                    "message": _retired_message(ev)})
+    born = _signing_key_born()
+    for row in list_unverified():
+        ev = row.get("event")
+        sha = row.get("line_sha256")
+        if not isinstance(ev, dict) or ev.get("event") not in _GRANT_EVENTS:
+            continue
+        if sha in d:
+            continue
+        ts = ev.get("created_ts")
+        predates = (born is not None and isinstance(ts, (int, float)) and ts < born)
+        msg = (_retired_message(ev) if predates else
+               "A permission from %s could not be verified; re-grant it?"
+               % _date_label(ts))
+        out.append({"id": sha, "reason": "retired_key" if predates else "unverified",
+                    "in_ledger": True, "path": ev.get("path"), "type": ev.get("type"),
+                    "created_ts": ts, "expires_ts": ev.get("expires_ts"),
+                    "message": msg + " Until you decide, every file permission is "
+                                     "paused."})
+    return out
+
+
+def find_notice(notice_id: str) -> dict | None:
+    for n in notices():
+        if n.get("id") == notice_id:
+            return n
+    return None
+
+
+def resolve_notice(notice_id: str, outcome: str, *, confirmed_by: str) -> dict:
+    """Close one notice: 'regranted' or 'dismissed'. Never re-signs anything.
+
+    A notice whose line is still in the ledger is quarantined verbatim first
+    (dismiss_unverified), so the active ledger can verify again."""
+    if outcome not in ("regranted", "dismissed"):
+        return {"ok": False, "error": "outcome must be regranted or dismissed"}
+    n = find_notice(notice_id)
+    if n is None:
+        return {"ok": False, "error": "no open notice with that id"}
+    if n.get("in_ledger"):
+        moved = dismiss_unverified(notice_id, confirmed_by=confirmed_by)
+        if not moved.get("ok"):
+            return {"ok": False, "error": moved.get("error") or "could not set it aside"}
+    with _NOTICE_LOCK:
+        d = _read_notices()
+        rec = d["notices"].get(notice_id) or {
+            "reason": n.get("reason"), "path": n.get("path"), "type": n.get("type"),
+            "created_ts": n.get("created_ts"), "expires_ts": n.get("expires_ts")}
+        rec.update(status=outcome, closed_at=_iso_now(), closed_by=confirmed_by)
+        d["notices"][notice_id] = rec
+        d["alarmed"].setdefault(notice_id, _iso_now())
+        _write_notices(d)
+    _invalidate_cache()
+    return {"ok": True, "id": notice_id, "status": outcome}
+
+
+def access_rows() -> list[dict]:
+    """Every row the File access panel lists, each with a plain status.
+
+    valid: a grant in force. changed / missing: a file grant whose file no
+    longer matches what was granted (it gates normally). expired: a folder or
+    pattern grant past its expiry. paused: grants exist but the ledger is
+    suspended. quarantined / unverified: a line that grants nothing.
+    """
+    state = _load_state()
+    stale = {g.get("id"): g.get("reason") for g in list_pending_reapproval()}
+    now = time.time()
+    rows: list[dict] = []
+    for g in list(state.grants.values()) + list(state.paused_grants.values()):
+        status = "valid" if not state.suspended else "paused"
+        if g.get("id") in stale:
+            status = "missing" if stale[g["id"]] == "file_missing" else "changed"
+        elif g.get("expires_ts") and now > g["expires_ts"]:
+            status = "expired"
+        rows.append({"id": g.get("id"), "type": g.get("type"), "path": g.get("path"),
+                     "status": status, "created_ts": g.get("created_ts"),
+                     "expires_ts": g.get("expires_ts"),
+                     "summary": g.get("findings_summary")})
+    if state.suspended:
+        for row in list_unverified():
+            ev = row.get("event") if isinstance(row.get("event"), dict) else {}
+            rows.append({"id": row.get("line_sha256"), "type": ev.get("type"),
+                         "path": ev.get("path"), "status": "unverified",
+                         "created_ts": ev.get("created_ts"),
+                         "expires_ts": ev.get("expires_ts"), "why": row.get("why")})
+    rows.extend(list_quarantined())
+    return rows
