@@ -1408,12 +1408,27 @@ def context_block_for(cid: str) -> str:
                      "capabilities.network [\"none\"]. Never use the reserved status colours or anything close to them: amber #f59e0b, "
                      "green #00ff80 / #00ff66, pink #ff0080, red #ff0033 / #ef4444, yellow #ffcc00; the brand check refuses them."
                      % (ws_label, rec["workspace_id"]))
+    from agent_friday.services import credential_paths as _cred
+    repo = repo_path(cid)
     budget = _CONTEXT_MAX
     lines.append("Files:")
     for f in files(cid):
         text = None
         if f["text"] and f["bytes"] <= _INLINE_MAX and budget - f["bytes"] > 0:
-            text = read(cid, f["path"])
+            # Nothing of a key rides in the prompt (read_file's rule, services/
+            # credential_paths). A file that is key material by name, place or
+            # content is listed and never shown, and a key or token pasted inside
+            # a file that is shown is withheld from its text. Only the files that
+            # would be shown are judged; the rest are listed by name alone.
+            try:
+                p = _check_rel(repo, f["path"])
+                if _cred.check(p):
+                    lines.append("--- %s (%d bytes, withheld: key material) ---" % (f["path"], f["bytes"]))
+                    continue
+                if p.is_file():
+                    text = _cred.redact_secrets(p.read_text(encoding="utf-8", errors="replace"))
+            except Exception:   # a link out of the tree, an unreadable file, what cannot be judged: not shown
+                text = None
         if text is not None:
             budget -= len(text)
             lines.append("--- %s (%d bytes) ---" % (f["path"], f["bytes"]))
