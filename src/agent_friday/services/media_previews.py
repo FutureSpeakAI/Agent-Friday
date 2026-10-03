@@ -515,8 +515,19 @@ def _audio(p: Path, det: Dict[str, Any]):
     return img
 
 
+def _first_paragraph(slide_xml: str) -> str:
+    """The first paragraph on a slide that has words in it: the slide's own
+    heading, not the heading and everything under it. The runs of a paragraph
+    are joined as written, because a run break is a change of style."""
+    for para in re.findall(r"<a:p[ >].*?</a:p>", slide_xml, re.S):
+        text = _clean("".join(re.findall(r"<a:t>([^<]*)</a:t>", para)))
+        if text:
+            return text
+    return ""
+
+
 def _pptx_text(p: Path, det: Dict[str, Any]) -> Tuple[str, List[str]]:
-    """The first slide's words and every slide's text, from the zip; the slide count."""
+    """The first slide's title line and every slide's text, from the zip; the slide count."""
     first, allt = "", []
     try:
         with zipfile.ZipFile(p) as z:
@@ -527,7 +538,7 @@ def _pptx_text(p: Path, det: Dict[str, Any]) -> Tuple[str, List[str]]:
                 words = " ".join(t for t in re.findall(r"<a:t>([^<]*)</a:t>", xml)).strip()
                 allt.append(words)
                 if i == 0:
-                    first = words
+                    first = _first_paragraph(xml)
     except Exception:
         pass
     return first, allt

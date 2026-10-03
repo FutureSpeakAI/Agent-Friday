@@ -160,6 +160,19 @@ def test_the_details_are_real_titles_and_the_measure_that_fits_the_kind(home):
         assert mp.strip_path(v) is not None
 
 
+def test_a_decks_title_is_one_heading_with_its_runs_joined_and_its_entities_decoded():
+    """A heading is one paragraph, split into runs wherever the style changes
+    and XML-escaped; the subtitle under it, and any empty paragraph before it,
+    are not part of it."""
+    slide = ('<p:sld xmlns:a="y"><p:cSld><p:spTree><p:sp><p:txBody>'
+             '<a:p/><a:p><a:pPr/></a:p>'
+             '<a:p><a:pPr/><a:r><a:t>Q3 </a:t></a:r><a:r><a:t>Review &amp; Plan</a:t></a:r></a:p>'
+             '<a:p><a:r><a:t>Three numbers explain the quarter.</a:t></a:r></a:p>'
+             '</p:txBody></p:sp></p:spTree></p:cSld></p:sld>')
+    assert mp._first_paragraph(slide) == "Q3 Review & Plan"
+    assert mp._first_paragraph("<p:sld/>") == "", "a slide with no words has no title to guess"
+
+
 def test_provenance_rides_on_the_card(home):
     mp.ensure_all(sync=True)
     by = _by_name(mi.query(view="all", limit=100)["cards"])
