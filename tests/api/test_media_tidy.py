@@ -128,11 +128,19 @@ def test_restore_puts_a_thing_back_and_the_card_returns(client, home):
     rec = [a for a in approvals.list_approvals(kind="governed_action") if (a.get("payload") or {}).get("handler") == "media_tidy"][0]
     approvals.decide(rec["approval_id"], "approve", decided_by="user")
     entries = client.get("/api/media/trash").get_json()["entries"]
-    e = [x for x in entries if x["card"]["title"] == "The ferry story (copy)"][0]
+    # Of two near-duplicate documents the favourite is kept, else the larger file,
+    # else the newer one (docs/design/active/media-workspace.md). The "(copy)"
+    # carries the extra words, so it is the keeper and the shorter original is
+    # what the tidy-up moves.
+    assert (home["creations"] / "friday-text-ferry-copy.md").exists(), "the keeper stays where it was"
+    e = [x for x in entries if x["card"]["title"] == "The ferry story"][0]
+    assert not (home["creations"] / "friday-text-ferry.md").exists()
     r = client.post("/api/media/trash/" + e["entry"] + "/restore")
     assert r.status_code == 200 and r.get_json()["status"] == "ok"
-    assert (home["creations"] / "friday-text-ferry-copy.md").exists()
-    assert "The ferry story (copy)" in {c["title"] for c in mi.query(view="all", limit=100)["cards"]}
+    assert (home["creations"] / "friday-text-ferry.md").exists()
+    assert "friday-text-ferry.md" in {c.get("filename") for c in mi.query(view="all", limit=100)["cards"]}, "the card returns with the file"
+    mp.ensure_all(sync=True)       # the preview pass reads its heading again, as it does after any new file
+    assert "The ferry story" in {c["title"] for c in mi.query(view="all", limit=100)["cards"]}
     assert len(client.get("/api/media/trash").get_json()["entries"]) == 3
     assert client.post("/api/media/trash/no-such/restore").status_code == 404
     assert client.post("/api/media/trash/..%2F..%2Fetc/restore").status_code in (400, 404)
