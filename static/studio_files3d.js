@@ -2177,6 +2177,35 @@
   const recall = k => { try { return localStorage.getItem('friday_files3d_' + k) || ''; } catch (_) { return ''; } };
   const PANEL_BG = 'rgba(6,10,18,0.9)';
 
+  // A PDF is shown as server-rendered page images, never in the browser's own
+  // viewer: the file's scripts, links and fonts never reach the page.
+  function PdfPagePreview(props) {
+    const { root, rel, name } = props;
+    const [page, setPage] = useState(1);
+    const [pages, setPages] = useState(0);
+    const [state, setState] = useState('loading');
+    useEffect(() => { setPage(1); setPages(0); setState('loading'); }, [root, rel]);
+    useEffect(() => {
+      let live = true;
+      fetch('/api/studio-files/pdfinfo?' + qs(root, rel)).then(r => r.ok ? r.json() : Promise.reject(r)).then(j => {
+        if (live) { setPages(j.pages || 0); }
+      }).catch(() => { if (live) setState('failed'); });
+      return () => { live = false; };
+    }, [root, rel]);
+    const src = '/api/studio-files/pdfpage?' + qs(root, rel) + '&n=' + page + '&w=900';
+    const step = d => setPage(p => Math.max(1, Math.min(pages || 1, p + d)));
+    return h('div', { style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 0 } },
+      h('div', { style: { flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', justifyContent: 'center', background: '#02050b' } },
+        state === 'failed'
+          ? h('div', { style: { padding: 16, color: '#9fb6d6' } }, 'Couldn’t read ' + name + '.')
+          : h('img', { src, alt: name + ', page ' + page, onLoad: () => setState('ok'), onError: () => setState('failed'),
+            style: { maxWidth: '100%', height: 'auto', alignSelf: 'flex-start', background: '#fff' } })),
+      pages > 0 && h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center', padding: '6px 0', fontSize: 11, color: '#9fb6d6' } },
+        h('button', { className: 'btn', style: BTN, disabled: page <= 1, onClick: () => step(-1), 'aria-label': 'Previous page' }, '‹'),
+        h('span', { style: { fontFamily: 'JetBrains Mono, Consolas, monospace' } }, 'p. ' + page + ' / ' + pages),
+        h('button', { className: 'btn', style: BTN, disabled: page >= pages, onClick: () => step(1), 'aria-label': 'Next page' }, '›')));
+  }
+
   // props.root / props.path / props.view open a given folder and view
   // (the Code workspace opens Projects as a City); otherwise the last used.
   function Files3DPanel(props) {
@@ -2549,7 +2578,7 @@
             selIt.cat === 'image' ? h('img', { src: rawURL, alt: selIt.name, style: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' } })
               : selIt.cat === 'video' ? h('video', { src: rawURL, controls: true, preload: 'metadata', style: { width: '100%', maxHeight: '100%' } })
                 : selIt.cat === 'audio' ? h('div', { style: { padding: 20, width: '100%' } }, h('audio', { src: rawURL, controls: true, style: { width: '100%' } }))
-                  : selIt.ext === 'pdf' ? h('iframe', { src: rawURL, title: selIt.name, style: { width: '100%', height: '100%', border: 'none', background: '#fff' } })
+                  : selIt.ext === 'pdf' ? h(PdfPagePreview, { root, rel: selIt.rel, name: selIt.name })
                     : preview.text != null ? h('pre', { style: { margin: 0, padding: 10, fontSize: 11, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#cfe0f5', fontFamily: 'JetBrains Mono, Consolas, monospace', width: '100%' } }, preview.text + (preview.truncated ? '\n\n… (preview cut at 256 KB)' : ''))
                       : selIt.dir ? h('div', { style: { padding: 16, color: '#9fb6d6', lineHeight: 1.7 } }, 'Folder with ' + selIt.kids.length + ' items shown here.', h('br'), 'Double-click it, press Enter, or use "Enter folder" to fly inside.')
                         : h('div', { style: { padding: 16, color: '#7f93ad' } }, TEXT_PREVIEW.has(selIt.ext) ? 'Loading…' : 'No preview for this type. Open it or show it in Explorer.')),
