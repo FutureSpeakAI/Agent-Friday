@@ -127,7 +127,7 @@ Skills are portable. They can be imported from a folder, a `.zip`, a legacy `.ya
 
 ## SkillOpt Engine
 
-The SkillOpt engine (`skillopt_engine.py`) tracks skill performance over time and evolves skills through an optimization loop inspired by Andrej Karpathy's SkillOpt work.
+The SkillOpt engine (`skillopt_engine.py`) tracks skill performance over time and evolves skills through an optimization loop inspired by Microsoft's SkillOpt (github.com/microsoft/SkillOpt).
 
 ### Architecture
 
