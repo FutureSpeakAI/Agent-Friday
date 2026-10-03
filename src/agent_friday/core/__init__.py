@@ -2623,20 +2623,24 @@ DEFAULT_SETTINGS = {
         "head_smoothing": 0.35,
         "holo_cues": 0.6,
         # The hologram window's depth. head.z is octaves nearer (log2 of the
-        # face-width ratio against the calibrated neutral), and the zoom is
-        # 2 ** (z * depth_strength), so at 1.0 halving your distance doubles
-        # the avatar: it behaves as if it sat right at the glass. zoom_in_max
-        # and zoom_out_max bound it; 1.8 is a clear lean-in without the
-        # avatar filling the screen, and the engine caps zoom_in_max at 2.5
-        # so the eye can never reach the avatar. head_response is the One
-        # Euro speed term on its own (how hard a quick lean is followed);
-        # head_smoothing above stays the stillness cutoff. neutral_face_width
-        # is the calibrated face-box width for "sitting normally"; 0 means
-        # not calibrated and the engine assumes 0.18.
+        # face-width ratio against the calibrated neutral), and the "zoom" is
+        # 2 ** (z * depth_strength): how many times nearer the glass the eye
+        # sits than at rest, so at 1.0 it follows your real distance.
+        # zoom_in_max and zoom_out_max bound it; the engine caps zoom_in_max
+        # at 2.5 so the eye can never reach the avatar behind the glass.
+        # head_response is the One Euro speed term on its own (how hard a
+        # quick lean is followed); head_smoothing above stays the stillness
+        # cutoff. neutral_face_width is the calibrated face-box width for
+        # "sitting normally"; 0 means not calibrated and the engine assumes
+        # 0.18. viewing_distance_cm and screen_width_cm are the window's
+        # scale, so a head movement becomes the same movement behind the
+        # glass; screen_width_cm 0 means worked out from the display.
         "zoom_in_max": 1.8,
         "zoom_out_max": 1.5,
         "head_response": 0.5,
         "neutral_face_width": 0,
+        "viewing_distance_cm": 60,
+        "screen_width_cm": 0,
         # Dock depth: shelf tilt, how far icons stand off the shelf, and how
         # much a button swells as the pointer nears it. 0 is the flat dock.
         "dock_depth": 1.0,

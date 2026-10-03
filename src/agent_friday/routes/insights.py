@@ -162,12 +162,49 @@ EVOLUTION_FILE = FRIDAY_DIR / "evolution.json"
 
 #: The desktop scene's structures, in EVOLUTION_PATH order (index.html).
 SCENE_NAMES = (
-    'GENESIS LATTICE', 'SACRED SPHERE', 'SHANNON NETWORK',
+    'GENESIS LATTICE', 'DYSON SPHERE', 'SHANNON NETWORK',
     'GEODESIC CATHEDRAL', 'LOVELACE ASTROLABE', 'VON NEUMANN TESSERACT',
     'DIRAC PROBABILITY', 'MANDELBROT SET', 'TURING MOBIUS',
     'OCEAN OF LIGHT', 'FIBONACCI NERVE', 'TRANSCENDENCE',
-    'GIGA EARTH (REZ)',
+    'GIGA EARTH (REZ)', 'EINSTEIN-ROSEN BRIDGE', 'HAWKING RADIATION',
 )
+
+#: Other names a structure answers to (EVOLUTION_PATH's aliases): a renamed
+#: structure keeps its old name, and a structure its everyday one.
+SCENE_ALIASES = {
+    'SACRED SPHERE': 'DYSON SPHERE',
+    'WORMHOLE': 'EINSTEIN-ROSEN BRIDGE',
+    'BLACK HOLE': 'HAWKING RADIATION',
+}
+
+
+def scene_index_for(text):
+    """The structure a spoken or typed name means: its name or an alias, with
+    or without "the", then any name or alias it contains or is contained in;
+    -1 when nothing matches. The page's fridayStructureIndex does the same."""
+    norm = lambda s: re.sub(r'[^a-z0-9]+', ' ', str(s or '').lower()).strip()
+    t = re.sub(r'^(the|a|an) ', '', norm(text))
+    if not t:
+        return -1
+    names = [[norm(n)] + [norm(a) for a, to in SCENE_ALIASES.items() if to == n] for n in SCENE_NAMES]
+    for i, ns in enumerate(names):
+        if t in ns:
+            return i
+    for i, ns in enumerate(names):
+        if any(n in t or t in n for n in ns):
+            return i
+    return -1
+
+
+def pin_scene(index):
+    """Keep `index` (or None, back to the calendar) as the structure shown,
+    as the picker does. False when it is not a structure."""
+    if index is not None and _scene_index(index) is None:
+        return False
+    own = _read_json(EVOLUTION_FILE)
+    own['preferred_scene_index'] = index
+    EVOLUTION_FILE.write_text(json.dumps(own, indent=2), encoding='utf-8')
+    return True
 
 
 def _scene_index(val):
@@ -220,9 +257,12 @@ def get_evolution():
                                 'error': 'preferred_scene_index must be null or a '
                                          'whole number from 0 to %d' % (len(SCENE_NAMES) - 1)}), 400
             # An explicit null is kept, so a pin recorded in personality.json
-            # stays cleared.
-            own['preferred_scene_index'] = val
-            _save_own()
+            # stays cleared. The same writer voice uses (pin_scene).
+            try:
+                pin_scene(val)
+            except Exception:
+                pass
+            own = _read_json(EVOLUTION_FILE)
         return jsonify({'status': 'ok', 'preferred_scene_index': own.get('preferred_scene_index')})
 
     today = _date.today()
