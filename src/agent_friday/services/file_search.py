@@ -174,7 +174,11 @@ def search_files(query: str = "", root: str | None = None,
         return {"query": query, "results": [], "scanned": 0, "truncated": False,
                 "error": err, "vault": _vault_note()}
 
-    deadline = time.monotonic() + _TIME_BUDGET_S
+    # Its own budget, or the calling seat's when that is sooner (a local seat
+    # gives a tool 3 s, services/tool_deadline.py); either way what was found
+    # by then comes back marked truncated.
+    from agent_friday.services import tool_deadline
+    deadline = tool_deadline.deadline(_TIME_BUDGET_S)
     budget = {"scanned": 0, "truncated": False}
     query = (query or "").strip()
 

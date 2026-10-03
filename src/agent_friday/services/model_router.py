@@ -2963,6 +2963,18 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
             prefix += "\n== WHAT YOU ACTUALLY ARE ==\n" + _acct + "\n"
     except Exception:
         pass
+    # A local seat is told, in one line, which model it is, its window, what it
+    # cannot do and that the conversation stays on this PC. Only a provider the
+    # egress gate itself treats as local gets the line, so the privacy claim is
+    # exactly as true as the gate's own decision. Friday-authored text with no
+    # user data in it, and stable across turns, so it sits in the cached prefix.
+    try:
+        from agent_friday.services.local_brain import self_knowledge_line as _self_line
+        _line = _self_line(provider)
+        if _line:
+            prefix += "\n== THIS SEAT ==\n" + _line + "\n"
+    except Exception:
+        pass
 
     # v5 personalization — fold in the LOCAL user model + learned heuristics.
     # Both are TIER_1 behavioral text (never raw PII), both best-effort, and both
