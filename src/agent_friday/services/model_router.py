@@ -1959,6 +1959,18 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 resp["_reasoning_local"] = bool(local_bypass)
             # Publish the seat's timings (llama-server) to whoever asked for
             # them -- the voice session records `prompt_n` as prefill_tokens.
+            # The prompt-cache audit, per turn: how much of the prompt the
+            # seat reused and how long the rest took to read. This is the
+            # measurement behind the stable-prefix assembly; a turn that
+            # repeats its prefix shows reused close to prompt.
+            try:
+                _tm = resp.get("timings") if isinstance(resp, dict) else None
+                if isinstance(_tm, dict) and _tm.get("prompt_n") is not None:
+                    print("[prompt-cache] reused=%s prompt=%s prompt_ms=%s model=%s"
+                          % (_tm.get("cache_n"), _tm.get("prompt_n"),
+                             _tm.get("prompt_ms"), model), flush=True)
+            except Exception:
+                pass
             _tsink = TIMINGS_SINK.get()
             if _tsink is not None and isinstance(resp, dict) and resp.get("timings"):
                 try:
@@ -3520,10 +3532,20 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     _T2 = getattr(_VaultTier, 'PRIVATE', 2)
     _T3 = getattr(_VaultTier, 'SENSITIVE', 3)
 
-    sections = []  # list of (tier, text)
+    # Two lists, not one. Everything that is the same for every turn of a
+    # conversation (persona, the generated tool text, the workspace) goes
+    # first; everything chosen by THIS message (wiki matches, memories,
+    # skills, the screen, the clock) goes after the clock header, which is
+    # `prompt_cache.VOLATILE_MARKER`. A local seat reuses its prompt cache
+    # only up to the first changed byte, so a per-message block near the top
+    # made it re-read the whole prompt every turn (43 s measured); and the
+    # cloud caches the prefix above the marker. Render order is orthogonal
+    # to tier, authority and gating: each section keeps its own.
+    _stable, _volatile = [], []  # lists of (tier, text)
+    _phase = ["stable"]
 
     def add(text, tier=_T1):
-        sections.append((tier, text))
+        (_stable if _phase[0] == "stable" else _volatile).append((tier, text))
 
     def classify(text, fallback_tier=_T2):
         if vault_control is not None:
@@ -3554,6 +3576,8 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     except Exception as _e:
         add(f"\n== TODAY'S CONTEXT ==\n(load failed: {_e})", _T1)
 
+    # Today's context is the same for every turn of the day; the workspace
+    # is the same for every turn of the conversation. Both stay in the head.
     # Layer 1: Active workspace context (from frontend) — may show finance/health
     # data, so classify by what's actually in the payload.
     if workspace_context:
@@ -3566,6 +3590,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         if workspace_context.get('focus'):
             add(f"Current focus: {workspace_context['focus']}", _T2)
         sources_consulted.append('workspace')
+    _phase[0] = "volatile"
 
     # Layer 2: Vault data (personality always included). Friday's own state is
     # not personal data about the user, so it stays public.
@@ -3819,9 +3844,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # position for an instruction the model must not override.
     try:
         from agent_friday.services.clock import clock_context_block
-        add(clock_context_block(), _T1)
+        _clock_section = (_T1, clock_context_block())
     except Exception:
-        pass
+        _clock_section = None
     # LIVE CAPABILITY STATE, right behind the clock and for the same reason:
     # it is true of the machine right now, not of anything remembered. It
     # rides in the volatile tail (after prompt_cache.VOLATILE_MARKER) so a
@@ -3851,6 +3876,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
                            turn=_presence.current_turn())
         except Exception:
             pass
+    # Stable first, then the clock header (the cache boundary), then what
+    # this message chose.
+    sections = _stable + ([_clock_section] if _clock_section else []) + _volatile
     try:
         from agent_friday.services import retrieval_ledger as _rl
         from agent_friday.services.egress_gate import is_local_provider as _is_local

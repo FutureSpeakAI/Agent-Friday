@@ -1508,7 +1508,31 @@ def chat():
         if cite_sources:
             _extra_system += CITATION_INSTRUCTIONS
 
+        # The newest user turn carries this turn's context on the local seat
+        # (see _prep_for); the original text is kept so a cloud fallback can
+        # put it back and carry the context in the system prompt instead.
+        _last_user_msg = (messages[-1] if messages and messages[-1].get('role') == 'user'
+                          and isinstance(messages[-1].get('content'), str) else None)
+        _last_user_text = _last_user_msg.get('content') if _last_user_msg is not None else None
+
         def _prep_for(provider):
+            """The system prompt for `provider`, in two parts.
+
+            HEAD is the same bytes on every turn of this conversation: the
+            settings prefix (personality, cLaws), the persona and generated
+            tool text, the workspace, the user model and heuristics, the
+            voice rules, and the sealed action policy last. TAIL is what this
+            message chose: the clock, wiki matches, memories, skills, the
+            screen, session continuity, the pinned situation.
+
+            On the local seat the TAIL rides at the top of the newest user
+            turn and the system message is HEAD alone, so llama-server
+            reuses its cache for the system prompt and the whole history and
+            reads only the new turn (measured: 43 s a turn re-reading a
+            ~21k-token prompt, 0.43 s when the prefix repeated). On the
+            cloud the tail follows the head in the system prompt, below
+            `prompt_cache.VOLATILE_MARKER`, and the policy is sealed last.
+            """
             vc = _get_vault_control() if _vault_local_only() else None
             sp, src = _build_context_prompt(
                 message, workspace, workspace_context, vision_description,
@@ -1516,7 +1540,10 @@ def chat():
                 vault_fallback=_vault_cloud_fallback(),
                 **({"pilot": _pilot} if _pilot is not None else {}),
             )
-            sp = _settings_system_prefix(settings, personality) + (sp or '')
+            from agent_friday.services.prompt_cache import VOLATILE_MARKER as _VM
+            _cut = (sp or '').find(_VM)
+            head, tail = ((sp or '')[:_cut], (sp or '')[_cut:]) if _cut > 0 else ((sp or ''), '')
+            head = _settings_system_prefix(settings, personality) + head
             # v5 personalization: fold in the LOCAL user model + learned heuristics
             # (the same blocks _get_friday_system_prompt injects). /api/chat builds
             # its prompt via _build_context_prompt directly, so without this the
@@ -1527,50 +1554,64 @@ def chat():
                 from agent_friday.services.user_model import render_user_model_prompt
                 _um_block = render_user_model_prompt()
                 if _um_block:
-                    sp = sp + "\n\n== USER MODEL ==\n" + _um_block + "\n"
+                    head = head + "\n\n== USER MODEL ==\n" + _um_block + "\n"
             except Exception:
                 pass
             try:
                 from agent_friday.services.learning_loop import render_heuristics_prompt
                 _heur_block = render_heuristics_prompt(task_type=workspace or None)
                 if _heur_block:
-                    sp = sp + "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur_block + "\n"
-            except Exception:
-                pass
-            if _extra_system:
-                sp = sp + "\n" + _extra_system
-            # A situation the model pinned with check_situation(pin=true):
-            # read now, from memory, on every turn of this conversation.
-            try:
-                from agent_friday.services.situation import pinned_block
-                sp = sp + pinned_block(_conversation_id)
+                    head = head + "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur_block + "\n"
             except Exception:
                 pass
             if voice_mode:
-                sp = (
-                    "=== VOICE MODE ACTIVE ===\n"
+                # Constant while voice mode is on, so it belongs to the head;
+                # at its end, not its start, so it never moves the prefix.
+                head = head + (
+                    "\n\n=== VOICE MODE ACTIVE ===\n"
                     "The user is speaking to you via microphone. Your reply will be read aloud.\n"
                     "Rules: Keep it SHORT (1-3 sentences). Never use markdown — no asterisks, "
                     "headers, bullet points, or code blocks. Use natural speech patterns and "
                     "contractions. Ask a follow-up question to keep the conversation flowing.\n"
-                    "=========================\n\n"
-                ) + sp
+                    "=========================\n"
+                )
+            if _extra_system:
+                tail = tail + "\n" + _extra_system
+            # A situation the model pinned with check_situation(pin=true):
+            # read now, from memory, on every turn of this conversation.
+            try:
+                from agent_friday.services.situation import pinned_block
+                tail = tail + pinned_block(_conversation_id)
+            except Exception:
+                pass
             lookup = {}
             # Scrub guarded cloud turns. Scrubbing every message
             # (not just the new one) means a cached LOCAL reply retrieved by the
             # pruner is scrubbed at retrieval time before it can reach the cloud.
             from agent_friday.services.egress_gate import is_unrestricted_cloud
             if provider != 'local' and not is_unrestricted_cloud():
-                if sp:
-                    sp, sub = _scrub_pii(sp)
+                if head:
+                    head, sub = _scrub_pii(head)
+                    lookup.update(sub)
+                if tail:
+                    tail, sub = _scrub_pii(tail)
                     lookup.update(sub)
                 _scrub_messages_pii(messages, lookup)
                 if lookup:
-                    sp += "\n\n" + PRIVACY_PLACEHOLDERS_NOTE
+                    tail += "\n\n" + PRIVACY_PLACEHOLDERS_NOTE
             # This route assembles its own prompt rather than going through
             # `_get_friday_system_prompt`, so the policy and the override
             # strip are applied here, last.
-            return seal_system_prompt(sp, "/api/chat prompt"), src, lookup
+            if provider == 'local' and _last_user_msg is not None and tail.strip():
+                from agent_friday.services.action_policy import strip_authority_overrides
+                _last_user_msg['content'] = (
+                    "[CONTEXT FOR THIS TURN — retrieved by Friday, not written by the user]\n"
+                    + strip_authority_overrides(tail, source="/api/chat turn context").strip()
+                    + "\n[END OF CONTEXT]\n\n" + _last_user_text)
+                return seal_system_prompt(head, "/api/chat prompt"), src, lookup
+            if _last_user_msg is not None:
+                _last_user_msg['content'] = _last_user_text
+            return seal_system_prompt(head + tail, "/api/chat prompt"), src, lookup
 
         system_prompt, sources, pii_lookup = _prep_for(_provider)
 
