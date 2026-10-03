@@ -974,6 +974,28 @@ def _suggest_near_miss(p: Path) -> str:
     return ""
 
 
+#: The whole-file redaction of the last few files read, keyed by path and
+#: version (mtime, size), so paging a large file does not redact it per page.
+_REDACTED_CACHE: dict = {}
+_REDACTED_CACHE_MAX = 8
+
+
+def _redacted_once(p, text: str) -> str:
+    from agent_friday.services import credential_paths as _cred
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size, len(text))
+    except OSError:
+        return _cred.redact_secrets(text)
+    hit = _REDACTED_CACHE.get(key)
+    if hit is None:
+        hit = _cred.redact_secrets(text)
+        if len(_REDACTED_CACHE) >= _REDACTED_CACHE_MAX:
+            _REDACTED_CACHE.pop(next(iter(_REDACTED_CACHE)))
+        _REDACTED_CACHE[key] = hit
+    return hit
+
+
 def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
     if not raw:
@@ -1015,7 +1037,7 @@ def _tool_read_file(inp):
     # that starts or ends inside a key block (or a one-line window the model
     # asks for by offset) would otherwise show a fragment no redactor can
     # recognise on its own. Offsets therefore count lines of the withheld text.
-    text = _cred.redact_secrets(text)
+    text = _redacted_once(p, text)
     # One page per call, and a partial page says where the next one starts.
     # The ceiling here is the executor's, so a file read is never cut twice.
     page, info = _tool_output.window_lines(text, offset=(inp or {}).get("offset") or 1,
@@ -12047,6 +12069,19 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tname, {"raw": str(_raw)[:300]}, _arg_error, _tool_ms)
                 _ledger_tool_call(tname, _arg_error, _tool_ms, orb_id, session_ctx)
+                # The same bad call, sent again and again, is a loop like any
+                # other: the guard sees it before the error goes back, or a model
+                # that keeps resending the same arguments is never stopped.
+                _loop_hit = (_loop_guard.observe(tname, _raw if isinstance(_raw, dict)
+                                                 else {"raw": str(_raw)[:300]})
+                             if _loop_guard is not None else None)
+                if _loop_hit:
+                    _pilot_outcome(session_ctx, "error")
+                    _orb(status='error', label='Loop detected', progress=1.0)
+                    _led_done()
+                    return _tb.limit_message("loop", detail=_loop_hit,
+                                             used=_round,
+                                             model=str(model or "")), tool_trace
                 convo.append({"role": "tool", "tool_call_id": tcid,
                               "content": _arg_error})
                 continue
