@@ -483,19 +483,31 @@ def context_block(cid: str) -> str:
         lines += ["Standing instructions:", instr]
     files = proj.get("files") or []
     if files:
+        from agent_friday.services import credential_paths as _cred
         lines.append("Files (%d):" % len(files))
         budget = EXCERPT_TOTAL_CHARS
         for f in files:
             name = f.get("name") or ""
             size = int(f.get("bytes") or 0)
-            excerpt = ""
+            excerpt, more = "", ""
             if budget > 0 and _is_text(name) and size <= EXCERPT_MAX_FILE_BYTES:
-                blob = read_file(pid, name) or b""
-                text = blob.decode("utf-8", "replace").strip()
+                # Nothing of a key rides in the prompt (read_file's rule, services/
+                # credential_paths). A file that is key material by name, place or
+                # content is listed and never quoted, and a key or token inside the
+                # text is withheld from the WHOLE text before the excerpt is cut, so
+                # the cut cannot leave a fragment of one.
+                try:
+                    if _cred.check(contained(_files_dir(pid), _file_name(name))):
+                        lines.append("- %s (%d bytes, withheld: key material)" % (name, size))
+                        continue
+                    blob = read_file(pid, name) or b""
+                    text = _cred.redact_secrets(blob.decode("utf-8", "replace")).strip()
+                except Exception:   # what cannot be judged or redacted is not quoted
+                    text = ""
                 excerpt = text[:min(EXCERPT_CHARS, budget)]
+                more = " …" if len(excerpt) < len(text) else ""     # the text, once redacted
                 budget -= len(excerpt)
             if excerpt:
-                more = " …" if len(excerpt) < size else ""
                 lines.append("- %s (%d bytes): %s%s" % (name, size, excerpt.replace("\n", " / "), more))
             else:
                 lines.append("- %s (%d bytes)" % (name, size))
