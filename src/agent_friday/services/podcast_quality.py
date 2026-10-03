@@ -208,7 +208,14 @@ def relayed_outlet(story: dict) -> str:
         if m:
             return m.group(1).strip()
     m = re.search(r"\((?:[^()/]{1,60}/\s*)?([^()/]{2,60})\)\s*$", story.get("title") or "")
-    return m.group(1).strip() if m else ""
+    if m:
+        return m.group(1).strip()
+    # The publisher's own page, when it was read, names itself.
+    from agent_friday.services import page_reader
+    pub = (page_reader.known_meta(story.get("url") or "").get("publisher") or "").strip()
+    if pub and re.sub(r"[^a-z0-9]", "", pub.lower()) != re.sub(r"[^a-z0-9]", "", _site_name(dom)):
+        return pub
+    return ""
 
 
 def spoken_outlet(story: dict) -> str:

@@ -25,6 +25,10 @@ MODES = ("compare", "primary", "background", "claims", "follow", "local", "make"
 ARCHIVE_DAYS = {"compare": 4, "claims": 4, "local": 7, "background": 30, "primary": 2}
 MAX_RELATED = {"compare": 6, "claims": 6, "local": 6, "background": 12, "primary": 3}
 STATUSES = ("confirmed", "disputed", "one side only")
+#: Tokens of each fetched source the model reads: the passages the question
+#: needs (page_reader.select_text), so four full sources and the answer fit
+#: the local seat's 8,192-token window.
+SOURCE_TOKENS = 900
 _PRIMARY_RE = re.compile(
     r"https?://[^\s\"'<>)]*(?:\.gov|\.mil|congress\.gov|courtlistener\.com|supremecourt\.gov|sec\.gov"
     r"|arxiv\.org|doi\.org|nih\.gov|europa\.eu|\.int)(?:/[^\s\"'<>)]*)?", re.I)
@@ -51,9 +55,30 @@ def _archive(days: int) -> list[dict]:
     return out
 
 
-def _fetch(url: str) -> tuple[str, str]:
+def _fetch(url: str) -> tuple[str, str, list]:
+    """(title, text, links): the article read by the page reader, with its
+    links as numbered references kept beside the text."""
     from agent_friday.services import news_engine as ne
-    return ne._extract_article_text(url)
+    from agent_friday.services import page_reader
+    title, text = ne._extract_article_text(url)
+    page = page_reader.recent(url)
+    return title, text, (page.links if page is not None else [])
+
+
+def _got(fetched) -> tuple[str, str, list]:
+    """A fetch's answer as (title, text, links); a reader that returns no
+    links gives []."""
+    f = tuple(fetched or ())
+    return (f[0] if f else "", f[1] if len(f) > 1 else "", list(f[2] or []) if len(f) > 2 else [])
+
+
+def _primary_links(links: list, text: str) -> list[str]:
+    """The article's links to its primary documents: from where its links
+    point (page_reader.primary_links), then any such address in its text."""
+    from agent_friday.services import page_reader
+    out = [x["url"] for x in page_reader.primary_links(links)]
+    out += [m.rstrip(".,") for m in _PRIMARY_RE.findall(text or "")]
+    return list(dict.fromkeys(out))[:3]
 
 
 def _related(title: str, url: str, items: list[dict], limit: int) -> list[dict]:
@@ -115,10 +140,13 @@ SYSTEM = (
 
 
 def _ask(mode, docs, title, city, llm):
+    from agent_friday.services import page_reader
     lines = []
+    question = "%s %s" % (title, _ASK.get(mode, ""))
     for d in docs:
         # Links come from code, never from the model: it never sees one.
-        text = re.sub(r"https?://\S+", "[link]", d["text"][:3000])
+        text = re.sub(r"https?://\S+", "[link]",
+                      page_reader.select_text(d["text"], question, SOURCE_TOKENS))
         lines.append("[%s] %s (%s%s)\n%s" % (d["sid"], d["title"], d["outlet"],
                                              (", " + d["when"]) if d.get("when") else "", text))
     shape = _SHAPES[mode] % city if "%s" in _SHAPES[mode] else _SHAPES[mode]
@@ -155,9 +183,9 @@ def discuss(url: str, title: str = "", mode: str = "compare", *, fetch=None, arc
             return {"status": "ok", "mode": mode, "findings": [], "read": [], "sources": [],
                     "note": "No local angle: set your city in News, Local beat, and ask again."}
     try:
-        page_title, text = fetch(url)
+        page_title, text, links = _got(fetch(url))
     except Exception:
-        page_title, text = "", ""
+        page_title, text, links = "", "", []
     title = title or page_title or url
     docs = [_doc("D1", title, text, url, _domain(url))]
     related = _related(title, url, archive(ARCHIVE_DAYS.get(mode, 4)), MAX_RELATED.get(mode, 6))
@@ -170,17 +198,15 @@ def discuss(url: str, title: str = "", mode: str = "compare", *, fetch=None, arc
                          it.get("source"), (it.get("published_at") or "")[:10]))
     primary = []
     if mode == "primary":
-        for i, link in enumerate(dict.fromkeys(_PRIMARY_RE.findall(text or "")), start=1):
-            primary.append({"id": "P%d" % i, "url": link.rstrip(".,")})
-            if len(primary) >= 3:
-                break
+        for i, link in enumerate(_primary_links(links, text), start=1):
+            primary.append({"id": "P%d" % i, "url": link})
         if not primary:
             return {"status": "ok", "mode": mode, "primary": [], "findings": [], "read": [],
                     "sources": _public(docs), "note": "Primary source not found in the article; "
                     "I won't guess one."}
         for p in primary:
             try:
-                ptitle, ptext = fetch(p["url"])
+                ptitle, ptext, _plinks = _got(fetch(p["url"]))
             except Exception:
                 ptitle, ptext = p["url"], ""
             docs.append(_doc(p["id"], ptitle, ptext, p["url"], _domain(p["url"])))

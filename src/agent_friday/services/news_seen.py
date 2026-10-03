@@ -259,11 +259,17 @@ def window_hours(routine: str) -> float:
         return float(DEFAULT_WINDOW_H)
 
 
-def is_article(item: dict) -> bool:
+def is_article(item: dict, meta: dict | None = None) -> bool:
     """A story, not a page: no forecast, headline index, app promo, homepage,
-    untitled or cut-off post ("Yet More …")."""
+    untitled or cut-off post ("Yet More …"), and no page whose own metadata
+    says it is a section front or a list of links (`meta`, or what a read of
+    the page kept: page_reader.known_meta)."""
     title = (item.get("title") or "").strip()
     if not title:
+        return False
+    from agent_friday.services import page_reader
+    if page_reader.is_article_meta(meta if meta is not None
+                                   else page_reader.known_meta(item.get("url") or "")) is False:
         return False
     if _NOT_ARTICLE_RE.match(title.rstrip(".! ")) or _PROMO_RE.match(title) or _promotes(item):
         return False

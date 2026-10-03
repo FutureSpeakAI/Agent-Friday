@@ -799,27 +799,41 @@ def _drop_echoes(new: list[dict], before: list[dict]) -> tuple[list, list]:
 
 
 _ARTICLES: dict = {}
+_ARTICLES_MAX = 64
+#: Article tokens a quote is checked against: the passage that carries it
+#: and its neighbours, found by the quoted sentence itself.
+QUOTE_CHECK_TOKENS = 700
 
 
 def article_text(url: str) -> str:
     """The article's own text, fetched through the guarded fetcher (publisher
-    link first), or "" when it cannot be had. Cached for the process."""
+    link first), or "" when it cannot be had. Cached for the process. What the
+    publisher's page says about itself is kept under the item's own link too,
+    so an aggregator's item is named for the outlet it led to."""
     if not url:
         return ""
     if url not in _ARTICLES:
         try:
-            from agent_friday.services import news_engine, news_links
-            _t, text = news_engine._extract_article_text(news_links.resolve_url(url))
-            _ARTICLES[url] = (text or "")[:20000]
+            from agent_friday.services import news_engine, news_links, page_reader
+            real = news_links.resolve_url(url)
+            _t, text = news_engine._extract_article_text(real)
+            _ARTICLES[url] = text or ""
+            page = page_reader.recent(real)
+            if page is not None and page.meta and real != url:
+                page_reader.remember_meta([url], page.meta)
         except Exception:
             _ARTICLES[url] = ""
+        while len(_ARTICLES) > _ARTICLES_MAX:
+            _ARTICLES.pop(next(iter(_ARTICLES)))
     return _ARTICLES[url]
 
 
 def _fetch_for_speech(lines: list[dict], docs: list[dict]) -> None:
     """Reported speech is checked against the source sentence that carries it;
     when the item's snippet cannot (it is often cut off mid-sentence), the
-    article itself is fetched, for that story only."""
+    article itself is fetched, for that story only, and the passages that
+    sentence is in are added to what the check reads."""
+    from agent_friday.services import page_reader
     story_list = quality.stories(docs)
     by = {d["sid"]: d for d in docs}
     sids = {s["sid"]: s for s in story_list}
@@ -835,8 +849,13 @@ def _fetch_for_speech(lines: list[dict], docs: list[dict]) -> None:
                                                                           quality.SPEECH_STATES_MIN)):
                 for c in cluster:
                     d = by.get(c)
-                    if d is not None and "article" not in d:
-                        d["article"] = article_text(d.get("url") or "")
+                    if d is None:
+                        continue
+                    # The passage the quoted sentence is in, found by the sentence itself.
+                    found = page_reader.select_text(article_text(d.get("url") or ""), sent,
+                                                    QUOTE_CHECK_TOKENS)
+                    if found and found not in d.get("article", ""):
+                        d["article"] = (d.get("article", "") + "\n" + found).strip()
                 story_list = quality.stories(docs)
 
 
