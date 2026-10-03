@@ -240,7 +240,8 @@ class VoiceSession:
                  barge_detector=None, rms=None,
                  barge_cooldown_s: float = BARGE_COOLDOWN_S,
                  first_token_filler_s: float | None = None,
-                 first_token_abort_s: float | None = None):
+                 first_token_abort_s: float | None = None,
+                 stream_ear=None):
         self.send = send
         self.ear = ear
         self.mouth = mouth
@@ -295,6 +296,15 @@ class VoiceSession:
         # 0 turns each off.
         self.first_token_filler_s = float(first_token_filler_s or 0) or None
         self.first_token_abort_s = float(first_token_abort_s or 0) or None
+        # The streaming ear (voice_ear_stream.StreamingEar) when there is one:
+        # true partials while the owner speaks, the final at the endpoint.
+        # Without it, the whisper ear's 2-second windows stand in.
+        self.stream_ear = stream_ear
+        self._speculating = threading.Lock()
+        # Results that finish after the turn that asked for them (a delegated
+        # task, the deeper mind's answer) arrive over services/
+        # voice_live_channel and are spoken between turns, never over one.
+        self._inject_q: "queue.Queue" = queue.Queue()
 
     # ── frames ───────────────────────────────────────────────────────────
 
@@ -350,6 +360,13 @@ class VoiceSession:
             self._client_speaking(bool(msg.get("on")))
         elif t == "conversation":
             self.conversation_id = (msg.get("id") or "").strip() or None
+            # Late results and tool reports follow the thread he switched to.
+            rt = self.hooks.get("retarget")
+            if rt is not None and self.conversation_id:
+                try:
+                    rt(self.conversation_id)
+                except Exception:
+                    pass
         elif t == "text" and msg.get("text"):
             self.spawn_turn(str(msg["text"]))
         elif t == "end":
@@ -423,6 +440,20 @@ class VoiceSession:
                 self._partials = []
                 self._set_state("hearing")
                 self.stage("ear", "busy", "hearing")
+                h = self.hooks.get("hearing")
+                if h is not None:
+                    try:
+                        h()
+                    except Exception:
+                        pass
+                if self.stream_ear is not None:
+                    # The endpointer's buffer holds the pre-roll before the
+                    # onset; the streaming ear hears it too.
+                    self._stream_feed(bytes(buf))
+                    return
+            if self.stream_ear is not None:
+                self._stream_feed(pcm)
+                return
             # Speculative chunked transcription while speech continues.
             if len(buf) - self._chunk_pos >= self._chunk_bytes:
                 window = bytes(buf[self._chunk_pos:self._chunk_pos + self._chunk_bytes])
@@ -449,10 +480,48 @@ class VoiceSession:
                            detail="VAD endpointed an utterance; ASR returned no text")
             self.stage("ear", "idle")
 
+    def _stream_feed(self, pcm: bytes) -> None:
+        """One chunk to the streaming ear; a changed partial goes to the
+        client, a stable one to the speculative prefill (single-flight: a
+        prefill still running is never queued behind)."""
+        try:
+            ev = self.stream_ear.feed(pcm)
+        except Exception as e:
+            log.warning("streaming ear failed on a chunk: %s", e)
+            return
+        if not ev:
+            return
+        text, stable = ev
+        self.send({"type": "partial_transcript", "text": text})
+        spec = self.hooks.get("speculate")
+        if stable and spec is not None and self._speculating.acquire(blocking=False):
+            def _run():
+                try:
+                    spec(text)
+                except Exception as e:
+                    log.debug("speculative prefill failed: %s", e)
+                finally:
+                    self._speculating.release()
+            threading.Thread(target=_run, daemon=True,
+                             name=f"voice-speculate-{self.session_id}").start()
+
     def _final_transcript(self, utterance: bytes):
-        """§4.2: re-do a short utterance whole; join the tail of a long one."""
+        """§4.2: re-do a short utterance whole; join the tail of a long one.
+        With a streaming ear, the final is its flush (the utterance was heard
+        as it was spoken); the whisper ear re-hears it only if that is empty."""
         ms = (len(utterance) / 2) / ASR_RATE * 1000.0
         t0 = self._clock()
+        if self.stream_ear is not None:
+            try:
+                text = self.stream_ear.finish()
+            except Exception as e:
+                log.error("streaming ear final failed: %s: %s", type(e).__name__, e)
+                text = ""
+            if text:
+                self._chunk_pos = 0
+                self._partials = []
+                self.last_ear_ms = (self._clock() - t0) * 1000.0
+                return text.strip(), ms
         try:
             if ms <= self.rejoin_s * 1000.0 or not self._partials:
                 text = self._transcribe(utterance)
@@ -486,6 +555,24 @@ class VoiceSession:
     def spawn_turn(self, user_text: str, audio_ms: float | None = None) -> None:
         threading.Thread(target=self.run_turn, args=(user_text, audio_ms),
                          daemon=True).start()
+
+    def deliver(self, text: str, kind: str = "result") -> None:
+        """Queue a late result (already introduced as not from the user) to
+        be spoken at the next quiet moment."""
+        if text and str(text).strip():
+            self._inject_q.put((str(text), str(kind or "result")))
+            self._maybe_inject()
+
+    def _maybe_inject(self) -> None:
+        """Speak one queued result if nobody is talking and no turn runs."""
+        if self.done.is_set() or self._current_turn is not None or self._hearing:
+            return
+        try:
+            text, _kind = self._inject_q.get_nowait()
+        except queue.Empty:
+            return
+        threading.Thread(target=self.run_turn, args=(text, None, True), daemon=True,
+                         name=f"voice-inject-{self.session_id}").start()
 
     def barge(self, source: str = "escape") -> None:
         """Stop Friday now (Escape, or the user talking over her)."""
@@ -553,7 +640,9 @@ class VoiceSession:
                     break
                 if filler_s and elapsed >= filler_s and turn["deadline_hit"] is None:
                     turn["deadline_hit"] = "filler"
-                    self._enqueue_clause(turn, FILLER_LINE, receipt)
+                    # Not the answer: it neither counts as a clause nor
+                    # stamps first_clause_ms.
+                    self._enqueue_clause(turn, FILLER_LINE, receipt, filler=True)
                 nxt = [t for t in (filler_s if turn["deadline_hit"] is None else None,
                                    abort_s) if t]
                 wait = (min(nxt) - elapsed) if nxt else 0.5
@@ -566,7 +655,11 @@ class VoiceSession:
             turn["pending"] -= 1
             turn["cv"].notify_all()
 
-    def run_turn(self, user_text: str, audio_ms: float | None = None) -> None:
+    def run_turn(self, user_text: str, audio_ms: float | None = None,
+                 injected: bool = False) -> None:
+        """One turn. ``injected`` marks a late result handed to the mind
+        between turns: it is not the owner's words, so it is never shown or
+        stored as something they said."""
         user_text = (user_text or "").strip()
         if not user_text or self.done.is_set():
             return
@@ -590,7 +683,8 @@ class VoiceSession:
                 receipt.mark("vad_open")
                 receipt.mark("vad_close")
                 receipt.mark("input_complete", audio_ms=audio_ms)
-            self.send({"type": "input_transcript", "text": user_text})
+            if not injected:
+                self.send({"type": "input_transcript", "text": user_text})
             self._status("thinking")
             self._set_state("thinking")
             self.stage("mind", "busy", "thinking")
@@ -641,8 +735,16 @@ class VoiceSession:
             elif not turn["cancel"].is_set():
                 if mind["error"] is not None:
                     e = mind["error"]
-                    # The owner hears a plain sentence, never an exception.
-                    mind["reply"] = MIND_FAILED_LINE
+                    # The owner hears a plain sentence, never an exception;
+                    # what the mind had already said stays said.
+                    said_so_far = " ".join(c for c in turn["spoken"] if c != FILLER_LINE)
+                    lead = (said_so_far + " ") if said_so_far else ""
+                    mind["reply"] = lead + MIND_FAILED_LINE
+                    if streamed["chars"]:
+                        # The streamed words are already queued; the failure
+                        # line follows them (an unstreamed reply is spoken
+                        # whole below).
+                        self._enqueue_clause(turn, MIND_FAILED_LINE, receipt)
                     log.error("brain call failed: %s: %s", type(e).__name__, e)
                     if receipt is not None:
                         receipt.set(brain_failed=True)
@@ -684,8 +786,11 @@ class VoiceSession:
                                 first_clause_ms=turn["first_clause_ms"])
                 except Exception:
                     pass
-                receipt.done(outcome="aborted" if turn["aborted"] else None,
-                             detail=f"barge ({turn['barge']})" if turn["aborted"] else "")
+                receipt.done(outcome=("aborted" if turn["aborted"] else
+                                      "timeout" if turn["deadline_hit"] == "abort" else None),
+                             detail=(f"barge ({turn['barge']})" if turn["aborted"] else
+                                     "no first token by the deadline"
+                                     if turn["deadline_hit"] == "abort" else ""))
             rec = {"type": "turn_receipt", "turn_id": turn["id"],
                    "barge": turn["barge"] or None,
                    "prefill_tokens": prefill, "clauses": turn["clauses"],
@@ -694,6 +799,7 @@ class VoiceSession:
                    "first_audio_ms": turn["first_audio_ms"],
                    "audio_bytes_out": turn["audio_bytes"],
                    "outcome": "aborted" if turn["aborted"] else
+                   "timeout" if turn["deadline_hit"] == "abort" else
                    ("served" if turn["audio_bytes"] else "silent"),
                    "ear_ms": int(getattr(self, "last_ear_ms", 0) or 0),
                    "engines": {"ear": getattr(self.ear, "name", "?"),
@@ -703,7 +809,8 @@ class VoiceSession:
             self.last_receipt = rec
             self.send(rec)
             self.send({"type": "turn_end"})
-            self.send({"type": "voice_turn_done", "user_text": user_text,
+            said = "" if injected else user_text
+            self.send({"type": "voice_turn_done", "user_text": said,
                        "agent_text": reply})
             # A turn spoken off the record never reaches the call's summary,
             # even if off-record ends before the call does.
@@ -713,16 +820,16 @@ class VoiceSession:
             except Exception:
                 _unsaved = False
             if not _unsaved:
-                self.turn_log.append((user_text, reply))
+                self.turn_log.append((said, reply))
             try:
                 p = self.hooks.get("persist")
                 if p:
-                    p(user_text, reply, self.conversation_id)
+                    p(said, reply, self.conversation_id)
             except Exception:
                 pass
             try:
                 a = self.hooks.get("actions")
-                acts = a(user_text) if a else None
+                acts = a(user_text) if (a and not injected) else None
                 if acts:
                     self.send({"type": "action", "actions": acts})
             except Exception:
@@ -731,13 +838,16 @@ class VoiceSession:
                 self._status("listening")
                 self._set_state("listening")
             self._current_turn = None
+        # A late result that arrived during this turn is spoken now.
+        self._maybe_inject()
 
-    def _enqueue_clause(self, turn: dict, clause: str, receipt) -> None:
+    def _enqueue_clause(self, turn: dict, clause: str, receipt, filler=False) -> None:
         if turn["cancel"].is_set():
             return
-        if turn["first_clause_ms"] is None:
-            turn["first_clause_ms"] = int((self._clock() - turn["t0"]) * 1000)
-        turn["clauses"] += 1
+        if not filler:
+            if turn["first_clause_ms"] is None:
+                turn["first_clause_ms"] = int((self._clock() - turn["t0"]) * 1000)
+            turn["clauses"] += 1
         with turn["cv"]:
             turn["pending"] += 1
         self._speak_q.put((turn, clause, receipt))

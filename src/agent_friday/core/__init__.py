@@ -2244,17 +2244,19 @@ DEFAULT_SETTINGS = {
     # working in applications that wanted it.
     "push_to_transcribe_hold_ms": 150,
     "local_voice_tts_voice": "en_US-amy-medium",  # Tier-1 Piper voice id
-    # Which synthesizer the Tier-1 (CPU) path uses. Piper is the default and
-    # stays the default: it is the only local synthesizer that runs acceptably
-    # without a GPU. Kokoro is an ADDITION, selected explicitly, and refuses
-    # rather than silently degrading when it cannot run (see kokoro_voice.py).
-    #   "piper"  — faster-whisper's companion; CPU-capable; GPL-3.0 since Oct 2025
-    #   "kokoro" — Kokoro-82M (Apache-2.0); needs CUDA; higher quality
+    # Which synthesizer local voice speaks with. Kokoro is the default (local
+    # voice spec D4): Apache-2.0, the better voice, on the graphics card when
+    # it fits and on the processor when it does not (the session says which).
+    # Piper's upstream went GPL-3.0 in Oct 2025, so it is no longer a default;
+    # an installed Piper stays the last-resort floor for a phrase Kokoro
+    # cannot speak (services/voice_workers.build_mouth).
+    #   "kokoro" — Kokoro-82M (Apache-2.0); GPU when it fits, else CPU
+    #   "piper"  — CPU-only; GPL-3.0 upstream since Oct 2025
     # These three MUST live here. `_load_settings_raw()` drops any persisted key
     # absent from DEFAULT_SETTINGS, so a key the service layer reads but this
     # dict does not declare is a control that saves, reports success, and
     # reverts on the next read (docs/decisions/2026-09-04-five-dead-settings.md).
-    "local_voice_tts_engine": "piper",
+    "local_voice_tts_engine": "kokoro",
     "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
     "local_voice_kokoro_allow_cpu": True,     # Kokoro may run on the CPU when the card is busy (slower; the session says so) rather than Piper speaking
     # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
@@ -2262,7 +2264,7 @@ DEFAULT_SETTINGS = {
     # model) if desired; the TTS pair (FastPitch+HiFi-GAN) is fixed for v1.
     "local_voice_gpu_asr_model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
     "local_voice_gpu_tts": "fastpitch-hifigan",
-    "voice_silence_ms": 800,               # trailing silence (ms) that ends a local-voice turn
+    "voice_silence_ms": 500,               # trailing silence (ms) that ends a local-voice turn (spec P2: 500; the streaming ear has the transcript ready at the endpoint)
     # Clean-sheet voice (docs/design/active/voice-system-clean-sheet.md §8.1):
     # per-stage GPU policy read by services/voice_manifest.read_selection()
     # and enforced by its proofs ("required" refuses a CPU engine); idle
@@ -2271,6 +2273,17 @@ DEFAULT_SETTINGS = {
     "voice_ear_gpu": "if_free",            # never | if_free | required
     "voice_mouth_gpu": "if_free",          # never | if_free | required
     "voice_idle_unload_s": 600,            # GPU voice worker idle unload (s)
+    # ── The voice front (local voice spec §4.1, §6) ──
+    # The small fast model that answers live voice turns on its own seat; the
+    # brain takes deep work asynchronously. Read by services/voice_front.
+    "voice_front_model": "qwen3-4b-instruct-2507",   # qwen3-4b-instruct-2507 | qwen3-1.7b
+    # The brain during a call: "auto" = beside the front when the card holds
+    # both, else parked for the call; "parked"; "resident".
+    "voice_brain_during_calls": "auto",
+    # Where a deep question asked by voice goes: "local_only" (the brain,
+    # or after the call) | "follow_model_routing" (the owner's routing,
+    # cloud included, behind the same gates).
+    "voice_async_routing": "local_only",
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".

@@ -15,7 +15,7 @@ from agent_friday.services.model_catalog import _tts_engines
 # ------------------------------------------------------- the setting persists
 
 @pytest.mark.parametrize("key, default", [
-    ("local_voice_tts_engine", "piper"),
+    ("local_voice_tts_engine", "kokoro"),   # D4: Kokoro is the default mouth
     ("local_voice_kokoro_voice", "af_heart"),
     ("local_voice_kokoro_allow_cpu", True),
     # clean-sheet §8.1 B: per-stage GPU policy + idle unload

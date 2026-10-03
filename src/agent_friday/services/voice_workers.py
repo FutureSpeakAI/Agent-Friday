@@ -221,6 +221,11 @@ class VoiceWorker:
                 cmd += [f"--{k}", str(self.args[k])]
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")
+        # A voice worker loads files that are already on disk (fetched by the
+        # installer); it has no reason to reach the hub, so it cannot.
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
+        env["HF_HUB_DISABLE_TELEMETRY"] = "1"
         return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, env=env,
                                 creationflags=_POPEN_FLAGS)

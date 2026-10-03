@@ -93,7 +93,9 @@ def test_served_by_names_the_mouth_that_is_actually_speaking(refused_card):
                             "device_policy": "required"})
     sb = _served_by(_Ear(), mouth, "bonsai2:27b")
     assert sb["mouth"] == "kokoro@cpu"
-    assert sb["mind"] == "bonsai2:27b@local"
+    # No voice front here: the brain answers, and the frame says at what pace.
+    assert sb["mind"] == "bonsai2:27b@local (thinking mode)"
+    assert sb["brain"] == "bonsai2:27b@local"
     assert sb["degraded"], "a degraded mouth is stated in the frame"
 
 

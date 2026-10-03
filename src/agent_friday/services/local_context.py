@@ -228,11 +228,18 @@ def local_answer(question: str, seat: Optional[str] = None) -> tuple:
         return "", None
     system, meta = _build_voice_system_prompt(settings, seat=seat)
     user = _voice_user_message(RELAY_NOTE + question, settings, volatile=meta.get("volatile"))
-    text, _trace = _generate_agent(
-        [{"role": "user", "content": user}], system=system, model=seat, max_tokens=600,
-        session_ctx={"authenticated": True, "provider": "local", "is_voice": True,
-                     "surface": "voice-live-relay"},
-        workspace=settings.get("active_workspace") or "")
+    try:
+        text, _trace = _generate_agent(
+            [{"role": "user", "content": user}], system=system, model=seat, max_tokens=600,
+            session_ctx={"authenticated": True, "provider": "local", "is_voice": True,
+                         "surface": "voice-live-relay",
+                         # The prompt is gated for the LOCAL seat: a dead seat
+                         # fails here, it never rides a cloud leg.
+                         "pin_to_seat": True},
+            workspace=settings.get("active_workspace") or "")
+    except Exception as e:  # noqa: BLE001 - the seat failed: no answer, said as such
+        _log.warning("local answer failed on %s: %s: %s", seat, type(e).__name__, e)
+        return "", None
     return (text or "").strip(), seat
 
 

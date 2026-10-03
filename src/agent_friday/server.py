@@ -57,6 +57,15 @@ try:
 except Exception:
     pass
 
+# Zero telemetry (local voice spec §6): huggingface_hub reads these at import
+# time. Telemetry pings are off for the whole process. HF_HUB_OFFLINE is NOT
+# set process-wide, because first-run model fetches the owner starts
+# (faster-whisper checkpoints, the embedder) go through the hub; the voice
+# stack's own files are vendored and pinned (services/voice_artifacts.py) and
+# its worker processes run offline (services/voice_workers.py).
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("DO_NOT_TRACK", "1")
+
 import agent_friday.core as core
 
 _log = logging.getLogger("friday.server")

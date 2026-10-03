@@ -1204,6 +1204,7 @@ def auto_router_cost_tier(settings=None):
     return tier if tier in AUTO_ROUTER_COST_TIERS else AUTO_ROUTER_DEFAULT_TIER
 
 
+
 def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
     """Assemble an OpenAI-compatible SSE stream into ONE response dict.
 
@@ -1282,66 +1283,96 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
 
     _cancel = TURN_CANCEL.get()
     cancelled = False
-    for raw in resp.iter_lines(decode_unicode=True):
-        if _cancel is not None and _cancel.is_set():
-            cancelled = True
-            break
-        if not raw:
-            continue
-        # OpenRouter sends ": OPENROUTER PROCESSING" keepalive comments while
-        # it waits on an upstream. They are not events; treating them as JSON
-        # is how a stream reader dies three seconds into a cold start.
-        if raw.startswith(":"):
-            continue
-        if not raw.startswith("data:"):
-            continue
-        data = raw[5:].strip()
-        if data == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data)
-        except Exception:
-            continue
-        if chunk.get("model"):
-            served_model = chunk["model"]
-        if chunk.get("usage"):
-            usage = chunk["usage"]
-        if chunk.get("timings"):
-            timings = chunk["timings"]
-        for choice in chunk.get("choices") or []:
-            if choice.get("finish_reason"):
-                finish_reason = choice["finish_reason"]
-            delta = choice.get("delta") or {}
-            piece = delta.get("content")
-            if piece:
-                content_parts.append(piece)
-                if on_delta:
-                    try:
-                        on_delta(piece)
-                    except Exception:
-                        pass
-            # `reasoning_content` is llama.cpp's and DeepSeek's spelling,
-            # `reasoning` is OpenRouter's. No on_delta: progressive rendering
-            # shows the answer, not the scratchpad.
-            _think = delta.get("reasoning_content") or delta.get("reasoning")
-            if _think and isinstance(_think, str):
-                reasoning_parts.append(_think)
-                if reasoning_source and _rt_sink is not None:
-                    _rt_sink(_think, reasoning_source, model=served_model)
-            # Tool calls arrive fragmented: the id/name land on the first
-            # chunk for an index, the arguments accrete character-wise after.
-            for tc in delta.get("tool_calls") or []:
-                idx = tc.get("index", 0)
-                slot = tool_calls.setdefault(
-                    idx, {"id": None, "type": "function",
-                          "function": {"name": None, "arguments": ""}})
-                if tc.get("id"):
-                    slot["id"] = tc["id"]
-                fn = tc.get("function") or {}
-                if fn.get("name"):
-                    slot["function"]["name"] = fn["name"]
-                if fn.get("arguments"):
-                    slot["function"]["arguments"] += fn["arguments"]
+    # A cancel must close the stream even while the seat is still prefilling
+    # and has sent nothing yet: the per-line check below never runs until a
+    # line arrives, and with one slot the next turn would queue behind the
+    # abandoned prompt. A watcher closes the response the moment the turn is
+    # cancelled; the blocked read then ends and is treated as the cut.
+    _stream_done = threading.Event()
+    if _cancel is not None:
+        def _close_on_cancel():
+            while not _stream_done.is_set():
+                if _cancel.wait(0.05):
+                    if not _stream_done.is_set():
+                        try:
+                            resp.close()
+                        except Exception:
+                            pass
+                    return
+        threading.Thread(target=_close_on_cancel, daemon=True,
+                         name="sse-cancel-watch").start()
+    try:
+        for raw in resp.iter_lines(decode_unicode=True):
+            if _cancel is not None and _cancel.is_set():
+                cancelled = True
+                break
+            if not raw:
+                continue
+            # OpenRouter sends ": OPENROUTER PROCESSING" keepalive comments while
+            # it waits on an upstream. They are not events; treating them as JSON
+            # is how a stream reader dies three seconds into a cold start.
+            if raw.startswith(":"):
+                continue
+            if not raw.startswith("data:"):
+                continue
+            data = raw[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except Exception:
+                continue
+            if chunk.get("model"):
+                served_model = chunk["model"]
+            if chunk.get("usage"):
+                usage = chunk["usage"]
+            if chunk.get("timings"):
+                timings = chunk["timings"]
+            for choice in chunk.get("choices") or []:
+                if choice.get("finish_reason"):
+                    finish_reason = choice["finish_reason"]
+                delta = choice.get("delta") or {}
+                piece = delta.get("content")
+                if piece:
+                    content_parts.append(piece)
+                    if on_delta:
+                        try:
+                            on_delta(piece)
+                        except Exception:
+                            pass
+                # `reasoning_content` is llama.cpp's and DeepSeek's spelling,
+                # `reasoning` is OpenRouter's. No on_delta: progressive rendering
+                # shows the answer, not the scratchpad.
+                _think = delta.get("reasoning_content") or delta.get("reasoning")
+                if _think and isinstance(_think, str):
+                    reasoning_parts.append(_think)
+                    if reasoning_source and _rt_sink is not None:
+                        _rt_sink(_think, reasoning_source, model=served_model)
+                # Tool calls arrive fragmented: the id/name land on the first
+                # chunk for an index, the arguments accrete character-wise after.
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = tool_calls.setdefault(
+                        idx, {"id": None, "type": "function",
+                              "function": {"name": None, "arguments": ""}})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        slot["function"]["arguments"] += fn["arguments"]
+
+    except Exception:
+        # The watcher closed the response under a blocked read: that is the
+        # cut, not a transport failure. Anything else is still an error.
+        if not (_cancel is not None and _cancel.is_set()):
+            raise
+        cancelled = True
+    finally:
+        _stream_done.set()
+    if _cancel is not None and _cancel.is_set():
+        cancelled = True
 
     if cancelled:
         try:

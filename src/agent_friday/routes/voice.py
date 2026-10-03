@@ -427,10 +427,11 @@ def _compose_final_voice_error(attempt_errors, key_source):
 # tts_pause lands while she's speaking, the fetch blocks with dead air, and the
 # turn resumes incoherently — the on-stage "freeze then stutter". The contract
 # is announce → act → confirm, one action at a time.
-#: Default ceiling on a SPOKEN reply, in tokens. ~300 tokens is ~225 words is
-#: ~90 seconds of speech — a generous backstop, not the target (the target is
-#: the LENGTH paragraph in the voice prompt, which asks for under 60 words).
-_VOICE_REPLY_TOKENS_DEFAULT = 300
+#: Default ceiling on a SPOKEN reply, in tokens: "Natural" in Settings. ~400
+#: tokens is ~300 words, two minutes of speech — a backstop, not the target
+#: (the target is the adaptive length rule in the voice prompt, which matches
+#: the moment).
+_VOICE_REPLY_TOKENS_DEFAULT = 400
 
 
 def _num_setting(settings, key, default) -> float:
@@ -652,10 +653,69 @@ async def _voice_tool_with_limit(fname, fargs, send, session=None, limit=None, r
     except asyncio.TimeoutError:
         _log.warning("voice tool %s passed its %gs limit; answered without a result",
                      fname, limit)
-        return (f"The {fname} tool did not finish within {limit:g} seconds, so "
-                f"there is no result. Tell the user in one short sentence that it "
-                f"is taking too long, and offer to try again or do something else. "
-                f"Do not guess at what it would have said.")
+        return _tool_timeout_message(fname, limit)
+
+
+def _tool_timeout_message(fname, limit) -> str:
+    """What the model is told when a voice tool passes the owner's limit."""
+    return (f"The {fname} tool did not finish within {limit:g} seconds, so "
+            f"there is no result. Tell the user in one short sentence that it "
+            f"is taking too long, and offer to try again or do something else. "
+            f"Do not guess at what it would have said.")
+
+
+def _run_voice_tool_bounded(fname, fargs, send, session=None, limit=None, runner=None):
+    """The synchronous twin of ``_voice_tool_with_limit``, for the local
+    engine (whose turns run on threads, not the asyncio bridge): the same
+    owner limit, the same sentence when it passes, and the work goes on in
+    the background either way."""
+    runner = runner or _voice_tool_run
+    if limit is None:
+        limit = voice_tool_limit_s()
+    box = {}
+
+    def _go():
+        box["r"] = runner(fname, fargs, send, session)
+    th = threading.Thread(target=_go, daemon=True, name=f"voice-tool-{fname}")
+    th.start()
+    th.join(limit or None)
+    if th.is_alive():
+        _log.warning("voice tool %s passed its %gs limit; answered without a result",
+                     fname, limit)
+        return _tool_timeout_message(fname, limit)
+    return box.get("r")
+
+
+def _local_voice_tool(fname, fargs, send, session):
+    """One tool call from the LOCAL voice front, with the cloud path's manners
+    (local voice spec P3 parity): the owner's time limit, a process orb as the
+    execution receipt, a slow-call warning, and the late-result label when
+    the owner spoke while it ran. No egress gate: the result stays on this
+    machine with the local model that asked for it."""
+    _log.info("voice tool call (local): %s(%s)", fname, fargs)
+    try:
+        send({"type": "status", "text": f"⚙ {fname}"})
+    except Exception:
+        pass
+    orb_id, t0 = _voice_orb_start(fname), _time.time()
+    try:
+        result = _run_voice_tool_bounded(fname, fargs, send, session)
+    except Exception as e:  # noqa: BLE001
+        _log.error("local voice tool %r failed: %s", fname, e, exc_info=True)
+        result = (f"I hit a problem with the {fname} tool ({type(e).__name__}). "
+                  f"Please try again.")
+    if not isinstance(result, str):
+        result = str(result)
+    result = result[:8000]
+    took = _time.time() - t0
+    result = _mark_if_stale(result, fname, t0,
+                            float((session or {}).get("user_spoke_at") or 0.0),
+                            _time.time())
+    if took > VOICE_TOOL_SLOW_S:
+        _log.warning("voice tool %s took %.1fs; the caller heard silence for that "
+                     "long", fname, took)
+    _voice_orb_finish(orb_id, fname, fargs, result, took * 1000.0)
+    return result
 
 
 #: A reconnect shorter than this carries the user's words across; a longer
@@ -1286,7 +1346,178 @@ def _build_hours_end() -> str:
     return "until the window ends"
 
 
-def _served_by(ear, mouth, seat) -> dict:
+def _brain_parked_for_call(settings, front_model) -> bool:
+    """Does this call park the brain (mode V-B)? "auto" parks it for a front
+    that does not fit beside it (the 4B); "parked"/"resident" are the owner's
+    explicit choices. During build hours the daemon already holds the brain
+    parked, so the call takes no lease of its own."""
+    from agent_friday.services import voice_front as _vf
+    pol = str((settings or {}).get("voice_brain_during_calls") or "auto").lower()
+    try:
+        from agent_friday.services import build_hours
+        if build_hours.is_active():
+            return False
+    except Exception:
+        pass
+    if pol == "resident":
+        return False
+    if pol == "parked":
+        return True
+    return _vf.FRONT_MODELS.get(front_model, {}).get("role") == "solo"
+
+
+#: Sessions holding the voice-call lease. The Arbiter holds ONE lease; two
+#: calls share it, and it is given back when the last one ends.
+_VOICE_LEASE_HOLDERS: set = set()
+_VOICE_LEASE_LOCK = threading.Lock()
+
+
+def _voice_lease_take(settings, holder, progress=None) -> bool:
+    """Park the brain for this call (mode V-B). True when the session holds
+    the voice-call lease; raises when the card cannot be cleared."""
+    from agent_friday.services import residency_arbiter as ra
+    arb = ra.get_arbiter()
+    if arb is None:
+        return False
+    with _VOICE_LEASE_LOCK:
+        if not _VOICE_LEASE_HOLDERS:
+            if progress:
+                progress("making room for the voice")
+            got = arb.grant("voice_call", ttl_s=_voice_lease_ttl(settings))
+            if not got.get("ok"):
+                raise RuntimeError("the card could not be cleared for the voice: "
+                                   + str(got.get("error") or "refused"))
+        _VOICE_LEASE_HOLDERS.add(str(holder))
+    return True
+
+
+def _voice_lease_ttl(settings) -> float:
+    # Renewed every heartbeat (15 s) while the call lives; a crashed holder
+    # lets it lapse and the parked seats come back.
+    return 120.0
+
+
+def _voice_lease_renew(settings) -> None:
+    try:
+        from agent_friday.services import residency_arbiter as ra
+        arb = ra.get_arbiter()
+        if arb is not None:
+            arb.renew("voice_call", _voice_lease_ttl(settings))
+    except Exception:
+        pass
+
+
+def _voice_lease_give(holder) -> None:
+    with _VOICE_LEASE_LOCK:
+        if str(holder) not in _VOICE_LEASE_HOLDERS:
+            return
+        _VOICE_LEASE_HOLDERS.discard(str(holder))
+        if _VOICE_LEASE_HOLDERS:
+            return
+    try:
+        from agent_friday.services import residency_arbiter as ra
+        arb = ra.get_arbiter()
+        if arb is not None:
+            # Only the voice-call lease: if ours lapsed and another job took
+            # the card, that lease is not ours to end.
+            arb.release(kind="voice_call")
+    except Exception as e:  # noqa: BLE001
+        _log.warning("voice call lease release failed: %s", e)
+
+
+def _arm_voice_front(settings, progress=None, holder="session"):
+    """Arm the voice front for a session, or return None to answer with the
+    brain (no front installed). Returns ``{"seat", "model", "label",
+    "contract", "prompt", "lease", "holder"}``. Raises with a sentence when a
+    front is installed and cannot start: the session refuses rather than
+    pretending the slow brain is the fast voice. Whatever was taken before a
+    failure is given back."""
+    from agent_friday.services import voice_front as _vf
+    from agent_friday.services.voice_engine import build_voice_tool_contract
+    model = _vf.selected_model(settings)
+    if not _vf.installed(model):
+        return None
+    label = _vf.FRONT_MODELS[model]["label"]
+    taken = {"seat": None, "lease": False, "holder": holder}
+    try:
+        if _brain_parked_for_call(settings, model):
+            taken["lease"] = _voice_lease_take(settings, holder, progress)
+        seat = _vf.get()
+        if progress:
+            progress(f"starting {label}")
+        seat.arm(model, holder=holder)
+        taken["seat"] = seat
+        contract = build_voice_tool_contract()
+        prompt = _build_front_system_prompt(settings, contract, label)
+        seat.prefill(prompt, contract)
+    except Exception:
+        _release_voice_front(taken)
+        raise
+    return {"seat": seat, "model": model, "label": label, "contract": contract,
+            "prompt": prompt, "lease": taken["lease"], "holder": holder}
+
+
+def _release_voice_front(front) -> None:
+    """Give back what the session took: its hold on the front seat (evicted
+    when no call holds it) and its share of the brain's park."""
+    if not front:
+        return
+    holder = front.get("holder") or "session"
+    try:
+        if front.get("seat") is not None:
+            front["seat"].disarm(holder=holder)
+    except Exception as e:  # noqa: BLE001
+        _log.warning("voice front disarm failed: %s", e)
+    if front.get("lease"):
+        _voice_lease_give(holder)
+
+
+#: How long the after-call queue waits for the brain to come back.
+AFTER_CALL_WAIT_S = 900.0
+
+
+def _run_after_call(items, conversation_id, wait_s=None, poll_s=10.0) -> None:
+    """Run the deep questions a Private call queued, once the brain serves
+    again (its park ends with the call): each a background task pinned to the
+    brain, reporting to the call's conversation. Never a cloud leg; if the
+    brain does not come back in time the conversation is told so."""
+    if not items:
+        return
+    wait_s = AFTER_CALL_WAIT_S if wait_s is None else float(wait_s)
+
+    def _go():
+        from agent_friday.services.voice_engine import _DELEGATE_PROMPT, _brain_serving
+        deadline = _time.time() + wait_s
+        seat = _brain_serving()
+        while seat is None and _time.time() < deadline:
+            _time.sleep(poll_s)
+            seat = _brain_serving()
+        if seat is None:
+            _log.warning("after-call queue: the brain did not come back; %d "
+                         "question(s) not run", len(items))
+            try:
+                _persist_voice_turn(
+                    "", "I couldn't get to what you asked during our call: my "
+                        "deeper mind didn't come back. Ask me again when it's up: "
+                    + "; ".join(i["request"] for i in items),
+                    conversation_id=conversation_id, provider="local")
+            except Exception:
+                pass
+            return
+        from agent_friday.services.agent import _spawn_task
+        for it in items:
+            try:
+                _spawn_task(it.get("title") or it["request"][:60],
+                            _DELEGATE_PROMPT + it["request"],
+                            description="Asked during a voice call; run after it ended",
+                            model=seat, tools=None, conversation_id=conversation_id,
+                            orb_icon="🎙", pin_to_seat=True)
+            except Exception as e:  # noqa: BLE001
+                _log.error("after-call task failed to start: %s", e)
+    threading.Thread(target=_go, daemon=True, name="voice-after-call").start()
+
+
+def _served_by(ear, mouth, seat, front=None, brain_parked=False) -> dict:
     """The serving identities a local session states (``served_by`` frame).
 
     Read from the running engines' own ``describe()``, never from settings,
@@ -1299,11 +1530,16 @@ def _served_by(ear, mouth, seat) -> dict:
         except Exception:
             return {}
     e, m = _d(ear), _d(mouth)
+    brain = (("parked (voice call)" if brain_parked else f"{seat}@local")
+             if seat else "none")
     return {
         "ear": f"{e.get('engine') or '?'}@{e.get('device') or '?'}",
         "ear_model": e.get("model"),
-        "mind": f"{seat}@local" if seat else "none",
-        "brain": f"{seat}@local" if seat else "none",
+        # The front answers when there is one; otherwise the brain does, at
+        # its own pace ("thinking mode": no sub-second promise).
+        "mind": (f"{front}@gpu" if front else
+                 (f"{seat}@local (thinking mode)" if seat else "none")),
+        "brain": brain,
         "mouth": f"{m.get('engine') or '?'}@{m.get('device') or '?'}",
         "voice": m.get("voice"),
         "degraded": m.get("degraded") or "",
@@ -1503,7 +1739,14 @@ def _resolve_voice_engine(settings=None):
         models_ready = eng.models_ready() if local_ok else False
         if models_ready:
             _brain_state = _local_brain_state()
-            if not _brain_state["ready"]:
+            try:
+                from agent_friday.services import voice_front as _vf
+                _front_ready = _vf.installed(_vf.selected_model(settings))
+            except Exception:
+                _front_ready = False
+            # With a voice front installed the FRONT answers; the brain is the
+            # deep lane and its state is reported, not required.
+            if not _brain_state["ready"] and not _front_ready:
                 models_ready = False
                 _log.warning("local voice: ASR and TTS are ready but %s — refusing "
                              "the local engine rather than starting a session "
@@ -1725,6 +1968,66 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None):
              "seat": seat, "volatile": volatile})
 
 
+#: How the front hands deep work to the brain, and how it talks about it
+#: (local voice spec §8 P6). It never claims a deep answer as its own.
+VOICE_FRONT_HANDOFF_RULE = (
+    "YOUR DEEPER MIND: You are Friday's fast voice; her full memory and slower, "
+    "deeper reasoning are one tool call away. When a question needs the user's "
+    "full context, real research, or careful thought, say a short line such as "
+    "'let me dig into that', then call ask_friday (an answer in seconds) or "
+    "delegate_to_friday (a longer task that reports back). When a deep answer "
+    "arrives later it is marked as one: offer it ('that deep answer's ready, "
+    "want it now?'). Never present a deep answer as something you just "
+    "thought of, and never guess at something the deeper mind could look up.\n"
+)
+
+
+def _build_front_system_prompt(settings=None, contract=None, model_label=None):
+    """The VOICE FRONT's system prompt (local voice spec P1), prefix-stable.
+
+    Unlike the brain's, it carries no 60-word pin: the length rule is the
+    same adaptive VOICE_LENGTH_RULE cloud voice follows, the persona opens
+    and closes it the same way, and its context is a ~3K-token digest of the
+    gated local context instead of the ~26K standing prompt. The tool-surface
+    line is rendered from the contract's own names, so the prompt cannot name
+    a tool the session does not hold. Volatile context rides in the user
+    turn, exactly as on the brain path.
+    """
+    settings = settings if settings is not None else (_load_settings() or {})
+    from agent_friday.services import voice_context_digest
+    from agent_friday.services.action_policy import seal_system_prompt
+    names = list((contract or {}).get("names") or [])
+    label = model_label or "a small local model"
+    body = (
+        "You are Agent Friday, a sovereign personal AI assistant, in a LIVE "
+        "VOICE conversation. You are her fast voice, running on this computer "
+        f"({label}): what they say and what you think stays here; tools that "
+        "search the web or the news reach out only for what they look up.\n"
+        "Speak like a person: natural, warm, contractions.\n"
+        + VOICE_LENGTH_RULE +
+        "NEVER use markdown: no asterisks, headers, or bullets; this is read "
+        "aloud. Numbered points are said the way a person says them, inside "
+        "ordinary sentences.\n"
+        "Never state that an action succeeded unless the tool result in this "
+        "turn says so. A withheld, failed, or missing result is reported as "
+        "exactly that.\n"
+        + VOICE_FRONT_HANDOFF_RULE
+        + VOICE_ANCHOR_RULES + "\n"
+        + VOICE_TOOL_CHOREOGRAPHY
+        + ("\nTHE TOOLS YOU HOLD IN THIS CONVERSATION: " + ", ".join(names) + ".\n"
+           if names else "\nYou hold no tools in this conversation.\n")
+        + "\n== WHAT YOU KNOW (a digest; ask_friday reaches the rest) ==\n"
+        + voice_context_digest.build(settings)
+    )
+    style = ""
+    try:
+        style = _get_voice_style_prompt() or ""
+    except Exception:
+        style = ""
+    return seal_system_prompt(compose_live_instruction(style, body),
+                              "voice front prompt")
+
+
 def _voice_user_message(user_text, settings=None, volatile=None):
     """The user turn: the volatile context block (clock, auto-context,
     continuity, tone), rebuilt fresh (~45 ms), then what was said."""
@@ -1759,6 +2062,14 @@ def _warm_seat_prefix() -> dict:
     """
     t0 = _time.time()
     settings = _load_settings() or {}
+    try:
+        from agent_friday.services import voice_front as _vf
+        if _vf.installed(_vf.selected_model(settings)):
+            # The front answers the turns and prefills its own prefix when a
+            # session arms; warming the brain's would spend its slot for nothing.
+            return {"warmed": False, "reason": "the voice front answers; it prefills at arm"}
+    except Exception:
+        pass
     try:
         system_prompt, _pmeta = _build_voice_system_prompt(settings)
         from agent_friday.services import local_seats as _seats
@@ -2423,8 +2734,11 @@ if sock is not None:
         # A stage the manifest has PROVEN to fail refuses the session with the
         # taxonomy's message and action (§7); an unproven stage is loaded now
         # with visible progress (arming before the click is the client's job).
+        # An installed voice front that no call holds yet is proven by this
+        # session's own arm below, not refused here.
         _refused = [k for k, st in (_msnap.get("stages") or {}).items()
-                    if (st.get("proof") or {}).get("state") == "refused"]
+                    if (st.get("proof") or {}).get("state") == "refused"
+                    and (st.get("proof") or {}).get("code") != _vm.FRONT_ARMS_WITH_CALL]
         if _refused:
             _k = _refused[0]
             _st = _msnap["stages"][_k]
@@ -2499,88 +2813,207 @@ if sock is not None:
             _brain = _seats.resolve("brain")
         except Exception:
             pass
-        system_prompt, _pmeta = _build_voice_system_prompt(settings, seat=_brain)
-        _prov = _pmeta["provider"]
-        _timings = {}
-        # What is serving, stated once at open (and again by later frames
-        # when something degrades). The owner always sees which model answers.
-        _send({"type": "served_by", **_served_by(ear, mouth, _brain)})
+        # What the front's tools see of this call (voice_engine._voice_ctx and
+        # the voice tools): its conversation, the owner's latest words, where
+        # deep work may go, when the owner last spoke, and the deep questions
+        # waiting for the call to end (Private with the brain parked).
+        _tool_session = {"engine": "local", "conversation_id": _open_cid[0],
+                         "owner_text": "", "user_spoke_at": 0.0,
+                         "async_routing": settings.get("voice_async_routing")
+                         or "local_only",
+                         "after_call": [], "news_offered": [], "spoken": []}
+        # THE VOICE FRONT (local voice spec P1): a small fast model on its own
+        # seat answers the turns with the voice tool contract; the brain takes
+        # deep work through ask_friday/delegate_to_friday. With no front
+        # installed the brain answers, at its own pace, and says so.
+        try:
+            _front = _arm_voice_front(settings, progress=_prog, holder=_vsession)
+        except Exception as _fe:
+            _vlog.error("session refused: voice front failed: %s: %s",
+                        type(_fe).__name__, _fe)
+            _send({"type": "error", "error": "voice_front_unavailable",
+                   "detail": f"Friday's local voice could not start: {_fe}. "
+                             f"Try again, or switch to cloud voice."})
+            return
+        # Anything that fails between arming the front and the loop below
+        # gives the front and the brain's park back (the loop's finally
+        # covers the rest of the call).
+        try:
+            if _front:
+                # The front's prompt was built at arm; it is a local seat.
+                system_prompt, _prov = _front["prompt"], "local"
+            else:
+                system_prompt, _pmeta = _build_voice_system_prompt(settings, seat=_brain)
+                _prov = _pmeta["provider"]
+            _timings = {}
+            # What is serving, stated once at open (and again by later frames
+            # when something degrades). The owner always sees which model answers.
+            _send({"type": "served_by", **_served_by(
+                ear, mouth, _brain, front=_front and _front["label"],
+                brain_parked=bool(_front and _front.get("lease")))})
 
-        def _generate(user_text, on_delta, cancel):
-            from agent_friday.services.model_router import TIMINGS_SINK, TURN_CANCEL
-            _timings.clear()
-            # A barged turn's timings arrive late and belong to no receipt.
-            _tok = TIMINGS_SINK.set(
-                lambda t: None if cancel.is_set() else _timings.update(t or {}))
-            # A barge sets `cancel`: the seat's stream is closed and the agent
-            # loop starts no further round and runs no tool from the cut round.
-            _ctok = TURN_CANCEL.set(cancel)
-            # A local voice turn is Friday's own: her presence label.
-            from agent_friday.services import presence as _presence
-            try:
-                with _presence.acting_as(_presence.FRIDAY):
-                    reply, _trace = _generate_agent(
-                        [{"role": "user",
-                          "content": _voice_user_message(user_text, settings)}],
-                        system=system_prompt,
-                        model=_brain,
+            # One volatile block (clock, auto-context, continuity, tone) per
+            # utterance, shared by the speculative prefill and the turn: if each
+            # rebuilt it, a clock that ticked between them would differ and the
+            # cached prefix would be spent for nothing.
+            _vol = {"text": None, "at": 0.0}
+
+            def _volatile():
+                now = _time.time()
+                if _vol["text"] is None or now - _vol["at"] > 30.0:
+                    try:
+                        _vol["text"] = _build_voice_system_prompt(
+                            settings, seat=_brain)[1].get("volatile") or ""
+                    except Exception:
+                        _vol["text"] = ""
+                    _vol["at"] = now
+                return _vol["text"]
+
+            def _speculate(partial_text):
+                # Stable partial transcript -> the front's cache, before the
+                # endpoint (local voice spec §4.2 recovery lever).
+                if not _front:
+                    return
+                _front["seat"].prefill_partial(
+                    _front["prompt"],
+                    [{"role": "user", "content": _voice_user_message(
+                        partial_text, settings, volatile=_volatile())}],
+                    _front["contract"])
+
+            def _front_turn(user_text, on_delta):
+                _tool_session["owner_text"] = str(user_text or "")[:4000]
+                try:
+                    return _front["seat"].run_turn(
+                        _front["prompt"],
+                        [{"role": "user", "content": _voice_user_message(
+                            user_text, settings, volatile=_volatile())}],
+                        _front["contract"], on_delta=on_delta,
+                        run_tool=lambda n, a: _local_voice_tool(n, a, _send, _tool_session),
                         max_tokens=_voice_reply_cap(settings),
-                        temperature=settings.get("temperature"),
-                        # The owner's own words for this turn, and that they were
-                        # spoken: a card is decided by those words (answer_card),
-                        # exactly as a typed or cloud-voice answer is.
-                        session_ctx={"authenticated": _ws_authenticated,
-                                     "provider": _prov,
-                                     "is_voice": True,
-                                     "surface": "voice-local",
-                                     # The local mind or an honest failure,
-                                     # never a cloud leg answering for it.
-                                     "pin_to_seat": True,
-                                     "owner_text": str(user_text or "")[:4000]},
-                        workspace=settings.get("active_workspace") or "",
-                        on_text_delta=on_delta,
-                    )
-            finally:
-                TURN_CANCEL.reset(_ctok)
-                TIMINGS_SINK.reset(_tok)
-            return reply
+                        temperature=settings.get("temperature"), timings=_timings)
+                finally:
+                    _vol["text"] = None        # the next utterance gets a fresh clock
 
-        def _receipt():
+            def _generate(user_text, on_delta, cancel):
+                from agent_friday.services.model_router import TIMINGS_SINK, TURN_CANCEL
+                _timings.clear()
+                # A barged turn's timings arrive late and belong to no receipt.
+                _tok = TIMINGS_SINK.set(
+                    lambda t: None if cancel.is_set() else _timings.update(t or {}))
+                # A barge sets `cancel`: the seat's stream is closed and the agent
+                # loop starts no further round and runs no tool from the cut round.
+                _ctok = TURN_CANCEL.set(cancel)
+                # A local voice turn is Friday's own: her presence label.
+                from agent_friday.services import presence as _presence
+                if _front:
+                    try:
+                        with _presence.acting_as(_presence.FRIDAY):
+                            return _front_turn(user_text, on_delta)
+                    finally:
+                        TURN_CANCEL.reset(_ctok)
+                        TIMINGS_SINK.reset(_tok)
+                try:
+                    with _presence.acting_as(_presence.FRIDAY):
+                        reply, _trace = _generate_agent(
+                            [{"role": "user",
+                              "content": _voice_user_message(user_text, settings)}],
+                            system=system_prompt,
+                            model=_brain,
+                            max_tokens=_voice_reply_cap(settings),
+                            temperature=settings.get("temperature"),
+                            # The owner's own words for this turn, and that they were
+                            # spoken: a card is decided by those words (answer_card),
+                            # exactly as a typed or cloud-voice answer is.
+                            session_ctx={"authenticated": _ws_authenticated,
+                                         "provider": _prov,
+                                         "is_voice": True,
+                                         "surface": "voice-local",
+                                         # The local mind or an honest failure,
+                                         # never a cloud leg answering for it.
+                                         "pin_to_seat": True,
+                                         "owner_text": str(user_text or "")[:4000]},
+                            workspace=settings.get("active_workspace") or "",
+                            on_text_delta=on_delta,
+                        )
+                finally:
+                    TURN_CANCEL.reset(_ctok)
+                    TIMINGS_SINK.reset(_tok)
+                return reply
+
+            def _receipt():
+                try:
+                    return TurnReceipt(session_id=_vsession,
+                                       tier=("gpu" if ear.describe().get("device") == "cuda" else "cpu"),
+                                       asr_model=ear.describe().get("model"),
+                                       tts_voice=mouth.describe().get("voice"),
+                                       brain_seat=(("voice-front:" + _front["model"])
+                                                   if _front else (_brain or "unresolved")))
+                except Exception:
+                    return None
+
+            hooks = {
+                "persist": lambda u, a, cid: _persist_voice_turn(u, a, conversation_id=cid,
+                                                                 provider="local"),
+                "distill": _spawn_voice_distill,
+                "actions": _voice_actions_for,
+                "receipt": _receipt,
+                "timings": lambda: dict(_timings),
+                "speculate": _speculate,
+                # When the owner starts speaking: a tool result that lands
+                # after this is labelled late (the cloud path's rule).
+                "hearing": lambda: _tool_session.__setitem__("user_spoke_at", _time.time()),
+                "retarget": lambda cid: _retarget_call(cid),
+            }
+            # The streaming ear when it is installed (true partials, final at the
+            # endpoint); the whisper ear stays as its fallback.
+            _stream_ear = None
             try:
-                return TurnReceipt(session_id=_vsession,
-                                   tier=("gpu" if ear.describe().get("device") == "cuda" else "cpu"),
-                                   asr_model=ear.describe().get("model"),
-                                   tts_voice=mouth.describe().get("voice"),
-                                   brain_seat=_brain or "unresolved")
-            except Exception:
-                return None
+                from agent_friday.services import voice_ear_stream as _ves
+                if _ves.installed():
+                    _stream_ear = _ves.StreamingEar()
+            except Exception as _se:
+                _vlog.warning("streaming ear unavailable, using the whisper ear: %s", _se)
+                _stream_ear = None
+            vad = VADEndpointer(silence_ms=int(_num_setting(settings, "voice_silence_ms", 500)) or 500)
+            sess = VoiceSession(_send, ear=ear, mouth=mouth, fallback_mouth=_fallback,
+                                vad=vad, generate=_generate, hooks=hooks,
+                                manifest_snapshot=_msnap,
+                                contract=_msnap.get("contract") or {},
+                                gpu_queue=_vw.gpu_queue(), session_id=_vsession,
+                                barge_detector=_local_talk_over_detector(settings),
+                                rms=_quick_rms,
+                                # First-token deadline: a filler line, then an
+                                # honest abort at the voice tool hard limit.
+                                first_token_filler_s=_num_setting(
+                                    settings, "voice_first_token_filler_s", 6),
+                                first_token_abort_s=_num_setting(
+                                    settings, "voice_tool_hard_limit_s", 20),
+                                stream_ear=_stream_ear)
+            sess.conversation_id = _open_cid[0]
 
-        hooks = {
-            "persist": lambda u, a, cid: _persist_voice_turn(u, a, conversation_id=cid,
-                                                             provider="local"),
-            "distill": _spawn_voice_distill,
-            "actions": _voice_actions_for,
-            "receipt": _receipt,
-            "timings": lambda: dict(_timings),
-        }
-        vad = VADEndpointer(silence_ms=int(settings.get("voice_silence_ms") or 800))
-        sess = VoiceSession(_send, ear=ear, mouth=mouth, fallback_mouth=_fallback,
-                            vad=vad, generate=_generate, hooks=hooks,
-                            manifest_snapshot=_msnap,
-                            contract=_msnap.get("contract") or {},
-                            gpu_queue=_vw.gpu_queue(), session_id=_vsession,
-                            barge_detector=_local_talk_over_detector(settings),
-                            rms=_quick_rms,
-                            # First-token deadline: a filler line, then an
-                            # honest abort at the voice tool hard limit.
-                            first_token_filler_s=_num_setting(
-                                settings, "voice_first_token_filler_s", 6),
-                            first_token_abort_s=_num_setting(
-                                settings, "voice_tool_hard_limit_s", 20))
-        sess.conversation_id = _open_cid[0]
-        _sub = lambda snap: _send({"type": "manifest", **snap})  # noqa: E731
-        _manifest.subscribe(_sub)
-        sess.start()
+            # Results that finish after the turn that asked for them come back
+            # over the live channel and are spoken between turns (local voice
+            # spec P3). The mind is local, so they are introduced, not gated.
+            def _deliver_local(text, kind="result"):
+                body = str(text) + ("]" if kind in ("declined", "notice") else "")
+                sess.deliver(_INJECT_LEADS.get(kind, _INJECT_LEADS["result"]) + body, kind)
+
+            def _retarget_call(cid):
+                old = _tool_session.get("conversation_id")
+                if cid == old:
+                    return
+                _voice_live_channel.unregister(old, _deliver_local)
+                _tool_session["conversation_id"] = cid
+                _voice_live_channel.register(cid, _deliver_local)
+
+            _voice_live_channel.register(_tool_session["conversation_id"], _deliver_local)
+            _sub = lambda snap: _send({"type": "manifest", **snap})  # noqa: E731
+            _manifest.subscribe(_sub)
+            sess.start()
+
+        except BaseException:
+            _release_voice_front(_front)
+            raise
 
         _last_hb = _time.time()
         try:
@@ -2588,6 +3021,8 @@ if sock is not None:
                 if _time.time() - _last_hb >= 15.0:
                     _last_hb = _time.time()
                     _send({"type": "hb", "ts": int(_last_hb)})
+                    if _front and _front.get("lease"):
+                        _voice_lease_renew(settings)   # the brain stays parked while the call lives
                 try:
                     raw = ws.receive(timeout=1.0)
                 except ConnectionClosed:
@@ -2613,6 +3048,16 @@ if sock is not None:
             done.set()
             _manifest.unsubscribe(_sub)
             sess.close()
+            try:
+                _voice_live_channel.unregister(_tool_session.get("conversation_id"),
+                                               _deliver_local)
+            except Exception:
+                pass
+            # The front seat and the brain's park end with the call; then the
+            # deep questions that waited for it run on the brain.
+            _release_voice_front(_front)
+            _run_after_call(list(_tool_session.get("after_call") or []),
+                            _tool_session.get("conversation_id"))
             try:
                 ws.close()
             except Exception:

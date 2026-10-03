@@ -1104,6 +1104,11 @@ class LlamaServerBackend:
     @staticmethod
     def _declared_serve_args(model_id):
         """Extra llama-server flags this model was measured with, or []."""
+        # The voice front is not in the model store (it is a role, not a
+        # brain choice the Model Soup offers); its flags live with it.
+        if str(model_id).startswith("voice-front:"):
+            from agent_friday.services.voice_front import SERVE_ARGS
+            return list(SERVE_ARGS)
         try:
             from agent_friday.services import model_store as _ms
             rec = _ms.get(model_id) or {}
@@ -2488,6 +2493,17 @@ class Arbiter:
                                   "model_id": "z-image-turbo-fp8",
                                   "displaced": displaced,
                                   "expires_at": time.time() + ttl_s}
+                elif kind == "voice_call":
+                    # Local voice mode V-B (front solo): the pinned seats are
+                    # parked for the call so the voice front and the mouth
+                    # fit; release restores them exactly as the other kinds
+                    # do. The front itself is served by services/voice_front,
+                    # outside the plan, so nothing is loaded here.
+                    displaced = self._evict_pinned()
+                    self.lease = {"kind": kind, "role": "voice",
+                                  "model_id": None,
+                                  "displaced": displaced,
+                                  "expires_at": time.time() + ttl_s}
                 else:
                     self.state = STATE_DEFAULT
                     return {"ok": False, "error": "unknown lease %r" % kind}
@@ -2501,11 +2517,19 @@ class Arbiter:
                 self._rollback()
                 return {"ok": False, "error": str(e), "rolled_back": True}
 
-    def release(self):
-        """Give the GPU back and restore the default plan."""
+    def release(self, kind=None):
+        """Give the GPU back and restore the default plan.
+
+        ``kind`` names the lease the caller holds: when the held lease is a
+        different one (its own expired and another job took the card), it
+        is not the caller's to release, and nothing happens.
+        """
         with self._lock:
             if self.lease is None:
                 return {"ok": True, "note": "no lease held"}
+            if kind is not None and self.lease.get("kind") != kind:
+                return {"ok": True, "note": "the held lease is %s, not %s"
+                        % (self.lease.get("kind"), kind)}
             kind = self.lease["kind"]
             self.state = STATE_TRANSITIONING
             t0 = time.time()
@@ -2530,6 +2554,21 @@ class Arbiter:
             except Exception as e:
                 self.state = STATE_DEGRADED
                 return {"ok": False, "error": str(e)}
+
+    def renew(self, kind, ttl_s):
+        """Extend the held lease of `kind` by `ttl_s` from now.
+
+        Only a voice call renews: its length is the conversation's, so its
+        holder renews while the call lives and a crashed holder still lets the
+        lease expire (``expire_if_due``) and the parked seats come back.
+        """
+        with self._lock:
+            if self.lease is None or self.lease.get("kind") != kind:
+                return {"ok": False, "error": "no %s lease held" % kind}
+            if kind != "voice_call":
+                return {"ok": False, "error": "lease %s does not renew" % kind}
+            self.lease["expires_at"] = time.time() + float(ttl_s)
+            return {"ok": True, "expires_at": self.lease["expires_at"]}
 
     def expire_if_due(self):
         """A crashed lease holder must not strand the GPU."""

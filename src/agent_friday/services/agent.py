@@ -4188,7 +4188,10 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                                  # A scheduled job's outward actions need a grant
                                  # scoped to that schedule (governance/action_gate).
                                  # Only the scheduler sets it; see _spawn_task.
-                                 "schedule_id": _task_schedule_id(task_id)},
+                                 "schedule_id": _task_schedule_id(task_id),
+                                 # A private-voice handoff runs on its local
+                                 # seat or fails (see _spawn_task).
+                                 "pin_to_seat": _task_pinned(task_id)},
                     orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
                     workspace='task', on_route=_log_route, tools=_tools_override,
                 )
@@ -4284,7 +4287,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                          "task_id": task_id,
                          # As the main leg: a card raised while steering reports
                          # into the same conversation, not into Main.
-                         "conversation_id": _task_conversation_id(task_id)},
+                         "conversation_id": _task_conversation_id(task_id),
+                         "pin_to_seat": _task_pinned(task_id)},
                     orb_label=f"steer: {steer_msg[:18]}", orb_category='monitoring', orb_icon='🎯',
                     workspace='task',
                 )
@@ -4605,6 +4609,12 @@ def _report_task_completion(task_id, name, status, result_text):
     _post_task_result_to_conversation(task_id, name, status, result_text)
 
 
+def _task_pinned(task_id) -> bool:
+    """Was this task spawned pinned to its local seat?"""
+    with TASKS_LOCK:
+        return bool((TASKS.get(task_id) or {}).get('pin_to_seat'))
+
+
 def _post_task_result_to_conversation(task_id, name, status, result_text):
     """Land a finished task's outcome in the conversation that asked for it.
 
@@ -4646,8 +4656,12 @@ def _post_task_result_to_conversation(task_id, name, status, result_text):
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
-                runner=None):
+                runner=None, pin_to_seat=False):
     """Spawn a background task.
+
+    pin_to_seat: run every leg on `model` (a local seat) and nowhere else; a
+        failure is the task's failure, never a cloud leg answering for it.
+        Private-voice handoffs set it (local voice spec P3).
 
     runner: optional callable ``runner(task_id) -> {"status", "result"}`` that
         does the task's work INSTEAD of the agent loop, for structured work
@@ -4720,6 +4734,7 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'chain': chain,
             'chain_step': chain_step,
             'model': model,
+            'pin_to_seat': bool(pin_to_seat and model),
             # Who this task answers to. `reconcile` reads this to decide where
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.

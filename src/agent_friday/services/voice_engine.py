@@ -559,10 +559,54 @@ _VOICE_LIVE_TOOLS = [
 ]
 
 
-def _tool_ask_friday(inp):
+def _ask_friday_local(question: str, session: dict) -> str:
+    """ask_friday from the LOCAL voice front (local voice spec P3).
+
+    The brain serving: it answers, pinned to its seat (never a cloud leg),
+    and the answer goes back to the front unsealed, because both are on this
+    machine. The brain parked for the call: in Private ("local_only") the
+    question waits for the end of the call; in Automatic it goes to the
+    owner's routing as a background task, whose legs are gated per provider
+    exactly as a typed task's are, and its answer comes back over the live
+    channel.
+    """
+    from agent_friday.routes.voice import (_build_voice_system_prompt,
+                                           _voice_reply_cap, _voice_user_message)
+    from agent_friday.services.agent import _generate_agent
+    seat = _brain_serving()
+    if seat is None:
+        if _async_routing(session) == "local_only":
+            return _queue_after_call(session, question, "A question from a voice call")
+        return _tool_delegate_to_friday(
+            {"request": question, "title": "A question from a voice call"}, session)
+    settings = _load_settings() or {}
+    system, _meta = _build_voice_system_prompt(settings, seat=seat)
+    user = _voice_user_message(
+        "Friday's fast voice handed you this question during a live call because "
+        "it needs your full memory or deeper thought. Answer it plainly in a few "
+        "spoken sentences; the voice will say your answer aloud.\n\n" + question,
+        settings, volatile=_meta.get("volatile"))
+    try:
+        from agent_friday.services import presence as _presence
+        with _presence.acting_as(_presence.FRIDAY):
+            text, _trace = _generate_agent(
+                [{"role": "user", "content": user}], system=system, model=seat,
+                max_tokens=_voice_reply_cap(settings),
+                session_ctx={"authenticated": True, "provider": "local",
+                             "is_voice": True, "surface": "voice-local-deep",
+                             "pin_to_seat": True},
+                workspace=settings.get("active_workspace") or "")
+    except Exception as e:
+        _log.error("ask_friday (local) failed: %s: %s", type(e).__name__, e)
+        return f"Friday's deeper mind could not answer ({type(e).__name__}). Say so plainly."
+    return (text or "").strip()
+
+
+def _tool_ask_friday(inp, session=None):
     """Dispatch the question to the LOCAL agent pipeline with the full contract
     (the same `_generate_agent` a local voice turn uses, on the resident
     brain seat, reply cap 300), then seal the answer for google-gemini.
+    From the local voice front it goes to ``_ask_friday_local`` instead.
 
     The seal is applied HERE, not only by the Live tool-call runner, so the
     withheld-whole guarantee (`_gate_voice_tool_result`: a withheld result is
@@ -575,6 +619,8 @@ def _tool_ask_friday(inp):
     question = str((inp or {}).get("question") or "").strip()
     if not question:
         return "ask_friday needs a question."
+    if _local_session(session):
+        return _ask_friday_local(question, session)
     settings = _load_settings() or {}
     try:
         from agent_friday.services import local_seats
@@ -603,7 +649,10 @@ def _tool_ask_friday(inp):
                 [{"role": "user", "content": user}], system=system, model=seat,
                 max_tokens=_voice_reply_cap(settings),
                 session_ctx={"authenticated": True, "provider": "local",
-                             "is_voice": True, "surface": "voice-live-relay"},
+                             "is_voice": True, "surface": "voice-live-relay",
+                             # The prompt is gated for the LOCAL seat: a dead
+                             # seat fails here, it never rides a cloud leg.
+                             "pin_to_seat": True},
                 workspace=settings.get("active_workspace") or "")
     except Exception as e:
         _log.error("ask_friday failed: %s: %s", type(e).__name__, e, exc_info=True)
@@ -714,6 +763,77 @@ def _voice_tool_names():
     given.
     """
     return [t[0] for t in _VOICE_LIVE_TOOLS] + [n for n, _d, _s in _voice_shared_tool_specs()]
+
+
+#: Ceiling on the rendered voice tool contract (local voice spec §2, P1). The
+#: front model prefills it on every cold start; the 124-tool registry (~22.8K
+#: tokens) is what put local voice at a 63-199 s first token.
+VOICE_CONTRACT_MAX_TOKENS = 9000
+
+#: Never declared to any voice engine, curated or full (voice_engine
+#: decision: shell execution from a speech recogniser is its own risk class;
+#: delegate_to_friday's gated background agent reaches it).
+VOICE_NEVER_DECLARED = frozenset({"run_command"})
+
+
+def _native_tool_schema(props, required):
+    """A _VOICE_LIVE_TOOLS (props, required) pair as JSON schema. "array" is a
+    list of strings; every other type is a scalar (the Live renderer's rule)."""
+    out = {}
+    for pname, (ptype, pdesc) in props.items():
+        if ptype == "array":
+            out[pname] = {"type": "array", "items": {"type": "string"},
+                          "description": pdesc}
+        else:
+            out[pname] = {"type": ptype if ptype in ("string", "integer", "number",
+                                                     "boolean") else "string",
+                          "description": pdesc}
+    schema = {"type": "object", "properties": out}
+    if required:
+        schema["required"] = list(required)
+    return schema
+
+
+def build_voice_tool_contract(full: bool = False) -> dict:
+    """The voice tool contract as OpenAI-style declarations, for ANY engine.
+
+    ``full=False`` is the curated contract every voice engine shares: the
+    native voice tools plus the borrowed ones, from the same tables
+    ``_build_voice_live_tools`` renders for Gemini Live and in the same order
+    (``_voice_tool_names()`` is the name list). ``full=True`` adds the rest of
+    the text registry (local voice spec §12.3). ``run_command`` is absent
+    from both.
+
+    Returns ``{"tools": [...], "names": [...], "tokens": int, "fits": bool}``;
+    ``fits`` holds the curated contract to ``VOICE_CONTRACT_MAX_TOKENS``.
+    """
+    tools = []
+    for name, desc, props, required in _VOICE_LIVE_TOOLS:
+        tools.append({"type": "function", "function": {
+            "name": name, "description": _navigate_tool_description(desc),
+            "parameters": _native_tool_schema(props, required)}})
+    for name, desc, schema in _voice_shared_tool_specs():
+        tools.append({"type": "function", "function": {
+            "name": name, "description": desc, "parameters": schema}})
+    if full:
+        try:
+            from agent_friday.services.agent import CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS
+            have = {t["function"]["name"] for t in tools}
+            for t in CLAUDE_TOOLS:
+                n = t.get("name") if isinstance(t, dict) else None
+                if not n or n in have or n not in CLAUDE_TOOL_HANDLERS:
+                    continue
+                tools.append({"type": "function", "function": {
+                    "name": n, "description": t.get("description") or n,
+                    "parameters": t.get("input_schema")
+                    or {"type": "object", "properties": {}}}})
+        except Exception as e:  # pragma: no cover - import-time failure
+            _log.error("full voice toolkit unavailable (registry import failed): %s", e)
+    tools = [t for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED]
+    tokens = len(json.dumps(tools, ensure_ascii=False)) // 4
+    return {"tools": tools, "names": [t["function"]["name"] for t in tools],
+            "tokens": tokens,
+            "fits": full or tokens <= VOICE_CONTRACT_MAX_TOKENS}
 
 
 def _navigate_tool_description(desc):
@@ -895,6 +1015,47 @@ def _news_args_for_session(args: dict, session) -> dict:
     return out
 
 
+def _local_session(session) -> bool:
+    """Is this tool call from the LOCAL voice front (not Gemini Live)?"""
+    return isinstance(session, dict) and session.get("engine") == "local"
+
+
+def _async_routing(session) -> str:
+    """Where deep work asked by voice goes (local voice spec §6/§7.2):
+    "local_only" (Private) or "follow_model_routing" (Automatic)."""
+    v = (session or {}).get("async_routing") if isinstance(session, dict) else None
+    if not v:
+        v = (_load_settings() or {}).get("voice_async_routing")
+    v = str(v or "local_only").strip().lower()
+    return v if v in ("local_only", "follow_model_routing") else "local_only"
+
+
+def _brain_serving():
+    """The brain seat when it is serving right now, else None."""
+    try:
+        from agent_friday.services import local_seats
+        seat = local_seats.resolve("brain")
+        return seat if seat and seat in (local_seats.serving() or {}) else None
+    except Exception:
+        return None
+
+
+#: What the front is told when deep work must wait for the end of the call
+#: (Private, brain parked for the call).
+QUEUED_AFTER_CALL = (
+    "QUEUED_AFTER_CALL: Friday's deeper mind is parked while you two talk, and "
+    "this conversation is set to stay on this computer, so it will work on "
+    "this as soon as the call ends and the answer will be in this "
+    "conversation. Tell the user in one short sentence that you'll dig into "
+    "it after you hang up. Do not guess the answer.")
+
+
+def _queue_after_call(session, request: str, title: str = "") -> str:
+    session.setdefault("after_call", []).append(
+        {"request": str(request), "title": str(title or request[:60])})
+    return QUEUED_AFTER_CALL
+
+
 def _voice_ctx(session=None) -> dict:
     """The governance context of a voice tool call.
 
@@ -904,6 +1065,11 @@ def _voice_ctx(session=None) -> dict:
     Main) and tools that need the owner's words see them, as in chat.
     """
     ctx = {"authenticated": True, "surface": "voice-live", "taint_key": "voice-live"}
+    if _local_session(session):
+        # The local voice front: the model reading these results is on this
+        # machine, so the vault's zero-trust check judges it as local.
+        ctx.update({"surface": "voice-local", "taint_key": "voice-local",
+                    "provider": "local", "is_voice": True})
     if isinstance(session, dict):
         if session.get("conversation_id"):
             ctx["conversation_id"] = session["conversation_id"]
@@ -921,6 +1087,12 @@ def _voice_local_only() -> bool:
         return True          # cannot tell: behave as restricted
 
 
+#: The task prompt a spoken request is handed over with.
+_DELEGATE_PROMPT = ("The user asked for this in a live voice conversation. Do it fully, "
+                    "with whatever tools it needs, then report the real outcome in a few "
+                    "plain sentences that can be spoken aloud.\n\nRequest: ")
+
+
 def _tool_delegate_to_friday(inp, session=None):
     """Hand a spoken request to the full agent as a background task.
 
@@ -935,6 +1107,25 @@ def _tool_delegate_to_friday(inp, session=None):
     request = str(inp.get("request") or "").strip()
     if not request:
         return "delegate_to_friday needs the request itself. Ask the user what they want done."
+    if _local_session(session) and (_async_routing(session) == "local_only"
+                                    or _voice_local_only()):
+        # Private voice (or local-only mode): the work runs on the local
+        # brain, pinned to it, or waits for the end of the call when the
+        # brain is parked for it. Never a cloud leg (local voice spec P3).
+        seat = _brain_serving()
+        title = str(inp.get("title") or "").strip() or request[:60]
+        if seat is None:
+            return _queue_after_call(session, request, title)
+        from agent_friday.services.agent import _spawn_task
+        task_id = _spawn_task(
+            title, _DELEGATE_PROMPT + request,
+            description="Handed over from a voice conversation", model=seat,
+            tools=None, conversation_id=session.get("conversation_id"),
+            orb_icon="🎙", pin_to_seat=True)
+        return (f"DELEGATED:{task_id} Friday's deeper mind is working on it on this "
+                f"computer. Say one short sentence that you're on it and keep "
+                f"talking; the outcome will be handed back to you when it is done. "
+                f"Do not guess the result.")
     if _voice_local_only():
         return ("NOT DONE: local-only mode is on, so a cloud voice session cannot hand "
                 "work to Friday. Tell the user; they can ask in chat, or turn local-only off.")
@@ -949,9 +1140,7 @@ def _tool_delegate_to_friday(inp, session=None):
             seat = None
     from agent_friday.services.agent import _spawn_task
     title = str(inp.get("title") or "").strip() or request[:60]
-    prompt = ("The user asked for this in a live voice conversation. Do it fully, "
-              "with whatever tools it needs, then report the real outcome in a few "
-              "plain sentences that can be spoken aloud.\n\nRequest: " + request)
+    prompt = _DELEGATE_PROMPT + request
     task_id = _spawn_task(title, prompt, description="Handed over from a voice conversation",
                           model=seat, tools=None, conversation_id=cid, orb_icon="🎙")
     return (f"DELEGATED:{task_id} Friday is working on it in the background. Say one "
@@ -1227,7 +1416,7 @@ def _voice_tool_run(name, args, send_client, session=None):
             except Exception:
                 pass
             try:
-                return _governed("ask_friday", _tool_ask_friday, args)
+                return _governed("ask_friday", lambda a: _tool_ask_friday(a, session), args)
             finally:
                 try:
                     send_client({"type": "stage", "stage": "mind", "state": "idle",

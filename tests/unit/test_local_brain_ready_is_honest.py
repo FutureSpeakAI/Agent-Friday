@@ -20,6 +20,8 @@ def seat(monkeypatch):
     monkeypatch.setattr(local_seats, "resolve", lambda role, configured=None: "bonsai2:27b")
     monkeypatch.setattr(local_seats, "serving", lambda: dict(st["serving"]))
     monkeypatch.setattr(build_hours, "is_active", lambda *a, **k: st["build_hours"])
+    # Readiness without a voice front: the brain is what answers.
+    monkeypatch.setattr("agent_friday.services.voice_front.installed", lambda m: False)
     return st
 
 

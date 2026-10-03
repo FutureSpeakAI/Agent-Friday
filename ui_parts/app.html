@@ -15941,7 +15941,7 @@ function TtsEngineRows({s,save,mc}){
   },[]);
   useEffect(()=>{refresh();const t=setInterval(refresh,6000);return()=>clearInterval(t)},[refresh]);
   const engines=(mc&&mc.ttsEngines)||TTS_ENGINES_FALLBACK;
-  const sel=s.local_voice_tts_engine||'piper';
+  const sel=s.local_voice_tts_engine||'kokoro';
   const selMeta=engines.filter(o=>o.id===sel)[0]||null;
   const running=(live&&live.running)||null;
   const servingEngine=(running&&running.tts_engine)||null;
@@ -16052,7 +16052,7 @@ function SettingsTabVoice({s,save}){
       </StRow>}
       {((s.voice_engine||'local')!=='gemini')&&<TtsEngineRows s={s} save={save} mc={mc}/>}
       <PushToTranscribeRows s={s} save={save}/>
-      {((s.voice_engine||'local')!=='gemini')&&(s.local_voice_tts_engine||'piper')==='piper'&&<StRow label="Piper voice" desc="The on-device voice the local engines speak with.">
+      {((s.voice_engine||'local')!=='gemini')&&(s.local_voice_tts_engine||'kokoro')==='piper'&&<StRow label="Piper voice" desc="The on-device voice the local engines speak with.">
         <select className="input" style={{width:'100%'}} value={s.local_voice_tts_voice||'en_US-amy-medium'} onChange={e=>save({local_voice_tts_voice:e.target.value})}>
           {[['en_US-amy-medium','Amy \u2014 US English (medium)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
         </select>
@@ -16074,7 +16074,7 @@ function SettingsTabVoice({s,save}){
         </div>
       </StRow>}
       {!gem&&<StSavedSlider label={("Pause before " + fridayName() + " replies")} desc="How long a silence counts as the end of what you said. Longer suits slow speech; shorter feels snappier."
-        value={s.voice_silence_ms??800} min={300} max={2000} step={100} fmt={v=>Math.round(v)+' ms'}
+        value={s.voice_silence_ms??500} min={300} max={2000} step={100} fmt={v=>Math.round(v)+' ms'}
         onSave={v=>save({voice_silence_ms:Math.round(v)})}/>}
     </StSection>
     <StSection title="What voice can't do, and why" desc={("Voice can do anything chat can: what its quick tools do not cover, it hands to " + fridayName() + " in the background. These limits remain, and why.")}>
