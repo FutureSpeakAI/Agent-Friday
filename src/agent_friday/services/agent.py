@@ -9137,7 +9137,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
             else str(_sc.get("owner_text") or ""))
         _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
-        _prov_tok = _CURRENT_PROVIDER.set(_sc.get("provider") or _LOOP_PROVIDER.get())
+        # The loop that is running knows what it talks to; the session's
+        # provider is the ROUTED intent, built once and stale after a
+        # local-to-cloud fallback. The loop wins; the session only fills in
+        # for a call made outside any loop (voice helpers).
+        _prov_tok = _CURRENT_PROVIDER.set(_LOOP_PROVIDER.get() or _sc.get("provider"))
         try:
             _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
             _cred_paths.REFUSED.set(False)
@@ -11370,8 +11374,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
     """The shared OpenAI-format loop. It names its provider for the run so a
-    handler can tell a local seat from the cloud. See _oai_agentic_loop_run."""
-    _tok = _LOOP_PROVIDER.set(provider)
+    handler can tell a local seat from the cloud: a loopback seat we serve
+    ourselves is LOCAL whatever dialect it speaks (`seat='local'`). See
+    _oai_agentic_loop_run."""
+    _tok = _LOOP_PROVIDER.set("local" if kw.get("seat") == "local" else provider)
     try:
         return _oai_agentic_loop_run(convo, oai_tools, send_fn, provider=provider,
                                      model=model, **kw)

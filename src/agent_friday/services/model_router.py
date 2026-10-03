@@ -3707,7 +3707,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # block this replaces carried the epistemic score and told the model to
     # increase pushback when it fell (the metric-chasing the north star
     # forbids); the fallback leaked the score too.
-    add("\n== HONESTY ==\n" + _honesty_rules_text(), _T1)
+    _honesty = _honesty_rules_text()
+    if _honesty:
+        add("\n== HONESTY ==\n" + _honesty, _T1)
 
     # Layer 2.5: Project context files (.friday-context.md / AGENTS.md)
     # Hermes-inspired: drop a context file in any project directory and Friday

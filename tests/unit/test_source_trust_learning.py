@@ -68,7 +68,9 @@ class TestNoPackPenalty:
         arts.append(_art("lonely.test", title="Plan announced", sentiment="negative",
                          snippet=snippet, url="https://lonely.test/plan"))
         cluster = {"articles": arts, "source_count": 8, "headline": "Plan announced"}
-        before = dict((graph.get("lonely.test") or {}).get("scores") or {})
+        graph.observe("lonely.test", "opinion_labeled", "opinion_separation", 0.9)
+        before = dict(graph.get("lonely.test")["scores"])
+        assert before
         summary = graph.analyze_fetch(arts, [cluster])
         rec = graph.get("lonely.test") or {}
         types = {o["type"] for o in rec.get("observations") or []}

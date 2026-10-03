@@ -2238,7 +2238,9 @@ def _build_live_context() -> str:
                 except Exception:
                     score = 0.0
                 items.append((name, score, role))
-            items.sort(key=lambda x: x[1], reverse=True)
+            # By name, not by score: an order by score is a rank, and a rank
+            # of people is a judgement that stays home.
+            items.sort(key=lambda x: str(x[0]).lower())
             top = items[:8]
             if top:
                 lines = [f"- {n}" + (f" ({r})" if r else '') for n, _s, r in top]

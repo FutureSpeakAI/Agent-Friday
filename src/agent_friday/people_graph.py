@@ -323,8 +323,11 @@ class PeopleGraph:
             event = self._log_event(person_key, person, before,
                                     kind=("owner_correction" if because else "owner_statement"),
                                     origin=("owner" if ev_origin == "owner" else "system"),
-                                    detail=((add_evidence or {}).get("notes") or
-                                            (add_evidence or {}).get("type") or
+                                    # A reference to the evidence, never the
+                                    # owner's note text: the log is explanation,
+                                    # not a second copy of the record.
+                                    detail=(("evidence: " + str((add_evidence or {}).get("type") or "observation"))
+                                            if add_evidence else
                                             ("scores set: " + ", ".join(sorted(scores or {})))),
                                     because=because)
             if event is not None:

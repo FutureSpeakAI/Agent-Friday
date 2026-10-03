@@ -240,12 +240,17 @@ def _apply_to_graph(attestation, friday_dir=None):
     dim, signal = _OBS_TYPE_MAP.get(otype, (None, None))
     if dim is None:
         return
+    from agent_friday.trust import agents as _agents
     try:
-        from agent_friday.trust import agents as _agents
-        if not _agents.enabled() or _agents.read(str(attestation.get("agent_id") or "")) is None:
-            _agents.quarantine(attestation)
-            return
+        held = (not _agents.enabled()
+                or _agents.read(str(attestation.get("agent_id") or "")) is None)
     except Exception:
+        held = True   # a switch that cannot be read is off
+    if held:
+        try:
+            _agents.quarantine(attestation)
+        except Exception:
+            pass
         return
     g = get_source_trust_graph(friday_dir=friday_dir)
     g.observe(

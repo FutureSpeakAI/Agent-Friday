@@ -74,11 +74,16 @@ def record_intelligence(person_name: str, content: str, *, friday_dir=None,
     dimensions when absent, appends the intelligence under the store's lock
     and saves through `PeopleGraph`, so the next save never erases it.
     """
-    from agent_friday.people_graph import PeopleGraph, _DEFAULT_SCORES
+    from pathlib import Path as _P
+    from agent_friday.people_graph import PeopleGraph, _DEFAULT_SCORES, get_people_graph
     name = (person_name or "").strip()
     if not name:
         return {"ok": False, "error": "No person_name in metadata"}
-    pg = PeopleGraph(friday_dir=friday_dir) if friday_dir is not None else PeopleGraph()
+    # The routes edit through the module singleton; sharing its lock keeps a
+    # SendTo and a concurrent edit from losing each other's write.
+    pg = get_people_graph(friday_dir=friday_dir) if friday_dir is not None else get_people_graph()
+    if friday_dir is not None and _P(pg.path).parent.resolve() != _P(friday_dir).resolve():
+        pg = PeopleGraph(friday_dir=friday_dir)
     with pg._lock:
         graph = pg.load()
         people = graph.setdefault("people", {})

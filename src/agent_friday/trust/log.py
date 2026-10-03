@@ -80,12 +80,44 @@ def _read_lines(path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _tip(path: Path) -> str:
-    rows = _read_lines(path)
-    for r in reversed(rows):
-        if isinstance(r, dict) and r.get("hash"):
-            return r["hash"]
+_TIPS: Dict[str, str] = {}
+
+
+def _last_hash_on_disk(path: Path) -> str:
+    """The hash of the last well-formed line, read from the tail of the file."""
+    if not path.exists():
+        return GENESIS
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            chunk = b""
+            pos = size
+            while pos > 0 and chunk.count(b"\n") < 3:
+                step = min(65536, pos)
+                pos -= step
+                f.seek(pos)
+                chunk = f.read(step) + chunk
+        for raw in reversed(chunk.decode("utf-8", "replace").splitlines()):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                r = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(r, dict) and r.get("hash"):
+                return r["hash"]
+    except Exception:
+        pass
     return GENESIS
+
+
+def _tip(path: Path) -> str:
+    """The chain tip for a path, cached under the path's lock after one tail read."""
+    key = str(path)
+    if key not in _TIPS or not path.exists():
+        _TIPS[key] = _last_hash_on_disk(path)
+    return _TIPS[key]
 
 
 def append(path: Path, *, entity_id: str, kind: str, origin: str = "system",
@@ -119,6 +151,7 @@ def append(path: Path, *, entity_id: str, kind: str, origin: str = "system",
         core["hash"] = _hash(core)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(core, ensure_ascii=False, default=str) + "\n")
+        _TIPS[str(path)] = core["hash"]
         return core
 
 
@@ -219,4 +252,5 @@ def forget_entity(path: Path, *, match) -> int:
         tmp.write_text("".join(json.dumps(r, ensure_ascii=False, default=str) + "\n" for r in rebuilt),
                        encoding="utf-8")
         os.replace(tmp, path)
+        _TIPS[str(path)] = marker["hash"]
         return removed

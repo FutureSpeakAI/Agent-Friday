@@ -41,7 +41,7 @@ observation from swinging a score to an extreme.
 import json
 import re
 import threading
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 from agent_friday.paths import friday_home
@@ -267,7 +267,7 @@ def _corrects_a_prior_article(rec, title) -> bool:
 
 
 def _corrections_this_week(rec) -> int:
-    cutoff = (datetime.now() - __import__("datetime").timedelta(days=7)).date()
+    cutoff = (datetime.now() - timedelta(days=7)).date()
     n = 0
     for o in rec.get("observations") or []:
         if o.get("type") != "correction_issued":

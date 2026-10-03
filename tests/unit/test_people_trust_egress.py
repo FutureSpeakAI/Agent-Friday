@@ -100,6 +100,32 @@ def test_an_unknown_provider_is_treated_as_not_local(graph, monkeypatch):
         assert s not in out
 
 
+def test_a_stale_session_provider_does_not_beat_the_loop(graph):
+    """After a local-to-cloud fallback the session still says provider 'local';
+    the cloud loop that is actually running must win."""
+    tok = ag._LOOP_PROVIDER.set("anthropic")
+    try:
+        out = ag._execute_tool("query_trust_graph", {"name": "Pat"},
+                               session_ctx={"provider": "local", "session_id": "s1"})
+    finally:
+        ag._LOOP_PROVIDER.reset(tok)
+    for s in SECRETS:
+        assert s not in out, "a stale session provider handed a cloud loop %r" % s
+    assert "accountant" in out
+
+
+def test_a_loopback_seat_on_the_openai_dialect_is_local(graph, monkeypatch):
+    seen = []
+
+    def run(*a, **k):
+        seen.append(ag._LOOP_PROVIDER.get())
+        return "ok", []
+    monkeypatch.setattr(ag, "_oai_agentic_loop_run", run)
+    ag._oai_agentic_loop([], [], lambda *a, **k: None, provider="openai", model="m", seat="local")
+    ag._oai_agentic_loop([], [], lambda *a, **k: None, provider="openai", model="m", seat="openai")
+    assert seen == ["local", "openai"]
+
+
 def test_the_anthropic_loop_names_itself_cloud(monkeypatch):
     seen = []
 
