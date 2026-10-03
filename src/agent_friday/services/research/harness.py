@@ -19,7 +19,7 @@ import re
 import time
 import uuid
 
-from agent_friday.services import web_fetch, web_search
+from agent_friday.services import page_reader, web_fetch, web_search
 from agent_friday.services.research.objects import (
     CONFIRMED, CONTESTED, GRINDING, SCOPING, SINGLE_SOURCE, SYNTHESIZING,
     UNCONFIRMED, VERIFYING, Commission, Finding, ResearchPlan, SubQuestion,
@@ -45,6 +45,11 @@ SIDEKICK = "gemma4:e2b"     # cheap structured work
 # what was timing out at the old 120s ceiling mid-commission.
 EXTRACTOR = "gemma4:e2b"    # page -> relevant verbatim spans
 HEAVY = "gemma4:26b"        # synthesis
+
+#: Page tokens the extractor reads per page: the passages the sub-question
+#: needs (page_reader.select_text), sized so the page, the instructions and a
+#: 1,536-token answer fit an 8,192-token window.
+EXTRACT_PAGE_TOKENS = 4000
 
 
 def refresh_seats() -> dict:
@@ -400,11 +405,12 @@ def grind(c: Commission) -> None:
                     continue
                 c.log(f"read {rec.get('title') or r['url']}", url=r["url"],
                       chars=rec.get("chars"), cached=rec.get("from_cache"))
-                page = web_fetch.load_extraction(rec["id"])
+                page = page_reader.select_text(web_fetch.load_extraction(rec["id"]) or "",
+                                               sq.text, EXTRACT_PAGE_TOKENS)
                 ex = _json_local(
                     _EXTRACT_SYSTEM,
                     f"Question: {sq.text}\n\nPage ({rec.get('title')}):\n"
-                    f"{page[:24000]}",
+                    f"{page}",
                     EXTRACTOR, max_tokens=1536)
                 for passage in _as_list(_as_dict(ex).get("passages"))[:8]:
                     ptext = _as_text(passage)

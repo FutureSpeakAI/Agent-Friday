@@ -47,6 +47,7 @@ _ALLOWED_FIELDS = {
     # A reasoning trace was archived (services/reasoning_trace.py). A pointer
     # into the encrypted trace ledger by seq/hash plus counts -- the reasoning
     # itself, the label and tool arguments stay in the encrypted record.
+    "notification": {"kind", "source", "tier", "muted"},
     "reasoning_trace": {
         "trace_id", "parent_id", "task_id", "model", "seat", "trace_kind", "source",
         "tokens_in", "tokens_out", "reasoning_chars", "tool_calls", "duration_ms",

@@ -168,6 +168,88 @@ _PROMO_RE = re.compile(r"^[^:]{2,40}:\s.*\b(?:keeping you|stay (?:safe|informed)
                        r"sign up|subscribe)\b", re.I)
 
 
+# ── news value ──────────────────────────────────────────────────────────────
+
+#: Hard news first, then analysis, service pieces, and promotion last.
+VALUE_ORDER = ("hard", "analysis", "service", "promo")
+_SPONSORED_RE = re.compile(r"^(?:sponsored|partner content|paid content|advertisement|presented by|"
+                           r"brought to you by)\b|\bsponsored content\b", re.I)
+_ADVERTORIAL_RE = re.compile(r"\b(?:discusses|explains|shares) how\b.*\b(?:can|could)\s+(?:help|partner|support|save)\b",
+                             re.I)
+_EVENT_RE = re.compile(r"\b(?:summit|disrupt|conference|festival|expo|awards|tickets|session|speakers?|"
+                       r"agenda|guide to)\b", re.I)
+_HARD_RE = re.compile(
+    r"\b(?:council|legislat\w*|senate|congress|court|judge|ruling|lawsuit|indict\w*|charged|police|"
+    r"sheriff|fbi|governor|mayor|budget|votes?|voted|election|ballot|bill|law|ordinance|tax(?:es)?|"
+    r"jobs report|unemployment|inflation|tariffs?|strike|evacuat\w*|wildfire|flood\w*|outage|recall|"
+    r"crime|justices?|recus\w*|supreme court|gdp|recession|interest rates?|job market|[\d,]+ jobs)\b", re.I)
+_SERVICE_RE = re.compile(
+    r"\b(?:things to do|guide to|how to|tips|list of|events (?:across|this|in|around)|weekend (?:check|guide)|"
+    r"where to|recipes?|deals?|gear up)\b", re.I)
+_MARKETS_RE = re.compile(r"\b(?:stocks?|bonds?|bond market|yields?|nasdaq|s&p|dow|wall street|markets?|"
+                         r"investors?|shares|earnings|ipo)\b", re.I)
+_FIRST_PERSON_RE = re.compile(r"\b(?:I|I've|I'm|I'd|I'll)\b|\bmy\b|^opinion\b|^column\b", re.I)
+
+
+def _brand(item: dict) -> str:
+    return re.sub(r"[^a-z0-9]", "", (item.get("source") or "").lower().removeprefix("www.").split(".")[0])
+
+
+def _promotes(item: dict) -> bool:
+    """Sponsored or advertorial, or an outlet promoting its own event."""
+    title = item.get("title") or ""
+    if _SPONSORED_RE.search(title) or _ADVERTORIAL_RE.search(title):
+        return True
+    brand = _brand(item)
+    squashed = re.sub(r"[^a-z0-9]", "", title.lower())
+    return bool(brand and len(brand) > 3 and brand in squashed and _EVENT_RE.search(title))
+
+
+def news_value(item: dict) -> str:
+    """"hard", "analysis", "service" or "promo"."""
+    if _promotes(item):
+        return "promo"
+    title = item.get("title") or ""
+    from agent_friday.services.podcast_quality import is_safety_story
+    if is_safety_story({"title": title, "text": ""}) or _HARD_RE.search(title):
+        return "hard"
+    if _SERVICE_RE.search(title):
+        return "service"
+    return "analysis"
+
+
+def rank(items: list[dict]) -> list[dict]:
+    """Hard news first, keeping the order within each kind."""
+    return sorted(items, key=lambda i: VALUE_ORDER.index(news_value(i)))
+
+
+def cap_per_outlet(items: list[dict], per_outlet: int = 2) -> list[dict]:
+    seen: dict = {}
+    out = []
+    for i in items:
+        src = (i.get("source") or "").lower()
+        seen[src] = seen.get(src, 0) + 1
+        if seen[src] <= per_outlet:
+            out.append(i)
+    return out
+
+
+def is_opinion(item: dict) -> bool:
+    """A column or opinion piece, labelled as such on the card."""
+    url = (item.get("url") or "").lower()
+    if re.search(r"/(?:opinion|opinions|op-ed|oped|column|columns|commentary)(?:/|$)", url):
+        return True
+    return bool(_FIRST_PERSON_RE.search(item.get("title") or ""))
+
+
+def section_for(item: dict) -> str:
+    """The section a story belongs in, whatever feed it came from: a markets
+    story is Business."""
+    if _MARKETS_RE.search(item.get("title") or ""):
+        return "Business"
+    return item.get("category") or ""
+
+
 def window_hours(routine: str) -> float:
     try:
         from agent_friday.core import _load_settings
@@ -177,13 +259,19 @@ def window_hours(routine: str) -> float:
         return float(DEFAULT_WINDOW_H)
 
 
-def is_article(item: dict) -> bool:
+def is_article(item: dict, meta: dict | None = None) -> bool:
     """A story, not a page: no forecast, headline index, app promo, homepage,
-    untitled or cut-off post ("Yet More …")."""
+    untitled or cut-off post ("Yet More …"), and no page whose own metadata
+    says it is a section front or a list of links (`meta`, or what a read of
+    the page kept: page_reader.known_meta)."""
     title = (item.get("title") or "").strip()
     if not title:
         return False
-    if _NOT_ARTICLE_RE.match(title.rstrip(".! ")) or _PROMO_RE.match(title):
+    from agent_friday.services import page_reader
+    if page_reader.is_article_meta(meta if meta is not None
+                                   else page_reader.known_meta(item.get("url") or "")) is False:
+        return False
+    if _NOT_ARTICLE_RE.match(title.rstrip(".! ")) or _PROMO_RE.match(title) or _promotes(item):
         return False
     # A death notice is a private person's page, not front-page news.
     if re.search(r"\bobituary\b|\bobituaries\b", title, re.I):

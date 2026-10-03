@@ -45,3 +45,9 @@ def test_a_merged_story_names_every_outlet_on_its_card(page):
     s = (ROOT / page).read_text(encoding="utf-8")
     assert "function FpAlso" in s and "Also reported by" in s
     assert s.count("FpAlso, { it:") + s.count("<FpAlso it=") == 2
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_an_opinion_piece_is_labelled_on_its_card(page):
+    s = (ROOT / page).read_text(encoding="utf-8")
+    assert s.count("OPINION") >= 2 and "fp-badge opinion" in s

@@ -119,6 +119,12 @@ def repin_claws() -> str:
 #: accounts, publishing, code execution, or no undo.
 OUTWARD_TOOLS = frozenset({
     "draft_email",                  # its own card is the gate (SELF_GATED)
+    # Decided, not yet reviewed for internal: each waits for a card, as an
+    # unclassified tool does. notifications can also mute and clear the
+    # owner's cards, so a turn steered by something it read could silence an
+    # alarm; local_model_status only reads, and its case for internal is its
+    # author's to make with a review.
+    "notifications", "local_model_status",
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
     # Scheduling (services/scheduling.py). book_slot sends invitations to
     # other people. hold_slots writes only to the owner's own calendar and
@@ -188,6 +194,9 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
 #: gate already judges, and delegation (a spawned task's own actions come
 #: back through this checkpoint one by one).
 INTERNAL_TOOLS = frozenset({
+    # Reads the machine and the model catalogue; downloads nothing and
+    # reaches no one (services/local_models_tools).
+    "local_models_advise",
     "search_web", "browse_web", "read_file", "search_files",
     "write_clipboard", "query_trust_graph", "query_calendar", "revert_workspace",
     "list_workspace_history", "find_calendar_events", "search_email",
@@ -269,6 +278,14 @@ INTERNAL_TOOLS = frozenset({
     "hologram_window",
     # Standing back for a call: the owner's own machine and own setting.
     "call_mode",
+    # File permissions: lists them, removes one (only ever narrowing what
+    # leaves), or raises an approval card. It creates no grant: that happens
+    # only when the owner approves the card on screen.
+    "file_access",
+    # Big mode and the hand cursor: the owner's own screen and own setting;
+    # select never fires a guarded action.
+    "big_mode",
+    "hand_cursor",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but

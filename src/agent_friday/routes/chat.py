@@ -670,6 +670,14 @@ def _privacy_hold_turn(fn):
     return _inner
 
 
+def _note_owner_turn():
+    try:
+        from agent_friday.services import notification_policy as _pol
+        _pol.note_owner_turn()
+    except Exception:
+        pass
+
+
 def _traced_turn(fn):
     """Run a chat turn under its own reasoning trace.
 
@@ -684,6 +692,7 @@ def _traced_turn(fn):
     """
     @wraps(fn)
     def _inner(*args, **kwargs):
+        _note_owner_turn()
         from agent_friday.services import reasoning_trace as _rt
         data = request.get_json(silent=True) or {}
         msg = str(data.get("message") or "").strip()
@@ -707,8 +716,10 @@ def _traced_turn(fn):
                     status = "failed"
             return rv
         finally:
+            _note_owner_turn()
             if tid:
-                _rt.finish(tid, status, reply=reply_text)
+                _rt.finish(tid, status, reply=reply_text,
+                           reason=(reply_text if status == "failed" and reply_text else None))
     return _inner
 
 

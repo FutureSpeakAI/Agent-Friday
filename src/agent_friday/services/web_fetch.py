@@ -40,6 +40,10 @@ MAX_EXTRACT_CHARS = 200_000
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
+#: A cached page older than this is fetched again; so is one read by an older
+#: page reader.
+CACHE_TTL_S = 7 * 86400
+
 # Paragraph-sized spans, shaped to the egress registry's existing 2,000-char
 # bound on purpose (egress_gate.register_public_text drops anything longer).
 SPAN_MAX_CHARS = 2000
@@ -64,19 +68,38 @@ def _url_key(url: str) -> str:
     return hashlib.blake2b(url.strip().encode("utf-8"), digest_size=12).hexdigest()
 
 
-def _html_to_text(html: str) -> str:
-    """Strip markup to readable text. Mirrors agent._html_to_text so browse_web
-    behaviour does not change shape when it routes through here."""
+def _read_page(html: str, url: str = "") -> tuple[str, dict]:
+    """(readable text, the page's own metadata): the page reader's scored
+    blocks, paragraphs separated by a blank line; without BeautifulSoup, the
+    plain scanner's text and no metadata."""
     try:
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
-            tag.decompose()
-        text = soup.get_text(separator="\n", strip=True)
-        return re.sub(r"\n{3,}", "\n\n", text)
+        from agent_friday.services import page_reader
+        page = page_reader.read_html(html, url)
+        return page.text, page.meta
     except ImportError:
         from agent_friday.services.html_text import html_to_text
-        return html_to_text(html)
+        return html_to_text(html), {}
+
+
+def _html_to_text(html: str) -> str:
+    """Readable text of a page: its story blocks, page furniture dropped."""
+    return _read_page(html)[0]
+
+
+def _fresh(rec: dict) -> bool:
+    """A cached record is used while it is young and, for a direct read, made
+    by the current page reader."""
+    if time.time() - float(rec.get("fetched_at") or 0) > CACHE_TTL_S:
+        return False
+    if rec.get("via") == "direct":
+        from agent_friday.services import page_reader
+        return rec.get("extractor") == page_reader.VERSION
+    return True
+
+
+def _reader_version() -> int:
+    from agent_friday.services import page_reader
+    return page_reader.VERSION
 
 
 def _title_of(html: str) -> str:
@@ -185,9 +208,10 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
     if use_cache and meta_path.exists() and text_path.exists():
         try:
             rec = json.loads(meta_path.read_text(encoding="utf-8"))
-            rec["extracted_path"] = str(text_path)
-            rec["from_cache"] = True
-            return FetchResult(rec)
+            if _fresh(rec):
+                rec["extracted_path"] = str(text_path)
+                rec["from_cache"] = True
+                return FetchResult(rec)
         except Exception:
             pass  # unreadable cache entry → re-fetch
 
@@ -259,7 +283,7 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
                      "unreadable_type")
 
     html = resp.text
-    text = _html_to_text(html)
+    text, page_meta = _read_page(html, current)
     truncated = len(text) > MAX_EXTRACT_CHARS
     if truncated:
         text = text[:MAX_EXTRACT_CHARS]
@@ -279,7 +303,12 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
         "provenance": "fetched-by-friday-research",
         "via": "direct",
         "from_cache": False,
+        "extractor": _reader_version(),
     })
+    if page_meta:
+        from agent_friday.services import page_reader
+        rec["page_meta"] = page_meta
+        rec["header"] = page_reader.header_line(page_meta)
     spans = _spans(text)
     rec["spans"] = spans
 

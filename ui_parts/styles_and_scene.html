@@ -3092,40 +3092,10 @@
             FridayGestureScene.begin();
             const elapsed = clock.getElapsedTime() * 0.5;
 
-            // --- HAND CURSOR LOGIC (Minority Report) ---
-            const cursor = document.getElementById('hand-cursor');
-            const pRing = document.querySelector('.pinch-circle');
-            if (isHandTrackingMode) {
-                currHandX += (rawHandX - currHandX) * 0.25; 
-                currHandY += (rawHandY - currHandY) * 0.25; 
-                cursor.style.left = `${currHandX}px`; cursor.style.top = `${currHandY}px`;
-                
-                if (isPinching) {
-                    if(!wasPinching) { pinchStartTime = performance.now(); rightClickFired = false; cursor.classList.add('pinching'); }
-                    const duration = performance.now() - pinchStartTime;
-                    if (duration > 200) {
-                        document.getElementById('pinch-progress').style.opacity = 1;
-                        const progress = Math.min(1.0, (duration - 200) / PINCH_HOLD_TIME);
-                        pRing.style.strokeDashoffset = 95 * (1.0 - progress);
-                        if (progress >= 1.0 && !rightClickFired) {
-                            rightClickFired = true; spawnRipple(currHandX, currHandY, '#ff00ff');
-                        }
-                    }
-                } else {
-                    if (wasPinching) {
-                        const duration = performance.now() - pinchStartTime;
-                        cursor.classList.remove('pinching');
-                        document.getElementById('pinch-progress').style.opacity = 0; pRing.style.strokeDashoffset = 95;
-                        if (duration < 500) {
-                            spawnRipple(currHandX, currHandY, '#00ffff');
-                            cursor.style.display = 'none'; 
-                            let el = document.elementFromPoint(currHandX, currHandY);
-                            cursor.style.display = 'flex';
-                            if (el && typeof el.click === 'function') el.click();
-                        }
-                    }
-                }
-                wasPinching = isPinching;
+            // --- HAND CURSOR (static/hand_cursor.js): snap, pinch freeze, dwell, drag, big mode ---
+            if (isHandTrackingMode && window.FridayHandCursor) {
+                currHandX = rawHandX; currHandY = rawHandY;
+                window.FridayHandCursor.frame({ x: rawHandX, y: rawHandY, visible: handVisible, pinching: isPinching, t: performance.now() });
             }
 
             // --- STABILIZED TRUE 3D HOLOGRAPHIC PARALLAX OFFSET ---

@@ -632,6 +632,14 @@ def handle_approval_reply(text: str, now: Optional[float] = None) -> Optional[st
                 return "Too many wrong codes. Approval by text is now off."
             _save_state("sms_approvals.json", st)
             return "That code does not match a waiting approval. Nothing was changed."
+        card = ap.get_approval(match) or {}
+        if decision == "approve" and card.get("kind") in ap.SCREEN_ONLY_KINDS:
+            # Said plainly, and the code is kept so a NO still works: this kind
+            # of card is approved only by a click on screen.
+            _save_state("sms_approvals.json", st)
+            return ("File access is approved only on screen, in the app. Nothing was "
+                    "changed; the request is still waiting there. Reply NO %s to "
+                    "decline it." % code)
         entry = st["codes"].pop(match)
         _save_state("sms_approvals.json", st)
     rec = ap.decide(match, decision, decided_by="owner:sms", note="decided by text reply")

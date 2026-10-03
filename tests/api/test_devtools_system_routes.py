@@ -1153,8 +1153,21 @@ class TestNotifications:
         resp = client.post("/api/notifications/push", json={})
         assert resp.status_code in (400, 503)
 
-    def test_push_and_list_round_trip(self, client):
-        """Push a notification and check it surfaces in the list (if engine up)."""
+    def test_push_and_list_round_trip(self, client, tmp_path, monkeypatch):
+        """Push a notification and check it surfaces in the list (if engine up).
+
+        The store is this test's own: the list is priority-first and capped,
+        so cards earlier tests left behind could push a low-priority one off
+        the page."""
+        try:
+            from agent_friday import notifications_engine as _ne
+        except Exception:
+            _ne = None
+        if _ne is not None:
+            monkeypatch.setattr(_ne, "NOTIF_FILE", tmp_path / "notifications.json")
+            monkeypatch.setattr(_ne, "TRIGGER_STATE_FILE", tmp_path / "notif_trigger_state.json")
+            from agent_friday.services import notification_policy as _pol
+            monkeypatch.setattr(_pol, "owner_in_conversation", lambda now=None: False)
         push_resp = client.post("/api/notifications/push", json={
             "title": "pytest test notification",
             "body": "created by test_devtools_system_routes",

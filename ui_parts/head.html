@@ -210,20 +210,54 @@ window.addEventListener('DOMContentLoaded',function(){
         #camera-indicator.holo-active { background: #00ff66; box-shadow: 0 0 8px #00ff66; }
 
         /* MINORITY REPORT HAND CURSOR */
+        /* The hand cursor is an abstract reticle (HIG, hand-cursor.md §1.7): a ring in cyan,
+           never a hand. Its states are opacity and scale transitions of at least 350 ms. */
         #hand-cursor {
-            position: fixed; top: -50px; left: -50px; width: 24px; height: 24px;
-            border-radius: 50%; border: 4px solid rgba(0, 255, 255, 0.8);
+            position: fixed; top: -50px; left: -50px; width: 20px; height: 20px;
+            border-radius: 50%; border: 1.5px solid rgba(0, 255, 255, 0.85);
             transform: translate(-50%, -50%); pointer-events: none; z-index: 9999;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5), inset 0 0 6px rgba(0, 255, 255, 0.3);
-            display: none; opacity: 0; transition: transform 0.1s, border-color 0.2s, opacity 0.3s;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.45), inset 0 0 6px rgba(0, 212, 255, 0.25);
+            display: none; opacity: 0; transition: transform var(--fr-reveal), opacity var(--fr-reveal-time), width var(--fr-reveal-time), height var(--fr-reveal-time);
             justify-content: center; align-items: center;
         }
-        #hand-cursor.active { display: flex; opacity: 1; }
+        #hand-cursor.active { display: flex; opacity: 0.7; }
         #hand-cursor.hidden { opacity: 0; }
-        #hand-cursor.pinching { transform: translate(-50%, -50%) scale(0.8); border-color: #fff; box-shadow: 0 0 15px #fff; }
-        
-        #pinch-progress { position: absolute; top: -5px; left: -5px; width: 34px; height: 34px; transform: rotate(-90deg); opacity: 0; }
-        .pinch-circle { fill: none; stroke: #ff00ff; stroke-width: 4; stroke-dasharray: 95; stroke-dashoffset: 95; transition: stroke-dashoffset 0.1s linear; }
+        #hand-cursor.fr-locked { opacity: 1; }
+        #hand-cursor.fr-pinched { opacity: 1; transform: translate(-50%, -50%) scale(0.72); }
+        #hand-cursor.fr-held { opacity: 1; transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 0 18px rgba(0, 212, 255, 0.7); }
+        body.fr-big #hand-cursor { width: 26px; height: 26px; }
+        #hand-cursor .fr-arc { position: absolute; left: -10px; top: -10px; width: 40px; height: 40px; transform: rotate(-90deg); pointer-events: none; }
+        body.fr-big #hand-cursor .fr-arc { left: -7px; top: -7px; }
+        #hand-cursor .fr-arc-bg { fill: none; stroke: rgba(0, 212, 255, 0.15); stroke-width: 2.5; }
+        #hand-cursor .fr-arc-fill { fill: none; stroke: #00d4ff; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 106.8; stroke-dashoffset: 106.8; opacity: 0; transition: stroke-dashoffset 0.08s linear, opacity 0.35s; }
+        /* The locked target: a soft ring drawn around it so the user knows what a pinch will hit. */
+        .fr-snap-box { position: fixed; left: 0; top: 0; width: 0; height: 0; border: 2px solid rgba(0, 212, 255, 0.6); border-radius: 10px;
+            box-shadow: 0 0 14px rgba(0, 212, 255, 0.35); pointer-events: none; z-index: 9990; opacity: 0;
+            transition: left 0.18s ease-out, top 0.18s ease-out, width 0.18s ease-out, height 0.18s ease-out, opacity 0.35s; }
+        .fr-snap { outline: none !important; }
+        /* Big mode (hand-cursor.md §2): large targets, fewer items, generous spacing. One switch, body.fr-big. */
+        body.fr-big { --fr-gap: 16px; }
+        body.fr-big .dock-btn { min-width: 72px; min-height: 72px; font-size: 13px; }
+        body.fr-big .chat-panel { width: min(600px, 100vw) !important; }
+        body.fr-big .chat-panel [data-chat-input] { flex: 1 1 100% !important; width: 100% !important; order: -1; }
+        body.fr-big .chat-panel .chat-compose, body.fr-big .chat-panel [data-chat-compose], body.fr-big .chat-panel form { flex-wrap: wrap; row-gap: 10px; }
+        body.fr-big .dock .items, body.fr-big .dock-items { gap: 10px; }
+        body.fr-big .landing-cluster .landing-countdowns > * { font-size: 1.25em; padding: 10px 14px; }
+        body.fr-big .landing-cluster button, body.fr-big .landing-cluster .btn { min-height: 72px; min-width: 96px; font-size: 1.15em; padding: 0 26px; }
+        body.fr-big .landing-cluster input, body.fr-big .landing-cluster textarea { min-height: 72px; font-size: 1.25em; padding: 0 22px; border-radius: 36px; }
+        body.fr-big .chat-panel .btn, body.fr-big .chat-panel button, body.fr-big .chat-win button { min-height: 72px; min-width: 72px; font-size: 1.1em; }
+        body.fr-big .chat-panel textarea[data-chat-input], body.fr-big .chat-win textarea[data-chat-input] { min-height: 72px; font-size: 1.2em; line-height: 1.5; }
+        body.fr-big .chat-panel [data-chat-head] .btn { min-height: 56px; }
+        body.fr-big .news-ws .news-toolbar .btn, body.fr-big .news-ws .news-toolbar button { min-height: 72px; min-width: 96px; font-size: 1.1em; padding: 0 22px; }
+        body.fr-big .news-ws .news-masonry { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; column-count: 2 !important; gap: 24px; }
+        body.fr-big .news-ws .news-card { padding: 22px; font-size: 1.15em; min-height: 160px; }
+        body.fr-big .news-ws .news-card .btn, body.fr-big .news-ws .news-card button { min-height: 56px; min-width: 72px; }
+        body.fr-big .notif-dropdown { width: min(560px, 96vw); font-size: 1.15em; }
+        body.fr-big .notif-dropdown button, body.fr-big .notif-dropdown .btn { min-height: 56px; min-width: 72px; }
+        body.fr-big .notif-dropdown .task-card { padding: 18px; }
+        body.fr-big .top-bar .ibtn, body.fr-big .top-bar button { min-height: 44px; min-width: 44px; }
+        body.fr-big .fr-folded { display: none !important; }
+        body.fr-big .fr-more { min-height: 72px; min-width: 96px; font-size: 1.1em; padding: 0 22px; border: 1px dashed rgba(0, 212, 255, 0.45); }
         
         .ripple {
             position: fixed; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 9998;
@@ -2274,6 +2308,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fp-badge.new { color:#03130a; background:#00ff88; border:1px solid #00ff88; }
         .fp-badge.update { color:#0a0a14; background:#f59e0b; border:1px solid #f59e0b; }
+        .fp-badge.opinion { color:#0a0a14; background:#d6c7a1; border:1px solid #d6c7a1; }
         .fp-thread {
             margin-top:8px; padding:7px 10px; border-radius:7px; font-size:11px; line-height:1.45;
             color:#cfe8ff; background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.2);

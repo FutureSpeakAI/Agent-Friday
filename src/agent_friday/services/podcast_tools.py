@@ -118,17 +118,41 @@ def line_at(ep: dict, t: float) -> tuple[int, dict | None]:
 
 # ── tools ───────────────────────────────────────────────────────────────────
 
+#: How many of the newest episodes "the latest" is looked for among.
+_LATEST_WINDOW = 500
+
+
+def _ready_at(ep: dict) -> float:
+    """When an episode became playable: its finish time, else its creation."""
+    for key in ("finished_at", "created_at"):
+        try:
+            v = float(ep.get(key) or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        if v:
+            return v
+    return 0.0
+
+
 def _latest_ready(routine: str = "") -> dict | None:
-    """The newest READY episode, by when it was finished, across every show;
-    "news" is any News routine's; a named show narrows it to that show."""
-    eps = [e for e in pe.list_episodes(limit=500) if e.get("status") == "ready"]
+    """"The latest podcast": the READY episode that finished most recently,
+    across every show; "news" is any News routine's; a named show narrows it
+    to that show.
+
+    Never the newest-created one, which may still be queued, rendering or
+    failed, and never the newest-created ready one when an older long episode
+    finished after it: the latest the owner can listen to is the one that
+    became listenable last.
+    """
+    eps = [e for e in pe.list_episodes(limit=_LATEST_WINDOW) if e.get("status") == "ready"]
     routine = (routine or "").strip()
     if routine == "news":
         eps = [e for e in eps if (e.get("attached") or {}).get("routine")]
     elif routine and routine != "any":
         eps = [e for e in eps if (e.get("attached") or {}).get("routine") == routine]
-    eps.sort(key=lambda e: e.get("finished_at") or e.get("updated_at") or e.get("created_at") or 0, reverse=True)
-    return eps[0] if eps else None
+    if not eps:
+        return None
+    return max(eps, key=lambda ep: (_ready_at(ep), str(ep.get("id") or "")))
 
 
 def _tool_make_podcast(inp):
@@ -202,8 +226,16 @@ def _tool_podcast_list(inp):
         limit = max(1, min(25, int(inp.get("limit") or 8)))
     except (TypeError, ValueError):
         limit = 8
-    eps = pe.list_episodes(routine=str(inp.get("routine") or ""), limit=limit)
-    return json.dumps({"status": "ok", "episodes": [_brief(e) for e in eps]})
+    routine = str(inp.get("routine") or "")
+    eps = pe.list_episodes(routine=routine, limit=limit)
+    out = {"status": "ok", "episodes": [_brief(e) for e in eps]}
+    # The list is newest-created first, and its first entry may not be
+    # playable. "The latest" is named separately so it is never read off
+    # the top of the list.
+    latest = _latest_ready(routine)
+    out["latest_ready"] = ({"episode_id": latest["id"], "title": _safe_title(latest)}
+                           if latest else None)
+    return json.dumps(out)
 
 
 PLAY_OPS = ("play", "pause", "resume", "stop", "next_chapter", "previous_chapter", "seek")

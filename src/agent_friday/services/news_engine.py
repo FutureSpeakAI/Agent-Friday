@@ -453,6 +453,12 @@ _RSS_CACHE_TTL = 300  # seconds
 _RSS_FETCH_TIMEOUT_S = 8.0
 _RSS_CACHE_LOCK = threading.Lock()
 
+#: Per feed URL: (ETag, Last-Modified, entries) from its last full answer.
+#: The next fetch asks "changed since?"; a 304 reuses the entries, so a feed
+#: that has not moved costs the publisher one empty reply. Pacing is not
+#: changed by this, only the bytes.
+_FEED_VALIDATORS: dict = {}
+
 
 def _clean_feed_text(text):
     """Collapse an HTML/RSS summary into clean one-line plain text.
@@ -527,6 +533,9 @@ def _parse_feed(url, limit=12, timeout=None):
     then never finishes sending. `timeout` defaults to
     `_RSS_FETCH_TIMEOUT_S`; overridable so a test can prove the bound is
     real without waiting out the production value. See KNOWN_ISSUES.md.
+
+    The fetch is conditional when the feed sent an ETag or Last-Modified
+    last time: a 304 answer reuses the entries already parsed.
     """
     now = _time.time()
     with _RSS_CACHE_LOCK:
@@ -536,12 +545,29 @@ def _parse_feed(url, limit=12, timeout=None):
     try:
         import urllib.request
         import feedparser
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
-        })
-        with urllib.request.urlopen(
-                req, timeout=timeout or _RSS_FETCH_TIMEOUT_S) as resp:
-            raw = resp.read()
+        import urllib.error
+        headers = {"User-Agent": "Mozilla/5.0 FridayAgent/1.0"}
+        with _RSS_CACHE_LOCK:
+            etag, modified, before = _FEED_VALIDATORS.get(url) or ("", "", None)
+        if before is not None:
+            if etag:
+                headers["If-None-Match"] = etag
+            if modified:
+                headers["If-Modified-Since"] = modified
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(
+                    req, timeout=timeout or _RSS_FETCH_TIMEOUT_S) as resp:
+                raw = resp.read()
+                etag = resp.headers.get("ETag") or ""
+                modified = resp.headers.get("Last-Modified") or ""
+        except urllib.error.HTTPError as e:
+            if e.code != 304 or before is None:
+                raise
+            # Not modified since the last full answer: the same entries.
+            with _RSS_CACHE_LOCK:
+                _RSS_CACHE[url] = (now, before)
+            return before[:limit]
         d = feedparser.parse(raw)
         out = []
         for e in d.entries[: max(limit * 2, limit)]:
@@ -550,6 +576,10 @@ def _parse_feed(url, limit=12, timeout=None):
                 out.append(norm)
         with _RSS_CACHE_LOCK:
             _RSS_CACHE[url] = (now, out)
+            if etag or modified:
+                _FEED_VALIDATORS[url] = (etag, modified, out)
+            else:
+                _FEED_VALIDATORS.pop(url, None)
         return out[:limit]
     except Exception:
         return []
@@ -2195,6 +2225,14 @@ def _generate_front_page(slot="morning"):
     # The owner's approved media diet holds here, with a receipt.
     from agent_friday.services import media_diet
     pool, diet_removed = media_diet.enforce(pool, "front_page")
+    # News value: hard news first (safety, government, courts, the economy),
+    # then analysis, then service pieces; the section is what the story is
+    # about, not the feed it came from; opinion is labelled.
+    for p in pool:
+        p["category"] = news_seen.section_for(p) or p.get("category")
+        p["news_value"] = news_seen.news_value(p)
+        p["opinion"] = news_seen.is_opinion(p)
+    pool = news_seen.rank(pool)
     editorial = _editorialize_front_page(
         pool, slot=slot, prev_stories=prev_titles,
         calendar_events=calendar_events)
@@ -2234,7 +2272,8 @@ def _generate_front_page(slot="morning"):
     order = sorted(NEWS_CATEGORIES.keys(),
                    key=lambda c: _CATEGORY_WEIGHT.get(c, 0), reverse=True)
     for cat in order:
-        group = [a for a in (_tag(dict(p)) for p in rest if p.get("category") == cat) if _shown(a)][:6]
+        group = news_seen.cap_per_outlet(
+            [a for a in (_tag(dict(p)) for p in rest if p.get("category") == cat) if _shown(a)], 2)[:6]
         if not group:
             continue
         sections.append({
@@ -3334,32 +3373,17 @@ def _wiki_title_index():
 
 # ── "Deep Dive" full-article summaries ─────────────────────────────────────
 def _extract_article_text(url):
-    """Fetch a URL and extract readable article text via BeautifulSoup.
+    """Fetch a URL and read its article text (services/page_reader).
 
-    Returns (page_title, text). Strips script/style/nav chrome and joins the
-    article's paragraph text; falls back to whole-container text for thin <p>
-    markup. Raises on network/parse failure, and raises
-    web_safety.UnsafeURLError for a URL (or redirect hop) that points at this
-    machine or its network: the URL comes from a feed, the page, or the voice
-    model, none of which may steer a fetch inward."""
-    from bs4 import BeautifulSoup
-
-    from agent_friday.services.web_safety import safe_get
-    resp = safe_get(url, timeout=15, headers={
-        "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
-    })
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for tag in soup(["script", "style", "nav", "aside", "footer", "header",
-                     "form", "noscript"]):
-        tag.decompose()
-    page_title = soup.title.get_text(strip=True) if soup.title else ""
-    container = soup.find("article") or soup.find("main") or soup.body or soup
-    paras = [p.get_text(" ", strip=True) for p in container.find_all("p")]
-    text = "\n\n".join(p for p in paras if len(p) > 40)
-    if len(text) < 200:  # thin <p> markup — fall back to all container text
-        text = container.get_text("\n", strip=True)
-    return page_title, re.sub(r"\n{3,}", "\n\n", text).strip()
+    Returns (page_title, text): the page's scored blocks, clutter dropped,
+    paragraphs separated by a blank line. The page's links and metadata stay
+    with page_reader (`recent`, `known_meta`). Raises on network/parse
+    failure, and raises web_safety.UnsafeURLError for a URL (or redirect hop)
+    that points at this machine or its network: the URL comes from a feed,
+    the page, or the voice model, none of which may steer a fetch inward."""
+    from agent_friday.services import page_reader
+    page = page_reader.fetch(url, timeout=15)
+    return page.title, page.text
 
 
 # A spoken deep-dive has to answer while the question is still the topic.
@@ -3369,7 +3393,13 @@ def _extract_article_text(url):
 # opening, and the full answer is cached for the next ask when it lands.
 DEEP_DIVE_QUICK_BUDGET_S = 12.0
 DEEP_DIVE_QUICK_MAX_TOKENS = 450
-DEEP_DIVE_QUICK_BODY_CHARS = 6000
+#: Article tokens each read is given, chosen by the headline (page_reader
+#: .select): sized for the local seat's 8,192-token window with the system
+#: prompt and the answer beside it.
+DEEP_DIVE_QUICK_BODY_TOKENS = 900
+DEEP_DIVE_BODY_TOKENS = 2500
+#: A cached read older than this, or made by an older extractor, is read again.
+DEEP_DIVE_CACHE_TTL_S = 7 * 86400
 
 
 def _lead_sentences(body, n=4):
@@ -3379,12 +3409,28 @@ def _lead_sentences(body, n=4):
 
 
 def _read_cached_dive(path):
+    """A cached read, or None when it is missing, unreadable, older than
+    DEEP_DIVE_CACHE_TTL_S or made by an older page reader."""
+    from agent_friday.services import page_reader
     try:
         cached = json.loads(path.read_text(encoding="utf-8"))
+        if cached.get("extractor") != page_reader.VERSION:
+            return None
+        made = datetime.fromisoformat(cached.get("generated_at") or "")
+        if (datetime.now() - made).total_seconds() > DEEP_DIVE_CACHE_TTL_S:
+            return None
         cached["cached"] = True
         return cached
     except Exception:
         return None
+
+
+def _article_header(url):
+    """The page's own one-line header ("Reuters · Oct 2, 2026 · by …"), when
+    the read kept its metadata."""
+    from agent_friday.services import page_reader
+    page = page_reader.recent(url)
+    return page.header if page is not None else page_reader.header_line(page_reader.known_meta(url))
 
 
 @_local_news('News deep dive')
@@ -3425,12 +3471,16 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
     headline = title or page_title or url
     if quick:
         return _quick_dive(url, headline, body, quick_path)
-    body = body[:14000]  # keep the prompt bounded
+    from agent_friday.services import page_reader
+    body = page_reader.select_text(body, headline, DEEP_DIVE_BODY_TOKENS)
+    source = _article_header(url)
     prompt = (
         "You are deep-reading a news article for the user. Use what you know about "
         "them (their work, interests, and goals, from your vault/wiki context) to "
         "make the 'implications' specific and personal — not generic.\n\n"
-        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n\nARTICLE TEXT:\n{body}\n\n"
+        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n"
+        + (f"SOURCE: {source}\n" if source else "")
+        + f"\nARTICLE TEXT:\n{body}\n\n"
         "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
         "these keys:\n"
         '  "summary": a 3-paragraph plain-text summary, paragraphs separated by \\n\\n;\n'
@@ -3457,6 +3507,7 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
         "key_quotes": quotes if isinstance(quotes, list) else [],
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "cached": False,
+        "extractor": page_reader.VERSION,
     }
     try:
         DEEP_DIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -3468,11 +3519,16 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
 
 def _quick_dive(url, headline, body, cache_path):
     """The spoken deep-dive: short, and never longer than the budget."""
-    body = body[:DEEP_DIVE_QUICK_BODY_CHARS]
+    from agent_friday.services import page_reader
+    lead = body
+    body = page_reader.select_text(body, headline, DEEP_DIVE_QUICK_BODY_TOKENS)
+    source = _article_header(url)
     prompt = (
         "You are briefing the user, out loud, on one news article. Use what you "
         "know about them to make the implication specific, not generic.\n\n"
-        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n\nARTICLE TEXT:\n{body}\n\n"
+        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n"
+        + (f"SOURCE: {source}\n" if source else "")
+        + f"\nARTICLE TEXT:\n{body}\n\n"
         "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
         "these keys:\n"
         '  "summary": 3-5 plain sentences of what happened: who, what, where, when;\n'
@@ -3502,7 +3558,7 @@ def _quick_dive(url, headline, body, cache_path):
             "implications": (parsed.get("implications") or "").strip(),
             "key_quotes": quotes if isinstance(quotes, list) else [],
             "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "cached": False, "quick": True,
+            "cached": False, "quick": True, "extractor": page_reader.VERSION,
         }
         box["result"] = result
         try:
@@ -3520,7 +3576,7 @@ def _quick_dive(url, headline, body, cache_path):
         return {"status": "error", "message": f"Summary generation failed: {box['error']}"}, 502
     return {
         "status": "ok", "url": url, "title": headline, "partial": True,
-        "summary": _lead_sentences(body),
+        "summary": _lead_sentences(lead),
         "implications": "",
         "key_quotes": [],
         "note": ("The full read is still being written; this is the article's own "

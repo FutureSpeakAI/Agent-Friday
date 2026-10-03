@@ -687,9 +687,9 @@ CLAUDE_TOOLS = [
       "required": ["task_id", "tasklist_id", "account_id"]}},
     {"name": "search_contacts", "description": "Search the user's Google Contacts across every connected account by name, email, or phone substring (built-in read-only integration). Omit query to list recent contacts.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
-    {"name": "read_wiki", "description": "Read a markdown file from the personal wiki at ~/wiki/. Use a relative path like 'professional/job-search.md'.",
+    {"name": "read_wiki", "description": "Read a markdown file from the personal wiki (~/.friday/wiki). Use a relative path like 'projects/atlas.md'.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
-    {"name": "search_wiki", "description": "Keyword-search the personal wiki (and ~/.friday/wiki/) for files whose name or contents match a query. Returns up to 5 hits with a relative path and a short excerpt. Use this when the smart-loaded context didn't include the file you need; then call read_wiki on the most promising hit for the full file.",
+    {"name": "search_wiki", "description": "Keyword-search the personal wiki for files whose name or contents match a query. Returns up to 5 hits with a relative path and a short excerpt. Use this when the smart-loaded context didn't include the file you need; then call read_wiki on the most promising hit for the full file.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]}},
     {"name": "search_news", "description": "Search the live news feed for current stories matching a query (the same feed the News workspace shows). Returns ranked hits with title, snippet, source, trust rating, and URL. Use for 'what's the news on X', 'any headlines about Y', or to ground a claim in current reporting. Omit the query to get the top current stories.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Keywords to match across headline/snippet/source. Blank = top current stories."}, "limit": {"type": "integer", "description": "Max stories to return (1-25, default 8)."}}}},
@@ -2006,14 +2006,23 @@ def _tool_search_contacts(inp):
 
 
 def _tool_read_wiki(inp):
-    raw = (inp or {}).get('path', '')
-    p = (WIKI_DIR / raw).resolve()
-    wiki_resolved = WIKI_DIR.resolve()
-    try:
-        p.relative_to(wiki_resolved)
-    except ValueError:
-        return f"Path escapes the wiki root: {raw}"
-    if not p.exists() or not p.is_file():
+    """Read one wiki page.
+
+    The path resolves through the knowledge graph's own resolver, against the
+    root its index is built from, so every page knowledge_query or search_wiki
+    names opens here exactly as named.
+    """
+    raw = str((inp or {}).get('path', '') or '')
+    from agent_friday.services.knowledge_graph import wiki_graph as _wg
+    p = _wg.resolve_page(raw)
+    if p is None:
+        root = Path(_wg.WIKI_DIR)
+        try:
+            (root / raw.replace('\\', '/')).resolve().relative_to(root.resolve())
+        except ValueError:
+            return f"Path escapes the wiki root: {raw}"
+        except OSError:
+            pass
         return f"Wiki file not found: {raw}"
     try:
         text = wiki_read_text(p)
@@ -2036,11 +2045,21 @@ def _tool_search_wiki(inp):
     q_low = query.lower()
 
     results = []
-    for root, label in [(WIKI_DIR, 'wiki'), (FRIDAY_DIR / 'wiki', 'friday-wiki')]:
+    # A call under a time budget (a local seat's, services/tool_deadline.py)
+    # stops scanning when it runs out and returns the hits found so far.
+    from agent_friday.services import tool_deadline as _td
+    partial = False
+    # One root: the serving wiki the knowledge graph indexes and read_wiki
+    # resolves against, so every hit's path opens with read_wiki as returned.
+    from agent_friday.services.knowledge_graph import wiki_graph as _wg
+    for root, label in [(Path(_wg.WIKI_DIR), 'wiki')]:
         if not root.exists():
             continue
         for f in root.rglob('*'):
             if len(results) >= limit:
+                break
+            if _td.expired():
+                partial = True
                 break
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
                 continue
@@ -2070,9 +2089,19 @@ def _tool_search_wiki(inp):
         if len(results) >= limit:
             break
 
+    note = ("The time budget ran out before the whole wiki was searched; these "
+            "are the hits found so far. Narrow the query to search further."
+            if partial else "")
     if not results:
+        if partial:
+            return (f"No wiki files matched {query!r} in the part of the wiki "
+                    f"searched before the time budget ran out. Narrow the query "
+                    f"or use knowledge_query.")
         return f"No wiki files matched {query!r}."
-    return json.dumps({'query': query, 'hits': results}, default=str)[:100_000]
+    out = {'query': query, 'hits': results}
+    if partial:
+        out.update(partial=True, note=note)
+    return json.dumps(out, default=str)[:100_000]
 
 
 def _news_title_key(title) -> str:
@@ -6703,6 +6732,19 @@ TOOL_RINGS: dict[str, int] = {
     "correct_wiki":         1,
     "learn_skill":          1,
     # Ring 2 — NETWORK (external calls; requires authenticated session)
+    # switch_model rewrites which model answers chat, and can move the
+    # conversation from a local seat to a cloud one: the ring the unknown-tool
+    # default already gave it, now declared rather than inherited.
+    "switch_model":         2,
+    # Voice-only tools (voice_engine._VOICE_LIVE_TOOLS) that run through
+    # _execute_tool under their own names. Each is declared at the ring the
+    # unknown-tool default already gave it: check_email and the article deep
+    # dive reach the network, ask_friday runs a whole agent turn, and the
+    # source-trust lookup is held at the same ring until it is reviewed down.
+    "check_email":          2,
+    "get_article_deep_dive": 2,
+    "get_source_trust":     2,
+    "ask_friday":           2,
     "search_web":           2,
     "search_news":          2,   # fetches the live RSS/Brave feed (network)
     "browse_web":           2,
@@ -9094,6 +9136,15 @@ except Exception as _mte:  # never let optional deps break the agent import
 # Podcasts (make_podcast / podcast_list / podcast_play / podcast_source): any
 # sources into a two-host episode, written by the local model and spoken on
 # this computer. See services/podcast_tools.py.
+# Local models (local_models_advise): what this computer can run and how,
+# from the same fit arithmetic the Models screen shows. See
+# services/local_models_tools.py.
+try:
+    from agent_friday.services import local_models_tools as _local_models_tools
+    _local_models_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _lmte:  # never let an optional module break the agent import
+    print(f"  [LOCAL-MODELS-TOOLS] registration skipped: {_lmte}")
+
 try:
     from agent_friday.services import podcast_tools as _podcast_tools
     _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
@@ -9115,6 +9166,14 @@ try:
 except Exception as _ate:  # never let optional deps break the agent import
     print(f"  [AVATAR] registration skipped: {_ate}")
 
+# The notification tray (notifications): "what's in my notifications", "clear
+# them", "mute these". Shared into voice. See services/notification_tools.py.
+try:
+    from agent_friday.services import notification_tools as _notification_tools
+    _notification_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _nte:  # never let optional deps break the agent import
+    print(f"  [NOTIFICATIONS] registration skipped: {_nte}")
+
 # The hologram window (hologram_window): how much leaning in and out zooms
 # the avatar, the parallax, smoothing and response, and the calibrated
 # sitting distance. Shared into voice. See services/hologram_tools.py.
@@ -9124,6 +9183,15 @@ try:
 except Exception as _hte:  # never let optional deps break the agent import
     print(f"  [HOLOGRAM] registration skipped: {_hte}")
 
+# The hand cursor and big mode (big_mode, hand_cursor): the large-target layout
+# and "next card", "select", "back" by voice. Shared into voice. See
+# services/hand_cursor_tools.py and docs/design/hig/hand-cursor.md.
+try:
+    from agent_friday.services import hand_cursor_tools as _hand_cursor_tools
+    _hand_cursor_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _hcte:  # never let optional deps break the agent import
+    print(f"  [HAND CURSOR] registration skipped: {_hcte}")
+
 # Call mode (call_mode): standing back for a call, and the setting that
 # decides whether that happens on its own. Shared into voice. See
 # services/call_tools.py.
@@ -9132,6 +9200,16 @@ try:
     _call_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
 except Exception as _cte:  # never let optional deps break the agent import
     print(f"  [CALL] registration skipped: {_cte}")
+
+# File access (file_access): list, ask for, remove and re-grant file
+# permissions. Asking raises one approval card; the grant itself is created only
+# when the owner approves that card on screen. Shared into voice. See
+# services/file_grant_requests.py.
+try:
+    from agent_friday.services import file_grant_requests as _file_grant_requests
+    _file_grant_requests.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _fge:  # never let optional deps break the agent import
+    print(f"  [FILE ACCESS] registration skipped: {_fge}")
 
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
@@ -9151,6 +9229,16 @@ try:
     _interactive_sessions.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
 except Exception as _ise:  # never let optional deps break the agent import
     print(f"  [SESSIONS] registration skipped: {_ise}")
+
+# local_model_status: which local model serves the brain, its window, its load.
+# Read-only (ring 0); its schema is a Settings workspace tool, outside the
+# always-on catalogue. See services/local_model_tools.py.
+try:
+    from agent_friday.services import local_model_tools as _local_model_tools
+    _local_model_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS,
+                                workspace_tools=WORKSPACE_TOOLS)
+except Exception as _lme:  # never let optional deps break the agent import
+    print(f"  [LOCAL-MODEL] registration skipped: {_lme}")
 
 
 _GOVERNANCE_KEY: bytes | None = None
@@ -12557,13 +12645,22 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
     # seat refuses as too long is compacted harder and sent once more rather
     # than ending the run.
     _raw_send = send_fn
+    # A round sent to a local seat is counted while it is in flight, which is
+    # what local_model_status reports as the seat's load.
+    from agent_friday.services import local_brain as _local_brain
+    import contextlib as _ctxlib
+
+    def _in_flight():
+        return (_local_brain.generating() if _compact_seat == "local"
+                else _ctxlib.nullcontext())
 
     def send_fn(_c, _tools, **_kw):
         _schema_tokens[0] = _compaction.schema_tokens(_tools)
         _est = _compaction.estimate_tokens(_c) + _schema_tokens[0]
         try:
             _pilot_model_round(session_ctx, _compact_seat)
-            _r = _raw_send(_c, _tools, **_kw)
+            with _in_flight():
+                _r = _raw_send(_c, _tools, **_kw)
         except Exception as _se:
             if not _compaction.is_context_overflow(_se):
                 raise
@@ -12571,7 +12668,8 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             _compact_convo(force=True)
             _est = _compaction.estimate_tokens(_c) + _schema_tokens[0]
             _pilot_model_round(session_ctx, _compact_seat)
-            _r = _raw_send(_c, _tools, **_kw)
+            with _in_flight():
+                _r = _raw_send(_c, _tools, **_kw)
         try:
             _compaction.observe(model, _est, ((_r or {}).get("usage") or {}).get("prompt_tokens"))
         except Exception:
@@ -13116,8 +13214,15 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                                          model=str(model or "")), tool_trace
             _mtok = _CURRENT_MODEL.set(str(_meter_model or model or ""))
             try:
-                result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
-                                       session_ctx=session_ctx)
+                # A local seat waits for every tool, on top of its own slow
+                # rounds, so its calls carry a 3 s budget: a tool that scans
+                # returns what it has by then, marked partial. The budget is read,
+                # never enforced by interruption, so no action is cut off.
+                from agent_friday.services import tool_deadline as _td
+                with (_td.budget(_td.LOCAL_TOOL_BUDGET_S) if _compact_seat == "local"
+                      else _ctxlib.nullcontext()):
+                    result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
+                                           session_ctx=session_ctx)
             finally:
                 _CURRENT_MODEL.reset(_mtok)
             _tool_ms = int((_time.time() - _t_tool) * 1000)
@@ -13140,6 +13245,16 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                                 "visually verified \u2014 say so rather than "
                                 "claiming it looks right]")
             tool_trace.append({"name": tname, "input": targs, "result": clip(result, 2000)})
+            # A local seat re-reads every result on every later round inside a
+            # small window, so it gets the result without formatting
+            # boilerplate; the data is unchanged and the trace keeps the
+            # original. A cloud seat gets the result exactly as returned.
+            if _compact_seat == "local":
+                try:
+                    from agent_friday.services.tool_result_compact import compact as _compact_result
+                    result = _compact_result(result)
+                except Exception:
+                    pass
             convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
 
     # Reached only when a tool loop really did spend its whole budget: a
@@ -13220,3 +13335,23 @@ HUB_TOOL_NAMES = (
 )
 WORKSPACE_TOOLS["hub"] = [t for t in CLAUDE_TOOLS if t.get("name") in HUB_TOOL_NAMES]
 CLAUDE_TOOLS[:] = [t for t in CLAUDE_TOOLS if t.get("name") not in HUB_TOOL_NAMES]
+
+
+# ── Tools a turn loads on demand ─────────────────────────────────────────────
+# The always-on catalogue has a token ceiling every turn pays
+# (tests/unit/test_latency_budget.py). These tools are reached by name or query
+# through load_tools, and voice resolves them by name like any workspace's own
+# (WORKSPACE_TOOLS); their handlers and rings stay registered, so they run
+# wherever they are named. A name not registered in this build is skipped.
+ON_DEMAND_TOOLS = (
+    "file_access",           # file grants: asks raise the owner's card
+    "notifications",         # the tray: read, clear, mute
+    "local_models_advise",   # Settings > Models: what this PC can run
+    "hand_cursor",           # the hand cursor and big mode, by voice
+    "big_mode",
+    "hologram_window",       # the hologram window's depth, by voice
+)
+WORKSPACE_TOOLS.setdefault("on_demand", []).extend(
+    t for t in CLAUDE_TOOLS if isinstance(t, dict) and t.get("name") in ON_DEMAND_TOOLS)
+CLAUDE_TOOLS[:] = [t for t in CLAUDE_TOOLS
+                   if not (isinstance(t, dict) and t.get("name") in ON_DEMAND_TOOLS)]

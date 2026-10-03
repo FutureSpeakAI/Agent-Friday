@@ -102,6 +102,15 @@ logos or third-party artwork.
 - `shockwave.png` — Big Bang shock ring
 - `spiral_haze.png` — face-on galaxy glow (Spiral arrangement)
 
+### Crawl4AI (github.com/unclecode/crawl4ai)
+License: Apache-2.0 (with an attribution requirement) | UncleCode (https://x.com/unclecode)
+
+Friday's page reader (`services/page_reader.py`) takes its ideas from
+Crawl4AI: scoring page blocks to drop clutter, choosing passages by the
+question (BM25) inside a token budget, keeping links as numbered references
+beside the text, reading the page's own metadata, and conditional feed
+fetches. No Crawl4AI code or dependency is used.
+
 ### Headroom (github.com/chopratejas/headroom)
 License: Apache-2.0 | Tejas Chopra and the Headroom Contributors
 

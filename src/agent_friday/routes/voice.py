@@ -594,6 +594,12 @@ def voice_tool_limit_s(settings=None) -> float:
 
 
 async def _voice_tool_with_limit(fname, fargs, send, session=None, limit=None, runner=None):
+    # A live voice conversation is in progress: hold the tray's interruptions.
+    try:
+        from agent_friday.services import notification_policy as _pol_live
+        _pol_live.note_owner_turn()
+    except Exception:
+        pass
     """Run one voice tool on a worker thread, bounded by the owner's limit."""
     runner = runner or _voice_tool_run
     if limit is None:
@@ -2376,6 +2382,8 @@ if sock is not None:
         _timings = {}
 
         def _generate(user_text, on_delta, cancel):
+            from agent_friday.services import notification_policy as _pol_v
+            _pol_v.note_owner_turn()
             from agent_friday.services.model_router import TIMINGS_SINK
             _timings.clear()
             _tok = TIMINGS_SINK.set(lambda t: _timings.update(t or {}))

@@ -242,6 +242,20 @@ def _tool_check_email(inp):
 # Kept as a plain spec so _build_voice_live_tools can render google.genai
 # FunctionDeclarations without importing types at module load.
 _VOICE_LIVE_TOOLS = [
+    ("local_models_advise",
+     "What local AI models this computer can run and how. Use for 'what's the "
+     "biggest model I can run', 'could I run X', 'what would I need for X', "
+     "'pretend I had 24 gigabytes', 'what's using my graphics memory'. Pass the "
+     "user's words as question; put a named model in model; a pretend size in "
+     "pretend_vram_gb. Say the result's spoken sentence aloud as it is; it "
+     "already says 'about' where a number is an estimate. It installs nothing: "
+     "if they want it installed, say Settings, Models, Get, which asks them "
+     "first.",
+     {"question": ("string", "The user's words."),
+      "model": ("string", "A model name or Hugging Face id, when one is named."),
+      "pretend_vram_gb": ("number", "A pretend graphics-memory size in GB."),
+      "pretend_ram_gb": ("number", "A pretend RAM size in GB.")},
+     ["question"]),
     ("query_calendar",
      "Get the user's calendar — today's and tomorrow's events with times, "
      "locations, and attendees. Use whenever they ask 'what's next', 'what's on "
@@ -721,6 +735,16 @@ _VOICE_SHARED_TOOLS = (
     "hologram_window",
     # Call mode: "I'm on a call", "the call is over", "ask me first on calls".
     "call_mode",
+    # The tray: "what's in my notifications", "clear them", "mute these".
+    "notifications",
+    # File access: "what files can the cloud see?", "let it read my CV",
+    # "take that away", "re-grant the old one". Asking raises the same card
+    # the panel's approvals use; the yes is a click on screen, never a word.
+    "file_access",
+    # Big mode and the hand cursor: "big mode", "big mode off", "next card",
+    # "select", "back". select never fires a guarded action.
+    "big_mode",
+    "hand_cursor",
 )
 
 
@@ -1293,6 +1317,10 @@ def _voice_tool_run(name, args, send_client, session=None):
                                  "detail": ""})
                 except Exception:
                     pass
+        if name == "local_models_advise":
+            from agent_friday.services.local_models_tools import (
+                _tool_local_models_advise)
+            return _governed("local_models_advise", _tool_local_models_advise, args)
         if name in ("navigate_workspace", "navigate"):
             # Pause speech while the action runs; resume + report after.
             try:
