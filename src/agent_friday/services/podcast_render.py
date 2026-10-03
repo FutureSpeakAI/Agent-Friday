@@ -125,6 +125,10 @@ class CpuKokoro:
                 import torch
                 n = self._threads or max(2, (os.cpu_count() or 4) // 2)
                 torch.set_num_threads(n)
+                try:
+                    torch.set_num_interop_threads(1)
+                except RuntimeError:
+                    pass                    # already set in this process
                 from kokoro import KModel
                 self._model = KModel(config=cfg, model=pth).to("cpu").eval()
             except RenderError:
@@ -172,9 +176,12 @@ class CpuKokoro:
 
         def run():
             try:
-                for _gs, _ps, audio in pipe(text, voice=vpath):
-                    if audio is not None:
-                        chunks.append(np.asarray(audio, dtype="float32").reshape(-1))
+                import torch
+                # No autograd: nothing is kept for a backward pass that never comes.
+                with torch.inference_mode():
+                    for _gs, _ps, audio in pipe(text, voice=vpath):
+                        if audio is not None:
+                            chunks.append(np.asarray(audio, dtype="float32").reshape(-1))
             except BaseException as e:  # noqa: BLE001
                 failure.append(e)
 
@@ -199,6 +206,13 @@ class CpuKokoro:
             self._pipes = {}
 
 
+#: Threads the speaking process uses (torch, OpenMP, MKL): each keeps its own
+#: scratch memory, and a podcast is spoken ahead of time, not live.
+SPEAKER_THREADS = 4
+#: Private memory past which the speaking process is replaced after its line.
+SPEAKER_RECYCLE_MB = 2560
+
+
 class ProcessKokoro:
     """`CpuKokoro` in a child process (`podcast_speaker_process`), same `speak`.
 
@@ -216,15 +230,25 @@ class ProcessKokoro:
     def __init__(self):
         self.process = None
         self._lock = threading.Lock()
+        self.last_private_mb = 0
+        self.peak_private_mb = 0
+        self.recycled = 0
 
     def loaded(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-    def _start(self):
-        import sys
+    def _env(self) -> dict:
         env = dict(os.environ)
         src = str(Path(__file__).resolve().parents[2])
         env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS",
+                  "FRIDAY_PODCAST_SPEAKER_THREADS"):
+            env[k] = str(SPEAKER_THREADS)
+        return env
+
+    def _start(self):
+        import sys
+        env = self._env()
         self.process = subprocess.Popen(
             [sys.executable, "-m", "agent_friday.services.podcast_speaker_process"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
@@ -278,6 +302,14 @@ class ProcessKokoro:
                 self._start()
             budget = synthesis_budget_s(text) * CPU_BUDGET_FACTOR + (self.LOAD_ALLOWANCE_S if first else 0.0)
             reply, data = self._exchange({"op": "speak", "text": text, "voice": voice}, budget)
+            if reply.get("ok"):
+                self.last_private_mb = int(reply.get("private_mb") or 0)
+                self.peak_private_mb = max(self.peak_private_mb, self.last_private_mb)
+                if self.last_private_mb > SPEAKER_RECYCLE_MB:
+                    # Past its budget: this line is kept, and the next one is
+                    # spoken by a fresh process, so an episode never grows it.
+                    self._kill()
+                    self.recycled += 1
         if not reply.get("ok"):
             raise RenderError(reply.get("code") or "voice_failed",
                               reply.get("message") or "Kokoro failed on a line.")
@@ -349,6 +381,12 @@ def speaker() -> ProcessKokoro:
         if _SPEAKER is None:
             _SPEAKER = ProcessKokoro()
         return _SPEAKER
+
+
+def speaker_running() -> bool:
+    """Whether a speaking process is up (its memory is already committed)."""
+    with _SPEAKER_LOCK:
+        return _SPEAKER is not None and _SPEAKER.loaded()
 
 
 def release_speaker():

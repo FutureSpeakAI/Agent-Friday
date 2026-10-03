@@ -94,7 +94,7 @@ FORMATS = ("solo", "duo")
 RECOMMENDED_FORMAT = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
                       "weekly": "duo", "any": "duo"}
 #: Commit headroom the out-of-process voice (Kokoro on the CPU) needs, in MB.
-VOICE_HEADROOM_MB = 3584
+VOICE_HEADROOM_MB = 6144
 #: Revision passes the writer gets when the script-quality gate finds problems.
 MAX_REVISIONS = 2
 #: Fewer words than this that survived the source check is no episode.
@@ -1631,7 +1631,8 @@ def _gate_reason(ep: dict) -> str:
     if ep.get("voice_engine") != "cloud":
         # The local voice runs in its own process; it is started only when the
         # machine can hold it, whoever asked.
-        head = render.commit_headroom_mb()
+        # Launching a speaker needs the room; one already running has it.
+        head = None if render.speaker_running() else render.commit_headroom_mb()
         if head is not None and head < VOICE_HEADROOM_MB:
             return ("waiting for memory: the voice needs about %.1f GB free to commit, %.1f GB is"
                     % (VOICE_HEADROOM_MB / 1024, head / 1024))
@@ -1669,32 +1670,38 @@ def _recover() -> None:
             _update(ep["id"], status="queued", stage_detail="resuming after a restart")
 
 
+def _worker_tick() -> str:
+    """One turn of the render worker: "ran" (an episode was produced),
+    "idle" (episodes wait on a retry or a gate) or "empty". The speaker is
+    released whenever nothing can run now, not only when the queue is empty:
+    it holds gigabytes, and a waiting episode does not need it."""
+    todo = pending()
+    if not todo:
+        render.release_speaker()
+        return "empty"
+    for ep in todo:
+        if (ep.get("retry_after") or 0) > time.time():
+            continue
+        why = _gate_reason(ep)
+        if why:
+            if ep.get("waiting_reason") != why or ep.get("status") != "waiting":
+                _update(ep["id"], status="waiting", waiting_reason=why,
+                         stage_detail="waiting: " + why)
+            continue
+        _update(ep["id"], waiting_reason="")
+        produce(ep["id"])
+        return "ran"
+    render.release_speaker()
+    return "idle"
+
+
 def _worker_loop() -> None:
     _recover()
     while True:
         try:
-            todo = pending()
-            if not todo:
-                render.release_speaker()
-                _WAKE.wait(timeout=300)
-                _WAKE.clear()
-                continue
-            ran = False
-            for ep in todo:
-                if (ep.get("retry_after") or 0) > time.time():
-                    continue
-                why = _gate_reason(ep)
-                if why:
-                    if ep.get("waiting_reason") != why or ep.get("status") != "waiting":
-                        _update(ep["id"], status="waiting", waiting_reason=why,
-                                 stage_detail="waiting: " + why)
-                    continue
-                _update(ep["id"], waiting_reason="")
-                produce(ep["id"])
-                ran = True
-                break
-            if not ran:
-                _WAKE.wait(timeout=POLL_S)
+            got = _worker_tick()
+            if got != "ran":
+                _WAKE.wait(timeout=300 if got == "empty" else POLL_S)
                 _WAKE.clear()
         except Exception:
             log.exception("podcast worker tick failed")
