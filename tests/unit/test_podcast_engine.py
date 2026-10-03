@@ -37,17 +37,28 @@ def _fake_writer(script_for_chapter=None, outline=None):
 
     def llm(system, user, *, max_tokens=3000):
         calls.append({"system": system, "user": user})
+        if "PROBLEMS FOUND" in user:
+            # A revision pass: this stand-in cannot improve the script.
+            body = user.split("sign-off are added around it):\n", 1)[1].split("\n\nPROBLEMS FOUND", 1)[0]
+            return {"lines": json.loads(body)}, "bonsai2:27b"
         if '"chapters"' in user and "Plan an episode" in user:
             return (outline or {"title": "Test episode", "chapters": [
                 {"title": "Open", "sources": ["S1"]},
                 {"title": "Middle", "sources": ["S1", "S2"]},
                 {"title": "Close", "sources": ["S2"]}]}, "bonsai2:27b")
         n = sum(1 for c in calls if "Chapter " in c["user"])
-        lines = (script_for_chapter(n) if script_for_chapter else [
-            {"speaker": "a", "text": "Good evening, this is the show.", "cites": []},
-            {"speaker": "b", "text": "The council voted 7 to 2 on Tuesday.", "cites": ["S1"]},
-            {"speaker": "a", "text": "And the budget rose by 12 percent.", "cites": ["S2"]},
-        ])
+        # A different passage per chapter: a real writer does not repeat a
+        # chapter, and the stitch drops a line that repeats an earlier one.
+        lines = (script_for_chapter(n) if script_for_chapter else {
+            1: [{"speaker": "a", "text": "Good evening, this is the show.", "cites": []},
+                {"speaker": "b", "text": "The council voted 7 to 2 on Tuesday.", "cites": ["S1"]},
+                {"speaker": "a", "text": "And the budget rose by 12 percent.", "cites": ["S2"]}],
+            2: [{"speaker": "a", "text": "Here is what happened next.", "cites": []},
+                {"speaker": "b", "text": "Councillors argued for an hour before the 7 to 2 result.", "cites": ["S1"]},
+                {"speaker": "a", "text": "Roads take most of the 12 percent rise.", "cites": ["S2"]}],
+        }.get(n, [{"speaker": "a", "text": "That is the shape of the week.", "cites": []},
+                  {"speaker": "b", "text": "Watch the final vote on the 12 percent increase.", "cites": ["S2"]},
+                  {"speaker": "a", "text": "We will be back.", "cites": []}]))
         return {"lines": lines}, "bonsai2:27b"
     llm.calls = calls
     return llm
@@ -322,7 +333,8 @@ def test_episodes_notify_and_never_autoplay(monkeypatch):
     monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw))
     pe._announce({"id": "20260929T100000-abcdef", "title": "T", "privacy": "public",
                   "show": "S", "duration_s": 60})
-    assert pushed and pushed[0]["target"]["view"] == "podcasts"
+    # The note opens the episode (on its Media card, or Studio's Podcasts view).
+    assert pushed and pushed[0]["target"]["episode"] == "20260929T100000-abcdef"
     assert not any("play" in json.dumps(a).lower() and a.get("type") == "podcast"
                    for a in pushed[0].get("actions") or [])
 
@@ -331,6 +343,7 @@ def test_episodes_notify_and_never_autoplay(monkeypatch):
 
 def test_a_request_waits_only_for_stand_down_and_the_gpu_lease(monkeypatch):
     from agent_friday.services import residency_arbiter, scheduler, stand_down
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 64 * 1024)
     monkeypatch.setattr(scheduler, "idle_work_blocked_reason",
                         lambda *a, **k: pytest.fail("a request must not wait for idle"))
     monkeypatch.setattr(stand_down, "is_stood_down", lambda: False)
@@ -342,6 +355,7 @@ def test_a_request_waits_only_for_stand_down_and_the_gpu_lease(monkeypatch):
 
 def test_routine_and_long_episodes_use_the_scheduler_idle_gate(monkeypatch):
     from agent_friday.services import scheduler
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 64 * 1024)
     seen = []
     monkeypatch.setattr(scheduler, "idle_work_blocked_reason",
                         lambda rec=None, spec=None, now=None: seen.append(spec) or "")
@@ -392,7 +406,11 @@ def test_kokoro_is_built_from_cached_paths_on_the_cpu(monkeypatch, tmp_path):
             yield text, "ph", np.zeros(240, dtype="float32")
 
     monkeypatch.setitem(sys.modules, "kokoro", types.SimpleNamespace(KModel=KModel, KPipeline=KPipeline))
-    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(set_num_threads=lambda n: None))
+    # The parts of torch the speaker uses: thread counts and inference mode.
+    import contextlib
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        set_num_threads=lambda n: None, set_num_interop_threads=lambda n: None,
+        inference_mode=contextlib.nullcontext))
     from agent_friday.services import kokoro_voice
     monkeypatch.setattr(kokoro_voice, "ensure_espeak_fallback", lambda: {"wired": True})
     files = {}
@@ -545,3 +563,40 @@ def test_her_habits_are_character_not_a_refrain():
     where it matters, and for varied wording."""
     prompt = pe._system_prompt({"show": "S", "hosts": pe.DEFAULTS["hosts"]})
     assert "once, where it matters" in prompt and "not as a refrain" in prompt
+
+
+def test_an_outline_heading_never_reaches_speech_and_the_sentence_after_it_does():
+    kept, _cut = pe.clean_lines([{"speaker": "a", "cites": ["S1"], "text":
+                                  "2. Top News (relevant to you). The pledge is thin on terms."}], {"S1"})
+    assert kept[0]["text"] == "The pledge is thin on terms."
+    kept, _cut = pe.clean_lines([{"speaker": "a", "cites": ["S1"], "text":
+                                  "It rose 3.5 percent. 4. Proactive Insight: lead with it."}], {"S1"})
+    assert kept[0]["text"] == "It rose 3.5 percent. lead with it."
+
+
+def test_lines_with_their_own_sources_are_not_merged_so_each_chip_stays_by_its_sentence():
+    ls = [{"speaker": "a", "chapter": 0, "text": "Story one.", "cites": ["S1"]},
+          {"speaker": "a", "chapter": 0, "text": "Why it matters.", "cites": []},
+          {"speaker": "a", "chapter": 0, "text": "Story two.", "cites": ["S2"]}]
+    out = pe.merge_turns(ls)
+    assert [o["text"] for o in out] == ["Story one. Why it matters.", "Story two."]
+    assert [o["cites"] for o in out] == [["S1"], ["S2"]]
+
+
+def test_a_local_render_waits_for_the_voice_s_memory(monkeypatch):
+    """Launching the out-of-process voice needs 6 GB of commit headroom (its
+    measured peak, with room); below that every local episode waits, whatever
+    its priority. A cloud voice does not load one."""
+    monkeypatch.setattr(render, "speaker_running", lambda: False)
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 2000)
+    assert "memory" in pe._gate_reason({"priority": "now"})
+    assert pe.VOICE_HEADROOM_MB == 6144
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 7000)
+    assert pe._gate_reason({"priority": "now"}) == ""
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 2000)
+    assert pe._gate_reason({"priority": "now", "voice_engine": "cloud"}) == ""
+
+
+def test_commit_headroom_is_a_number_of_megabytes():
+    v = render.commit_headroom_mb()
+    assert v is None or (isinstance(v, int) and v >= 0)

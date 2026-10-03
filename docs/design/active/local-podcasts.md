@@ -32,15 +32,19 @@ github.com/souzatharsis/podcastfy). Only the idea is borrowed; no code is.
    the episode is sent anywhere.
 3. **Any sources, from anywhere.** Files, wiki pages, knowledge-graph entries,
    chat conversations, Studio creations, datasets or pasted text. It is reachable
-   from Studio → Podcasts, from the "send to" menu, from chat ("make a podcast
+   from Media (Studio until Media lands), from the "send to" menu, from chat ("make a podcast
    from …"), from voice, and as a typed tool.
 4. **Data mode.** For a spreadsheet or CSV, Friday computes the numbers first,
    on this computer, and draws charts. The hosts may only say numbers that
    appear in that computation; a line with a number that cannot be traced is
    cut before it is spoken, and the cut is recorded.
-5. **Checked by ear.** Every finished episode is transcribed back by the local
-   speech recogniser and compared with the script. The episode shows the match
-   rate; one that does not match is marked, not hidden.
+5. **Two checks, named for what they check.** Before a word is spoken, the
+   script-quality gate checks the script against the episode's story list and
+   calendar (§3.11); the episode shows "script checked" or the problems it
+   found. After speaking, the local speech recogniser transcribes the audio
+   back and compares it with the script; that badge reads "audio matches
+   script", because it checks the audio, not the writing. Either failure is
+   marked, not hidden.
 6. **Private stays private.** An episode made from mail, the vault, the wiki,
    files or chats is labelled "Private · made on this PC". No cloud model or
    cloud voice is ever used for it, and when voice mode (which may be a cloud
@@ -276,7 +280,8 @@ Everything but public news articles is private.
     seam (§3.7).
 - **Routes** (`routes/podcasts.py`, owner and loopback only): list, create, get,
   audio, captions, charts, now-playing.
-- **UI:** one global mini-player, a Podcasts view in Studio, an episode chip on
+- **UI:** one global mini-player, the owner's own episodes in Media (Studio until
+  Media lands), each News routine's episode on its News tab, an episode chip on
   each News run, and a "Make a podcast" destination in the shared send-to menu.
 - **Playback control from voice:** a `podcast` action on the existing desktop
   bus.
@@ -340,6 +345,114 @@ and 4,500 (~30 min) for long.
   (it means "needs you"); "Private" is violet-soft. Charts read their colours
   from `agent_friday.brand` when it is present. `tests/unit/test_podcast_ui_brand.py`
   holds this.
+
+### 3.11 The Briefing, and the script-quality gate
+
+What the first live Briefing episode got wrong, and the rules that now hold
+(`services/podcast_quality.py`, `tests/unit/test_podcast_quality.py`,
+`tests/unit/test_podcast_briefing_episode.py`; the fixtures are a synthetic
+day with the same defects).
+
+- **Who is on the show** is a setting per routine, shown with the
+  recommended value and changeable in the Podcasts view (Media, or Studio until
+  Media lands), over
+  `/api/podcasts/formats`, or by voice and chat (`podcast_format`). The
+  Briefing, the Front Page and the Editorial are Friday alone (a newscast and
+  an op-ed are one voice); the Weekly and episodes made from the owner's own
+  sources are two hosts.
+- **The Briefing keeps its sources.** The calendar events (title, times,
+  place; never attendees or descriptions) and the news items (title, outlet,
+  link, snippet) that a briefing was written from are saved beside the run
+  (`briefing_runs/<date>.json`). The episode is written from those, one source
+  per story and per event, with Friday's written notes as context. A run from
+  before this has no story list, so its sign-off never claims links.
+- **The gate**, run on every script before it is spoken:
+  - *ledes*: a story's first mention says what happened, who or where, when,
+    and the outlet aloud, then why it matters to the listener;
+  - *safety*: violence, death or local safety is introduced plainly and
+    attributed, never called background, with a practical line when it
+    happened where the listener is going that day;
+  - *calendar times*: every clock time is in the calendar or a source, and
+    "before" / "after" agree with the calendar's order;
+  - *repetition*: a word no source uses is said at most twice, no line
+    restates another, and the close adds instead of re-reading;
+  - *headings*: an outline heading is stripped from speech;
+  - *fragments*: at most one flat fragment ("It's context.");
+  - *link claim*: "linked in the transcript" only when every story heard has
+    a link, which the transcript then lists under Sources;
+  - *density*, for a solo newscast: at least two stories or events per spoken
+    minute when the list has them.
+  Lines that only restate are dropped; for the rest the writer gets up to two
+  revision passes with the problems by line. What still fails is published
+  with the problems shown, not passed as checked.
+- **The bar.** A solo briefing is judged against a public-radio five-minute
+  hourly newscast; a two-host episode against the best two-host audio
+  overviews. It must still sound like Friday: evidence first and dry, with
+  an anchor's authority, an explainer's build from context to consequence,
+  and deadpan understatement. These are traits; no real person is named or
+  imitated, in prompts or in copy.
+- **Source chips** show the outlet or title, never a bare "S3", and are set
+  apart from the sentence.
+
+### 3.12 Links are attached by code, in every News routine
+
+The saved briefings showed the fetched URLs reaching the prompt and the local
+model keeping real article links on some days and none on others, and once
+writing addresses of its own (a mail homepage, a jobs page). So no routine
+lets the model write a link (`services/news_links.py`):
+
+- The model sees each story as `[N3] Headline (outlet): snippet`, with no URL,
+  and cites by id. Code turns each id into a link to the fetched URL, removes
+  any link or address the model typed, and ends with the stories cited.
+- Briefing: ids N1…; Weekly Digest: stories picked by id (W1…), title and
+  link attached by code; Weekly Editorial: E1…, its cited stories saved
+  beside it; Front Page: stories were already chosen by index and linked by
+  code. The spoken Start My Day briefing gets the same stories without ids.
+- `link_problems` fails text that cites no story or cites one without a
+  working link. Google News redirect links are resolved to the publisher.
+- An episode's source chips carry the same ids (`story_id`), so the written
+  routine and its episode link the same story the same way.
+
+### 3.13 A third pass on the Briefing episode
+
+- Home is the listener's own setting (`news_local_area`): "here in <city>",
+  never "where you are going". A practical line is owed only for a specific
+  tie: the venue or street of one of today's events.
+- Every fact in a sentence comes from the story it is about (`crossed_facts`).
+- No read or opinion on violence or crime; elsewhere a read rests on the
+  cited facts. The writer never narrates its own process.
+- No forced relevance: a personal tie is said only when it is real.
+- Stories are weighted by news value (local safety, policy, the economy
+  first; gadgets last), at most eight in a briefing episode.
+- `/api/podcasts/<id>/transcript.txt` is UTF-8 with a byte-order mark.
+
+### 3.14 Blocking rules, applied before the gate
+
+The codes in `podcast_quality.HARD_CODES` block an episode. The writer's
+draft is edited by code (`podcast_engine.edit_script`) on every draft and
+every revision, then revised by the model. A script that still has a
+blocking problem fails as `script_rejected` and is kept for review, never
+spoken.
+
+- **A citation is a claim.** A sentence in a cited line must be supported by
+  the cited story's text (`support`). Friday's commentary becomes her own
+  line, with no outlet on it (`own`, the stories it is about in `about`),
+  and the transcript marks it "Friday's analysis". A sentence is cut when it
+  names a fact from a story it does not cite, names a fact no source holds,
+  or names an outlet aloud for words that outlet never wrote.
+- **Each story is told once.** A later sentence that comes back to a story
+  after two lines on other stories is cut (`story_split`). The close is one
+  sentence of synthesis (`close_recap`).
+- **A story of violence or a threat stands alone**, with its own humane
+  introduction. It is never a thread in another story, a summary or the
+  close (`safety_threaded`), and it gets no read and no commentary.
+- **Every story opens with a spoken lede** (`no_lede`): the outlet aloud,
+  when, and what happened. Each story's source block gives the writer the
+  outlet's spoken name and the date it was published.
+- **The writer is told its used-up words.** Each chapter's prompt lists the
+  writer's own words (ones no source uses) that it has already said twice.
+- The Front Page's contrarian corner is an article and a note. The article
+  is a story with its own outlet; only the note is Friday's own.
 
 ---
 

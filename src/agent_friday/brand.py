@@ -194,6 +194,19 @@ def _mark_maker(part: str) -> str:
         else m.group(1) + TRADEMARK, part)
 
 
+def her_name(agent_name) -> str:
+    """Her name as the owner gave it (settings `agent_name`), as it is said
+    and shown: a name stored in capitals ("AGENT FRIDAY", her default) reads
+    in title case, the last word for the default. The page's fridayNameInText
+    is the same rule."""
+    n = str(agent_name or "").strip()
+    if not n or n.upper() == "AGENT FRIDAY":
+        return "Friday"
+    if n == n.upper() and re.search(r"[A-Z]", n):
+        return re.sub(r"(^|[\s-])(\S)", lambda m: m.group(1) + m.group(2).upper(), n.lower())
+    return n
+
+
 def tm(text: str) -> str:
     """`text` as it is displayed: "Agent Friday" and "FutureSpeak.AI" gain
     their trademark sign.

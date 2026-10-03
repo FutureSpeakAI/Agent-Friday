@@ -94,6 +94,18 @@ TERMINAL_STATUSES = ("auto_approved", "approved", "denied", "expired", "blocked"
 
 DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 
+#: Card kinds that only the owner's click on screen may APPROVE, mapped to the
+#: `decided_by` values that click carries. Any other surface (voice, a text
+#: message, a chat reply, Friday herself) may still decline one; its approve is
+#: refused and the card stays pending. A file-access card is one: a spoken
+#: "yes" must never be what lets a file's contents reach a cloud model. The
+#: bare "owner" label is NOT a click: it is the default of every in-process
+#: caller, so only the explicit "owner:ui" the page sends counts.
+SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
+    "file_grant_request": frozenset({"owner:ui"}),
+    "file_access_reset": frozenset({"owner:ui"}),
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Q3 POLICY TABLE
@@ -606,6 +618,9 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
             return None, False
         if rec.get("status") != "pending":
             return dict(rec), False
+        screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
+        if decision == "approve" and screen_only is not None and decided_by not in screen_only:
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
@@ -653,6 +668,14 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
         getattr(approval_feed, name)(record)
     except Exception as e:
         _log.warning("approval feed unavailable: %s", e)
+    if name == "card_resolved":
+        # A decided or expired card is no longer waiting in the tray. Only
+        # its own outcome closes it; nothing else dismisses an approval.
+        try:
+            import agent_friday.notifications_engine as _ne
+            _ne.resolve_approval(record.get("approval_id"))
+        except Exception as e:
+            _log.debug("approval notice close failed: %s", e)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -687,8 +710,19 @@ def _notify_pending(record: Dict[str, Any]) -> None:
         import agent_friday.notifications_engine as _ne
     except Exception:
         return
+    meta: Dict[str, Any] = {"approval_id": record.get("approval_id")}
+    try:
+        from agent_friday.services import notification_policy as _pol
+        # Memory proposals arrive as one grouped card in the tray, each one
+        # kept or skipped by its own approval; the card is still an approval.
+        if _pol.is_memory_proposal(record):
+            meta["group"] = _pol.MEMORY_GROUP
+            meta["detail"] = (record.get("action_description") or "")[:300]
+    except Exception:
+        pass
     try:
         _ne.push(
+            meta=meta,
             title=f"Approval needed: {record.get('title')}",
             body=(record.get("description") or record.get("action_description") or "")[:300],
             priority="medium", source="approvals", kind="approval_pending",

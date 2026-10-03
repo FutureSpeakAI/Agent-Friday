@@ -2561,6 +2561,16 @@ class Arbiter:
                                   "model_id": "z-image-turbo-fp8",
                                   "displaced": displaced,
                                   "expires_at": time.time() + ttl_s}
+                elif kind == "bench_job":
+                    # A benchmark needs the card to itself and starts no
+                    # server: the seats stand down, the bench runs its own
+                    # process, release brings the seats back.
+                    displaced = self._evict_pinned()
+                    self._evict_all_but_retained()
+                    self.lease = {"kind": kind, "role": "bench",
+                                  "model_id": role or "bench",
+                                  "displaced": displaced,
+                                  "expires_at": time.time() + ttl_s}
                 else:
                     self.state = STATE_DEFAULT
                     return {"ok": False, "error": "unknown lease %r" % kind}

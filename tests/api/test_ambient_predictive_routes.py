@@ -127,12 +127,13 @@ class TestWorkflowChains:
         })
         monkeypatch.setattr(agent_mod, "_spawn_task", fake_spawn, raising=False)
 
-        # Seed a finished step-0 task in the registry, then advance it.
+        # Seed a finished step-0 task in the registry, then advance it. The
+        # row leaves the registry with this test.
         with agent_mod.TASKS_LOCK:
-            agent_mod.TASKS["t0"] = {
+            monkeypatch.setitem(agent_mod.TASKS, "t0", {
                 "task_id": "t0", "name": "S1", "chain": "chain-adv", "chain_step": 0,
                 "on_complete": None, "log": [],
-            }
+            })
         agent_mod._advance_task_chain("t0", "RESULT-FROM-S1")
 
         assert spawned.get("chain_step") == 1

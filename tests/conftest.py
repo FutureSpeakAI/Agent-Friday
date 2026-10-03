@@ -189,6 +189,16 @@ _silence_child_consoles()
 
 import pytest  # noqa: E402
 
+# The keystore's file and the vault config the credential store reads are paths
+# under FRIDAY_DIR bound when those modules are first imported. They are
+# imported here, while FRIDAY_DIR is this run's test home: a test that points
+# FRIDAY_DIR at a scratch directory and happened to be their first importer
+# bound them there for the rest of the process, and a child process (which
+# imports them fresh, against the test home) then held a different key and
+# could not read what this process wrote, or the reverse.
+import agent_friday.services.keystore  # noqa: E402,F401
+import agent_friday.services.credential_store  # noqa: E402,F401
+
 # The canned model reply, shared so api tests can assert against it.
 CANNED_TEXT = "[[friday-test-stub-response]]"
 

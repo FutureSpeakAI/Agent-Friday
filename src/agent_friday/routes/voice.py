@@ -594,6 +594,12 @@ def voice_tool_limit_s(settings=None) -> float:
 
 
 async def _voice_tool_with_limit(fname, fargs, send, session=None, limit=None, runner=None):
+    # A live voice conversation is in progress: hold the tray's interruptions.
+    try:
+        from agent_friday.services import notification_policy as _pol_live
+        _pol_live.note_owner_turn()
+    except Exception:
+        pass
     """Run one voice tool on a worker thread, bounded by the owner's limit."""
     runner = runner or _voice_tool_run
     if limit is None:
@@ -763,8 +769,8 @@ def _voice_tool_surface_note():
     """The authoritative list of tools the LIVE VOICE session actually has.
 
     The voice system prompt is assembled from ``_get_friday_system_prompt()`` --
-    the TEXT-CHAT prompt -- whose "== AVAILABLE TOOLS ==" section advertises the
-    full text toolbox (read_file, write_file, run_command, browse_web,
+    the TEXT-CHAT prompt -- whose generated "== TOOLS ==" section advertises the
+    text toolbox (read_file, write_file, run_command, browse_web,
     search_email, draft_email, open_path, learn_skill, query_trust_graph,
     get_briefing, the OS-control ring ...). The Live API is handed only
     ``_VOICE_LIVE_TOOLS``. Every tool named in the prompt but absent from that
@@ -797,7 +803,7 @@ def _voice_tool_surface_note():
         )
     return (
         header +
-        "This is a LIVE VOICE session. The tool list in the '== AVAILABLE TOOLS =='\n"
+        "This is a LIVE VOICE session. The tool list in the '== TOOLS =='\n"
         "section above describes the TEXT CHAT surface and does NOT apply here.\n"
         "In voice you can call EXACTLY these " + str(len(names)) +
         " tools, and nothing else:\n"
@@ -2376,6 +2382,8 @@ if sock is not None:
         _timings = {}
 
         def _generate(user_text, on_delta, cancel):
+            from agent_friday.services import notification_policy as _pol_v
+            _pol_v.note_owner_turn()
             from agent_friday.services.model_router import TIMINGS_SINK
             _timings.clear()
             # Laya 2 tier 1 in shadow on the spoken turn, exactly as on a typed
