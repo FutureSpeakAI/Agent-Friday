@@ -1994,6 +1994,10 @@ def _tool_search_wiki(inp):
     q_low = query.lower()
 
     results = []
+    # A call under a time budget (a local seat's, services/tool_deadline.py)
+    # stops scanning when it runs out and returns the hits found so far.
+    from agent_friday.services import tool_deadline as _td
+    partial = False
     # One root: the serving wiki the knowledge graph indexes and read_wiki
     # resolves against, so every hit's path opens with read_wiki as returned.
     from agent_friday.services.knowledge_graph import wiki_graph as _wg
@@ -2002,6 +2006,9 @@ def _tool_search_wiki(inp):
             continue
         for f in root.rglob('*'):
             if len(results) >= limit:
+                break
+            if _td.expired():
+                partial = True
                 break
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
                 continue
@@ -2031,9 +2038,19 @@ def _tool_search_wiki(inp):
         if len(results) >= limit:
             break
 
+    note = ("The time budget ran out before the whole wiki was searched; these "
+            "are the hits found so far. Narrow the query to search further."
+            if partial else "")
     if not results:
+        if partial:
+            return (f"No wiki files matched {query!r} in the part of the wiki "
+                    f"searched before the time budget ran out. Narrow the query "
+                    f"or use knowledge_query.")
         return f"No wiki files matched {query!r}."
-    return json.dumps({'query': query, 'hits': results}, default=str)[:100_000]
+    out = {'query': query, 'hits': results}
+    if partial:
+        out.update(partial=True, note=note)
+    return json.dumps(out, default=str)[:100_000]
 
 
 def _news_title_key(title) -> str:
@@ -11993,8 +12010,15 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 return _tb.limit_message("loop", detail=_loop_hit,
                                          used=_round,
                                          model=str(model or "")), tool_trace
-            result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
-                                   session_ctx=session_ctx)
+            # A local seat waits for every tool, on top of its own slow
+            # rounds, so its calls carry a 3 s budget: a tool that scans
+            # returns what it has by then, marked partial. The budget is read,
+            # never enforced by interruption, so no action is cut off.
+            from agent_friday.services import tool_deadline as _td
+            with (_td.budget(_td.LOCAL_TOOL_BUDGET_S) if _compact_seat == "local"
+                  else _ctxlib.nullcontext()):
+                result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
+                                       session_ctx=session_ctx)
             _tool_ms = int((_time.time() - _t_tool) * 1000)
             _orb_tool_trace(orb_id, tname, targs, result, _tool_ms)
             _ledger_tool_call(tname, result, _tool_ms, orb_id, session_ctx)
