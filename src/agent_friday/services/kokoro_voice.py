@@ -217,6 +217,9 @@ def kokoro_import_status(refresh: bool = False) -> dict:
             from agent_friday.services.ml_imports import guarded
 
             def _imp():
+                # kokoro.pipeline imports misaki.espeak (and with it the
+                # GPL phonemizer); the stand-in goes first, always.
+                ensure_espeak_fallback()
                 from kokoro import KPipeline  # noqa: F401
             guarded(_imp)
             res = {"ok": True, "error": "", "missing": ""}
@@ -352,72 +355,38 @@ def kokoro_health() -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def ensure_espeak_fallback() -> dict:
-    """Point phonemizer at the bundled espeak-ng, BEFORE misaki.espeak imports.
+    """Prepare Kokoro's pronunciation fallback BEFORE kokoro/misaki import.
 
-    This is the fix for a crash that reaches the user as garbled failure rather
-    than as anything actionable. `misaki/espeak.py` runs its `set_espeak_library()`
-    at IMPORT time, and on Windows that function only looks at one hardcoded
-    path: ``C:\\Program Files\\eSpeak NG\\libespeak-ng.dll``. It has no knowledge of
-    the ``espeakng_loader`` wheel, which is where pip actually puts the library.
-    So on a pip-only install the lookup fails, ``EspeakWrapper._ESPEAK_LIBRARY``
-    stays unset, and misaki's G2P is constructed with ``fallback = None``.
+    misaki's English G2P leaves ``token.phonemes`` None for any word outside
+    its lexicon (most people's names) and relies on a fallback to fill it in;
+    without one it raises on the join (measured: 16 of 26 ordinary words).
+    The usual fallback is espeak-ng through phonemizer, both GPL-3.0, and
+    Friday does not load them into its own process: this puts the pipe-backed
+    stand-in (services/g2p_fallback) in place of ``misaki.espeak``, so the
+    pipeline Kokoro builds asks the separate espeak-ng helper program, or
+    spells the word out when the helper is not installed. Never raises.
 
-    That matters because misaki's English G2P leaves ``token.phonemes is None``
-    for any out-of-vocabulary word and relies on the fallback to fill it in
-    (``misaki/en.py`` ~676-686). With no fallback, nothing fills it in, and the
-    join at ``misaki/en.py:693`` raises
-    ``TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'``.
-    Measured here: 16 of 26 ordinary words trip it, including "Kubernetes",
-    "Nguyen", "Ryzen" and "Ceph". It is not an edge case, it is most speech.
-
-    Setting the library first makes misaki wire its own fallback normally.
-    Returns a report dict; never raises.
+    Returns ``{"wired", "helper", "library", "data", "detail"}``: ``wired`` is
+    True when the stand-in is in place (a fallback always exists then);
+    ``helper`` says whether espeak-ng pronunciations are available or names
+    will be spelled out.
     """
-    out = {"wired": False, "library": "", "data": "", "detail": ""}
+    out = {"wired": False, "helper": False, "library": "", "data": "", "detail": ""}
     try:
-        import espeakng_loader
-        from phonemizer.backend.espeak.wrapper import EspeakWrapper
-    except BaseException as e:  # noqa: BLE001
-        out["detail"] = "espeak support not importable (%s)" % type(e).__name__
-        return out
-    try:
-        if not getattr(EspeakWrapper, "_ESPEAK_LIBRARY", None):
-            lib = espeakng_loader.get_library_path()
-            EspeakWrapper.set_library(lib)
-            out["library"] = str(lib)
-        else:
-            out["library"] = str(EspeakWrapper._ESPEAK_LIBRARY)
-        try:
-            data = espeakng_loader.get_data_path()
-            EspeakWrapper.set_data_path(data)
-            out["data"] = str(data)
-        except Exception:
-            # Older wrappers manage the data path themselves.
-            pass
-        out["wired"] = bool(getattr(EspeakWrapper, "_ESPEAK_LIBRARY", None))
+        from agent_friday.services import g2p_fallback
+        st = g2p_fallback.install_stub()
+        out.update(wired=bool(st.get("stubbed")), helper=bool(st.get("helper")),
+                   detail=st.get("detail") or "")
     except BaseException as e:  # noqa: BLE001
         out["detail"] = ExceptionText("%s: %s" % (type(e).__name__, str(e)[:120]))
     return out
 
 
 def attach_espeak_fallback(pipeline) -> dict:
-    """Ensure the pipeline's g2p has a pronunciation fallback, building one if
-    kokoro did not.
-
-    ``ensure_espeak_fallback()`` fixes the *library lookup*, and in the common
-    case kokoro then wires its own fallback. This function removes the
-    remaining dependence on that happening: it inspects the constructed g2p and,
-    if the fallback is still ``None``, builds ``EspeakFallback`` directly and
-    attaches it.
-
-    The distinction matters because a missing fallback is not a degraded voice,
-    it is a crashing one, and only for a specific class of word:
-    out-of-dictionary proper nouns. Numbers, times, percentages and paths all
-    resolve without it, so the failure hides during casual testing and then
-    fires on exactly the words Friday says most -- people's names. Repairing the
-    object we hold is not dependent on anyone's import ordering.
-
-    Returns a report; never raises.
+    """Ensure the pipeline's g2p has a pronunciation fallback, attaching the
+    pipe-backed one (services/g2p_fallback.PipeFallback) when Kokoro built
+    none. A missing fallback is not a degraded voice, it is one that crashes
+    on names, the words Friday says most. Returns a report; never raises.
     """
     out = {"fallback": False, "repaired": False, "detail": ""}
     g2p = getattr(pipeline, "g2p", None)
@@ -428,14 +397,14 @@ def attach_espeak_fallback(pipeline) -> dict:
         out["fallback"] = True
         return out
     try:
-        from misaki import espeak as _mespeak
-        g2p.fallback = _mespeak.EspeakFallback(british=False)
+        from agent_friday.services.g2p_fallback import PipeFallback
+        g2p.fallback = PipeFallback(british=bool(getattr(g2p, "british", False)))
         out["fallback"] = True
         out["repaired"] = True
-        log.info("kokoro g2p had no fallback; attached EspeakFallback directly")
+        log.info("kokoro g2p had no fallback; attached the espeak helper pipe")
     except BaseException as e:  # noqa: BLE001
         out["detail"] = ExceptionText("%s: %s" % (type(e).__name__, str(e)[:140]))
-        log.warning("could not attach espeak fallback: %s", out["detail"])
+        log.warning("could not attach the pronunciation fallback: %s", out["detail"])
     return out
 
 
@@ -566,11 +535,10 @@ class KokoroTTS:
                     "local_voice_kokoro_no_g2p_fallback",
                     "Kokoro loaded but its pronunciation fallback is missing, so "
                     "it would crash on any word outside its dictionary (about "
-                    "half of ordinary speech). espeak-ng could not be located: "
+                    "half of ordinary speech): "
                     + (_fb.get("detail") or esp.get("detail")
-                       or "no espeak library was wired")
-                    + ". Installing `espeakng-loader` and `phonemizer-fork` into "
-                      "the server environment is what fixes it.")
+                       or "the fallback could not be attached")
+                    + ".")
             self._pipeline = pipeline
             self._device = device
 

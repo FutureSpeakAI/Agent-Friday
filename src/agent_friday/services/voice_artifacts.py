@@ -92,6 +92,36 @@ ARTIFACTS = {
         "licence": "Apache-2.0",
         "source": "PyPI",
     },
+    # OPTIONAL, GPL-3.0: espeak-ng pronunciations for names misaki does not
+    # know. Installed only by the owner's choice, and run as its own helper
+    # program (agent_friday/voice/espeak_helper.py) that Friday talks to over
+    # a pipe; it is never imported or loaded into Friday's process, and the
+    # repository vendors none of it. Without it, unknown names are spelled
+    # out (services/g2p_fallback).
+    "espeak-ng-helper": {
+        "label": "espeak-ng pronunciation helper for names (optional; runs as its "
+                 "own program)",
+        "kind": "pip",
+        "package": "phonemizer-fork",
+        "version": "3.3.2",
+        "sha256": None,
+        "size_mb": 25,
+        "licence": "GPL-3.0-or-later (phonemizer-fork and espeak-ng)",
+        "source": "PyPI (phonemizer-fork, espeakng-loader; espeak-ng)",
+        "optional": True,
+        "requires": ["espeakng-loader"],
+    },
+    "espeakng-loader": {
+        "label": "espeak-ng library for the pronunciation helper",
+        "kind": "pip",
+        "package": "espeakng-loader",
+        "version": "0.2.4",
+        "sha256": None,
+        "size_mb": 20,
+        "licence": "GPL-3.0-or-later (bundles espeak-ng)",
+        "source": "PyPI",
+        "optional": True,
+    },
     "voice-ear-turbo": {
         "label": "faster-whisper large-v3-turbo int8 (optional accuracy lane)",
         "kind": "archive",
