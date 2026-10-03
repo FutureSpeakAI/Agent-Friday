@@ -8191,6 +8191,16 @@ try:
 except Exception as _ise:  # never let optional deps break the agent import
     print(f"  [SESSIONS] registration skipped: {_ise}")
 
+# local_model_status: which local model serves the brain, its window, its load.
+# Read-only (ring 0); its schema is a Settings workspace tool, outside the
+# always-on catalogue. See services/local_model_tools.py.
+try:
+    from agent_friday.services import local_model_tools as _local_model_tools
+    _local_model_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS,
+                                workspace_tools=WORKSPACE_TOOLS)
+except Exception as _lme:  # never let optional deps break the agent import
+    print(f"  [LOCAL-MODEL] registration skipped: {_lme}")
+
 
 _GOVERNANCE_KEY: bytes | None = None
 
@@ -11439,13 +11449,22 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # seat refuses as too long is compacted harder and sent once more rather
     # than ending the run.
     _raw_send = send_fn
+    # A round sent to a local seat is counted while it is in flight, which is
+    # what local_model_status reports as the seat's load.
+    from agent_friday.services import local_brain as _local_brain
+    import contextlib as _ctxlib
+
+    def _in_flight():
+        return (_local_brain.generating() if _compact_seat == "local"
+                else _ctxlib.nullcontext())
 
     def send_fn(_c, _tools, **_kw):
         _schema_tokens[0] = _compaction.schema_tokens(_tools)
         _est = _compaction.estimate_tokens(_c) + _schema_tokens[0]
         try:
             _pilot_model_round(session_ctx, _compact_seat)
-            _r = _raw_send(_c, _tools, **_kw)
+            with _in_flight():
+                _r = _raw_send(_c, _tools, **_kw)
         except Exception as _se:
             if not _compaction.is_context_overflow(_se):
                 raise
@@ -11453,7 +11472,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             _compact_convo(force=True)
             _est = _compaction.estimate_tokens(_c) + _schema_tokens[0]
             _pilot_model_round(session_ctx, _compact_seat)
-            _r = _raw_send(_c, _tools, **_kw)
+            with _in_flight():
+                _r = _raw_send(_c, _tools, **_kw)
         try:
             _compaction.observe(model, _est, ((_r or {}).get("usage") or {}).get("prompt_tokens"))
         except Exception:
