@@ -2,7 +2,8 @@
 SkillOpt Engine — Self-improving skill optimization for Agent Friday
 FutureSpeak.AI · Asimov's Mind
 
-Inspired by Karpathy's SkillOpt: skills evolve through training epochs, validated
+Inspired by Microsoft's SkillOpt (github.com/microsoft/SkillOpt, MIT): skills
+evolve through training epochs, validated
 against regression gates, and refined by an auto-research loop that proposes
 improvements when scores trend down.
 
@@ -452,7 +453,7 @@ class SkillStorage:
 
 class AutoResearchLoop:
     """
-    Karpathy-style self-improvement:
+    SkillOpt-style self-improvement:
       1. Watch the rolling mean of composite scores
       2. When it drops by AUTORESEARCH_DROP_THRESHOLD vs best, trigger
       3. Generate hypotheses (LLM-backed if researcher callable provided)

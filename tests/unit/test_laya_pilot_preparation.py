@@ -32,7 +32,8 @@ def test_apps_preloads_read_schemas_and_retains_every_loader_entry():
     assert "send_email" not in names and "delete_task" not in names
     assert len(names) == len(set(names))
     for tool in tools:
-        assert tool["name"] in opening[-1]["description"]
+        assert [x["name"] for x in tc.search(tools, tool["name"])][:1] == [tool["name"]] or \
+            tool["name"] in {x["name"] for x in tc.expand(tools, [tool["name"]], [])[0]}
     assert pilot.counts["added_tools"] >= 3
 
 

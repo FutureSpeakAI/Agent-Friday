@@ -27,6 +27,18 @@ JavaScript and CSS vendored under static/vendor/:
     Copyright (c) 2006, Ivan Sagalaev and other contributors.
     BSD 3-Clause License.
 
+Code and prompts carried in Friday's own source (src/agent_friday/services/
+knowledge_graph/), each under the MIT License, with the notices reproduced
+in THIRD_PARTY_LICENSES.md:
+
+  obsidian-wiki (graph analysis, structural queries, wikilink parsing,
+  the canonical-path rule)
+    Copyright (c) 2026 Ar9av. MIT License.
+  Microsoft GraphRAG prompt set (prompts/*.txt), carried via graphrag-workbench
+    Copyright (c) Microsoft Corporation. MIT License.
+  graphrag-workbench (artifact contract, force-layout design)
+    Copyright (c) 2026 Lyon Industries (Christopher Lyon). MIT License.
+
 Fonts under static/fonts/g/, each under the SIL Open Font License 1.1, whose
 text is in static/fonts/ (OFL-<family>.txt). The .woff2 files are the ones
 Google Fonts serves for the page's font request (fonts.gstatic.com), unmodified:

@@ -406,7 +406,11 @@ def test_kokoro_is_built_from_cached_paths_on_the_cpu(monkeypatch, tmp_path):
             yield text, "ph", np.zeros(240, dtype="float32")
 
     monkeypatch.setitem(sys.modules, "kokoro", types.SimpleNamespace(KModel=KModel, KPipeline=KPipeline))
-    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(set_num_threads=lambda n: None))
+    # The parts of torch the speaker uses: thread counts and inference mode.
+    import contextlib
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        set_num_threads=lambda n: None, set_num_interop_threads=lambda n: None,
+        inference_mode=contextlib.nullcontext))
     from agent_friday.services import kokoro_voice
     monkeypatch.setattr(kokoro_voice, "ensure_espeak_fallback", lambda: {"wired": True})
     files = {}

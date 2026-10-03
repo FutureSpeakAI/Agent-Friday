@@ -974,6 +974,28 @@ def _suggest_near_miss(p: Path) -> str:
     return ""
 
 
+#: The whole-file redaction of the last few files read, keyed by path and
+#: version (mtime, size), so paging a large file does not redact it per page.
+_REDACTED_CACHE: dict = {}
+_REDACTED_CACHE_MAX = 8
+
+
+def _redacted_once(p, text: str) -> str:
+    from agent_friday.services import credential_paths as _cred
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size, len(text))
+    except OSError:
+        return _cred.redact_secrets(text)
+    hit = _REDACTED_CACHE.get(key)
+    if hit is None:
+        hit = _cred.redact_secrets(text)
+        if len(_REDACTED_CACHE) >= _REDACTED_CACHE_MAX:
+            _REDACTED_CACHE.pop(next(iter(_REDACTED_CACHE)))
+        _REDACTED_CACHE[key] = hit
+    return hit
+
+
 def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
     if not raw:
@@ -1010,6 +1032,12 @@ def _tool_read_file(inp):
     # stays withheld. Registration must happen on the exact string that will
     # actually reach the gate, which is only known after the scrub hook runs.
     _log_context("file_read", {"path": str(p), "bytes": len(text)})
+    # Key material pasted inside an otherwise ordinary file never reaches the
+    # model, and it is withheld from the WHOLE text before it is paged: a page
+    # that starts or ends inside a key block (or a one-line window the model
+    # asks for by offset) would otherwise show a fragment no redactor can
+    # recognise on its own. Offsets therefore count lines of the withheld text.
+    text = _redacted_once(p, text)
     # One page per call, and a partial page says where the next one starts.
     # The ceiling here is the executor's, so a file read is never cut twice.
     page, info = _tool_output.window_lines(text, offset=(inp or {}).get("offset") or 1,
@@ -1017,7 +1045,7 @@ def _tool_read_file(inp):
     out = page + _tool_output.page_note(info)
     if result.truncated:
         out += "\n...[extraction truncated to the first pages of this document]"
-    # Key material pasted inside an otherwise ordinary file never reaches the model.
+    # And once more on what goes out (the page note and the truncation line).
     return _cred.redact_secrets(out)
 
 
@@ -8219,7 +8247,7 @@ except Exception as _lmte:  # never let an optional module break the agent impor
 
 try:
     from agent_friday.services import podcast_tools as _podcast_tools
-    _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
     from agent_friday.services import media_diet as _media_diet
     _media_diet.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
     from agent_friday.services import news_discuss as _news_discuss
@@ -11539,6 +11567,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
 #  Ollama. Only called when the model router selects a local model.
 # ══════════════════════════════════════════════════════════════
 
+# The wrapper above only sets the loop-provider ContextVar; its signature is
+# the real one's (inspect.signature follows __wrapped__).
+_call_claude_agent.__wrapped__ = _call_claude_agent_run
+
+
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
     """The shared OpenAI-format loop. It names its provider for the run so a
     handler can tell a local seat from the cloud: a loopback seat we serve
@@ -12125,6 +12158,19 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tname, {"raw": str(_raw)[:300]}, _arg_error, _tool_ms)
                 _ledger_tool_call(tname, _arg_error, _tool_ms, orb_id, session_ctx)
+                # The same bad call, sent again and again, is a loop like any
+                # other: the guard sees it before the error goes back, or a model
+                # that keeps resending the same arguments is never stopped.
+                _loop_hit = (_loop_guard.observe(tname, _raw if isinstance(_raw, dict)
+                                                 else {"raw": str(_raw)[:300]})
+                             if _loop_guard is not None else None)
+                if _loop_hit:
+                    _pilot_outcome(session_ctx, "error")
+                    _orb(status='error', label='Loop detected', progress=1.0)
+                    _led_done()
+                    return _tb.limit_message("loop", detail=_loop_hit,
+                                             used=_round,
+                                             model=str(model or "")), tool_trace
                 convo.append({"role": "tool", "tool_call_id": tcid,
                               "content": _arg_error})
                 continue
@@ -12261,6 +12307,11 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
 #  soft limit, compress older turns into a dense summary block
 #  while keeping recent turns verbatim.
 # ══════════════════════════════════════════════════════════════
+
+# The wrapper above only sets the loop-provider ContextVar; its signature is
+# the real one's (inspect.signature follows __wrapped__).
+_oai_agentic_loop.__wrapped__ = _oai_agentic_loop_run
+
 
 _TRAJ_CHAR_LIMIT = 2_000_000   # ~500K tokens; Opus 4.8 has 1M ctx — only compress at this threshold
 _TRAJ_KEEP_VERBATIM = 20       # keep last 20 turn-pairs (~40 messages) verbatim

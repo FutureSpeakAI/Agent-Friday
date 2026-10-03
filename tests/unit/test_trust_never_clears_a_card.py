@@ -91,10 +91,18 @@ def test_no_grant_is_created_or_consumed_by_trust(home):
 
 
 def test_tainted_content_from_a_trusted_source_still_cards(home):
+    """Trust never removes the gate. draft_email raises its own approval card
+    inside the handler (authorize answers allow and names that card as the
+    gate, with the content's provenance); whatever the gate is, trusting the
+    source changes nothing about it."""
+    args = {"to": "pat@example.test", "body": "from trusted.test"}
+    before = ag.authorize("draft_email", dict(args), {"session_id": "s1"}, tainted=True)
     _seed_trust(home)
-    v = ag.authorize("draft_email", {"to": "pat@example.test", "body": "from trusted.test"},
-                     {"session_id": "s1"}, tainted=True)
-    assert v.action in ("card", "deny")
+    v = ag.authorize("draft_email", dict(args), {"session_id": "s1"}, tainted=True)
+    assert (v.action, v.klass, v.reason) == (before.action, before.klass, before.reason), \
+        "trusting the source changed the verdict"
+    assert v.action in ("card", "deny") or (
+        v.action == "allow" and "own approval card is the gate" in v.reason and "provenance" in v.reason)
 
 
 def test_the_guard_script_is_wired_into_the_hooks():

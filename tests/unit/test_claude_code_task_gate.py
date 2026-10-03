@@ -30,6 +30,9 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "VIBE_TERMINALS", {})
     from agent_friday.services import claude_code_tasks as cct
     monkeypatch.setattr(cct, "VIBE_TERMINALS", core.VIBE_TERMINALS)
+    # code_engine imports VIBE_TERMINALS from core by name: one registry for all.
+    from agent_friday.services import code_engine as ce
+    monkeypatch.setattr(ce, "VIBE_TERMINALS", core.VIBE_TERMINALS)
     monkeypatch.setattr(core, "_persist_vibe_terminals", lambda: None)
     return tmp_path
 
@@ -83,6 +86,7 @@ def test_the_launcher_runs_under_the_gate_when_granted(home, monkeypatch):
     from agent_friday.services import claude_code_tasks as cct
     import agent_friday.core as core
     monkeypatch.setattr(core, "_safe_under_home", lambda p: p)
+    monkeypatch.setattr(ce, "_safe_under_home", lambda p: p)   # its own binding
     popen = []
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: popen.append((a, k)) or type("P", (), {"pid": 4242})())
     core.VIBE_TERMINALS["t2"] = {"id": "t2", "task": "write tests", "status": "awaiting_approval",
