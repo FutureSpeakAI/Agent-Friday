@@ -103,20 +103,43 @@ def test_a_new_distinct_failure_is_announced_while_an_older_alarm_is_unread(tmp_
     assert len({n["dedupe_key"] for n in told}) == 2
 
 
-def test_an_alarm_the_engine_swallowed_is_not_marked_as_told(tmp_path, notifications, monkeypatch):
-    import agent_friday.notifications_engine as ne
+def _a_corrupt_line(tmp_path):
     fg.create_file_grant(str(_file(tmp_path)))
     with open(fg._ledger_path(), "a", encoding="utf-8") as f:
         f.write("garbage line\n")
     sha = hashlib.sha256(b"garbage line").hexdigest()
-    # An undismissed entry already holds the exact key this failure would use.
-    ne.push(title="older", body="", source="file_grants",
-            dedupe_key="file_grants_ledger_failure:%s" % sha)
+    return sha, "file_grants_ledger_failure:%s" % sha
+
+
+def test_an_alarm_that_folds_into_its_waiting_card_is_told(tmp_path, notifications, monkeypatch):
+    """The engine folds a repeat into the undismissed card with the same key:
+    that card takes this alarm's words and its count goes up, so the user is
+    told, and the alarm is recorded as told."""
+    import agent_friday.notifications_engine as ne
+    sha, key = _a_corrupt_line(tmp_path)
+    ne.push(title="older", body="", source="file_grants", dedupe_key=key)
+
+    fg._load_state(force=True)
+
+    (card,) = [n for n in notifications() if n.get("dedupe_key") == key]
+    assert card.get("count") == 2 and "ledger corrupted" in card["title"], card
+    assert sha in fg._read_notices()["alarmed"]
+
+
+def test_an_alarm_the_engine_suppressed_is_not_marked_as_told(tmp_path, notifications, monkeypatch):
+    """A card the owner dismissed is not shown again at the same rank: that
+    alarm reached no one, so it is not recorded as told and the next read
+    tries again."""
+    import agent_friday.notifications_engine as ne
+    sha, key = _a_corrupt_line(tmp_path)
+    older = ne.push(title="older", body="", source="file_grants", priority="high",
+                    kind="warning", dedupe_key=key)
+    assert ne.dismiss(older["id"])
 
     fg._load_state(force=True)
 
     assert sha not in fg._read_notices()["alarmed"], (
-        "a push the engine dropped as a duplicate was recorded as the user being told")
+        "a push the engine suppressed was recorded as the user being told")
 
 
 # ── 2. An unauthenticated line is never trusted ──────────────────────────────

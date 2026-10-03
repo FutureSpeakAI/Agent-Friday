@@ -119,6 +119,12 @@ def repin_claws() -> str:
 #: accounts, publishing, code execution, or no undo.
 OUTWARD_TOOLS = frozenset({
     "draft_email",                  # its own card is the gate (SELF_GATED)
+    # Decided, not yet reviewed for internal: each waits for a card, as an
+    # unclassified tool does. notifications can also mute and clear the
+    # owner's cards, so a turn steered by something it read could silence an
+    # alarm; local_model_status only reads, and its case for internal is its
+    # author's to make with a review.
+    "notifications", "local_model_status",
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
     # Scheduling (services/scheduling.py). book_slot sends invitations to
     # other people. hold_slots writes only to the owner's own calendar and
