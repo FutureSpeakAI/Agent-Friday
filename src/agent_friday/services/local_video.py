@@ -33,7 +33,6 @@ import logging
 import threading
 import time
 import uuid
-from pathlib import Path
 
 from agent_friday.services.local_image import (
     comfy_root, PROVIDER, COMFY_PORT, interrupt_comfy,
@@ -233,42 +232,11 @@ def _get(path, timeout=30):
         return json.loads(r.read().decode())
 
 
-#: Which models take a start image (image-to-video). Wan 2.2 TI2V 5B is
-#: "text+image-to-video unified": its WanImageToVideo node takes start_image.
-#: The 14B pair here is the T2V build and CogVideoX-2b is text-only.
-I2V_MODELS = (WAN_5B_ID,)
-
-
-def i2v_available() -> dict:
-    """Can this PC turn an image into a video locally? {available, model, reason}.
-    Earned, like is_installed: the weights must be on disk."""
-    for mid in I2V_MODELS:
-        if is_installed(mid):
-            return {"available": True, "model": mid, "backend": "local: " + MODELS[mid].get("label", mid), "reason": ""}
-    return {"available": False, "model": None, "backend": None,
-            "reason": "Image-to-video needs the Wan 2.2 TI2V 5B model on this PC (Settings \u2192 Models); it is not installed."}
-
-
-def stage_input(path) -> str:
-    """Copy a start image into ComfyUI's input folder and return the name its
-    LoadImage node reads. The copy is named by content so repeats are free."""
-    import hashlib
-    import shutil as _sh
-    p = Path(path)
-    data = p.read_bytes()
-    name = "friday-i2v-%s%s" % (hashlib.sha1(data).hexdigest()[:16], p.suffix.lower() or ".png")
-    dest = comfy_root() / "input" / name
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if not dest.exists():
-        _sh.copy2(p, dest)
-    return name
-
-
 def build_workflow(prompt: str, *, negative: str = "", width: int = 0,
                    height: int = 0, length: int = 0, fps: float = 0,
                    steps: int = 0, cfg: float = 0, seed: int = 0,
                    filename_prefix: str = "friday_local_video",
-                   model_id: str | None = None, start_image: str | None = None) -> dict:
+                   model_id: str | None = None) -> dict:
     """The ComfyUI graph for one clip, on whichever video model is seated.
 
     All three end at the same pair of nodes — VAEDecode → SaveWEBM — because
@@ -282,8 +250,6 @@ def build_workflow(prompt: str, *, negative: str = "", width: int = 0,
     """
     spec = model_spec(model_id)
     mid = model_id or DEFAULT_MODEL_ID
-    if start_image and mid not in I2V_MODELS:
-        raise ValueError("%s is text-to-video only; a start image needs %s" % (mid, WAN_5B_ID))
     width = width or spec["width"]
     height = height or spec["height"]
     length = length or spec["length"]
@@ -303,25 +269,23 @@ def build_workflow(prompt: str, *, negative: str = "", width: int = 0,
     return _wan_5b_workflow(prompt, negative=negative, width=width,
                             height=height, length=length, fps=fps,
                             steps=steps, cfg=cfg, seed=seed,
-                            filename_prefix=filename_prefix, spec=spec,
-                            start_image=start_image)
+                            filename_prefix=filename_prefix, spec=spec)
 
 
 def _wan_5b_workflow(prompt, *, negative, width, height, length, fps, steps,
-                     cfg, seed, filename_prefix, spec, start_image=None) -> dict:
-    """Wan 2.2 TI2V 5B: text-to-video, or image-to-video when a start image
-    (a name in ComfyUI's input folder, see stage_input) is given.
+                     cfg, seed, filename_prefix, spec) -> dict:
+    """Wan 2.2 TI2V 5B, text-to-video (no start image).
 
-    `WanImageToVideo` (comfy_extras/nodes_wan.py) is the one node for both:
-    leaving `start_image` unconnected is text-to-video; connecting a LoadImage
-    to it animates that picture. `ModelSamplingSD3`
+    `WanImageToVideo` (comfy_extras/nodes_wan.py) is the same node the image-
+    to-video graph uses; leaving `start_image` unconnected is what makes this
+    text-to-video rather than a second, redundant node type. `ModelSamplingSD3`
     applies the shift Wan's reference workflow calls for — feeding the
     unpatched model into KSampler produces a noticeably worse motion result.
     """
     unet_name = spec["files"][0][1]
     clip_name = spec["files"][1][1]
     vae_name = spec["files"][2][1]
-    wf = {
+    return {
         "1": {"class_type": "UnetLoaderGGUF",
               "inputs": {"unet_name": unet_name}},
         "1b": {"class_type": "ModelSamplingSD3",
@@ -352,10 +316,6 @@ def _wan_5b_workflow(prompt, *, negative, width, height, length, fps, steps,
               "inputs": {"images": ["8", 0], "filename_prefix": filename_prefix,
                          "codec": "vp9", "fps": fps, "crf": 24.0}},
     }
-    if start_image:
-        wf["10"] = {"class_type": "LoadImage", "inputs": {"image": start_image}}
-        wf["6"]["inputs"]["start_image"] = ["10", 0]
-    return wf
 
 
 def _wan_a14b_workflow(prompt, *, negative, width, height, length, fps, steps,
@@ -598,23 +558,13 @@ def _watch_progress(prompt_id, client_id, on_update, stop_flag):
 def generate(prompt: str, *, aspect_ratio: str = "16:9", negative: str = "",
              duration_seconds: int = 0, seed: int = 0,
              arbiter=None, lease_ttl_s: int = 1800,
-             system: bool = False, model: str | None = None,
-             image_path: str | None = None) -> dict:
+             system: bool = False, model: str | None = None) -> dict:
     """Generate one video clip on-device, under the Arbiter's exclusive image
     lease — see the module docstring for why it is "image_job" and not a
     video-specific kind. Returns the SAME envelope shape as local_image's
     generate(): {status, files, model, provider, elapsed_s, ...}. Never raises.
     """
     _model_id = model or DEFAULT_MODEL_ID
-    if image_path:
-        # image-to-video: only the TI2V model takes a start image, whatever was asked for
-        cap = i2v_available()
-        if not cap["available"]:
-            return {"status": "unavailable", "provider": PROVIDER, "reason": cap["reason"]}
-        _model_id = cap["model"]
-        if not Path(image_path).is_file():
-            return {"status": "error", "provider": PROVIDER,
-                    "reason": "the start image is not there: %s" % image_path}
     if not is_installed(_model_id):
         _model_id = DEFAULT_MODEL_ID
     if not is_installed(_model_id):
@@ -703,10 +653,9 @@ def generate(prompt: str, *, aspect_ratio: str = "16:9", negative: str = "",
             raise Cancelled("cancelled while the GPU was being prepared")
 
         _seed = seed if seed else uuid.uuid4().int % (2 ** 63)
-        _start = stage_input(image_path) if image_path else None
         wf = build_workflow(prompt, negative=negative, width=width,
                             height=height, length=length, fps=fps, seed=_seed,
-                            model_id=_model_id, start_image=_start)
+                            model_id=_model_id)
         client_id = uuid.uuid4().hex[:12]
         sub = _post("/prompt", {"prompt": wf, "client_id": client_id})
         pid = sub.get("prompt_id")

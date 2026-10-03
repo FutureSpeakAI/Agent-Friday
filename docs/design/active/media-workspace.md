@@ -1,7 +1,6 @@
 # Media: one home for everything Friday makes or helps make
 
-> **Status:** on main since `b0e5a7ed`; the self-building index, the "kept" status and the
-> complete source walk (§4.3) are on branch `fix/media-index-fresh` over main `62243240`:
+> **Status:** built on branch `feat/media-workspace` over `feat/unified-shell`, not yet on main:
 > the Studio tab-width fix (§1.6), the card index and routes (§4.2), the Library with its
 > grid, list and 3D layouts, the Pipeline board with the publish gate, the Calendar view and
 > the Calendar workspace's Media layer (D6), the editor frame with "turn this into…" for
@@ -286,10 +285,8 @@ is retired.
 ### 3.6 The podcast session
 
 "The routine shows stay in News on their runs; the player is mine." The questioning kept
-that line: a user episode is a card of kind `episode`; a routine episode is listed as a
-card too, so the library is complete and nothing is silently missing, but it is marked
-`origin: routine`, its source names the News run that made it, and opening it goes to the
-show's tab in News, never into Media's editor. The player stays News's.
+that line exactly: a routine episode is never a card; a user episode is a card of kind
+`episode`; search may find a routine episode and links into News.
 
 ### 3.7 The UI session, building the shell
 
@@ -360,97 +357,8 @@ event and on a timer. `GET /api/media?q=&kind=&status=&project=&privacy=&since=&
 | In review (badge: held for you) | review | HELD, and a card awaiting approval | — |
 | Scheduled | scheduled | SCHEDULED, PUBLISHING | — |
 | Published (badges: partial, failed) | published | PUBLISHED, PARTIAL, FAILED | — |
-| Kept (made and kept on this PC; not a lane) | — | — | every creation, document, ready episode, render or daily file without a publication record |
 
 CANCELLED cards return to Draft with a note. The mapping is a table in code with a test.
-"Kept" is the sixth word: a finished thing that stays on this PC. It is never shown as
-published; only a provenance manifest that records where it went (or the content store's
-receipt) moves a card into Published, so the Published view is honest. The Library's rail
-has a "Kept here" view beside Published; the board's five lanes stay five.
-
-The index builds itself. It is built in the background at server start, checked for
-freshness on every list (a cheap signature: each source root's and its first-level
-folders' mtimes, no file read), rebuilt when a source changed, and re-checked on a slow
-periodic pass. While it builds, the Library says "Indexing your library… N so far" and asks
-again until it is done; it never shows a silent empty grid over a full creations folder.
-Every source is walked: the creations folder, the office documents, every podcast episode
-(user and routine), Draft copies, the legacy kanban, v2 posts, Media's own cards, the daily
-creations folder, timelines, pipeline runs, creative projects and ComfyUI's output folder.
-A file whose type the index has no word for is a generic file card, never a gap.
-`tests/api/test_media_index_fresh.py` is the proof.
-
-**Previews and details** (`services/media_previews.py`). Every card gets a real preview,
-made locally and lazily by one low-priority worker (one job at a time, a pause between
-jobs, waiting while the machine is short of memory), cached under the home, never a
-placeholder: a thumbnail, a 2×2 mosaic for a set, a deck's first slide (the office tool,
-else a rendered text card of its words), a page's first viewport from a headless browser
-that is offline, refuses every request but the file and is closed after the batch, a
-video's poster plus an eight-frame strip for hover scrub, an audio file's waveform; a type
-with no picture shows its icon and size. The details ride on the card and in the side
-panel: a real title, type, size, dimensions or duration or pages, created and modified,
-the model or tool, the prompt, the sources, privacy and where it went, the project. A
-quick look (Space, or a click on the picture) walks the list with the arrows, plays video
-and audio inline, frames a page in a sandbox, and opens the file in its app or its folder.
-`tests/unit/test_media_previews.py` is the proof.
-
-**Search inside things** (`cards_fts`, `services/media_transcripts.py`). One local FTS5
-index over the title, the card's text, what the preview pass read out of slides, pages
-and documents, the transcript, the prompt, the sources, the maker and the project. Every
-word is a prefix term; a quoted phrase is kept whole; the hit shows the line with the
-words marked. Audio and video get a local transcript (faster-whisper base.en on the CPU,
-int8, from the local cache only, one file at a time after the preview pass, memory-aware,
-cached), so "find the video where I said X" lands on the card and the quick look starts
-the player where the words were said. Nothing is sent anywhere.
-`tests/unit/test_media_search.py` is the proof.
-
-**Ask Friday** (`services/media_card_tools.py`). "Find the deck about Covista", "show me
-September's videos", "play the last podcast about AI policy": media_show and media_cards
-take a time in the owner's words as a window on the date that matters; media_play finds the
-newest audio or video for the words and opens the quick look where they were said. One
-line per item.
-
-**Organize.** Favourites and tags are overrides, set by hand on a card or on many at once
-(`POST /api/media/bulk`: move to a project, tag, favourite). A smart collection is a saved
-filter with a name ("this week's podcasts", "decks for Harbour"), kept in
-`media/collections.json` and evaluated when opened, so it is always current. The Library's
-rail shows Favourites, the collections and the tags with counts; the grid groups by project,
-date or type. `tests/api/test_media_organize.py` is the proof.
-
-**Clean-up help** (`services/media_tidy.py`). Friday spots near-duplicate renders (the
-preview pass's difference hash for pictures and video posters, Hamming distance at most 6;
-word shingles with Jaccard at least 0.9 for documents) and stale drafts (Media's own drafts
-and ideas untouched for thirty days with little in them), and OFFERS a tidy-up as one
-batched card through the governed-action gate, the same gate publishing uses. Nothing moves
-before the owner approves; in a group the favourite, else the larger file, else the newer
-one is kept. What moves goes to `<home>/media/trash/<entry>/` with a manifest, the card's
-Delete goes the same way, Restore puts an entry back, and Friday never empties the trash:
-there is no hard delete anywhere in Media. `tests/api/test_media_tidy.py` is the proof.
-
-**Image → video (MEDIA-I2V).** "Turn this into a video" on a picture runs locally: Wan 2.2
-TI2V 5B through ComfyUI, under the arbiter's lease inside `local_video.generate`, with the
-picture staged into ComfyUI's input folder and wired to `WanImageToVideo.start_image`. The
-card is made at once in Draft with "working"; the clip, its credential and the kept status
-land when the GPU is done; a refusal or failure is a "failed" badge with the message on the
-card and a notice to the owner. `GET /api/media` carries `turns`, what this PC can turn a
-card into and why not, and the editor's menu offers only what works, naming what it cannot
-("Not a video here: …"), never a dead button. `tests/unit/test_media_i2v.py` would fail the
-moment the menu offered a conversion with no working backend.
-
-**Turn any media into any other** (`services/media_convert.py`). The matrix (in the program
-ledger) is filled local-first with what is installed: audio, music and video → a transcript
-(timestamped text) and captions (.srt + .vtt) by the local recogniser; audio and music → a
-waveform video with the captions burned in (ffmpeg); video → its sound track and a still;
-a deck → narration (the local voice reads each slide) and a narrated video (the office tool
-renders each page, else a text card; each slide held while it is read); an image → the
-words it carries (local OCR, labelled as not a description); a document or a deck feeds the
-text-made kinds (article, read aloud, slides) with its own extracted words. Music that is
-not Friday's own is never transcribed: lyrics are somebody's work. Every conversion is a
-Media-owned card made at once in Draft with "working", an orb with real steps, then the
-file, its credential and the kept status, or a "failed" badge with the message and a notice.
-`turn_capabilities()` returns the map per menu group; the menu and the voice tool read the
-same map, so no item is offered without a working backend. Models not installed (Demucs
-for stems, a local vision model for descriptions) are listed in the ledger, not downloaded.
-`tests/unit/test_media_convert.py` is the proof.
 
 ### 4.4 Three views of the same cards
 
@@ -497,9 +405,8 @@ same tools as the buttons; publish is a card, read aloud; "yes, but" becomes "ch
 
 - **News** is reading. Editions and the four routine shows stay there, on their runs.
   "Share to draft" makes a card of kind `draft` with the story as a source; the seed file
-  becomes that card's source record. A routine episode is listed as a card (origin
-  `routine`, source "News · show · run") so the library is complete; opening it goes to
-  the show's tab in News, and its player stays there.
+  becomes that card's source record. A Media search can find a routine episode or an
+  edition; the result says "In News" and opens it there.
 - **The Salon** is the IDE. A repo the Salon makes is a card of kind `code` with its status
   and last run; Open goes to the Salon; publish receipts from the Salon write onto the card.
 - **Knowledge** keeps the wiki; a card can be sent there.

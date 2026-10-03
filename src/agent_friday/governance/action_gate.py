@@ -119,6 +119,12 @@ def repin_claws() -> str:
 #: accounts, publishing, code execution, or no undo.
 OUTWARD_TOOLS = frozenset({
     "draft_email",                  # its own card is the gate (SELF_GATED)
+    # Decided, not yet reviewed for internal: each waits for a card, as an
+    # unclassified tool does. notifications can also mute and clear the
+    # owner's cards, so a turn steered by something it read could silence an
+    # alarm; local_model_status only reads, and its case for internal is its
+    # author's to make with a review.
+    "notifications", "local_model_status",
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
     # Scheduling (services/scheduling.py). book_slot sends invitations to
     # other people. hold_slots writes only to the owner's own calendar and
@@ -218,7 +224,7 @@ INTERNAL_TOOLS = frozenset({
     # Friday's own folder; playing it steers the owner's own screen; the
     # format is the owner's own podcast setting on this computer.
     "make_podcast", "podcast_list", "podcast_play", "podcast_source", "podcast_format",
-    "media_show", "media_cards", "media_play", "media_turn",
+    "media_show", "media_cards", "media_turn",
     # A media diet note only proposes: an approval card in the owner's own
     # approvals; the rule is applied by the approved card, with a receipt.
     "media_diet_note",
