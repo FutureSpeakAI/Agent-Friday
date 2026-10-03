@@ -2922,6 +2922,17 @@ if sock is not None:
                     finally:
                         TURN_CANCEL.reset(_ctok)
                         TIMINGS_SINK.reset(_tok)
+                # Laya 2 tier 1 in shadow on the spoken turn, exactly as on a typed
+                # one (routes/chat.py): a budgeted verdict logged without the words,
+                # carried as advice for the seat's reasoning effort and nothing else.
+                # The front seat takes no session context, so only the agent path
+                # below carries it.
+                _turn_shape = None
+                try:
+                    from agent_friday.services import reflex_turn as _reflex
+                    _turn_shape = _reflex.shadow(user_text)
+                except Exception:
+                    _turn_shape = None
                 try:
                     with _presence.acting_as(_presence.FRIDAY):
                         reply, _trace = _generate_agent(
@@ -2941,7 +2952,8 @@ if sock is not None:
                                          # The local mind or an honest failure,
                                          # never a cloud leg answering for it.
                                          "pin_to_seat": True,
-                                         "owner_text": str(user_text or "")[:4000]},
+                                         "owner_text": str(user_text or "")[:4000],
+                                         "turn_shape": _turn_shape},
                             workspace=settings.get("active_workspace") or "",
                             on_text_delta=on_delta,
                         )

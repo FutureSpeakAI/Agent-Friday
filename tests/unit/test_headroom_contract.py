@@ -160,39 +160,42 @@ def _arb():
     return a
 
 
-def test_the_gate_now_requires_2560_not_256_on_single_monitor_windows(
+def test_the_gate_now_requires_the_floor_not_256_on_single_monitor_windows(
         monkeypatch):
     """The exact before/after this phase closes.
 
     Before: `vram_headroom()` reserved 256 MiB (the raw, unclamped
-    `display_reserve_mib()` formula on one monitor), so 2,082 MiB free would
+    `display_reserve_mib()` formula on one monitor), so 1,500 MiB free would
     have passed. After: `Arbiter.grant()` reconciles through
-    `resolve_display_reserve()`, which clamps to `MIN_DISPLAY_RESERVE_MIB
-    ["windows"]` = 2,560, and the same 2,082 MiB free is refused.
+    `resolve_display_reserve()`, which clamps to the card's floor: P1's
+    measured idle draw of 1,261 MiB plus the 512 MiB margin = 1,773
+    (`hardware_profile.display_reserve_floor_mib`; 2,560 on a machine with no
+    measurement), and the same 1,500 MiB free is refused.
     """
     monkeypatch.setattr(hwp, "display_reserve_mib", lambda *a, **k: 256)
+    monkeypatch.setattr(hwp, "_display_reserve_mode", lambda: "adaptive")
     monkeypatch.setattr(
         hwp, "detect_gpus",
         lambda: [{"index": 0, "vram_total_mib": 12282,
-                  "vram_used_mib": 12282 - 2082}])  # 2,082 MiB free
+                  "vram_used_mib": 12282 - 1500}])  # 1,500 MiB free
 
     # The raw, unreconciled figure -- what the gate used to enforce.
     before = hwp.vram_headroom()
     assert before["display_reserve_mib"] == 256
     assert before["ok"] is True, (
-        "sanity check: 2,082 MiB free clears a 256 MiB reserve -- this is "
+        "sanity check: 1,500 MiB free clears a 256 MiB reserve -- this is "
         "the state a monitor dropped off in (322 MiB free), "
         "and the un-reconciled gate would have let it through")
 
     # The reconciled figure -- what the gate enforces now.
     reserve = hc.resolve_display_reserve(fx.P1)
-    assert reserve["mib"] == 2560
+    assert reserve["mib"] == 1773
 
     arb = _arb()
     result = arb.grant("heavy_turn")
     assert result["ok"] is False
     assert result["refused"]["rule_id"] == "R-DISPLAY-RESERVE"
-    assert "2560" in result["error"]
+    assert "1773" in result["error"]
 
 
 def test_the_gate_still_passes_with_real_headroom(monkeypatch):

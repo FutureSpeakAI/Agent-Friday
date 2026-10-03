@@ -423,13 +423,17 @@
   }
 
   // A Gmail signature is the owner's own HTML, but it goes into Friday's page,
-  // so anything active is removed first. Its images (a logo) stay.
+  // so anything active is removed first. An inline (data:) logo stays; a
+  // remote image does not, because the editor sits in Friday's own page and a
+  // remote src would be fetched the moment the signature is inserted.
   const cleanSig = html => {
     const d = new DOMParser().parseFromString(html || '', 'text/html');
     d.querySelectorAll('script,style,link,meta,base,iframe,frame,object,embed,form,input,button,svg').forEach(n => n.remove());
     d.querySelectorAll('*').forEach(n => [...n.attributes].forEach(at => {
       const k = at.name.toLowerCase(), v = String(at.value || '');
-      if (k.startsWith('on') || (k === 'style' && /url\s*\(/i.test(v)) || ((k === 'href' || k === 'src') && !/^(https?:|mailto:|data:image\/)/i.test(v.trim()))) n.removeAttribute(at.name);
+      if (k.startsWith('on') || k === 'srcset' || (k === 'style' && /url\s*\(/i.test(v))
+        || (k === 'href' && !/^(https?:|mailto:)/i.test(v.trim()))
+        || (k === 'src' && !/^data:image\/(png|jpe?g|gif|webp);/i.test(v.trim()))) n.removeAttribute(at.name);
     }));
     return d.body.innerHTML;
   };

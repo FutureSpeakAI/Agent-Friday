@@ -18,17 +18,20 @@ exposed via ``character_context()`` (name → description map consumed by
 scene_dna.render_prompt) and ``project_prompt_context()`` (a text block the
 context-injection middleware folds into the system prompt).
 
-Storage: ~/.friday/projects/<project_id>/bible.json  (one JSON per project).
-The active project pointer lives in ~/.friday/projects/active.json. Pure JSON on
-disk — no DB, import-safe under FRIDAY_TESTING (home is redirected to a temp dir
-by the test harness, so writes are isolated).
+Storage: ONE record with the chat sidebar's projects, ~/.friday/projects/
+<project_id>/project.json, owned by services/projects; the Bible is its
+`bible` field and this module reads and writes it through that store (atomic
+writes, deletes confined to the project's own folder, the chats inside kept).
+A legacy ~/.friday/projects/<id>/bible.json migrates on first sight and is left
+in place. The active project pointer lives in ~/.friday/projects/active.json.
+Pure JSON on disk — no DB, import-safe under FRIDAY_TESTING (home is redirected
+to a temp dir by the test harness, so writes are isolated).
 """
 from __future__ import annotations
 
 import json
 import re
 import threading
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -36,7 +39,7 @@ from typing import Any, Dict, List, Optional
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.paths import contained, safe_name
 
-PROJECTS_DIR = FRIDAY_DIR / "projects"
+PROJECTS_DIR = FRIDAY_DIR / "projects"          # the shared root (services/projects owns it)
 _ACTIVE_FILE = PROJECTS_DIR / "active.json"
 
 # Project types the UI offers. Free-text is allowed; this just seeds the picker.
@@ -50,9 +53,9 @@ PROJECT_TYPES = (
 _LOCK = threading.RLock()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  PATHS / IO
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════
+#  PATHS / IO (through the one store)
+# ══════════════════════════════════════════════
 
 def _slug(text: str, fallback: str = "project") -> str:
     s = re.sub(r"[^\w\s-]", "", (text or "").lower()).strip()
@@ -61,17 +64,24 @@ def _slug(text: str, fallback: str = "project") -> str:
 
 
 def _now() -> str:
-    return datetime.now().isoformat()
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _store():
+    from agent_friday.services import projects
+    return projects
 
 
 def _project_dir(project_id: str) -> Path:
-    """The project's folder. Raises ValueError unless the id is one plain name
-    inside PROJECTS_DIR: ids arrive in URLs and delete_project rmtree's this."""
-    return contained(PROJECTS_DIR, safe_name(project_id, what="project id"))
+    return _store()._dir(project_id)
 
 
 def _bible_path(project_id: str) -> Path:
     return _project_dir(project_id) / "bible.json"
+
+
+def _active_file() -> Path:
+    return _store()._root() / "active.json"
 
 
 def _read_json(path: Path) -> Optional[Dict[str, Any]]:
@@ -84,9 +94,31 @@ def _read_json(path: Path) -> Optional[Dict[str, Any]]:
 
 
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str),
-                    encoding="utf-8")
+    _store()._atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False, default=str))
+
+
+def _iso(epoch) -> str:
+    try:
+        return datetime.fromtimestamp(float(epoch)).isoformat(timespec="seconds")
+    except Exception:
+        return _now()
+
+
+def _bible_view(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """The Bible as this module's callers have always seen it: id, name, type,
+    created, updated and the Bible's own fields, read off the project record."""
+    b = rec.get("bible") or {}
+    view = {
+        "id": rec["id"],
+        "name": rec.get("name"),
+        "type": rec.get("type") or "general",
+        "created": b.get("created") or _iso(rec.get("created_at")),
+        "updated": b.get("updated") or _iso(rec.get("updated_at")),
+    }
+    for k in _store().BIBLE_KEYS:
+        v = b.get(k)
+        view[k] = v if v is not None else ({} if k in ("style_guide", "pipeline_status") else [])
+    return view
 
 
 def _empty_bible(project_id: str, name: str, ptype: str) -> Dict[str, Any]:
@@ -105,53 +137,43 @@ def _empty_bible(project_id: str, name: str, ptype: str) -> Dict[str, Any]:
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  PROJECT CRUD
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════
+#  PROJECT CRUD (one store: services/projects)
+# ══════════════════════════════════════════════
 
 def create_project(name: str, ptype: str = "general", *,
                    style_guide: Optional[Dict[str, Any]] = None,
                    make_active: bool = True) -> Dict[str, Any]:
-    """Create a new project + empty Series Bible. Returns the bible dict.
+    """Create a new project + empty Series Bible. Returns the bible view.
 
-    The project id is a slug of the name plus a short uuid suffix so two
-    same-named projects never collide.
+    The record is the chat sidebar's project record; the id is the store's.
     """
     name = (name or "Untitled Project").strip()
     ptype = (ptype or "general").strip() or "general"
     with _LOCK:
-        project_id = f"{_slug(name)}-{uuid.uuid4().hex[:6]}"
-        bible = _empty_bible(project_id, name, ptype)
-        if style_guide:
-            bible["style_guide"] = dict(style_guide)
-        _write_json(_bible_path(project_id), bible)
+        rec = _store().create(name, type=ptype, bible={"style_guide": dict(style_guide or {})})
+        _store().patch_bible(rec["id"], {"created": _now(), "updated": _now()})
         if make_active:
-            set_active_project(project_id)
-        return bible
+            set_active_project(rec["id"])
+        return get_project(rec["id"])
 
 
 def list_projects() -> List[Dict[str, Any]]:
     """Lightweight summaries of every project, newest first."""
     out: List[Dict[str, Any]] = []
-    if not PROJECTS_DIR.exists():
-        return out
     active = get_active_project_id()
-    for child in PROJECTS_DIR.iterdir():
-        if not child.is_dir():
-            continue
-        bible = _read_json(child / "bible.json")
-        if not bible:
-            continue
+    for rec in _store().list_all(include_archived=False):
+        view = _bible_view(rec)
         out.append({
-            "id": bible.get("id", child.name),
-            "name": bible.get("name", child.name),
-            "type": bible.get("type", "general"),
-            "created": bible.get("created"),
-            "updated": bible.get("updated"),
-            "characters": len(bible.get("characters", [])),
-            "locations": len(bible.get("locations", [])),
-            "assets": len(bible.get("assets", [])),
-            "active": bible.get("id") == active,
+            "id": view["id"],
+            "name": view["name"],
+            "type": view["type"],
+            "created": view["created"],
+            "updated": view["updated"],
+            "characters": len(view["characters"]),
+            "locations": len(view["locations"]),
+            "assets": len(view["assets"]),
+            "active": view["id"] == active,
         })
     out.sort(key=lambda p: p.get("updated") or "", reverse=True)
     return out
@@ -159,61 +181,55 @@ def list_projects() -> List[Dict[str, Any]]:
 
 def get_project(project_id: str) -> Optional[Dict[str, Any]]:
     """Full Series Bible for a project, or None if it doesn't exist."""
-    try:
-        return _read_json(_bible_path(project_id))
-    except ValueError:
-        return None
+    rec = _store().load(project_id) if project_id else None
+    return _bible_view(rec) if rec else None
 
 
 def update_project(project_id: str, *, name: Optional[str] = None,
                    ptype: Optional[str] = None) -> Optional[Dict[str, Any]]:
     with _LOCK:
-        bible = get_project(project_id)
-        if not bible:
+        if get_project(project_id) is None:
             return None
-        if name is not None:
-            bible["name"] = name.strip() or bible["name"]
-        if ptype is not None:
-            bible["type"] = ptype.strip() or bible["type"]
-        return _save(bible)
+        fields = {}
+        if name is not None and name.strip():
+            fields["name"] = name.strip()
+        if ptype is not None and ptype.strip():
+            fields["type"] = ptype.strip()
+        if fields:
+            _store().patch(project_id, **fields)
+        _store().patch_bible(project_id, {"updated": _now()})
+        return get_project(project_id)
 
 
 def delete_project(project_id: str) -> bool:
-    """Delete a project and its Bible. Clears the active pointer if it pointed
-    here. Returns True if something was removed."""
+    """Delete a project: its record, its files and its Bible, never the chats
+    filed in it (they are detached and kept). Clears the active pointer if it
+    pointed here. Returns True if something was removed."""
     with _LOCK:
-        try:
-            d = _project_dir(project_id)
-        except ValueError:
+        if not project_id or _store().load(project_id) is None:
             return False
-        if not d.exists():
-            return False
-        import shutil
-        try:
-            shutil.rmtree(d)
-        except Exception:
-            return False
+        _store().delete(project_id)
         if get_active_project_id() == project_id:
-            _write_json(_ACTIVE_FILE, {"active": ""})
+            set_active_project("")
         return True
 
 
 def _save(bible: Dict[str, Any]) -> Dict[str, Any]:
     bible["updated"] = _now()
-    _write_json(_bible_path(bible["id"]), bible)
+    _store().patch_bible(bible["id"], bible)
     return bible
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════
 #  ACTIVE PROJECT POINTER
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════
 
 def set_active_project(project_id: str) -> None:
-    _write_json(_ACTIVE_FILE, {"active": project_id or ""})
+    _write_json(_active_file(), {"active": project_id or ""})
 
 
 def get_active_project_id() -> str:
-    data = _read_json(_ACTIVE_FILE) or {}
+    data = _read_json(_active_file()) or {}
     return (data.get("active") or "").strip()
 
 

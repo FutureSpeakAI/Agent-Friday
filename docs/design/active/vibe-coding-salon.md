@@ -2,7 +2,7 @@
 
 > **Status:** accepted and in build. Its three original questions were settled on 2026-09-29 as delegated decisions, as recommended, under the owner's "build all pending specs" delegation. Three owner rulings since then are recorded in §12 (LocalStack is out and no component may phone home; Friday never serves tools or pages to the internet from the user's hardware; "This PC" is the default host for published static artifacts). The 2026-09-30 revision also folds in the spike results (S1, S2, S4), a competitor gap pass and the workspace-evolution re-sequencing (§10).
 > **Last verified:** 2026-09-30 against main `02035ba6`
-> **Implementation:** Phase 1, first increment, on branch `feat/salon-phase1` (not on main): `services/artifacts.py` (the store), `routes/artifacts.py`, the `artifact_put` tool in `services/agent.py`, the fenced-block absorb in `routes/chat.py`, `static/friday_artifacts.js` (the panel and the frame), `FridayChatShell` in `index.html` and `ui_parts/app.html`. Tests: `tests/unit/test_artifacts_store.py`, `test_artifact_tool_and_gate.py`, `test_artifact_panel_ui_files.py`, `tests/api/test_artifacts_routes.py`, `test_chat_absorbs_fenced_artifact.py`, `tests/ui/test_artifact_frame_isolation.py`. Everything else in this document is not built. Builds on:
+> **Implementation:** Phase 1, first increment, on branch `feat/salon-phase1` (not on main): `services/artifacts.py` (the store), `routes/artifacts.py`, the `artifact_put` tool in `services/agent.py`, the fenced-block absorb in `routes/chat.py`, `static/friday_artifacts.js` (the panel and the frame), `FridayChatShell` in `index.html` and `ui_parts/app.html`. Tests: `tests/unit/test_artifacts_store.py`, `test_artifact_tool_and_gate.py`, `test_artifact_panel_ui_files.py`, `tests/api/test_artifacts_routes.py`, `test_chat_absorbs_fenced_artifact.py`, `tests/ui/test_artifact_frame_isolation.py`. **Phase 1b (publish to web), first three increments, on the same branch:** `services/publish_web.py` (the bundle, the scan, the licence check, the one card, "This PC" writes), `services/published_server.py` (the separate static server), `services/publish_hosting.py` (the tunnel, the switch, the status, account connections), `routes/publish.py`, `static/friday_publish.js` (the card body and the Settings section), the `publish_artifact` tool; tests in `tests/unit/test_publish_web.py`, `test_published_server.py`, `test_publish_hosting.py`, `tests/api/test_publish_routes.py`. 1b-D added `services/publish_adapters.py` (Cloudflare Pages and GitHub Pages, tested against fakes; their first real run is the gated check) and `tests/exposure_guard.py` (no test process may start a tunnel binary or bind a public host). **Workspace-ecosystem Phase 1 (pulled forward, §4.9.1):** undo walks backwards, ids are refused not rewritten, the studio chat passes the blast-radius gate, every workspace route requires login and carries a CSP; its Phase 0 UI already existed. **Phase 2, first two increments:** `services/codebases.py` (repo per codebase, templates, steps as commits with receipts, undo that walks back, the one-document preview, the model's context), `routes/codebases.py`, the `codebase_edit` / `codebase_undo` / `codebase_read` tools, "+ Codebase" in the sidebar and the panel's Preview, Files and Changes in `static/friday_artifacts.js`. **Phase 2, §4.11 gaps:** plan-first (`services/plans.py`, the `plan_first` / `plan_approve` / `plan_milestone` tools, the plan strip with "Build this plan", approval opens a task-ledger run, milestones close with typed blockers), one-click export (`codebase_export`, `GET /api/codebases/<id>/export`, a plain zip with nothing of Friday's inside) and point-and-say (`set_pick` / `clear_pick` / `quick_style` in `services/codebases.py`, the `/pick`, `/pick/clear` and `/quick-style` routes, the picker `window.fridayPickerDoc` injected into the preview frame in Point mode, the pick strip's quick actions; the pick is told to the model next turn, a quick style is one CSS rule as a step by "you", never a model call). **Phase 2b ("Improve this workspace", §4.9.1 items 3 and 5):** `services/workspace_bundles.py` (bundle workspaces under the Friday home's `workspaces/<id>/`, every installed version kept, one `workspace_swap` card per codebase head after the manifest check, the CIEDE2000 brand check against the reserved status colours and a headless load, install only on approval, one-click rollback), `routes/workspace_bundles.py`, the `improve_workspace` and `workspace_swap` tools in chat and by voice through the governed path, a declared `boundary` for all nineteen registry workspaces, `static/friday_bundles.js` (the header button, the sandboxed bundle frame attached to the broker, the swap card, the versions with rollback), the served page carrying the installed bundles so the dock shows them under Mine; the codebase panel's Compare and Swap in. A native workspace is refused with the typed blocker `needs_phase_7`. Not yet built in Phase 2: the data viewer of §4.11 (waits on Phase 5), Friday-proposed evolution (§4.9.1 item 4, waits on owner rules Phase 1), the receipt classifier hand-off to goals-and-receipts (its Phase 0 is not on main; receipts are written in the §4.8 shape and the classifier plugs in later), the frame broker's read-only subset. Not yet built in 1b: the voice verb. Everything else in this document is not built. Builds on:
 > - `index.html`: `ChatSurface`, `ChatSidebar`, `CodeWS` and its `CODE_TABS`
 >   (`DevDiff`, `DevFiles`, `DevGit`, `DevVibe`), `FWin`, `useTabState`,
 >   `useNavTarget`
@@ -461,6 +461,24 @@ repository and its verdict is in §4.6.1 and
    never a default and never required**, because a new Windows user without
    WSL 2 must still get a working salon (§4.4).
 
+   **S3 result (2026-09-30):** it runs here after two WSL-specific fixes
+   (the supervisor callback and the certificate SAN); telemetry is off and
+   proven off on the gateway side by capture, on the sandbox side by a
+   connection log; Windows support is not stable out of the box, which is
+   what the two fixes show; the policy is driven live through the CLI in
+   98 ms, through the SDK unverified. B2-OS stays behind the gate with the
+   recipe written down. A finding beyond OpenShell: Docker Desktop calls
+   Docker's hosts and Bugsnag at every start with analytics off, so any B2
+   backend that must not phone home uses Podman or plain containerd inside
+   the distro, not Docker Desktop. Details in
+   `docs/design/research/2026-09-30-s3-openshell-wsl-spike.md`. **Ruling from
+   the spike (2026-09-30):** Docker Desktop's crash reporter cannot be
+   switched off below the Business tier and contacted Bugsnag at start, so
+   Docker Desktop is not a required dependency for ordinary users under A3;
+   Friday's own B2 backend and B2-OS target Podman inside the WSL distro,
+   proven by capture, with Docker Desktop accepted only when the user already
+   has it.
+
 ---
 
 ## 3. STORM: questioning it from six perspectives
@@ -663,10 +681,12 @@ output store.
   ```` ```friday-artifact ```` block instead. The server parses it into the
   same call. This is the pattern `workspace_studio`'s ```` ```friday-customize ````
   block already uses.
-- **The artifact tool is in the always-resident tool set only when the panel
-  is enabled.** Its schema is small (about 150 tokens, **INFERRED** from the
-  other tools of that shape). `tool_catalogue.ALWAYS_RESIDENT` is where it
-  goes.
+- **The artifact tool loads through the tool index like every other tool;
+  it is not resident.** As built, its schema measured about 255 tokens, and
+  the opening set every turn pays (tests/unit/test_latency_budget.py) could
+  not carry it with the hub's twenty tools; the index line names it and the
+  model loads it when the panel is in play. The panel's own switch
+  (`artifact_panel_enabled`) still governs the panel.
 
 **Where it lives.**
 
@@ -758,7 +778,7 @@ picked.
 |---|---|---|---|---|---|
 | **B0: frame** | the app runs in the sandboxed iframe | the browser | no | yes, by CSP | nothing |
 | **B1: host** | build tools and dev servers as Low-integrity processes in a Job Object, with a scrubbed environment and a Low-labelled folder | Windows (writes only) | **yes** | **no** (proxy variables only) | nothing |
-| **B2: VM** | a container in WSL 2 (Docker or Podman), or Windows Sandbox, or a WHP microVM (microsandbox, Apache-2.0) | the hypervisor | no, only the codebase folder is mapped | yes, the only route out is Friday's proxy | one of: WSL 2, Windows Sandbox, WHP. **Friday never turns a Windows feature on** |
+| **B2: VM** | a container in WSL 2 (Podman inside the distro first; Docker Desktop only if the user already has it, since it phones home with no switch below Business, S3), or Windows Sandbox, or a WHP microVM (microsandbox, Apache-2.0) | the hypervisor | no, only the codebase folder is mapped | yes, the only route out is Friday's proxy | one of: WSL 2, Windows Sandbox, WHP. **Friday never turns a Windows feature on** |
 | **B2-OS: OpenShell** | OpenShell on WSL 2 + Docker, fed the salon policy | OpenShell plus the hypervisor | no | yes | past the §2.2 gate |
 
 **How Friday picks a tier** (an engineering call):
@@ -982,6 +1002,22 @@ Backstage tab (what is running, on which address, its init status, the
 coverage table, the last snapshot). Sized honestly in §10: 24–34 agent-days,
 not the earlier 5.
 
+**S5, floci (2026-09-30, code audit done, run pending):** a new lead, an
+MIT-licensed Java 25 / Quarkus emulator that is a LocalStack drop-in on
+:4566 with no account, token or feature gates. The code audit found no
+telemetry, no update check and no built-in external endpoint; its outbound
+clients serve emulated features that call endpoints the user configures, and
+Docker image pulls happen only for Docker-backed services. S3, DynamoDB,
+SQS, SNS, Secrets Manager, Cognito/OIDC, IAM/STS, KMS, SSM, EventBridge and
+Step Functions run in-process; **Lambda runs only in Docker**. No Windows
+binary is published: a Windows user builds it (JDK 25, or GraalVM 25 for the
+~13 MiB native binary) or uses Docker. Conditional recommendation, pending
+the RAM measurement, the egress-blocked run and the parity suites that need
+a JDK 25 here: **wrap it** behind Friday's gateway as the Phase 5 backend,
+keep Friday's own subprocess runner for Lambda-style functions, and re-size
+Phase 5 from 24–34 to about 10–14 agent-days. Details in
+`docs/design/research/2026-09-30-s5-floci-spike.md`.
+
 **"Go live"** swaps one or more stand-in addresses for real endpoints and
 real credentials. It is an outward card that names each service and each
 credential. Going back to stand-ins is one click and needs no card.
@@ -1035,6 +1071,47 @@ size. The route taken is shown on each step ("edited by Bonsai2").
 **When no local model is resident** (a cloud-only laptop), the small-edit
 seat is the heavy seat. The header says so. It does not pretend a local model
 is working.
+
+*As built (Phase 3, first increment):* the routing record lives on the
+codebase (`seats.small_edit_seat`, default the resident brain;
+`seats.heavy_seat`, none until chosen; `seats.engine`, `friday`) with a
+`key_profile` of `mine` or a guest key's label. Small or big is a rule Friday
+can explain: a message over 400 characters, the words that name a feature or
+a rewrite, an approved plan with an open milestone, or a last step that
+touched more than three files or 200 lines. The chat routes each turn by the
+record, and when no local model is resident the heavy seat takes everything.
+The header line is computed on the server from the record, the arbiter's
+residency (no probes, cached 15 s) and the meter, with a spoken form; every
+seat or key change is a system line in the chat and a `codebase_header` bus
+event, and the panel re-reads the line after each step. `cost_calls` carries
+`key_profile` and `codebase`; the chat's session context sets both, and
+Costs splits by either. The agent loops set the current model before a tool
+runs, so each step and receipt names the seat that made it. Tools
+`codebase_seat`, `codebase_key` and `codebase_costs` work in chat and by
+voice.
+
+*As built (Phase 3, second and third increments):* a **guest key** is stored
+in the credential store under a name only that codebase uses, with label,
+provider, cap and date beside it and never the key; a turn under it calls
+Anthropic on a client built for that key, so the owner's key is never sent
+for that codebase's work; the payer's cap stops a call before it is made,
+and Friday adds none; a refused key turns the header red, names whose key
+failed, and the turn stops with nothing falling back; removal deletes the
+key and says so. Guest keys are Anthropic only for now. The Salon section of
+Settings → Accounts & Keys shows, per codebase, the header, the seats, whose key pays and the guest
+keys; Costs splits by key and by codebase. The **`claude_agent` engine**
+runs the user's own Claude Code CLI for one task in the codebase's folder as
+a process on this PC (B1, disclosed), with a scrubbed environment pointed at
+the **salon proxy**: loopback only, provider API paths only, the dummy key
+swapped for the real one on the way out, answers relayed as they stream, and
+a record of host, path, method, status and size per request with no body
+and no key. Everything the agent changed becomes one step whose receipt
+names the engine, the hosts reached, any refused requests and the
+disclosure. A missing CLI is a typed blocker; a failed run commits nothing.
+The engine is chosen per codebase (`codebase_engine`) and a run is refused
+until it is. Not run here: the money measurement of a reference session and
+the §12 capture of hosts Claude's agent reaches beyond the API, both of
+which spend the owner's tokens and wait on the owner.
 
 ### 4.8 Every change is a step
 
@@ -1110,7 +1187,17 @@ happen, in this order:
    nothing may repaint the reserved status colours. This is
    workspace-scoped evolution, lighter than Phase 7's self-edit of Friday's
    core. Anything touching governance, the gate or the cLaws keeps the loud
-   approval of §7.4.
+   approval of §7.4. *As built (Phase 2b):* the button sits in every window's
+   header and is a chat and voice tool; a bundle workspace's codebase chat
+   opens seeded from the installed version, the panel compares the live and
+   the improved page side by side, "Swap in" raises the one card after the
+   manifest check, the brand check (a colour distance of at least 20 from the
+   reserved status colours, not a string match) and a headless load, the
+   card's approval installs a new version and rollback restores any earlier
+   one in one click, all versions kept. A native workspace is refused with
+   the typed blocker `needs_phase_7` and told, in plain words, that
+   improving it means Friday's own source. Every one of the nineteen
+   registry workspaces now declares its boundary as a set of components.
 4. **Friday-proposed evolution.** Friday may notice friction in a workspace
    (repeated manual steps, ignored panels, things the owner asks for often)
    and *propose* an improvement as a diff with a preview and evidence, one
@@ -1186,6 +1273,21 @@ MCP servers off of my local hardware."*
 - **Not in 1b:** apps that need a backend. They belong to the later "go
   live" (§4.6) and federation work. Friday never hosts anything dynamic from
   the user's hardware, never registers domains and never sells hosting.
+- **As built (2026-09-30).** The static server is Friday's own stdlib-only
+  process (`services/published_server.py`), not Caddy: the Caddy service on
+  the owner's machine fronts `agent.friday` and is left alone, and a
+  hand-written server is the one whose every refusal is a test. The tunnel is
+  a cloudflared *quick tunnel* given exactly one URL, the static server's
+  loopback port, so its `*.trycloudflare.com` hostname is distinct from
+  anything Friday uses and has no route to the app. A setting
+  (`publish_this_pc_tunnel`) keeps pages on loopback only. The chart page
+  carries the panel's own renderer inlined (`static/friday_chart.js`), so a
+  published chart draws itself in the visitor's browser with no library and
+  no network. Nothing is spawned while a pytest test runs: the first version
+  of the hosting manager did spawn a server and a tunnel from each test
+  worker when a unit test approved a card, exposing temporary folders with
+  no approval; those processes were stopped, the guard reads pytest's own
+  marker, and a test pins it (§9.1).
 
 #### 4.10.2 The tool manifest: a seam for the parked sharing sprint
 
@@ -1224,14 +1326,34 @@ recommended engineering option taken as a delegated decision (§12), are:
 2. **Point-and-say visual editing (Phase 2).** Select an element in the
    preview and say or type the change. Selection returns a selector plus a
    cropped screenshot; simple property edits go through a non-model patcher,
-   the rest is a normal edit turn.
+   the rest is a normal edit turn. *As built:* the picker runs inside the
+   sandboxed preview frame as an inline script (the frame's CSP allows no
+   network); one click posts one message to the panel, `{selector, tag, text,
+   snippet, rect}`, and nothing else crosses; the panel accepts it only from
+   its own frame's window. The selector is `#id` when unique, else a
+   structural path (`main > section > p.lead`) that resolves to that element
+   alone. The pick is stored on the codebase and told to the model in its
+   context block ("the user POINTED AT ..."), so "make this bigger" has a
+   referent; it stays until cleared or replaced. The quick actions (bigger,
+   smaller, bolder, center, hide) append one rule to `styles.css` (or create
+   and link `friday-pick.css`) as a step by "you", undoable like any other.
+   The patcher accepts only a fixed set of plain properties and plain values:
+   no `url(`, no `expression(`, no `;` or `}`. The cropped screenshot waits
+   for the frame broker; the rect is already in the message.
 3. **Bring your own code (Phase 4).** Open any existing repo or local folder
    (§4.8 already gives it a salon branch); push and open a PR through one
    card kind, `code_publish`, non-grantable by default, with the receipt's
    screenshot in the PR body.
 4. **Plan-first mode for big asks (Phase 2).** A short plan as a `markdown`
    artifact, approval, then build; its milestones become task-ledger tasks
-   and every step closes with a typed blocker, wired to goals.
+   and every step closes with a typed blocker, wired to goals. *As built:*
+   `plan_first` makes the plan a `markdown` artifact with `meta.plan`
+   (twelve milestones at most); the panel shows a plan strip whose "Build
+   this plan" is the approval (`POST .../plan/approve`), which opens a
+   task-ledger run and appends a system line to the chat. Until then the
+   model's context block says AWAITING and "Do not build". `plan_milestone`
+   moves one milestone through todo, doing, done or blocked with one of the
+   goals spec's typed blockers, and the block names the next milestone.
 5. **Phone preview (Phase 5).** LAN-first behind a one-time 30-minute token
    with a QR code; a tunnel the user already runs is detected, never
    installed, and opening one is a card.
@@ -1270,7 +1392,7 @@ flagged for the owner in §12.
 | Code workspace | Repos, Git and Procs stay. "Vibe" becomes "open in salon" | `CODE_TABS` |
 | Header line | model · key · cost | the `seat_transparency` system line style |
 | Cards | install, network and go-live cards, each with a spoken form (§6.3) | the approval card popup, drawer and System list |
-| Settings → Salon | default posture, default seats, guest keys, box backend | the Settings `TABS` array **and** its matching branch (the documented two-place edit) |
+| Settings → Accounts & Keys, the Salon section | default posture, default seats, guest keys, box backend | the Accounts & Keys branch in both UI files; Settings keeps its eight task-shaped tabs (`tests/unit/test_settings_structure.py`), so the Salon is a section, not a tab |
 | Costs | split by key profile and codebase | the Costs view |
 
 **What the Preview tab adds:**
@@ -1651,15 +1773,24 @@ salon and hand the owner a patch file to merge by hand.
 - **Backstage egress (Phase 5):** the whole backstage runs with outbound
   network blocked at the host; any component that tries to reach the
   internet fails the test.
-- **Publish to web (Phase 1b):** through the pages hostname, every Friday API
-  and UI path, the websocket and every path-traversal attempt returns 404 or
-  is refused; nothing outside `published/` is readable; a bundle with a
-  tracking script or a secret-shaped string is refused before the card; the
-  owner's kill switch makes every published page unreachable within a
-  second; a declined card publishes nothing.
-- **Workspace evolution (Phase 2b):** an improved bundle runs only in the
-  frame; the swap needs one approval; rollback restores the previous bundle
-  hash; a change touching a reserved status colour fails the brand check.
+- **Publish to web (Phase 1b, built):** through the pages hostname, every
+  Friday API and UI path, the websocket and every path-traversal attempt
+  returns 404 or is refused; nothing outside `published/` is readable; a
+  bundle with a tracking script or a secret-shaped string is refused before
+  the card; the owner's kill switch makes every published page unreachable
+  within a second; a declined card publishes nothing; a forged card with no
+  staged bundle publishes nothing; **under a test run the hosting manager
+  spawns nothing** unless the test has stubbed every process and says so.
+- **Workspace evolution (Phase 2b, built):** an improved bundle runs only in
+  the frame; the swap needs one approval; rollback restores the previous
+  bundle hash; a change touching a reserved status colour fails the brand
+  check; a page that throws at load is a `run_failed` blocker and no card;
+  a declined swap installs nothing; a native workspace is refused with
+  `needs_phase_7`. Tests: `tests/unit/test_workspace_bundles.py`,
+  `test_codebase_smoke.py`, `test_improve_workspace_tool.py`,
+  `test_workspace_bundles_ui_files.py`, the boundary assertion in
+  `test_workspace_registry_ui.py`, `tests/api/test_workspace_bundle_routes.py`,
+  `test_index_carries_installed_bundles.py`.
 - **The panel (Phase 1, built):** a second put is a new version and the
   first is kept; restore is a new version; a hand edit is authored by "you"
   and the next turn's prompt carries its diff once; off the record nothing is
@@ -1703,15 +1834,19 @@ not count.
     - Files;
     - Changes with one-line summaries;
     - after "undo".
-  - **Phase 2b:**
-    - "Improve this workspace" from a workspace's menu;
+  - **Phase 2b (taken and looked at, 2026-09-30):**
+    - "Improve this workspace" from a workspace's menu, and a native
+      workspace's plain refusal;
     - the workspace and its improved copy side by side;
     - the swap card;
-    - after rollback.
-  - **Phase 3:**
-    - the header line on the local seat;
-    - the header line on the cloud seat;
-    - the header line on a guest key;
+    - the installed versions, and after rollback.
+  - **Phase 3 (taken and looked at, 2026-09-30; the private server has no
+    resident local model, so the local-seat wording is proven by unit test):**
+    - the header line with no local model resident, and after "use Opus for
+      this one";
+    - the header line on a guest key, and red after a rejection;
+    - the Salon section of Settings → Accounts & Keys with a guest key;
+    - the header line at 390 px;
     - Costs split by key.
   - **Phase 4:**
     - an install announcement line;
@@ -1769,7 +1904,8 @@ Effort is in focused agent-days with review. Each phase is shippable alone.
 
 | Phase | What | Effort | Depends on |
 |---|---|---|---|
-| **S1–S3** | Spikes, which report and build nothing. **S1 (done, PASS):** esbuild-wasm plus pinned packages built a React app inside the opaque-origin frame on the owner's machine; every isolation probe was blocked; esm.sh is the one package host (unpkg serves raw CommonJS and fails); cold start about 25 s, warm about 2 s; the CSP needs `'wasm-unsafe-eval'` and `worker-src blob:`. **S2 (done):** Node, npm and a dev server run in an AppContainer without admin and cannot read the profile, but host-to-container loopback is dropped in every capability combination; a pipe bridge is the viable shape (§4.4). **S3 (waiting on the owner):** OpenShell 0.1.2 on WSL 2 + Docker needs Docker Desktop started and the OpenShell CLI and Python SDK installed in the Ubuntu distro; neither is done without the owner's say-so. Windows Sandbox is absent; the WHP library is present; microsandbox's Windows path needs the WHP feature enabled, which needs admin to check | 3 | nothing |
+| **S1–S3** | Spikes, which report and build nothing. **S1 (done, PASS):** esbuild-wasm plus pinned packages built a React app inside the opaque-origin frame on the owner's machine; every isolation probe was blocked; esm.sh is the one package host (unpkg serves raw CommonJS and fails); cold start about 25 s, warm about 2 s; the CSP needs `'wasm-unsafe-eval'` and `worker-src blob:`. **S2 (done):** Node, npm and a dev server run in an AppContainer without admin and cannot read the profile, but host-to-container loopback is dropped in every capability combination; a pipe bridge is the viable shape (§4.4). **S3 (done, 2026-09-30; research doc `2026-09-30-s3-openshell-wsl-spike.md`):** OpenShell 0.1.2 runs on the owner's WSL 2 + Docker Desktop after two fixes that are the experimental part: the Docker driver's supervisor callback must be Docker Desktop's host-gateway (`grpc_endpoint = "https://192.168.65.254:17670"`, gateway bound on all addresses) and the server certificate needs that IP as a SAN. Sandbox Ready in 3 s warm; the workload runs network-none and unprivileged; deny-by-default holds at connect(); `policy update --add-endpoint` applies live in 98 ms with no restart. Telemetry: off via `OPENSHELL_TELEMETRY_ENABLED=false`, propagated to supervisors, zero packets to the NVIDIA endpoint in a 40-minute capture on the distro side; the sandbox side is covered by a per-process connection log only (a Windows capture needs admin). Docker Desktop itself calls `api.docker.com`, `hub.docker.com`, `desktop.docker.com` and `sessions.bugsnag.com` at every start with analytics off, which has no switch outside Docker Business: a finding for every Docker Desktop tier. Not completed: the HTTP-level allow/refuse/revoke with a curl image (cut short by an external `wsl --shutdown`, twice); policy through the Python SDK is UNVERIFIED. Docker Desktop's VM costs about 2.1 GB of host RAM at idle. Nothing needed admin or a reboot. Windows Sandbox is absent; the WHP library is present; microsandbox's Windows path needs the WHP feature enabled, which needs admin to check | 3 | nothing |
+| **S5** | **Research (audit done, run pending the owner's JDK 25):** floci audited for telemetry (none in the code), coverage (six of the salon's seven services in-process; Lambda needs Docker), Windows (build it yourself; no published binary) and licence (MIT). Conditional recommendation: wrap it as the Phase 5 backend, re-sizing Phase 5 to about 10–14 days | 1 | nothing |
 | **S4** | **Research (done):** LocalStack's archived Apache-2.0 tree studied for the gateway, the provider model over moto, persistence and init hooks, coverage tracking, parity testing, licence reuse and the telemetry modules never to import. Verdicts in §4.6.1 and the research doc | 1 | nothing |
 | **1** | **The artifact panel in every chat** (first increment built, on `feat/salon-phase1`): `artifact_put`, the fenced-block fallback, the store with off-record honoured, versions, hand edits as versions, the frame (§4.3), the six kinds, both HTML files, the Settings toggle. Left: the broker's read-only subset (moves to Phase 2 with the bundle broker), the live check after merge (§9.5) | 7–8 | S1 (for `html` apps; the other kinds don't wait) |
 | **1b** | **Publish to web** (§4.10.1): the static bundle packer, the PII scan and licence check, the one card with its spoken form, the "This PC" adapter (separate static server, own tunnel hostname, read-only `published/`, no route to Friday, strict headers, kill switch, reachability status, adversarial tests), the Cloudflare Pages and GitHub Pages adapters on the user's account, the FutureSpeak slot, republish, versions, take-down, the "Made with Friday" mark | 6–8 | 1 |
@@ -1820,8 +1956,8 @@ The queue, as `avatar-visual-genome.md` §11.1 records it:
 
 The recommended order:
 
-1. **S1–S3, S4 and Phase 1 first.** S1, S2 and S4 are done; S3 waits on the
-   owner; Phase 1's first increment is on its branch. They touch only the
+1. **S1–S3, S4 and Phase 1 first.** S1, S2, S3 and S4 are done; Phase 1's
+   first increment is on its branch. They touch only the
    chat UI and a new store, need no GPU, and block nothing.
 2. **Phase 1b (publish to web) right after Phase 1 lands**, then **W0/W1**
    (workspace version history, review, rollback, dock show and hide).
@@ -1857,7 +1993,11 @@ dollar figure.
 - **B0 costs no VRAM.** It runs in the browser, and the preview uses the GPU
   only as a web page does.
 - **B2 on WSL 2 takes host RAM, not VRAM.** Docker Desktop's VM reserves
-  memory, which is **UNMEASURED** on this machine and measured in S3.
+  memory: **measured in S3** at about 2.1 GB of host RAM for Docker
+  Desktop's VM at idle (1.15 → 3.29 GB at start, settling at 2.0–2.4 GB),
+  plus 24 MB for an OpenShell supervisor and 10 MB for an idle workload.
+  Docker's engine is reachable 11 s after a warm start and 116 s after a
+  cold WSL start.
 - **The local seat is the existing brain.** The salon never loads a second
   model.
 
@@ -1992,8 +2132,9 @@ default is taken until the owner says otherwise):
 - which hosts Claude's agent contacts beyond the API (the Phase 3 capture);
 - whether a real Vite or Next dev server tolerates the AppContainer beyond
   the real-path issue (Phase 4);
-- S3, until the owner clears starting Docker Desktop and installing the
-  OpenShell CLI in the Ubuntu distro.
+- S3's last check: the HTTP-level allow, refuse and revoke through curl in
+  a sandbox, and a Windows-side packet capture (`pktmon`, admin) if the
+  sandbox path is to be proven the way the gateway side was.
 
 ---
 

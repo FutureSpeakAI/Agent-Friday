@@ -637,3 +637,80 @@ def apply_anthropic_cache(kwargs):
         # payload, which is exactly what shipped before this module existed.
         _log.warning("prompt-cache breakpoints skipped (%s) — sending uncached", exc)
         return kwargs
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  The local seat's prefix-cache audit
+# ─────────────────────────────────────────────────────────────────────────────
+# llama-server reports, on every completion, `prompt_n` (tokens it had to
+# read) and `cache_n` (tokens already in the slot). A turn that only appends
+# re-reads the new turn: a few hundred to ~3,000 tokens. A turn that re-reads
+# more than that paid for a prefix that did not match (a history edit, a
+# background job on the slot, a restart). Measured before this audit existed:
+# 51% of requests re-read >= 2,000 tokens (median 15,300, 31 s each) and only
+# 6% hit the prefix. The audit keeps the last 50 local calls and says, once
+# per window, when fewer than 80% of them were hits.
+SEAT_AUDIT_WINDOW = 50
+SEAT_AUDIT_MIN_HIT_RATE = 0.80
+SEAT_REREAD_HIT_MAX_TOKENS = 4000      # a re-read this size is "the new turn"
+
+_SEAT_AUDIT_LOCK = threading.Lock()
+_SEAT_AUDIT: list = []                 # newest last; True = hit
+_SEAT_AUDIT_WARNED_AT = 0              # observations when the last alarm fired
+_SEAT_AUDIT_SEEN = 0
+
+
+def observe_seat_timings(timings) -> dict:
+    """Score one llama-server `timings` object; returns the verdict.
+
+    `{"hit": bool, "reread": int, "prompt_n": int, "cache_n": int}` or
+    `{}` when the object carries no `prompt_n`.
+    """
+    global _SEAT_AUDIT_WARNED_AT, _SEAT_AUDIT_SEEN
+    if not isinstance(timings, dict):
+        return {}
+    try:
+        prompt_n = int(timings.get("prompt_n") or 0)
+        cache_n = int(timings.get("cache_n") or 0)
+    except (TypeError, ValueError):
+        return {}
+    if prompt_n <= 0 and cache_n <= 0:
+        return {}
+    reread = max(0, prompt_n)
+    hit = reread <= SEAT_REREAD_HIT_MAX_TOKENS
+    with _SEAT_AUDIT_LOCK:
+        _SEAT_AUDIT.append(hit)
+        del _SEAT_AUDIT[:-SEAT_AUDIT_WINDOW]
+        _SEAT_AUDIT_SEEN += 1
+        n = len(_SEAT_AUDIT)
+        rate = sum(_SEAT_AUDIT) / n
+        alarm = (n >= SEAT_AUDIT_WINDOW and rate < SEAT_AUDIT_MIN_HIT_RATE
+                 and _SEAT_AUDIT_SEEN - _SEAT_AUDIT_WARNED_AT >= SEAT_AUDIT_WINDOW)
+        if alarm:
+            _SEAT_AUDIT_WARNED_AT = _SEAT_AUDIT_SEEN
+    out = {"hit": hit, "reread": reread, "prompt_n": prompt_n, "cache_n": cache_n}
+    if alarm:
+        _log.warning(
+            "prefix-cache hit rate over the last %d local calls is %.0f%% "
+            "(floor %.0f%%): the seat is re-reading its prompt; look for a "
+            "history edit, a background job on the slot, or a restart",
+            n, rate * 100, SEAT_AUDIT_MIN_HIT_RATE * 100)
+        out["alarm"] = True
+    return out
+
+
+def seat_cache_hit_rate() -> dict:
+    """`{"hits", "calls", "rate"}` over the audit window (rate None when empty)."""
+    with _SEAT_AUDIT_LOCK:
+        n = len(_SEAT_AUDIT)
+        hits = sum(_SEAT_AUDIT)
+    return {"hits": hits, "calls": n, "rate": (hits / n) if n else None}
+
+
+def _reset_seat_audit() -> None:
+    """Tests only."""
+    global _SEAT_AUDIT_WARNED_AT, _SEAT_AUDIT_SEEN
+    with _SEAT_AUDIT_LOCK:
+        _SEAT_AUDIT.clear()
+        _SEAT_AUDIT_WARNED_AT = 0
+        _SEAT_AUDIT_SEEN = 0

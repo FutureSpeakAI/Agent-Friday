@@ -26,6 +26,9 @@ _LOCK = threading.Lock()
 _MEMORY: dict = {}
 #: Stores that declined a write while off-record, with a count (no content).
 SKIPPED: dict = {}
+#: Stores that keep their own off-record memory register a callable here and
+#: it runs from `end()`, so switching off-record off empties every store.
+_END_HOOKS: list = []
 
 #: What a receipt or governance record keeps while off-record.
 RECEIPT_FIELDS = ("tool", "tool_name", "name", "kind", "class", "action_class",
@@ -79,10 +82,21 @@ def recalled(cid: str) -> list:
         return list(_MEMORY.get(str(cid), []))
 
 
+def on_end(fn) -> None:
+    """Register a store's own "forget everything" for `end()`."""
+    if fn not in _END_HOOKS:
+        _END_HOOKS.append(fn)
+
+
 def end() -> None:
     """Off-record is over: drop everything this session kept in memory."""
     with _LOCK:
         _MEMORY.clear()
+    for fn in list(_END_HOOKS):
+        try:
+            fn()
+        except Exception:
+            pass
     try:
         from agent_friday.core import CHAT_HISTORY
         CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if not (m or {}).get("off_record")]

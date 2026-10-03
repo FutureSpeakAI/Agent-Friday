@@ -1149,6 +1149,25 @@ def turn_cancelled() -> bool:
     ev = TURN_CANCEL.get()
     return bool(ev is not None and ev.is_set())
 
+
+# How long a local call waits for a seat that answers 503 "Loading model"
+# before giving up. llama-server answers that way from the moment it binds
+# its port until the weights are read: 11.9 s median, 31.3 s p90 for the 27B.
+# Routines used to take the 503 as a failed call and degrade (the 07:00
+# edition shipped degraded against a still-loading seat); a seat that says it
+# is loading is a seat that will answer, so the transport waits, bounded, and
+# every caller above it inherits the patience.
+SEAT_LOADING_WAIT_S = 180.0
+SEAT_LOADING_POLL_S = 2.0
+
+
+def _body_says_loading(resp) -> bool:
+    try:
+        text = (resp.text or "")[:2000].lower()
+    except Exception:
+        return False
+    return "loading model" in text or "loading" in text and "model" in text
+
 AUTO_ROUTER_MODEL = "openrouter/auto"
 
 #: The cost-priority knob, in OpenRouter's own vocabulary. Their default is
@@ -1204,8 +1223,8 @@ def auto_router_cost_tier(settings=None):
     return tier if tier in AUTO_ROUTER_COST_TIERS else AUTO_ROUTER_DEFAULT_TIER
 
 
-
-def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
+def _consume_sse_completion(resp, on_delta=None, reasoning_source=None,
+                            started_at=None):
     """Assemble an OpenAI-compatible SSE stream into ONE response dict.
 
     The returned dict is shape-identical to a non-streamed
@@ -1258,6 +1277,11 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
     served_model = None
     usage = None
     timings = None           # llama-server puts them on the last chunk
+    # Time to first token, measured from `started_at` (the moment the request
+    # was sent) to the first content or reasoning delta. The seat's own
+    # `timings.prompt_ms` says how long it READ; this says how long the user
+    # WAITED, which includes the queue in front of the slot.
+    first_token_at = None
 
     # DECODE THE STREAM AS UTF-8 EXPLICITLY. `decode_unicode=True` tells
     # requests to decode using `resp.encoding`, and requests derives that from
@@ -1333,6 +1357,9 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
                     finish_reason = choice["finish_reason"]
                 delta = choice.get("delta") or {}
                 piece = delta.get("content")
+                if first_token_at is None and (piece or delta.get("reasoning_content")
+                                               or delta.get("reasoning")):
+                    first_token_at = _time.time()
                 if piece:
                     content_parts.append(piece)
                     if on_delta:
@@ -1415,6 +1442,8 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
         out["usage"] = usage
     if timings:
         out["timings"] = timings
+    if started_at and first_token_at:
+        out["_ttft_ms"] = int((first_token_at - started_at) * 1000)
     return out
 
 
@@ -1423,8 +1452,15 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
                  provider=None, fallback_models=None, stream=None,
-                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False):
+                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False,
+                 turn_shape=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
+
+    ``turn_shape`` is Laya 2's tier-1 verdict for this turn (services/
+    reflex_turn), or None. It only chooses the local seat's reasoning effort
+    (services/reasoning_policy); a caller that carries it in
+    ``session_ctx["turn_shape"]`` need not pass it twice, and a per-round
+    override in ``_over`` outranks both.
 
     Two configuration paths:
 
@@ -1777,18 +1813,27 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # this codebase was passing anything at all.
             #
             # Settable, because the right default is a product decision and
-            # because a hard task genuinely wants the depth: set
+            # because a hard task genuinely wants the depth: pin
             # `local_reasoning_effort` to "xhigh" to restore the old
-            # behaviour, or "off" to disable thinking outright. Only applied
-            # to seats we serve ourselves, and never over an explicit caller.
+            # behaviour, or "off" to disable thinking outright. On "auto" the
+            # turn's shape decides (services/reasoning_policy): a deep turn
+            # thinks at xhigh, a reflex-shaped one may think not at all once
+            # the harness gate has passed, and every other turn keeps medium.
+            # Only applied to seats we serve ourselves, and never over an
+            # explicit caller.
             if local_bypass and not _no_think and "reasoning_effort" not in payload:
                 try:
-                    _eff = ((_load_settings() or {}).get(
-                        "local_reasoning_effort") or "medium").strip().lower()
-                    if _eff in ("off", "none", "disabled"):
+                    from agent_friday.services import reasoning_policy as _rp
+                    _shape = _over.get("turn_shape")
+                    if _shape is None:
+                        _shape = (turn_shape if turn_shape is not None
+                                  else (session_ctx or {}).get("turn_shape"))
+                    _eff = _rp.reasoning_effort_for_turn(_shape, _load_settings() or {})
+                    if _eff == "none":
                         payload.setdefault("chat_template_kwargs", {})[
                             "enable_thinking"] = False
-                    elif _eff not in ("default", "auto", ""):
+                        payload["reasoning_effort"] = "none"
+                    elif _eff:
                         payload["reasoning_effort"] = _eff
                 except Exception:
                     pass
@@ -1986,6 +2031,25 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                     r = requests.post(f"{base_url}/chat/completions",
                                       headers=headers, json=payload,
                                       timeout=timeout_s)
+            # 503 "Loading model" from a seat we serve ourselves: wait for it.
+            # Not for a cloud 503 (that is the fallback chain's business) and
+            # not past SEAT_LOADING_WAIT_S, after which the 503 raises as
+            # before and the caller's own handling takes over.
+            if r.status_code == 503 and local_bypass and _body_says_loading(r):
+                _deadline = _t0 + SEAT_LOADING_WAIT_S
+                while r.status_code == 503 and _time.time() < _deadline:
+                    _health(False, int((_time.time() - _t0) * 1000), status=503)
+                    try:
+                        r.close()
+                    except Exception:
+                        pass
+                    _time.sleep(SEAT_LOADING_POLL_S)
+                    r = requests.post(f"{base_url}/chat/completions",
+                                      headers=headers,
+                                      json=(dict(payload, stream=True) if _want_stream else payload),
+                                      timeout=timeout_s, stream=_want_stream)
+                    if r.status_code == 503 and not _body_says_loading(r):
+                        break
             try:
                 if r.status_code >= 400:
                     # requests' str() is "400 Client Error: Bad Request for
@@ -2013,10 +2077,16 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 _want_stream = False
             resp = (_consume_sse_completion(
                         r, on_delta=on_delta or DELTA_SINK.get(),
-                        reasoning_source=("full" if local_bypass else "provider"))
+                        reasoning_source=("full" if local_bypass else "provider"),
+                        started_at=_t0)
                     if _want_stream else r.json())
             if isinstance(resp, dict):
                 resp["_reasoning_local"] = bool(local_bypass)
+                # Wall time of the whole call, so costs.db and the reasoning
+                # trace carry a duration for LOCAL rows too (they carried none:
+                # 789 local chat rows, `dur>0: 0`), and the seat's own timings
+                # (prompt_n, cache_n, prompt_ms) ride with it to the trace.
+                resp["_duration_ms"] = int((_time.time() - _t0) * 1000)
             # Publish the seat's timings (llama-server) to whoever asked for
             # them -- the voice session records `prompt_n` as prefill_tokens.
             # The prompt-cache audit, per turn: how much of the prompt the
@@ -2035,6 +2105,15 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             if _tsink is not None and isinstance(resp, dict) and resp.get("timings"):
                 try:
                     _tsink(resp["timings"])
+                except Exception:
+                    pass
+            if local_bypass and isinstance(resp, dict) and resp.get("timings"):
+                # The prefix-cache audit: how much of the prompt the seat
+                # re-read, and the alarm when the hit rate over the last 50
+                # local calls falls under 80%.
+                try:
+                    from agent_friday.services import prompt_cache as _pc
+                    _pc.observe_seat_timings(resp["timings"])
                 except Exception:
                     pass
             # Attribute cost to the model the provider ACTUALLY served (an

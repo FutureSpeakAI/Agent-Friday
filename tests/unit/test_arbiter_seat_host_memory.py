@@ -34,6 +34,7 @@ def _spawn_cmd(monkeypatch, tmp_path, record):
             pass
 
     monkeypatch.setattr(subprocess, "Popen", DeadProc)
+    monkeypatch.setattr(ra, "_host_ram_total_mib", lambda: 16384)
     monkeypatch.setattr(ra, "runtime_dir", lambda: tmp_path)
     monkeypatch.setattr(model_store, "get", lambda mid: dict(record))
     be = ra.LlamaServerBackend(binary=tmp_path / "llama-server.exe")

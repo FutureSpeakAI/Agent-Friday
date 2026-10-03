@@ -27,6 +27,11 @@ _CURRENT_OWNER_TEXT: ContextVar = ContextVar("friday_tool_owner_text", default="
 #: its result goes to the cloud voice model, which is never handed raw private
 #: data (docs/reference/voice-tool-contract.md §5).
 _CURRENT_SURFACE: ContextVar = ContextVar("friday_tool_surface", default="")
+#: The model answering the turn, set by the agent loops before a tool runs,
+#: so a codebase step can name the seat that made it (salon spec §4.7).
+_CURRENT_MODEL: ContextVar = ContextVar("friday_tool_model", default="")
+#: Whose key the turn runs on ("mine" or a guest key's label).
+_CURRENT_KEY_PROFILE: ContextVar = ContextVar("friday_tool_key_profile", default="")
 #: The provider the running tool loop talks to, set by the loop itself
 #: (the Anthropic loop is always cloud; the OpenAI-format loop names its
 #: provider), and the provider a handler may ask about during one call.
@@ -343,7 +348,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         return _call_openai(
             messages, system=_system_for('openai'), model=use_model,
             max_tokens=max_tokens, temperature=temperature,
-            orb_label=orb_label, tools=(tools or tools_for_workspace(workspace)),
+            orb_label=orb_label, tools=(tools or tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             provider=routed_provider_name if use_model else None,
         )
@@ -371,7 +376,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # nothing left for it to drop, which is the point.
         from agent_friday.services import tool_catalogue as _TCat
         if _TCat.enabled() and CLAUDE_TOOLS:
-            _turn_tools = tools or tools_for_workspace(workspace)
+            _turn_tools = tools or tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
             _open = _TCat.opening_set(
                 _turn_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
             try:
@@ -2439,6 +2444,20 @@ try:
     _approval_executor.register()
 except Exception as _e:                                    # pragma: no cover
     _log.warning("approval executor not registered: %s", _e)
+
+# An approved publish card runs the publish, once, through the same path.
+try:
+    from agent_friday.services import publish_web as _publish_web
+    _publish_web.register()
+except Exception as _e:                                    # pragma: no cover
+    _log.warning("publish executor not registered: %s", _e)
+
+# An approved workspace swap installs the bundle version, once, the same way.
+try:
+    from agent_friday.services import workspace_bundles as _workspace_bundles
+    _workspace_bundles.register()
+except Exception as _e:                                    # pragma: no cover
+    _log.warning("workspace swap executor not registered: %s", _e)
 
 # The payload card for sharing local context with the cloud voice model runs
 # through the same single approval path: one decision, executed once.
@@ -6246,10 +6265,28 @@ def _tool_personality_check_sycophancy(inp):
 WORKSPACE_TOOLS: dict = {}
 
 
-def tools_for_workspace(workspace=None, base=None):
-    """The catalogue for one turn: the always-on tools plus the front workspace's own."""
-    extra = WORKSPACE_TOOLS.get(str(workspace or ""), [])
-    return list(CLAUDE_TOOLS if base is None else base) + list(extra)
+def _hub_chat(conversation_id=None) -> bool:
+    """A chat in the Chat Hub (docs/design/active/chat-hub.md): bound to a
+    codebase, or filed in a project. Its turns carry the hub's own tools."""
+    cid = conversation_id or _CURRENT_CONVERSATION.get()
+    if not cid:
+        return False
+    try:
+        from agent_friday.services import conversations as _convs
+        conv = _convs.load(cid) or {}
+        return bool(conv.get("codebase") or conv.get("project"))
+    except Exception:
+        return False
+
+
+def tools_for_workspace(workspace=None, base=None, conversation_id=None):
+    """The catalogue for one turn: the always-on tools, the front workspace's
+    own, and the hub's when the chat is in the hub. A tool outside the turn's
+    catalogue is still handed over by name through load_tools."""
+    extra = list(WORKSPACE_TOOLS.get(str(workspace or ""), []))
+    if str(workspace or "") != "hub" and _hub_chat(conversation_id):
+        extra += [t for t in WORKSPACE_TOOLS.get("hub", []) if t not in extra]
+    return list(CLAUDE_TOOLS if base is None else base) + extra
 
 
 CLAUDE_TOOL_HANDLERS = {
@@ -8223,6 +8260,878 @@ TOOL_RINGS.update({
     "save_google_contact": 2,     # writes to Google; outward in action_gate
 })
 
+
+# ══════════════════════════════════════════════════════════════
+#  THE ARTIFACT PANEL — one tool, `artifact_put`
+#  (docs/design/active/vibe-coding-salon.md §4.2; services/artifacts)
+# ══════════════════════════════════════════════════════════════
+#
+# Anything a model makes that is better seen than read goes in the panel
+# beside the chat: a table, a chart, a draft to edit, a small `html` app, a
+# diff, an image. Every call is a new version of the artifact, never an
+# overwrite. INTERNAL for the gate: it writes only to Friday's own artifact
+# store, and off the record it writes nothing at all.
+CLAUDE_TOOLS.append({
+    "name": "artifact_put",
+    "description": (
+        "Put something in the panel beside this chat, where the user can see, "
+        "edit and keep it: use it whenever the result is better SEEN than read "
+        "- a table of results, a chart, a draft or letter they may want to "
+        "edit, a small working web app or mockup (kind html: one complete "
+        "HTML document with inline CSS/JS; packages only from https://esm.sh "
+        "pinned to exact versions), a diff, or an image/svg. Do not paste the "
+        "same content into your reply as well - say in one line what is in "
+        "the panel. To CHANGE an artifact, pass its artifact_id (listed for "
+        "you under 'ARTIFACTS' in your context) instead of making a new one; "
+        "every call is a new version and the user can go back. If the "
+        "context says the user edited it by hand, keep their changes. "
+        "Content shapes: markdown -> text; table -> {columns:[..], rows:[[..]]}; "
+        "chart -> {type: bar|line|area|pie|donut|scatter, columns:[..], "
+        "rows:[[..]], x?: column, y?: [columns], title?}; html/svg/diff -> "
+        "text; image -> a data: URL."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string",
+                     "enum": ["markdown", "table", "chart", "html", "diff", "image", "svg"],
+                     "description": "What it is; decides how the panel renders it."},
+            "title": {"type": "string", "description": "A short human title, e.g. 'FOIA tracker' or 'Rent by month'."},
+            "content": {"description": "The content, in the shape for its kind (text, or an object for table/chart)."},
+            "artifact_id": {"type": "string", "description": "Update THIS artifact (a new version) instead of creating one."},
+            "conversation_id": {"type": "string", "description": "Only when acting for another conversation; normally omitted."},
+            "meta": {"type": "object", "description": "Optional: {sensitivity, source_refs: [..], task_id, goal_id}."},
+        },
+        "required": ["kind", "title", "content"],
+    },
+})
+
+
+def _tool_artifact_put(inp):
+    """One version into the artifact store, for the conversation that asked."""
+    from agent_friday.services import artifacts as _art
+    inp = inp or {}
+    cid = (inp.get("conversation_id") or _CURRENT_CONVERSATION.get() or "").strip()
+    if not cid:
+        return ("artifact_put needs a conversation to put the artifact in, and "
+                "none is current. Nothing was stored.")
+    try:
+        rec = _art.put(cid, str(inp.get("kind") or ""), str(inp.get("title") or ""),
+                       inp.get("content"),
+                       meta=inp.get("meta") if isinstance(inp.get("meta"), dict) else None,
+                       artifact_id=(inp.get("artifact_id") or None), author="friday")
+    except ValueError as e:
+        return f"artifact_put refused: {e}. Nothing was stored."
+    return {
+        "status": "ok",
+        "artifact_id": rec["id"],
+        "version": rec["version"],
+        "kind": rec["kind"],
+        "title": rec["title"],
+        "off_record": rec["off_record"],
+        "note": ("In the panel now" + (" (v%d)" % rec["version"] if rec["version"] > 1 else "")
+                 + ". Tell the user in one line; do not repeat the content."),
+    }
+
+
+CLAUDE_TOOL_HANDLERS.update({"artifact_put": _tool_artifact_put})
+TOOL_RINGS.update({"artifact_put": 1})   # writes Friday's own artifact store; INTERNAL in action_gate
+
+
+# Publish to web (docs/design/active/vibe-coding-salon.md §4.10.1). The tool
+# only files the approval card; nothing is public until the owner approves it
+# (SELF_GATED in action_gate, like draft_email).
+CLAUDE_TOOLS.append({
+    "name": "publish_artifact",
+    "description": (
+        "Ask to publish an artifact from this chat's panel to the web as a "
+        "self-contained static page (a document, table, chart, drawing or "
+        "small client-side app; nothing with a backend). This ONLY files an "
+        "approval card showing the files, a preview, the privacy scan and the "
+        "licence check; NOTHING is public until the user approves it, so never "
+        "say it is published - say a publish card is waiting and read back its "
+        "'spoken' line. The default host is this PC (up only while it is on); "
+        "cloudflare_pages or github_pages stay up around the clock once the "
+        "user has connected an account. If the result says refused, tell the "
+        "user plainly why and what to change."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "artifact_id": {"type": "string", "description": "The artifact to publish (from the ARTIFACTS context)."},
+            "adapter": {"type": "string", "enum": ["this_pc", "cloudflare_pages", "github_pages"],
+                        "description": "Where to host it. Omit for the user's default."},
+            "conversation_id": {"type": "string", "description": "Only when acting for another conversation; normally omitted."},
+        },
+        "required": ["artifact_id"],
+    },
+})
+
+
+def _tool_publish_artifact(inp):
+    from agent_friday.services import publish_web as _pw
+    inp = inp or {}
+    cid = (inp.get("conversation_id") or _CURRENT_CONVERSATION.get() or "").strip()
+    if not cid:
+        return "publish_artifact needs a conversation, and none is current. Nothing was filed."
+    try:
+        out = _pw.request_publish(cid, str(inp.get("artifact_id") or ""),
+                                  adapter=(inp.get("adapter") or None), requested_by="chat")
+    except KeyError:
+        return "publish_artifact: no such artifact in this conversation. Nothing was filed."
+    except ValueError as e:
+        return f"publish_artifact refused: {e}. Nothing was filed."
+    if out.get("refused"):
+        return {"status": "refused", "reasons": out["refused"],
+                "note": "Not publishable as it is. Tell the user why; nothing was filed."}
+    card = out["approval"]
+    p = card.get("payload") or {}
+    return {"status": "card_raised", "approval_id": card.get("approval_id"),
+            "adapter": p.get("adapter_label"), "files": len(p.get("files") or []), "size": p.get("size"),
+            "warnings": p.get("warnings") or [], "spoken": p.get("spoken"),
+            "note": "A publish card is waiting for the user. Nothing is public yet; do not say it is."}
+
+
+CLAUDE_TOOL_HANDLERS.update({"publish_artifact": _tool_publish_artifact})
+TOOL_RINGS.update({"publish_artifact": 2})   # publishing is outward; its own card is the gate
+
+
+# ══════════════════════════════════════════════════════════════
+#  CODEBASES — a chat's panel with a repository behind it
+#  (docs/design/active/vibe-coding-salon.md §4.8; services/codebases)
+# ══════════════════════════════════════════════════════════════
+CLAUDE_TOOLS.append({
+    "name": "codebase_edit",
+    "description": (
+        "Change files in this chat's codebase (the panel's Preview/Files/Changes). "
+        "Pass the FULL new content of each file you change (or null to delete "
+        "one) and a one-line plain-language summary for the user. Every call is "
+        "one step: a commit the user can undo by saying 'undo that'. The preview "
+        "is one index.html with relative css/js inlined, running in a sandboxed "
+        "frame with no server; packages only from https://esm.sh pinned to exact "
+        "versions. Do not say the change is done until the result names the step; "
+        "then say what changed in one line and do not paste the code."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "files": {"type": "object", "description": "{path: full new text, or null to delete}. Paths are relative; never .git or .friday.",
+                      "additionalProperties": {"type": ["string", "null"]}},
+            "summary": {"type": "string", "description": "One plain line for the user, e.g. 'Made the header bigger'."},
+            "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase; normally omitted."},
+        },
+        "required": ["files", "summary"],
+    },
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_undo",
+    "description": ("Undo the last step in this chat's codebase ('undo that'). Each call goes one step further back; "
+                    "an undo is itself a step. Say which step was undone, from the result."),
+    "input_schema": {"type": "object", "properties": {
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_read",
+    "description": "Read one file of this chat's codebase that your context did not show in full (large files are listed by name only).",
+    "input_schema": {"type": "object", "properties": {
+        "path": {"type": "string", "description": "Relative path, e.g. 'app.js'."},
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}},
+        "required": ["path"]},
+})
+
+
+def _codebase_in_scope(inp):
+    from agent_friday.services import codebases as _cb
+    cbid = str((inp or {}).get("codebase_id") or "").strip()
+    if cbid:
+        rec = _cb.load(cbid)
+    else:
+        rec = _cb.for_conversation(_CURRENT_CONVERSATION.get())
+    return rec
+
+
+def _tool_codebase_edit(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return "codebase_edit: this chat has no codebase. Ask the user to open one with '+ Codebase'. Nothing was changed."
+    files = inp.get("files")
+    if not isinstance(files, dict) or not files:
+        return "codebase_edit refused: 'files' must be a non-empty object of {path: content}. Nothing was changed."
+    try:
+        st = _cb.step(rec["id"], files, str(inp.get("summary") or "Change"),
+                      model=str(inp.get("_model") or _CURRENT_MODEL.get() or ""),
+                      key_profile=str(_CURRENT_KEY_PROFILE.get() or rec.get("key_profile") or "mine"))
+    except ValueError as e:
+        return f"codebase_edit refused: {e}. Nothing was changed."
+    except RuntimeError as e:
+        return f"codebase_edit failed: {e}. Nothing was committed."
+    if st is None:
+        return {"status": "no_change", "note": "The files were already exactly that; no step was made."}
+    return {"status": "ok", "codebase": rec["id"], "step": {"sha": st["sha"], "summary": st["summary"],
+            "files": [f["path"] for f in st["receipt"]["files"]], "deleted": st["receipt"]["deleted"]},
+            "note": "Step made; the preview reloads. Say what changed in one line."}
+
+
+def _tool_codebase_undo(inp):
+    from agent_friday.services import codebases as _cb
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return "codebase_undo: this chat has no codebase. Nothing was changed."
+    try:
+        st = _cb.undo(rec["id"])
+    except _cb.NothingToUndo as e:
+        return {"status": "nothing_to_undo", "note": str(e)}
+    except RuntimeError as e:
+        return f"codebase_undo failed: {e}."
+    return {"status": "ok", "codebase": rec["id"], "step": {"sha": st["sha"], "kind": "undo", "summary": st["summary"], "undoes": st["undoes"]}}
+
+
+def _tool_codebase_read(inp):
+    from agent_friday.services import codebases as _cb
+    from agent_friday.services import credential_paths as _cred
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return "codebase_read: this chat has no codebase."
+    rel = str(inp.get("path") or "")
+    try:
+        p = _cb.path_of(rec["id"], rel)
+    except ValueError as e:
+        return f"codebase_read refused: {e}."
+    # A codebase may be a folder the user pointed at, so it can hold key
+    # material. This tool opens a file the way read_file does: a key file is
+    # refused, and a key pasted inside an ordinary one is withheld from the
+    # whole text before it is capped (services/credential_paths).
+    if _cred.check(p):
+        return _cred.refusal(p)
+    content = _cb.read(rec["id"], rel)
+    if content is None:
+        return {"status": "missing", "path": inp.get("path")}
+    return {"status": "ok", "path": inp.get("path"), "content": _redacted_once(p, content)[:60000]}
+
+
+CLAUDE_TOOLS.append({
+    "name": "codebase_export",
+    "description": ("Give the user this chat's codebase as a plain project: a zip of the working tree with a README, "
+                    "nothing of Friday's inside (no lock-in). Returns the download path to tell the user; "
+                    "the panel's Export button does the same."),
+    "input_schema": {"type": "object", "properties": {
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
+})
+
+
+def _tool_codebase_export(inp):
+    rec = _codebase_in_scope(inp or {})
+    if rec is None:
+        return "codebase_export: this chat has no codebase."
+    return {"status": "ok", "download": "/api/codebases/%s/export" % rec["id"], "filename": rec["slug"] + ".zip",
+            "note": "Tell the user the export is ready at that path (the panel's Export button downloads it)."}
+
+
+CLAUDE_TOOL_HANDLERS.update({"codebase_edit": _tool_codebase_edit, "codebase_undo": _tool_codebase_undo,
+                             "codebase_read": _tool_codebase_read, "codebase_export": _tool_codebase_export})
+TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "codebase_export": 0})
+
+
+# ── "Improve this workspace" (services/workspace_bundles; spec §4.9.1) ───────
+CLAUDE_TOOLS.append({
+    "name": "improve_workspace",
+    "description": (
+        "Open the codebase chat that improves one of the user's workspaces, by id or spoken name "
+        "('improve the News workspace'). While it runs, say you are opening it. Only a bundle workspace "
+        "(one the user built in the salon, under \"Mine\" in the dock) can be improved this way: its live "
+        "version keeps running and nothing changes until the user approves a swap. A NATIVE workspace "
+        "(News, Messages, Calendar and the rest of Friday's own) is part of Friday herself; improving it "
+        "means editing Friday's own source, which is not built yet, and the result says so: tell the user "
+        "that plainly, do not promise it. The result carries conversation_id: tell the user the chat is open."),
+    "input_schema": {"type": "object", "properties": {
+        "workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'rent-board', 'the chore wheel', 'news'."}},
+        "required": ["workspace"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "workspace_swap",
+    "description": (
+        "Ask the user to swap this chat's codebase in as the live version of the workspace it improves "
+        "(or to install a fresh bundle codebase as a new workspace). Raises ONE approval card after the "
+        "manifest check, the brand check and a browser load check; the user decides on the card or by "
+        "saying yes or no. Call it only when the user says they are happy with the change. If the result "
+        "is refused, say why in one line (a reserved colour, a broken manifest, a page that throws) and "
+        "fix it; never say the workspace is swapped until the card is approved."),
+    "input_schema": {"type": "object", "properties": {
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
+})
+
+
+def _resolve_workspace_name(name):
+    """A registry id, an alias, or an installed bundle's id or label; None when nothing matches."""
+    from agent_friday.services import workspace_bundles as _wb, workspace_registry as _reg
+    n = (name or "").strip()
+    if not n:
+        return None
+    rid = _reg.resolve(n) or (n.lower() if n.lower() in _reg.ids() else None)
+    if rid:
+        return rid
+    low = n.lower()
+    for suffix in (" workspace", " window", " tab", " app"):
+        if low.endswith(suffix):
+            low = low[: -len(suffix)].strip()
+    for prefix in ("the ", "my "):
+        if low.startswith(prefix):
+            low = low[len(prefix):].strip()
+    for w in _wb.list_installed():
+        if low in (w["id"], (w.get("label") or "").lower()) or low in [a.lower() for a in w.get("aliases") or []]:
+            return w["id"]
+    return None
+
+
+def _tool_improve_workspace(inp):
+    from agent_friday.services import workspace_bundles as _wb
+    name = str((inp or {}).get("workspace") or "")
+    ws_id = _resolve_workspace_name(name)
+    if not ws_id:
+        return {"status": "refused", "say": "I don't know a workspace called \"%s\". The ones you built are under Mine in the dock." % name}
+    try:
+        out = _wb.improve(ws_id)
+    except _wb.NativeWorkspace as e:
+        return {"status": "refused", "blocker": e.blocker, "workspace_id": ws_id, "say": str(e)}
+    try:
+        from agent_friday.services import desktop_bus as _bus
+        _bus.broadcast({"type": "open_conversation", "conversation_id": out["conversation_id"],
+                        "title": "Improve %s" % out["label"], "reason": "improve_workspace"}, kind="chat")
+    except Exception:
+        pass
+    return {"status": "ok", **out,
+            "say": 'I opened a codebase chat for "%s". Tell me what to change; every change is a step you can undo, '
+                   "and nothing goes live until you approve the swap." % out["label"]}
+
+
+def _tool_workspace_swap(inp):
+    from agent_friday.services import workspace_bundles as _wb
+    rec = _codebase_in_scope(inp or {})
+    if rec is None:
+        return "workspace_swap: this chat has no codebase."
+    try:
+        card = _wb.request_swap(rec["id"], requested_by="friday")
+    except _wb.SmokeFailed as e:
+        return {"status": "refused", "blocker": e.blocker, "say": str(e)}
+    except (_wb.BrandRefused, _wb.ManifestRefused, ValueError) as e:
+        return {"status": "refused", "say": str(e)}
+    return {"status": "ok", "approval_id": card["approval_id"], "card_status": card["status"],
+            "spoken": card["payload"]["spoken"],
+            "note": "The card is on screen; read its spoken line and wait for the user's decision."}
+
+
+CLAUDE_TOOL_HANDLERS.update({"improve_workspace": _tool_improve_workspace, "workspace_swap": _tool_workspace_swap})
+TOOL_RINGS.update({"improve_workspace": 1, "workspace_swap": 1})
+
+
+# ── Seats, keys and costs per codebase (services/codebases; spec §4.7) ───────
+CLAUDE_TOOLS.append({
+    "name": "codebase_seat",
+    "description": (
+        "Change which model this chat's codebase uses: which='small' for small edits (a model, or 'local' "
+        "for the resident local brain) or which='heavy' for big ones ('use Opus for this one'). The header "
+        "line changes at once and the chat gets a system line. Speak the result's `say` as is; if refused, "
+        "say the model name was not recognised and offer the catalogue names."),
+    "input_schema": {"type": "object", "properties": {
+        "which": {"type": "string", "enum": ["small", "heavy"]},
+        "model": {"type": "string", "description": "A model as people say it ('Opus 5.5') or its id; 'local' for the resident brain; empty to clear the heavy seat."},
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}},
+        "required": ["which", "model"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_key",
+    "description": (
+        "Change whose key pays for this chat's codebase: 'mine' (the user's own key) or the label of a "
+        "guest key added under Settings \u2192 Accounts & Keys ('use Alex's key'). A guest key is used only by this "
+        "codebase; nothing falls back to the user's key if it fails. Speak the result's `say` as is."),
+    "input_schema": {"type": "object", "properties": {
+        "profile": {"type": "string", "description": "'mine' or a guest key's label."},
+        "codebase_id": {"type": "string"}}, "required": ["profile"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_costs",
+    "description": ("What this chat's codebase has cost so far, split by whose key paid ('how much has this cost?'). "
+                    "Speak the result's `say` as is; do not add up or estimate anything yourself."),
+    "input_schema": {"type": "object", "properties": {"codebase_id": {"type": "string"}}},
+})
+
+
+def _tool_codebase_seat(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase, so there is no seat to change."}
+    which = str(inp.get("which") or "").strip().lower()
+    words = str(inp.get("model") or "").strip()
+    model = "local" if words.lower() in ("local", "this pc", "the local model") else (model_from_words(words) if words else "")
+    if words and not model:
+        return {"status": "refused", "say": "I don't know a model called \"%s\". The ones I can name are %s." % (words, _cb_catalogue_names())}
+    try:
+        out = _cb.set_seat(rec["id"], which, model or "", by="you")
+    except (ValueError, KeyError) as e:
+        return {"status": "refused", "say": str(e)}
+    hd = _cb.header(rec["id"])
+    name = "the local model on this PC" if model == "local" else (_cb.model_short(model) if model else "none")
+    key = "your key" if hd["key"] == "mine" else "%s's key" % hd["key"]
+    return {"status": "ok", "seats": out["seats"], "header": hd["text"],
+            "say": "Switching %s to %s on %s." % ("small edits" if which == "small" else "big edits", name, key)}
+
+
+def model_from_words(words):
+    from agent_friday.services import codebases as _cb
+    return _cb.model_from_words(words)
+
+
+def _cb_catalogue_names():
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        names = []
+        for prov in get_provider_registry().list_providers():
+            for meta in (prov.get("model_meta") or {}).values():
+                if meta.get("short"):
+                    names.append(meta["short"])
+        return ", ".join(sorted(set(names))[:12]) or "the models in Settings"
+    except Exception:
+        return "the models in Settings"
+
+
+def _tool_codebase_key(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase, so there is no key to change."}
+    profile = str(inp.get("profile") or "").strip()
+    if profile.lower() in ("mine", "my key", "your key", "own"):
+        profile = "mine"
+    try:
+        out = _cb.set_key_profile(rec["id"], profile, by="you")
+    except (ValueError, KeyError) as e:
+        return {"status": "refused", "say": str(e)}
+    hd = _cb.header(rec["id"])
+    key = "your key" if out["key_profile"] == "mine" else "%s's key" % out["key_profile"]
+    return {"status": "ok", "key_profile": out["key_profile"], "header": hd["text"],
+            "say": "This codebase now runs on %s." % key}
+
+
+def _tool_codebase_costs(inp):
+    from agent_friday.services import codebases as _cb, cost_meter as _cm
+    rec = _codebase_in_scope(inp or {})
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase to add up."}
+    c = _cm.codebase_costs(rec["id"])
+    parts = ["%s $%.2f" % ("your key" if k == "mine" else "%s's key" % k, v) for k, v in sorted(c.get("by_key_profile", {}).items())]
+    say = ('"%s" has cost $%.2f so far' % (rec["title"], c["total_usd"])) + ((": " + ", ".join(parts)) if len(parts) > 1 else (" on %s" % parts[0].rsplit(" $", 1)[0] if parts else "")) + "."
+    return {"status": "ok", "total_usd": c["total_usd"], "by_key_profile": c.get("by_key_profile", {}), "calls": c.get("calls", 0), "say": say}
+
+
+CLAUDE_TOOL_HANDLERS.update({"codebase_seat": _tool_codebase_seat, "codebase_key": _tool_codebase_key, "codebase_costs": _tool_codebase_costs})
+TOOL_RINGS.update({"codebase_seat": 1, "codebase_key": 1, "codebase_costs": 0})
+
+
+# ── Claude's agent as an engine (services/claude_engine; spec §4.7) ──────────
+CLAUDE_TOOLS.append({
+    "name": "codebase_engine",
+    "description": (
+        "Change which engine edits this chat's codebase: 'friday' (Friday's own loop, the default) or "
+        "'claude_agent' (the user's Claude Code, run as a process on this PC with the salon proxy injecting "
+        "the key). Choosing claude_agent is the user's call: say the disclosure in the result plainly."),
+    "input_schema": {"type": "object", "properties": {
+        "engine": {"type": "string", "enum": ["friday", "claude_agent"]},
+        "codebase_id": {"type": "string"}}, "required": ["engine"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_agent",
+    "description": (
+        "Run one task with Claude's agent in this chat's codebase folder (only when the codebase's engine is "
+        "claude_agent). While it runs, say the agent is working in the folder. The result carries the step, "
+        "the hosts the agent reached through the proxy, and the disclosure; speak `say` as is. A refusal names "
+        "why (engine not chosen, not installed, or the run failed) and promises nothing. The first run of a "
+        "task waits on one approval card (status 'waiting'): say so and that nothing runs until it is approved; "
+        "never say the agent is working before then."),
+    "input_schema": {"type": "object", "properties": {
+        "task": {"type": "string", "description": "What the agent should do, in the user's words."},
+        "codebase_id": {"type": "string"}}, "required": ["task"]},
+})
+
+
+def _tool_codebase_engine(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase."}
+    try:
+        out = _cb.set_engine(rec["id"], str(inp.get("engine") or ""), by="you")
+    except (ValueError, KeyError) as e:
+        return {"status": "refused", "say": str(e)}
+    eng = out["seats"]["engine"]
+    say = ("This codebase is now edited by Claude's agent: it runs as a process on this PC and can read this PC's files "
+           "while it works; the key never enters its environment, the proxy injects it." if eng == "claude_agent"
+           else "This codebase is edited by Friday again.")
+    return {"status": "ok", "engine": eng, "say": say}
+
+
+def _codebase_task_gate(rec, tool, args):
+    """The one card per task (services/codebase_tasks): None when the task's
+    grant covers this call (one use spent), else the waiting result to return."""
+    from agent_friday.governance import action_gate as _gate
+    from agent_friday.services import codebase_tasks as _ct
+    if _gate.consume_grant(tool, _ct.scope(rec["id"])) is not None:
+        return None
+    conv = _CURRENT_CONVERSATION.get() or rec.get("conversation_id") or ""
+    card = _ct.request(rec, tool, args, conversation_id=conv)
+    return {"status": "waiting", "approval_id": card.get("approval_id"),
+            "say": ("I raised one card to run commands in %s for this task. Approve it and I run %s and the rest "
+                    "of the task without asking again; nothing runs until then."
+                    % (rec.get("title") or "the codebase", _ct._describe(tool, args)))}
+
+
+CLAUDE_TOOLS.append({
+    "name": "codebase_run",
+    "description": (
+        "Run ONE shell command in this chat's codebase folder (tests, a build, a script): the Terminal of the "
+        "Build panel. The first command of a task raises one approval card; once approved, the rest of the task "
+        "runs without asking. The result carries exit code and output; report both plainly. Never run commands "
+        "that read key material, reach Friday's own API, or touch Friday's own source."),
+    "input_schema": {"type": "object", "properties": {
+        "command": {"type": "string", "description": "The command, as it would be typed in PowerShell."},
+        "codebase_id": {"type": "string"}}, "required": ["command"]},
+})
+
+
+def _tool_codebase_run(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase."}
+    cmd = str(inp.get("command") or "").strip()
+    if not cmd:
+        return {"status": "refused", "say": "There is no command to run."}
+    waiting = _codebase_task_gate(rec, "codebase_run", {"command": cmd})
+    if waiting is not None:
+        return waiting
+    return _cb.run(rec["id"], cmd)
+
+
+def _tool_codebase_agent(inp):
+    from agent_friday.services import claude_engine as _ce, codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase."}
+    if (rec.get("seats") or {}).get("engine") != "claude_agent":
+        return {"status": "refused", "blocker": "needs_user_input",
+                "say": "This codebase's engine is Friday. Say \"use Claude's agent for this codebase\" first; it runs as a process on this PC."}
+    waiting = _codebase_task_gate(rec, "codebase_agent", {"task": str(inp.get("task") or "")})
+    if waiting is not None:
+        return waiting
+    out = _ce.run_task(rec["id"], str(inp.get("task") or ""), key_profile=rec.get("key_profile") or "mine")
+    return out
+
+
+CLAUDE_TOOL_HANDLERS.update({"codebase_engine": _tool_codebase_engine, "codebase_agent": _tool_codebase_agent,
+                             "codebase_run": _tool_codebase_run})
+TOOL_RINGS.update({"codebase_engine": 1, "codebase_agent": 1, "codebase_run": 1})
+
+
+# ── The Chat Hub by voice (docs/design/active/chat-hub.md M3c) ──────────────
+# Three tools that move the owner's own screen: "open my Friday project",
+# "show me the preview", "build mode". Each follows set_workspace_layout's
+# round trip: the state is saved first, the open pages are told (a chat-kind
+# `hub` event), and only a page that applied it earns HUB_OK; otherwise
+# HUB_SAVED says what was remembered and that no page showed it.
+HUB_ACK_S = 5.0
+
+
+def _hub_send(action, **fields):
+    """Tell the pages; returns (sent, applied)."""
+    import secrets as _secrets
+    import time as _t
+    from agent_friday.services import desktop_bus
+    cid = "hub-%d-%s" % (int(_t.time()), _secrets.token_hex(3))
+    waiter = desktop_bus.expect(cid)
+    event = {"type": "hub", "id": cid, "action": action}
+    event.update({k: v for k, v in fields.items() if v is not None})
+    sent = desktop_bus.broadcast(event, kind="chat")
+    got = desktop_bus.wait(cid, waiter, HUB_ACK_S if sent else 0)
+    return bool(sent), bool(got.get("acked") and (got.get("ack") or {}).get("applied"))
+
+
+def _hub_words(text):
+    drop = {"my", "the", "a", "project", "projects", "open", "folder", "please", "up"}
+    return [w for w in "".join(ch if ch.isalnum() else " " for ch in str(text or "").lower()).split() if w not in drop]
+
+
+def _hub_find_project(words):
+    from agent_friday.services import projects as _proj
+    allp = _proj.list_all()
+    want = " ".join(_hub_words(words))
+    if not want:
+        return None, allp
+    for p in allp:
+        if (p.get("name") or "").strip().lower() == want:
+            return p, allp
+    for p in allp:
+        name = (p.get("name") or "").lower()
+        if want in name or name in want:
+            return p, allp
+    ww = set(want.split())
+    best = None
+    for p in allp:
+        hit = len(ww & set(_hub_words(p.get("name"))))
+        if hit and (best is None or hit > best[0]):
+            best = (hit, p)
+    return (best[1] if best else None), allp
+
+
+CLAUDE_TOOLS.append({
+    "name": "open_project",
+    "description": (
+        "Open one of the user's projects in the chat: its latest chat comes to the front (a new one is made "
+        "when the project has none). 'Open my Friday project' -> project='Friday'. Say the result's line as is."),
+    "input_schema": {"type": "object", "properties": {"project": {"type": "string", "description": "The project, as the user said it."}},
+                     "required": ["project"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "show_preview",
+    "description": (
+        "Show the preview beside this chat: the page the codebase renders, or the chat's artifacts. "
+        "'Show me the preview'. Says plainly when there is nothing to preview."),
+    "input_schema": {"type": "object", "properties": {}},
+})
+CLAUDE_TOOLS.append({
+    "name": "build_mode",
+    "description": (
+        "Switch this chat into build mode (its panel becomes the Build panel for one of the project's codebases: "
+        "editor, preview, changes, terminal) or back out of it. 'Build mode' -> on=true; 'build mode with the rent "
+        "tracker' names the codebase; 'leave build mode' -> on=false."),
+    "input_schema": {"type": "object", "properties": {
+        "on": {"type": "boolean", "description": "true to enter, false to leave. Default true."},
+        "codebase": {"type": "string", "description": "Which codebase, as the user said it (optional)."}}},
+})
+
+
+def _tool_open_project(inp):
+    from agent_friday.services import conversations as _convs
+    inp = inp or {}
+    proj, allp = _hub_find_project(inp.get("project"))
+    if proj is None:
+        names = ", ".join(p.get("name") or p["id"] for p in allp) or "none yet"
+        return "HUB_FAIL: no project is called %r. Projects: %s." % (str(inp.get("project") or "").strip(), names)
+    members = [c for c in _convs.list_all() if c.get("project") == proj["id"]]
+    if members:
+        conv = max(members, key=lambda c: float(c.get("last_active_at") or c.get("created_at") or 0))
+    else:
+        conv = _convs.create(proj.get("name") or "Project chat")
+        _convs.patch(conv["id"], project=proj["id"])
+    sent, applied = _hub_send("open_conversation", conversation_id=conv["id"], title=conv.get("title") or "", project=proj.get("name") or "")
+    what = "%s: %s" % (proj.get("name"), conv.get("title") or conv["id"])
+    if applied:
+        return "HUB_OK:%s — opened %s." % (conv["id"], what)
+    return "HUB_SAVED:%s — %s is the chat to open; no Friday page showed it%s." % (
+        conv["id"], what, "" if sent else " (none is listening)")
+
+
+def _tool_show_preview(inp):
+    from agent_friday.services import artifacts as _art, codebases as _cb, conversations as _convs
+    conv_id = _CURRENT_CONVERSATION.get() or ""
+    conv = _convs.load(conv_id) if conv_id else None
+    if conv is None:
+        return "HUB_FAIL: this is not a chat that can show a preview."
+    rec = _cb.for_conversation(conv_id)
+    if rec is not None:
+        what = "the preview of %s" % (rec.get("title") or "the codebase")
+    else:
+        try:
+            n = len(_art.list_for(conv_id))
+        except Exception:
+            n = 0
+        if not n:
+            return "HUB_FAIL: nothing to preview here yet: no codebase is bound to this chat and it has no artifacts. Say 'build mode' to start one."
+        what = "this chat's artifacts (%d)" % n
+    sent, applied = _hub_send("preview", conversation_id=conv_id)
+    if applied:
+        return "HUB_OK:%s — showing %s." % (conv_id, what)
+    return "HUB_SAVED:%s — %s is there to show; no Friday page is showing this chat%s." % (
+        conv_id, what, "" if sent else " (none is listening)")
+
+
+def _tool_build_mode(inp):
+    from agent_friday.services import codebases as _cb, conversations as _convs, projects as _proj
+    inp = inp or {}
+    on = inp.get("on")
+    on = True if on is None else bool(on)
+    conv_id = _CURRENT_CONVERSATION.get() or ""
+    conv = _convs.load(conv_id) if conv_id else None
+    if conv is None:
+        return "HUB_FAIL: this is not a chat that can enter build mode."
+    if not on:
+        current = conv.get("codebase")
+        if current:
+            _convs.patch(conv_id, codebase=None)
+            rec = _cb.load(current)
+            if rec is not None and rec.get("conversation_id") == conv_id:
+                rec["conversation_id"] = None
+                _cb._save(rec)
+        sent, applied = _hub_send("build_off", conversation_id=conv_id)
+        return "HUB_OK:%s — out of build mode; the panel is the chat's own canvas." % conv_id if applied else                "HUB_SAVED:%s — out of build mode; no Friday page is showing this chat." % conv_id
+    words = " ".join(_hub_words(inp.get("codebase")))
+    proj = _proj.load(conv.get("project")) if conv.get("project") else None
+    pool = [_cb.load(c) for c in ((proj or {}).get("codebases") or [])]
+    pool = [r for r in pool if r]
+    chosen = None
+    if words:
+        for r in pool + [r for r in _cb.list_all() if r not in pool]:
+            t = (r.get("title") or "").lower()
+            if words == t or words in t or set(words.split()) & set(_hub_words(t)):
+                chosen = r
+                break
+        if chosen is None:
+            return "HUB_FAIL: no codebase is called %r. %s" % (str(inp.get("codebase") or "").strip(),
+                   ("This project's: %s." % ", ".join(r.get("title") or r["id"] for r in pool)) if pool else "This chat's project connects no codebase yet.")
+    elif conv.get("codebase") and _cb.load(conv["codebase"]) is not None:
+        chosen = _cb.load(conv["codebase"])
+    elif pool:
+        chosen = pool[0]
+    else:
+        return ("HUB_FAIL: this chat's project connects no codebase yet. Connect one under the project's settings, "
+                "or say 'build mode with <its name>'." if proj else
+                "HUB_FAIL: this chat is in no project and has no codebase. File it in a project with codebases, or say 'build mode with <its name>'.")
+    if conv.get("codebase") != chosen["id"]:
+        _cb.bind(chosen["id"], conv_id)
+    sent, applied = _hub_send("build", conversation_id=conv_id, codebase_id=chosen["id"], title=chosen.get("title") or "")
+    what = "build mode on %s" % (chosen.get("title") or chosen["id"])
+    if applied:
+        return "HUB_OK:%s — %s: editor, preview, changes and terminal beside the chat." % (conv_id, what)
+    return "HUB_SAVED:%s — %s is bound; no Friday page is showing this chat%s." % (conv_id, what, "" if sent else " (none is listening)")
+
+
+CLAUDE_TOOL_HANDLERS.update({"open_project": _tool_open_project, "show_preview": _tool_show_preview, "build_mode": _tool_build_mode})
+TOOL_RINGS.update({"open_project": 1, "show_preview": 1, "build_mode": 1})
+
+
+# ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────
+CLAUDE_TOOLS.append({
+    "name": "plan_first",
+    "description": (
+        "For a BIG ask (a new feature, several files, anything that takes more than one or two steps), "
+        "write a short plan FIRST and stop. The plan appears in the panel as an editable draft with its "
+        "milestones; nothing is built until the user approves it there or says so in chat. Keep the plan "
+        "under 200 words and the milestones to 3-7 plain lines. After calling this, tell the user in one "
+        "line that the plan is in the panel and ask if they want changes. Small edits do not need a plan."),
+    "input_schema": {"type": "object", "properties": {
+        "title": {"type": "string", "description": "What is being built, e.g. 'Rent tracker with a chart'."},
+        "plan": {"type": "string", "description": "Markdown: what, why, how, what is out of scope."},
+        "milestones": {"type": "array", "items": {"type": "string"}, "description": "3-7 milestones, each one plain line, in order."}},
+        "required": ["title", "plan", "milestones"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "plan_approve",
+    "description": (
+        "Record that the USER approved the current plan, in their own words, in chat ('go ahead', 'build it'). "
+        "Pass their words. Never call this on your own initiative: a plan approved by the model is not approved. "
+        "The panel's 'Build this plan' button does the same thing on screen."),
+    "input_schema": {"type": "object", "properties": {
+        "user_words": {"type": "string", "description": "The user's own words that approve the plan."},
+        "artifact_id": {"type": "string", "description": "Only when several plans exist; normally omitted."}},
+        "required": ["user_words"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "plan_milestone",
+    "description": (
+        "Move one milestone of the approved plan: 'doing' when you start it, 'done' with the step sha when it is "
+        "built, or 'blocked' with one typed blocker and a note the user can act on when you must stop. Then say "
+        "in one line what happened."),
+    "input_schema": {"type": "object", "properties": {
+        "n": {"type": "integer", "description": "The milestone number, from the PLAN context."},
+        "status": {"type": "string", "enum": ["todo", "doing", "done", "blocked"]},
+        "step": {"type": "string", "description": "The codebase step sha that completed it, when done."},
+        "blocker": {"type": "string", "enum": ["missing_evidence", "needs_user_input", "run_failed", "external_wait", "goal_not_met_yet"],
+                    "description": "Required when status is blocked."},
+        "note": {"type": "string", "description": "One line the user can act on."},
+        "artifact_id": {"type": "string", "description": "Only when several plans exist; normally omitted."}},
+        "required": ["n", "status"]},
+})
+
+
+def _plan_in_scope(inp):
+    from agent_friday.services import plans as _plans
+    cid = (_CURRENT_CONVERSATION.get() or "").strip()
+    if not cid:
+        return None, None
+    aid = str((inp or {}).get("artifact_id") or "").strip()
+    if aid:
+        from agent_friday.services import artifacts as _art
+        rec = _art.get(cid, aid)
+    else:
+        rec = _plans.current(cid)
+    return cid, rec
+
+
+def _tool_plan_first(inp):
+    from agent_friday.services import plans as _plans
+    inp = inp or {}
+    cid = (_CURRENT_CONVERSATION.get() or "").strip()
+    if not cid:
+        return "plan_first needs a conversation, and none is current. Nothing was filed."
+    try:
+        rec = _plans.create(cid, str(inp.get("title") or "Plan"), str(inp.get("plan") or ""), list(inp.get("milestones") or []))
+    except ValueError as e:
+        return f"plan_first refused: {e}."
+    return {"status": "awaiting_approval", "artifact_id": rec["id"], "milestones": len(rec["meta"]["plan"]["milestones"]),
+            "note": "The plan is in the panel awaiting the user's approval. Do not build anything until they approve it "
+                    "(the panel's Build this plan, or their words, which you then report with plan_approve). Ask in one "
+                    "line whether they want changes."}
+
+
+def _tool_plan_approve(inp):
+    from agent_friday.services import plans as _plans
+    inp = inp or {}
+    words = " ".join(str(inp.get("user_words") or "").split())
+    if len(words) < 2:
+        return "plan_approve needs the user's own words that approve the plan; a plan is not approved without them."
+    cid, rec = _plan_in_scope(inp)
+    if not cid or rec is None:
+        return "plan_approve: there is no plan in this conversation."
+    try:
+        out = _plans.approve(cid, rec["id"], by="you (in chat: %s)" % words[:80])
+    except ValueError as e:
+        return f"plan_approve refused: {e}."
+    nxt = _plans.next_milestone(out["meta"]["plan"])
+    return {"status": "approved", "artifact_id": out["id"], "next": nxt["n"] if nxt else None,
+            "note": "Approved. Build milestone %s now, in one or a few codebase_edit steps, then plan_milestone." % (nxt["n"] if nxt else "-")}
+
+
+def _tool_plan_milestone(inp):
+    from agent_friday.services import plans as _plans
+    inp = inp or {}
+    cid, rec = _plan_in_scope(inp)
+    if not cid or rec is None:
+        return "plan_milestone: there is no plan in this conversation."
+    try:
+        out = _plans.milestone(cid, rec["id"], int(inp.get("n") or 0), str(inp.get("status") or ""),
+                               step=inp.get("step") or None, blocker=inp.get("blocker") or None, note=str(inp.get("note") or ""))
+    except _plans.NotApproved as e:
+        return f"plan_milestone refused: {e}. Wait for the user's approval."
+    except (ValueError, TypeError) as e:
+        return f"plan_milestone refused: {e}."
+    plan = out["meta"]["plan"]
+    nxt = _plans.next_milestone(plan)
+    m = plan["milestones"][int(inp.get("n")) - 1]
+    return {"status": "ok", "milestone": m["n"], "state": m["status"], "blocked": m.get("blocker"),
+            "next": nxt["n"] if nxt else None,
+            "note": ("Plan complete: say so in one line." if nxt is None and m["status"] != "blocked"
+                     else ("Stopped on a typed blocker; tell the user what you need." if m["status"] == "blocked"
+                           else "Go on to milestone %d." % nxt["n"]))}
+
+
+CLAUDE_TOOL_HANDLERS.update({"plan_first": _tool_plan_first, "plan_approve": _tool_plan_approve,
+                             "plan_milestone": _tool_plan_milestone})
+TOOL_RINGS.update({"plan_first": 1, "plan_approve": 1, "plan_milestone": 1})
+
 # ══════════════════════════════════════════════════════════════
 #  CAPABILITY PREFLIGHT — a tool whose dependency is missing is REMOVED
 # ══════════════════════════════════════════════════════════════
@@ -9339,6 +10248,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
             else str(_sc.get("owner_text") or ""))
         _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
+        # Whose key this turn runs on, for the handlers that write receipts
+        # (salon spec §4.7).
+        _kp_tok = _CURRENT_KEY_PROFILE.set(str(_sc.get("key_profile") or ""))
         # The loop that is running knows what it talks to; the session's
         # provider is the ROUTED intent, built once and stale after a
         # local-to-cloud fallback. The loop wins; the session only fills in
@@ -9352,6 +10264,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         finally:
             _CURRENT_PROVIDER.reset(_prov_tok)
             _CURRENT_SURFACE.reset(_surface_tok)
+            _CURRENT_KEY_PROFILE.reset(_kp_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
             _gate_mod.DECIDED.reset(_dtok)
             _taint_mod.CURRENT_KEY.reset(_ktok)
@@ -10955,6 +11868,50 @@ def _no_empty_text(messages):
     return out
 
 
+def _guest_client_for_turn(client, session_ctx):
+    """The provider client a turn should use: the owner's, or one built on the
+    guest key its codebase names (salon spec §4.7). The guest key is used for
+    that codebase's calls only; a cap the payer set stops the call before it
+    is made. Returns (client, guest) with guest None for the owner's key."""
+    from agent_friday.services import codebases as _cb
+    g = _cb.guest_key_for_turn(session_ctx or {})
+    if not g:
+        return client, None
+    over = _cb.guest_key_over_cap(g["codebase"], g["label"])
+    if over:
+        raise RuntimeError("%s's key has reached the cap you set for it ($%.2f of $%.2f). Nothing was sent on your key; "
+                           "raise the cap under Settings \u2192 Accounts & Keys or say \"use my key\"." % (g["label"], over["spent"], over["cap"]))
+    if g["provider"] != "anthropic":
+        raise RuntimeError("%s's key is for %s, and guest keys are supported for Anthropic only for now. Nothing was sent on your key."
+                           % (g["label"], g["provider"]))
+    if client is not None and hasattr(client, "with_options"):
+        return client.with_options(api_key=g["secret"]), g
+    from anthropic import Anthropic
+    return Anthropic(api_key=g["secret"]), g
+
+
+def _guest_auth_failed(guest, exc):
+    """A provider error under a guest key: when it is the key being refused
+    (401/403), record it so the header turns red and stop the turn with a plain
+    sentence; never fall back to the owner's key. Any other error is not the
+    key's fault and is left to the caller. Returns None when it did not raise."""
+    if not guest:
+        return None
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    name = type(exc).__name__
+    if status not in (401, 403) and name not in ("AuthenticationError", "PermissionDeniedError"):
+        return None
+    from agent_friday.services import codebases as _cb
+    try:
+        _cb.mark_key_rejected(guest["codebase"], guest["label"], "%s%s" % (name, (" %s" % status) if status else ""))
+    except Exception as e:
+        _log.warning("could not record the rejected guest key: %s", e)
+    raise RuntimeError("%s's key was rejected by the provider (%s). Nothing was sent on your key; fix or replace it under "
+                       "Settings \u2192 Accounts & Keys, or say \"use my key\"." % (guest["label"], status or name))
+
+
 def _call_claude_agent(*args, **kwargs):
     """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
     _tok = _LOOP_PROVIDER.set("anthropic")
@@ -10976,6 +11933,8 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     from agent_friday.services.local_only_guard import apply_pin
     model = apply_pin("anthropic", model)
     client = get_anthropic_client()
+    # A codebase under a guest key runs on that key and nothing else (§4.7).
+    client, _guest = _guest_client_for_turn(client, session_ctx)
     if client is None:
         # One key is enough: with only an OpenRouter key, the same Claude
         # model runs the same tool loop through OpenRouter
@@ -10986,7 +11945,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
         if _alt:
             return _call_openai(
                 messages, system=system, model=_alt, max_tokens=max_tokens,
-                orb_label=orb_label, orb_icon=orb_icon, tools=tools_for_workspace(workspace),
+                orb_label=orb_label, orb_icon=orb_icon, tools=tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id")),
                 pii_lookup=pii_lookup, session_ctx=session_ctx,
                 provider=_one_key.OPENROUTER)
         raise RuntimeError(
@@ -11145,7 +12104,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     # tool called without its schema still runs and its schema arrives for
     # the next round (see services/tool_catalogue.py).
     from agent_friday.services import tool_catalogue as _TC
-    _all_tools = tools_for_workspace(workspace)
+    _all_tools = tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
     _sent_tools = (_TC.opening_set(_all_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
                    if _TC.enabled() and _all_tools else list(_all_tools))
 
@@ -11307,7 +12266,41 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 pass
             _t0 = _time.time()
             _pilot_model_round(session_ctx, "cloud")
-            resp = client.messages.create(**kwargs)
+            # Stream the turn so the UI shows the text as it is written. The
+            # local and OpenAI transports already publish every text delta to
+            # model_router.DELTA_SINK and /api/chat/stream carries it to the
+            # browser; create() showed nothing until the whole answer was
+            # back. The final message is taken from the stream, so everything
+            # below sees the same object create() returned: usage, trace,
+            # signed thinking blocks echoed back verbatim, tool_use. Only
+            # text deltas reach the sink -- thinking is the scratchpad, never
+            # the answer -- and a sink that fails cannot cost the turn. A
+            # client without stream() (a wrapper, a fake) takes create().
+            try:
+                _stream_fn = getattr(client.messages, "stream", None)
+                if callable(_stream_fn):
+                    from agent_friday.services.model_router import DELTA_SINK as _DS
+                    _sink = _DS.get()
+                    with _stream_fn(**kwargs) as _stream:
+                        for _ev in _stream:
+                            if _sink is None or getattr(_ev, "type", None) != "content_block_delta":
+                                continue
+                            _delta = getattr(_ev, "delta", None)
+                            if getattr(_delta, "type", None) != "text_delta":
+                                continue
+                            _piece = getattr(_delta, "text", None)
+                            if not _piece:
+                                continue
+                            try:
+                                _sink(_piece)
+                            except Exception:
+                                pass
+                        resp = _stream.get_final_message()
+                else:
+                    resp = client.messages.create(**kwargs)
+            except Exception as _gexc:
+                _guest_auth_failed(_guest, _gexc)      # raises for a refused guest key; never falls back
+                raise
             _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
                                              thinking_requested=bool(_thinking_cfg))
             try:
@@ -11527,7 +12520,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 # The "about to do this" narration is announced inside
                 # _execute_tool, once the governance check has let the call
                 # through: a held action is not work that is happening.
-                result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                _mtok = _CURRENT_MODEL.set(str(kwargs.get("model") or model or ""))
+                try:
+                    result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                finally:
+                    _CURRENT_MODEL.reset(_mtok)
                 # Cleared on the SUCCESS path only, deliberately not in a
                 # `finally`. If _execute_tool raised, the tool's side effect is
                 # exactly as unknown as it is after a process death, and a
@@ -11921,7 +12918,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
         _round_cost = None
         try:
             from agent_friday.services import cost_meter as _cm
-            _round_cost = _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx)
+            _round_cost = _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx,
+                                    duration_ms=int((resp.get("_duration_ms") or 0)
+                                                    if isinstance(resp, dict) else 0))
         except Exception:
             pass
 
@@ -12299,15 +13298,19 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 return _tb.limit_message("loop", detail=_loop_hit,
                                          used=_round,
                                          model=str(model or "")), tool_trace
-            # A local seat waits for every tool, on top of its own slow
-            # rounds, so its calls carry a 3 s budget: a tool that scans
-            # returns what it has by then, marked partial. The budget is read,
-            # never enforced by interruption, so no action is cut off.
-            from agent_friday.services import tool_deadline as _td
-            with (_td.budget(_td.LOCAL_TOOL_BUDGET_S) if _compact_seat == "local"
-                  else _ctxlib.nullcontext()):
-                result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
-                                       session_ctx=session_ctx)
+            _mtok = _CURRENT_MODEL.set(str(_meter_model or model or ""))
+            try:
+                # A local seat waits for every tool, on top of its own slow
+                # rounds, so its calls carry a 3 s budget: a tool that scans
+                # returns what it has by then, marked partial. The budget is read,
+                # never enforced by interruption, so no action is cut off.
+                from agent_friday.services import tool_deadline as _td
+                with (_td.budget(_td.LOCAL_TOOL_BUDGET_S) if _compact_seat == "local"
+                      else _ctxlib.nullcontext()):
+                    result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
+                                           session_ctx=session_ctx)
+            finally:
+                _CURRENT_MODEL.reset(_mtok)
             _tool_ms = int((_time.time() - _t_tool) * 1000)
             _orb_tool_trace(orb_id, tname, targs, result, _tool_ms)
             _ledger_tool_call(tname, result, _tool_ms, orb_id, session_ctx)
@@ -12398,6 +13401,26 @@ def _start_kill_hotkey():
         _log.info("pynput not installed — kill hotkey unavailable. Run: pip install pynput")
     except Exception as e:
         _log.warning("Kill hotkey listener failed: %s", e)
+
+
+# ── The Chat Hub's tools are on demand (docs/design/active/chat-hub.md) ───────
+# The hub's tools live in the workspace-tools pool, not the always-on catalogue:
+# a chat in the hub (bound to a codebase, or filed in a project) gets them in
+# its turn's catalogue, with codebase_edit resident (tool_catalogue.HUB_RESIDENT).
+# Any other chat reaches them through load_tools, by name or by a query: the
+# loader's search covers the workspace pools (tool_catalogue.expand). The
+# always-on catalogue keeps its budget (tests/unit/test_latency_budget.py), so
+# no hub tool is always-on, not even the ways in (artifact_put for the panel,
+# improve_workspace, open_project).
+HUB_TOOL_NAMES = (
+    "artifact_put", "improve_workspace", "open_project",
+    "publish_artifact", "codebase_edit", "codebase_undo", "codebase_read", "codebase_export",
+    "plan_first", "plan_approve", "plan_milestone", "workspace_swap",
+    "codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent",
+    "codebase_run", "show_preview", "build_mode",
+)
+WORKSPACE_TOOLS["hub"] = [t for t in CLAUDE_TOOLS if t.get("name") in HUB_TOOL_NAMES]
+CLAUDE_TOOLS[:] = [t for t in CLAUDE_TOOLS if t.get("name") not in HUB_TOOL_NAMES]
 
 
 # ── Tools a turn loads on demand ─────────────────────────────────────────────

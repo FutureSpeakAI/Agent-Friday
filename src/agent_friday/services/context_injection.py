@@ -101,10 +101,17 @@ def _workspace_block(workspace: str, settings: Dict[str, Any]) -> List[str]:
     return [line + "."]
 
 
-def _project_block(max_chars: int) -> List[str]:
+def _project_block(max_chars: int, conversation_id: str = "") -> List[str]:
+    """The Bible of the conversation's own project when one is known, else the
+    globally active project (pipelines and creations still work by pointer)."""
     try:
         from agent_friday.services import creative_memory
-        pid = creative_memory.get_active_project_id()
+        pid = ""
+        if conversation_id:
+            from agent_friday.services import conversations as _conv
+            pid = (_conv.load(conversation_id) or {}).get("project") or ""
+        if not pid:
+            pid = creative_memory.get_active_project_id()
         if not pid:
             return []
         block = creative_memory.project_prompt_context(pid, max_chars=max_chars)
@@ -114,7 +121,7 @@ def _project_block(max_chars: int) -> List[str]:
 
 
 def build_injected_context(workspace: str = "", message: str = "",
-                           *, max_chars: int = 2400) -> str:
+                           *, max_chars: int = 2400, conversation_id: str = "") -> str:
     """Assemble the AUTO-CONTEXT block for a system prompt.
 
     Returns "" when there's nothing to inject. The block is clearly delimited so
@@ -129,7 +136,7 @@ def build_injected_context(workspace: str = "", message: str = "",
     parts: List[str] = []
     # Project context gets the largest share of the budget (it's the highest-value
     # "remember what we're working on" signal).
-    parts += _project_block(max_chars=int(max_chars * 0.6))
+    parts += _project_block(max_chars=int(max_chars * 0.6), conversation_id=conversation_id)
     parts += _preferences_block(settings)
     parts += _workspace_block(workspace, settings)
     # Graph-aware wiki pointers for the current message (structural, no LLM).

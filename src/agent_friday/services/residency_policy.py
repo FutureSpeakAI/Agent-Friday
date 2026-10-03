@@ -411,6 +411,12 @@ def gpu_budgets(profile: dict) -> list:
         # one computed from a measurement, and the difference has to be visible
         # to whoever is asking why a seat did not fit.
         rejected = g.get("vram_display_reserve_rejected")
+        if isinstance(g.get("vram_foreign_mib"), int):
+            # Another tenant holds the card right now (device `memory.used`
+            # minus our own seats); the budget is against THAT, re-measured
+            # every refresh, not against a display reserve.
+            row["foreign_mib"] = g["vram_foreign_mib"]
+            row["foreign_sampled_at"] = g.get("vram_foreign_at")
         if rejected:
             row["baseline_source"] = "cached-floor (live reading discarded)"
             row["baseline_rejected"] = rejected
