@@ -345,6 +345,38 @@ def _stored_messages(cid: str) -> list[dict]:
     return out
 
 
+def rewrite(cid: str, fn) -> int:
+    """Apply `fn(message) -> message` to each stored message and rewrite the
+    file once, atomically. Returns how many messages changed. For the few
+    cases where history must be edited after the fact (a forgotten source)."""
+    try:
+        p = _dir(cid) / "messages.jsonl"
+    except ValueError:
+        return 0
+    with _LOCK:
+        if not p.exists():
+            return 0
+        lines, changed = [], 0
+        with open(p, "r", encoding="utf-8") as fh:
+            for line in fh:
+                raw = line.rstrip("\n")
+                if not raw.strip():
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    lines.append(raw)
+                    continue
+                before = json.dumps(msg, ensure_ascii=False, sort_keys=True)
+                out = fn(msg) or msg
+                if json.dumps(out, ensure_ascii=False, sort_keys=True) != before:
+                    changed += 1
+                lines.append(json.dumps(out, ensure_ascii=False))
+        if changed:
+            _atomic_write(p, "\n".join(lines) + "\n")
+        return changed
+
+
 def clear(cid: str, include_pinned: bool = False) -> int:
     """Scoped clear — the per-conversation replacement for /api/chat/clear.
 

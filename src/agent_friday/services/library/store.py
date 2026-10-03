@@ -227,7 +227,7 @@ class Store:
                 for s in sections:
                     cur = self.x("INSERT INTO sections(doc_id, parent_id, ord, heading, level, first_block, "
                                  "last_block, page_from, page_to) VALUES(?,?,?,?,?,?,?,?,?)",
-                                 (doc_id, sec_ids.get(s["parent"]), s["id"], s["heading"], s["level"],
+                                 (doc_id, sec_ids.get(s["parent"]), s["id"], self._enc(s["heading"], shelf), s["level"],
                                   s["first"], s["last"], s["page_from"], s["page_to"]))
                     sec_ids[s["id"]] = cur.lastrowid
                 block_of_ord: dict[int, int] = {}
@@ -255,10 +255,10 @@ class Store:
                         self.x("INSERT INTO fts(rowid, title, headings, body) VALUES(?,?,?,?)",
                                (cur.lastrowid, title, head_of[p["section"]], p["text"]))
                 self.x("INSERT OR REPLACE INTO profiles(node_kind, node_id, text) VALUES('document',?,?)",
-                       (doc_id, doc_profile))
+                       (doc_id, self._enc(doc_profile, shelf)))
                 for local, text in section_profiles.items():
                     self.x("INSERT OR REPLACE INTO profiles(node_kind, node_id, text) VALUES('section',?,?)",
-                           (sec_ids[local], text))
+                           (sec_ids[local], self._enc(text, shelf)))
                 self.x("UPDATE documents SET title=?, pages=?, shelf=?, index_version=?, state='indexed', "
                        "state_detail=NULL, indexed_at=?, ocr_pages=?, sha256=COALESCE(?, sha256) WHERE id=?",
                        (title, pages, shelf, INDEX_VERSION, time.time(), ocr_pages, sha256, doc_id))
@@ -309,6 +309,24 @@ class Store:
                          "WHERE parent_id IS NOT NULL)").rowcount:
                 pass
 
+    # -- receipts and citations (nothing is written off the record) -----------
+
+    def add_receipt(self, search_id: str, data: dict) -> None:
+        """Why a search found what it found: ids and numbers, never passage text."""
+        from agent_friday.services import off_record
+        if off_record.skip("library"):
+            return
+        self.x("INSERT INTO receipts(search_id, ts, data) VALUES(?,?,?)",
+               (search_id, time.time(), json.dumps(data, separators=(",", ":"))))
+
+    def add_citation(self, block_id: int, doc_id: int, conversation_id: str | None,
+                     message_id: str | None) -> None:
+        from agent_friday.services import off_record
+        if off_record.skip("library"):
+            return
+        self.x("INSERT INTO cited_in(block_id, doc_id, conversation_id, message_id, ts) VALUES(?,?,?,?,?)",
+               (block_id, doc_id, conversation_id, message_id, time.time()))
+
     # -- reading --------------------------------------------------------------
 
     def block(self, block_id: int):
@@ -321,8 +339,29 @@ class Store:
     def passage_text(self, row, shelf: str) -> str:
         return self.dec(row["text"], shelf)
 
-    def sections_of(self, doc_id: int) -> list[sqlite3.Row]:
-        return self.q("SELECT * FROM sections WHERE doc_id=? ORDER BY ord", (doc_id,))
+    def sections_of(self, doc_id: int) -> list[dict]:
+        """The document's sections with headings readable (a vault-shelf heading
+        reads 'Locked section' while the vault is locked)."""
+        doc = self.get_document(doc_id)
+        shelf = doc["shelf"] if doc else "open"
+        out = []
+        for r in self.q("SELECT * FROM sections WHERE doc_id=? ORDER BY ord", (doc_id,)):
+            d = dict(r)
+            try:
+                d["heading"] = self.dec(d["heading"], shelf)
+            except VaultLocked:
+                d["heading"] = "Locked section"
+            out.append(d)
+        return out
+
+    def profile(self, kind: str, node_id: int, shelf: str = "open") -> str | None:
+        row = self.one("SELECT text FROM profiles WHERE node_kind=? AND node_id=?", (kind, node_id))
+        if not row:
+            return None
+        try:
+            return self.dec(row["text"], shelf)
+        except VaultLocked:
+            return None
 
     def tombstoned(self, sha256: str | None, path: str) -> bool:
         return bool(self.one("SELECT 1 FROM tombstones WHERE (sha256=? AND sha256 IS NOT NULL) OR path=?",

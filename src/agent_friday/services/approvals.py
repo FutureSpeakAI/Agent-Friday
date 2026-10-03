@@ -104,6 +104,11 @@ DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
+    # Library changes Friday proposes (services/library/cards.py): the click is
+    # the consent, as it is for a file grant.
+    "library_add_request": frozenset({"owner:ui"}),
+    "library_remove_request": frozenset({"owner:ui"}),
+    "library_forget_request": frozenset({"owner:ui"}),
 }
 
 

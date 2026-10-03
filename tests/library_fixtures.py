@@ -80,3 +80,34 @@ def make_docx(paragraphs: list[tuple[str, str]], *, doctype: str = "") -> bytes:
                    '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
         z.writestr("word/document.xml", xml)
     return buf.getvalue()
+
+
+def isolate_library(tmp_path, monkeypatch):
+    """A scratch Friday home, ledger and store registry for one test."""
+    from agent_friday.services import file_grants as fg
+    from agent_friday.services.library import store as lstore
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "fh"))
+    monkeypatch.setattr(fg, "_ledger_path", lambda: tmp_path / "privacy" / "file_grants.jsonl")
+    fg._invalidate_cache()
+    lstore.forget_open_stores()
+    return fg, lstore
+
+
+def release_library(fg, lstore):
+    fg._invalidate_cache()
+    lstore.forget_open_stores()
+
+
+def write_docs(folder, docs: dict):
+    """{relative name: text or bytes} -> files under folder."""
+    from pathlib import Path
+    out = {}
+    for name, body in docs.items():
+        p = Path(folder) / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(body, bytes):
+            p.write_bytes(body)
+        else:
+            p.write_text(body, encoding="utf-8")
+        out[name] = p
+    return out

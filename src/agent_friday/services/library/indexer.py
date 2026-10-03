@@ -23,7 +23,8 @@ from agent_friday.services.library.textclean import safe_title
 SKIP_DIRS = {"node_modules", ".git", ".hg", ".svn", "__pycache__", ".venv", "venv", ".cache", "$RECYCLE.BIN",
              "System Volume Information"}
 
-Classify = Callable[[str, str], str]
+# (path, title, sample text) -> "open" | "vault"
+Classify = Callable[[Path, str, str], str]
 
 
 def file_sha256(path: Path) -> str:
@@ -102,6 +103,10 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
         rel_s = ""
     scope_root = str(scope_p.resolve() if scope_p.is_dir() else p.parent)
     kind = _ext.kind_for(p)
+    prior = store.find_document(str(p))
+    if (prior and not force and prior["state"] == "indexed" and prior["size"] == st.st_size
+            and prior["mtime"] == st.st_mtime and prior["index_version"] == INDEX_VERSION):
+        return {"state": "unchanged", "doc_id": prior["id"], "detail": None}   # same size and time: not re-read
     sha = None
     try:
         sha = file_sha256(p) if st.st_size <= _ext.caps.MAX_FILE_BYTES else None
@@ -132,7 +137,10 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
     blocks = res["blocks"]
     title = res["title"]
     sample = "\n".join(b["text"] for b in blocks[:40])[:4000]
-    chosen = shelf or (classify(title, sample) if classify else "open")
+    chosen = shelf or (classify(p, title, sample) if classify else "open")
+    if chosen == "vault" and not store.vault_open():
+        store.set_state(doc_id, "skipped:sensitive", "looks sensitive, and the vault isn't set up")
+        return {"state": "skipped", "doc_id": doc_id, "detail": "sensitive"}
     try:
         sections = structure.build_sections(blocks, title)
         passages: list[dict] = []
@@ -157,7 +165,7 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
 
 def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob: str | None = None,
                 kinds: set[str] | None = None, classify: Classify | None = None,
-                allowed: Callable[[Path], bool] | None = None) -> dict:
+                allowed: Callable[[Path], bool] | None = None, gate=None) -> dict:
     """Index new and changed files under `scope`; purge rows of files that are
     gone. `allowed` is the consent check: a path it refuses is not read."""
     out = {"indexed": 0, "unchanged": 0, "failed": 0, "skipped": 0, "purged": 0}
@@ -169,7 +177,11 @@ def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob
             seen.add(str(p.resolve()))
         except OSError:
             continue
-        r = index_file(store, p, scope, classify=classify)
+        if gate is not None:
+            with gate():
+                r = index_file(store, p, scope, classify=classify)
+        else:
+            r = index_file(store, p, scope, classify=classify)
         out[r["state"] if r["state"] in out else "failed"] += 1
     root = Path(scope)
     try:
@@ -188,11 +200,13 @@ class Indexer:
     """A background worker that indexes queued files, one at a time."""
 
     def __init__(self, principal: str = OWNER, *, can_run: Callable[[], bool] | None = None,
-                 classify: Classify | None = None, allowed: Callable[[Path], bool] | None = None):
+                 classify: Classify | None = None, allowed: Callable[[Path], bool] | None = None,
+                 gate=None):
         self.principal = principal
         self.can_run = can_run or (lambda: True)
         self.classify = classify
         self.allowed = allowed
+        self.gate = gate
         self._q: list[tuple] = []
         self._cv = threading.Condition()
         self._thread: threading.Thread | None = None
@@ -238,7 +252,8 @@ class Indexer:
                     return
             self.current = scope
             try:
-                sweep_scope(store_for(self.principal), scope, classify=self.classify, allowed=self.allowed, **kw)
+                sweep_scope(store_for(self.principal), scope, classify=self.classify, allowed=self.allowed,
+                            gate=self.gate, **kw)
             except Exception:  # noqa: BLE001 - one scope's failure must not stop the queue
                 pass
             finally:

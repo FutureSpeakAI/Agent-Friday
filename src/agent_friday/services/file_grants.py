@@ -169,6 +169,13 @@ class LedgerState:
     #: grants suspended: what it said cannot be known, so it might have been a
     #: deny, and moving it aside must not be what lets content out.
     held: int = 0
+    #: "Add to the Library" consents (library_add, folded through library_remove
+    #: and revoke). They let Friday READ and index a path on this PC; they are
+    #: never a cloud grant. Empty while the ledger is suspended, like grants.
+    library: dict = field(default_factory=dict)
+    paused_library: dict = field(default_factory=dict)
+    #: (principal, normcased path) -> "open" | "vault", from library_shelf events.
+    library_shelves: dict = field(default_factory=dict)
 
 
 #: Ledger events that can only ever ADD access. Removing one of these from the
@@ -321,6 +328,23 @@ def _fold(events: list[dict]) -> tuple[dict, dict]:
             grants.pop(tgt, None)
             denies.pop(tgt, None)
     return grants, denies
+
+
+def _fold_library(events: list[dict]) -> tuple[dict, dict]:
+    """The live Library consents and shelf choices. A remove, or a revoke of the
+    consent's id, ends one; a later shelf event for a path replaces an earlier."""
+    import os
+    adds: dict = {}
+    shelves: dict = {}
+    for ev in events:
+        et = ev.get("event")
+        if et == "library_add" and ev.get("id"):
+            adds[ev["id"]] = ev
+        elif et in ("library_remove", "revoke"):
+            adds.pop(ev.get("target_id"), None)
+        elif et == "library_shelf" and ev.get("path") and ev.get("shelf") in ("open", "vault"):
+            shelves[(str(ev.get("principal") or "owner"), os.path.normcase(str(ev["path"])))] = ev["shelf"]
+    return adds, shelves
 
 
 def _push(**kwargs) -> bool:
@@ -499,10 +523,15 @@ def _load_state(force: bool = False) -> LedgerState:
         dropped = len(scan["dropped"])
         suspended = dropped > 0 or held > 0
         paused: dict = {}
+        library, shelves = _fold_library(scan["events"])
+        paused_library: dict = {}
         if suspended:
             paused, grants = grants, {}   # suspenders mode: ALL grants suspended
+            paused_library, library = library, {}   # and the Library's consents with them
         state = LedgerState(grants=grants, denies=denies, suspended=suspended,
-                            dropped=dropped, paused_grants=paused, held=held)
+                            dropped=dropped, paused_grants=paused, held=held,
+                            library=library, paused_library=paused_library,
+                            library_shelves=shelves)
         _STATE_CACHE["mtime"] = mtime
         _STATE_CACHE["state"] = state
     if suspended:
