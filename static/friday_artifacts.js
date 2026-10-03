@@ -126,7 +126,7 @@
       if (bus.es) {
         bus.es.onmessage = e => {
           let m = null; try { m = JSON.parse(e.data); } catch (_) { return; }
-          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step', 'codebase_run' || m.type === 'workspace_bundle_changed' || m.type === 'open_conversation' || m.type === 'codebase_header')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
+          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step' || m.type === 'codebase_run' || m.type === 'workspace_bundle_changed' || m.type === 'open_conversation' || m.type === 'codebase_header')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
         };
         // The stream reconnects by itself; while it is down, a slow poll keeps
         // the panel honest.

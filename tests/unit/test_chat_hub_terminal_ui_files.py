@@ -33,6 +33,6 @@ def test_a_new_run_reaches_the_panel_on_the_bus():
 def test_the_terminal_asks_friday_in_chat_never_a_process_directly():
     js = _read(PANEL_JS)
     panel = js[js.index("function CodebasePanel("):js.index("function FridayArtifactHost(")]
-    term = panel[panel.index("data-codebase-runs"):]
-    assert "/api/chat/send" in term, "a typed command goes through the chat"
+    ask = panel[panel.index("const askRun"):panel.index("data-codebase-runs")]
+    assert "/api/chat/send" in ask, "a typed command goes through the chat"
     assert not re.search(r"/api/codebases/[^']*/(run|exec|shell)'", panel), "no route runs a command from the page"
