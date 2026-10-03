@@ -71,6 +71,15 @@ _WEEKLY_DECAY = 0.95
 _PRIOR_STRENGTH = 3.0
 # Cap stored observations per source so the file can't grow without bound.
 _MAX_OBSERVATIONS = 400
+#: An (article, evidence type) pair counts once, ever: the archiver hands the
+#: whole pool to analyze_fetch every tick, and without this the same headline
+#: was observed again every five minutes until it pushed older evidence out.
+_MAX_EVIDENCE_KEYS = 2000
+#: Titles a source has run, so a correction can be matched to the article
+#: it corrects. A correction with no prior article is just a headline word.
+_MAX_RECENT_TITLES = 300
+_CORRECTIONS_PER_WEEK = 2
+_CORRECTION_MATCH_JACCARD = 0.3
 
 # Seed reputations so a brand-new graph still produces sensible badges. These
 # mirror the static trust map in server.py; the live graph diverges from them
@@ -218,6 +227,58 @@ def _seed_for(domain):
 
 #: path -> ((mtime_ns, size), parsed data); see SourceTrustGraph._load_readonly.
 _READ_CACHE: dict = {}
+
+
+import hashlib as _hashlib
+
+
+def _article_key(art) -> str:
+    """A stable id for an article: its URL, else its title."""
+    basis = (art.get("url") or "").strip() or (art.get("title") or "").strip().lower()
+    if not basis:
+        return ""
+    return _hashlib.sha1(basis.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+_WORD_RX = re.compile(r"[a-z0-9]{3,}")
+_CORRECTION_WORDS = frozenset({"correction", "corrected", "retraction", "retract", "retracts",
+                               "retracted", "regret", "editor", "note", "clarify",
+                               "clarification", "clarifies", "clarified", "updates", "update",
+                               "earlier"})
+
+
+def _title_words(title) -> set:
+    return {w for w in _WORD_RX.findall((title or "").lower()) if w not in _CORRECTION_WORDS}
+
+
+def _corrects_a_prior_article(rec, title) -> bool:
+    """True when this correction resembles an article the source ran before."""
+    words = _title_words(title)
+    if not words:
+        return False
+    for prior in rec.get("recent_titles") or []:
+        pw = _title_words(prior.get("t"))
+        if not pw:
+            continue
+        j = len(words & pw) / float(len(words | pw))
+        if j >= _CORRECTION_MATCH_JACCARD:
+            return True
+    return False
+
+
+def _corrections_this_week(rec) -> int:
+    cutoff = (datetime.now() - __import__("datetime").timedelta(days=7)).date()
+    n = 0
+    for o in rec.get("observations") or []:
+        if o.get("type") != "correction_issued":
+            continue
+        try:
+            d = datetime.strptime(str(o.get("date"))[:10], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        if d >= cutoff:
+            n += 1
+    return n
 
 
 class SourceTrustGraph:
@@ -471,13 +532,15 @@ class SourceTrustGraph:
 
         Heuristics (snippet/title-level, no model call):
           * Per-article attribution + opinion-separation signals.
-          * Correction/retraction detection.
-          * Within a cluster of 7+ sources, a source holding the *minority*
-            sentiment is logged as a minority_claim (factual_accuracy down) —
-            unless its snippet cites a primary source, in which case it's
-            credited as narrative_independence instead.
+          * Correction/retraction detection, counted only against an article
+            the same source ran before, at most two a week.
           * Within a small cluster (2-3 sources) whose coverage cites primary
             documents, the covering sources get a factual_accuracy boost.
+
+        Every (article, evidence type) pair counts once, ever, so handing the
+        same pool back every tick adds nothing. Disagreeing with the pack is
+        not evidence of anything: the sentiment-based minority penalty is
+        gone, and a lonely framing waits for the claim to resolve.
         """
         summary = {"attribution": 0, "opinion": 0, "corrections": 0,
                    "minority_claims": 0, "primary_boosts": 0,
@@ -496,34 +559,42 @@ class SourceTrustGraph:
                 snippet = art.get("snippet") or ""
                 url = art.get("url") or ""
                 text = f"{title} {snippet}"
+                akey = _article_key(art)
 
                 # Correction behaviour: a correction/retraction is positive
-                # evidence that the source owns its mistakes.
+                # evidence that the source owns its mistakes -- when it
+                # corrects something the source actually ran. A headline that
+                # merely contains the word is not accountability, and a flood
+                # of them is a way to farm the dimension: at most two a week.
                 if _CORRECTION_RX.search(text):
-                    self._append(rec, "correction_issued", "correction_behavior",
-                                 0.95, detail=title[:160])
-                    summary["corrections"] += 1
+                    if (_corrects_a_prior_article(rec, title)
+                            and _corrections_this_week(rec) < _CORRECTIONS_PER_WEEK
+                            and self._append(rec, "correction_issued", "correction_behavior",
+                                             0.95, detail=title[:160], article_key=akey)):
+                        summary["corrections"] += 1
+                elif title:
+                    self._remember_title(rec, title)
 
                 # Source attribution: reward visible citation; lightly penalise
                 # a substantive snippet that cites nothing.
                 if _ATTRIBUTION_RX.search(text) or "http" in snippet:
-                    self._append(rec, "attribution_present", "source_attribution",
-                                 0.9, detail=title[:160])
-                    summary["attribution"] += 1
+                    if self._append(rec, "attribution_present", "source_attribution",
+                                    0.9, detail=title[:160], article_key=akey):
+                        summary["attribution"] += 1
                 elif len(snippet) > 140:
                     self._append(rec, "attribution_absent", "source_attribution",
-                                 0.3, detail=title[:160])
+                                 0.3, detail=title[:160], article_key=akey)
 
                 # Opinion separation: clearly-labelled opinion (section path) is
                 # good practice. Opinion language with no label is a soft miss.
                 cat = (art.get("category") or "").lower()
                 if _OPINION_PATH_RX.search(url) or cat in ("opinion", "analysis"):
-                    self._append(rec, "opinion_labeled", "opinion_separation",
-                                 0.9, detail=title[:160])
-                    summary["opinion"] += 1
+                    if self._append(rec, "opinion_labeled", "opinion_separation",
+                                    0.9, detail=title[:160], article_key=akey):
+                        summary["opinion"] += 1
                 elif _OPINION_WORD_RX.search(title) and not _OPINION_PATH_RX.search(url):
                     self._append(rec, "opinion_unlabeled", "opinion_separation",
-                                 0.4, detail=title[:160])
+                                 0.4, detail=title[:160], article_key=akey)
 
             # ── 2. Cluster-level cross-source comparison ──
             for cl in clusters or []:
@@ -541,48 +612,17 @@ class SourceTrustGraph:
                         if not domain:
                             continue
                         rec = self._get_or_create(data, domain)
-                        self._append(
-                            rec, "primary_corroborated", "factual_accuracy", 0.9,
-                            detail=f"Primary-sourced story: {cl.get('headline','')[:120]}",
-                            counter_sources=[])
-                        summary["primary_boosts"] += 1
+                        if self._append(
+                                rec, "primary_corroborated", "factual_accuracy", 0.9,
+                                detail=f"Primary-sourced story: {cl.get('headline','')[:120]}",
+                                counter_sources=[], article_key=_article_key(a)):
+                            summary["primary_boosts"] += 1
 
-                # Large consensus story with a 1-2 source minority: the minority
-                # is either contradicting the field (factual ding) or breaking
-                # from the pack with documents (independence credit).
-                if src_count >= 7:
-                    sentiments = [a.get("sentiment") for a in arts if a.get("sentiment")]
-                    if sentiments:
-                        majority = max(set(sentiments), key=sentiments.count)
-                        maj_count = sentiments.count(majority)
-                        minority = [a for a in arts
-                                    if a.get("sentiment") and a.get("sentiment") != majority]
-                        # Only treat as a genuine minority when the consensus is
-                        # strong (majority is most of the field) and the dissent
-                        # is small (1-2 outlets).
-                        if maj_count >= src_count - 2 and 1 <= len(minority) <= 2:
-                            consensus_srcs = sorted({a.get("source") for a in arts
-                                                     if a.get("sentiment") == majority})
-                            for a in minority:
-                                domain = _extract_domain(a.get("source") or a.get("url", ""))
-                                if not domain:
-                                    continue
-                                rec = self._get_or_create(data, domain)
-                                txt = f"{a.get('title','')} {a.get('snippet','')}"
-                                if _PRIMARY_SOURCE_RX.search(txt):
-                                    self._append(
-                                        rec, "narrative_break", "narrative_independence",
-                                        0.85,
-                                        detail=f"Broke from {len(consensus_srcs)}-source consensus with primary sourcing: {a.get('title','')[:100]}",
-                                        counter_sources=consensus_srcs[:8])
-                                    summary["independence"] += 1
-                                else:
-                                    self._append(
-                                        rec, "minority_claim", "factual_accuracy",
-                                        0.25,
-                                        detail=f"Minority framing vs {len(consensus_srcs)}-source consensus: {a.get('title','')[:100]}",
-                                        counter_sources=consensus_srcs[:8])
-                                    summary["minority_claims"] += 1
+                # A source that disagrees with a large consensus is NOT marked
+                # down for it. Sentiment is not a claim and agreement is not
+                # accuracy; scoops and early corrections of a wrong consensus
+                # all start as the minority framing. Claim resolution (a later
+                # phase) is what decides who was right.
 
             # Recompute every touched source and persist once.
             for domain in list(data["sources"].keys()):
@@ -591,8 +631,20 @@ class SourceTrustGraph:
         return summary
 
     def _append(self, rec, obs_type, dimension, signal, detail="",
-                counter_sources=None, signed_by="local"):
-        """Internal: append an observation to an in-memory record (caller saves)."""
+                counter_sources=None, signed_by="local", article_key=None):
+        """Internal: append an observation to an in-memory record (caller saves).
+
+        Returns True when the observation was added. With an ``article_key``
+        the pair (article, obs_type) counts once, ever; a repeat returns False.
+        """
+        if article_key:
+            ek = f"{article_key}:{obs_type}"
+            keys = rec.setdefault("evidence_keys", [])
+            if ek in keys:
+                return False
+            keys.append(ek)
+            if len(keys) > _MAX_EVIDENCE_KEYS:
+                del keys[:-_MAX_EVIDENCE_KEYS]
         rec.setdefault("observations", []).append({
             "date": _today_str(),
             "type": obs_type,
@@ -604,6 +656,18 @@ class SourceTrustGraph:
         })
         if len(rec["observations"]) > _MAX_OBSERVATIONS:
             rec["observations"] = rec["observations"][-_MAX_OBSERVATIONS:]
+        return True
+
+    @staticmethod
+    def _remember_title(rec, title):
+        """Keep the titles a source ran, so a later correction can be matched."""
+        titles = rec.setdefault("recent_titles", [])
+        t = (title or "")[:160]
+        if any(x.get("t") == t for x in titles[-50:]):
+            return
+        titles.append({"t": t, "d": _today_str()})
+        if len(titles) > _MAX_RECENT_TITLES:
+            del titles[:-_MAX_RECENT_TITLES]
 
 
 # ── singleton accessor ─────────────────────────────────────────────
