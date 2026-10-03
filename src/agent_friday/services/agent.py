@@ -11372,6 +11372,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
 #  Ollama. Only called when the model router selects a local model.
 # ══════════════════════════════════════════════════════════════
 
+# The wrapper above only sets the loop-provider ContextVar; its signature is
+# the real one's (inspect.signature follows __wrapped__).
+_call_claude_agent.__wrapped__ = _call_claude_agent_run
+
+
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
     """The shared OpenAI-format loop. It names its provider for the run so a
     handler can tell a local seat from the cloud: a loopback seat we serve
@@ -12032,6 +12037,11 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
 #  soft limit, compress older turns into a dense summary block
 #  while keeping recent turns verbatim.
 # ══════════════════════════════════════════════════════════════
+
+# The wrapper above only sets the loop-provider ContextVar; its signature is
+# the real one's (inspect.signature follows __wrapped__).
+_oai_agentic_loop.__wrapped__ = _oai_agentic_loop_run
+
 
 _TRAJ_CHAR_LIMIT = 2_000_000   # ~500K tokens; Opus 4.8 has 1M ctx — only compress at this threshold
 _TRAJ_KEEP_VERBATIM = 20       # keep last 20 turn-pairs (~40 messages) verbatim
