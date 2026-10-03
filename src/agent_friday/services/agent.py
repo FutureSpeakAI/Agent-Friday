@@ -27,6 +27,13 @@ _CURRENT_OWNER_TEXT: ContextVar = ContextVar("friday_tool_owner_text", default="
 #: its result goes to the cloud voice model, which is never handed raw private
 #: data (docs/reference/voice-tool-contract.md §5).
 _CURRENT_SURFACE: ContextVar = ContextVar("friday_tool_surface", default="")
+#: The provider the running tool loop talks to, set by the loop itself
+#: (the Anthropic loop is always cloud; the OpenAI-format loop names its
+#: provider), and the provider a handler may ask about during one call.
+#: A handler that hands out a person's record asks this, and treats
+#: "unknown" as "not local": people trust stays home (trust/people.py).
+_LOOP_PROVIDER: ContextVar = ContextVar("friday_loop_provider", default=None)
+_CURRENT_PROVIDER: ContextVar = ContextVar("friday_tool_provider", default=None)
 import subprocess
 import shutil
 import base64
@@ -1202,17 +1209,21 @@ def _tool_query_trust_graph(inp):
     # Defined in services/misc_engine.py — an UPPER layer — so it must be
     # imported lazily at call time (module-level would be circular).
     from agent_friday.services.misc_engine import _load_trust_graph
+    from agent_friday.trust import people as _tp
     graph = _load_trust_graph()
     people = graph.get('people') or {}
     items = people.values() if isinstance(people, dict) else people
+    # People trust stays home: the full record (dimensions, evidence, saved
+    # intelligence, notes) goes only to a loop that is KNOWN local. A cloud
+    # loop, or one whose provider is unknown, gets role, confirmed
+    # relationship and contact channel.
+    _local = _tp.loop_is_local(_CURRENT_PROVIDER.get())
     for p in items:
         if not isinstance(p, dict):
             continue
-        if (p.get('name') or '').strip().lower() == name:
-            return json.dumps(p, default=str)[:100_000]
         aliases = [str(a).lower() for a in (p.get('aliases') or [])]
-        if name in aliases:
-            return json.dumps(p, default=str)[:100_000]
+        if (p.get('name') or '').strip().lower() == name or name in aliases:
+            return json.dumps(_tp.view_for_loop(p, local=_local), default=str)[:100_000]
     return f"No trust-graph entry found for {name!r}."
 
 
@@ -9126,12 +9137,14 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
             else str(_sc.get("owner_text") or ""))
         _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
+        _prov_tok = _CURRENT_PROVIDER.set(_sc.get("provider") or _LOOP_PROVIDER.get())
         try:
             _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
             _cred_paths.REFUSED.set(False)
             result = handler(ctx.input)
             _refused = _cred_paths.REFUSED.get()
         finally:
+            _CURRENT_PROVIDER.reset(_prov_tok)
             _CURRENT_SURFACE.reset(_surface_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
             _gate_mod.DECIDED.reset(_dtok)
@@ -10734,7 +10747,16 @@ def _no_empty_text(messages):
     return out
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None):
+def _call_claude_agent(*args, **kwargs):
+    """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
+    _tok = _LOOP_PROVIDER.set("anthropic")
+    try:
+        return _call_claude_agent_run(*args, **kwargs)
+    finally:
+        _LOOP_PROVIDER.reset(_tok)
+
+
+def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -11346,7 +11368,18 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 #  Ollama. Only called when the model router selects a local model.
 # ══════════════════════════════════════════════════════════════
 
-def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
+def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
+    """The shared OpenAI-format loop. It names its provider for the run so a
+    handler can tell a local seat from the cloud. See _oai_agentic_loop_run."""
+    _tok = _LOOP_PROVIDER.set(provider)
+    try:
+        return _oai_agentic_loop_run(convo, oai_tools, send_fn, provider=provider,
+                                     model=model, **kw)
+    finally:
+        _LOOP_PROVIDER.reset(_tok)
+
+
+def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                       pii_lookup=None, session_ctx=None, max_iters=None, orb=None,
                       meter_provider=None, orb_id=None, seat=None,
                       catalogue_all=None, max_tokens=None):

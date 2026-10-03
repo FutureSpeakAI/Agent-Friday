@@ -3189,6 +3189,15 @@ except Exception:
 CAREER_OPS_DIR = HOME / 'Projects' / 'career-ops' / 'data'
 WIKI_DIR_FRIDAY = HOME / ".friday" / "wiki"
 
+def _people_trust_allowed(provider) -> bool:
+    """People trust is assembled for a local model only (trust/people.py)."""
+    try:
+        from agent_friday.trust.people import loop_is_local
+        return loop_is_local(provider)
+    except Exception:
+        return False
+
+
 def _load_vault_summary():
     """Load a lightweight summary of all core vault data for context injection."""
     ctx = {}
@@ -3589,7 +3598,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         )
         sources_consulted.append('personality')
 
-    if 'trust' in needs and 'trust_people' in vault:
+    # People trust stays home: these sections exist for a LOCAL model only,
+    # whatever the vault gating says, so no posture can send them.
+    if 'trust' in needs and 'trust_people' in vault and _people_trust_allowed(provider):
         # Check if message references a specific person
         trust_data_raw = None
         tfile = FRIDAY_DIR / "trust_graph.json"
@@ -3761,7 +3772,8 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # hints. Anything missing can be fetched on demand via search_wiki /
     # read_wiki tools. Capped ~8KB to keep the system prompt lean.
     try:
-        wiki_smart = _load_smart_context(message, workspace)
+        wiki_smart = _load_smart_context(message, workspace,
+                                         include_people=_people_trust_allowed(provider))
         if wiki_smart:
             _smart_text = (
                 "\n== PERSONAL CONTEXT (smart-loaded for this turn) ==\n"
@@ -3889,7 +3901,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     return '\n'.join(t for _, t in sections), sources_consulted
 
 
-def _load_smart_context(user_message, workspace=None):
+def _load_smart_context(user_message, workspace=None, include_people=True):
     """Load only relevant wiki context based on the user's message and active workspace.
 
     Keyword-driven loader — instead of dumping the full ~80KB wiki into every
@@ -3933,9 +3945,10 @@ def _load_smart_context(user_message, workspace=None):
     if any(w in msg_lower for w in ['health', 'medication', 'doctor', 'appointment', 'insurance']):
         _load_friday_data(context_parts, "health", max_bytes=10_000)
 
-    # Person-name detection — pull the trust-graph entry for anyone named
+    # Person-name detection — pull the trust-graph entry for anyone named.
+    # Never for a cloud model: people trust stays home (trust/people.py).
     trust_path = FRIDAY_DIR / "trust_graph.json"
-    if trust_path.exists():
+    if include_people and trust_path.exists():
         try:
             trust = json.loads(trust_path.read_text(encoding='utf-8'))
             people = trust.get('people', {})
