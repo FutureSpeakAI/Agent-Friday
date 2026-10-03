@@ -76,6 +76,8 @@ jobs:
         run: python scripts/check_settings_readers.py
       - name: Stale model names
         run: python scripts/check_stale_model_names.py
+      - name: Governance never reads trust
+        run: python scripts/check_trust_in_governance.py
       - name: Brand tokens
         run: python scripts/check_brand_tokens.py
       - name: Markdown links

@@ -3189,6 +3189,34 @@ except Exception:
 CAREER_OPS_DIR = HOME / 'Projects' / 'career-ops' / 'data'
 WIKI_DIR_FRIDAY = HOME / ".friday" / "wiki"
 
+def _honesty_rules_text() -> str:
+    """Friday's fixed honesty rules, registered gate-exempt once (no user data)."""
+    try:
+        from agent_friday.epistemic_engine import HONESTY_POLICY as _text
+    except Exception:
+        return ""
+    if _text not in _TOOLS_BLOCK_REGISTERED_HONESTY:
+        try:
+            from agent_friday.services.egress_gate import register_trusted_text as _reg
+            _reg(_text)
+        except Exception:
+            pass
+        _TOOLS_BLOCK_REGISTERED_HONESTY.add(_text)
+    return _text
+
+
+_TOOLS_BLOCK_REGISTERED_HONESTY = set()
+
+
+def _people_trust_allowed(provider) -> bool:
+    """People trust is assembled for a local model only (trust/people.py)."""
+    try:
+        from agent_friday.trust.people import loop_is_local
+        return loop_is_local(provider)
+    except Exception:
+        return False
+
+
 def _load_vault_summary():
     """Load a lightweight summary of all core vault data for context injection."""
     ctx = {}
@@ -3589,7 +3617,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         )
         sources_consulted.append('personality')
 
-    if 'trust' in needs and 'trust_people' in vault:
+    # People trust stays home: these sections exist for a LOCAL model only,
+    # whatever the vault gating says, so no posture can send them.
+    if 'trust' in needs and 'trust_people' in vault and _people_trust_allowed(provider):
         # Check if message references a specific person
         trust_data_raw = None
         tfile = FRIDAY_DIR / "trust_graph.json"
@@ -3673,18 +3703,13 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             sources_consulted.append('wiki')
             _retrieved += len(wiki_results)
 
-    if 'epistemic' in needs:
-        try:
-            from agent_friday.epistemic_engine import get_epistemic_engine
-            _ee = get_epistemic_engine()
-            add(f"\n== EPISTEMIC STATE ==\n{_ee.get_prompt_injection()}", _T1)
-        except Exception:
-            if 'epistemic' in vault:
-                add(
-                    f"\n== EPISTEMIC STATE ==\n"
-                    f"Independence score: {vault['epistemic'].get('overall', 0.72)}",
-                    _T1,
-                )
+    # Honesty rules: fixed text, the same bytes whatever any score says. The
+    # block this replaces carried the epistemic score and told the model to
+    # increase pushback when it fell (the metric-chasing the north star
+    # forbids); the fallback leaked the score too.
+    _honesty = _honesty_rules_text()
+    if _honesty:
+        add("\n== HONESTY ==\n" + _honesty, _T1)
 
     # Layer 2.5: Project context files (.friday-context.md / AGENTS.md)
     # Hermes-inspired: drop a context file in any project directory and Friday
@@ -3761,7 +3786,8 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # hints. Anything missing can be fetched on demand via search_wiki /
     # read_wiki tools. Capped ~8KB to keep the system prompt lean.
     try:
-        wiki_smart = _load_smart_context(message, workspace)
+        wiki_smart = _load_smart_context(message, workspace,
+                                         include_people=_people_trust_allowed(provider))
         if wiki_smart:
             _smart_text = (
                 "\n== PERSONAL CONTEXT (smart-loaded for this turn) ==\n"
@@ -3889,7 +3915,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     return '\n'.join(t for _, t in sections), sources_consulted
 
 
-def _load_smart_context(user_message, workspace=None):
+def _load_smart_context(user_message, workspace=None, include_people=True):
     """Load only relevant wiki context based on the user's message and active workspace.
 
     Keyword-driven loader — instead of dumping the full ~80KB wiki into every
@@ -3933,9 +3959,10 @@ def _load_smart_context(user_message, workspace=None):
     if any(w in msg_lower for w in ['health', 'medication', 'doctor', 'appointment', 'insurance']):
         _load_friday_data(context_parts, "health", max_bytes=10_000)
 
-    # Person-name detection — pull the trust-graph entry for anyone named
+    # Person-name detection — pull the trust-graph entry for anyone named.
+    # Never for a cloud model: people trust stays home (trust/people.py).
     trust_path = FRIDAY_DIR / "trust_graph.json"
-    if trust_path.exists():
+    if include_people and trust_path.exists():
         try:
             trust = json.loads(trust_path.read_text(encoding='utf-8'))
             people = trust.get('people', {})

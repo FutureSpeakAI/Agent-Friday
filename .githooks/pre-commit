@@ -83,6 +83,14 @@ if ! $PY "$HERE/../scripts/check_stale_model_names.py"; then
     exit 1
 fi
 
+# Governance never reads trust: trust may add caution and can never clear a
+# card (scripts/check_trust_in_governance.py). AST walk, stdlib only.
+if ! $PY "$HERE/../scripts/check_trust_in_governance.py"; then
+    echo "[pre-commit] trust-in-governance check FAILED - commit blocked." >&2
+    echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+    exit 1
+fi
+
 # ── Brand token check ─────────────────────────────────────────────────────
 # The palette lives in src/agent_friday/brand.py; the UI carries one --fr-*
 # token block in index.html and ui_parts/head.html. Fails when the two blocks

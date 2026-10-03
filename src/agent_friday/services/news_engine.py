@@ -1243,9 +1243,8 @@ def _local_news(label):
     return deco
 
 
-# Below this independence_fostering score the editorial is regenerated with a
-# stronger pushback prompt.
-EDITORIAL_INDEPENDENCE_FLOOR = 0.6
+# The editorial's independence score is reported with the editorial; it never
+# triggers a rewrite (a neutral essay scored 0.5 and was regenerated weekly).
 # Shown at the top of every editorial.
 EDITORIAL_DISCLAIMER = (
     "This editorial draws from my full source index, not your curated feed. "
@@ -2761,9 +2760,8 @@ def _generate_weekly_editorial():
     """Write + persist Friday's weekly editorial. Returns the editorial dict.
 
     Draws from the full 7-day archive (banned sources included), scores the draft
-    for independence, and regenerates with a stronger pushback prompt if the
-    independence_fostering score is below EDITORIAL_INDEPENDENCE_FLOOR.
-    Persists markdown at ~/.friday/editorials/YYYY-WNN.md."""
+    for independence and reports the score; an empty draft is retried once with
+    the stronger prompt. Persists markdown at ~/.friday/editorials/YYYY-WNN.md."""
     cnow = _front_page_central_now()
     week_id = cnow.strftime('%G-W%V')
     pool = _gather_editorial_pool(7)
@@ -2824,12 +2822,15 @@ def _generate_weekly_editorial():
     body = _compose(strong=False)
     score = _editorial_independence_score(body)
     regenerated = False
-    if (score is not None and score < EDITORIAL_INDEPENDENCE_FLOOR) or not body:
+    # The independence score is reported, never used to rewrite: an essay
+    # with no "teach" or "do" phrases scores a neutral 0.5, which sat below
+    # the old 0.6 floor, so most editorials were regenerated "for stronger
+    # pushback" every week. A rubric that can tell an essay from a how-to
+    # comes before any floor; until then only an EMPTY draft is retried.
+    if not body:
         strong_body = _compose(strong=True)
-        strong_score = _editorial_independence_score(strong_body)
-        if strong_body and (not body or strong_score is None
-                            or score is None or strong_score >= score):
-            body, score, regenerated = strong_body, strong_score, True
+        if strong_body:
+            body, score, regenerated = strong_body, _editorial_independence_score(strong_body), True
 
     when = (cnow.strftime('%Y-%m-%d %H:%M %Z')
             or cnow.isoformat(timespec='minutes'))
