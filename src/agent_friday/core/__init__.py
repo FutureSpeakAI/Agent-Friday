@@ -2307,6 +2307,9 @@ DEFAULT_SETTINGS = {
     # ── Privacy / Context Log ──
     "context_logging_enabled": True,       # master switch for the append-only event log
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
+    # Full tool output kept on disk when a result is cut (services/tool_output.py);
+    # day folders older than this are deleted. 0 = keep forever.
+    "tool_output_retention_days": 7,
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
     "off_record_stops_storage": True,      # off-record writes nothing about the conversation to disk (receipts and governance logs keep only tool, class, decision and time)

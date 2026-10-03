@@ -145,6 +145,22 @@ def _gate_vision_prompt(text: str) -> str:
 
 
 
+def _cloud_tool_set(pilot=None):
+    """(tools, catalogue_all) for a cloud OpenAI-format turn.
+
+    With the catalogue on, the cloud sends the opening set (resident tools
+    plus the loader) and the loop loads the rest by name or query; with it
+    off, every schema goes as before. Same shape as the local-seat branch.
+    """
+    try:
+        from agent_friday.services import tool_catalogue as _TCat
+        if _TCat.enabled() and CLAUDE_TOOLS:
+            return _TCat.opening_set(CLAUDE_TOOLS, pilot=pilot), CLAUDE_TOOLS
+    except Exception:
+        pass
+    return CLAUDE_TOOLS, None
+
+
 def _fit_tools(model_id, tools, prompt_cost=0, intent=None,
                system=None, messages=None):
     """As much of the tool registry as this seat can hold. Never raises.
@@ -1874,11 +1890,15 @@ def chat():
                 # each request hits that provider's own base_url + credentials
                 # (multi-provider dispatch, GAP-3 fix). provider_name=None
                 # keeps the legacy single-slot settings behavior.
+                # The cloud gets the same opening set as the local seat and
+                # loads the rest through load_tools (services/tool_catalogue).
+                _cloud_tools, _cloud_catalogue = _cloud_tool_set(_pilot)
                 reply, tool_trace = _call_openai(
                     messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
                     orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
-                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    tools=_cloud_tools, catalogue_all=_cloud_catalogue,
+                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                     provider=_route_info.get('provider_name'),
                 )
             else:
@@ -1927,11 +1947,13 @@ def chat():
                     tools=_local_tools, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                 )
             if _provider == 'openai':
+                _cloud_tools, _cloud_catalogue = _cloud_tool_set(_pilot)
                 return _call_openai(
                     _retry_messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
                     orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
-                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    tools=_cloud_tools, catalogue_all=_cloud_catalogue,
+                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                     provider=_route_info.get('provider_name'),
                 )
             _cloud_model = _route_info.get('model')
