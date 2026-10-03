@@ -281,6 +281,21 @@ def _corrections_this_week(rec) -> int:
     return n
 
 
+def _log_source_event(rec, obs_type, dimension, signal, detail, before, *, origin,
+                      provenance=None):
+    """One event in the sources log for an observation that just landed."""
+    try:
+        from agent_friday.trust import log as _tlog
+        after = dict(rec.get("scores") or {})
+        _tlog.append(_tlog.sources_path(), entity_id=rec.get("domain") or "", entity_kind="source",
+                     kind="observation", origin=origin, dimension=dimension, signal=signal,
+                     provenance=dict(provenance or {}, type=obs_type),
+                     detail=(detail or "")[:160],
+                     effect=_tlog.effect_between(before, after, [dimension]))
+    except Exception:
+        pass
+
+
 class SourceTrustGraph:
     def __init__(self, friday_dir=None):
         self.friday_dir = Path(friday_dir or friday_home())
@@ -424,8 +439,13 @@ class SourceTrustGraph:
             # Trim oldest observations past the cap.
             if len(rec["observations"]) > _MAX_OBSERVATIONS:
                 rec["observations"] = rec["observations"][-_MAX_OBSERVATIONS:]
+            before = dict(rec.get("scores") or {})
             self._recompute(rec)
             self._save(data)
+            _log_source_event(rec, obs_type, dimension, signal, detail, before,
+                              origin=("peer" if signed_by not in ("local", "user") else
+                                      ("owner" if signed_by == "user" else "system")),
+                              provenance={"signed_by": signed_by})
             return rec
 
     def record_article_seen(self, domain, name=None):
@@ -645,6 +665,7 @@ class SourceTrustGraph:
             keys.append(ek)
             if len(keys) > _MAX_EVIDENCE_KEYS:
                 del keys[:-_MAX_EVIDENCE_KEYS]
+        before = dict(rec.get("scores") or {})
         rec.setdefault("observations", []).append({
             "date": _today_str(),
             "type": obs_type,
@@ -656,6 +677,12 @@ class SourceTrustGraph:
         })
         if len(rec["observations"]) > _MAX_OBSERVATIONS:
             rec["observations"] = rec["observations"][-_MAX_OBSERVATIONS:]
+        # The effect is known only once the record is recomputed; the caller
+        # recomputes every touched source at the end of the tick, so the log
+        # records the movement this observation alone produces.
+        self._recompute(rec)
+        _log_source_event(rec, obs_type, dimension, signal, detail, before,
+                          origin="system", provenance={"article_key": article_key or ""})
         return True
 
     @staticmethod

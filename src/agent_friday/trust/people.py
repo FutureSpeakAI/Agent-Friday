@@ -112,3 +112,43 @@ def record_intelligence(person_name: str, content: str, *, friday_dir=None,
         person["last_interaction"] = datetime.now().isoformat()
         pg.save(graph)
     return {"ok": True, "person": key}
+
+
+# ── Editable, correctable, forgettable ───────────────────────────────────────
+
+def log_for(person_key: str, *, dimension: Optional[str] = None) -> list:
+    """The person's events, oldest first, from the people log."""
+    from agent_friday.trust import log as tlog
+    from agent_friday.people_graph import PeopleGraph
+    key = PeopleGraph._key_for(person_key)
+    return tlog.read(tlog.people_path(), entity_id=key, dimension=dimension)
+
+
+def correct_event(event_id: str, *, friday_dir=None):
+    """An owner correction: restore every dimension the named event moved to
+    its `before`, as a new event that names the old one. Returns (out, err)."""
+    from agent_friday.trust import log as tlog
+    from agent_friday.people_graph import PeopleGraph
+    ev = tlog.find(tlog.people_path(), event_id)
+    if ev is None:
+        return None, f"event {event_id!r} not found"
+    if ev.get("entity_kind") != "person":
+        return None, "only a person's event can be corrected here"
+    if ev.get("kind") == "owner_correction":
+        return None, "a correction is answered by a new statement, not corrected again"
+    # `overall` is a composite the store recomputes; a person has no single
+    # score, so only the real dimensions are restored.
+    restore = {e["dimension"]: e["before"] for e in (ev.get("effect") or [])
+               if e.get("dimension") and e.get("dimension") != "overall"
+               and e.get("before") is not None}
+    pg = PeopleGraph(friday_dir=friday_dir) if friday_dir is not None else PeopleGraph()
+    person, err = pg.edit(ev.get("entity_id"), scores=restore or None,
+                          add_evidence={"type": "owner_correction", "magnitude": 0.0,
+                                        "notes": f"corrects event {event_id}",
+                                        "dimension": next(iter(restore), "overall"),
+                                        "origin": "owner"},
+                          origin="owner", because=[event_id])
+    if err:
+        return None, err
+    return {"corrected": event_id, "restored": restore,
+            "event_id": person.get("last_event_id")}, None

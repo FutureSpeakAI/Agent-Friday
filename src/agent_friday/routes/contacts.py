@@ -186,6 +186,40 @@ def edit_trust():
         return api_error(e, "Couldn't save the trust change")
 
 
+@contacts_bp.route('/api/trust/log')
+def trust_log():
+    """The evidence log for one person (git log for trust), owner only."""
+    from agent_friday.trust import people as _tp
+    entity = (request.args.get('person') or '').strip()
+    if not entity:
+        return jsonify({"status": "error", "message": "person required"}), 400
+    try:
+        return jsonify({"status": "ok", "person": entity,
+                        "events": _tp.log_for(entity, dimension=request.args.get('dimension'))})
+    except Exception as e:
+        return api_error(e, "Couldn't read the trust log")
+
+
+@contacts_bp.route('/api/trust/correct', methods=['POST'])
+def trust_correct():
+    """Answer a mistaken event with an owner correction that restores what
+    the event moved. Nothing is rewritten; the correction names the event."""
+    from agent_friday.trust import people as _tp
+    data = request.get_json(silent=True) or {}
+    event_id = (data.get('event_id') or '').strip()
+    if not event_id:
+        return jsonify({"status": "error", "message": "event_id required"}), 400
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "people graph unavailable"}), 501
+    try:
+        out, err = _tp.correct_event(event_id, friday_dir=FRIDAY_DIR)
+        if err:
+            return jsonify({"status": "error", "message": err}), 404 if 'not found' in err else 400
+        return jsonify({"status": "ok", **out})
+    except Exception as e:
+        return api_error(e, "Couldn't record the correction")
+
+
 @contacts_bp.route('/api/trust/add-person', methods=['POST'])
 def add_trust_person():
     """Add a new person to the trust graph."""
