@@ -201,19 +201,23 @@ class ConversationMemory:
         almost certainly already cached on disk from the context pruner), so we
         don't trigger ChromaDB's separate ONNX model download. Fall back to
         ChromaDB's default embedder if that path is unavailable.
+
+        Either way the embedder runs on the inference thread
+        (services/inference_executor.py), whichever thread Chroma calls it on.
         """
         from chromadb.utils import embedding_functions
+        from agent_friday.services.inference_executor import routed
         try:
             from agent_friday.services import embedder_cache
             if self.model_name == embedder_cache.MODEL:
                 embedder_cache.ensure_available("conversation memory")
-            return embedding_functions.SentenceTransformerEmbeddingFunction(
+            return routed(embedding_functions.SentenceTransformerEmbeddingFunction)(
                 model_name=self.model_name
             )
         except Exception as e:
             print(f"  [MEMORY] sentence-transformers embedder unavailable, "
                   f"using ChromaDB default: {e}")
-            return embedding_functions.DefaultEmbeddingFunction()
+            return routed(embedding_functions.DefaultEmbeddingFunction)()
 
     # ── embedding-space integrity (decision D5) ──────────────────────
     def _current_dimension(self):
