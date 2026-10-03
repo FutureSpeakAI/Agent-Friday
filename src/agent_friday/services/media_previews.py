@@ -518,8 +518,10 @@ def _audio(p: Path, det: Dict[str, Any]):
 def _first_paragraph(slide_xml: str) -> str:
     """The first paragraph on a slide that has words in it: the slide's own
     heading, not the heading and everything under it. The runs of a paragraph
-    are joined as written, because a run break is a change of style."""
+    are joined as written, because a run break is a change of style; a soft
+    line break is a space."""
     for para in re.findall(r"<a:p[ >].*?</a:p>", slide_xml, re.S):
+        para = re.sub(r"<a:br\b[^>]*>", "<a:t> </a:t>", para)
         text = _clean("".join(re.findall(r"<a:t>([^<]*)</a:t>", para)))
         if text:
             return text
