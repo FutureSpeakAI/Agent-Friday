@@ -70,6 +70,54 @@ def _page_key(rel_path: str) -> str:
     return "/".join(_slug(part) for part in rel.split("/"))
 
 
+#: Ways a model writes a page path that all mean "relative to the wiki root":
+#: the serving wiki's own location, the legacy ~/wiki the read_wiki schema once
+#: named, and a bare leading slash.
+_ROOT_PREFIXES = ("~/.friday/wiki/", ".friday/wiki/", "~/wiki/", "wiki/", "/")
+
+
+def resolve_page(raw, wiki_dir: Optional[Path] = None) -> Optional[Path]:
+    """The file a page path names, resolved against the same root the index
+    is built from, or None.
+
+    Every `path` this index hands out (knowledge_query's candidates and
+    should_read, including "SOUL.md", which lives beside the wiki rather than
+    in it) resolves here to the file it was built from, so a reader that uses
+    this cannot disagree with the index about where a page is. A path that
+    escapes the root resolves to None.
+    """
+    s = str(raw or "").strip().strip("'\"").replace("\\", "/")
+    if not s:
+        return None
+    if s.lower() in ("soul.md", SOUL_ID):
+        try:
+            return SOUL_FILE if SOUL_FILE.is_file() else None
+        except OSError:
+            return None
+    root = Path(wiki_dir) if wiki_dir else WIKI_DIR
+    try:
+        root_r = root.resolve()
+    except OSError:
+        return None
+    bases = [Path(s) if Path(s).is_absolute() else root / s]
+    for pre in _ROOT_PREFIXES:
+        if s.lower().startswith(pre) and s[len(pre):]:
+            bases.append(root / s[len(pre):])
+    for base in bases:
+        cands = [base]
+        if not base.suffix:
+            cands.append(base.with_name(base.name + ".md"))
+        for cand in cands:
+            try:
+                p = cand.resolve()
+                p.relative_to(root_r)
+            except (OSError, ValueError):
+                continue
+            if p.is_file():
+                return p
+    return None
+
+
 def _read(path: Path) -> str:
     """Read via wiki_engine for transparent vault decryption."""
     try:

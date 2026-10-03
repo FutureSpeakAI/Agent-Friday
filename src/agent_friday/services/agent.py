@@ -671,9 +671,9 @@ CLAUDE_TOOLS = [
       "required": ["task_id", "tasklist_id", "account_id"]}},
     {"name": "search_contacts", "description": "Search the user's Google Contacts across every connected account by name, email, or phone substring (built-in read-only integration). Omit query to list recent contacts.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
-    {"name": "read_wiki", "description": "Read a markdown file from the personal wiki at ~/wiki/. Use a relative path like 'professional/job-search.md'.",
+    {"name": "read_wiki", "description": "Read a markdown file from the personal wiki (~/.friday/wiki). Use a relative path like 'projects/atlas.md'.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
-    {"name": "search_wiki", "description": "Keyword-search the personal wiki (and ~/.friday/wiki/) for files whose name or contents match a query. Returns up to 5 hits with a relative path and a short excerpt. Use this when the smart-loaded context didn't include the file you need; then call read_wiki on the most promising hit for the full file.",
+    {"name": "search_wiki", "description": "Keyword-search the personal wiki for files whose name or contents match a query. Returns up to 5 hits with a relative path and a short excerpt. Use this when the smart-loaded context didn't include the file you need; then call read_wiki on the most promising hit for the full file.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]}},
     {"name": "search_news", "description": "Search the live news feed for current stories matching a query (the same feed the News workspace shows). Returns ranked hits with title, snippet, source, trust rating, and URL. Use for 'what's the news on X', 'any headlines about Y', or to ground a claim in current reporting. Omit the query to get the top current stories.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Keywords to match across headline/snippet/source. Blank = top current stories."}, "limit": {"type": "integer", "description": "Max stories to return (1-25, default 8)."}}}},
@@ -1955,14 +1955,23 @@ def _tool_search_contacts(inp):
 
 
 def _tool_read_wiki(inp):
-    raw = (inp or {}).get('path', '')
-    p = (WIKI_DIR / raw).resolve()
-    wiki_resolved = WIKI_DIR.resolve()
-    try:
-        p.relative_to(wiki_resolved)
-    except ValueError:
-        return f"Path escapes the wiki root: {raw}"
-    if not p.exists() or not p.is_file():
+    """Read one wiki page.
+
+    The path resolves through the knowledge graph's own resolver, against the
+    root its index is built from, so every page knowledge_query or search_wiki
+    names opens here exactly as named.
+    """
+    raw = str((inp or {}).get('path', '') or '')
+    from agent_friday.services.knowledge_graph import wiki_graph as _wg
+    p = _wg.resolve_page(raw)
+    if p is None:
+        root = Path(_wg.WIKI_DIR)
+        try:
+            (root / raw.replace('\\', '/')).resolve().relative_to(root.resolve())
+        except ValueError:
+            return f"Path escapes the wiki root: {raw}"
+        except OSError:
+            pass
         return f"Wiki file not found: {raw}"
     try:
         text = wiki_read_text(p)
@@ -1985,7 +1994,10 @@ def _tool_search_wiki(inp):
     q_low = query.lower()
 
     results = []
-    for root, label in [(WIKI_DIR, 'wiki'), (FRIDAY_DIR / 'wiki', 'friday-wiki')]:
+    # One root: the serving wiki the knowledge graph indexes and read_wiki
+    # resolves against, so every hit's path opens with read_wiki as returned.
+    from agent_friday.services.knowledge_graph import wiki_graph as _wg
+    for root, label in [(Path(_wg.WIKI_DIR), 'wiki')]:
         if not root.exists():
             continue
         for f in root.rglob('*'):
