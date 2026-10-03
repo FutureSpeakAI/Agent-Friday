@@ -84,16 +84,15 @@ def _tools():
             for n in ("search_web", "artifact_put", "tool_a")]
 
 
-def test_artifact_put_loads_through_the_index_and_is_never_resident():
-    """The opening set pays nothing for the panel's tool: its index line names
-    it and it loads like every other tool (tests/unit/test_latency_budget.py).
-    The always-resident tools stay resident whatever the panel setting."""
-    on = {n["name"] for n in TC.resident(_tools(), settings={"artifact_panel_enabled": True})}
-    off = {n["name"] for n in TC.resident(_tools(), settings={"artifact_panel_enabled": False})}
-    assert "artifact_put" not in on and "artifact_put" not in off
-    assert "search_web" in on and "search_web" in off
-    assert "artifact_put" in {t["name"] for t in TC.opening_set(_tools())} or any(
-        "artifact_put" in (t.get("description") or "") for t in TC.opening_set(_tools())), "the index must name it"
+def test_artifact_put_is_not_resident_and_the_loader_finds_it():
+    """The opening set pays nothing for the panel's tool: it is not resident,
+    and the loader hands it over by name or by a query about the panel, like
+    every other tool (tests/unit/test_latency_budget.py)."""
+    resident = {t["name"] for t in TC.resident(_tools())}
+    assert "artifact_put" not in resident and "search_web" in resident
+    assert "artifact_put" not in {t["name"] for t in TC.opening_set(_tools())}
+    got, msg = TC.expand(_tools(), ["artifact_put"], TC.opening_set(_tools()))
+    assert [t["name"] for t in got] == ["artifact_put"] and "Loaded" in msg
 
 
 def test_the_panel_is_enabled_by_default():

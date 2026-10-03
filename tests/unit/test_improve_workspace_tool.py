@@ -14,6 +14,11 @@ from agent_friday.services import workspace_bundles as wb
 
 @pytest.fixture(autouse=True)
 def _root(monkeypatch, tmp_path):
+    # The approvals store is this test's own, so a pending count is its own.
+    from agent_friday.services import approvals as _ap
+    monkeypatch.setattr(_ap, "APPROVALS_FILE", tmp_path / "approvals.json")
+    monkeypatch.setattr(_ap, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(_ap, "_notify_pending", lambda rec: None)
     monkeypatch.setattr(wb, "_root", lambda: tmp_path / "workspaces")
     from agent_friday.services import codebases as cb, conversations as convs
     monkeypatch.setattr(cb, "_root", lambda: tmp_path / "codebases")

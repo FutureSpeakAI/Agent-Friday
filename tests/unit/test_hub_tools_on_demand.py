@@ -3,8 +3,9 @@ program rule: keep the catalogue ceilings, make tools on demand).
 
 They live in the workspace-tools pool, not the always-on catalogue. A chat in
 the hub (bound to a codebase, or filed in a project) gets them in its turn's
-catalogue, as index lines, with codebase_edit resident; any other chat can
-still load one by name. The ways into the hub stay always-on.
+catalogue, with codebase_edit resident; the loader finds any of them from any
+chat, by name or by a query (services/tool_catalogue.expand searches the
+workspace pools too), so the ways into the hub need no rent.
 """
 from __future__ import annotations
 
@@ -29,20 +30,15 @@ def _names(tools):
     return {t["name"] for t in tools}
 
 
-def test_the_hubs_tools_are_out_of_the_always_on_catalogue_and_named_by_the_loader():
+def test_the_hubs_tools_are_out_of_the_always_on_catalogue():
     always = _names(ag.CLAUDE_TOOLS)
     hub = _names(ag.WORKSPACE_TOOLS["hub"])
     assert set(ag.HUB_TOOL_NAMES) == hub
     assert not (hub & always), "a hub tool is still paid for on every turn"
     for n in ag.HUB_TOOL_NAMES:
         assert n in ag.CLAUDE_TOOL_HANDLERS, n
-    # a plain chat's loader names the ways into the hub on one short line, so
-    # artifact_put, improve_workspace and open_project are a load_tools away;
-    # the rest of the pool is in a hub chat's own index, not a plain chat's
-    loader = str(tc.loader_spec(ag.CLAUDE_TOOLS))
-    for entry in ag.HUB_ENTRY_NAMES:
-        assert entry in loader, entry + " is not named by the loader"
-    assert "build_mode" not in loader and "codebase_run" not in loader
+    # the loader's own text is a constant: it never lists tools
+    assert tc.loader_spec(ag.CLAUDE_TOOLS)["description"] == tc.LOADER_DESCRIPTION
 
 
 def test_a_hub_chat_gets_them_and_a_plain_chat_does_not():
@@ -58,22 +54,20 @@ def test_a_hub_chat_gets_them_and_a_plain_chat_does_not():
     assert len(ag.tools_for_workspace("chat", conversation_id=bound["id"])) == len(ag.CLAUDE_TOOLS) + len(ag.HUB_TOOL_NAMES)
 
 
-def test_in_a_hub_chat_codebase_edit_is_resident_and_the_rest_are_index_lines():
+def test_in_a_hub_chat_codebase_edit_is_resident_and_the_rest_wait_for_the_loader():
     bound = convs.create("Build it")
     cb.create("Rent tracker", template="static", conversation_id=bound["id"])
-    turn = ag.tools_for_workspace("chat", conversation_id=bound["id"])
-    opening = tc.opening_set(turn)
-    full = {t["name"] for t in opening if (t.get("input_schema") or {}).get("properties") is not None and t["name"] != tc.LOADER_NAME}
-    assert "codebase_edit" in full
-    assert "codebase_run" not in full and "build_mode" not in full
-    loader = next(t for t in opening if t["name"] == tc.LOADER_NAME)
-    assert "codebase_run" in str(loader) and "build_mode" in str(loader), "the index names them"
-    # a plain chat's opening set carries none of them, not even as index lines
-    plain_opening = tc.opening_set(ag.tools_for_workspace(None))
-    assert "codebase_edit" not in {t["name"] for t in plain_opening}
-    assert "codebase_run" not in str(next(t for t in plain_opening if t["name"] == tc.LOADER_NAME))
+    opening = {t["name"] for t in tc.opening_set(ag.tools_for_workspace("chat", conversation_id=bound["id"]))}
+    assert "codebase_edit" in opening and tc.LOADER_NAME in opening
+    assert "codebase_run" not in opening and "build_mode" not in opening
+    plain_opening = {t["name"] for t in tc.opening_set(ag.tools_for_workspace(None))}
+    assert "codebase_edit" not in plain_opening, "a plain chat pays nothing for the hub"
 
 
-def test_any_chat_can_still_load_a_hub_tool_by_name():
-    new, msg = tc.expand(ag.CLAUDE_TOOLS, ["codebase_run"], [])
-    assert [t["name"] for t in new] == ["codebase_run"] and "Loaded" in msg
+def test_any_chat_can_load_a_hub_tool_by_name_or_by_query():
+    new, msg = tc.expand(ag.CLAUDE_TOOLS, ["codebase_run", "open_project"], [])
+    assert sorted(t["name"] for t in new) == ["codebase_run", "open_project"] and "Loaded" in msg
+    for query, name in (("build mode", "build_mode"), ("open project", "open_project"),
+                        ("improve workspace", "improve_workspace")):
+        found, _ = tc.expand(ag.CLAUDE_TOOLS, [], [], query=query)
+        assert name in [t["name"] for t in found], (query, [t["name"] for t in found])

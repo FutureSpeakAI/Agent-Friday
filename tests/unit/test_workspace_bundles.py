@@ -18,6 +18,12 @@ from agent_friday.services import workspace_registry as reg
 
 @pytest.fixture(autouse=True)
 def _root(monkeypatch, tmp_path):
+    # The approvals store is this test's own: a card another test left pending
+    # must not be counted here, nor this test's left behind.
+    from agent_friday.services import approvals as _ap
+    monkeypatch.setattr(_ap, "APPROVALS_FILE", tmp_path / "approvals.json")
+    monkeypatch.setattr(_ap, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(_ap, "_notify_pending", lambda rec: None)
     monkeypatch.setattr(wb, "_root", lambda: tmp_path / "workspaces")
     monkeypatch.setattr(cb, "_root", lambda: tmp_path / "codebases")
     monkeypatch.setattr(convs, "_root", lambda: tmp_path / "conversations")
