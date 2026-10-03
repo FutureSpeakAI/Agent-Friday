@@ -21,6 +21,21 @@ from agent_friday.services import residency_arbiter as ra
 
 LIVE = {"bonsai2:27b": (4242, 8090)}
 
+# The real function, taken at collection time: tests/conftest.py's autouse
+# _no_local_seat_is_serving replaces scheduler._resolve_local_seat during tests.
+from agent_friday.services import scheduler as _scheduler  # noqa: E402
+_REAL_RESOLVE_LOCAL_SEAT = _scheduler._resolve_local_seat
+
+
+@pytest.fixture(autouse=True)
+def no_watch_leaks_in_or_out():
+    """A seat watch left running by an earlier test (an Arbiter boot starts one)
+    would make start_seat_watch() return that thread instead of this test's, and
+    one started here must not outlive the test either."""
+    ra.stop_seat_watch()
+    yield
+    ra.stop_seat_watch()
+
 
 @pytest.fixture
 def backend(monkeypatch):
@@ -66,11 +81,31 @@ def test_serving_adopts_on_demand_instead_of_reporting_no_seat(backend, monkeypa
 
 
 def test_the_scheduler_adopts_before_it_asks_for_a_local_seat(monkeypatch):
-    from agent_friday.services import scheduler
+    """The real _resolve_local_seat (tests/conftest.py stubs it for every test
+    once the scheduler is imported) adopts before anything else; the adoption
+    stub stops it there, so nothing probes a real model server."""
+    import sys
     calls = []
-    monkeypatch.setattr(ra, "adopt_live_seats", lambda: calls.append(1) or [])
-    scheduler._resolve_local_seat()
+
+    class _Stop(BaseException):
+        pass
+
+    def _adopt():
+        calls.append(1)
+        raise _Stop()
+    mod = sys.modules.get("agent_friday.services.residency_arbiter", ra)
+    monkeypatch.setattr(mod, "adopt_live_seats", _adopt)
+    with pytest.raises(_Stop):
+        _REAL_RESOLVE_LOCAL_SEAT()
     assert calls, "the podcast/routine path did not try to adopt a live seat first"
+
+
+def test_a_boot_in_a_test_process_starts_no_watch():
+    """Arbiter.boot() starts the watch only outside tests, so no test leaves one behind."""
+    import inspect
+    src = inspect.getsource(ra.Arbiter.boot)
+    i = src.index("start_seat_watch()")
+    assert 'os.environ.get("FRIDAY_TESTING") != "1"' in src[max(0, i - 200):i]
 
 
 def test_the_seat_watch_adopts_within_its_interval(backend):

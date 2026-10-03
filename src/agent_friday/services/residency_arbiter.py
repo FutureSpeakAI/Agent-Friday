@@ -2162,10 +2162,14 @@ class Arbiter:
                 self.llama.adopt_or_reap({m for m in _wanted if m})
             except Exception as e:
                 print(f"  [arbiter] adopt/reap failed (continuing): {e}")
-            try:
-                start_seat_watch()
-            except Exception as e:
-                print(f"  [arbiter] seat watch not started: {e}")
+            # Never under FRIDAY_TESTING, like every other background daemon: a
+            # watch a test's boot left running would outlive the test and keep
+            # adopting into whatever Arbiter the next test installs.
+            if os.environ.get("FRIDAY_TESTING") != "1":
+                try:
+                    start_seat_watch()
+                except Exception as e:
+                    print(f"  [arbiter] seat watch not started: {e}")
             try:
                 self.reconcile_daemon(evict=True)
             except Exception as e:
