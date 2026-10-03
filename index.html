@@ -48131,6 +48131,11 @@ function LocalModelRow({ r, onFetch }) {
       E(AxisBadge, { axisLabel: 'Fits', v: v.fits }),
       E(AxisBadge, { axisLabel: 'Runs well', v: v.runs_well }),
       E(AxisBadge, { axisLabel: 'Worth it', v: v.worth_it }),
+      r.friday_standard && E('span', {
+        style: { fontSize: 9, fontFamily: 'var(--st-font)', color: 'var(--st-accent)',
+                 border: '1px solid var(--st-accent-soft)', borderRadius: 4, padding: '1px 6px' },
+        title: 'Recommended for this computer. Picked for you only at first setup; never after.',
+      }, fridayName() + "'s standard"),
       !r.installed && E('button', {
         onClick: () => onFetch(r.model_id),
         style: {
@@ -48138,7 +48143,7 @@ function LocalModelRow({ r, onFetch }) {
           border: '1px solid rgba(0,212,255,0.35)', borderRadius: 5,
           padding: '3px 9px', color: '#cfefff', fontFamily: 'JetBrains Mono', fontSize: 10,
         },
-      }, 'Fetch')),
+      }, r.fetch === 'download' ? 'Get' : 'Fetch')),
     r.licence && E('div', {
       style: { fontSize: 9.5, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 3 },
     }, 'Licence: ' + r.licence),
@@ -48219,6 +48224,286 @@ function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
           fontFamily: 'JetBrains Mono', fontSize: 10.5,
         },
       }, 'Cancel')));
+}
+
+
+
+// ── Your stack: these fit together ─────────────────────────────────────────
+//
+// One bar per memory pool from /api/models/stack/preview: solid blocks stay
+// loaded, dashed blocks take turns with the brain and carry the swap time,
+// the display reserve is a labelled block. The picks are the seats resident
+// now plus whatever the catalogue's "Add to stack" ticked; nothing here
+// downloads or loads anything.
+function StackBar({ pool }) {
+  const total = Math.max(1, pool.total_mib || pool.available_mib || 1);
+  const kindStyle = (b) => ({
+    reserve: { background: 'rgba(255,255,255,0.06)', border: '1px solid var(--st-line)', color: 'var(--st-faint)' },
+    pinned: { background: 'var(--st-accent-soft)', border: '1px solid rgba(0,212,255,0.45)', color: 'var(--st-text)' },
+    leased: { background: 'transparent', border: '1px dashed rgba(123,97,255,0.8)', color: 'var(--st-label)' },
+  })[b.kind] || {};
+  const blocks = pool.blocks.filter(b => b.kind !== 'leased');
+  const leased = pool.blocks.filter(b => b.kind === 'leased');
+  return E('div', { style: { marginBottom: 10 } },
+    E('div', { style: { fontSize: 11, color: 'var(--st-label)', fontFamily: 'var(--st-font)', marginBottom: 3 } },
+      pool.name + (pool.device ? ' · ' + pool.device : '') + ' · ' + (pool.total_mib / 1024).toFixed(1) + ' GB'),
+    E('div', { role: 'img', 'aria-label': pool.name + ' usage', style: { display: 'flex', height: 22, width: '100%', borderRadius: 5, overflow: 'hidden', background: 'rgba(255,255,255,0.03)' } },
+      blocks.map((b, i) => E('div', { key: i, title: b.label + ': ' + b.mib + ' MiB' + (b.context ? ', ' + Math.round(b.context / 1024) + 'K context' : ''),
+        style: Object.assign({ width: (100 * b.mib / total) + '%', minWidth: b.mib ? 2 : 0, fontSize: 9.5, lineHeight: '22px', padding: '0 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'var(--st-font)' }, kindStyle(b)) },
+        (b.kind === 'reserve' ? 'reserve' : b.label) + (b.partial ? ' (part)' : ''))),
+      E('div', { title: 'free: ' + pool.free_mib + ' MiB', style: { flex: 1, fontSize: 9.5, lineHeight: '22px', padding: '0 6px', color: 'var(--st-faint)', fontFamily: 'var(--st-font)' } },
+        (pool.free_mib / 1024).toFixed(1) + ' GB free')),
+    leased.length > 0 && E('div', { style: { display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' } },
+      leased.map((b, i) => E('div', { key: i, style: Object.assign({ fontSize: 9.5, padding: '2px 8px', borderRadius: 5, fontFamily: 'var(--st-font)', width: Math.max(12, 100 * b.mib / total) + '%', boxSizing: 'border-box' }, kindStyle(b)) },
+        b.label + ' · takes turns, about ' + b.swap_s + ' s to switch'))),
+    E('div', { style: { display: 'flex', gap: '4px 14px', flexWrap: 'wrap', marginTop: 4, fontSize: 10, color: 'var(--st-dim)', fontFamily: 'var(--st-font)' } },
+      pool.blocks.map((b, i) => E('span', { key: 'l' + i },
+        E('span', { 'aria-hidden': true, style: Object.assign({ display: 'inline-block', width: 9, height: 9, borderRadius: 2, marginRight: 5, verticalAlign: 'middle' }, kindStyle(b)) }),
+        (b.kind === 'reserve' ? 'Reserved for the display and what others hold' : b.label) + ' ' + (b.mib / 1024).toFixed(1) + ' GB' +
+        (b.context ? ' · ' + Math.round(b.context / 1024) + 'K' : '') + (b.kind === 'leased' ? ' · takes turns' : '')))));
+}
+
+function StackSection({ picks, onRemovePick, pretend }) {
+  const [out, setOut] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    setErr('');
+    apiFetch('/api/models/stack/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ picks }, pretend || {})) })
+      .then(r => r.json()).then(d => { if (d.status !== 'ok') throw new Error(d.error || d.message || 'preview failed'); setOut(d); })
+      .catch(e => setErr(String(e && e.message || e)));
+  }, [JSON.stringify(picks), JSON.stringify(pretend || {})]);
+  return E(StSection, { title: 'Your stack', desc: 'What the models you have, and the ones you tick in the list below, cost side by side. Solid blocks stay loaded; dashed blocks take turns with the brain.' },
+    err && E('div', { style: { fontSize: 11, color: 'var(--st-danger)' } }, err),
+    out && out.pools.map((p, i) => E(StackBar, { key: i, pool: p })),
+    out && E('div', { style: { fontSize: 12, color: out.fits_together ? 'var(--st-ok)' : (out.cannot && out.cannot.length ? 'var(--st-warn)' : 'var(--st-label)'), fontFamily: 'var(--st-font)', marginTop: 4 } },
+      (out.fits_together ? '✓ ' : '') + out.sentence + (out.simulated ? '  (simulated)' : '')),
+    picks.length > 0 && E('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 } },
+      picks.map(p => E('span', { key: p.id + (p.packing || ''), style: { fontSize: 10, color: 'var(--st-label)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '1px 6px' } },
+        (p.label || p.id) + (p.packing ? ' · ' + p.packing : ''),
+        E('button', { className: 'settings-btn', 'aria-label': 'Remove ' + (p.label || p.id) + ' from the preview', onClick: () => onRemovePick(p), style: { marginLeft: 6, fontSize: 9, padding: '0 5px' } }, '×')))));
+}
+
+// ── Find a model: the catalogue with a verdict per file ─────────────────────
+//
+// Rows come from /api/models/catalog: the curated shortlist, the installed
+// store, and anything the user pastes. Each file carries a verdict for THIS
+// machine (runs well / tight / partly on the processor / won't fit), its
+// speed with a basis word, the context it can hold, and the arithmetic
+// behind it under "Why?". Bonsai 2 wears the "standard" label and is never
+// pre-selected here. "Pretend I have…" recomputes everything on a pretend
+// card, locally, under a SIMULATED badge.
+const _FIT_SKIN = {
+  runs_well: { c: 'var(--st-ok)', dot: '●' },
+  tight: { c: 'var(--st-warn)', dot: '◐' },
+  partial: { c: 'var(--st-warn)', dot: '◐' },
+  wont_fit: { c: 'var(--st-dim)', dot: '○' },
+};
+const _LIC_SKIN = { permissive: 'var(--st-ok)', attribution: 'var(--st-accent)',
+  restricted: 'var(--st-warn)', 'non-commercial': 'var(--st-danger)', unknown: 'var(--st-danger)' };
+
+function _speedWords(sp) {
+  if (!sp || sp.tok_s == null) return (sp && sp.note) || 'speed unknown';
+  if (sp.basis === 'measured') return sp.tok_s + ' tok/s, measured here';
+  if (sp.basis === 'published') return sp.tok_s + ' tok/s, published by the maker';
+  const cal = sp.calibration && sp.calibration.basis === 'calibrated'
+    ? ' (calibrated ×' + sp.calibration.factor + ' from your ' + sp.calibration.from + ' run)' : '';
+  return 'about ' + sp.tok_s + ' tok/s' + cal;
+}
+
+function _ctxWords(n) {
+  if (!n) return '';
+  return n >= 1024 ? Math.round(n / 1024) + 'K context' : n + ' context';
+}
+
+function WhyPanel({ f }) {
+  const s = f.seat || {}, w = f.why || {}, p = f.placement || {};
+  const lines = [
+    ['Weights (the file itself)', s.weights_mib != null ? s.weights_mib + ' MiB' : '—'],
+    ['KV cache at ' + _ctxWords(s.num_ctx) + ' (' + (s.kv_type || '') + ')', s.kv_mib != null ? s.kv_mib + ' MiB' : 'not counted'],
+    ['Compute buffer', s.compute_mib != null ? s.compute_mib + ' MiB' : '—'],
+    s.mmproj_mib ? ['Vision tower', s.mmproj_mib + ' MiB'] : null,
+    ['Seat total', s.total_mib != null ? s.total_mib + ' MiB' : '—'],
+    w.vram_available_mib != null ? ['Graphics memory available (after the display reserve and what is loaded)', w.vram_available_mib + ' MiB'] : null,
+    w.ram_available_mib != null ? ['Processor RAM available for models', w.ram_available_mib + ' MiB'] : null,
+    ['Context wanted for this job', _ctxWords(w.context_wanted) + ' (floor ' + _ctxWords(w.context_floor) + ')'],
+    ['Where it lands', w.fits_at || '—'],
+    p.n_gpu_layers != null && p.n_gpu_layers !== 'all' ? ['Layers on the card', p.n_gpu_layers] : null,
+    f.speed && f.speed.formula ? ['Speed formula', f.speed.formula] : null,
+    f.shortfall_mib ? ['Short by', f.shortfall_mib + ' MiB'] : null,
+  ].filter(Boolean);
+  return E('div', { style: { margin: '6px 0 4px 18px', padding: '8px 10px', border: '1px solid var(--st-line)',
+    borderRadius: 6, fontFamily: 'var(--st-mono)', fontSize: 10.5, color: 'var(--st-label)' } },
+    lines.map(([k, v], i) => E('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', gap: 12, padding: '2px 0' } },
+      E('span', { style: { color: 'var(--st-dim)' } }, k), E('span', null, String(v)))),
+    E('div', { style: { color: 'var(--st-faint)', marginTop: 4, fontFamily: 'var(--st-font)' } },
+      'Sized from the file’s real bytes and its attention layout, placed by the residency planner’s own budgets. Measured on this computer after install.'));
+}
+
+function CatalogFileRow({ m, f, onGet, onPick, why, setWhy }) {
+  const skin = _FIT_SKIN[f.verdict] || _FIT_SKIN.wont_fit;
+  const key = m.id + '|' + f.file;
+  return E('div', { key: key },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '4px 0 4px 18px', fontSize: 11 } },
+      E('span', { style: { color: skin.c, fontFamily: 'var(--st-mono)', minWidth: 10 } }, skin.dot),
+      E('span', { style: { fontFamily: 'var(--st-mono)', color: 'var(--st-text)', minWidth: 70 } }, f.packing || 'gguf'),
+      E('span', { style: { fontFamily: 'var(--st-mono)', color: 'var(--st-label)', minWidth: 58 } }, f.gib + ' GB'),
+      E('span', { style: { color: skin.c, fontWeight: 600 } }, f.verdict_word),
+      E('span', { style: { color: 'var(--st-dim)' } }, '· ' + _speedWords(f.speed)),
+      f.context && E('span', { style: { color: 'var(--st-dim)' } }, '· ' + _ctxWords(f.context)),
+      E('button', { className: 'settings-btn', onClick: () => setWhy(why === key ? null : key),
+        style: { fontSize: 10, padding: '1px 7px' } }, why === key ? 'Hide why' : 'Why?'),
+      !m.installed && f.verdict !== 'wont_fit' && E('button', { className: 'settings-btn', onClick: () => onGet(m, f),
+        style: { fontSize: 10, padding: '1px 9px', color: 'var(--st-accent)' } }, 'Get'),
+      onPick && f.verdict !== 'wont_fit' && E('button', { className: 'settings-btn', onClick: () => onPick(m, f),
+        title: 'Preview this file in your stack before downloading anything',
+        style: { fontSize: 10, padding: '1px 9px' } }, 'Add to stack'),
+      f.note && E('span', { style: { color: 'var(--st-faint)', fontSize: 10 } }, f.note)),
+    why === key && E(WhyPanel, { f }));
+}
+
+function InstalledModelActions({ m, onChanged }) {
+  const [msg, setMsg] = useState('');
+  const [askReplace, setAskReplace] = useState(false);
+  const post = (path, opts) => apiFetch(path, Object.assign({ method: 'POST', headers: { 'Content-Type': 'application/json' } }, opts || {}))
+    .then(r => r.json());
+  const measure = () => post('/api/models/' + encodeURIComponent(m.id) + '/bench')
+    .then(j => setMsg(j.status === 'measuring' ? 'Measuring on this computer; the number replaces the estimate when it lands.' : (j.error || j.message || 'could not start')))
+    .catch(e => setMsg(String(e)));
+  const remove = (force) => apiFetch('/api/models/' + encodeURIComponent(m.id) + (force ? '?force=1' : ''), { method: 'DELETE' })
+    .then(r => r.json()).then(j => {
+      if (j.needs_replacement) { setAskReplace(true); setMsg(j.error); return; }
+      setMsg(j.ok ? ('Removed; freed ' + j.freed_gib + ' GB.') : (j.error || 'could not remove'));
+      if (j.ok && onChanged) onChanged();
+    }).catch(e => setMsg(String(e)));
+  const rollback = () => post('/api/models/' + encodeURIComponent(m.id) + '/rollback')
+    .then(j => { setMsg(j.ok ? 'Back to the previous version.' : (j.error || 'could not go back')); if (j.ok && onChanged) onChanged(); })
+    .catch(e => setMsg(String(e)));
+  const b = m.bench;
+  return E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 4, paddingLeft: 18 } },
+    b && b.status === 'measured' && E('span', { style: { fontSize: 10, color: 'var(--st-ok)' } },
+      'measured ' + b.decode_tok_s + ' tok/s' + (b.peak_vram_delta_mib ? ', ' + b.peak_vram_delta_mib + ' MiB peak' : '')),
+    b && b.status === 'failed' && E('span', { style: { fontSize: 10, color: 'var(--st-danger)' } }, 'last measurement failed: ' + (b.error || '')),
+    E('button', { className: 'settings-btn', style: { fontSize: 10 }, onClick: measure }, b ? 'Measure again' : 'Measure'),
+    m.previous_available && E('button', { className: 'settings-btn', style: { fontSize: 10 }, onClick: rollback }, 'Go back to the previous version'),
+    !askReplace && E('button', { className: 'settings-btn btn-magenta', style: { fontSize: 10 }, onClick: () => remove(false) }, 'Remove'),
+    askReplace && E('span', { style: { fontSize: 10.5, color: 'var(--st-warn)' } },
+      'It answers for ' + (m.roles_bound || []).join(', ') + '. Pick a replacement in "Model for each job" first, or ',
+      E('button', { className: 'settings-btn btn-magenta', style: { fontSize: 10, marginLeft: 4 }, onClick: () => remove(true) }, 'remove anyway')),
+    msg && E('span', { style: { fontSize: 10.5, color: 'var(--st-dim)' } }, msg));
+}
+
+function CatalogModelRow({ m, onGet, onPick, why, setWhy, onChanged }) {
+  return E('div', { style: { borderTop: '1px solid var(--st-line)', padding: '8px 2px' } },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+      E('span', { style: { fontFamily: 'var(--st-font)', fontSize: 12.5, fontWeight: 600, color: 'var(--st-text)' } }, m.label),
+      m.publisher && E('span', { style: { fontSize: 10.5, color: 'var(--st-dim)' } }, m.publisher),
+      m.friday_standard && E('span', { title: 'Recommended for this computer. Picked for you only at first setup; never after.',
+        style: { fontSize: 9.5, color: 'var(--st-accent)', border: '1px solid var(--st-accent-soft)', borderRadius: 4, padding: '1px 6px' } },
+        fridayName() + '’s standard'),
+      m.installed && E('span', { style: { fontSize: 9.5, color: 'var(--st-ok)' } }, 'installed'),
+      E('span', { style: { fontSize: 9.5, color: _LIC_SKIN[m.licence_class] || 'var(--st-dim)' },
+        title: m.licence || 'licence not stated' }, (m.licence_class || 'unknown') + (m.licence ? ' · ' + m.licence : '')),
+      E('span', { style: { fontSize: 9.5, color: m.telemetry === 'none' ? 'var(--st-ok)' : 'var(--st-danger)' } },
+        m.telemetry === 'none' ? 'phones home: no' : 'phones home: ' + m.telemetry),
+      m.gated && E('span', { style: { fontSize: 9.5, color: 'var(--st-warn)' } }, 'gated repository'),
+      m.generation_note && E('span', { style: { fontSize: 9.5, color: 'var(--st-faint)' } }, m.generation_note)),
+    m.kv_note && E('div', { style: { fontSize: 10, color: 'var(--st-warn)', marginTop: 2 } }, m.kv_note),
+    (m.files || []).map(f => E(CatalogFileRow, { key: f.file, m, f, onGet, onPick, why, setWhy })),
+    m.installed && E(InstalledModelActions, { m, onChanged }));
+}
+
+function ModelCatalogSection({ onGet, onPick, onPretend }) {
+  const [cat, setCat] = useState(null);
+  const [err, setErr] = useState('');
+  const [q, setQ] = useState('');
+  const [fitFilter, setFitFilter] = useState('all');
+  const [licFilter, setLicFilter] = useState('all');
+  const [why, setWhy] = useState(null);
+  const [numbers, setNumbers] = useState(false);
+  const [pretend, setPretend] = useState({ vram: '', ram: '' });
+  const [anyId, setAnyId] = useState('');
+  const [pasted, setPasted] = useState([]);
+  const [checking, setChecking] = useState(false);
+  const [pastedMsg, setPastedMsg] = useState('');
+
+  const load = (body) => {
+    setErr('');
+    const p = body
+      ? apiFetch('/api/models/whatif', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      : apiFetch('/api/models/catalog?beside=1');
+    p.then(r => r.json()).then(d => {
+      if (!d || d.status !== 'ok') throw new Error((d && (d.error || d.message)) || 'the catalogue did not load');
+      setCat(d);
+    }).catch(e => setErr(String(e && e.message || e)));
+  };
+  useEffect(() => { load(null); }, []);
+
+  const checkAny = () => {
+    const id = anyId.trim();
+    if (!id) return;
+    setChecking(true); setPastedMsg('');
+    apiFetch('/api/models/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: id }) })
+      .then(r => r.json()).then(d => {
+        if (d.status !== 'ok') { setPastedMsg(d.error || 'could not check it'); return; }
+        setPasted(prev => [d.model].concat(prev.filter(p => p.id !== d.model.id)));
+        setAnyId('');
+      }).catch(e => setPastedMsg(String(e))).finally(() => setChecking(false));
+  };
+
+  const sim = !!(cat && cat.machine && cat.machine.simulated);
+  const models = (cat ? cat.models : []).concat(pasted);
+  const needle = q.trim().toLowerCase();
+  const shown = models.filter(m => {
+    if (needle && !(m.label + ' ' + (m.publisher || '') + ' ' + m.id).toLowerCase().includes(needle)) return false;
+    if (fitFilter !== 'all' && !(m.files || []).some(f => f.verdict === fitFilter)) return false;
+    if (licFilter !== 'all' && m.licence_class !== licFilter) return false;
+    return true;
+  });
+  const mc = cat && cat.machine;
+  const chip = (cur, set, val, label) => E('button', { key: val, className: 'settings-btn' + (cur === val ? ' active' : ''),
+    'aria-pressed': cur === val, onClick: () => set(val), style: { fontSize: 10, padding: '1px 8px' } }, label);
+
+  return E(StSection, { title: 'Find a model',
+    desc: 'Every model ' + fridayName() + ' can run here, with a verdict for this computer on each file. Pick anything: bigger, smaller, or several. Nothing about this computer leaves it.' },
+    mc && E('div', { style: { marginBottom: 10 } },
+      E('div', { style: { fontSize: 12, color: 'var(--st-text)', fontFamily: 'var(--st-font)' } },
+        'This computer: ' + mc.line + ' · ' + mc.tier,
+        sim && E('span', { style: { marginLeft: 8, fontSize: 9.5, color: 'var(--st-warn)', border: '1px solid var(--st-warn)', borderRadius: 4, padding: '1px 6px' } }, 'SIMULATED')),
+      E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' } },
+        E('button', { className: 'settings-btn', onClick: () => setNumbers(!numbers), style: { fontSize: 10 } }, numbers ? 'Hide the numbers' : 'Show me the numbers'),
+        E('span', { style: { fontSize: 10.5, color: 'var(--st-dim)' } }, 'Pretend I have'),
+        E('input', { value: pretend.vram, onChange: e => setPretend({ ...pretend, vram: e.target.value }), placeholder: 'GB of graphics memory',
+          style: { width: 150, fontSize: 10.5, background: 'rgba(255,255,255,0.05)', color: 'var(--st-text)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '2px 6px' } }),
+        E('input', { value: pretend.ram, onChange: e => setPretend({ ...pretend, ram: e.target.value }), placeholder: 'GB of RAM',
+          style: { width: 90, fontSize: 10.5, background: 'rgba(255,255,255,0.05)', color: 'var(--st-text)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '2px 6px' } }),
+        E('button', { className: 'settings-btn', style: { fontSize: 10 }, onClick: () => { const body = { vram_gb: pretend.vram || null, ram_gb: pretend.ram || null }; load(body); onPretend && onPretend(body); } }, 'Recalculate'),
+        sim && E('button', { className: 'settings-btn', style: { fontSize: 10 }, onClick: () => { setPretend({ vram: '', ram: '' }); load(null); onPretend && onPretend(null); } }, 'Back to this computer')),
+      numbers && E('div', { style: { marginTop: 6, fontFamily: 'var(--st-mono)', fontSize: 10.5, color: 'var(--st-label)' } },
+        mc.gpu && E('div', null, 'Graphics: ' + mc.gpu.total_mib + ' MiB total − 1024 MiB reserve − ' + mc.gpu.baseline_mib + ' MiB held by the display and others = ' + mc.gpu.available_mib + ' MiB for models' + (cat.pinned_vram_mib ? ' (' + cat.pinned_vram_mib + ' MiB of that is loaded now)' : '')),
+        E('div', null, 'RAM: ' + mc.ram.total_mib + ' MiB total − ' + mc.ram.os_reserve_mib + ' MiB for the OS; ' + mc.ram.available_target_mib + ' MiB for models inside the 65% target'),
+        E('div', null, 'Disk: ' + Math.round((mc.disk_free_mib || 0) / 1024) + ' GB free; ' + fridayName() + ' keeps 10 GB free'),
+        E('div', null, 'Profile: ' + mc.profile_path),
+        cat.calibration && E('div', null, 'Speed estimates: ' + (cat.calibration.basis === 'calibrated' ? 'calibrated ×' + cat.calibration.factor + ' from your ' + cat.calibration.from + ' run' : 'uncalibrated until a model is measured here')))),
+    E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 } },
+      E('input', { value: q, onChange: e => setQ(e.target.value), placeholder: 'Search by name or publisher', 'aria-label': 'Search models',
+        style: { flex: '1 1 200px', fontSize: 11, background: 'rgba(255,255,255,0.05)', color: 'var(--st-text)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '3px 8px' } }),
+      E('span', { style: { fontSize: 10, color: 'var(--st-dim)' } }, 'Fit'),
+      chip(fitFilter, setFitFilter, 'all', 'any'), chip(fitFilter, setFitFilter, 'runs_well', 'runs well'),
+      chip(fitFilter, setFitFilter, 'tight', 'tight'), chip(fitFilter, setFitFilter, 'partial', 'partly on CPU'),
+      E('span', { style: { fontSize: 10, color: 'var(--st-dim)' } }, 'Licence'),
+      chip(licFilter, setLicFilter, 'all', 'any'), chip(licFilter, setLicFilter, 'permissive', 'permissive'),
+      chip(licFilter, setLicFilter, 'restricted', 'restricted')),
+    err && E('div', { style: { fontSize: 11, color: 'var(--st-danger)' } }, err),
+    !cat && !err && E('div', { style: { fontSize: 11, color: 'var(--st-dim)' } }, 'Working out what fits…'),
+    shown.map(m => E(CatalogModelRow, { key: m.id, m, onGet, onPick, why, setWhy, onChanged: () => load(null) })),
+    cat && !shown.length && E('div', { style: { fontSize: 11, color: 'var(--st-dim)', padding: '8px 2px' } }, 'Nothing matches those filters.'),
+    E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' } },
+      E('input', { value: anyId, onChange: e => setAnyId(e.target.value), placeholder: 'Any model: paste a Hugging Face id (publisher/model)', 'aria-label': 'Any model',
+        onKeyDown: e => { if (e.key === 'Enter') checkAny(); },
+        style: { flex: '1 1 260px', fontSize: 11, background: 'rgba(255,255,255,0.05)', color: 'var(--st-text)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '3px 8px' } }),
+      E('button', { className: 'settings-btn', onClick: checkAny, disabled: checking, style: { fontSize: 10 } }, checking ? 'Checking…' : 'Check it'),
+      pastedMsg && E('span', { style: { fontSize: 10.5, color: 'var(--st-warn)' } }, pastedMsg)));
 }
 
 const _MODALITY_HEADING = {
@@ -48728,6 +49013,30 @@ function SettingsTabIntelligence({ s, save }) {
   const [fetchFor, setFetchFor] = useState(null);   // model_id or null
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState('');
+  // Which file of a model the catalogue's Get asked for, and the pasted
+  // model's own download spec when it is not on the shortlist.
+  const [fetchPick, setFetchPick] = useState(null);
+  // The stack preview: the seats resident now, plus files ticked in the
+  // catalogue. Picks are ids with a packing, never downloads.
+  const residentPicks = Object.entries((d && d.residency_reading && d.residency_reading.seats) || {})
+    .filter(([role, s]) => s && s.model_id && s.status === 'pinned')
+    .map(([role, s]) => ({ id: s.model_id, label: s.model_id, kind: 'text', role }));
+  const [stackPicks, setStackPicks] = useState([]);
+  const [stackPretend, setStackPretend] = useState(null);
+  const onCatalogPick = (m, f) => setStackPicks(prev =>
+    prev.some(p => p.id === m.id) ? prev : prev.concat([{ id: m.id, label: m.label, packing: f.packing, kind: 'text' }]));
+  const onRemovePick = (p) => setStackPicks(prev => prev.filter(x => x.id !== p.id));
+  const allPicks = residentPicks.filter(r => !stackPicks.some(p => p.id === r.id)).concat(stackPicks);
+  const onCatalogGet = (m, f) => {
+    if (m.source === 'pasted') {
+      setFetchPick({ repo: (m.repo_url || '').replace('https://huggingface.co/', ''), file: f.file,
+        bytes: f.bytes, sha256: f.sha256, label: m.label, licence: m.licence });
+      setFetchFor(m.id);
+      return;
+    }
+    setFetchPick({ packing: f.packing });
+    setFetchFor(m.id);
+  };
 
   /* CONFIRM FROM THE FAST ROUTE, NOT THE SLOW ONE.
      Reported as "nothing changed when I picked Opus 5.5 for either seat". The
@@ -48794,7 +49103,24 @@ function SettingsTabIntelligence({ s, save }) {
     const modelId = card.model_id;
     const modality = (card.row || {}).modality;
     setFetching(true);
-    if (modality === 'text') {
+    if ((card.row || {}).fetch === 'download') {
+      // A GGUF by URL: resumable, sha256-verified, registered with the engine
+      // that serves it (routes/models_screen.py). This is how the standard
+      // brain arrives; progress shows in the orb and in this section.
+      apiFetch('/api/models/download', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ model_id: modelId }, fetchPick || {})),
+      }).then(r => r.json()).then(j => {
+        if (j && j.status === 'refused') {
+          setFetchMsg('Not started: ' + (j.error || 'refused'));
+        } else {
+          setFetchMsg('Downloading ' + modelId + ' — it resumes if interrupted and is ' +
+            'checked against the publisher\'s checksum before it counts as installed.');
+          setTimeout(reload, 6000);
+        }
+      }).catch(e => setFetchMsg('Could not start the download: ' + e))
+        .finally(() => { setFetching(false); setFetchFor(null); });
+    } else if (modality === 'text') {
       // The ONE automated fetch path that exists today (headroom.md §8.2):
       // Ollama artifacts. HR10 -- this reports "pulling", not "installed";
       // the row only reads installed once reload() sees it in the store.
@@ -48921,6 +49247,8 @@ function SettingsTabIntelligence({ s, save }) {
       E(AutoRouterControls, { s: s || {}, save: save, orReady: true }),
 
     // headroom.md §8.2: what this machine can run, measured.
+    E(StackSection, { picks: allPicks, onRemovePick, pretend: stackPretend }),
+    E(ModelCatalogSection, { onGet: onCatalogGet, onPick: onCatalogPick, onPretend: setStackPretend }),
     E(LocalModelsSection, {
       lm: d.local_models || {}, fetchFor: fetchFor, setFetchFor: setFetchFor,
       confirmFetch: confirmFetch, fetching: fetching, fetchMsg: fetchMsg,

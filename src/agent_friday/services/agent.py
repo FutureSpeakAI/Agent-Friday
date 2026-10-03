@@ -8137,6 +8137,15 @@ except Exception as _mte:  # never let optional deps break the agent import
 # Podcasts (make_podcast / podcast_list / podcast_play / podcast_source): any
 # sources into a two-host episode, written by the local model and spoken on
 # this computer. See services/podcast_tools.py.
+# Local models (local_models_advise): what this computer can run and how,
+# from the same fit arithmetic the Models screen shows. See
+# services/local_models_tools.py.
+try:
+    from agent_friday.services import local_models_tools as _local_models_tools
+    _local_models_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _lmte:  # never let an optional module break the agent import
+    print(f"  [LOCAL-MODELS-TOOLS] registration skipped: {_lmte}")
+
 try:
     from agent_friday.services import podcast_tools as _podcast_tools
     _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)

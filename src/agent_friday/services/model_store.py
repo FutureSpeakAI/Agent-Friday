@@ -346,8 +346,15 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
              mmproj=None, lora=None, chat_template=None,
              sha256: str | None = None, origin: dict | None = None,
              verify: bool = False, label: str | None = None,
-             local_files: dict | None = None) -> dict:
+             local_files: dict | None = None, engine=None,
+             serve_args: list | None = None,
+             serve_num_ctx: int | None = None) -> dict:
     """Record a model Friday holds, with its facts read from the file.
+
+    `engine` is the server binary that can load this file, when stock
+    llama.cpp cannot (Bonsai 2's ternary tensor types need the PrismML fork);
+    the Arbiter reads it before spawning. `serve_args` and `serve_num_ctx`
+    are the flags and context the file was measured or published with.
 
     A seat is up to three files: the weights (`path`), an adapter (`lora`)
     that `llama-server` applies at serve time with `--lora`, and a projector
@@ -406,6 +413,12 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
         entry["sha256"] = sha256
     elif verify:
         entry["sha256"] = sha256_of(path)
+    if engine:
+        entry["engine"] = str(engine)
+    if serve_args:
+        entry["serve_args"] = [str(a) for a in serve_args]
+    if serve_num_ctx:
+        entry["serve_num_ctx"] = int(serve_num_ctx)
 
     data = _load()
     data.setdefault("version", REGISTRY_VERSION)

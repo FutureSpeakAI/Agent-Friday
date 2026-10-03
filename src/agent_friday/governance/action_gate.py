@@ -168,6 +168,9 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
 #: gate already judges, and delegation (a spawned task's own actions come
 #: back through this checkpoint one by one).
 INTERNAL_TOOLS = frozenset({
+    # Reads the machine and the model catalogue; downloads nothing and
+    # reaches no one (services/local_models_tools).
+    "local_models_advise",
     "search_web", "browse_web", "read_file", "search_files",
     "write_clipboard", "query_trust_graph", "query_calendar", "revert_workspace",
     "list_workspace_history", "find_calendar_events", "search_email",

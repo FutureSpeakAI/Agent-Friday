@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "reviewed": "2026-10-02",
+  "note": "The curated shortlist the Models screen offers before the user pastes anything of their own. Every file entry carries the publisher's byte count and sha256 as read from the public Hugging Face API on the review date; the downloader verifies against them. Licence and telemetry classes follow model-soup-advisor.md section 6. Nothing here is a measurement; speeds are the publisher's figures or absent.",
+  "runtime": {
+    "prism-fork": {
+      "label": "PrismML llama.cpp fork (Bonsai 2's ternary kernels)",
+      "repo": "PrismML-Eng/llama.cpp",
+      "releases_api": "https://api.github.com/repos/PrismML-Eng/llama.cpp/releases/latest",
+      "minimum_build": 10658,
+      "assets": {
+        "windows": {
+          "cpu": "bin-win-cpu-x64.zip",
+          "cuda": "bin-win-cuda-12.4-x64.zip",
+          "cuda_runtime": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+          "hip": "bin-win-hip-radeon-x64.zip",
+          "vulkan": "bin-win-vulkan-x64.zip"
+        },
+        "linux": {
+          "cpu": "bin-ubuntu-x64.tar.gz",
+          "cuda": "bin-linux-cuda-12.4-x64.tar.gz",
+          "rocm": "bin-ubuntu-rocm-7.2-x64.tar.gz",
+          "vulkan": "bin-ubuntu-vulkan-x64.tar.gz"
+        },
+        "darwin": {
+          "metal": "bin-macos-arm64.tar.gz",
+          "cpu": "bin-macos-x64.tar.gz"
+        }
+      },
+      "server_binary": {"windows": "llama-server.exe", "linux": "llama-server", "darwin": "llama-server"}
+    }
+  },
+  "models": [
+    {
+      "id": "bonsai2:27b",
+      "label": "Bonsai 2 27B",
+      "publisher": "PrismML",
+      "friday_standard": true,
+      "roles": ["brain", "deep_reasoner"],
+      "runtime": "prism-fork",
+      "repo": "prism-ml/Ternary-Bonsai-2-27B-gguf",
+      "repo_url": "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf",
+      "licence": "Apache-2.0",
+      "licence_class": "permissive",
+      "telemetry": "none",
+      "architecture": "qwen35",
+      "params_total_b": 27.4,
+      "context_training": 262144,
+      "kv_layout": {"full_attention_layers": 16, "kv_heads": 4, "head_dim": 256, "note": "64 blocks, full attention every 4th; the recurrent layers hold a small fixed state"},
+      "published_speed": {"RTX 5090": {"PTQ1_0": 120.5, "PQ2_0": 129.9}, "RTX 4090": {"PTQ1_0": 91.1, "PQ2_0": 81.2}, "L4": {"PTQ1_0": 32.1, "PQ2_0": 29.8}, "M5 Max": {"PQ2_0": 47.0}, "M5 Pro": {"PQ2_0": 28.1}, "source": "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf"},
+      "serve": {"serve_num_ctx": 131072, "serve_args": ["-b", "4096", "-ub", "512", "-np", "1", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]},
+      "files": [
+        {"file": "Ternary-Bonsai-2-27B-PTQ1_0.gguf", "packing": "PTQ1_0", "bits_per_weight": 1.75, "bytes": 5946648928, "sha256": "53107f530aa52eb00912263ab1ee29bd199261c87cd7b4ad4ca1318c1fe33ee3", "default": true, "note": "smallest; faster decode on Ada-class cards and every CPU"},
+        {"file": "Ternary-Bonsai-2-27B-PQ2_0.gguf", "packing": "PQ2_0", "bits_per_weight": 2.13, "bytes": 7206168928, "sha256": "3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1", "note": "faster decode on Ampere, Hopper, Blackwell, RDNA and Apple M5"}
+      ],
+      "companions": [
+        {"file": "Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf", "kind": "mmproj", "bytes": 629246976, "sha256": "6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903", "note": "vision tower; loaded for image turns only"}
+      ]
+    },
+    {
+      "id": "ternary-bonsai:1.7b",
+      "label": "Ternary Bonsai 1.7B",
+      "publisher": "PrismML",
+      "roles": ["system_one"],
+      "runtime": "prism-fork",
+      "repo": "prism-ml/Ternary-Bonsai-1.7B-gguf",
+      "repo_url": "https://huggingface.co/prism-ml/Ternary-Bonsai-1.7B-gguf",
+      "licence": "Apache-2.0",
+      "licence_class": "permissive",
+      "telemetry": "none",
+      "architecture": "qwen3",
+      "params_total_b": 1.7,
+      "context_training": 32768,
+      "generation_note": "the earlier Ternary Bonsai generation (Qwen3 base), not Bonsai 2",
+      "files": [
+        {"file": "Ternary-Bonsai-1.7B-PQ2_0.gguf", "packing": "PQ2_0", "bytes": 463290464, "sha256": "de68ba48a8dacb21979915991e7741b917869d71410a370df951c0c3a237ae50", "default": true},
+        {"file": "Ternary-Bonsai-1.7B-Q2_0_g64.gguf", "packing": "Q2_0_g64", "bytes": 490163968, "sha256": "6d0ecb3d9055969b5cde332b6fdb60e67ed3599e9f73e56b977731e1467e5c91", "runtime": "llama.cpp", "note": "loads on stock llama.cpp"}
+      ]
+    },
+    {
+      "id": "ternary-bonsai:4b",
+      "label": "Ternary Bonsai 4B",
+      "publisher": "PrismML",
+      "roles": ["system_one", "lesser_brain"],
+      "runtime": "prism-fork",
+      "repo": "prism-ml/Ternary-Bonsai-4B-gguf",
+      "repo_url": "https://huggingface.co/prism-ml/Ternary-Bonsai-4B-gguf",
+      "licence": "Apache-2.0",
+      "licence_class": "permissive",
+      "telemetry": "none",
+      "architecture": "qwen3",
+      "params_total_b": 4.0,
+      "context_training": 32768,
+      "generation_note": "the earlier Ternary Bonsai generation (Qwen3 base), not Bonsai 2",
+      "files": [
+        {"file": "Ternary-Bonsai-4B-PQ2_0.gguf", "packing": "PQ2_0", "bytes": 1074969344, "sha256": "829abec7eb92f5bf464762be7c9e8a45d777c714543a1474fc90cee20e698beb", "default": true},
+        {"file": "Ternary-Bonsai-4B-Q2_0_g64.gguf", "packing": "Q2_0_g64", "bytes": 1137806656, "sha256": "9d968b04a3c9a794897bcc744c8072fb6a061c0e42efd03c989401ddf8baef0c", "runtime": "llama.cpp", "note": "loads on stock llama.cpp"}
+      ]
+    },
+    {
+      "id": "ternary-bonsai:8b",
+      "label": "Ternary Bonsai 8B",
+      "publisher": "PrismML",
+      "roles": ["system_one", "lesser_brain"],
+      "runtime": "prism-fork",
+      "repo": "prism-ml/Ternary-Bonsai-8B-gguf",
+      "repo_url": "https://huggingface.co/prism-ml/Ternary-Bonsai-8B-gguf",
+      "licence": "Apache-2.0",
+      "licence_class": "permissive",
+      "telemetry": "none",
+      "architecture": "qwen3",
+      "params_total_b": 8.0,
+      "context_training": 32768,
+      "generation_note": "the earlier Ternary Bonsai generation (Qwen3 base), not Bonsai 2",
+      "files": [
+        {"file": "Ternary-Bonsai-8B-PQ2_0.gguf", "packing": "PQ2_0", "bytes": 2182184672, "sha256": "1376f942aa90e60f7b570c1d81b3916fea1315ff85aa1c4d19006af68fb4b922", "default": true},
+        {"file": "Ternary-Bonsai-8B-Q2_0_g64.gguf", "packing": "Q2_0_g64", "bytes": 2310125920, "sha256": "e17b298d84ee78797916ae5c2ecc8211469cc65cccfe3080cd9a9bb503fbc55e", "runtime": "llama.cpp", "note": "loads on stock llama.cpp"}
+      ]
+    }
+  ]
+}
