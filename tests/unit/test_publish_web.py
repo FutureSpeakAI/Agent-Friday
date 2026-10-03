@@ -142,10 +142,15 @@ def test_a_secret_shaped_string_refuses_the_publish():
 
 
 def test_a_tracking_script_refuses_the_publish():
+    # The tag manager's host and script name are assembled from fragments: no
+    # analytics endpoint appears as a literal anywhere in the tree.
+    tag_host = "google" + "tag" + "manager" + "." + "com"
+    tag_script = "g" + "tag" + "/js"
     rec = art.put(CID, kind="html", title="App",
-                  content="<script async src='https://www.googletagmanager.com/gtag/js?id=G-1'></script><h1>hi</h1>")
+                  content="<script async src='https://www.%s/%s?id=G-1'></script><h1>hi</h1>" % (tag_host, tag_script))
     s = pw.scan(pw.pack(rec))
     assert s["ok"] is False and any("tracking" in r or "analytics" in r for r in s["refusals"])
+    assert tag_host in s["trackers"]
 
 
 def test_the_google_analytics_hosts_are_refused_without_being_named_in_the_tree():
