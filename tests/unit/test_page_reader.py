@@ -62,6 +62,22 @@ def test_a_cms_dressing_the_story_in_tag_classes_still_keeps_it():
     assert page.dropped == 1
 
 
+def test_paywall_marked_paragraphs_are_read_and_captions_are_not():
+    """A publisher marks the story's own paragraphs class="paywall"; a photo's
+    caption is not the story (and must never become its lead)."""
+    html = ('<html><body><article><div class="byline"><a href="/by/jane">Jane Roe</a></div>'
+            '<div class="credit-caption"><div class="caption"><p>Shoppers walk past a store in '
+            'Riverton on Monday. Photograph: Example Wire</p></div></div>'
+            + "".join('<p class="paywall">Story paragraph %d, which the page itself carries in full.</p>' % i
+                      for i in range(5))
+            + '<figure><img src="x.jpg"><figcaption>Image credits: Example Wire</figcaption></figure>'
+            '</article></body></html>')
+    page = pr.read_html(html)
+    assert [b["text"] for b in page.blocks][:2] == [
+        "Jane Roe", "Story paragraph 0, which the page itself carries in full."]
+    assert "Photograph" not in page.text and "Image credits" not in page.text
+
+
 def test_short_wire_paragraphs_headline_and_byline_survive():
     """The old rule kept only paragraphs over 40 characters."""
     page = pr.read_html(STORY, "https://examplenews.com/budget")

@@ -49,8 +49,10 @@ _DROP_TAGS = ("script", "style", "noscript", "template", "svg", "iframe", "form"
 _CLUTTER_RE = re.compile(
     r"(?:^|[\s_-])(?:nav|navbar|menu|footer|sidebar|side-?bar|rail|related|recommended|"
     r"promo|advert|ads?|ad-slot|sponsor(?:ed)?|social|share|sharing|newsletter|subscribe|"
-    r"signup|comments?|disqus|breadcrumbs?|cookie|consent|paywall|trending|popular|"
-    r"most-read|outbrain|taboola|teaser|more-stories|tags?)(?:$|[\s_-])", re.I)
+    r"signup|comments?|disqus|breadcrumbs?|cookie|consent|trending|popular|"
+    r"most-read|outbrain|taboola|teaser|more-stories|tags?|caption|credits?)(?:$|[\s_-])", re.I)
+# ("paywall" is not furniture: a publisher marks the story's own paragraphs
+# with it, and text that is in the page is text Friday may read.)
 _BYLINE_RE = re.compile(r"(?:^|[\s_-])(?:byline|author|dateline|contributor)s?(?:$|[\s_-])", re.I)
 #: Lines that are page furniture whatever element carries them.
 _BOILERPLATE_RE = re.compile(
@@ -233,6 +235,8 @@ def _furniture(el, root) -> bool:
         elif inside:
             if node is not el and node.name == "article":
                 return True
+            if node.name in ("figure", "figcaption"):
+                return True          # a picture's caption and credit, not the story
             a = _attrs(node)
             if a.strip() and _CLUTTER_RE.search(a) and not _BYLINE_RE.search(a):
                 return True
@@ -257,6 +261,8 @@ def _story_root(soup):
 
 
 def _score(el, text: str, kind: str) -> float:
+    if kind == "byline":
+        return 1.0                   # a short line, often a link to the author's page
     html_len = max(len(str(el)), 1)
     density = min(1.0, len(text) / html_len * 1.25)
     link_chars = sum(len(a.get_text(" ", strip=True)) for a in el.find_all("a"))
