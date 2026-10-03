@@ -35749,7 +35749,7 @@ function FinanceWS() {
       gap: 4,
       flexWrap: 'wrap'
     }
-  }, ['overview', 'portfolio', 'perks', 'contacts', 'quickref', 'wallet'].map(v => /*#__PURE__*/React.createElement("button", {
+  }, ['overview', 'portfolio', 'perks', 'contacts', 'quickref'].concat(fridayHeldOn('federation') ? ['wallet'] : []).map(v => /*#__PURE__*/React.createElement("button", {
     key: v,
     className: 'btn' + (view === v ? ' active' : ''),
     "aria-pressed": view === v,
@@ -36002,7 +36002,7 @@ function FinanceWS() {
       fontSize: 11,
       color: '#888'
     }
-  }, "Add in ~/.friday/wiki/finance/"))))), view === 'wallet' && /*#__PURE__*/React.createElement(WalletPanel, null), view === 'quickref' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "Add in ~/.friday/wiki/finance/"))))), fridayHeldOn('federation') && view === 'wallet' && /*#__PURE__*/React.createElement(WalletPanel, null), view === 'quickref' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Quick Reference"), [{
     name: 'Your Bank',
