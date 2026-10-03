@@ -209,6 +209,25 @@ def _retired_keys() -> list[bytes]:
     return [k for k in dict.fromkeys(keys) if k and k != current]
 
 
+def _ledger_lines(path: Path) -> list[tuple[str | None, bytes]]:
+    """Every non-blank ledger line as (text, raw bytes), decoded ONE BY ONE.
+
+    A stray undecodable byte spoils only its own line (text None), never the
+    rest of the file: every line that verifies is still read, so a deny mark
+    beside a damaged line is still enforced. The hash of a line is the hash of
+    its raw bytes, which for a readable line equals _line_sha(text)."""
+    out: list[tuple[str | None, bytes]] = []
+    for raw in path.read_bytes().split(b"\n"):
+        b = raw.strip()
+        if not b:
+            continue
+        try:
+            out.append((b.decode("utf-8"), b))
+        except UnicodeDecodeError:
+            out.append((None, b))
+    return out
+
+
 def _known_key_of(line: str) -> tuple[str | None, dict | None]:
     """Which known key signed this ledger line: ("current" | "retired" | None, event).
 
@@ -250,18 +269,15 @@ def _scan_ledger(path: Path) -> dict:
         return out
     _secret_bytes()
     try:
-        raw = path.read_text(encoding="utf-8", errors="strict")
+        entries = _ledger_lines(path)
     except Exception:
-        try:
-            out["dropped"].append(hashlib.sha256(path.read_bytes()).hexdigest())
-        except Exception:
-            out["dropped"].append("undecodable-ledger")
+        out["dropped"].append("unreadable-ledger")
         return out
-    for raw_line in raw.split("\n"):
-        line = raw_line.strip()
-        if not line:
+    for line, b in entries:
+        sha = hashlib.sha256(b).hexdigest()
+        if line is None:
+            out["dropped"].append(sha)
             continue
-        sha = _line_sha(line)
         known, ev = _known_key_of(line)
         if known == "current":
             out["events"].append(ev)
@@ -643,6 +659,64 @@ def unsafe_path_reason(text: str) -> str | None:
                 return "network drives are not allowed; use a file on this computer"
         except Exception:
             pass
+    return link_reason(expanded)
+
+
+def _link_target(prefix: str) -> str | None:
+    """Where a symlink or junction at `prefix` points, read WITHOUT following it
+    (lstat and readlink look at the link itself, not at its target). None when
+    `prefix` is not a link or cannot be read."""
+    import os
+    import stat as _stat
+    try:
+        st = os.lstat(prefix)
+    except OSError:
+        return None
+    reparse = getattr(st, "st_file_attributes", 0) & 0x400   # FILE_ATTRIBUTE_REPARSE_POINT
+    if not (_stat.S_ISLNK(st.st_mode) or reparse):
+        return None
+    try:
+        return os.readlink(prefix)
+    except (OSError, ValueError):
+        return None
+
+
+def _is_network_target(target: str) -> bool:
+    t = str(target or "").replace("/", "\\")
+    if t.upper().startswith("\\\\?\\UNC\\"):
+        return True
+    return t.startswith("\\\\") and not t.startswith(("\\\\?\\", "\\\\.\\"))
+
+
+def link_reason(text: str) -> str | None:
+    """Refuse a local-looking path that a link in its chain sends to the network.
+
+    Walks the path from its root one component at a time and reads each link it
+    meets without following it; a local link target is walked in turn (a
+    bounded number of hops), a network one refuses the path."""
+    import os
+    todo = [os.path.normpath(os.path.expanduser(str(text or "")))]
+    hops = 0
+    while todo:
+        path = todo.pop()
+        drive, rest = os.path.splitdrive(path)
+        parts = [x for x in rest.replace("/", "\\").split("\\") if x]
+        prefix = drive + "\\" if drive else os.sep
+        for i, part in enumerate(parts):
+            prefix = os.path.join(prefix, part)
+            target = _link_target(prefix)
+            if target is None:
+                continue
+            if _is_network_target(target):
+                return "that path leads to a network location; use a file on this computer"
+            hops += 1
+            if hops > 16:
+                return "that path has too many links to check"
+            t = target[4:] if target.startswith("\\\\?\\") else target
+            if not os.path.isabs(t):
+                t = os.path.join(os.path.dirname(prefix), t)
+            todo.append(os.path.normpath(os.path.join(t, *parts[i + 1:])))
+            break
     return None
 
 
@@ -882,17 +956,19 @@ def list_unverified() -> list[dict]:
     if not path.exists():
         return []
     try:
-        raw = path.read_text(encoding="utf-8", errors="strict")
+        entries = _ledger_lines(path)
     except Exception:
         return [{"event": None, "verified": False, "line_sha256": "",
-                 "why": "the ledger could not be decoded at all"}]
+                 "signed_with": None, "why": "the ledger could not be read at all"}]
     _secret_bytes()
     out: list[dict] = []
-    for raw_line in raw.split("\n"):
-        line = raw_line.strip()
-        if not line:
+    for line, b in entries:
+        sha = hashlib.sha256(b).hexdigest()
+        if line is None:
+            out.append({"event": None, "verified": False, "line_sha256": sha,
+                        "signed_with": None,
+                        "why": "the line is not readable text"})
             continue
-        sha = hashlib.sha256(line.encode("utf-8")).hexdigest()
         try:
             rec = json.loads(line)
             ev = rec["event"]
@@ -947,21 +1023,19 @@ def _quarantine_line(line_sha256: str, why: str, who: str) -> bool:
         if not path.exists():
             return False
         try:
-            raw = path.read_text(encoding="utf-8", errors="strict")
+            entries = _ledger_lines(path)
         except Exception:
             return False
-        keep, moved = [], None
-        for raw_line in raw.split("\n"):
-            line = raw_line.strip()
-            if not line:
+        keep: list[bytes] = []
+        moved, moved_b = None, None
+        for line, b in entries:
+            if hashlib.sha256(b).hexdigest() == line_sha256:
+                moved, moved_b = line, b
                 continue
-            if _line_sha(line) == line_sha256:
-                moved = line
-                continue
-            keep.append(line)
-        if moved is None:
+            keep.append(b)
+        if moved_b is None:
             return False
-        known, ev = _known_key_of(moved)
+        known, ev = (_known_key_of(moved) if moved is not None else (None, None))
         vouched_grant = known is not None and (ev or {}).get("event") in _GRANT_EVENTS
         q = _quarantine_path()
         q.parent.mkdir(parents=True, exist_ok=True)
@@ -974,10 +1048,11 @@ def _quarantine_line(line_sha256: str, why: str, who: str) -> bool:
                 "signed_with": known,
                 "holds_suspension": not vouched_grant,
                 "line": moved,
+                "line_b64": (None if moved is not None else
+                             __import__("base64").b64encode(moved_b).decode("ascii")),
             }, sort_keys=True, separators=(",", ":")) + "\n")
         tmp = path.with_suffix(".jsonl.tmp")
-        tmp.write_text(("\n".join(keep) + "\n") if keep else "", encoding="utf-8",
-                       newline="\n")
+        tmp.write_bytes((b"\n".join(keep) + b"\n") if keep else b"")
         tmp.replace(path)
     _invalidate_cache()
     return True
@@ -1053,10 +1128,12 @@ def dismiss_unverified(line_sha256: str, *, confirmed_by: str) -> dict:
 # ── Starting fresh ───────────────────────────────────────────────────────────
 #
 # The one way out of a suspension that an unauthenticated line holds. The whole
-# ledger is moved aside verbatim (renamed, so byte for byte; never deleted, never
-# re-signed), the quarantine file with it, and a new ledger starts with no
-# grants. Never-send marks that still verify are carried over as their own
-# signed lines, unchanged: starting fresh must not un-deny anything. Called
+# ledger is set aside verbatim (copied and checked byte for byte; never
+# deleted, never re-signed), the quarantine file with it, and a new ledger
+# starts with no grants. Lines are decoded one by one, so every never-send mark
+# that still verifies is carried over as its own signed line, unchanged, even
+# beside a line that is not readable text: starting fresh must not un-deny
+# anything. Called
 # only from the approval hook of a "file_access_reset" card that the owner
 # approved on screen (file_grant_requests.apply_reset).
 
@@ -1066,6 +1143,15 @@ FRESH_START_TEXT = ("The old permissions file, which has a line no current key "
 
 
 def start_fresh(*, confirmed_by: str) -> dict:
+    """Set the whole ledger aside and start a new one. See the section note.
+
+    Order, so that a crash at any point leaves a ledger in place and nothing
+    looser than before: the new ledger is written to a temp file, the old one is
+    COPIED aside and checked byte for byte, then the temp file replaces the
+    ledger in one step. The quarantine file is renamed aside last; a crash before
+    that leaves its holds in force, which only keeps grants suspended."""
+    import os
+    import shutil
     if confirmed_by != "owner:ui":
         return {"ok": False, "error": "starting fresh is approved only on screen"}
     path = _ledger_path()
@@ -1073,33 +1159,49 @@ def start_fresh(*, confirmed_by: str) -> dict:
     stamp = "%s-%s" % (time.strftime("%Y%m%d-%H%M%S"), uuid.uuid4().hex[:6])
     aside = path.parent / ("file_grants.set-aside-%s.jsonl" % stamp)
     q_aside = path.parent / ("file_grants.quarantine.set-aside-%s.jsonl" % stamp)
-    kept: list[str] = []
+    kept: list[bytes] = []
     with _APPEND_LOCK:
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
+        had_ledger = path.exists()
+        if had_ledger:
             try:
-                raw = path.read_text(encoding="utf-8", errors="strict")
+                entries = _ledger_lines(path)
             except Exception:
-                raw = ""
+                return {"ok": False, "error": "the permissions file could not be read, "
+                                              "so nothing was changed"}
             lines, events = [], []
-            for raw_line in raw.split("\n"):
-                line = raw_line.strip()
-                if not line:
-                    continue
+            for line, b in entries:
+                if line is None:
+                    continue   # unreadable: not carried, kept in the file set aside
                 known, ev = _known_key_of(line)
                 if known == "current" or (known == "retired" and (ev or {}).get("event") == "deny"):
-                    lines.append((line, ev))
+                    lines.append((b, ev))
                     events.append(ev)
             _grants, denies = _fold(events)
-            kept = [line for line, ev in lines
+            kept = [b for b, ev in lines
                     if ev.get("event") == "deny" and ev.get("id") in denies]
-            path.replace(aside)
+        tmp = path.with_suffix(".jsonl.fresh.tmp")
+        tmp.write_bytes((b"\n".join(kept) + b"\n") if kept else b"")
+        try:
+            if had_ledger:
+                original = path.read_bytes()
+                shutil.copyfile(path, aside)
+                if aside.read_bytes() != original:
+                    tmp.unlink()
+                    return {"ok": False, "error": "the old permissions file could not "
+                                                  "be set aside intact, so nothing was "
+                                                  "changed"}
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
         if q.exists():
             q.replace(q_aside)
-        path.write_text(("\n".join(kept) + "\n") if kept else "", encoding="utf-8",
-                        newline="\n")
     _invalidate_cache()
-    return {"ok": True, "set_aside": aside.name if aside.exists() else None,
+    return {"ok": True, "set_aside": aside.name if had_ledger else None,
             "kept_denies": len(kept)}
 
 

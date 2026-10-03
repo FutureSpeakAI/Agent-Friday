@@ -63183,13 +63183,19 @@ function App() {
       /* Anything waiting on a decision takes the caption's place. Polled
          rather than pushed, because the widget must not depend on the React
          tree having mounted — in the PiP window it has not. */
+      var CAPTION_NEVER_DECIDES = ['file_grant_request', 'file_access_reset'];
       function pollApprovals() {
         if (approvalTimer) clearInterval(approvalTimer);
         var tick = function () {
           fetch('/api/approvals?status=pending')
             .then(function (r) { return r.json(); })
             .then(function (d) {
-              var list = (d && d.approvals) || [];
+              // A file-access or start-fresh card is decided only from its full
+              // card, where every path it would allow is listed; the caption
+              // never offers it.
+              var list = ((d && d.approvals) || []).filter(function (x) {
+                return CAPTION_NEVER_DECIDES.indexOf(x && x.kind) < 0;
+              });
               var a = list[0];
               body.classList.toggle('has-approval', !!a);
               if (a) {
@@ -63210,7 +63216,7 @@ function App() {
         if (!id) return;
         fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision: ok ? 'approve' : 'deny', decided_by: 'owner:ui' })
+          body: JSON.stringify({ decision: ok ? 'approve' : 'deny', decided_by: 'owner:caption' })
         }).catch(function () {}).then(function () {
           body.classList.remove('has-approval');
         });

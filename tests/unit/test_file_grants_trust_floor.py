@@ -246,6 +246,22 @@ def test_a_folder_grant_on_a_drive_root_or_the_home_folder_is_refused(tmp_path):
             fg.create_scope_grant(str(broad), "folder", 7)
 
 
+def test_a_local_path_whose_link_leads_to_the_network_is_refused(tmp_path, monkeypatch):
+    (tmp_path / "link").mkdir()
+    target = _file(tmp_path / "link", "cv.txt")
+    unc = chr(92) * 2 + "fileserver" + chr(92) + "share"
+    monkeypatch.setattr(fg, "_link_target",
+                        lambda prefix: unc if prefix.lower().endswith("link") else None)
+
+    out = fgr.describe_item({"path": str(target)})
+
+    assert out["ok"] is False and "network" in out["error"]
+    with pytest.raises(ValueError):
+        fg.create_file_grant(str(target))
+    monkeypatch.setattr(fg, "_link_target", lambda prefix: None)
+    assert fgr.describe_item({"path": str(target)})["ok"] is True
+
+
 # ── Only the on-screen click approves ────────────────────────────────────────
 
 def test_the_bare_owner_label_does_not_approve_a_file_card(tmp_path):

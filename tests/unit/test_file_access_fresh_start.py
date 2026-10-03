@@ -153,5 +153,63 @@ def test_no_model_tool_can_start_fresh(tmp_path):
     assert approvals.list_approvals(kind=fgr.RESET_KIND) == []
 
 
+def _deny_beside_unreadable_line(tmp_path):
+    keep = _file(tmp_path, "medical.txt", "Private.")
+    deny = fg.create_deny_mark(str(keep), "file")
+    with open(fg._ledger_path(), "ab") as f:
+        f.write(bytes([0xFF, 0xFE]) + b" a stray line that is not text" + bytes([10]))
+    fg._invalidate_cache()
+    return keep, deny
+
+
+def test_a_deny_beside_an_unreadable_line_is_still_enforced(tmp_path):
+    keep, deny = _deny_beside_unreadable_line(tmp_path)
+
+    state = fg._load_state(force=True)
+
+    assert deny["id"] in state.denies and state.suspended is True
+    assert fg.check_grant(keep, sha256_hex=_sha(keep)).state == "denied"
+
+
+def test_starting_fresh_keeps_a_deny_beside_an_unreadable_line(tmp_path):
+    keep, deny = _deny_beside_unreadable_line(tmp_path)
+    before = fg._ledger_path().read_bytes()
+    out = fgr.request_fresh_start()
+
+    approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
+
+    (aside,) = _set_aside(tmp_path)
+    assert aside.read_bytes() == before, "the unreadable line was not kept in the file set aside"
+    state = fg._load_state(force=True)
+    assert list(state.denies) == [deny["id"]], "starting fresh dropped a never-send mark"
+    assert state.suspended is False and state.grants == {}
+    assert fg.check_grant(keep, sha256_hex=_sha(keep)).state == "denied"
+
+
+def test_a_failed_copy_aside_leaves_the_ledger_exactly_as_it_was(tmp_path, monkeypatch):
+    import shutil
+    _broken_ledger(tmp_path)
+    before = fg._ledger_path().read_bytes()
+
+    def _disk_full(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(shutil, "copyfile", _disk_full)
+
+    with pytest.raises(OSError):
+        fg.start_fresh(confirmed_by="owner:ui")
+
+    assert fg._ledger_path().read_bytes() == before
+    assert fg.status()["suspended"] is True
+
+
+def test_the_caption_widget_never_decides_file_access_cards():
+    text = (ROOT / "index.html").read_text(encoding="utf-8")
+    start = text.index("function pollApprovals()")
+    widget = text[start - 200:text.index("function decide(ok)", start) + 600]
+    assert "CAPTION_NEVER_DECIDES = ['file_grant_request', 'file_access_reset']" in widget
+    assert "CAPTION_NEVER_DECIDES.indexOf(x && x.kind) < 0" in widget
+    assert "decided_by: 'owner:caption'" in widget and "'owner:ui'" not in widget
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
