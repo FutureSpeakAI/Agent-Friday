@@ -186,13 +186,19 @@ def test_unverified_lines_can_be_listed_for_review(grants):
     assert len(pending[0]["line_sha256"]) == 64
 
 
-def test_reattesting_writes_a_new_signed_line_with_provenance(grants):
-    grants._append_event({"event": "grant_file", "id": "g-4", "path": "d.pdf"})
+def test_reattesting_writes_a_new_signed_line_with_provenance(grants, monkeypatch):
+    # A line signed with the RETIRED key (the session secret the ledger used
+    # before it had its own): authentic, so it may be re-signed on confirmation.
+    old = "the-session-secret-before-the-ledger-key"  # pragma: allowlist secret
+    monkeypatch.setenv("FRIDAY_SECRET_KEY", old)
+    grants._secret_bytes()
+    ev = {"event": "grant_file", "id": "g-4", "path": "d.pdf"}
     p = grants._ledger_path()
-    rec = json.loads(p.read_text(encoding="utf-8").strip())
-    rec["hmac"] = "2" * 64
+    p.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"event": ev, "hmac": grants._hmac_hex(ev, old.encode("utf-8"))}
     p.write_text(json.dumps(rec, sort_keys=True, separators=(",", ":")) + "\n",
                  encoding="utf-8")
+    grants._invalidate_cache()
 
     pending = grants.list_unverified()
     out = grants.reattest(pending[0]["line_sha256"], confirmed_by="owner")
@@ -215,7 +221,7 @@ def test_reattesting_writes_a_new_signed_line_with_provenance(grants):
     kept = json.loads(q.read_text(encoding="utf-8").strip())
     assert kept["line_sha256"] == pending[0]["line_sha256"]
     assert kept["quarantined_by"] == "owner"
-    assert '"hmac":"2222' in kept["line"] or "2" * 8 in kept["line"], (
+    assert kept["line"] == json.dumps(rec, sort_keys=True, separators=(",", ":")), (
         "the quarantined copy is not the original line verbatim")
 
 

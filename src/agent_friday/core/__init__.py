@@ -2061,10 +2061,17 @@ _SETTINGS_CACHE_TTL: float = 2.0  # seconds
 _SETTINGS_CACHE_LOCK = threading.Lock()
 
 
+#: Bumped by every invalidation. A reader stores what it read only when no
+#: invalidation happened while it was reading: a read that overlapped a save
+#: holds the pre-save file and must not be served from the cache afterwards.
+_SETTINGS_CACHE_GEN = [0]
+
+
 def _invalidate_settings_cache() -> None:
     with _SETTINGS_CACHE_LOCK:
         _SETTINGS_CACHE["value"] = None
         _SETTINGS_CACHE["ts"] = 0.0
+        _SETTINGS_CACHE_GEN[0] += 1
 
 DEFAULT_AGENT_PERSONALITY = (
     "You are Friday — a calm, perceptive AI partner. "
@@ -2155,7 +2162,12 @@ DEFAULT_SETTINGS = {
     # (source_trust_graph.local_beat_sources). Both empty means no Local beat.
     # The four News routines write on the local model (news_engine.local_news_run).
     "news_local_only": True,
+    # Notification kinds the owner muted ("kind|source"); muted kinds go to the
+    # activity log. Approvals can never be muted (notification_policy).
+    "notification_mutes": [],
     "news_local_area": "",
+    # Hours a story stays eligible for each routine's edition (news_seen).
+    "news_edition_window_hours": {"front_page": 36, "briefing": 36},
     "news_local_sources": [],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
@@ -2300,6 +2312,9 @@ DEFAULT_SETTINGS = {
     # ── Privacy / Context Log ──
     "context_logging_enabled": True,       # master switch for the append-only event log
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
+    # Full tool output kept on disk when a result is cut (services/tool_output.py);
+    # day folders older than this are deleted. 0 = keep forever.
+    "tool_output_retention_days": 7,
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
     "off_record_stops_storage": True,      # off-record writes nothing about the conversation to disk (receipts and governance logs keep only tool, class, decision and time)
@@ -2314,7 +2329,8 @@ DEFAULT_SETTINGS = {
     # it and its routes answer "not enabled". `federation` holds the
     # Marketplace, positrons, peer federation, federated compute and
     # defederation. Buying stays refused whatever this says.
-    "held_features": {"federation": False},
+    # trust_agents: the trust graph's agent kind (schema only; both off).
+    "held_features": {"federation": False, "trust_agents": False},
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
     # `decision_backend` (which scorer answers Friday's typed judgments) is
     # declared once, with the approval-gate block further down.
@@ -2468,6 +2484,8 @@ DEFAULT_SETTINGS = {
     # day) shows (unified-shell.md §10.4): "smart" when it is useful, "always"
     # whenever no workspace is open, "never" only when asked (show_my_day).
     "landing_mode": "smart",
+    # Big mode (hand-cursor.md §2): large targets when hand tracking is on. auto | on | off.
+    "big_mode": "auto",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
     # most tasks; Opus 5 remains available for max-reasoning work. Fallback
     # chain: Sonnet 5 → Fable 5 → Opus 5 → Sonnet 5 → Haiku 4.5
@@ -2520,6 +2538,11 @@ DEFAULT_SETTINGS = {
     "podcasts": {
         "enabled_for_routines": {"front_page": True, "briefing": True,
                                  "weekly": True, "editorial": True},
+        # Who is on each show: "solo" (Friday alone) or "duo" (two hosts).
+        # "any" is every episode not made by a routine. Recommended values;
+        # podcast_engine.RECOMMENDED_FORMAT is the same table.
+        "format": {"briefing": "solo", "front_page": "solo", "editorial": "solo",
+                   "weekly": "duo", "any": "duo"},
         "length": {"front_page": "short", "briefing": "short",
                    "weekly": "standard", "editorial": "standard"},
         "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
@@ -2626,6 +2649,11 @@ DEFAULT_SETTINGS = {
         "pinch_enter": 0.050,
         "pinch_exit": 0.075,
         "dwell_ms": 700,
+        # The hand cursor layer (static/hand_cursor.js): magnetic snap to targets, its reach in
+        # pixels (release is 1.6x), and two-hand zoom (a second tracked hand costs CPU).
+        "snap": True,
+        "snap_radius": 40,
+        "two_hand_zoom": False,
         "debug_overlay": False,
     },
     # ── Which scanner decides whether an action needs your sign-off ──
@@ -3095,6 +3123,7 @@ def _load_settings_raw():
         if (_SETTINGS_CACHE["value"] is not None
                 and (_time.time() - _SETTINGS_CACHE["ts"]) < _SETTINGS_CACHE_TTL):
             return dict(_SETTINGS_CACHE["value"])
+        _gen = _SETTINGS_CACHE_GEN[0]
 
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     if not SETTINGS_FILE.exists():
@@ -3140,8 +3169,9 @@ def _load_settings_raw():
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _sync_capability_routing(merged)
         with _SETTINGS_CACHE_LOCK:
-            _SETTINGS_CACHE["value"] = merged
-            _SETTINGS_CACHE["ts"] = _time.time()
+            if _SETTINGS_CACHE_GEN[0] == _gen:
+                _SETTINGS_CACHE["value"] = merged
+                _SETTINGS_CACHE["ts"] = _time.time()
         return merged
     except Exception as e:
         # NEVER SILENT AGAIN. Reverting to defaults is a defensible last
@@ -3186,7 +3216,18 @@ _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
                        "turn_budget", "local_address", "scheduled_cloud")
 
 
-def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
+def _routing_mode_caller() -> str:
+    """'file:function:line' of the code that asked for this settings write."""
+    import traceback as _tb
+    for fr in reversed(_tb.extract_stack()):
+        if fr.name in ("_save_settings", "_routing_mode_caller"):
+            continue
+        return "%s:%s:%s" % (Path(fr.filename).name, fr.name, fr.lineno)
+    return "unknown"
+
+
+def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
+                   owner_routing_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -3262,6 +3303,35 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
             raise RuntimeError(
                 "settings.json exists but is unreadable (%s); refusing to "
                 "overwrite it with defaults" % e) from e
+    # THE ROUTING MODE CHANGES ONLY ON AN EXPLICIT OWNER ACTION.
+    #
+    # model_routing.mode decides where every turn goes and what it costs. A
+    # write that merely carries a mode (a whole settings dict read earlier, a
+    # UI block spread from a stale copy, a migration, a test) must never move
+    # it. Only the owner's own mode controls pass `owner_routing_change`; any
+    # other change of the mode is dropped from the write and logged with the
+    # caller, and every accepted change is logged old -> new.
+    _mr_in = (data or {}).get("model_routing")
+    if isinstance(_mr_in, dict) and "mode" in _mr_in:
+        _old_mode = (existing.get("model_routing") or {}).get("mode") \
+            if isinstance(existing.get("model_routing"), dict) else None
+        _new_mode = _mr_in.get("mode")
+        if _new_mode != _old_mode and existing:
+            import logging as _lg
+            _who = _routing_mode_caller()
+            if owner_routing_change:
+                _lg.getLogger("friday.settings").warning(
+                    "routing mode changed %s -> %s by an explicit owner action (%s)",
+                    _old_mode, _new_mode, _who)
+            else:
+                _lg.getLogger("friday.settings").warning(
+                    "REFUSED a routing mode change %s -> %s: not an explicit owner "
+                    "action (caller %s); the rest of the write is kept",
+                    _old_mode, _new_mode, _who)
+                data = dict(data)
+                _mr_in = dict(_mr_in)
+                _mr_in.pop("mode", None)
+                data["model_routing"] = _mr_in
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():

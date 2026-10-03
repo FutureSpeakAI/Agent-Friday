@@ -9,13 +9,17 @@ Protocol on the child's stdin/stdout, every message a 4-byte big-endian length
 followed by that many bytes:
 
     request  JSON {"op": "speak", "text": .., "voice": ..}
-    reply    JSON {"ok": true, "samples": n}  then  n float32 samples (24 kHz)
+    reply    JSON {"ok": true, "samples": n, "private_mb": m}  then  n float32
+             samples (24 kHz); m is this process's private memory after the line
          or  JSON {"ok": false, "code": .., "message": ..}
     request  JSON {"op": "quit"}           the process exits 0
 
 Anything the libraries print goes to stderr; stdout carries only the protocol.
 FRIDAY_PODCAST_SPEAKER_FAKE=1 answers with a tone instead of loading Kokoro, for
-tests that exercise the process and not the model.
+tests that exercise the process and not the model (and
+FRIDAY_PODCAST_SPEAKER_FAKE_MB makes it report that much private memory).
+The process runs with a small thread cap (FRIDAY_PODCAST_SPEAKER_THREADS):
+every torch, OpenMP and MKL thread keeps its own scratch memory.
 """
 from __future__ import annotations
 
@@ -50,6 +54,19 @@ def _fake_speak(text: str, voice: str):
     return (0.1 * np.sin(2 * np.pi * hz * t)).astype("float32")
 
 
+def _private_mb() -> int:
+    """This process's private (committed) memory, in MB."""
+    fake = os.environ.get("FRIDAY_PODCAST_SPEAKER_FAKE_MB")
+    if fake:
+        return int(fake)
+    try:
+        import psutil
+        info = psutil.Process().memory_info()
+        return int(getattr(info, "private", 0) or info.rss) // (1024 * 1024)
+    except Exception:
+        return 0
+
+
 def serve(inp, out) -> int:
     fake = os.environ.get("FRIDAY_PODCAST_SPEAKER_FAKE") == "1"
     speaker = None
@@ -77,11 +94,12 @@ def serve(inp, out) -> int:
             else:
                 if speaker is None:
                     from agent_friday.services.podcast_render import CpuKokoro
-                    speaker = CpuKokoro()
+                    speaker = CpuKokoro(threads=int(os.environ.get("FRIDAY_PODCAST_SPEAKER_THREADS") or 0) or None)
                 samples = speaker.speak(text, voice)
             import numpy as np
             data = np.asarray(samples, dtype="<f4").tobytes()
-            write_msg(out, json.dumps({"ok": True, "samples": len(data) // 4}).encode())
+            write_msg(out, json.dumps({"ok": True, "samples": len(data) // 4,
+                                       "private_mb": _private_mb()}).encode())
             write_msg(out, data)
         except Exception as e:  # noqa: BLE001 - every failure goes back as a reply
             code = getattr(e, "code", None) or "voice_failed"

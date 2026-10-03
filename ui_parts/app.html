@@ -1844,7 +1844,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
              silently answering from the cloud — offer the explicit choice
              to switch instead of a dead end. */}
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
-            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
+            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner_action:'routing_mode',settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {m.role==='user'?'You':fridayName()} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
@@ -2310,6 +2310,119 @@ function ShortcutsSheet({onClose,settings}){
 }
 
 // ═══ SEND-TO DROPDOWN (Data Flow) ═══
+// One event from several outlets is one story (news_seen.merge_events): the
+// card names every other outlet that reported it, each linked.
+function FpAlso({ it }) {
+  const h = React.createElement;
+  if (!it || !(it.also || []).length) return null;
+  return h('div', { className: 'fp-also', style: { fontSize: 11, color: '#999', margin: '4px 0' } }, 'Also reported by ',
+    it.also.map((a, i) => h(React.Fragment, { key: i }, i ? ', ' : '',
+      h('a', { href: a.url, target: '_blank', rel: 'noopener noreferrer', title: a.title }, a.source))));
+}
+// The owner's media diet rules: what is in force, what Friday proposed from
+// conversation (approve or reject: nothing applies until approved), and what
+// the rules removed, as receipts.
+function MediaDietRules() {
+  const h = React.createElement;
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => fetch('/api/news/media-diet').then(r => r.json()).then(setD).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const decide = (id, decision) => {
+    setBusy(id);
+    fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) })
+      .then(() => { setBusy(''); load(); }).catch(() => setBusy(''));
+  };
+  const drop = outlet => fetch('/api/news/media-diet/rule', { method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outlet }) }).then(load);
+  if (!d) return null;
+  const muted = { fontSize: 11, color: '#777' };
+  return h('div', { style: { marginBottom: 12 } },
+    h('div', { className: 'card-title', style: { marginTop: 8 } }, 'Your rules'),
+    (d.rules || []).length === 0
+      ? h('div', { style: muted }, 'No rules yet. Tell ' + fridayName() + ' which outlets to avoid or prefer; she proposes a rule here, and nothing applies until you approve it.')
+      : d.rules.map(r => h('div', { key: r.outlet, className: 'manage-row' },
+          h('span', null, (r.kind === 'block' ? 'Never cite ' : 'Prefer ') + (r.name || r.outlet)),
+          h('button', { className: 'btn', style: { fontSize: 10 }, onClick: () => drop(r.outlet),
+            'aria-label': 'Remove the rule for ' + (r.name || r.outlet) }, 'Remove'))),
+    (d.pending || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'Waiting for you') : null,
+    (d.pending || []).map(p => h('div', { key: p.approval_id, className: 'manage-row', style: { display: 'block' } },
+      h('pre', { style: { whiteSpace: 'pre-wrap', fontSize: 11, margin: '4px 0', fontFamily: 'inherit' } }, p.diff),
+      h('button', { className: 'btn active', style: { fontSize: 10 }, disabled: busy === p.approval_id,
+        onClick: () => decide(p.approval_id, 'approve') }, 'Approve'), ' ',
+      h('button', { className: 'btn', style: { fontSize: 10 }, disabled: busy === p.approval_id,
+        onClick: () => decide(p.approval_id, 'deny') }, 'Reject'))),
+    (d.receipts || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'What your rules removed') : null,
+    (d.receipts || []).slice(0, 8).map((x, i) => h('div', { key: i, style: muted },
+      String(x.at || '').replace('T', ' ').slice(0, 16) + ' \u00b7 ' + String(x.where || '').replace('_', ' ') + ' \u00b7 '
+      + x.rule + ': ' + (x.removed || []).length + ' removed')));
+}
+// Discuss with Friday (docs/design/active/news-discuss.md): one story,
+// evidence first. What the sources say, each linked from the fetched URL;
+// then her read, labelled as hers. The local model only.
+const DISCUSS_MODES = [['compare', 'Compare coverage'], ['primary', 'Primary source'], ['background', 'Background'],
+  ['claims', 'Claim check'], ['local', 'Local angle'], ['follow', 'Follow'], ['make', 'Make something']];
+function DiscussPanel({ story, onClose }) {
+  const h = React.createElement;
+  const [mode, setMode] = useState('compare');
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const ask = (m, extra) => {
+    setMode(m); setBusy(true); setRes(null);
+    fetch('/api/news/discuss', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ url: story.url, title: story.title, mode: m }, extra || {})) })
+      .then(r => r.json()).then(d => { setRes(d); setBusy(false); })
+      .catch(() => { setRes({ status: 'error', message: 'Could not reach ' + fridayName() }); setBusy(false); });
+  };
+  useEffect(() => { if (story && story.url) ask('compare'); }, [story && story.url]);
+  const draft = () => {
+    const lines = ((res && res.findings) || []).map(f => '- ' + f.text + (f.links && f.links.length ? ' (' + f.links.join(', ') + ')' : ''));
+    fetch('/api/media', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'draft', title: 'On: ' + story.title, body: '# ' + story.title + '\n\n' + story.url + '\n\n' + lines.join('\n') }) })
+      .then(r => r.json()).then(d => { if (d.status === 'ok' && window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: d.card.id }); });
+  };
+  const link = (u, i) => h('a', { key: i, href: u, target: '_blank', rel: 'noopener noreferrer', style: { marginLeft: 6, fontSize: 11 } }, '[' + (i + 1) + ']');
+  const muted = { fontSize: 11, color: '#777' };
+  const body = busy ? h('div', { style: muted }, 'Reading the sources on this computer…')
+    : !res ? null
+    : res.status !== 'ok' ? h('div', { style: { fontSize: 12 } }, res.message || 'That didn’t work.')
+    : h('div', null,
+      res.note ? h('div', { style: Object.assign({}, muted, { marginBottom: 8 }) }, res.note) : null,
+      res.diet_removed ? h('div', { style: muted }, res.diet_removed + ' source' + (res.diet_removed === 1 ? '' : 's') + ' left out: your media diet') : null,
+      (res.findings || []).length ? h('div', { className: 'card-title', style: { marginTop: 8 } }, 'What the sources say') : null,
+      (res.findings || []).map((f, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } }, f.text, (f.links || []).map(link))),
+      (res.outlets || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'How each outlet framed it') : null,
+      (res.outlets || []).map((o, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } },
+        h('a', { href: o.url, target: '_blank', rel: 'noopener noreferrer' }, o.outlet), ': ', o.framing,
+        o.left_out ? h('div', { style: muted }, 'Left out: ' + o.left_out) : null)),
+      (res.primary || []).map((p, i) => h('div', { key: i, style: { fontSize: 12 } }, 'Primary source: ', h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.url))),
+      (res.timeline || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Timeline') : null,
+      (res.timeline || []).map((t, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, t.when), ' ', t.what, (t.links || []).map(link))),
+      (res.who || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Who’s who') : null,
+      (res.who || []).map((w, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, w.name), ': ', w.role, (w.links || []).map(link))),
+      (res.claims || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Claims') : null,
+      (res.claims || []).map((c, i) => h('div', { key: i, style: { fontSize: 12 } }, h('span', { className: 'fp-badge ' + (c.status === 'confirmed' ? 'new' : 'update') }, c.status), ' ', c.claim, (c.links || []).map(link))),
+      (res.read || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, fridayName() + '’s read') : null,
+      (res.read || []).map((r, i) => h('div', { key: i, style: { fontSize: 12, fontStyle: 'italic' } }, r)),
+      (res.sources || []).length ? h('div', { style: Object.assign({}, muted, { marginTop: 10 }) }, 'Sources: ',
+        res.sources.map((s, i) => h('a', { key: i, href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { marginRight: 8 } }, s.outlet || s.title))) : null,
+      res.episode ? h('div', { style: { fontSize: 12 } }, 'A two-host deep dive is being made on this computer; it will be in Media.') : null,
+      res.path ? h('div', { style: { fontSize: 12 } }, 'Notes saved: ' + res.path) : null);
+  return h('div', { className: 'news-side' },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      h('h3', null, '💬 DISCUSS WITH ' + fridayName().toUpperCase()),
+      h('button', { className: 'icon-btn', 'aria-label': 'Close this panel', title: 'Close this panel', onClick: onClose }, '✕')),
+    h('div', { style: { fontSize: 12, marginBottom: 8 } }, story.title),
+    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 } },
+      DISCUSS_MODES.map(([m, label]) => h('button', { key: m, className: 'btn' + (mode === m ? ' active' : ''), style: { fontSize: 10 },
+        onClick: () => m === 'make' ? (setMode('make'), setRes(null)) : ask(m) }, label))),
+    mode === 'make' && !busy ? h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'podcast' }) }, '🎧 A two-host podcast'),
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'notes' }) }, '📝 Notes'),
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: draft }, '✍️ A draft in Media')) : null,
+    body);
+}
 // ═══ PODCASTS — player, Studio view, News chip (services/podcast_engine.py) ═══
 // Plain React.createElement so the same block runs in index.html and reads the
 // same in ui_parts/app.html. Episodes never play on their own: the player
@@ -2343,10 +2456,28 @@ const PODCAST_C = {
   xs: 'var(--fr-text-xs, 10px)', sm: 'var(--fr-text-sm, 11px)', md: 'var(--fr-text-md, 12px)',
   base: 'var(--fr-text-base, 13px)', lg: 'var(--fr-text-lg, 15px)', xl: 'var(--fr-text-xl, 18px)'
 };
+// A source chip's label: the outlet as said aloud, "Calendar 9:00 AM", a
+// computed fact's id, or the start of the title. Never the bare "S3".
+function podcastSourceLabel(s, id) {
+  if (!s) return id;
+  if (s.outlet) return s.outlet;
+  if (s.kind === 'event') return 'Calendar' + (s.when ? ' ' + s.when : '');
+  if (s.kind === 'fact') return s.id;
+  const t = String(s.title || id);
+  return t.length > 28 ? t.slice(0, 27) + '…' : t;
+}
+// The stories an episode links to: each source a line cites that has a web address.
+function podcastLinked(ep) {
+  const cited = new Set();
+  (ep.lines || []).forEach(ln => (ln.cites || []).forEach(c => cited.add(c)));
+  return (ep.sources || []).filter(s => cited.has(s.id) && /^https?:\/\//.test(s.url || ''));
+}
+const PODCAST_SHOWS = [['briefing', 'The Briefing'], ['front_page', 'Front Page'], ['editorial', 'The Editorial'], ['weekly', 'The Week'], ['any', 'Your own episodes']];
 function PodcastBadges({ ep }) {
   const h = React.createElement;
   if (!ep) return null;
   const chk = ep.check || {};
+  const sc = ep.script_check || {};
   const pill = (txt, color, title) => h('span', {
     title: title || txt,
     style: { fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.font, padding: '1px 7px', borderRadius: 10, border: '1px solid ' + color, color: color, whiteSpace: 'nowrap' }
@@ -2355,9 +2486,33 @@ function PodcastBadges({ ep }) {
     ep.privacy === 'private'
       ? pill('🔒 Private · made on this PC', PODCAST_C.second, 'Built from your own material. Written and spoken on this computer; never sent to a cloud model or voice.')
       : pill('Public sources', PODCAST_C.dim),
-    chk.ok === true ? pill('✓ checked by ear', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script') : null,
-    chk.ok === false ? pill('⚠ check found differences', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
+    sc.ok === true ? pill('✓ script checked', PODCAST_C.ok, 'Checked before it was spoken: ' + (sc.checks || []).join(', ') + '.') : null,
+    sc.ok === false ? pill('⚠ script: ' + (sc.problems || []).length + ' problem' + ((sc.problems || []).length === 1 ? '' : 's'), PODCAST_C.error,
+      'The script check found problems the writer could not fix:\n' + (sc.problems || []).map(p => '• ' + p.message).join('\n')) : null,
+    chk.ok === true ? pill('✓ audio matches script', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script. This checks the audio, not the writing.') : null,
+    chk.ok === false ? pill('⚠ audio differs from script', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
     ep.mode === 'data' ? pill('📊 data mode', PODCAST_C.accent, 'Every number is from a computation over your data') : null);
+}
+// Where the player sits: a remembered position, or the bottom-right corner.
+const PODCAST_POS_KEY = 'friday.podcastPlayer.pos';
+function podcastSavedPos() {
+  try { const p = JSON.parse(localStorage.getItem(PODCAST_POS_KEY) || 'null'); return p && typeof p.x === 'number' ? p : null; } catch (_) { return null; }
+}
+function podcastClampPos(p) {
+  const w = Math.min(400, window.innerWidth - 32);
+  return { x: Math.max(0, Math.min(p.x, window.innerWidth - w)), y: Math.max(0, Math.min(p.y, window.innerHeight - 80)) };
+}
+// The brand tokens the player reads, copied into a popped-out window.
+const PODCAST_TOKENS = ['--fr-glass', '--fr-glass-blur', '--fr-glass-edge', '--fr-text', '--fr-dim', '--fr-cyan',
+  '--fr-cyan-soft', '--fr-violet-soft', '--fr-ok', '--fr-error', '--fr-surface', '--fr-font-body',
+  '--fr-font-display', '--fr-font-mono', '--fr-track-display', '--fr-text-xs', '--fr-text-sm', '--fr-text-md',
+  '--fr-text-base', '--fr-text-lg', '--fr-text-xl'];
+// Each source a line cites, with the time it is first heard: the scrubbable list.
+function podcastSourceTimeline(ep) {
+  const first = {};
+  (ep.lines || []).forEach(ln => (ln.cites || []).forEach(c => { if (!(c in first)) first[c] = ln.start || 0; }));
+  return (ep.sources || []).filter(s => s.id in first).map(s => Object.assign({ at: first[s.id] }, s))
+    .sort((a, b) => a.at - b.at);
 }
 function PodcastPlayer() {
   const h = React.createElement;
@@ -2367,6 +2522,10 @@ function PodcastPlayer() {
   const [rate, setRate] = useState(1);
   const [showText, setShowText] = useState(false);
   const [srcOpen, setSrcOpen] = useState(null);
+  const [showSources, setShowSources] = useState(false);
+  const [pos, setPos] = useState(podcastSavedPos);
+  const [popped, setPopped] = useState(null);       // {win, el} while popped out
+  const drag = useRef(null);
   const audio = useRef(null);
   const epRef = useRef(null);
   const pendingPlay = useRef(false);
@@ -2458,11 +2617,12 @@ function PodcastPlayer() {
   const srcById = {};
   (ep.sources || []).forEach(s => { srcById[s.id] = s; });
   (ep.facts || []).forEach(f => { srcById[f.id] = { id: f.id, title: f.text, kind: 'fact', expr: f.expr }; });
-  const cite = (c) => h('button', {
-    key: c, className: 'btn', onClick: () => setSrcOpen(srcOpen === c ? null : c),
-    'aria-label': 'Source ' + c + ': ' + ((srcById[c] || {}).title || ''),
-    style: { fontSize: PODCAST_C.xs, fontFamily: PODCAST_C.mono, padding: '0 5px', marginLeft: 4, minHeight: 0, lineHeight: '16px' }
-  }, c);
+  const cite = (c) => h(React.Fragment, { key: c }, ' ', h('button', {
+    className: 'btn', onClick: (e) => { e.stopPropagation(); setSrcOpen(srcOpen === c ? null : c); },
+    title: (srcById[c] || {}).title || c,
+    'aria-label': 'Source: ' + podcastSourceLabel(srcById[c], c) + ((srcById[c] || {}).title ? ', ' + srcById[c].title : ''),
+    style: { fontSize: PODCAST_C.xs, fontFamily: PODCAST_C.font, padding: '0 6px', minHeight: 0, lineHeight: '16px', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'baseline' }
+  }, podcastSourceLabel(srcById[c], c)));
   const chartFor = () => {
     if (!line || !ep.charts) return null;
     const cs = line.cites || [];
@@ -2474,22 +2634,73 @@ function PodcastPlayer() {
     className: 'btn', 'aria-label': aria, title: aria, onClick: onClick,
     style: { minWidth: 34, padding: '4px 8px' }
   }, extra || {}), label);
-  return h('div', {
+  // Moving the player: drag its title; the place is remembered.
+  const startDrag = (e) => {
+    if (popped || e.button !== 0 || e.target.closest('button')) return;
+    const box = e.currentTarget.closest('[role="region"]').getBoundingClientRect();
+    drag.current = { dx: e.clientX - box.left, dy: e.clientY - box.top };
+    const move = (ev) => setPos(podcastClampPos({ x: ev.clientX - drag.current.dx, y: ev.clientY - drag.current.dy }));
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      setPos(p => { try { if (p) localStorage.setItem(PODCAST_POS_KEY, JSON.stringify(p)); } catch (_) {} return p; });
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  const resetPos = () => { setPos(null); try { localStorage.removeItem(PODCAST_POS_KEY); } catch (_) {} };
+  // Popping out: Document Picture-in-Picture (stays above other windows)
+  // where the browser has it, otherwise a small window. Playback carries over.
+  const carry = () => {
+    const a = audio.current;
+    if (a) { pendingSeek.current = a.currentTime; pendingPlay.current = !a.paused; }
+  };
+  const popOut = async () => {
+    carry();
+    let win = null;
+    try {
+      win = window.documentPictureInPicture
+        ? await window.documentPictureInPicture.requestWindow({ width: 420, height: 640 })
+        : window.open('', 'friday-podcast', 'popup,width=420,height=640');
+    } catch (_) { win = null; }
+    if (!win) return;
+    const doc = win.document;
+    doc.title = (ep && (ep.title || ep.show)) || 'Podcast';
+    // The page's own styles (buttons, fonts) and the brand tokens.
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach(n => doc.head.appendChild(n.cloneNode(true)));
+    const root = getComputedStyle(document.documentElement);
+    PODCAST_TOKENS.forEach(t => { const v = root.getPropertyValue(t); if (v) doc.documentElement.style.setProperty(t, v); });
+    doc.body.style.cssText = 'margin:0;padding:8px;background:var(--fr-surface, #0a0e1a);color:var(--fr-text, rgba(255,255,255,0.86))';
+    const el = doc.createElement('div');
+    doc.body.appendChild(el);
+    win.addEventListener('pagehide', () => { carry(); setPopped(null); });
+    setPopped({ win: win, el: el });
+  };
+  const dockBack = () => { carry(); const p = popped; setPopped(null); try { p && p.win.close(); } catch (_) {} };
+  const where = popped ? { position: 'static', width: '100%', maxHeight: 'none', boxSizing: 'border-box' }
+    : pos ? { position: 'fixed', left: pos.x, top: pos.y, width: 'min(400px, calc(100vw - 32px))', maxHeight: '70vh' }
+    : { position: 'fixed', right: 16, bottom: 16, width: 'min(400px, calc(100vw - 32px))', maxHeight: '70vh' };
+  const nowSources = (line && line.cites ? line.cites : []).map(c => srcById[c]).filter(Boolean);
+  const timeline = podcastSourceTimeline(ep);
+  const frame = h('div', {
     role: 'region', 'aria-label': 'Podcast player',
-    style: {
-      position: 'fixed', right: 16, bottom: 16, zIndex: 180, width: 'min(400px, calc(100vw - 32px))',
+    style: Object.assign({
+      zIndex: 180,
       background: PODCAST_C.bg, backdropFilter: PODCAST_C.blur, WebkitBackdropFilter: PODCAST_C.blur, border: '1px solid ' + PODCAST_C.line, borderRadius: 12,
       boxShadow: '0 12px 40px rgba(0,0,0,0.5)', color: PODCAST_C.text, fontFamily: PODCAST_C.font, fontSize: PODCAST_C.base, padding: 12,
-      display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '70vh'
-    }
+      display: 'flex', flexDirection: 'column', gap: 8
+    }, where)
   },
   h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
-    h('div', { style: { flex: 1, minWidth: 0 } },
+    h('div', {
+      onPointerDown: startDrag, onDoubleClick: resetPos,
+      title: popped ? undefined : 'Drag to move · double-click to put it back',
+      style: { flex: 1, minWidth: 0, cursor: popped ? 'default' : 'move', touchAction: 'none' }
+    },
       h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.credit || ep.show),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, margin: '2px 0 4px' } },
         ep.credit || ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
       h(PodcastBadges, { ep: ep })),
-    btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); setEp(null); })),
+    popped ? btn('⇲', 'Put the player back in the window', dockBack) : btn('⧉', 'Pop the player out', popOut),
+    btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); dockBack(); setEp(null); })),
   h('audio', {
     ref: audio, preload: 'metadata', src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/audio',
     onLoadedMetadata: () => {
@@ -2508,7 +2719,7 @@ function PodcastPlayer() {
     'aria-label': 'Position', 'aria-valuetext': podcastClock(t) + ' of ' + podcastClock(ep.duration_s),
     onChange: (e) => seek(Number(e.target.value)), style: { width: '100%', accentColor: PODCAST_C.accent }
   }),
-  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
     btn('⏮', 'Previous chapter', () => stepChapter(-1)),
     btn(playing ? '⏸' : '▶', playing ? 'Pause' : 'Play', () => { const a = audio.current; if (a) (a.paused ? a.play().catch(() => {}) : a.pause()); }),
     btn('⏭', 'Next chapter', () => stepChapter(1)),
@@ -2518,12 +2729,30 @@ function PodcastPlayer() {
       'aria-label': 'Playback speed', value: rate, onChange: (e) => setRate(Number(e.target.value)),
       style: { background: 'transparent', color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6 }
     }, [0.8, 1, 1.25, 1.5, 1.75, 2].map(r => h('option', { key: r, value: r, style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, r + '×'))),
+    btn(showSources ? 'Hide sources' : 'Sources', showSources ? 'Hide the sources' : 'Show the sources', () => setShowSources(!showSources), { 'aria-expanded': showSources }),
     btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
+  nowSources.length ? h('div', { 'aria-label': 'Now citing', 'aria-live': 'polite', style: { display: 'flex', flexDirection: 'column', gap: 4, borderLeft: '3px solid ' + PODCAST_C.accent, paddingLeft: 8, background: PODCAST_C.accentSoft, borderRadius: 6, padding: '6px 8px' } },
+    h('div', { style: { fontSize: PODCAST_C.xs, color: PODCAST_C.dim, textTransform: 'uppercase', letterSpacing: '0.08em' } }, 'Now citing'),
+    nowSources.map(s => h('div', { key: s.id, style: { fontSize: PODCAST_C.md, lineHeight: 1.35 } },
+      h('b', null, podcastSourceLabel(s, s.id) + ': '),
+      s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, (s.title || '') + ' ↗')
+            : h('span', null, s.title || '')))) : null,
+  showSources ? h('div', { role: 'list', 'aria-label': 'Sources by time', style: { overflowY: 'auto', maxHeight: popped ? 'none' : '24vh', borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
+    timeline.map(s => {
+      const active = nowSources.some(n => n.id === s.id);
+      return h('div', { key: s.id, role: 'listitem', style: { display: 'flex', gap: 8, alignItems: 'baseline', padding: '3px 4px', borderRadius: 4, background: active ? PODCAST_C.accentSoft : 'transparent' } },
+        h('button', { className: 'btn', onClick: () => seek(s.at), 'aria-label': 'Play from ' + podcastClock(s.at) + ', where ' + podcastSourceLabel(s, s.id) + ' is cited',
+          style: { fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.xs, padding: '0 6px', minHeight: 0 } }, podcastClock(s.at)),
+        h('span', { style: { fontSize: PODCAST_C.md, flex: 1, minWidth: 0 } },
+          h('b', null, podcastSourceLabel(s, s.id) + ': '),
+          s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title || '')
+                : (s.title || '')));
+    })) : null,
   line ? h('div', { 'aria-live': 'polite', style: { fontSize: PODCAST_C.base, lineHeight: 1.45 } },
     h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.second } }, who(line.speaker) + ': '),
     fridayTM(line.text), (line.cites || []).map(cite)) : null,
   src ? h('div', { style: { fontSize: PODCAST_C.md, borderLeft: '2px solid ' + PODCAST_C.accent, paddingLeft: 8, color: PODCAST_C.text } },
-    h('b', null, srcOpen + ' '), src.kind === 'fact' ? src.title : (src.title || ''),
+    src.outlet ? h('b', null, src.outlet + ': ') : null, src.title || '',
     src.expr ? h('div', { style: { color: PODCAST_C.dim, fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.sm } }, 'computed by ', src.expr) : null,
     src.url ? h('div', null, h('a', { href: src.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, 'Open the source ↗')) : null) : null,
   chart ? h('img', { src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/charts/' + encodeURIComponent(chart.file), alt: chart.title, style: { width: '100%', borderRadius: 8 } }) : null,
@@ -2537,8 +2766,14 @@ function PodcastPlayer() {
         'aria-current': i === cur ? 'true' : undefined,
         style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? PODCAST_C.accentSoft : 'transparent' }
       }, h('b', null, who(ln.speaker) + ': '), fridayTM(ln.text), (ln.cites || []).map(cite)))),
+    podcastLinked(ep).length ? h('div', { role: 'list', 'aria-label': 'Sources', style: { marginTop: 10, borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
+      h('div', { style: { fontWeight: 600, color: PODCAST_C.accent, marginBottom: 4 } }, 'Sources'),
+      podcastLinked(ep).map(s => h('div', { key: s.id, role: 'listitem', style: { fontSize: PODCAST_C.md, margin: '2px 0' } },
+        s.outlet ? h('b', null, s.outlet + ': ') : null,
+        h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title)))) : null,
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
+  return popped ? ReactDOM.createPortal(frame, popped.el) : frame;
 }
 // A creation as a podcast source: a spreadsheet or table goes in as a dataset
 // (data mode), anything else as a creation.
@@ -2549,7 +2784,8 @@ function podcastCreationSource(name) {
 }
 // "Make a podcast" from whatever item a workspace is showing: a wiki page, a
 // graph entry, a creation, a conversation. One button, one request; the
-// episode follows in Studio → Podcasts with a notice when it is ready.
+// episode follows with a notice when it is ready (episode_home: a routine's
+// show on its News tab, the owner's own in Media, or Studio until Media lands).
 function PodcastButton({ sources, title, compact, className }) {
   const h = React.createElement;
   const [state, setState] = useState('');
@@ -2624,6 +2860,10 @@ function PodcastsView() {
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [formats, setFormats] = useState(null);
+  useEffect(() => { fetch('/api/podcasts/formats').then(r => r.json()).then(d => setFormats(d.formats || null)).catch(() => {}); }, []);
+  const setFormat = (routine, format) => fetch('/api/podcasts/formats', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ routine: routine, format: format }) })
+    .then(r => r.json()).then(d => { if (d.formats) setFormats(d.formats); }).catch(() => {});
   const refresh = () => fetch('/api/podcasts?limit=60').then(r => r.json()).then(d => setEps(d.episodes || [])).catch(() => {});
   useEffect(() => {
     refresh();
@@ -2664,7 +2904,14 @@ function PodcastsView() {
     h('div', null,
       h('h2', { style: { margin: 0, fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.xl } }, '🎧 Podcasts'),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.md, marginTop: 4, maxWidth: '80ch' } },
-        'Two hosts talk through any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and the hosts may only say computed numbers.')),
+        'Episodes from any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and only computed numbers are said.')),
+    formats ? h('section', { 'aria-label': 'Who is on each show', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' } },
+      h('div', { style: { width: '100%', fontWeight: 600 } }, 'Who is on each show'),
+      PODCAST_SHOWS.map(([key, label]) => formats[key] ? h('label', { key: key, style: { display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: PODCAST_C.md } },
+        label,
+        h('select', { value: formats[key].format, 'aria-label': label + ': who is on the show', onChange: (e) => setFormat(key, e.target.value), style: field },
+          [['solo', fridayName() + ' alone'], ['duo', 'Two hosts']].map(([v, t]) => h('option', { key: v, value: v, style: { color: PODCAST_C.text, background: PODCAST_C.surface } },
+            t + (formats[key].recommended === v ? ' (recommended)' : ''))))) : null)) : null,
     h('section', { 'aria-label': 'Make a podcast', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
       rows.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'flex-start' } },
         h('select', { 'aria-label': 'Source type', value: r.kind, style: field,
@@ -2685,8 +2932,10 @@ function PodcastsView() {
       msg ? h('div', { role: 'status', style: { fontSize: PODCAST_C.md, color: PODCAST_C.dim } }, msg) : null,
       h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim } }, 'A web page is fetched from the internet to be read; nothing about the episode is sent anywhere.')),
     h('section', { 'aria-label': 'Episodes', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-      eps.length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes yet. Every News routine run now comes with one, and you can make your own above.') : null,
-      eps.map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
+      h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim } },
+        'Episodes of the Front Page, the Briefing, the Editorial and the Weekly live in News, beside each edition.'),
+      eps.filter(ep => !ep.attached).length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes of your own yet. Make one above.') : null,
+      eps.filter(ep => !ep.attached).map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
         h('div', { style: { flex: 1, minWidth: 0 } },
           h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.credit || ep.show),
           h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim, margin: '2px 0 4px' } },
@@ -2774,10 +3023,13 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
 // Reusable glassmorphic button that triggers voice mode pre-loaded with context.
 // contentType: 'article'|'briefing'|'editorial'|'creation'
 // title/summary: strings used to prime Friday's opening question
-function TalkToFridayButton({contentType,title,summary,style}){
+function TalkToFridayButton({contentType,title,summary,style,onDiscuss}){
   const[active,setActive]=useState(false);
   const onClick=(e)=>{
     e.stopPropagation();
+    // A news story opens Discuss with Friday: evidence first, the local
+    // model only (docs/design/active/news-discuss.md).
+    if(onDiscuss){onDiscuss();return;}
     if(!window.fridayVoice){
       fridayToast('Enable voice mode first, then try again.');
       return;
@@ -2798,7 +3050,7 @@ function TalkToFridayButton({contentType,title,summary,style}){
     transition:'all .2s',whiteSpace:'nowrap',fontFamily:'inherit',
     boxShadow:active?'0 0 10px rgba(123,97,255,0.35)':'none',
   },style||{})}>
-    <span style={{fontSize:11}}>🎤</span>{active?'Starting…':('Discuss with ' + fridayName())}
+    <span style={{fontSize:11}}>{onDiscuss?'💬':'🎤'}</span>{active?'Starting…':('Discuss with ' + fridayName())}
   </button>;
 }
 
@@ -2819,8 +3071,8 @@ function CareerWS(){
   ]).then(()=>setLoading(false))},[]);
   const loadReport=name=>{fetch('/api/career-ops/report/'+name).then(r=>r.json()).then(d=>{setReportContent(d.content||'');setView('report')}).catch(()=>{})};
   const coCwd=()=>(coStatus&&coStatus.path)||'~\\Projects\\career-ops';
-  const launchEval=()=>{if(!evalUrl.trim())return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Evaluate this job: '+evalUrl],cwd:coCwd()})}).then(()=>{setEvalUrl('');fridayToast('Evaluation launched')}).catch(()=>{})};
-  const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:coCwd()})}).then(()=>fridayToast('Scan launched')).catch(()=>{})};
+  const launchEval=()=>{if(!evalUrl.trim())return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Evaluate this job: '+evalUrl],cwd:coCwd()})}).then(()=>{setEvalUrl('');fridayToast('Evaluation queued — approve its card to start')}).catch(()=>{})};
+  const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:coCwd()})}).then(()=>fridayToast('Scan queued — approve its card to start')).catch(()=>{})};
   const saveCoPath=()=>{fetch('/api/career-ops/path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:coPath})}).then(r=>r.json()).then(d=>{if(d.error){fridayToast(d.error);return}setCoStatus(d);fridayToast('Career-ops folder saved')}).catch(()=>{})};
   const engineScan=()=>{fetch('/api/pipeline/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(()=>fetch('/api/pipeline/jobs')).then(r=>r.json()).then(d=>{setEngineJobs(d.jobs||[]);fridayToast('Scan finished')}).catch(()=>{})};
   const engineApply=id=>{fetch('/api/pipeline/jobs/'+id+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(d=>fridayToast(d.status==='prepared'?('Prepared. ' + fridayName() + ' does not submit applications: submit it yourself on the employer’s site.'):'Not prepared: '+((d.quality_gates_failed||[]).join(', ')||d.error||d.status))).catch(()=>{})};
@@ -6150,7 +6402,7 @@ function FSProjectCard({p,onToast,onChanged}){
     if(!instr.trim())return;setBusy(true);
     try{const r=await fetch('/api/futurespeak/project/'+encodeURIComponent(p.name)+'/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task:instr,deploy})});
       const d=await r.json();
-      if(d.status==='ok'){onToast((deploy?'Deploy':'Quick Edit')+' launched for '+p.name+' — track in Code workspace');setInstr('');setEditing(false);setDeploy(false)}
+      if(d.status==='ok'){onToast((deploy?'Deploy':'Quick Edit')+' queued for '+p.name+' — approve its card to start');setInstr('');setEditing(false);setDeploy(false)}
       else onToast(d.message||'Launch failed')}
     catch(e){onToast('Launch failed')}
     setBusy(false);
@@ -6235,7 +6487,7 @@ function FSStudio(){
   const scaffold=async()=>{
     if(!wDesc.trim())return;setWBusy(true);
     try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Scaffold a new web project: '+wDesc+'. Create a clean modern site, initialize a git repo, create a GitHub repo, push it, then print deploy instructions.'],cwd:'~\\Projects'})});
-      showToast('Scaffold launched in Claude Code — watch the Code workspace');setWDesc('');setWizard(false)}
+      showToast('Scaffold queued — approve its card to start');setWDesc('');setWizard(false)}
     catch(e){showToast('Launch failed')}
     setWBusy(false);
   };
@@ -6313,7 +6565,7 @@ function FuturespeakWS(){
     try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company:opp.name,angle:'proposal',channel:'email',context:`Opportunity: ${opp.name}. Status: ${opp.status}. Value: $${opp.value_usd}. Next: ${opp.next_action}. ${opp.notes||''}`})});
       const d=await r.json();setDraft(d.draft||'')}catch(e){setDraft('[Error] '+e.message)}setDrafting(null)};
   const copyText=async(text,label)=>{try{await navigator.clipboard.writeText(text);showToast((label||'Text')+' copied')}catch(e){showToast('Copy failed')}};
-  const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'~\\Projects'})});showToast('Claude Code launched')}catch(e){showToast('Launch failed')}};
+  const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'~\\Projects'})});showToast('Claude Code queued — approve its card to start')}catch(e){showToast('Launch failed')}};
   const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI — Post Draft',/* brand: plain (a working title the drafting model reads) */type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading FutureSpeak workspace...</div>;
 
@@ -7114,7 +7366,7 @@ function StudioWS(){
   // prompts post straight to /api/create/<type> via StudioPromptBar; this
   // launcher (the old mis-wired "Create Now" button) is the only Studio
   // control that touches the terminal launcher, and it says so before it runs.
-  const runDailyAgent=()=>{if(!confirm(("Launch " + fridayName() + "'s autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar.")))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>fridayToast(d&&d.status==='ok'?'Daily creation agent launched — watch the Code workspace for progress.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>fridayToast('Could not launch the daily creation agent.'))};
+  const runDailyAgent=()=>{if(!confirm(("Launch " + fridayName() + "'s autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar.")))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>fridayToast(d&&d.status==='ok'?'Daily creation agent queued — approve its card to start it.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>fridayToast('Could not launch the daily creation agent.'))};
   const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
   // Deep-link: a notification's "Open Document" button navigates here with
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
@@ -9026,7 +9278,7 @@ function archiveToCard(a,boostedSet){
 function _fmtDur(sec){if(!sec||!isFinite(sec)||sec<0)return'0:00';const s=Math.floor(sec);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 
 const NEWS_TABS=[{id:'frontpage',label:'Front Page'},{id:'feed',label:'Feed'},{id:'readlater',label:'Read Later'},{id:'notes',label:'My Notes'},{id:'briefings',label:'Briefings'},{id:'weekly',label:'Weekly'},{id:'editorial',label:'Editorial'},{id:'trust',label:'Trust'}];
-fridayDeclareNav('news',{key:'tab',keys:['tab','article','url','title','source'],sections:NEWS_TABS});
+fridayDeclareNav('news',{key:'tab',keys:['tab','article','url','title','source','episode'],sections:NEWS_TABS});
 // The Local beat is the owner's setting: the place Local news covers and the
 // outlets it reads (news_local_area, news_local_sources). Nothing ships with a
 // city; both empty means no Local section. Listed outlets are trusted like the
@@ -9086,7 +9338,7 @@ function NewsWS(){
   const feedOffsetRef=useRef(0);const feedHasMoreRef=useRef(false);const feedBusyRef=useRef(false);
   const feedTopRef=useRef(null);const feedSentinelRef=useRef(null);const loadFeedRef=useRef(null);
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
-  const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
+  const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpRoutines,setFpRoutines]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
   const[weekly,setWeekly]=useState(null);const[wkList,setWkList]=useState([]);const[wkLoading,setWkLoading]=useState(true);const[wkGen,setWkGen]=useState(false);
   const[editorial,setEditorial]=useState(null);const[edList,setEdList]=useState([]);const[edLoading,setEdLoading]=useState(true);const[edGen,setEdGen]=useState(false);
   const[readLater,setReadLater]=useState([]);const[rlLoading,setRlLoading]=useState(true);const[savedUrls,setSavedUrls]=useState({});
@@ -9096,7 +9348,7 @@ function NewsWS(){
   const[prefs,setPrefs]=useState(null);const[cats,setCats]=useState([]);
   const[panel,setPanel]=useState(null); // 'sources' | 'customize' | 'diet' | null
   const[clusters,setClusters]=useState([]);const[clLoading,setClLoading]=useState(false);const[clOpen,setClOpen]=useState({});
-  const[diet,setDiet]=useState(null);const[dietLoading,setDietLoading]=useState(false);
+  const[diet,setDiet]=useState(null);const[discussFor,setDiscussFor]=useState(null);const[dietLoading,setDietLoading]=useState(false);
   // Source Trust Graph tab: leaderboard, selected source detail, federation status.
   const[trustBoard,setTrustBoard]=useState([]);const[trustLoading,setTrustLoading]=useState(false);
   const[trustSel,setTrustSel]=useState(null);const[trustDetail,setTrustDetail]=useState(null);
@@ -9112,7 +9364,7 @@ function NewsWS(){
   const[fpDuration,setFpDuration]=useState(0);const[fpSpeed,setFpSpeed]=useState(1);
   const fpAudioEl=useRef(null);const fpAudioCtx=useRef(null);
   // News Anchor Mode — interactive live voice read of the Front Page.
-  const[anchorReading,setAnchorReading]=useState(false);const[anchorBusy,setAnchorBusy]=useState(false);
+  const[anchorReading,setAnchorReading]=useState(false);const[anchorBusy,setAnchorBusy]=useState(false);const[listenState,setListenState]=useState('');
   // Track the live session ending from anywhere (stop button in chat, errors)
   // so the "Now Reading" indicator clears itself rather than going stale.
   useEffect(()=>{const h=e=>{if(e&&e.detail&&!e.detail.on)setAnchorReading(false)};window.addEventListener('friday-voice-change',h);return()=>window.removeEventListener('friday-voice-change',h)},[]);
@@ -9126,7 +9378,9 @@ function NewsWS(){
   // switches to the requested tab and clears any open single-briefing reader.
   useTabState('news',()=>({tab,article:articleOpen?articleOpen.id||articleOpen.url:''})); // what its own tab opens on
   useNavTarget('news',t=>{if(t.tab){setTab(t.tab);setSelected(null);}
-    if(t.article||t.url)setArticleOpen({id:t.article||'',url:t.url||'',title:t.title||'',source:t.source||''})});
+    if(t.article||t.url)setArticleOpen({id:t.article||'',url:t.url||'',title:t.title||'',source:t.source||''});
+    // A routine's episode lives beside its edition: open it in the player here.
+    if(t.episode)fridayPodcast('open', t.episode);});
 
   // Pull a page of the permanent archive (newest first). reset=true clears and
   // refetches from offset 0 (category/sort change, manual refresh); reset=false
@@ -9152,7 +9406,7 @@ function NewsWS(){
   const loadArchStats=()=>fetch('/api/news/archive/stats').then(r=>r.json()).then(d=>setArchStats(d)).catch(()=>{});
   const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
   const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
-  const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
+  const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpRoutines(d.routines||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
   const loadFpEdition=(id)=>{fetch('/api/news/front-page/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.edition)setFp(d.edition)}).catch(()=>{})};
   const loadWeekly=()=>{setWkLoading(true);fetch('/api/news/front-page/weekly/latest').then(r=>r.json()).then(d=>{setWeekly(d.digest||null);setWkList(d.digests||[]);setWkLoading(false)}).catch(()=>setWkLoading(false))};
   const genWeekly=async()=>{if(wkGen)return;setWkGen(true);try{const r=await fetch('/api/news/front-page/weekly/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.digest)throw new Error(d.message||'Generation failed');setWeekly(d.digest);loadWeekly()}catch(e){fridayToast('Weekly Digest generation failed: '+(e.message||e))}finally{setWkGen(false)}};
@@ -9260,6 +9514,33 @@ function NewsWS(){
   // clickable citation chips in the chat panel, then hand the script to the
   // live voice bridge so Friday reads the Front Page like a broadcast anchor —
   // interruptible via Gemini's server-side VAD for sourced Q&A.
+  // Listen: the edition's own episode, spoken by her on this computer and
+  // played in the podcast player. Not spoken yet, it is made now, with its
+  // progress on the button; never a cloud voice.
+  const playFrontPageEpisode = async () => {
+    if (!fp || !fp.id || listenState) return;
+    setListenState('🎧 Asking for the episode…');
+    try {
+      const r = await fetch('/api/podcasts/listen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ routine: 'front_page', run_id: fp.id }) });
+      const d = await r.json();
+      if (!r.ok || d.status !== 'ok' || !d.episode) throw new Error(d.message || 'Could not start the episode');
+      let ep = d.episode;
+      while (ep.status !== 'ready') {
+        if (ep.status === 'failed' || ep.status === 'cancelled') throw new Error((ep.error || {}).message || 'The episode could not be made');
+        const pr = ep.progress && ep.progress.of ? ' · ' + ep.progress.done + '/' + ep.progress.of : '';
+        setListenState('🎧 ' + (ep.waiting_reason || ep.stage_detail || ep.status) + pr);
+        await new Promise(res => setTimeout(res, 3000));
+        const g = await fetch('/api/podcasts/' + encodeURIComponent(ep.id)).then(x => x.json());
+        ep = g.episode || ep;
+      }
+      fridayPodcast('play', ep.id);
+    } catch (e) {
+      flashNews(e.message || 'Could not play the episode');
+    } finally {
+      setListenState('');
+    }
+  };
   const startAnchorBriefing=async()=>{
     if(anchorBusy)return;
     if(!window.fridayVoice){flashNews('Voice is unavailable here');return;}
@@ -9413,7 +9694,7 @@ function NewsWS(){
             interruptible by voice) was removed as redundant — "Listen to Front
             Page" (anchor mode, natively interruptible) is the one way to hear
             the Front Page. The player logic stays for programmatic callers. */}
-        {tab==='frontpage'&&fp&&!anchorReading&&<button className="btn" style={{fontSize:11}} onClick={startAnchorBriefing} disabled={anchorBusy} title={(fridayName() + " reads the Front Page aloud like a live news anchor — interrupt any time to ask about a story.")}>{anchorBusy?'Starting…':'🎙️ Listen to Front Page'}</button>}
+        {tab==='frontpage'&&fp&&!anchorReading&&<button className="btn" style={{fontSize:11}} onClick={playFrontPageEpisode} disabled={!!listenState} title={"The Front Page's episode, spoken by " + fridayName() + " on this computer"}>{listenState||'🎧 Listen to Front Page'}</button>}
         {tab==='frontpage'&&anchorReading&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={stopAnchorBriefing} title="End the live anchor briefing.">⏹ Stop Anchor</button>}
         {tab==='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={genFrontPage} disabled={fpGen}>{fpGen?'Curating…':'✨ Generate Front Page'}</button>}
         {tab!=='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Briefing'}</button>}
@@ -9490,7 +9771,7 @@ function NewsWS(){
              {it.published_at&&<span>{new Date(it.published_at).toLocaleDateString([],{month:'short',day:'numeric'})}</span>}
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{openBg(it.url);newsRecord(it.source,'click',it.category)}}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{if(it.url){window.open(it.url,'_blank');newsRecord(it.source,'click',it.category)}}}>↗ Open article</span>
-             <TalkToFridayButton contentType="article" title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
+             <TalkToFridayButton contentType="article" onDiscuss={()=>{setDiscussFor({url:it.url,title:it.title});setPanel('discuss')}} title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
            </div>
            {i===0&&<div className="editorial-note"><b>{fridayName()}'s note:</b> {editorialFor(it)}</div>}
            <div className="relevance-tag">{relevanceFor(it)}</div>
@@ -9526,6 +9807,10 @@ function NewsWS(){
              {fpList.map(e=><option key={e.id} value={e.id}>{e.date+' · '+(e.slot==='evening'?'PM':'AM')}</option>)}
            </select>}
          </div>
+         {fpRoutines.map(n=><div key={'fprn-'+n.id} className="fp-degraded fp-routine-notice">
+           <div className="fp-degraded-head">{n.state==='waiting'?'⏳ '+n.name+' is waiting for the local seat':n.state==='late'?'🕒 '+n.name+' ran late':n.state==='failed'?'⚠️ '+n.name+' failed':'⚠️ '+n.name+' did not run'}</div>
+           <div className="fp-degraded-body">{n.reason||''}</div>
+         </div>)}
          {anchorReading&&<div className="fp-anchor-bar">
            <span className="fp-anchor-dot"></span>
            <span className="fp-anchor-label">🎙️ Now Reading: Front Page — speak any time to ask {fridayName()} about a story</span>
@@ -9538,20 +9823,20 @@ function NewsWS(){
          {/* Lead story */}
          {fp.lead&&<div className={'fp-lead cat-'+(fp.lead.color||'tech')}>
            <div className="news-cardtop">
-             <span className="cat-chip">LEAD · {fp.lead.category}</span>{fp.lead.continuing?<span className="fp-badge update">UPDATE</span>:fp.lead.new_since_last?<span className="fp-badge new">NEW</span>:null}
+             <span className="cat-chip">LEAD · {fp.lead.category}</span>{fp.lead.continuing?<span className="fp-badge update">UPDATE</span>:fp.lead.new_since_last?<span className="fp-badge new">NEW</span>:null}{fp.lead.opinion?<span className="fp-badge opinion" title="Opinion: the writer's view, not news reporting">OPINION</span>:null}
              {cardActions(fp.lead)}
            </div>
            {fp.lead.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
            <div className="fp-lead-headline" onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>{fp.lead.title}</div>
            <div className="fp-lead-snippet">{fp.lead.snippet}</div>
            {fp.lead.editorial_note&&<div className="editorial-note"><b>{fridayName()}'s note:</b> {fp.lead.editorial_note}</div>}
-           {fp.lead.thread_update&&<div className="fp-thread"><b>What's new today:</b> {fp.lead.thread_update}</div>}
+           <FpAlso it={fp.lead}/>{fp.lead.thread_update&&<div className="fp-thread"><b>What's new today:</b> {fp.lead.thread_update}</div>}
            <div className="source-row" style={{marginTop:8}}>
              <span className="source-badge"><TrustBadge it={fp.lead}/>{fp.lead.source}</span>
              {annoBadge(fp.lead)}
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>openBg(fp.lead.url)}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>↗ Open article</span>
-             <TalkToFridayButton contentType="article" title={fp.lead.title} summary={fp.lead.snippet||fp.lead.editorial_note} style={{marginLeft:'auto'}}/>
+             <TalkToFridayButton contentType="article" onDiscuss={()=>{setDiscussFor({url:fp.lead.url,title:fp.lead.title});setPanel('discuss')}} title={fp.lead.title} summary={fp.lead.snippet||fp.lead.editorial_note} style={{marginLeft:'auto'}}/>
            </div>
            {annoBox(fp.lead)}
          </div>}
@@ -9579,7 +9864,7 @@ function NewsWS(){
            </div>
            <div className="news-masonry">
              {(sec.articles||[]).map((it,i)=><div key={i} className={'news-card cat-'+(it.color||sec.color||'tech')}>
-               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{it.continuing?<span className="fp-badge update">UPDATE</span>:it.new_since_last?<span className="fp-badge new">NEW</span>:null}{cardActions(it)}</div>{it.thread_update&&<div className="fp-thread sm"><b>New:</b> {it.thread_update}</div>}
+               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{it.continuing?<span className="fp-badge update">UPDATE</span>:it.new_since_last?<span className="fp-badge new">NEW</span>:null}{it.opinion?<span className="fp-badge opinion" title="Opinion: the writer's view, not news reporting">OPINION</span>:null}{cardActions(it)}</div><FpAlso it={it}/>{it.thread_update&&<div className="fp-thread sm"><b>New:</b> {it.thread_update}</div>}
                {it.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
                <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
                <div className="news-snippet">{it.snippet}</div>
@@ -9588,7 +9873,7 @@ function NewsWS(){
                  {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐</span>}
                  {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖</span>}
                  {annoBadge(it)}
-                 <TalkToFridayButton contentType="article" title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
+                 <TalkToFridayButton contentType="article" onDiscuss={()=>{setDiscussFor({url:it.url,title:it.title});setPanel('discuss')}} title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
                </div>
                {annoBox(it)}
              </div>)}
@@ -9849,9 +10134,11 @@ function NewsWS(){
       <NewsLocalBeatSettings/>
       <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Briefing and the live feed.</div>
     </div>}
+    {panel==='discuss'&&discussFor&&<DiscussPanel story={discussFor} onClose={()=>setPanel(null)}/>}
     {panel==='diet'&&<div className="news-side">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>📊 YOUR MEDIA DIET</h3><button aria-label={'Close this panel'} title={'Close this panel'} className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
       <div style={{fontSize:10,color:'#777',marginBottom:8}}>How you engage with the news — what you read, save, boost, and ban.</div>
+      <MediaDietRules/>
       {dietLoading?<div style={{color:'#999',textAlign:'center',padding:24,fontSize:12}}>Loading…</div>:!diet?<div style={{fontSize:11,color:'#777'}}>No engagement data yet. Read, save, boost, or ban a few stories and your diet will fill in.</div>:<div>
         <div className="card-title" style={{marginTop:8}}>Articles read by category</div>
         {(()=>{const cats=diet.categories||{};const keys=Object.keys(cats);const max=Math.max(1,...keys.map(k=>cats[k]));return keys.length===0?<div style={{fontSize:11,color:'#777'}}>Nothing read yet.</div>:keys.sort((a,b)=>cats[b]-cats[a]).map(k=><div key={k} className="diet-bar-row"><span className="diet-bar-label">{k}</span><span className="diet-bar-track"><span className="diet-bar-fill" style={{width:Math.round(cats[k]/max*100)+'%'}}></span></span><span className="diet-bar-num">{cats[k]}</span></div>)})()}
@@ -10752,7 +11039,7 @@ function FinanceWS(){
   const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused credit card perks · $${totalPerkValue} total perk value`;
   return(<div>
     <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref','wallet'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
+    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].concat(fridayHeldOn('federation')?['wallet']:[]).map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
@@ -10780,7 +11067,7 @@ function FinanceWS(){
       <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your Financial Advisor</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
       <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your CPA / Accountant</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
     </div>}
-    {view==='wallet'&&<WalletPanel/>}
+    {fridayHeldOn('federation')&&view==='wallet'&&<WalletPanel/>}
     {view==='quickref'&&<div>
       <div className="card-title">Quick Reference</div>
       {[{name:'Your Bank',type:'Banking',ico:'🏦'},{name:'Your Insurance Provider',type:'Insurance',ico:'🏥'},{name:'Primary Card',type:'Credit Card',ico:'💳'},{name:'Secondary Card',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
@@ -16310,13 +16597,16 @@ function SettingsTabPrivacy({s,save}){
         {armMsg&&<div style={{fontSize:10,color:armMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
       </div>}
       {armed&&armMsg&&<div style={{fontSize:10,color:'#00ff80',marginBottom:12,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
-      <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{...(s.model_routing||{}),vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
+      <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
     </StSection>
     <StSection title="Cloud mode">
       <PrivacyCloudConsent/>
     </StSection>
     <StSection title="Privacy check" desc={("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")}>
       <PrivacyCheckLayers/>
+    </StSection>
+    <StSection title="File access" desc={"Which files and folders cloud models may read when " + fridayName() + " opens them."}>
+      <FileAccessPanel/>
     </StSection>
     <StSection title="Fonts">
       <StToggle label="Load fonts from Google Fonts" value={s.web_fonts_from_google!==false} onChange={()=>save({web_fonts_from_google:s.web_fonts_from_google===false})} desc={("Only used while " + FRIDAY_BRAND.name + "'s own font files are not installed in static\\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, " + FRIDAY_BRAND.name + " uses similar fonts already on this PC. Takes effect when the page reloads.")}/>
@@ -16379,6 +16669,120 @@ function SettingsTabPrivacy({s,save}){
 // "still loading" or "the download is missing". A switch reading ON while the
 // gate is in fact keyword-only would be the same class of lie the approval log
 // exists to stop.
+// Settings › Privacy › File access: which files and folders cloud models may
+// read when Friday opens them. Lists every grant with its status, adds one
+// (the Add click is the owner's approval) and removes one, all through
+// /api/privacy/file-grants. A line that grants nothing (quarantined or
+// unverified) is listed but has no Remove. An old permission that was set
+// aside shows its one question here; Re-grant raises the normal approval card.
+function FileAccessPanel() {
+  const E = React.createElement;
+  const [data, setData] = useState(null);
+  const [path, setPath] = useState('');
+  const [kind, setKind] = useState('file');
+  const [days, setDays] = useState(7);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => apiFetch('/api/privacy/file-grants').then(r => r.json()).then(setData).catch(() => setMsg('Could not read file permissions.')), []);
+  useEffect(() => { load(); }, [load]);
+  const post = (url, body) => apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(r => r.json().then(d => ({ ok: r.ok, d })));
+  const add = () => {
+    const p = (path || '').trim();
+    if (!p) { setMsg('Type the path of a file or folder.'); return; }
+    setBusy(true);
+    setMsg('');
+    const body = kind === 'folder' ? { path: p, scope: 'folder', expiry_days: days } : { path: p, scope: 'file' };
+    post('/api/privacy/file-grants', body).then(({ ok, d }) => {
+      if (ok && d && d.status === 'ok') {
+        const g = d.grant || {};
+        setMsg('Allowed: ' + (g.path || p) + (g.findings_summary ? ' (' + g.findings_summary + ')' : '') + '.');
+        setPath('');
+        load();
+      } else setMsg((d && (d.error || d.message)) || 'The permission was not created.');
+    }).catch(() => setMsg('The permission was not created.')).finally(() => setBusy(false));
+  };
+  const remove = id => post('/api/privacy/file-grants/' + encodeURIComponent(id) + '/revoke')
+    .then(() => { setMsg('Removed. Cloud models no longer get it.'); load(); }).catch(() => setMsg('Could not remove it.'));
+  const regrant = id => post('/api/privacy/file-grants/notices/' + encodeURIComponent(id) + '/regrant')
+    .then(({ ok, d }) => { setMsg(ok ? 'A card is waiting for your approval.' : (d && d.message) || 'Could not offer it again.'); load(); })
+    .catch(() => setMsg('Could not offer it again.'));
+  const dismiss = id => post('/api/privacy/file-grants/notices/' + encodeURIComponent(id) + '/dismiss')
+    .then(({ ok, d }) => { setMsg(ok ? 'Done. Nothing else changed.' : (d && d.message) || 'Could not close that notice.'); load(); })
+    .catch(() => setMsg('Could not set it aside.'));
+  const startFresh = () => post('/api/privacy/file-grants/start-fresh')
+    .then(({ ok, d }) => { setMsg(ok ? 'A card is waiting for your approval. Nothing changes until you approve it on screen.' : (d && d.message) || 'Could not start fresh.'); load(); })
+    .catch(() => setMsg('Could not start fresh.'));
+  const rows = (data && data.rows) || [];
+  const notices = (data && data.notices) || [];
+  const st = (data && data.status) || {};
+  const said = { valid: 'Valid', paused: 'Paused', changed: 'File changed', missing: 'File missing', expired: 'Expired', quarantined: 'Quarantined', unverified: 'Unverified' };
+  const hue = { valid: '#00ff80', paused: '#f59e0b', changed: '#f59e0b', missing: '#f59e0b', expired: 'rgba(255,255,255,0.45)', quarantined: '#ff8080', unverified: '#ff8080' };
+  const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
+  const live = r => r.status !== 'quarantined' && r.status !== 'unverified';
+  const typeWord = t => t === 'folder' ? 'Folder ' : t === 'glob' ? 'Pattern ' : 'File ';
+  const when = r => r.expires_ts ? 'until ' + new Date(r.expires_ts * 1000).toLocaleDateString() : (r.type === 'file' && live(r) ? 'pinned to the file as it was' : '');
+  return E('div', { 'data-testid': 'file-access-panel' },
+    E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) },
+      'Cloud models never see a file’s contents unless you allow that file or folder here. A file is pinned to what it holds when you allow it; a folder lasts up to 30 days. Your never-send list still applies.'),
+    st.suspended ? E('div', { role: 'alert', style: { fontSize: 11, color: 'rgba(255,210,140,0.9)', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, padding: '8px 10px', marginBottom: 10, lineHeight: 1.6 } },
+      'Every file permission is paused: a line in the permissions record could not be verified, and it may have been a never-send mark. Permissions stay paused while it is there.') : null,
+    st.suspended ? E('div', { className: 'card', 'data-testid': 'file-access-start-fresh', style: { padding: 8, marginBottom: 10, border: '1px solid rgba(245,158,11,0.3)' } },
+      E('div', { style: Object.assign({}, muted, { color: 'rgba(255,255,255,0.7)' }) },
+        'The old permissions file, which has a line no current key signed, is set aside unchanged; you start with no file permissions and grant again. Your never-send marks are kept.'),
+      E('button', { className: 'settings-btn', style: { fontSize: 11, marginTop: 6 }, onClick: startFresh }, 'Start file access fresh')) : null,
+    notices.map(n => E('div', { key: n.id, className: 'card', 'data-testid': 'file-access-notice', style: { padding: 8, marginBottom: 6, border: '1px solid rgba(245,158,11,0.3)' } },
+      E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } }, n.message),
+      n.path ? E('div', { style: Object.assign({}, muted, { overflowWrap: 'anywhere' }) }, typeWord(n.type) + n.path) : null,
+      n.resolves ? E('div', { style: muted }, n.resolves) : null,
+      E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+        n.reason === 'retired_key' ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => regrant(n.id) }, 'Re-grant') : null,
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => dismiss(n.id) }, n.reason === 'retired_key' ? 'Leave it off' : 'Hide this notice')))),
+    !data ? E('div', { style: muted }, 'Reading file permissions…')
+      : rows.length === 0 ? E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, 'No file permissions. Cloud models get no file’s contents.')
+      : rows.map(r => E('div', { key: r.status + ':' + r.id, className: 'card', 'data-testid': 'file-access-row', 'data-status': r.status, style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+        E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5, minWidth: 0, overflowWrap: 'anywhere' } },
+          E('span', { style: { fontSize: 10, color: hue[r.status] || '#ddd', fontFamily: 'JetBrains Mono, monospace', marginRight: 6 } }, said[r.status] || r.status),
+          typeWord(r.type), E('b', null, r.path || '(path unknown)'),
+          E('div', { style: muted }, [when(r), r.summary, r.why].filter(Boolean).join(' · '))),
+        live(r) ? E('button', { className: 'settings-btn', style: { fontSize: 11, color: '#ff8080' }, onClick: () => remove(r.id) }, 'Remove') : null)),
+    E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Add'),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' } },
+      E('input', { className: 'input', 'aria-label': 'Path of a file or folder', value: path, onChange: e => setPath(e.target.value), placeholder: 'Path of a file or folder', style: { flex: 1, minWidth: 200 } }),
+      E('select', { 'aria-label': 'File or folder', value: kind, onChange: e => setKind(e.target.value), style: { fontSize: 12 } },
+        E('option', { value: 'file' }, 'File'), E('option', { value: 'folder' }, 'Folder')),
+      kind === 'folder' ? E('select', { 'aria-label': 'Lasts', value: days, onChange: e => setDays(Number(e.target.value)), style: { fontSize: 12 } },
+        [1, 7, 30].map(d => E('option', { key: d, value: d }, d === 1 ? '1 day' : d + ' days'))) : null,
+      E('button', { className: 'settings-btn', style: { fontSize: 12 }, disabled: busy, onClick: add }, busy ? 'Adding…' : 'Add')),
+    E('div', { style: Object.assign({}, muted, { marginTop: 6 }) },
+      'By voice: “what files can the cloud see?”, “let it read my CV”, “take that away”. Asking by voice puts a card on screen; only your click there allows it.'),
+    msg ? E('div', { role: 'status', style: Object.assign({}, muted, { marginTop: 6, color: '#9fd' }) }, msg) : null);
+}
+// The file-access approval card: one card for every path a turn asked for.
+// Each row is what Friday found on disk, not what was asked for. Approve
+// allows exactly the rows shown, and only this click can approve it (voice and
+// text replies can only decline it).
+function FileGrantRequestCard({ a, busy, onDecide }) {
+  const E = React.createElement;
+  const p = a.payload || {};
+  const items = p.items || [];
+  const skipped = p.skipped || [];
+  return E('div', { className: 'card', style: { marginBottom: 6, padding: 8 }, 'data-testid': 'approval-card', 'data-approval-id': a.approval_id, 'data-kind': 'file_grant_request' },
+    E('div', { style: { fontSize: 12, color: '#ddd' } }, a.title),
+    p.reason ? E('div', { style: { fontSize: 11, color: '#999', marginTop: 2 } }, 'Asked because: ' + p.reason) : null,
+    E('ul', { 'data-testid': 'file-grant-items', style: { fontSize: 11, color: '#b8c7dc', margin: '6px 0 0', padding: '0 0 0 16px', maxHeight: 220, overflowY: 'auto' } },
+      items.map((it, i) => E('li', { key: i, style: { overflowWrap: 'anywhere' } },
+        E('b', null, (it.type === 'folder' ? 'Folder ' : 'File ') + it.path),
+        it.summary ? E('div', { style: { color: '#7f93ad' } }, it.summary) : null))),
+    skipped.length ? E('div', { style: { fontSize: 10, color: '#ff8080', marginTop: 4 } },
+      'Not included: ' + skipped.map(s => (s.path || '?') + ' (' + s.error + ')').join('; ')) : null,
+    E('div', { style: { fontSize: 10, color: '#7f93ad', marginTop: 4 } }, a.description),
+    E(ApprovalProvenance, { p: a.provenance }),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: '#00ff80' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'approve') },
+        items.length === 1 ? 'Allow it' : 'Allow all ' + items.length),
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: '#ff0080' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'deny') }, 'Decline')));
+}
 // Scheduled jobs: what they may do on their own. A scheduled or background job
 // can take an outward action (change a calendar, schedule a post, run a
 // non-read command, a connector's send) only with a grant made here: named
@@ -16754,7 +17158,69 @@ function TrackingPanel({
     onClick: () => commit({
       click_method: o.k
     })
-  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
+  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Snap and big mode'), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Snap to targets",
+    value: cfg.snap !== false,
+    onChange: () => commit({
+      snap: cfg.snap === false
+    }),
+    desc: "The cursor locks onto the nearest button, card, link or orb within reach and holds it until you move well away, so neighbours never flicker. The locked target is ringed; a pinch hits it, not where your fingers drift."
+  }), cfg.snap !== false ? sl('snap_radius', 'Snap reach', 'How close the cursor must come to a target to lock on. It lets go at 1.6 times this distance.', 16, 96, 2, v => Math.round(v) + ' px') : null, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Two-hand zoom",
+    value: !!cfg.two_hand_zoom,
+    onChange: () => commit({
+      two_hand_zoom: !cfg.two_hand_zoom
+    }),
+    desc: "Pinch with both hands and move them apart to zoom the galaxy, the 3D views and images. Tracking a second hand costs CPU; off unless you use it. Takes effect the next time hand tracking starts."
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-label)',
+      margin: '10px 0 4px',
+      fontWeight: 500
+    }
+  }, "Big mode"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 6,
+      lineHeight: 1.6
+    }
+  }, "Large targets, fewer things per screen, and the primary actions as big cards, for driving the app by hand. Automatic turns it on with hand tracking and off with it. Anything that sends, deletes or spends needs a held pinch or a spoken yes while it is on; approval cards are unchanged."), /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Big mode",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, [{
+    k: 'auto',
+    l: 'With hand tracking'
+  }, {
+    k: 'on',
+    l: 'Always'
+  }, {
+    k: 'off',
+    l: 'Never'
+  }].map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": (s && s.big_mode || 'auto') === o.k,
+    className: `settings-btn ${(s && s.big_mode || 'auto') === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      if (typeof window !== 'undefined' && window.FridayHandCursor) window.FridayHandCursor.setBigMode(o.k);
+      save({
+        big_mode: o.k
+      });
+    }
+  }, o.l))), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: 'var(--st-dim)',
@@ -17694,6 +18160,30 @@ function SettingsTabSigning() {
 // window on her own profile (services/browser_session.py), never the owner's
 // normal browser. Sign-ins made in that window stay in that profile until they
 // are cleared here. Every route behind this is refused off this computer.
+/* Muted notification kinds (the tray's "Mute this kind"), reversible here.
+   Approvals can never be muted; muted kinds go to the activity log. */
+function SettingsNotificationMutes() {
+  const [mutes, setMutes] = React.useState(null);
+  const load = () => apiFetch('/api/settings').then(r => r.json())
+    .then(d => setMutes(((d || {}).settings || {}).notification_mutes || [])).catch(() => setMutes([]));
+  React.useEffect(() => { load(); }, []);
+  const unmute = m => {
+    const [kind, source] = String(m).split('|');
+    apiFetch('/api/notifications/mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: kind, source: source || '', unmute: true }) })
+      .then(r => r.json()).then(d => setMutes((d && d.mutes) || [])).catch(() => {});
+  };
+  return React.createElement(StSection, { title: 'Muted notifications' },
+    React.createElement('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginBottom: 8, lineHeight: 1.5 } },
+      'Kinds you muted from the tray go to the activity log instead. Approvals always reach you and cannot be muted.'),
+    mutes === null ? null : mutes.length === 0
+      ? React.createElement('div', { className: 'fridayui-muted', style: { fontSize: 11 } }, 'Nothing is muted.')
+      : mutes.map(m => React.createElement('div', { key: m, className: 'notif-mute-row',
+          style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, padding: '3px 0' } },
+          React.createElement('span', null, String(m).replace('|', ' \u00b7 ')),
+          React.createElement('button', { className: 'settings-btn', onClick: () => unmute(m) }, 'Unmute'))));
+}
+
 function SettingsTabBrowser() {
   const [st, setSt] = useState(null);
   const [msg, setMsg] = useState('');
@@ -18275,7 +18765,7 @@ function ScheduledCloudSection() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, "The morning news, evening front page, afternoon briefing, daily creation and heartbeat run on a model on this PC when it has one, at no cost. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
+  }, "The daily creation and heartbeat run on a model on this PC when it has one, at no cost. News (the front pages and briefings) always runs on this PC and waits for it; it never uses a cloud model. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -19449,7 +19939,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
@@ -19956,9 +20446,11 @@ function useApprovalFeed() {
 }
 // Approve or decline from any page. Exactly one decision wins (the server
 // decides under one lock); a page that lost the race is told what happened.
+// decided_by 'owner:ui' marks a click on this page: some cards (file access)
+// can be approved by nothing else.
 function fridayDecideApproval(id, decision) {
   return fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, decided_by: 'owner:ui' })
   }).then(r => r.json()).then(d => {
     if (d && d.ok) fridayApprovalFeed.drop(id);
     if (d && d.already_decided) {
@@ -20052,6 +20544,8 @@ function LocalContextShareCard({a,busy,onDecide}){
 function fridayIsBatchCard(a){return!!(a&&a.payload&&a.payload.handler==='item_batch')}
 function ApprovalCardBody({ a, busy, onDecide }) {
   // The share card has its own body: the exact payload, edit, and four choices.
+  // A file-access card lists every path it would allow; see FileGrantRequestCard.
+  if (a && a.kind === 'file_grant_request') return <FileGrantRequestCard a={a} busy={busy} onDecide={onDecide}/>;
   if (a && a.kind === 'local_context_share') return <LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>;
   return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
@@ -20591,6 +21085,7 @@ function App(){
     try{
       const body={settings:patch};
       if(opts.personality!==undefined)body.personality=opts.personality;
+      if(opts.ownerAction)body.owner_action=opts.ownerAction;
       const r=await apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       // A5: a rejected save (e.g. the FR-1 seat gate 400ing a red model) must
@@ -20768,8 +21263,7 @@ function App(){
     }).catch(()=>{});
   };
   const setRoutingMode=(mode)=>{
-    const cur=agentSettings.model_routing||{};
-    saveAgentSettings({model_routing:{...cur,mode}});
+    saveAgentSettings({model_routing:{mode}},{ownerAction:'routing_mode'});
   };
   // ── A1: in-UI model pull with disk-space preflight; progress = pull orb.
   const[pullName,setPullName]=useState('');
@@ -21815,7 +22309,69 @@ function App(){
     ids.forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}});
     apiFetch('/api/processes/dismiss-failed',{method:'POST'}).catch(()=>{})};
   const clearNotif=(id)=>{if(id){dismissedNotifIds.current.add(id);_notifPost('/api/notifications/dismiss',id)}setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
-  const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id){dismissedNotifIds.current.add(n.id);_notifPost('/api/notifications/dismiss',n.id)}});setNotifs([])};
+  // Clear all keeps pending approvals; "Mute this kind" sends a kind to the activity log.
+  const muteNotifKind=n=>{apiFetch('/api/notifications/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:n.kind||'',source:n.source||''})}).catch(()=>{});setNotifs(prev=>prev.filter(x=>!(x.kind===n.kind&&x.source===n.source)))};
+  const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id&&n.kind!=='approval_pending')dismissedNotifIds.current.add(n.id)});apiFetch('/api/notifications/clear-all',{method:'POST'}).catch(()=>{});setNotifs(prev=>prev.filter(n=>n.kind==='approval_pending'))};
+  // Cards are grouped by job, then kind, then source (the server sets each
+  // card's `group`). A group of two or more cards, and every memory-proposal
+  // group, shows as one group card; a group of one shows as its own card.
+  const notifGroupsOf = list => {
+    const m = new Map();
+    list.forEach(n => {
+      const g = n.group || n.id;
+      if (!m.has(g)) m.set(g, { key: g, memory: g === 'memory_proposals', items: [] });
+      m.get(g).items.push(n);
+    });
+    return [...m.values()].filter(g => g.memory || g.items.length > 1);
+  };
+  const notifGroupedIds = list => new Set(notifGroupsOf(list).flatMap(g => g.items.map(n => n.id)));
+  // Clear group: every card in it except a pending approval, which stays.
+  const clearNotifGroup = g => {
+    g.items.forEach(n => {
+      if (n.id && n.kind !== 'approval_pending') dismissedNotifIds.current.add(n.id);
+    });
+    apiFetch('/api/notifications/clear-group', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: g.key }) }).catch(() => {});
+    setNotifs(prev => prev.filter(n => n.group !== g.key || n.kind === 'approval_pending'));
+  };
+  // Keep or skip one memory proposal: its own approval decides it.
+  const decideMemoryItem = (n, keep) => {
+    const aid = n.meta && n.meta.approval_id;
+    if (!aid) return;
+    dismissedNotifIds.current.add(n.id);
+    setNotifs(prev => prev.filter(x => x.id !== n.id));
+    Promise.resolve(fridayDecideApproval(aid, keep ? 'approve' : 'deny')).catch(() => {});
+  };
+  const notifGroupCards = list => notifGroupsOf(list).map(g => {
+    const k = g.items.length;
+    const title = g.memory ? k + ' memory proposal' + (k === 1 ? '' : 's') + ' to keep or skip'
+      : fridayTM(g.items[0].title || 'Notifications') + ' \u00b7 ' + k + ' cards';
+    const clearable = g.items.some(n => n.kind !== 'approval_pending');
+    return React.createElement("div", { key: 'grp_' + g.key, className: "notif-group",
+      style: { padding: '8px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: 12 } },
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+        React.createElement("div", { className: "notif-group-title",
+          style: { flex: 1, minWidth: 0, fontFamily: 'Inter', fontWeight: 500, color: '#fff' } }, title),
+        clearable && React.createElement("button", { className: "notif-open-btn notif-clear-group",
+          onClick: e => { e.stopPropagation(); clearNotifGroup(g); },
+          title: "Clear this group (approvals stay)" }, "Clear group")),
+      g.items.map(n => React.createElement("div", { key: 'gi_' + n.id, className: "notif-group-item",
+        style: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, color: 'rgba(255,255,255,0.78)' } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          fridayTM(g.memory ? (n.meta && n.meta.detail) || n.body || n.title : n.title || 'Notification'),
+          n.count > 1 && React.createElement("span", { className: "notif-count",
+            style: { fontFamily: 'JetBrains Mono', fontSize: 10, color: 'rgba(255,255,255,0.55)', marginLeft: 6 } },
+            '\u00d7' + n.count)),
+        g.memory ? [
+          React.createElement("button", { key: 'keep', className: "notif-open-btn notif-keep",
+            onClick: e => { e.stopPropagation(); decideMemoryItem(n, true); } }, "Keep"),
+          React.createElement("button", { key: 'skip', className: "notif-open-btn notif-skip",
+            onClick: e => { e.stopPropagation(); decideMemoryItem(n, false); } }, "Skip")
+        ] : n.kind !== 'approval_pending' && React.createElement("button", { "aria-label": "Dismiss",
+          onClick: e => { e.stopPropagation(); clearNotif(n.id); },
+          style: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer',
+                   fontSize: 10, padding: '0 2px', lineHeight: 1 }, title: "Dismiss" }, "\u2715"))));
+  });
   const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n));_notifPost('/api/notifications/read',id)};
   useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
@@ -22445,7 +23001,7 @@ function App(){
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
   const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
-  const unread=notifs.filter(n=>!n.read).length;
+  const unread=notifs.filter(n=>!n.read&&n.tier!=='fyi').length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
   const bellBadgeCount=runningTaskCount>0?runningTaskCount:unread;
   const sortedBgTasks=[...bgTasks].sort((a,b)=>(b.created||0)-(a.created||0));
@@ -23267,9 +23823,10 @@ function App(){
           </div>;
         })}
       </div>}
+      {notifs.length>0&&notifGroupCards(notifs)}
       {notifs.length===0
         ?<div className="notif-empty">No new notifications</div>
-        :notifs.slice(0,50).map((n,i)=>{
+        :[...notifs].filter(n=>!notifGroupedIds(notifs).has(n.id)).sort((a,b)=>(a.tier==='fyi')-(b.tier==='fyi')).slice(0,50).map((n,i)=>{
           const key=n.id||`n_${i}`;
           const isExpanded=!!notifCardExpanded[`notif_${key}`];
           const hasDetail=!!(n.detail||n.body||(n.message&&n.title&&n.message!==n.title));
@@ -23324,11 +23881,12 @@ function App(){
             style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:12,color:n.read?'rgba(255,255,255,0.72)':'#fff',cursor:clickable?'pointer':'default',transition:'background .15s'}}>
             <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4,fontWeight:n.read?400:500}}>{fridayTM(n.title||n.message||n.text||'Notification')}</div>
+                <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4,fontWeight:n.read?400:500}}>{fridayTM(n.title||n.message||n.text||'Notification')}{n.count>1&&<span className="notif-count" style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.55)',marginLeft:6}}>{'\u00d7'+n.count}</span>}</div>
                 {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#aaa',marginTop:3}}>{n.time}</div>}
               </div>
               {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
               {!hasDetail&&tgt&&<span aria-hidden="true" title={notifTargetLabel(tgt)} style={{fontSize:12,color:'#00d4ff',marginTop:1}}>{tgt.url&&!tgt.workspace?'↗':'→'}</span>}
+              {n.id&&n.kind&&n.kind!=='approval_pending'&&<button aria-label="Mute this kind" className="notif-mute" onClick={e=>{e.stopPropagation();muteNotifKind(n)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Mute this kind (unmute in Settings > General)">&#x1F515;</button>}
               {n.id&&<button aria-label="Dismiss" onClick={e=>{e.stopPropagation();clearNotif(n.id)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Dismiss">&#x2715;</button>}
             </div>
             {isExpanded&&hasDetail&&<FridayDoc compact text={fridayTM(n.detail||n.body||n.message)} style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)'}}/>}

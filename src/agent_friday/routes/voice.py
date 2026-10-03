@@ -594,6 +594,12 @@ def voice_tool_limit_s(settings=None) -> float:
 
 
 async def _voice_tool_with_limit(fname, fargs, send, session=None, limit=None, runner=None):
+    # A live voice conversation is in progress: hold the tray's interruptions.
+    try:
+        from agent_friday.services import notification_policy as _pol_live
+        _pol_live.note_owner_turn()
+    except Exception:
+        pass
     """Run one voice tool on a worker thread, bounded by the owner's limit."""
     runner = runner or _voice_tool_run
     if limit is None:
@@ -763,8 +769,8 @@ def _voice_tool_surface_note():
     """The authoritative list of tools the LIVE VOICE session actually has.
 
     The voice system prompt is assembled from ``_get_friday_system_prompt()`` --
-    the TEXT-CHAT prompt -- whose "== AVAILABLE TOOLS ==" section advertises the
-    full text toolbox (read_file, write_file, run_command, browse_web,
+    the TEXT-CHAT prompt -- whose generated "== TOOLS ==" section advertises the
+    text toolbox (read_file, write_file, run_command, browse_web,
     search_email, draft_email, open_path, learn_skill, query_trust_graph,
     get_briefing, the OS-control ring ...). The Live API is handed only
     ``_VOICE_LIVE_TOOLS``. Every tool named in the prompt but absent from that
@@ -797,7 +803,7 @@ def _voice_tool_surface_note():
         )
     return (
         header +
-        "This is a LIVE VOICE session. The tool list in the '== AVAILABLE TOOLS =='\n"
+        "This is a LIVE VOICE session. The tool list in the '== TOOLS =='\n"
         "section above describes the TEXT CHAT surface and does NOT apply here.\n"
         "In voice you can call EXACTLY these " + str(len(names)) +
         " tools, and nothing else:\n"
@@ -2304,6 +2310,8 @@ if sock is not None:
             _k = _refused[0]
             _st = _msnap["stages"][_k]
             _send({"type": "manifest", **_msnap})
+            from agent_friday.services import reasoning_trace as _rt_v
+            _rt_v.set_reason("local voice refused: " + str(_st.get("reason") or _k))
             _send({"type": "error",
                    "error": (_st.get("proof") or {}).get("code") or "voice_stage_unproven",
                    "detail": _st.get("reason") or
@@ -2319,11 +2327,16 @@ if sock is not None:
             ear = _vw.held("ear") or _vw.build_ear(_sel["ear"], progress=_prog)
             mouth = _vw.held("mouth") or _vw.build_mouth(_sel["mouth"], progress=_prog)
         except _vw.GpuRefused as _ge:
+            from agent_friday.services import reasoning_trace as _rt_v
+            _rt_v.set_reason("local voice refused by the GPU: " + str(_ge.message))
             _send({"type": "error", "error": _ge.code, "detail": _ge.message})
             return
         except Exception as _le:
             _vlog.error("session aborted: engine load failed: %s: %s",
                         type(_le).__name__, _le)
+            from agent_friday.services import reasoning_trace as _rt_v
+            _rt_v.set_reason("local voice engines failed to load: %s: %s"
+                             % (type(_le).__name__, str(_le)[:200]))
             _send({"type": "error", "error": "local_voice_load_failed",
                    "detail": f"Could not load the local voice engines "
                              f"({type(_le).__name__}: {str(_le)[:160]}). Check "
@@ -2369,6 +2382,8 @@ if sock is not None:
         _timings = {}
 
         def _generate(user_text, on_delta, cancel):
+            from agent_friday.services import notification_policy as _pol_v
+            _pol_v.note_owner_turn()
             from agent_friday.services.model_router import TIMINGS_SINK
             _timings.clear()
             _tok = TIMINGS_SINK.set(lambda t: _timings.update(t or {}))
@@ -2473,10 +2488,14 @@ if sock is not None:
     # session-info hands the mic -- kept working. Register the undecorated
     # implementation under both paths, with distinct endpoint names so
     # Flask does not see one endpoint mapped to two view functions.
+    # One trace per voice session: every way out of it leaves a record.
+    from agent_friday.services import reasoning_trace as _rt_session
+    ws_voice_local = _rt_session.traced("voice", "Local voice session")(ws_voice_local)
     sock.route('/ws/voice-local', endpoint='ws_voice_local')(ws_voice_local)
     sock.route('/ws/voice', endpoint='ws_voice')(ws_voice_local)
 
     @sock.route('/ws/live')
+    @_rt_session.traced("voice", "Live voice session")
     def ws_live(ws):
         """Bridge a browser WebSocket to a Gemini Live API session.
 

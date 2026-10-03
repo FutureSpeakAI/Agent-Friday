@@ -200,6 +200,24 @@ def test_an_identical_call_is_still_caught(monkeypatch):
     assert "search_email" in text
 
 
+def test_an_identical_call_with_bad_arguments_is_still_caught(monkeypatch):
+    """A call that fails its schema never runs, and the error goes back; the
+    same bad call resent is still a loop the guard stops in a few rounds."""
+    def script(i):
+        return {"choices": [{"message": {"content": "", "tool_calls": [{
+            "id": "c", "function": {"name": "read_file",
+                                    "arguments": {"no_such_field": 1}},
+        }]}, "finish_reason": "tool_calls"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2}}
+
+    from agent_friday.services import agent as ag
+    from agent_friday.services import tool_args
+    monkeypatch.setattr(tool_args, "check",
+                        lambda name, args, schema: (args, "INVALID ARGUMENTS for %s" % name))
+    text, _, n = _drive(monkeypatch, script)
+    assert n <= 5, n
+
+
 def test_the_guard_can_be_switched_off_by_the_owner(monkeypatch):
     """It is the one guard left on by default, so it must also be his to
     disable — and then nothing stops a loop but the Stop button."""

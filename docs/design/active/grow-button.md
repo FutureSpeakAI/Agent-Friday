@@ -226,7 +226,10 @@ handed to a cloud provider by the code planner. The gate is working as designed 
 
 `_run_claude_terminal` (`code_engine.py:44-90`) spawns
 `cmd.exe /k title Friday-Vibe-<id> && cd /d "<cwd>" && claude --dangerously-skip-permissions "<task>"`
-with `CREATE_NEW_CONSOLE`. It records `log_file = VIBE_LOG_DIR / f"{terminal_id}.log"` into
+with `CREATE_NEW_CONSOLE`. (***Corrected 2026-10-02:*** the command is now
+`claude --settings <per-task file> "<task>"`, started only from an approved
+per-task card, with a hook that asks Friday's gate about every action; see
+`services/claude_code_tasks.py`. The log-file finding below still stands.) It records `log_file = VIBE_LOG_DIR / f"{terminal_id}.log"` into
 the registry at `:59`.
 
 **Nothing ever writes that file.** There is no redirection on the `Popen`, and

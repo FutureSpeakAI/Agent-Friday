@@ -12,7 +12,7 @@
  * GPU discipline: one turn pins ~8 GB of VRAM for five minutes. These run
  * serially and release the model afterwards; see afterAll.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { say, ask, explain, assertClaimLeftATrace, claimsAnAction, tally, BASE } from './scenario';
 
 // Independent scenarios, but they must not share the GPU concurrently.

@@ -574,6 +574,9 @@ This is also where `code_engine._run_claude_terminal` needs a hard look before i
 wired to anything community-facing — it currently spawns Claude Code with
 `--dangerously-skip-permissions` (`code_engine.py:44-86`), which is defensible for
 the owner's own repos and not defensible as a path a shared workspace can influence.
+***Corrected 2026-10-02:*** that hard look happened. The launcher starts only from
+an approved per-task card, and every action in the session asks Friday's gate
+through a per-task hook (`services/claude_code_tasks.py`); the flag is gone.
 
 ### Phase 4 — Sharing
 

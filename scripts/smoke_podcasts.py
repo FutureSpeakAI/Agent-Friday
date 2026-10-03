@@ -84,7 +84,18 @@ def run(base: str, phase: int, wait_s: float, fetcher=fetch, say=print) -> bool:
         return False
     lines = ep.get("lines") or []
     said = [ln for ln in lines if not ln.get("signature")]
-    check(len(said) >= 4, "a transcript with lines", "%d lines" % len(said))
+    words = sum(len(ln["text"].split()) for ln in said)
+    check(words >= 10, "a transcript with lines", "%d words" % words)
+    check(ep.get("format") == "solo" and {ln["speaker"] for ln in lines} == {"a"},
+          "a Briefing is Friday alone (the recommended format)", str(ep.get("format")))
+    sc = ep.get("script_check") or {}
+    check("ok" in sc, "the script-quality gate ran")
+    say("INFO script check: %s" % ("passed" if sc.get("ok") else "%d problem(s): %s" % (
+        len(sc.get("problems") or []), "; ".join(p["code"] for p in (sc.get("problems") or [])[:6]))))
+    stories = [s for s in ep.get("sources") or [] if s.get("role") == "story"]
+    claims = "linked" in (lines[-1]["text"] if lines else "")
+    check(not claims or (stories and all(s.get("url", "").startswith("http") for s in stories)),
+          "the sign-off claims links only when the stories have them")
     check(all(ln.get("start") is not None for ln in lines), "every line is timed")
     check(any(ln.get("cites") for ln in said), "lines cite their sources")
     check(str(ep.get("writer_model") or "") and "claude" not in str(ep.get("writer_model")).lower(),

@@ -242,20 +242,27 @@ def test_cancel_before_the_lease_stops_the_job(installed, monkeypatch):
 
 def test_cancel_during_the_lease_gives_the_gpu_back(installed, monkeypatch):
     """Taking the lease is the slowest part of the job, so this is when a
-    cancel most often lands. The GPU must come straight back."""
-    import threading
+    cancel most often lands. The GPU must come straight back.
+
+    The cancel is delivered from inside grant(), so it lands in that window on
+    every run; a wall-clock timer landed before the lease on a loaded machine
+    and then tested the pre-lease path instead."""
     posts = {"n": 0}
     monkeypatch.setattr(li, "_post",
                         lambda p, b, timeout=60: posts.__setitem__("n", posts["n"] + 1)
                         or {"prompt_id": "1"})
-    arb = _SlowArbiter(delay=0.5)
-    seen = _capture_job_id(
-        monkeypatch,
-        then=lambda pid: threading.Timer(0.1, li.request_cancel, args=(pid,)).start())
+    seen = _capture_job_id(monkeypatch)
+
+    class _CancelledWhileGranting(_SlowArbiter):
+        def grant(self, kind, ttl_s=900):
+            li.request_cancel(seen["pid"])
+            return super().grant(kind, ttl_s=ttl_s)
+    arb = _CancelledWhileGranting(delay=0.05)
     out = li.generate("x", arbiter=arb)
     li.clear_cancel(seen.get("pid"))
     assert out["status"] == "cancelled"
     assert posts["n"] == 0
+    assert len(arb.granted) == 1, "the cancel must land while the lease is being taken"
     assert arb.released == 1, "a cancelled lease that is not released strands the GPU"
 
 

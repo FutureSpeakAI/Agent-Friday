@@ -145,6 +145,22 @@ def _gate_vision_prompt(text: str) -> str:
 
 
 
+def _cloud_tool_set(pilot=None):
+    """(tools, catalogue_all) for a cloud OpenAI-format turn.
+
+    With the catalogue on, the cloud sends the opening set (resident tools
+    plus the loader) and the loop loads the rest by name or query; with it
+    off, every schema goes as before. Same shape as the local-seat branch.
+    """
+    try:
+        from agent_friday.services import tool_catalogue as _TCat
+        if _TCat.enabled() and CLAUDE_TOOLS:
+            return _TCat.opening_set(CLAUDE_TOOLS, pilot=pilot), CLAUDE_TOOLS
+    except Exception:
+        pass
+    return CLAUDE_TOOLS, None
+
+
 def _fit_tools(model_id, tools, prompt_cost=0, intent=None,
                system=None, messages=None):
     """As much of the tool registry as this seat can hold. Never raises.
@@ -483,6 +499,15 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
             "mode and the provider key in Settings > Models."
             % (chosen, actual, chosen))
 
+    # A local pick answered in the cloud because the mode is Cloud only: the
+    # model is installed and the setting is the cause, so name the setting.
+    if not chosen_is_cloud and actual_is_cloud and \
+            str(routing_mode or "").strip().lower() == "cloud_only":
+        return (
+            "Your routing mode is Cloud only, so this turn went to %s, not %s, "
+            "the model you chose. To be answered by %s on this machine, change "
+            "the routing mode in Settings > Models." % (actual, chosen, chosen))
+
     # Two cloud models: not an absent local install, so offer no install advice.
     if chosen_is_cloud and actual_is_cloud:
         return (
@@ -493,6 +518,29 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
         "You chose %s for the reasoning seat, but it is not installed on this "
         "machine; this turn was answered by %s instead. Install %s or pick an "
         "installed model in the seat picker." % (chosen, actual, chosen))
+
+
+def _explicit_local_pick(conv_seat, routed_model):
+    """The local model the owner bound this conversation to, when this turn
+    routed to it; otherwise None. A failure of that seat is reported, never
+    answered by a cloud model the owner did not pick."""
+    if not isinstance(conv_seat, dict):
+        return None
+    want = (conv_seat.get("model") or "").strip()
+    if not want or want != str(routed_model or "").strip():
+        return None
+    try:
+        from agent_friday.services.local_seats import _names_a_cloud_model
+        if _names_a_cloud_model(want):
+            return None
+    except Exception:
+        pass
+    return want
+
+
+#: The notice's one action: open Settings > Models (tab id `intelligence`).
+SEAT_NOTICE_ACTION = {"label": "Open Settings > Models", "workspace": "settings",
+                      "tab": "intelligence"}
 
 
 def _announce_seat_notice(conversation_id, text):
@@ -515,6 +563,7 @@ def _announce_seat_notice(conversation_id, text):
             "role": "system",
             "kind": "seat_notice",
             "text": "⚙ " + text,
+            "action": SEAT_NOTICE_ACTION,
             "pinned": False,
         }
         if conversation_id:
@@ -525,8 +574,11 @@ def _announce_seat_notice(conversation_id, text):
         pass
     try:
         from agent_friday.notifications_engine import push
+        # One tap to the setting that decides it: Settings > Models holds the
+        # routing mode and the seat picker. Nothing changes until the owner does.
         push(title="Answered by a different model than you chose", body=text,
              priority="high", source="routing", kind="seat_notice",
+             actions=[SEAT_NOTICE_ACTION],
              dedupe_key="seat_notice:" + text[:80])
     except Exception:
         pass
@@ -601,6 +653,14 @@ def _privacy_hold_turn(fn):
     return _inner
 
 
+def _note_owner_turn():
+    try:
+        from agent_friday.services import notification_policy as _pol
+        _pol.note_owner_turn()
+    except Exception:
+        pass
+
+
 def _traced_turn(fn):
     """Run a chat turn under its own reasoning trace.
 
@@ -615,6 +675,7 @@ def _traced_turn(fn):
     """
     @wraps(fn)
     def _inner(*args, **kwargs):
+        _note_owner_turn()
         from agent_friday.services import reasoning_trace as _rt
         data = request.get_json(silent=True) or {}
         msg = str(data.get("message") or "").strip()
@@ -638,8 +699,10 @@ def _traced_turn(fn):
                     status = "failed"
             return rv
         finally:
+            _note_owner_turn()
             if tid:
-                _rt.finish(tid, status, reply=reply_text)
+                _rt.finish(tid, status, reply=reply_text,
+                           reason=(reply_text if status == "failed" and reply_text else None))
     return _inner
 
 
@@ -1456,7 +1519,36 @@ def chat():
         if cite_sources:
             _extra_system += CITATION_INSTRUCTIONS
 
+        # The newest user turn carries this turn's context on the local seat
+        # (see _prep_for); the original text is kept so a cloud fallback can
+        # put it back and carry the context in the system prompt instead.
+        _last_user_msg = (messages[-1] if messages and messages[-1].get('role') == 'user'
+                          and isinstance(messages[-1].get('content'), str) else None)
+        _last_user_text = _last_user_msg.get('content') if _last_user_msg is not None else None
+
         def _prep_for(provider):
+            """The system prompt for `provider`, in two parts.
+
+            HEAD is the same bytes on every turn of this conversation: the
+            settings prefix (personality, cLaws), the persona and generated
+            tool text, the workspace, the user model and heuristics, the
+            voice rules, and the sealed action policy last. TAIL is what this
+            message chose: the clock, wiki matches, memories, skills, the
+            screen, session continuity, the pinned situation.
+
+            On the local seat the TAIL rides at the top of the newest user
+            turn and the system message is HEAD alone, so llama-server
+            reuses its cache for the system prompt and the whole history and
+            reads only the new turn (measured: 43 s a turn re-reading a
+            ~21k-token prompt, 0.43 s when the prefix repeated). On the
+            cloud the tail follows the head in the system prompt, below
+            `prompt_cache.VOLATILE_MARKER`, and the policy is sealed last.
+            """
+            # Start from the user's own text: a previous local prep may have
+            # wrapped it, and the cloud scrub below must see (and keep) the
+            # scrubbed form, so the restore happens first and only here.
+            if _last_user_msg is not None:
+                _last_user_msg['content'] = _last_user_text
             vc = _get_vault_control() if _vault_local_only() else None
             sp, src = _build_context_prompt(
                 message, workspace, workspace_context, vision_description,
@@ -1464,7 +1556,10 @@ def chat():
                 vault_fallback=_vault_cloud_fallback(),
                 **({"pilot": _pilot} if _pilot is not None else {}),
             )
-            sp = _settings_system_prefix(settings, personality) + (sp or '')
+            from agent_friday.services.prompt_cache import VOLATILE_MARKER as _VM
+            _cut = (sp or '').find(_VM)
+            head, tail = ((sp or '')[:_cut], (sp or '')[_cut:]) if _cut > 0 else ((sp or ''), '')
+            head = _settings_system_prefix(settings, personality) + head
             # v5 personalization: fold in the LOCAL user model + learned heuristics
             # (the same blocks _get_friday_system_prompt injects). /api/chat builds
             # its prompt via _build_context_prompt directly, so without this the
@@ -1475,50 +1570,62 @@ def chat():
                 from agent_friday.services.user_model import render_user_model_prompt
                 _um_block = render_user_model_prompt()
                 if _um_block:
-                    sp = sp + "\n\n== USER MODEL ==\n" + _um_block + "\n"
+                    head = head + "\n\n== USER MODEL ==\n" + _um_block + "\n"
             except Exception:
                 pass
             try:
                 from agent_friday.services.learning_loop import render_heuristics_prompt
                 _heur_block = render_heuristics_prompt(task_type=workspace or None)
                 if _heur_block:
-                    sp = sp + "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur_block + "\n"
-            except Exception:
-                pass
-            if _extra_system:
-                sp = sp + "\n" + _extra_system
-            # A situation the model pinned with check_situation(pin=true):
-            # read now, from memory, on every turn of this conversation.
-            try:
-                from agent_friday.services.situation import pinned_block
-                sp = sp + pinned_block(_conversation_id)
+                    head = head + "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur_block + "\n"
             except Exception:
                 pass
             if voice_mode:
-                sp = (
-                    "=== VOICE MODE ACTIVE ===\n"
+                # Constant while voice mode is on, so it belongs to the head;
+                # at its end, not its start, so it never moves the prefix.
+                head = head + (
+                    "\n\n=== VOICE MODE ACTIVE ===\n"
                     "The user is speaking to you via microphone. Your reply will be read aloud.\n"
                     "Rules: Keep it SHORT (1-3 sentences). Never use markdown — no asterisks, "
                     "headers, bullet points, or code blocks. Use natural speech patterns and "
                     "contractions. Ask a follow-up question to keep the conversation flowing.\n"
-                    "=========================\n\n"
-                ) + sp
+                    "=========================\n"
+                )
+            if _extra_system:
+                tail = tail + "\n" + _extra_system
+            # A situation the model pinned with check_situation(pin=true):
+            # read now, from memory, on every turn of this conversation.
+            try:
+                from agent_friday.services.situation import pinned_block
+                tail = tail + pinned_block(_conversation_id)
+            except Exception:
+                pass
             lookup = {}
             # Scrub guarded cloud turns. Scrubbing every message
             # (not just the new one) means a cached LOCAL reply retrieved by the
             # pruner is scrubbed at retrieval time before it can reach the cloud.
             from agent_friday.services.egress_gate import is_unrestricted_cloud
             if provider != 'local' and not is_unrestricted_cloud():
-                if sp:
-                    sp, sub = _scrub_pii(sp)
+                if head:
+                    head, sub = _scrub_pii(head)
+                    lookup.update(sub)
+                if tail:
+                    tail, sub = _scrub_pii(tail)
                     lookup.update(sub)
                 _scrub_messages_pii(messages, lookup)
                 if lookup:
-                    sp += "\n\n" + PRIVACY_PLACEHOLDERS_NOTE
+                    tail += "\n\n" + PRIVACY_PLACEHOLDERS_NOTE
             # This route assembles its own prompt rather than going through
             # `_get_friday_system_prompt`, so the policy and the override
             # strip are applied here, last.
-            return seal_system_prompt(sp, "/api/chat prompt"), src, lookup
+            if provider == 'local' and _last_user_msg is not None and tail.strip():
+                from agent_friday.services.action_policy import strip_authority_overrides
+                _last_user_msg['content'] = (
+                    "[CONTEXT FOR THIS TURN — retrieved by Friday, not written by the user]\n"
+                    + strip_authority_overrides(tail, source="/api/chat turn context").strip()
+                    + "\n[END OF CONTEXT]\n\n" + _last_user_text)
+                return seal_system_prompt(head, "/api/chat prompt"), src, lookup
+            return seal_system_prompt(head + tail, "/api/chat prompt"), src, lookup
 
         system_prompt, sources, pii_lookup = _prep_for(_provider)
 
@@ -1761,21 +1868,32 @@ def chat():
                 # and a slow answer from the model they chose beats a fast
                 # one from a model they rejected.
                 _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
-                if _mode == 'local_only':
+                # An explicit per-chat pick refuses the cloud the same way: the
+                # owner chose this local model for this chat.
+                _explicit = _explicit_local_pick(_conv_seat, _route_info.get('model'))
+                if _mode == 'local_only' or _explicit:
                     _pilot_error = True
-                    print(f"  [ROUTER] local inference failed and mode is "
-                          f"local_only — refusing the cloud: {_ole}")
-                    _local_only_msg = (
-                        "I could not get an answer out of "
-                        + str(_route_info.get('model') or 'the local model')
-                        + " just now (error "
-                        + log_failure(_ole, "Local model failed in local-only mode")
-                        + ").\n\n"
+                    print(f"  [ROUTER] local inference failed and "
+                          f"{'mode is local_only' if _mode == 'local_only' else 'this chat is bound to ' + _explicit}"
+                          f" — refusing the cloud: {_ole}")
+                    _why_local = (
                         "You are in **local only** mode, so I did not send this "
                         "to a cloud model. Options: wait and try again once the "
                         "GPU is free, pick a smaller local model, or switch the "
                         "mode to Local preferred in Settings -> Models if "
                         "you want me to fall back when local is busy."
+                        if _mode == 'local_only' else
+                        "You chose " + _explicit + " for this chat, so I did not "
+                        "send this to a cloud model. Options: wait and try again "
+                        "once the local model is free, or pick a different model "
+                        "for this chat in the model picker."
+                    )
+                    _local_only_msg = (
+                        "I could not get an answer out of "
+                        + str(_route_info.get('model') or 'the local model')
+                        + " just now (error "
+                        + log_failure(_ole, "Local model failed in local-only mode")
+                        + ").\n\n" + _why_local
                     )
                     user_msg = {
                         'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
@@ -1827,11 +1945,15 @@ def chat():
                 # each request hits that provider's own base_url + credentials
                 # (multi-provider dispatch, GAP-3 fix). provider_name=None
                 # keeps the legacy single-slot settings behavior.
+                # The cloud gets the same opening set as the local seat and
+                # loads the rest through load_tools (services/tool_catalogue).
+                _cloud_tools, _cloud_catalogue = _cloud_tool_set(_pilot)
                 reply, tool_trace = _call_openai(
                     messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
                     orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
-                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    tools=_cloud_tools, catalogue_all=_cloud_catalogue,
+                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                     provider=_route_info.get('provider_name'),
                 )
             else:
@@ -1880,11 +2002,13 @@ def chat():
                     tools=_local_tools, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                 )
             if _provider == 'openai':
+                _cloud_tools, _cloud_catalogue = _cloud_tool_set(_pilot)
                 return _call_openai(
                     _retry_messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
                     orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
-                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    tools=_cloud_tools, catalogue_all=_cloud_catalogue,
+                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                     provider=_route_info.get('provider_name'),
                 )
             _cloud_model = _route_info.get('model')

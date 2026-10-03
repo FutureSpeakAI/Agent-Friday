@@ -119,6 +119,12 @@ def repin_claws() -> str:
 #: accounts, publishing, code execution, or no undo.
 OUTWARD_TOOLS = frozenset({
     "draft_email",                  # its own card is the gate (SELF_GATED)
+    # Decided, not yet reviewed for internal: each waits for a card, as an
+    # unclassified tool does. notifications can also mute and clear the
+    # owner's cards, so a turn steered by something it read could silence an
+    # alarm; local_model_status only reads, and its case for internal is its
+    # author's to make with a review.
+    "notifications", "local_model_status",
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
     # Scheduling (services/scheduling.py). book_slot sends invitations to
     # other people. hold_slots writes only to the owner's own calendar and
@@ -130,6 +136,10 @@ OUTWARD_TOOLS = frozenset({
     "delete_task",
     "install_package",
     "spawn_interactive_session", "send_to_session",
+    # A Claude Code session launched from the Code workspace: the launch and
+    # every action inside it are governed through a per-task grant minted by
+    # one approval card (services/claude_code_tasks.py).
+    "claude_code_launch", "claude_code_action",
     "content_schedule_post",
     # Phone (agent_friday/phone): a text reaches a person the moment it is
     # sent; a call only ever raises its own card (SELF_GATED below).
@@ -168,6 +178,9 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
 #: gate already judges, and delegation (a spawned task's own actions come
 #: back through this checkpoint one by one).
 INTERNAL_TOOLS = frozenset({
+    # Reads the machine and the model catalogue; downloads nothing and
+    # reaches no one (services/local_models_tools).
+    "local_models_advise",
     "search_web", "browse_web", "read_file", "search_files",
     "write_clipboard", "query_trust_graph", "query_calendar", "revert_workspace",
     "list_workspace_history", "find_calendar_events", "search_email",
@@ -208,9 +221,16 @@ INTERNAL_TOOLS = frozenset({
     "knowledge_communities", "inspect_image", "inspect_audio", "save_output",
     "speak_text", "list_voices", "read_session_output", "load_tools",
     # Podcasts: an episode is written and spoken on this computer and saved in
-    # Friday's own folder; playing it steers the owner's own screen.
-    "make_podcast", "podcast_list", "podcast_play", "podcast_source",
-    "media_show", "media_cards", "media_play", "media_turn",
+    # Friday's own folder; playing it steers the owner's own screen; the
+    # format is the owner's own podcast setting on this computer.
+    "make_podcast", "podcast_list", "podcast_play", "podcast_source", "podcast_format",
+    "media_show", "media_cards", "media_turn",
+    # A media diet note only proposes: an approval card in the owner's own
+    # approvals; the rule is applied by the approved card, with a receipt.
+    "media_diet_note",
+    # Discuss reads the web through the guarded fetcher and the local model;
+    # it writes only the owner's own files (follows, notes, a queued episode).
+    "discuss_story",
     # Friday's own look: it changes only the owner's own desktop and history.
     # A step authored by a cloud model sends numbers only, through the spend
     # guard and the egress gate like any model call; it reaches no one.
@@ -219,6 +239,14 @@ INTERNAL_TOOLS = frozenset({
     "hologram_window",
     # Standing back for a call: the owner's own machine and own setting.
     "call_mode",
+    # File permissions: lists them, removes one (only ever narrowing what
+    # leaves), or raises an approval card. It creates no grant: that happens
+    # only when the owner approves the card on screen.
+    "file_access",
+    # Big mode and the hand cursor: the owner's own screen and own setting;
+    # select never fires a guarded action.
+    "big_mode",
+    "hand_cursor",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but
@@ -800,6 +828,14 @@ def revoke_grant(grant_id: str) -> bool:
 def _scopes(ctx: dict) -> set:
     return {str(ctx[k]) for k in ("schedule_id", "task_id", "run_id", "grant_scope")
             if ctx.get(k)}
+
+
+def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
+    """Spend one use of a scoped grant for an executor that is not a tool
+    call (a Claude Code launch, a codebase task). None when nothing is live."""
+    if not tool_name or not scope:
+        return None
+    return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
 def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:

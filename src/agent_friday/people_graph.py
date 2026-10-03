@@ -214,6 +214,8 @@ class PeopleGraph:
                 "created": now,
             }
             self.save(graph)
+            self._log_event(key, people[key], {}, kind="person_added", origin="owner",
+                            detail="added by the owner")
             return key, None
 
     #: Profile fields an import may set. Everything else on a record (scores,
@@ -264,26 +266,43 @@ class PeopleGraph:
                     srcs.append(source)
                 person["sources"] = srcs
             self.save(graph)
+            self._log_event(key, people[key], {}, kind="merge", origin="system",
+                            detail=("profile merged from " + str(source or "import"))[:160])
             return key, created
 
-    def edit(self, person_key, scores=None, add_evidence=None):
+    #: Where evidence about a person may come from: the owner's own dealings
+    #: and the owner's statements. The public web, a profile service or
+    #: another person's account is never evidence about a third party.
+    ALLOWED_EVIDENCE_ORIGINS = ("owner", "system")
+
+    def edit(self, person_key, scores=None, add_evidence=None, *, origin="owner",
+             because=None):
         """Update a contact's dimension scores and/or append evidence.
 
-        Returns (person_dict, error). error is None on success.
+        Returns (person_dict, error). error is None on success. Every change
+        is an event in the trust log with its before and after, so it can be
+        explained, corrected and forgotten. Evidence with an origin outside
+        ALLOWED_EVIDENCE_ORIGINS is refused with ``origin_not_allowed``.
         """
         if not person_key:
             return None, "No person specified"
+        ev_origin = origin
+        if add_evidence and add_evidence.get("origin"):
+            ev_origin = str(add_evidence.get("origin")).lower()
+        if ev_origin not in self.ALLOWED_EVIDENCE_ORIGINS:
+            return None, f"origin_not_allowed: evidence about a person must come from the owner's own dealings, not {ev_origin!r}"
         with self._lock:
             graph = self.load()
             people = graph.get("people")
             if not isinstance(people, dict) or person_key not in people:
                 return None, f"Person '{person_key}' not found"
             person = people[person_key]
+            before = dict(person.get("scores") or {})
             if scores:
                 pscores = person.setdefault("scores", {})
                 for dim, val in scores.items():
                     try:
-                        pscores[dim] = float(val)
+                        pscores[dim] = max(0.0, min(1.0, float(val)))
                     except (TypeError, ValueError):
                         continue
                 self._recompute_overall(pscores)
@@ -294,13 +313,44 @@ class PeopleGraph:
                     "magnitude": float(add_evidence.get("magnitude", 0.5)),
                     "timestamp": datetime.now().isoformat(),
                     "source": "friday-desktop-ui",
+                    "origin": ev_origin,
                     "notes": add_evidence.get("notes", ""),
                     "dimension": add_evidence.get("dimension", "overall"),
                 })
                 person["last_interaction"] = datetime.now().isoformat()
             people[person_key] = person
             self.save(graph)
+            event = self._log_event(person_key, person, before,
+                                    kind=("owner_correction" if because else "owner_statement"),
+                                    origin=("owner" if ev_origin == "owner" else "system"),
+                                    # A reference to the evidence, never the
+                                    # owner's note text: the log is explanation,
+                                    # not a second copy of the record.
+                                    detail=(("evidence: " + str((add_evidence or {}).get("type") or "observation"))
+                                            if add_evidence else
+                                            ("scores set: " + ", ".join(sorted(scores or {})))),
+                                    because=because)
+            if event is not None:
+                person["last_event_id"] = event.get("event_id")
             return person, None
+
+    def _log_event(self, person_key, person, before, *, kind, origin, detail, because=None):
+        """One event in the people log for a change to this person."""
+        try:
+            from agent_friday.trust import log as _tlog
+            after = dict(person.get("scores") or {})
+            # A person has no single score: the composite the store still
+            # keeps for old readers is not an effect worth recording.
+            effect = [e for e in _tlog.effect_between(before, after)
+                      if e.get("dimension") != "overall"]
+            return _tlog.append(
+                _tlog.people_path(), entity_id=person_key, entity_kind="person",
+                kind=kind, origin=origin, detail=detail, effect=effect,
+                because=because or [],
+                provenance={"names": [person.get("name") or person_key]
+                            + list(person.get("aliases") or [])})
+        except Exception:
+            return None
 
 
 # ── singleton accessor ─────────────────────────────────────────────

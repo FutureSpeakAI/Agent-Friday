@@ -39,6 +39,8 @@ window.addEventListener('error',function(e){
 <!-- Friday's workspaces: the one list the dock, window and tab titles, the
      command palette and the server's navigate tools and voice all read. -->
 <script src="/static/workspace_registry.js"></script>
+<script src="/static/hand_cursor_core.js"></script>
+<script src="/static/hand_cursor.js"></script>
 <!-- Push-to-transcribe inside the tab. One file rather than two
      hand-maintained copies; the tray suppresses the hotkey while the
      system-wide version is on, so only one of them ever fires. -->
@@ -271,20 +273,54 @@ window.addEventListener('DOMContentLoaded',function(){
         }
 
         /* MINORITY REPORT HAND CURSOR */
+        /* The hand cursor is an abstract reticle (HIG, hand-cursor.md §1.7): a ring in cyan,
+           never a hand. Its states are opacity and scale transitions of at least 350 ms. */
         #hand-cursor {
-            position: fixed; top: -50px; left: -50px; width: 24px; height: 24px;
-            border-radius: 50%; border: 4px solid rgba(0, 255, 255, 0.8);
+            position: fixed; top: -50px; left: -50px; width: 20px; height: 20px;
+            border-radius: 50%; border: 1.5px solid rgba(0, 255, 255, 0.85);
             transform: translate(-50%, -50%); pointer-events: none; z-index: 9999;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5), inset 0 0 6px rgba(0, 255, 255, 0.3);
-            display: none; opacity: 0; transition: transform 0.1s, border-color 0.2s, opacity 0.3s;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.45), inset 0 0 6px rgba(0, 212, 255, 0.25);
+            display: none; opacity: 0; transition: transform var(--fr-reveal), opacity var(--fr-reveal-time), width var(--fr-reveal-time), height var(--fr-reveal-time);
             justify-content: center; align-items: center;
         }
-        #hand-cursor.active { display: flex; opacity: 1; }
+        #hand-cursor.active { display: flex; opacity: 0.7; }
         #hand-cursor.hidden { opacity: 0; }
-        #hand-cursor.pinching { transform: translate(-50%, -50%) scale(0.8); border-color: #fff; box-shadow: 0 0 15px #fff; }
-        
-        #pinch-progress { position: absolute; top: -5px; left: -5px; width: 34px; height: 34px; transform: rotate(-90deg); opacity: 0; }
-        .pinch-circle { fill: none; stroke: #ff00ff; stroke-width: 4; stroke-dasharray: 95; stroke-dashoffset: 95; transition: stroke-dashoffset 0.1s linear; }
+        #hand-cursor.fr-locked { opacity: 1; }
+        #hand-cursor.fr-pinched { opacity: 1; transform: translate(-50%, -50%) scale(0.72); }
+        #hand-cursor.fr-held { opacity: 1; transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 0 18px rgba(0, 212, 255, 0.7); }
+        body.fr-big #hand-cursor { width: 26px; height: 26px; }
+        #hand-cursor .fr-arc { position: absolute; left: -10px; top: -10px; width: 40px; height: 40px; transform: rotate(-90deg); pointer-events: none; }
+        body.fr-big #hand-cursor .fr-arc { left: -7px; top: -7px; }
+        #hand-cursor .fr-arc-bg { fill: none; stroke: rgba(0, 212, 255, 0.15); stroke-width: 2.5; }
+        #hand-cursor .fr-arc-fill { fill: none; stroke: #00d4ff; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 106.8; stroke-dashoffset: 106.8; opacity: 0; transition: stroke-dashoffset 0.08s linear, opacity 0.35s; }
+        /* The locked target: a soft ring drawn around it so the user knows what a pinch will hit. */
+        .fr-snap-box { position: fixed; left: 0; top: 0; width: 0; height: 0; border: 2px solid rgba(0, 212, 255, 0.6); border-radius: 10px;
+            box-shadow: 0 0 14px rgba(0, 212, 255, 0.35); pointer-events: none; z-index: 9990; opacity: 0;
+            transition: left 0.18s ease-out, top 0.18s ease-out, width 0.18s ease-out, height 0.18s ease-out, opacity 0.35s; }
+        .fr-snap { outline: none !important; }
+        /* Big mode (hand-cursor.md §2): large targets, fewer items, generous spacing. One switch, body.fr-big. */
+        body.fr-big { --fr-gap: 16px; }
+        body.fr-big .dock-btn { min-width: 72px; min-height: 72px; font-size: 13px; }
+        body.fr-big .chat-panel { width: min(600px, 100vw) !important; }
+        body.fr-big .chat-panel [data-chat-input] { flex: 1 1 100% !important; width: 100% !important; order: -1; }
+        body.fr-big .chat-panel .chat-compose, body.fr-big .chat-panel [data-chat-compose], body.fr-big .chat-panel form { flex-wrap: wrap; row-gap: 10px; }
+        body.fr-big .dock .items, body.fr-big .dock-items { gap: 10px; }
+        body.fr-big .landing-cluster .landing-countdowns > * { font-size: 1.25em; padding: 10px 14px; }
+        body.fr-big .landing-cluster button, body.fr-big .landing-cluster .btn { min-height: 72px; min-width: 96px; font-size: 1.15em; padding: 0 26px; }
+        body.fr-big .landing-cluster input, body.fr-big .landing-cluster textarea { min-height: 72px; font-size: 1.25em; padding: 0 22px; border-radius: 36px; }
+        body.fr-big .chat-panel .btn, body.fr-big .chat-panel button, body.fr-big .chat-win button { min-height: 72px; min-width: 72px; font-size: 1.1em; }
+        body.fr-big .chat-panel textarea[data-chat-input], body.fr-big .chat-win textarea[data-chat-input] { min-height: 72px; font-size: 1.2em; line-height: 1.5; }
+        body.fr-big .chat-panel [data-chat-head] .btn { min-height: 56px; }
+        body.fr-big .news-ws .news-toolbar .btn, body.fr-big .news-ws .news-toolbar button { min-height: 72px; min-width: 96px; font-size: 1.1em; padding: 0 22px; }
+        body.fr-big .news-ws .news-masonry { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; column-count: 2 !important; gap: 24px; }
+        body.fr-big .news-ws .news-card { padding: 22px; font-size: 1.15em; min-height: 160px; }
+        body.fr-big .news-ws .news-card .btn, body.fr-big .news-ws .news-card button { min-height: 56px; min-width: 72px; }
+        body.fr-big .notif-dropdown { width: min(560px, 96vw); font-size: 1.15em; }
+        body.fr-big .notif-dropdown button, body.fr-big .notif-dropdown .btn { min-height: 56px; min-width: 72px; }
+        body.fr-big .notif-dropdown .task-card { padding: 18px; }
+        body.fr-big .top-bar .ibtn, body.fr-big .top-bar button { min-height: 44px; min-width: 44px; }
+        body.fr-big .fr-folded { display: none !important; }
+        body.fr-big .fr-more { min-height: 72px; min-width: 96px; font-size: 1.1em; padding: 0 22px; border: 1px dashed rgba(0, 212, 255, 0.45); }
         
         .ripple {
             position: fixed; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 9998;
@@ -3109,6 +3145,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fp-badge.new { color:#03130a; background:#00ff88; border:1px solid #00ff88; }
         .fp-badge.update { color:#0a0a14; background:#f59e0b; border:1px solid #f59e0b; }
+        .fp-badge.opinion { color:#0a0a14; background:#d6c7a1; border:1px solid #d6c7a1; }
         .fp-thread {
             margin-top:8px; padding:7px 10px; border-radius:7px; font-size:11px; line-height:1.45;
             color:#cfe8ff; background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.2);
@@ -3725,6 +3762,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 holo_cues: 0.6, hand_gain: 2.2, hand_accel: 0.6, hand_region: 0.45,
                 hand_deadzone: 0.006, hand_smoothing: 0.30, click_method: 'pinch',
                 pinch_enter: 0.050, pinch_exit: 0.075, dwell_ms: 700,
+                snap: true, snap_radius: 40, two_hand_zoom: false,
                 // The window's depth. How many times bigger the avatar may get
                 // as you lean in, how many times smaller as you lean back, how
                 // quickly a fast lean is followed, and the calibrated face
@@ -4214,6 +4252,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     .then(function (d) {
                         const t = d && d.settings && d.settings.tracking;
                         if (t) window.FridayTracking.apply(t);
+                        if (window.FridayHandCursor && d && d.settings) window.FridayHandCursor.applySettings(d.settings);
                     }).catch(function () {});
             } catch (e) { /* settings are a nicety here, never a blocker */ }
         })();
@@ -4646,14 +4685,16 @@ window.addEventListener('DOMContentLoaded',function(){
                 try { await loadMediaPipe(); }
                 catch (e) { console.warn('[tracking] hand tracking unavailable:', e); isHandTrackingMode = false; return; }
                 if (cursor) cursor.classList.add('active');
+                if (window.FridayHandCursor) window.FridayHandCursor.setTracking(true);
                 if (!handsMP) {
                     handsMP = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-                    handsMP.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                    handsMP.setOptions({ maxNumHands: window.FridayTracking && window.FridayTracking.cfg.two_hand_zoom ? 2 : 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
                     handsMP.onResults(onHandsResults);
                 }
                 await startSharedCamera();
             } else {
                 if (cursor) cursor.classList.remove('active');
+                if (window.FridayHandCursor) window.FridayHandCursor.setTracking(false);
                 releaseCameraIfUnused();
             }
         }
@@ -4676,6 +4717,11 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (!handVisible) { handVisible = true; cursor.classList.remove('hidden'); }
                 rawHandX = window.FridayTracking.hand.x;
                 rawHandY = window.FridayTracking.hand.y;
+                if (window.FridayHandCursor) {
+                    const second = results.multiHandLandmarks[1];
+                    // Only the distance between the hands matters for a zoom, so the raw frame maps to the screen directly.
+                    window.FridayHandCursor.second(second ? { x: (1 - (second[8].x + second[4].x) / 2) * window.innerWidth, y: (second[8].y + second[4].y) / 2 * window.innerHeight } : null);
+                }
             } else {
                 isPinching = false; handVisible = false;
                 window.FridayTracking.handLost();
@@ -5196,6 +5242,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 // forgiving than raycasting against the 0.35-unit sphere — at orbit distance
                 // the sphere is only ~12px wide, which is finicky to point at.
                 const projected = new Map();
+                this._projected = projected;
                 for (const [id, o] of this.orbs) {
                     const p3 = o.group.position.clone().project(this.camera);
                     projected.set(id, {
@@ -7577,70 +7624,12 @@ window.addEventListener('DOMContentLoaded',function(){
             FridayGestureScene.begin();
             const elapsed = clock.getElapsedTime() * 0.5;
 
-            // --- HAND CURSOR LOGIC (Minority Report) ---
-            const cursor = document.getElementById('hand-cursor');
-            const pRing = document.querySelector('.pinch-circle');
-            if (isHandTrackingMode) {
-                // The pointer model already filtered and shaped this; a second
-                // lerp here would just add the lag the model exists to avoid.
+            // --- HAND CURSOR (static/hand_cursor.js): snap, pinch freeze, dwell, drag, big mode ---
+            if (isHandTrackingMode && window.FridayHandCursor) {
+                // The pointer model already filtered and shaped this; the cursor layer decides
+                // what the hand is on and what a pinch does, and draws the reticle.
                 currHandX = rawHandX; currHandY = rawHandY;
-                cursor.style.left = `${currHandX}px`; cursor.style.top = `${currHandY}px`;
-
-                // DWELL CLICK: hold still inside a small radius and it fires.
-                // For anyone whose pinch is unreliable, or who would rather not
-                // hold a pinch at all.
-                if (window.FridayTracking.cfg.click_method === 'dwell' && handVisible) {
-                    const moved = Math.hypot(currHandX - dwellAnchorX, currHandY - dwellAnchorY);
-                    if (moved > 26) {
-                        dwellAnchorX = currHandX; dwellAnchorY = currHandY;
-                        dwellStart = performance.now(); dwellFired = false;
-                        document.getElementById('pinch-progress').style.opacity = 0;
-                    } else {
-                        const held = performance.now() - dwellStart;
-                        const need = Math.max(200, window.FridayTracking.cfg.dwell_ms);
-                        if (held > 150) {
-                            document.getElementById('pinch-progress').style.opacity = 1;
-                            pRing.style.strokeDashoffset = 95 * (1.0 - Math.min(1, held / need));
-                        }
-                        if (held >= need && !dwellFired) {
-                            dwellFired = true;
-                            document.getElementById('pinch-progress').style.opacity = 0;
-                            pRing.style.strokeDashoffset = 95;
-                            spawnRipple(currHandX, currHandY, '#00ffff');
-                            cursor.style.display = 'none';
-                            const el = document.elementFromPoint(currHandX, currHandY);
-                            cursor.style.display = 'flex';
-                            if (el && typeof el.click === 'function') el.click();
-                        }
-                    }
-                }
-
-                if (isPinching && window.FridayTracking.cfg.click_method !== 'dwell') {
-                    if(!wasPinching) { pinchStartTime = performance.now(); rightClickFired = false; cursor.classList.add('pinching'); }
-                    const duration = performance.now() - pinchStartTime;
-                    if (duration > 200) {
-                        document.getElementById('pinch-progress').style.opacity = 1;
-                        const progress = Math.min(1.0, (duration - 200) / PINCH_HOLD_TIME);
-                        pRing.style.strokeDashoffset = 95 * (1.0 - progress);
-                        if (progress >= 1.0 && !rightClickFired) {
-                            rightClickFired = true; spawnRipple(currHandX, currHandY, '#ff00ff');
-                        }
-                    }
-                } else {
-                    if (wasPinching) {
-                        const duration = performance.now() - pinchStartTime;
-                        cursor.classList.remove('pinching');
-                        document.getElementById('pinch-progress').style.opacity = 0; pRing.style.strokeDashoffset = 95;
-                        if (duration < 500) {
-                            spawnRipple(currHandX, currHandY, '#00ffff');
-                            cursor.style.display = 'none'; 
-                            let el = document.elementFromPoint(currHandX, currHandY);
-                            cursor.style.display = 'flex';
-                            if (el && typeof el.click === 'function') el.click();
-                        }
-                    }
-                }
-                wasPinching = isPinching;
+                window.FridayHandCursor.frame({ x: rawHandX, y: rawHandY, visible: handVisible, pinching: isPinching, t: performance.now() });
             }
 
             // --- STABILIZED TRUE 3D HOLOGRAPHIC PARALLAX OFFSET ---
@@ -8240,6 +8229,29 @@ window.fridayUpdateOrb = function(id, upd) {
 };
 window.fridayRemoveOrb = function(id) {
     if (typeof processOrbManager !== 'undefined' && processOrbManager) processOrbManager.removeOrb(id);
+};
+// The hand cursor treats orbs as snap targets (hand-cursor.md §1.8): it reads their screen
+// positions, feeds the manager a pointer so gravity and hover work as with a mouse, and
+// clicks through the manager's own hit test. The orb layer's behaviour is unchanged.
+window.fridayOrbTargets = function() {
+    const m = (typeof processOrbManager !== 'undefined' && processOrbManager) ? processOrbManager : null;
+    if (!m || !m._projected) return [];
+    const out = [];
+    for (const [id, p] of m._projected) { const o = m.orbs.get(id); if (p.onScreen && o && !o.dying) out.push({ id, sx: p.sx, sy: p.sy, label: o.label }); }
+    return out;
+};
+window.fridayOrbPointer = function(x, y) {
+    const m = (typeof processOrbManager !== 'undefined' && processOrbManager) ? processOrbManager : null;
+    if (!m || !m.renderer) return;
+    const rect = m.renderer.domElement.getBoundingClientRect();
+    const now = performance.now(); const lm = m._lastMove || { x: -10000, y: -10000, t: 0 };
+    const nx = x - rect.left, ny = y - rect.top;
+    if (lm.t && lm.x > -1000) { const dt = Math.max(1, now - lm.t) / 1000; m.mouseVel = m.mouseVel * 0.5 + (Math.hypot(nx - lm.x, ny - lm.y) / dt) * 0.5; }
+    m._lastMove = { x: nx, y: ny, t: now }; m._lastMoveT = now; m.mouseScreen.x = nx; m.mouseScreen.y = ny;
+};
+window.fridayOrbClickAt = function(x, y) {
+    const m = (typeof processOrbManager !== 'undefined' && processOrbManager) ? processOrbManager : null;
+    if (m && typeof m._onClick === 'function') m._onClick({ clientX: x, clientY: y });
 };
 window.fridayGetOrbs = function() {
     if (typeof processOrbManager !== 'undefined' && processOrbManager) return processOrbManager.getOrbs();
@@ -9034,6 +9046,16 @@ function fridayRunActions(actions) {
             a.result = { tracking: TK.get() };
           }
         }
+      } else if (a.type === 'hand_cursor') {
+        // Voice: "next card", "select", "back", "big mode", "big mode off" (hand_cursor_tools).
+        const HC = window.FridayHandCursor;
+        if (!HC) a.result = { ok: false, code: 'CURSOR_UNAVAILABLE' };
+        else if (a.op === 'next') a.result = HC.next(1);
+        else if (a.op === 'previous') a.result = HC.next(-1);
+        else if (a.op === 'select') a.result = HC.select();
+        else if (a.op === 'back') a.result = HC.back();
+        else if (a.op === 'big_mode') a.result = { ok: true, code: HC.setBigMode(a.mode) ? 'BIG_MODE_ON' : 'BIG_MODE_OFF', mode: a.mode };
+        else a.result = { ok: false, code: 'CURSOR_BAD_OP' };
       } else if (a.type === 'open_last_source') {
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
@@ -11903,6 +11925,7 @@ function ChatSurface(props) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
+        owner_action: 'routing_mode',
         settings: {
           model_routing: {
             mode: 'cloud_only'
@@ -13336,6 +13359,119 @@ function ShortcutsSheet({
 }
 
 // ═══ SEND-TO DROPDOWN (Data Flow) ═══
+// One event from several outlets is one story (news_seen.merge_events): the
+// card names every other outlet that reported it, each linked.
+function FpAlso({ it }) {
+  const h = React.createElement;
+  if (!it || !(it.also || []).length) return null;
+  return h('div', { className: 'fp-also', style: { fontSize: 11, color: '#999', margin: '4px 0' } }, 'Also reported by ',
+    it.also.map((a, i) => h(React.Fragment, { key: i }, i ? ', ' : '',
+      h('a', { href: a.url, target: '_blank', rel: 'noopener noreferrer', title: a.title }, a.source))));
+}
+// The owner's media diet rules: what is in force, what Friday proposed from
+// conversation (approve or reject: nothing applies until approved), and what
+// the rules removed, as receipts.
+function MediaDietRules() {
+  const h = React.createElement;
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => fetch('/api/news/media-diet').then(r => r.json()).then(setD).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const decide = (id, decision) => {
+    setBusy(id);
+    fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) })
+      .then(() => { setBusy(''); load(); }).catch(() => setBusy(''));
+  };
+  const drop = outlet => fetch('/api/news/media-diet/rule', { method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outlet }) }).then(load);
+  if (!d) return null;
+  const muted = { fontSize: 11, color: '#777' };
+  return h('div', { style: { marginBottom: 12 } },
+    h('div', { className: 'card-title', style: { marginTop: 8 } }, 'Your rules'),
+    (d.rules || []).length === 0
+      ? h('div', { style: muted }, 'No rules yet. Tell ' + fridayName() + ' which outlets to avoid or prefer; she proposes a rule here, and nothing applies until you approve it.')
+      : d.rules.map(r => h('div', { key: r.outlet, className: 'manage-row' },
+          h('span', null, (r.kind === 'block' ? 'Never cite ' : 'Prefer ') + (r.name || r.outlet)),
+          h('button', { className: 'btn', style: { fontSize: 10 }, onClick: () => drop(r.outlet),
+            'aria-label': 'Remove the rule for ' + (r.name || r.outlet) }, 'Remove'))),
+    (d.pending || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'Waiting for you') : null,
+    (d.pending || []).map(p => h('div', { key: p.approval_id, className: 'manage-row', style: { display: 'block' } },
+      h('pre', { style: { whiteSpace: 'pre-wrap', fontSize: 11, margin: '4px 0', fontFamily: 'inherit' } }, p.diff),
+      h('button', { className: 'btn active', style: { fontSize: 10 }, disabled: busy === p.approval_id,
+        onClick: () => decide(p.approval_id, 'approve') }, 'Approve'), ' ',
+      h('button', { className: 'btn', style: { fontSize: 10 }, disabled: busy === p.approval_id,
+        onClick: () => decide(p.approval_id, 'deny') }, 'Reject'))),
+    (d.receipts || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'What your rules removed') : null,
+    (d.receipts || []).slice(0, 8).map((x, i) => h('div', { key: i, style: muted },
+      String(x.at || '').replace('T', ' ').slice(0, 16) + ' \u00b7 ' + String(x.where || '').replace('_', ' ') + ' \u00b7 '
+      + x.rule + ': ' + (x.removed || []).length + ' removed')));
+}
+// Discuss with Friday (docs/design/active/news-discuss.md): one story,
+// evidence first. What the sources say, each linked from the fetched URL;
+// then her read, labelled as hers. The local model only.
+const DISCUSS_MODES = [['compare', 'Compare coverage'], ['primary', 'Primary source'], ['background', 'Background'],
+  ['claims', 'Claim check'], ['local', 'Local angle'], ['follow', 'Follow'], ['make', 'Make something']];
+function DiscussPanel({ story, onClose }) {
+  const h = React.createElement;
+  const [mode, setMode] = useState('compare');
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const ask = (m, extra) => {
+    setMode(m); setBusy(true); setRes(null);
+    fetch('/api/news/discuss', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ url: story.url, title: story.title, mode: m }, extra || {})) })
+      .then(r => r.json()).then(d => { setRes(d); setBusy(false); })
+      .catch(() => { setRes({ status: 'error', message: 'Could not reach ' + fridayName() }); setBusy(false); });
+  };
+  useEffect(() => { if (story && story.url) ask('compare'); }, [story && story.url]);
+  const draft = () => {
+    const lines = ((res && res.findings) || []).map(f => '- ' + f.text + (f.links && f.links.length ? ' (' + f.links.join(', ') + ')' : ''));
+    fetch('/api/media', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'draft', title: 'On: ' + story.title, body: '# ' + story.title + '\n\n' + story.url + '\n\n' + lines.join('\n') }) })
+      .then(r => r.json()).then(d => { if (d.status === 'ok' && window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: d.card.id }); });
+  };
+  const link = (u, i) => h('a', { key: i, href: u, target: '_blank', rel: 'noopener noreferrer', style: { marginLeft: 6, fontSize: 11 } }, '[' + (i + 1) + ']');
+  const muted = { fontSize: 11, color: '#777' };
+  const body = busy ? h('div', { style: muted }, 'Reading the sources on this computer…')
+    : !res ? null
+    : res.status !== 'ok' ? h('div', { style: { fontSize: 12 } }, res.message || 'That didn’t work.')
+    : h('div', null,
+      res.note ? h('div', { style: Object.assign({}, muted, { marginBottom: 8 }) }, res.note) : null,
+      res.diet_removed ? h('div', { style: muted }, res.diet_removed + ' source' + (res.diet_removed === 1 ? '' : 's') + ' left out: your media diet') : null,
+      (res.findings || []).length ? h('div', { className: 'card-title', style: { marginTop: 8 } }, 'What the sources say') : null,
+      (res.findings || []).map((f, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } }, f.text, (f.links || []).map(link))),
+      (res.outlets || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'How each outlet framed it') : null,
+      (res.outlets || []).map((o, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } },
+        h('a', { href: o.url, target: '_blank', rel: 'noopener noreferrer' }, o.outlet), ': ', o.framing,
+        o.left_out ? h('div', { style: muted }, 'Left out: ' + o.left_out) : null)),
+      (res.primary || []).map((p, i) => h('div', { key: i, style: { fontSize: 12 } }, 'Primary source: ', h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.url))),
+      (res.timeline || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Timeline') : null,
+      (res.timeline || []).map((t, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, t.when), ' ', t.what, (t.links || []).map(link))),
+      (res.who || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Who’s who') : null,
+      (res.who || []).map((w, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, w.name), ': ', w.role, (w.links || []).map(link))),
+      (res.claims || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Claims') : null,
+      (res.claims || []).map((c, i) => h('div', { key: i, style: { fontSize: 12 } }, h('span', { className: 'fp-badge ' + (c.status === 'confirmed' ? 'new' : 'update') }, c.status), ' ', c.claim, (c.links || []).map(link))),
+      (res.read || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, fridayName() + '’s read') : null,
+      (res.read || []).map((r, i) => h('div', { key: i, style: { fontSize: 12, fontStyle: 'italic' } }, r)),
+      (res.sources || []).length ? h('div', { style: Object.assign({}, muted, { marginTop: 10 }) }, 'Sources: ',
+        res.sources.map((s, i) => h('a', { key: i, href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { marginRight: 8 } }, s.outlet || s.title))) : null,
+      res.episode ? h('div', { style: { fontSize: 12 } }, 'A two-host deep dive is being made on this computer; it will be in Media.') : null,
+      res.path ? h('div', { style: { fontSize: 12 } }, 'Notes saved: ' + res.path) : null);
+  return h('div', { className: 'news-side' },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      h('h3', null, '💬 DISCUSS WITH ' + fridayName().toUpperCase()),
+      h('button', { className: 'icon-btn', 'aria-label': 'Close this panel', title: 'Close this panel', onClick: onClose }, '✕')),
+    h('div', { style: { fontSize: 12, marginBottom: 8 } }, story.title),
+    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 } },
+      DISCUSS_MODES.map(([m, label]) => h('button', { key: m, className: 'btn' + (mode === m ? ' active' : ''), style: { fontSize: 10 },
+        onClick: () => m === 'make' ? (setMode('make'), setRes(null)) : ask(m) }, label))),
+    mode === 'make' && !busy ? h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'podcast' }) }, '🎧 A two-host podcast'),
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'notes' }) }, '📝 Notes'),
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: draft }, '✍️ A draft in Media')) : null,
+    body);
+}
 // ═══ PODCASTS — player, Studio view, News chip (services/podcast_engine.py) ═══
 // Plain React.createElement so the same block runs in index.html and reads the
 // same in ui_parts/app.html. Episodes never play on their own: the player
@@ -13369,10 +13505,28 @@ const PODCAST_C = {
   xs: 'var(--fr-text-xs, 10px)', sm: 'var(--fr-text-sm, 11px)', md: 'var(--fr-text-md, 12px)',
   base: 'var(--fr-text-base, 13px)', lg: 'var(--fr-text-lg, 15px)', xl: 'var(--fr-text-xl, 18px)'
 };
+// A source chip's label: the outlet as said aloud, "Calendar 9:00 AM", a
+// computed fact's id, or the start of the title. Never the bare "S3".
+function podcastSourceLabel(s, id) {
+  if (!s) return id;
+  if (s.outlet) return s.outlet;
+  if (s.kind === 'event') return 'Calendar' + (s.when ? ' ' + s.when : '');
+  if (s.kind === 'fact') return s.id;
+  const t = String(s.title || id);
+  return t.length > 28 ? t.slice(0, 27) + '…' : t;
+}
+// The stories an episode links to: each source a line cites that has a web address.
+function podcastLinked(ep) {
+  const cited = new Set();
+  (ep.lines || []).forEach(ln => (ln.cites || []).forEach(c => cited.add(c)));
+  return (ep.sources || []).filter(s => cited.has(s.id) && /^https?:\/\//.test(s.url || ''));
+}
+const PODCAST_SHOWS = [['briefing', 'The Briefing'], ['front_page', 'Front Page'], ['editorial', 'The Editorial'], ['weekly', 'The Week'], ['any', 'Your own episodes']];
 function PodcastBadges({ ep }) {
   const h = React.createElement;
   if (!ep) return null;
   const chk = ep.check || {};
+  const sc = ep.script_check || {};
   const pill = (txt, color, title) => h('span', {
     title: title || txt,
     style: { fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.font, padding: '1px 7px', borderRadius: 10, border: '1px solid ' + color, color: color, whiteSpace: 'nowrap' }
@@ -13381,9 +13535,33 @@ function PodcastBadges({ ep }) {
     ep.privacy === 'private'
       ? pill('🔒 Private · made on this PC', PODCAST_C.second, 'Built from your own material. Written and spoken on this computer; never sent to a cloud model or voice.')
       : pill('Public sources', PODCAST_C.dim),
-    chk.ok === true ? pill('✓ checked by ear', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script') : null,
-    chk.ok === false ? pill('⚠ check found differences', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
+    sc.ok === true ? pill('✓ script checked', PODCAST_C.ok, 'Checked before it was spoken: ' + (sc.checks || []).join(', ') + '.') : null,
+    sc.ok === false ? pill('⚠ script: ' + (sc.problems || []).length + ' problem' + ((sc.problems || []).length === 1 ? '' : 's'), PODCAST_C.error,
+      'The script check found problems the writer could not fix:\n' + (sc.problems || []).map(p => '• ' + p.message).join('\n')) : null,
+    chk.ok === true ? pill('✓ audio matches script', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script. This checks the audio, not the writing.') : null,
+    chk.ok === false ? pill('⚠ audio differs from script', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
     ep.mode === 'data' ? pill('📊 data mode', PODCAST_C.accent, 'Every number is from a computation over your data') : null);
+}
+// Where the player sits: a remembered position, or the bottom-right corner.
+const PODCAST_POS_KEY = 'friday.podcastPlayer.pos';
+function podcastSavedPos() {
+  try { const p = JSON.parse(localStorage.getItem(PODCAST_POS_KEY) || 'null'); return p && typeof p.x === 'number' ? p : null; } catch (_) { return null; }
+}
+function podcastClampPos(p) {
+  const w = Math.min(400, window.innerWidth - 32);
+  return { x: Math.max(0, Math.min(p.x, window.innerWidth - w)), y: Math.max(0, Math.min(p.y, window.innerHeight - 80)) };
+}
+// The brand tokens the player reads, copied into a popped-out window.
+const PODCAST_TOKENS = ['--fr-glass', '--fr-glass-blur', '--fr-glass-edge', '--fr-text', '--fr-dim', '--fr-cyan',
+  '--fr-cyan-soft', '--fr-violet-soft', '--fr-ok', '--fr-error', '--fr-surface', '--fr-font-body',
+  '--fr-font-display', '--fr-font-mono', '--fr-track-display', '--fr-text-xs', '--fr-text-sm', '--fr-text-md',
+  '--fr-text-base', '--fr-text-lg', '--fr-text-xl'];
+// Each source a line cites, with the time it is first heard: the scrubbable list.
+function podcastSourceTimeline(ep) {
+  const first = {};
+  (ep.lines || []).forEach(ln => (ln.cites || []).forEach(c => { if (!(c in first)) first[c] = ln.start || 0; }));
+  return (ep.sources || []).filter(s => s.id in first).map(s => Object.assign({ at: first[s.id] }, s))
+    .sort((a, b) => a.at - b.at);
 }
 function PodcastPlayer() {
   const h = React.createElement;
@@ -13393,6 +13571,10 @@ function PodcastPlayer() {
   const [rate, setRate] = useState(1);
   const [showText, setShowText] = useState(false);
   const [srcOpen, setSrcOpen] = useState(null);
+  const [showSources, setShowSources] = useState(false);
+  const [pos, setPos] = useState(podcastSavedPos);
+  const [popped, setPopped] = useState(null);       // {win, el} while popped out
+  const drag = useRef(null);
   const audio = useRef(null);
   const epRef = useRef(null);
   const pendingPlay = useRef(false);
@@ -13484,11 +13666,12 @@ function PodcastPlayer() {
   const srcById = {};
   (ep.sources || []).forEach(s => { srcById[s.id] = s; });
   (ep.facts || []).forEach(f => { srcById[f.id] = { id: f.id, title: f.text, kind: 'fact', expr: f.expr }; });
-  const cite = (c) => h('button', {
-    key: c, className: 'btn', onClick: () => setSrcOpen(srcOpen === c ? null : c),
-    'aria-label': 'Source ' + c + ': ' + ((srcById[c] || {}).title || ''),
-    style: { fontSize: PODCAST_C.xs, fontFamily: PODCAST_C.mono, padding: '0 5px', marginLeft: 4, minHeight: 0, lineHeight: '16px' }
-  }, c);
+  const cite = (c) => h(React.Fragment, { key: c }, ' ', h('button', {
+    className: 'btn', onClick: (e) => { e.stopPropagation(); setSrcOpen(srcOpen === c ? null : c); },
+    title: (srcById[c] || {}).title || c,
+    'aria-label': 'Source: ' + podcastSourceLabel(srcById[c], c) + ((srcById[c] || {}).title ? ', ' + srcById[c].title : ''),
+    style: { fontSize: PODCAST_C.xs, fontFamily: PODCAST_C.font, padding: '0 6px', minHeight: 0, lineHeight: '16px', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'baseline' }
+  }, podcastSourceLabel(srcById[c], c)));
   const chartFor = () => {
     if (!line || !ep.charts) return null;
     const cs = line.cites || [];
@@ -13500,22 +13683,73 @@ function PodcastPlayer() {
     className: 'btn', 'aria-label': aria, title: aria, onClick: onClick,
     style: { minWidth: 34, padding: '4px 8px' }
   }, extra || {}), label);
-  return h('div', {
+  // Moving the player: drag its title; the place is remembered.
+  const startDrag = (e) => {
+    if (popped || e.button !== 0 || e.target.closest('button')) return;
+    const box = e.currentTarget.closest('[role="region"]').getBoundingClientRect();
+    drag.current = { dx: e.clientX - box.left, dy: e.clientY - box.top };
+    const move = (ev) => setPos(podcastClampPos({ x: ev.clientX - drag.current.dx, y: ev.clientY - drag.current.dy }));
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      setPos(p => { try { if (p) localStorage.setItem(PODCAST_POS_KEY, JSON.stringify(p)); } catch (_) {} return p; });
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  const resetPos = () => { setPos(null); try { localStorage.removeItem(PODCAST_POS_KEY); } catch (_) {} };
+  // Popping out: Document Picture-in-Picture (stays above other windows)
+  // where the browser has it, otherwise a small window. Playback carries over.
+  const carry = () => {
+    const a = audio.current;
+    if (a) { pendingSeek.current = a.currentTime; pendingPlay.current = !a.paused; }
+  };
+  const popOut = async () => {
+    carry();
+    let win = null;
+    try {
+      win = window.documentPictureInPicture
+        ? await window.documentPictureInPicture.requestWindow({ width: 420, height: 640 })
+        : window.open('', 'friday-podcast', 'popup,width=420,height=640');
+    } catch (_) { win = null; }
+    if (!win) return;
+    const doc = win.document;
+    doc.title = (ep && (ep.title || ep.show)) || 'Podcast';
+    // The page's own styles (buttons, fonts) and the brand tokens.
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach(n => doc.head.appendChild(n.cloneNode(true)));
+    const root = getComputedStyle(document.documentElement);
+    PODCAST_TOKENS.forEach(t => { const v = root.getPropertyValue(t); if (v) doc.documentElement.style.setProperty(t, v); });
+    doc.body.style.cssText = 'margin:0;padding:8px;background:var(--fr-surface, #0a0e1a);color:var(--fr-text, rgba(255,255,255,0.86))';
+    const el = doc.createElement('div');
+    doc.body.appendChild(el);
+    win.addEventListener('pagehide', () => { carry(); setPopped(null); });
+    setPopped({ win: win, el: el });
+  };
+  const dockBack = () => { carry(); const p = popped; setPopped(null); try { p && p.win.close(); } catch (_) {} };
+  const where = popped ? { position: 'static', width: '100%', maxHeight: 'none', boxSizing: 'border-box' }
+    : pos ? { position: 'fixed', left: pos.x, top: pos.y, width: 'min(400px, calc(100vw - 32px))', maxHeight: '70vh' }
+    : { position: 'fixed', right: 16, bottom: 16, width: 'min(400px, calc(100vw - 32px))', maxHeight: '70vh' };
+  const nowSources = (line && line.cites ? line.cites : []).map(c => srcById[c]).filter(Boolean);
+  const timeline = podcastSourceTimeline(ep);
+  const frame = h('div', {
     role: 'region', 'aria-label': 'Podcast player',
-    style: {
-      position: 'fixed', right: 16, bottom: 16, zIndex: 180, width: 'min(400px, calc(100vw - 32px))',
+    style: Object.assign({
+      zIndex: 180,
       background: PODCAST_C.bg, backdropFilter: PODCAST_C.blur, WebkitBackdropFilter: PODCAST_C.blur, border: '1px solid ' + PODCAST_C.line, borderRadius: 12,
       boxShadow: '0 12px 40px rgba(0,0,0,0.5)', color: PODCAST_C.text, fontFamily: PODCAST_C.font, fontSize: PODCAST_C.base, padding: 12,
-      display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '70vh'
-    }
+      display: 'flex', flexDirection: 'column', gap: 8
+    }, where)
   },
   h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
-    h('div', { style: { flex: 1, minWidth: 0 } },
+    h('div', {
+      onPointerDown: startDrag, onDoubleClick: resetPos,
+      title: popped ? undefined : 'Drag to move · double-click to put it back',
+      style: { flex: 1, minWidth: 0, cursor: popped ? 'default' : 'move', touchAction: 'none' }
+    },
       h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.credit || ep.show),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, margin: '2px 0 4px' } },
         ep.credit || ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
       h(PodcastBadges, { ep: ep })),
-    btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); setEp(null); })),
+    popped ? btn('⇲', 'Put the player back in the window', dockBack) : btn('⧉', 'Pop the player out', popOut),
+    btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); dockBack(); setEp(null); })),
   h('audio', {
     ref: audio, preload: 'metadata', src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/audio',
     onLoadedMetadata: () => {
@@ -13534,7 +13768,7 @@ function PodcastPlayer() {
     'aria-label': 'Position', 'aria-valuetext': podcastClock(t) + ' of ' + podcastClock(ep.duration_s),
     onChange: (e) => seek(Number(e.target.value)), style: { width: '100%', accentColor: PODCAST_C.accent }
   }),
-  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
     btn('⏮', 'Previous chapter', () => stepChapter(-1)),
     btn(playing ? '⏸' : '▶', playing ? 'Pause' : 'Play', () => { const a = audio.current; if (a) (a.paused ? a.play().catch(() => {}) : a.pause()); }),
     btn('⏭', 'Next chapter', () => stepChapter(1)),
@@ -13544,12 +13778,30 @@ function PodcastPlayer() {
       'aria-label': 'Playback speed', value: rate, onChange: (e) => setRate(Number(e.target.value)),
       style: { background: 'transparent', color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6 }
     }, [0.8, 1, 1.25, 1.5, 1.75, 2].map(r => h('option', { key: r, value: r, style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, r + '×'))),
+    btn(showSources ? 'Hide sources' : 'Sources', showSources ? 'Hide the sources' : 'Show the sources', () => setShowSources(!showSources), { 'aria-expanded': showSources }),
     btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
+  nowSources.length ? h('div', { 'aria-label': 'Now citing', 'aria-live': 'polite', style: { display: 'flex', flexDirection: 'column', gap: 4, borderLeft: '3px solid ' + PODCAST_C.accent, paddingLeft: 8, background: PODCAST_C.accentSoft, borderRadius: 6, padding: '6px 8px' } },
+    h('div', { style: { fontSize: PODCAST_C.xs, color: PODCAST_C.dim, textTransform: 'uppercase', letterSpacing: '0.08em' } }, 'Now citing'),
+    nowSources.map(s => h('div', { key: s.id, style: { fontSize: PODCAST_C.md, lineHeight: 1.35 } },
+      h('b', null, podcastSourceLabel(s, s.id) + ': '),
+      s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, (s.title || '') + ' ↗')
+            : h('span', null, s.title || '')))) : null,
+  showSources ? h('div', { role: 'list', 'aria-label': 'Sources by time', style: { overflowY: 'auto', maxHeight: popped ? 'none' : '24vh', borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
+    timeline.map(s => {
+      const active = nowSources.some(n => n.id === s.id);
+      return h('div', { key: s.id, role: 'listitem', style: { display: 'flex', gap: 8, alignItems: 'baseline', padding: '3px 4px', borderRadius: 4, background: active ? PODCAST_C.accentSoft : 'transparent' } },
+        h('button', { className: 'btn', onClick: () => seek(s.at), 'aria-label': 'Play from ' + podcastClock(s.at) + ', where ' + podcastSourceLabel(s, s.id) + ' is cited',
+          style: { fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.xs, padding: '0 6px', minHeight: 0 } }, podcastClock(s.at)),
+        h('span', { style: { fontSize: PODCAST_C.md, flex: 1, minWidth: 0 } },
+          h('b', null, podcastSourceLabel(s, s.id) + ': '),
+          s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title || '')
+                : (s.title || '')));
+    })) : null,
   line ? h('div', { 'aria-live': 'polite', style: { fontSize: PODCAST_C.base, lineHeight: 1.45 } },
     h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.second } }, who(line.speaker) + ': '),
     fridayTM(line.text), (line.cites || []).map(cite)) : null,
   src ? h('div', { style: { fontSize: PODCAST_C.md, borderLeft: '2px solid ' + PODCAST_C.accent, paddingLeft: 8, color: PODCAST_C.text } },
-    h('b', null, srcOpen + ' '), src.kind === 'fact' ? src.title : (src.title || ''),
+    src.outlet ? h('b', null, src.outlet + ': ') : null, src.title || '',
     src.expr ? h('div', { style: { color: PODCAST_C.dim, fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.sm } }, 'computed by ', src.expr) : null,
     src.url ? h('div', null, h('a', { href: src.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, 'Open the source ↗')) : null) : null,
   chart ? h('img', { src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/charts/' + encodeURIComponent(chart.file), alt: chart.title, style: { width: '100%', borderRadius: 8 } }) : null,
@@ -13563,8 +13815,14 @@ function PodcastPlayer() {
         'aria-current': i === cur ? 'true' : undefined,
         style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? PODCAST_C.accentSoft : 'transparent' }
       }, h('b', null, who(ln.speaker) + ': '), fridayTM(ln.text), (ln.cites || []).map(cite)))),
+    podcastLinked(ep).length ? h('div', { role: 'list', 'aria-label': 'Sources', style: { marginTop: 10, borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
+      h('div', { style: { fontWeight: 600, color: PODCAST_C.accent, marginBottom: 4 } }, 'Sources'),
+      podcastLinked(ep).map(s => h('div', { key: s.id, role: 'listitem', style: { fontSize: PODCAST_C.md, margin: '2px 0' } },
+        s.outlet ? h('b', null, s.outlet + ': ') : null,
+        h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title)))) : null,
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
+  return popped ? ReactDOM.createPortal(frame, popped.el) : frame;
 }
 // A creation as a podcast source: a spreadsheet or table goes in as a dataset
 // (data mode), anything else as a creation.
@@ -13575,7 +13833,8 @@ function podcastCreationSource(name) {
 }
 // "Make a podcast" from whatever item a workspace is showing: a wiki page, a
 // graph entry, a creation, a conversation. One button, one request; the
-// episode follows in Studio → Podcasts with a notice when it is ready.
+// episode follows with a notice when it is ready (episode_home: a routine's
+// show on its News tab, the owner's own in Media, or Studio until Media lands).
 function PodcastButton({ sources, title, compact, className }) {
   const h = React.createElement;
   const [state, setState] = useState('');
@@ -13650,6 +13909,10 @@ function PodcastsView() {
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [formats, setFormats] = useState(null);
+  useEffect(() => { fetch('/api/podcasts/formats').then(r => r.json()).then(d => setFormats(d.formats || null)).catch(() => {}); }, []);
+  const setFormat = (routine, format) => fetch('/api/podcasts/formats', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ routine: routine, format: format }) })
+    .then(r => r.json()).then(d => { if (d.formats) setFormats(d.formats); }).catch(() => {});
   const refresh = () => fetch('/api/podcasts?limit=60').then(r => r.json()).then(d => setEps(d.episodes || [])).catch(() => {});
   useEffect(() => {
     refresh();
@@ -13690,7 +13953,14 @@ function PodcastsView() {
     h('div', null,
       h('h2', { style: { margin: 0, fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.xl } }, '🎧 Podcasts'),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.md, marginTop: 4, maxWidth: '80ch' } },
-        'Two hosts talk through any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and the hosts may only say computed numbers.')),
+        'Episodes from any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and only computed numbers are said.')),
+    formats ? h('section', { 'aria-label': 'Who is on each show', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' } },
+      h('div', { style: { width: '100%', fontWeight: 600 } }, 'Who is on each show'),
+      PODCAST_SHOWS.map(([key, label]) => formats[key] ? h('label', { key: key, style: { display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: PODCAST_C.md } },
+        label,
+        h('select', { value: formats[key].format, 'aria-label': label + ': who is on the show', onChange: (e) => setFormat(key, e.target.value), style: field },
+          [['solo', fridayName() + ' alone'], ['duo', 'Two hosts']].map(([v, t]) => h('option', { key: v, value: v, style: { color: PODCAST_C.text, background: PODCAST_C.surface } },
+            t + (formats[key].recommended === v ? ' (recommended)' : ''))))) : null)) : null,
     h('section', { 'aria-label': 'Make a podcast', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
       rows.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'flex-start' } },
         h('select', { 'aria-label': 'Source type', value: r.kind, style: field,
@@ -13711,8 +13981,10 @@ function PodcastsView() {
       msg ? h('div', { role: 'status', style: { fontSize: PODCAST_C.md, color: PODCAST_C.dim } }, msg) : null,
       h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim } }, 'A web page is fetched from the internet to be read; nothing about the episode is sent anywhere.')),
     h('section', { 'aria-label': 'Episodes', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-      eps.length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes yet. Every News routine run now comes with one, and you can make your own above.') : null,
-      eps.map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
+      h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim } },
+        'Episodes of the Front Page, the Briefing, the Editorial and the Weekly live in News, beside each edition.'),
+      eps.filter(ep => !ep.attached).length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes of your own yet. Make one above.') : null,
+      eps.filter(ep => !ep.attached).map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
         h('div', { style: { flex: 1, minWidth: 0 } },
           h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.credit || ep.show),
           h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim, margin: '2px 0 4px' } },
@@ -13911,11 +14183,18 @@ function TalkToFridayButton({
   contentType,
   title,
   summary,
-  style
+  style,
+  onDiscuss
 }) {
   const [active, setActive] = useState(false);
   const onClick = e => {
     e.stopPropagation();
+    // A news story opens Discuss with Friday: evidence first, the local
+    // model only (docs/design/active/news-discuss.md).
+    if (onDiscuss) {
+      onDiscuss();
+      return;
+    }
     if (!window.fridayVoice) {
       fridayToast('Enable voice mode first, then try again.');
       return;
@@ -13953,7 +14232,7 @@ function TalkToFridayButton({
     style: {
       fontSize: 11
     }
-  }, "\uD83C\uDFA4"), active ? 'Starting…' : ('Discuss with ' + fridayName()));
+  }, onDiscuss ? "\uD83D\uDCAC" : "\uD83C\uDFA4"), active ? 'Starting…' : ('Discuss with ' + fridayName()));
 }
 
 // ═══ WORKSPACES ═══
@@ -13995,7 +14274,7 @@ function CareerWS() {
       })
     }).then(() => {
       setEvalUrl('');
-      fridayToast('Evaluation launched');
+      fridayToast('Evaluation queued — approve its card to start');
     }).catch(() => {});
   };
   const launchScan = () => {
@@ -14008,7 +14287,7 @@ function CareerWS() {
         tasks: ['Run portal scan'],
         cwd: coCwd()
       })
-    }).then(() => fridayToast('Scan launched')).catch(() => {});
+    }).then(() => fridayToast('Scan queued — approve its card to start')).catch(() => {});
   };
   const saveCoPath = () => {
     fetch('/api/career-ops/path', {
@@ -18954,7 +19233,7 @@ function FSProjectCard({
       });
       const d = await r.json();
       if (d.status === 'ok') {
-        onToast((deploy ? 'Deploy' : 'Quick Edit') + ' launched for ' + p.name + ' — track in Code workspace');
+        onToast((deploy ? 'Deploy' : 'Quick Edit') + ' queued for ' + p.name + ' — approve its card to start');
         setInstr('');
         setEditing(false);
         setDeploy(false);
@@ -19321,7 +19600,7 @@ function FSStudio() {
           cwd: '~\\Projects'
         })
       });
-      showToast('Scaffold launched in Claude Code — watch the Code workspace');
+      showToast('Scaffold queued — approve its card to start');
       setWDesc('');
       setWizard(false);
     } catch (e) {
@@ -19680,7 +19959,7 @@ function FuturespeakWS() {
           cwd: cwd || '~\\Projects'
         })
       });
-      showToast('Claude Code launched');
+      showToast('Claude Code queued — approve its card to start');
     } catch (e) {
       showToast('Launch failed');
     }
@@ -23441,7 +23720,7 @@ function StudioWS() {
         tasks: ['Run friday daily creation'],
         cwd: '~\\Projects\\friday-desktop'
       })
-    }).then(r => r.json()).then(d => fridayToast(d && d.status === 'ok' ? 'Daily creation agent launched — watch the Code workspace for progress.' : 'Could not launch: ' + (d && d.message || 'unknown error'))).catch(() => fridayToast('Could not launch the daily creation agent.', { error: true }));
+    }).then(r => r.json()).then(d => fridayToast(d && d.status === 'ok' ? 'Daily creation agent queued — approve its card to start it.' : 'Could not launch: ' + (d && d.message || 'unknown error'))).catch(() => fridayToast('Could not launch the daily creation agent.', { error: true }));
   };
   const openCreation = async f => {
     setSelected(f);
@@ -30048,7 +30327,7 @@ const NEWS_TABS = [{
 }];
 fridayDeclareNav('news', {
   key: 'tab',
-  keys: ['tab', 'article', 'url', 'title', 'source'],
+  keys: ['tab', 'article', 'url', 'title', 'source', 'episode'],
   sections: NEWS_TABS
 });
 // The Local beat is the owner's setting: the place Local news covers and the
@@ -30151,6 +30430,7 @@ function NewsWS() {
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
   const [fp, setFp] = useState(null);
   const [fpList, setFpList] = useState([]);
+  const [fpRoutines, setFpRoutines] = useState([]);
   const [fpLoading, setFpLoading] = useState(true);
   const [fpGen, setFpGen] = useState(false);
   const [weekly, setWeekly] = useState(null);
@@ -30178,6 +30458,7 @@ function NewsWS() {
   const [clLoading, setClLoading] = useState(false);
   const [clOpen, setClOpen] = useState({});
   const [diet, setDiet] = useState(null);
+  const [discussFor, setDiscussFor] = useState(null);
   const [dietLoading, setDietLoading] = useState(false);
   // Source Trust Graph tab: leaderboard, selected source detail, federation status.
   const [trustBoard, setTrustBoard] = useState([]);
@@ -30213,6 +30494,7 @@ function NewsWS() {
   // News Anchor Mode — interactive live voice read of the Front Page.
   const [anchorReading, setAnchorReading] = useState(false);
   const [anchorBusy, setAnchorBusy] = useState(false);
+  const [listenState, setListenState] = useState('');
   // Track the live session ending from anywhere (stop button in chat, errors)
   // so the "Now Reading" indicator clears itself rather than going stale.
   useEffect(() => {
@@ -30242,6 +30524,8 @@ function NewsWS() {
       setSelected(null);
     }
     if (t.article || t.url) setArticleOpen({ id: t.article || '', url: t.url || '', title: t.title || '', source: t.source || '' });
+    // A routine's episode lives beside its edition: open it in the player here.
+    if (t.episode) fridayPodcast('open', t.episode);
   });
 
   // Pull a page of the permanent archive (newest first). reset=true clears and
@@ -30291,6 +30575,7 @@ function NewsWS() {
     fetch('/api/news/front-page/latest').then(r => r.json()).then(d => {
       setFp(d.edition || null);
       setFpList(d.editions || []);
+      setFpRoutines(d.routines || []);
       setFpLoading(false);
     }).catch(() => setFpLoading(false));
   };
@@ -30876,6 +31161,33 @@ function NewsWS() {
   // clickable citation chips in the chat panel, then hand the script to the
   // live voice bridge so Friday reads the Front Page like a broadcast anchor —
   // interruptible via Gemini's server-side VAD for sourced Q&A.
+  // Listen: the edition's own episode, spoken by her on this computer and
+  // played in the podcast player. Not spoken yet, it is made now, with its
+  // progress on the button; never a cloud voice.
+  const playFrontPageEpisode = async () => {
+    if (!fp || !fp.id || listenState) return;
+    setListenState('🎧 Asking for the episode…');
+    try {
+      const r = await fetch('/api/podcasts/listen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ routine: 'front_page', run_id: fp.id }) });
+      const d = await r.json();
+      if (!r.ok || d.status !== 'ok' || !d.episode) throw new Error(d.message || 'Could not start the episode');
+      let ep = d.episode;
+      while (ep.status !== 'ready') {
+        if (ep.status === 'failed' || ep.status === 'cancelled') throw new Error((ep.error || {}).message || 'The episode could not be made');
+        const pr = ep.progress && ep.progress.of ? ' · ' + ep.progress.done + '/' + ep.progress.of : '';
+        setListenState('🎧 ' + (ep.waiting_reason || ep.stage_detail || ep.status) + pr);
+        await new Promise(res => setTimeout(res, 3000));
+        const g = await fetch('/api/podcasts/' + encodeURIComponent(ep.id)).then(x => x.json());
+        ep = g.episode || ep;
+      }
+      fridayPodcast('play', ep.id);
+    } catch (e) {
+      flashNews(e.message || 'Could not play the episode');
+    } finally {
+      setListenState('');
+    }
+  };
   const startAnchorBriefing = async () => {
     if (anchorBusy) return;
     if (!window.fridayVoice) {
@@ -31535,10 +31847,10 @@ function NewsWS() {
     style: {
       fontSize: 11
     },
-    onClick: startAnchorBriefing,
-    disabled: anchorBusy,
-    title: (fridayName() + " reads the Front Page aloud like a live news anchor \u2014 interrupt any time to ask about a story.")
-  }, anchorBusy ? 'Starting…' : '🎙️ Listen to Front Page'), tab === 'frontpage' && anchorReading && /*#__PURE__*/React.createElement("button", {
+    onClick: playFrontPageEpisode,
+    disabled: !!listenState,
+    title: ("The Front Page's episode, spoken by " + fridayName() + " on this computer")
+  }, listenState || '🎧 Listen to Front Page'), tab === 'frontpage' && anchorReading && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-magenta",
     style: {
       fontSize: 11
@@ -31765,6 +32077,10 @@ function NewsWS() {
     }
   }, "\u2197 Open article"), /*#__PURE__*/React.createElement(TalkToFridayButton, {
     contentType: "article",
+    onDiscuss: () => {
+      setDiscussFor({ url: it.url, title: it.title });
+      setPanel('discuss');
+    },
     title: it.title,
     summary: it.snippet,
     style: {
@@ -31858,6 +32174,19 @@ function NewsWS() {
     key: e.id,
     value: e.id
   }, e.date + ' · ' + (e.slot === 'evening' ? 'PM' : 'AM'))))),
+  // A routine waiting for the local seat, late or missed says so here, with
+  // its reason, so a gap in the morning read is never silent.
+  fpRoutines.map(n => /*#__PURE__*/React.createElement("div", {
+    key: 'fprn-' + n.id,
+    className: "fp-degraded fp-routine-notice"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-head"
+  }, (n.state === 'waiting' ? '⏳ ' + n.name + ' is waiting for the local seat'
+      : n.state === 'late' ? '🕒 ' + n.name + ' ran late'
+      : n.state === 'failed' ? '⚠️ ' + n.name + ' failed'
+      : '⚠️ ' + n.name + ' did not run')), /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-body"
+  }, n.reason || ''))),
   // An edition whose editor never answered is still a real page of real
   // stories — it is just ranked, not curated. Saying so here is the whole
   // point: this is the screen the user refreshes, and without it a degraded
@@ -31911,7 +32240,10 @@ function NewsWS() {
     className: "fp-badge update"
   }, "UPDATE") : fp.lead.new_since_last ? /*#__PURE__*/React.createElement("span", {
     className: "fp-badge new"
-  }, "NEW") : null, cardActions(fp.lead)), fp.lead.breaking && /*#__PURE__*/React.createElement("span", {
+  }, "NEW") : null, fp.lead.opinion ? /*#__PURE__*/React.createElement("span", {
+    className: "fp-badge opinion",
+    title: "Opinion: the writer's view, not news reporting"
+  }, "OPINION") : null, cardActions(fp.lead)), fp.lead.breaking && /*#__PURE__*/React.createElement("span", {
     className: "breaking-badge",
     style: {
       marginBottom: 6,
@@ -31924,7 +32256,7 @@ function NewsWS() {
     className: "fp-lead-snippet"
   }, fp.lead.snippet), fp.lead.editorial_note && /*#__PURE__*/React.createElement("div", {
     className: "editorial-note"
-  }, /*#__PURE__*/React.createElement("b", null, (fridayName() + "'s note:")), " ", fp.lead.editorial_note), fp.lead.thread_update && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, (fridayName() + "'s note:")), " ", fp.lead.editorial_note), /*#__PURE__*/React.createElement(FpAlso, { it: fp.lead }), fp.lead.thread_update && /*#__PURE__*/React.createElement("div", {
     className: "fp-thread"
   }, /*#__PURE__*/React.createElement("b", null, "What's new today:"), " ", fp.lead.thread_update), /*#__PURE__*/React.createElement("div", {
     className: "source-row",
@@ -31951,6 +32283,10 @@ function NewsWS() {
     onClick: () => fp.lead.url && window.open(fp.lead.url, '_blank')
   }, "\u2197 Open article"), /*#__PURE__*/React.createElement(TalkToFridayButton, {
     contentType: "article",
+    onDiscuss: () => {
+      setDiscussFor({ url: fp.lead.url, title: fp.lead.title });
+      setPanel('discuss');
+    },
     title: fp.lead.title,
     summary: fp.lead.snippet || fp.lead.editorial_note,
     style: {
@@ -32012,7 +32348,10 @@ function NewsWS() {
     className: "fp-badge update"
   }, "UPDATE") : it.new_since_last ? /*#__PURE__*/React.createElement("span", {
     className: "fp-badge new"
-  }, "NEW") : null, cardActions(it)), it.thread_update && /*#__PURE__*/React.createElement("div", {
+  }, "NEW") : null, it.opinion ? /*#__PURE__*/React.createElement("span", {
+    className: "fp-badge opinion",
+    title: "Opinion: the writer's view, not news reporting"
+  }, "OPINION") : null, cardActions(it)), /*#__PURE__*/React.createElement(FpAlso, { it: it }), it.thread_update && /*#__PURE__*/React.createElement("div", {
     className: "fp-thread sm"
   }, /*#__PURE__*/React.createElement("b", null, "New:"), " ", it.thread_update), it.breaking && /*#__PURE__*/React.createElement("span", {
     className: "breaking-badge",
@@ -32045,6 +32384,10 @@ function NewsWS() {
     }
   }, "\uD83D\uDD16"), annoBadge(it), /*#__PURE__*/React.createElement(TalkToFridayButton, {
     contentType: "article",
+    onDiscuss: () => {
+      setDiscussFor({ url: it.url, title: it.title });
+      setPanel('discuss');
+    },
     title: it.title,
     summary: it.snippet,
     style: {
@@ -32780,7 +33123,10 @@ function NewsWS() {
       color: '#777',
       marginTop: 10
     }
-  }, "Changes save instantly and shape your next \u2728 Generate Briefing and the live feed.")), panel === 'diet' && /*#__PURE__*/React.createElement("div", {
+  }, "Changes save instantly and shape your next \u2728 Generate Briefing and the live feed.")), panel === 'discuss' && discussFor && /*#__PURE__*/React.createElement(DiscussPanel, {
+    story: discussFor,
+    onClose: () => setPanel(null)
+  }), panel === 'diet' && /*#__PURE__*/React.createElement("div", {
     className: "news-side"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -32797,7 +33143,7 @@ function NewsWS() {
       color: '#777',
       marginBottom: 8
     }
-  }, "How you engage with the news \u2014 what you read, save, boost, and ban."), dietLoading ? /*#__PURE__*/React.createElement("div", {
+  }, "How you engage with the news \u2014 what you read, save, boost, and ban."), /*#__PURE__*/React.createElement(MediaDietRules, null), dietLoading ? /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#999',
       textAlign: 'center',
@@ -35431,7 +35777,7 @@ function FinanceWS() {
       gap: 4,
       flexWrap: 'wrap'
     }
-  }, ['overview', 'portfolio', 'perks', 'contacts', 'quickref', 'wallet'].map(v => /*#__PURE__*/React.createElement("button", {
+  }, ['overview', 'portfolio', 'perks', 'contacts', 'quickref'].concat(fridayHeldOn('federation') ? ['wallet'] : []).map(v => /*#__PURE__*/React.createElement("button", {
     key: v,
     className: 'btn' + (view === v ? ' active' : ''),
     "aria-pressed": view === v,
@@ -35684,7 +36030,7 @@ function FinanceWS() {
       fontSize: 11,
       color: '#888'
     }
-  }, "Add in ~/.friday/wiki/finance/"))))), view === 'wallet' && /*#__PURE__*/React.createElement(WalletPanel, null), view === 'quickref' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "Add in ~/.friday/wiki/finance/"))))), fridayHeldOn('federation') && view === 'wallet' && /*#__PURE__*/React.createElement(WalletPanel, null), view === 'quickref' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Quick Reference"), [{
     name: 'Your Bank',
@@ -47319,7 +47665,9 @@ function QuickSwitch({ current, onPick, switching }) {
           note: serving && !serving.stale
             ? 'Answering you now: ' + prettyModel(serving.model) + ' · ' + (fmtAgo(serving.at) || 'recently') +
               '. Pick another and the pill changes once it has actually served a turn.'
-            : 'Pick the default model for future turns. Current running turns keep their model.',
+            : 'Pick the default model for every chat that has no model of its own. '
+              + 'Current running turns keep their model. Under Cloud only, a local pick '
+              + 'here is not used until the routing mode allows it (Settings > Models).',
         }))));
 }
 
@@ -48113,6 +48461,11 @@ function LocalModelRow({ r, onFetch }) {
       E(AxisBadge, { axisLabel: 'Fits', v: v.fits }),
       E(AxisBadge, { axisLabel: 'Runs well', v: v.runs_well }),
       E(AxisBadge, { axisLabel: 'Worth it', v: v.worth_it }),
+      r.friday_standard && E('span', {
+        style: { fontSize: 9, fontFamily: 'var(--st-font)', color: 'var(--st-accent)',
+                 border: '1px solid var(--st-accent-soft)', borderRadius: 4, padding: '1px 6px' },
+        title: 'Recommended for this computer. Picked for you only at first setup; never after.',
+      }, fridayName() + "'s standard"),
       !r.installed && E('button', {
         onClick: () => onFetch(r.model_id),
         style: {
@@ -48120,7 +48473,7 @@ function LocalModelRow({ r, onFetch }) {
           border: '1px solid rgba(0,212,255,0.35)', borderRadius: 5,
           padding: '3px 9px', color: '#cfefff', fontFamily: 'JetBrains Mono', fontSize: 10,
         },
-      }, 'Fetch')),
+      }, r.fetch === 'download' ? 'Get' : 'Fetch')),
     r.licence && E('div', {
       style: { fontSize: 9.5, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 3 },
     }, 'Licence: ' + r.licence),
@@ -48201,6 +48554,286 @@ function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
           fontFamily: 'JetBrains Mono', fontSize: 10.5,
         },
       }, 'Cancel')));
+}
+
+
+
+// ── Your stack: these fit together ─────────────────────────────────────────
+//
+// One bar per memory pool from /api/models/stack/preview: solid blocks stay
+// loaded, dashed blocks take turns with the brain and carry the swap time,
+// the display reserve is a labelled block. The picks are the seats resident
+// now plus whatever the catalogue's "Add to stack" ticked; nothing here
+// downloads or loads anything.
+function StackBar({ pool }) {
+  const total = Math.max(1, pool.total_mib || pool.available_mib || 1);
+  const kindStyle = (b) => ({
+    reserve: { background: 'rgba(255,255,255,0.06)', border: '1px solid var(--st-line)', color: 'var(--st-faint)' },
+    pinned: { background: 'var(--st-accent-soft)', border: '1px solid rgba(0,212,255,0.45)', color: 'var(--st-text)' },
+    leased: { background: 'transparent', border: '1px dashed rgba(123,97,255,0.8)', color: 'var(--st-label)' },
+  })[b.kind] || {};
+  const blocks = pool.blocks.filter(b => b.kind !== 'leased');
+  const leased = pool.blocks.filter(b => b.kind === 'leased');
+  return E('div', { style: { marginBottom: 10 } },
+    E('div', { style: { fontSize: 11, color: 'var(--st-label)', fontFamily: 'var(--st-font)', marginBottom: 3 } },
+      pool.name + (pool.device ? ' · ' + pool.device : '') + ' · ' + (pool.total_mib / 1024).toFixed(1) + ' GB'),
+    E('div', { role: 'img', 'aria-label': pool.name + ' usage', style: { display: 'flex', height: 22, width: '100%', borderRadius: 5, overflow: 'hidden', background: 'rgba(255,255,255,0.03)' } },
+      blocks.map((b, i) => E('div', { key: i, title: b.label + ': ' + b.mib + ' MiB' + (b.context ? ', ' + Math.round(b.context / 1024) + 'K context' : ''),
+        style: Object.assign({ width: (100 * b.mib / total) + '%', minWidth: b.mib ? 2 : 0, fontSize: 9.5, lineHeight: '22px', padding: '0 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'var(--st-font)' }, kindStyle(b)) },
+        (b.kind === 'reserve' ? 'reserve' : b.label) + (b.partial ? ' (part)' : ''))),
+      E('div', { title: 'free: ' + pool.free_mib + ' MiB', style: { flex: 1, fontSize: 9.5, lineHeight: '22px', padding: '0 6px', color: 'var(--st-faint)', fontFamily: 'var(--st-font)' } },
+        (pool.free_mib / 1024).toFixed(1) + ' GB free')),
+    leased.length > 0 && E('div', { style: { display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' } },
+      leased.map((b, i) => E('div', { key: i, style: Object.assign({ fontSize: 9.5, padding: '2px 8px', borderRadius: 5, fontFamily: 'var(--st-font)', width: Math.max(12, 100 * b.mib / total) + '%', boxSizing: 'border-box' }, kindStyle(b)) },
+        b.label + ' · takes turns, about ' + b.swap_s + ' s to switch'))),
+    E('div', { style: { display: 'flex', gap: '4px 14px', flexWrap: 'wrap', marginTop: 4, fontSize: 10, color: 'var(--st-dim)', fontFamily: 'var(--st-font)' } },
+      pool.blocks.map((b, i) => E('span', { key: 'l' + i },
+        E('span', { 'aria-hidden': true, style: Object.assign({ display: 'inline-block', width: 9, height: 9, borderRadius: 2, marginRight: 5, verticalAlign: 'middle' }, kindStyle(b)) }),
+        (b.kind === 'reserve' ? 'Reserved for the display and what others hold' : b.label) + ' ' + (b.mib / 1024).toFixed(1) + ' GB' +
+        (b.context ? ' · ' + Math.round(b.context / 1024) + 'K' : '') + (b.kind === 'leased' ? ' · takes turns' : '')))));
+}
+
+function StackSection({ picks, onRemovePick, pretend }) {
+  const [out, setOut] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    setErr('');
+    apiFetch('/api/models/stack/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ picks }, pretend || {})) })
+      .then(r => r.json()).then(d => { if (d.status !== 'ok') throw new Error(d.error || d.message || 'preview failed'); setOut(d); })
+      .catch(e => setErr(String(e && e.message || e)));
+  }, [JSON.stringify(picks), JSON.stringify(pretend || {})]);
+  return E(StSection, { title: 'Your stack', desc: 'What the models you have, and the ones you tick in the list below, cost side by side. Solid blocks stay loaded; dashed blocks take turns with the brain.' },
+    err && E('div', { style: { fontSize: 11, color: 'var(--st-danger)' } }, err),
+    out && out.pools.map((p, i) => E(StackBar, { key: i, pool: p })),
+    out && E('div', { style: { fontSize: 12, color: out.fits_together ? 'var(--st-ok)' : (out.cannot && out.cannot.length ? 'var(--st-warn)' : 'var(--st-label)'), fontFamily: 'var(--st-font)', marginTop: 4 } },
+      (out.fits_together ? '✓ ' : '') + out.sentence + (out.simulated ? '  (simulated)' : '')),
+    picks.length > 0 && E('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 } },
+      picks.map(p => E('span', { key: p.id + (p.packing || ''), style: { fontSize: 10, color: 'var(--st-label)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '1px 6px' } },
+        (p.label || p.id) + (p.packing ? ' · ' + p.packing : ''),
+        E('button', { className: 'settings-btn', 'aria-label': 'Remove ' + (p.label || p.id) + ' from the preview', onClick: () => onRemovePick(p), style: { marginLeft: 6, fontSize: 9, padding: '0 5px' } }, '×')))));
+}
+
+// ── Find a model: the catalogue with a verdict per file ─────────────────────
+//
+// Rows come from /api/models/catalog: the curated shortlist, the installed
+// store, and anything the user pastes. Each file carries a verdict for THIS
+// machine (runs well / tight / partly on the processor / won't fit), its
+// speed with a basis word, the context it can hold, and the arithmetic
+// behind it under "Why?". Bonsai 2 wears the "standard" label and is never
+// pre-selected here. "Pretend I have…" recomputes everything on a pretend
+// card, locally, under a SIMULATED badge.
+const _FIT_SKIN = {
+  runs_well: { c: 'var(--st-ok)', dot: '●' },
+  tight: { c: 'var(--st-warn)', dot: '◐' },
+  partial: { c: 'var(--st-warn)', dot: '◐' },
+  wont_fit: { c: 'var(--st-dim)', dot: '○' },
+};
+const _LIC_SKIN = { permissive: 'var(--st-ok)', attribution: 'var(--st-accent)',
+  restricted: 'var(--st-warn)', 'non-commercial': 'var(--st-danger)', unknown: 'var(--st-danger)' };
+
+function _speedWords(sp) {
+  if (!sp || sp.tok_s == null) return (sp && sp.note) || 'speed unknown';
+  if (sp.basis === 'measured') return sp.tok_s + ' tok/s, measured here';
+  if (sp.basis === 'published') return sp.tok_s + ' tok/s, published by the maker';
+  const cal = sp.calibration && sp.calibration.basis === 'calibrated'
+    ? ' (calibrated ×' + sp.calibration.factor + ' from your ' + sp.calibration.from + ' run)' : '';
+  return 'about ' + sp.tok_s + ' tok/s' + cal;
+}
+
+function _ctxWords(n) {
+  if (!n) return '';
+  return n >= 1024 ? Math.round(n / 1024) + 'K context' : n + ' context';
+}
+
+function WhyPanel({ f }) {
+  const s = f.seat || {}, w = f.why || {}, p = f.placement || {};
+  const lines = [
+    ['Weights (the file itself)', s.weights_mib != null ? s.weights_mib + ' MiB' : '—'],
+    ['KV cache at ' + _ctxWords(s.num_ctx) + ' (' + (s.kv_type || '') + ')', s.kv_mib != null ? s.kv_mib + ' MiB' : 'not counted'],
+    ['Compute buffer', s.compute_mib != null ? s.compute_mib + ' MiB' : '—'],
+    s.mmproj_mib ? ['Vision tower', s.mmproj_mib + ' MiB'] : null,
+    ['Seat total', s.total_mib != null ? s.total_mib + ' MiB' : '—'],
+    w.vram_available_mib != null ? ['Graphics memory available (after the display reserve and what is loaded)', w.vram_available_mib + ' MiB'] : null,
+    w.ram_available_mib != null ? ['Processor RAM available for models', w.ram_available_mib + ' MiB'] : null,
+    ['Context wanted for this job', _ctxWords(w.context_wanted) + ' (floor ' + _ctxWords(w.context_floor) + ')'],
+    ['Where it lands', w.fits_at || '—'],
+    p.n_gpu_layers != null && p.n_gpu_layers !== 'all' ? ['Layers on the card', p.n_gpu_layers] : null,
+    f.speed && f.speed.formula ? ['Speed formula', f.speed.formula] : null,
+    f.shortfall_mib ? ['Short by', f.shortfall_mib + ' MiB'] : null,
+  ].filter(Boolean);
+  return E('div', { style: { margin: '6px 0 4px 18px', padding: '8px 10px', border: '1px solid var(--st-line)',
+    borderRadius: 6, fontFamily: 'var(--st-mono)', fontSize: 10.5, color: 'var(--st-label)' } },
+    lines.map(([k, v], i) => E('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', gap: 12, padding: '2px 0' } },
+      E('span', { style: { color: 'var(--st-dim)' } }, k), E('span', null, String(v)))),
+    E('div', { style: { color: 'var(--st-faint)', marginTop: 4, fontFamily: 'var(--st-font)' } },
+      'Sized from the file’s real bytes and its attention layout, placed by the residency planner’s own budgets. Measured on this computer after install.'));
+}
+
+function CatalogFileRow({ m, f, onGet, onPick, why, setWhy }) {
+  const skin = _FIT_SKIN[f.verdict] || _FIT_SKIN.wont_fit;
+  const key = m.id + '|' + f.file;
+  return E('div', { key: key },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '4px 0 4px 18px', fontSize: 11 } },
+      E('span', { style: { color: skin.c, fontFamily: 'var(--st-mono)', minWidth: 10 } }, skin.dot),
+      E('span', { style: { fontFamily: 'var(--st-mono)', color: 'var(--st-text)', minWidth: 70 } }, f.packing || 'gguf'),
+      E('span', { style: { fontFamily: 'var(--st-mono)', color: 'var(--st-label)', minWidth: 58 } }, f.gib + ' GB'),
+      E('span', { style: { color: skin.c, fontWeight: 600 } }, f.verdict_word),
+      E('span', { style: { color: 'var(--st-dim)' } }, '· ' + _speedWords(f.speed)),
+      f.context && E('span', { style: { color: 'var(--st-dim)' } }, '· ' + _ctxWords(f.context)),
+      E('button', { className: 'settings-btn', onClick: () => setWhy(why === key ? null : key),
+        style: { fontSize: 10, padding: '1px 7px' } }, why === key ? 'Hide why' : 'Why?'),
+      !m.installed && f.verdict !== 'wont_fit' && E('button', { className: 'settings-btn', onClick: () => onGet(m, f),
+        style: { fontSize: 10, padding: '1px 9px', color: 'var(--st-accent)' } }, 'Get'),
+      onPick && f.verdict !== 'wont_fit' && E('button', { className: 'settings-btn', onClick: () => onPick(m, f),
+        title: 'Preview this file in your stack before downloading anything',
+        style: { fontSize: 10, padding: '1px 9px' } }, 'Add to stack'),
+      f.note && E('span', { style: { color: 'var(--st-faint)', fontSize: 10 } }, f.note)),
+    why === key && E(WhyPanel, { f }));
+}
+
+function InstalledModelActions({ m, onChanged }) {
+  const [msg, setMsg] = useState('');
+  const [askReplace, setAskReplace] = useState(false);
+  const post = (path, opts) => apiFetch(path, Object.assign({ method: 'POST', headers: { 'Content-Type': 'application/json' } }, opts || {}))
+    .then(r => r.json());
+  const measure = () => post('/api/models/' + encodeURIComponent(m.id) + '/bench')
+    .then(j => setMsg(j.status === 'measuring' ? 'Measuring on this computer; the number replaces the estimate when it lands.' : (j.error || j.message || 'could not start')))
+    .catch(e => setMsg(String(e)));
+  const remove = (force) => apiFetch('/api/models/' + encodeURIComponent(m.id) + (force ? '?force=1' : ''), { method: 'DELETE' })
+    .then(r => r.json()).then(j => {
+      if (j.needs_replacement) { setAskReplace(true); setMsg(j.error); return; }
+      setMsg(j.ok ? ('Removed; freed ' + j.freed_gib + ' GB.') : (j.error || 'could not remove'));
+      if (j.ok && onChanged) onChanged();
+    }).catch(e => setMsg(String(e)));
+  const rollback = () => post('/api/models/' + encodeURIComponent(m.id) + '/rollback')
+    .then(j => { setMsg(j.ok ? 'Back to the previous version.' : (j.error || 'could not go back')); if (j.ok && onChanged) onChanged(); })
+    .catch(e => setMsg(String(e)));
+  const b = m.bench;
+  return E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 4, paddingLeft: 18 } },
+    b && b.status === 'measured' && E('span', { style: { fontSize: 10, color: 'var(--st-ok)' } },
+      'measured ' + b.decode_tok_s + ' tok/s' + (b.peak_vram_delta_mib ? ', ' + b.peak_vram_delta_mib + ' MiB peak' : '')),
+    b && b.status === 'failed' && E('span', { style: { fontSize: 10, color: 'var(--st-danger)' } }, 'last measurement failed: ' + (b.error || '')),
+    E('button', { className: 'settings-btn', style: { fontSize: 10 }, onClick: measure }, b ? 'Measure again' : 'Measure'),
+    m.previous_available && E('button', { className: 'settings-btn', style: { fontSize: 10 }, onClick: rollback }, 'Go back to the previous version'),
+    !askReplace && E('button', { className: 'settings-btn btn-magenta', style: { fontSize: 10 }, onClick: () => remove(false) }, 'Remove'),
+    askReplace && E('span', { style: { fontSize: 10.5, color: 'var(--st-warn)' } },
+      'It answers for ' + (m.roles_bound || []).join(', ') + '. Pick a replacement in "Model for each job" first, or ',
+      E('button', { className: 'settings-btn btn-magenta', style: { fontSize: 10, marginLeft: 4 }, onClick: () => remove(true) }, 'remove anyway')),
+    msg && E('span', { style: { fontSize: 10.5, color: 'var(--st-dim)' } }, msg));
+}
+
+function CatalogModelRow({ m, onGet, onPick, why, setWhy, onChanged }) {
+  return E('div', { style: { borderTop: '1px solid var(--st-line)', padding: '8px 2px' } },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+      E('span', { style: { fontFamily: 'var(--st-font)', fontSize: 12.5, fontWeight: 600, color: 'var(--st-text)' } }, m.label),
+      m.publisher && E('span', { style: { fontSize: 10.5, color: 'var(--st-dim)' } }, m.publisher),
+      m.friday_standard && E('span', { title: 'Recommended for this computer. Picked for you only at first setup; never after.',
+        style: { fontSize: 9.5, color: 'var(--st-accent)', border: '1px solid var(--st-accent-soft)', borderRadius: 4, padding: '1px 6px' } },
+        fridayName() + '’s standard'),
+      m.installed && E('span', { style: { fontSize: 9.5, color: 'var(--st-ok)' } }, 'installed'),
+      E('span', { style: { fontSize: 9.5, color: _LIC_SKIN[m.licence_class] || 'var(--st-dim)' },
+        title: m.licence || 'licence not stated' }, (m.licence_class || 'unknown') + (m.licence ? ' · ' + m.licence : '')),
+      E('span', { style: { fontSize: 9.5, color: m.telemetry === 'none' ? 'var(--st-ok)' : 'var(--st-danger)' } },
+        m.telemetry === 'none' ? 'phones home: no' : 'phones home: ' + m.telemetry),
+      m.gated && E('span', { style: { fontSize: 9.5, color: 'var(--st-warn)' } }, 'gated repository'),
+      m.generation_note && E('span', { style: { fontSize: 9.5, color: 'var(--st-faint)' } }, m.generation_note)),
+    m.kv_note && E('div', { style: { fontSize: 10, color: 'var(--st-warn)', marginTop: 2 } }, m.kv_note),
+    (m.files || []).map(f => E(CatalogFileRow, { key: f.file, m, f, onGet, onPick, why, setWhy })),
+    m.installed && E(InstalledModelActions, { m, onChanged }));
+}
+
+function ModelCatalogSection({ onGet, onPick, onPretend }) {
+  const [cat, setCat] = useState(null);
+  const [err, setErr] = useState('');
+  const [q, setQ] = useState('');
+  const [fitFilter, setFitFilter] = useState('all');
+  const [licFilter, setLicFilter] = useState('all');
+  const [why, setWhy] = useState(null);
+  const [numbers, setNumbers] = useState(false);
+  const [pretend, setPretend] = useState({ vram: '', ram: '' });
+  const [anyId, setAnyId] = useState('');
+  const [pasted, setPasted] = useState([]);
+  const [checking, setChecking] = useState(false);
+  const [pastedMsg, setPastedMsg] = useState('');
+
+  const load = (body) => {
+    setErr('');
+    const p = body
+      ? apiFetch('/api/models/whatif', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      : apiFetch('/api/models/catalog?beside=1');
+    p.then(r => r.json()).then(d => {
+      if (!d || d.status !== 'ok') throw new Error((d && (d.error || d.message)) || 'the catalogue did not load');
+      setCat(d);
+    }).catch(e => setErr(String(e && e.message || e)));
+  };
+  useEffect(() => { load(null); }, []);
+
+  const checkAny = () => {
+    const id = anyId.trim();
+    if (!id) return;
+    setChecking(true); setPastedMsg('');
+    apiFetch('/api/models/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: id }) })
+      .then(r => r.json()).then(d => {
+        if (d.status !== 'ok') { setPastedMsg(d.error || 'could not check it'); return; }
+        setPasted(prev => [d.model].concat(prev.filter(p => p.id !== d.model.id)));
+        setAnyId('');
+      }).catch(e => setPastedMsg(String(e))).finally(() => setChecking(false));
+  };
+
+  const sim = !!(cat && cat.machine && cat.machine.simulated);
+  const models = (cat ? cat.models : []).concat(pasted);
+  const needle = q.trim().toLowerCase();
+  const shown = models.filter(m => {
+    if (needle && !(m.label + ' ' + (m.publisher || '') + ' ' + m.id).toLowerCase().includes(needle)) return false;
+    if (fitFilter !== 'all' && !(m.files || []).some(f => f.verdict === fitFilter)) return false;
+    if (licFilter !== 'all' && m.licence_class !== licFilter) return false;
+    return true;
+  });
+  const mc = cat && cat.machine;
+  const chip = (cur, set, val, label) => E('button', { key: val, className: 'settings-btn' + (cur === val ? ' active' : ''),
+    'aria-pressed': cur === val, onClick: () => set(val), style: { fontSize: 10, padding: '1px 8px' } }, label);
+
+  return E(StSection, { title: 'Find a model',
+    desc: 'Every model ' + fridayName() + ' can run here, with a verdict for this computer on each file. Pick anything: bigger, smaller, or several. Nothing about this computer leaves it.' },
+    mc && E('div', { style: { marginBottom: 10 } },
+      E('div', { style: { fontSize: 12, color: 'var(--st-text)', fontFamily: 'var(--st-font)' } },
+        'This computer: ' + mc.line + ' · ' + mc.tier,
+        sim && E('span', { style: { marginLeft: 8, fontSize: 9.5, color: 'var(--st-warn)', border: '1px solid var(--st-warn)', borderRadius: 4, padding: '1px 6px' } }, 'SIMULATED')),
+      E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' } },
+        E('button', { className: 'settings-btn', onClick: () => setNumbers(!numbers), style: { fontSize: 10 } }, numbers ? 'Hide the numbers' : 'Show me the numbers'),
+        E('span', { style: { fontSize: 10.5, color: 'var(--st-dim)' } }, 'Pretend I have'),
+        E('input', { value: pretend.vram, onChange: e => setPretend({ ...pretend, vram: e.target.value }), placeholder: 'GB of graphics memory',
+          style: { width: 150, fontSize: 10.5, background: 'rgba(255,255,255,0.05)', color: 'var(--st-text)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '2px 6px' } }),
+        E('input', { value: pretend.ram, onChange: e => setPretend({ ...pretend, ram: e.target.value }), placeholder: 'GB of RAM',
+          style: { width: 90, fontSize: 10.5, background: 'rgba(255,255,255,0.05)', color: 'var(--st-text)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '2px 6px' } }),
+        E('button', { className: 'settings-btn', style: { fontSize: 10 }, onClick: () => { const body = { vram_gb: pretend.vram || null, ram_gb: pretend.ram || null }; load(body); onPretend && onPretend(body); } }, 'Recalculate'),
+        sim && E('button', { className: 'settings-btn', style: { fontSize: 10 }, onClick: () => { setPretend({ vram: '', ram: '' }); load(null); onPretend && onPretend(null); } }, 'Back to this computer')),
+      numbers && E('div', { style: { marginTop: 6, fontFamily: 'var(--st-mono)', fontSize: 10.5, color: 'var(--st-label)' } },
+        mc.gpu && E('div', null, 'Graphics: ' + mc.gpu.total_mib + ' MiB total − 1024 MiB reserve − ' + mc.gpu.baseline_mib + ' MiB held by the display and others = ' + mc.gpu.available_mib + ' MiB for models' + (cat.pinned_vram_mib ? ' (' + cat.pinned_vram_mib + ' MiB of that is loaded now)' : '')),
+        E('div', null, 'RAM: ' + mc.ram.total_mib + ' MiB total − ' + mc.ram.os_reserve_mib + ' MiB for the OS; ' + mc.ram.available_target_mib + ' MiB for models inside the 65% target'),
+        E('div', null, 'Disk: ' + Math.round((mc.disk_free_mib || 0) / 1024) + ' GB free; ' + fridayName() + ' keeps 10 GB free'),
+        E('div', null, 'Profile: ' + mc.profile_path),
+        cat.calibration && E('div', null, 'Speed estimates: ' + (cat.calibration.basis === 'calibrated' ? 'calibrated ×' + cat.calibration.factor + ' from your ' + cat.calibration.from + ' run' : 'uncalibrated until a model is measured here')))),
+    E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 } },
+      E('input', { value: q, onChange: e => setQ(e.target.value), placeholder: 'Search by name or publisher', 'aria-label': 'Search models',
+        style: { flex: '1 1 200px', fontSize: 11, background: 'rgba(255,255,255,0.05)', color: 'var(--st-text)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '3px 8px' } }),
+      E('span', { style: { fontSize: 10, color: 'var(--st-dim)' } }, 'Fit'),
+      chip(fitFilter, setFitFilter, 'all', 'any'), chip(fitFilter, setFitFilter, 'runs_well', 'runs well'),
+      chip(fitFilter, setFitFilter, 'tight', 'tight'), chip(fitFilter, setFitFilter, 'partial', 'partly on CPU'),
+      E('span', { style: { fontSize: 10, color: 'var(--st-dim)' } }, 'Licence'),
+      chip(licFilter, setLicFilter, 'all', 'any'), chip(licFilter, setLicFilter, 'permissive', 'permissive'),
+      chip(licFilter, setLicFilter, 'restricted', 'restricted')),
+    err && E('div', { style: { fontSize: 11, color: 'var(--st-danger)' } }, err),
+    !cat && !err && E('div', { style: { fontSize: 11, color: 'var(--st-dim)' } }, 'Working out what fits…'),
+    shown.map(m => E(CatalogModelRow, { key: m.id, m, onGet, onPick, why, setWhy, onChanged: () => load(null) })),
+    cat && !shown.length && E('div', { style: { fontSize: 11, color: 'var(--st-dim)', padding: '8px 2px' } }, 'Nothing matches those filters.'),
+    E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' } },
+      E('input', { value: anyId, onChange: e => setAnyId(e.target.value), placeholder: 'Any model: paste a Hugging Face id (publisher/model)', 'aria-label': 'Any model',
+        onKeyDown: e => { if (e.key === 'Enter') checkAny(); },
+        style: { flex: '1 1 260px', fontSize: 11, background: 'rgba(255,255,255,0.05)', color: 'var(--st-text)', border: '1px solid var(--st-line)', borderRadius: 4, padding: '3px 8px' } }),
+      E('button', { className: 'settings-btn', onClick: checkAny, disabled: checking, style: { fontSize: 10 } }, checking ? 'Checking…' : 'Check it'),
+      pastedMsg && E('span', { style: { fontSize: 10.5, color: 'var(--st-warn)' } }, pastedMsg)));
 }
 
 const _MODALITY_HEADING = {
@@ -48710,6 +49343,30 @@ function SettingsTabIntelligence({ s, save }) {
   const [fetchFor, setFetchFor] = useState(null);   // model_id or null
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState('');
+  // Which file of a model the catalogue's Get asked for, and the pasted
+  // model's own download spec when it is not on the shortlist.
+  const [fetchPick, setFetchPick] = useState(null);
+  // The stack preview: the seats resident now, plus files ticked in the
+  // catalogue. Picks are ids with a packing, never downloads.
+  const residentPicks = Object.entries((d && d.residency_reading && d.residency_reading.seats) || {})
+    .filter(([role, s]) => s && s.model_id && s.status === 'pinned')
+    .map(([role, s]) => ({ id: s.model_id, label: s.model_id, kind: 'text', role }));
+  const [stackPicks, setStackPicks] = useState([]);
+  const [stackPretend, setStackPretend] = useState(null);
+  const onCatalogPick = (m, f) => setStackPicks(prev =>
+    prev.some(p => p.id === m.id) ? prev : prev.concat([{ id: m.id, label: m.label, packing: f.packing, kind: 'text' }]));
+  const onRemovePick = (p) => setStackPicks(prev => prev.filter(x => x.id !== p.id));
+  const allPicks = residentPicks.filter(r => !stackPicks.some(p => p.id === r.id)).concat(stackPicks);
+  const onCatalogGet = (m, f) => {
+    if (m.source === 'pasted') {
+      setFetchPick({ repo: (m.repo_url || '').replace('https://huggingface.co/', ''), file: f.file,
+        bytes: f.bytes, sha256: f.sha256, label: m.label, licence: m.licence });
+      setFetchFor(m.id);
+      return;
+    }
+    setFetchPick({ packing: f.packing });
+    setFetchFor(m.id);
+  };
 
   /* CONFIRM FROM THE FAST ROUTE, NOT THE SLOW ONE.
      Reported as "nothing changed when I picked Opus 5.5 for either seat". The
@@ -48776,7 +49433,24 @@ function SettingsTabIntelligence({ s, save }) {
     const modelId = card.model_id;
     const modality = (card.row || {}).modality;
     setFetching(true);
-    if (modality === 'text') {
+    if ((card.row || {}).fetch === 'download') {
+      // A GGUF by URL: resumable, sha256-verified, registered with the engine
+      // that serves it (routes/models_screen.py). This is how the standard
+      // brain arrives; progress shows in the orb and in this section.
+      apiFetch('/api/models/download', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ model_id: modelId }, fetchPick || {})),
+      }).then(r => r.json()).then(j => {
+        if (j && j.status === 'refused') {
+          setFetchMsg('Not started: ' + (j.error || 'refused'));
+        } else {
+          setFetchMsg('Downloading ' + modelId + ' — it resumes if interrupted and is ' +
+            'checked against the publisher\'s checksum before it counts as installed.');
+          setTimeout(reload, 6000);
+        }
+      }).catch(e => setFetchMsg('Could not start the download: ' + e))
+        .finally(() => { setFetching(false); setFetchFor(null); });
+    } else if (modality === 'text') {
       // The ONE automated fetch path that exists today (headroom.md §8.2):
       // Ollama artifacts. HR10 -- this reports "pulling", not "installed";
       // the row only reads installed once reload() sees it in the store.
@@ -48807,16 +49481,22 @@ function SettingsTabIntelligence({ s, save }) {
     setSavingMode(id);
     apiFetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: { model_routing: { mode: id } } }),
-    }).then(r => r.json()).then(() => apiFetch('/api/settings'))
-      .then(r => r.json()).then(d => {
-        const got = ((d || {}).settings || {}).model_routing || {};
-        if ((got.mode || '') !== id) {
-          fridayToast('That mode did not stick — the server still has ' + (got.mode || 'nothing') + '.');
+      body: JSON.stringify({ owner_action: 'routing_mode', settings: { model_routing: { mode: id } } }),
+    }).then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        // The save answers with the settings it wrote; that is the truth, not
+        // a second read that can race other readers.
+        if (!ok || !d || d.status !== 'ok') {
+          fridayToast('The mode was not saved: ' + ((d && (d.message || d.error)) || 'the server refused it') + '.');
           return;
         }
+        const got = ((d.settings || {}).model_routing || {}).mode || '';
+        if (got !== id) {
+          fridayToast('The server kept ' + (got || 'no mode') + ' instead of ' + id + '.');
+        }
         reload();
-      }).catch(() => {}).finally(() => setSavingMode(null));
+      }).catch(() => fridayToast('Could not reach the server to save the mode.'))
+      .finally(() => setSavingMode(null));
   };
 
   return E('div', null,
@@ -48897,6 +49577,8 @@ function SettingsTabIntelligence({ s, save }) {
       E(AutoRouterControls, { s: s || {}, save: save, orReady: true }),
 
     // headroom.md §8.2: what this machine can run, measured.
+    E(StackSection, { picks: allPicks, onRemovePick, pretend: stackPretend }),
+    E(ModelCatalogSection, { onGet: onCatalogGet, onPick: onCatalogPick, onPretend: setStackPretend }),
     E(LocalModelsSection, {
       lm: d.local_models || {}, fetchFor: fetchFor, setFetchFor: setFetchFor,
       confirmFetch: confirmFetch, fetching: fetching, fetchMsg: fetchMsg,
@@ -50281,7 +50963,6 @@ function SettingsTabPrivacy({
     value: (s.model_routing || {}).vault_local_only !== false,
     onChange: () => save({
       model_routing: {
-        ...(s.model_routing || {}),
         vault_local_only: (s.model_routing || {}).vault_local_only === false
       }
     }),
@@ -50304,6 +50985,9 @@ function SettingsTabPrivacy({
     title: "Privacy check",
     desc: ("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")
   }, /*#__PURE__*/React.createElement(PrivacyCheckLayers, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "File access",
+    desc: "Which files and folders cloud models may read when " + fridayName() + " opens them."
+  }, /*#__PURE__*/React.createElement(FileAccessPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Fonts"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Load fonts from Google Fonts",
@@ -50476,6 +51160,120 @@ function SettingsTabPrivacy({
 // loading" or "the download is missing". A switch reading ON while the gate is
 // in fact keyword-only would be the same class of lie the approval log exists
 // to stop.
+// Settings › Privacy › File access: which files and folders cloud models may
+// read when Friday opens them. Lists every grant with its status, adds one
+// (the Add click is the owner's approval) and removes one, all through
+// /api/privacy/file-grants. A line that grants nothing (quarantined or
+// unverified) is listed but has no Remove. An old permission that was set
+// aside shows its one question here; Re-grant raises the normal approval card.
+function FileAccessPanel() {
+  const E = React.createElement;
+  const [data, setData] = useState(null);
+  const [path, setPath] = useState('');
+  const [kind, setKind] = useState('file');
+  const [days, setDays] = useState(7);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => apiFetch('/api/privacy/file-grants').then(r => r.json()).then(setData).catch(() => setMsg('Could not read file permissions.')), []);
+  useEffect(() => { load(); }, [load]);
+  const post = (url, body) => apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(r => r.json().then(d => ({ ok: r.ok, d })));
+  const add = () => {
+    const p = (path || '').trim();
+    if (!p) { setMsg('Type the path of a file or folder.'); return; }
+    setBusy(true);
+    setMsg('');
+    const body = kind === 'folder' ? { path: p, scope: 'folder', expiry_days: days } : { path: p, scope: 'file' };
+    post('/api/privacy/file-grants', body).then(({ ok, d }) => {
+      if (ok && d && d.status === 'ok') {
+        const g = d.grant || {};
+        setMsg('Allowed: ' + (g.path || p) + (g.findings_summary ? ' (' + g.findings_summary + ')' : '') + '.');
+        setPath('');
+        load();
+      } else setMsg((d && (d.error || d.message)) || 'The permission was not created.');
+    }).catch(() => setMsg('The permission was not created.')).finally(() => setBusy(false));
+  };
+  const remove = id => post('/api/privacy/file-grants/' + encodeURIComponent(id) + '/revoke')
+    .then(() => { setMsg('Removed. Cloud models no longer get it.'); load(); }).catch(() => setMsg('Could not remove it.'));
+  const regrant = id => post('/api/privacy/file-grants/notices/' + encodeURIComponent(id) + '/regrant')
+    .then(({ ok, d }) => { setMsg(ok ? 'A card is waiting for your approval.' : (d && d.message) || 'Could not offer it again.'); load(); })
+    .catch(() => setMsg('Could not offer it again.'));
+  const dismiss = id => post('/api/privacy/file-grants/notices/' + encodeURIComponent(id) + '/dismiss')
+    .then(({ ok, d }) => { setMsg(ok ? 'Done. Nothing else changed.' : (d && d.message) || 'Could not close that notice.'); load(); })
+    .catch(() => setMsg('Could not set it aside.'));
+  const startFresh = () => post('/api/privacy/file-grants/start-fresh')
+    .then(({ ok, d }) => { setMsg(ok ? 'A card is waiting for your approval. Nothing changes until you approve it on screen.' : (d && d.message) || 'Could not start fresh.'); load(); })
+    .catch(() => setMsg('Could not start fresh.'));
+  const rows = (data && data.rows) || [];
+  const notices = (data && data.notices) || [];
+  const st = (data && data.status) || {};
+  const said = { valid: 'Valid', paused: 'Paused', changed: 'File changed', missing: 'File missing', expired: 'Expired', quarantined: 'Quarantined', unverified: 'Unverified' };
+  const hue = { valid: '#00ff80', paused: '#f59e0b', changed: '#f59e0b', missing: '#f59e0b', expired: 'rgba(255,255,255,0.45)', quarantined: '#ff8080', unverified: '#ff8080' };
+  const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
+  const live = r => r.status !== 'quarantined' && r.status !== 'unverified';
+  const typeWord = t => t === 'folder' ? 'Folder ' : t === 'glob' ? 'Pattern ' : 'File ';
+  const when = r => r.expires_ts ? 'until ' + new Date(r.expires_ts * 1000).toLocaleDateString() : (r.type === 'file' && live(r) ? 'pinned to the file as it was' : '');
+  return E('div', { 'data-testid': 'file-access-panel' },
+    E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) },
+      'Cloud models never see a file’s contents unless you allow that file or folder here. A file is pinned to what it holds when you allow it; a folder lasts up to 30 days. Your never-send list still applies.'),
+    st.suspended ? E('div', { role: 'alert', style: { fontSize: 11, color: 'rgba(255,210,140,0.9)', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, padding: '8px 10px', marginBottom: 10, lineHeight: 1.6 } },
+      'Every file permission is paused: a line in the permissions record could not be verified, and it may have been a never-send mark. Permissions stay paused while it is there.') : null,
+    st.suspended ? E('div', { className: 'card', 'data-testid': 'file-access-start-fresh', style: { padding: 8, marginBottom: 10, border: '1px solid rgba(245,158,11,0.3)' } },
+      E('div', { style: Object.assign({}, muted, { color: 'rgba(255,255,255,0.7)' }) },
+        'The old permissions file, which has a line no current key signed, is set aside unchanged; you start with no file permissions and grant again. Your never-send marks are kept.'),
+      E('button', { className: 'settings-btn', style: { fontSize: 11, marginTop: 6 }, onClick: startFresh }, 'Start file access fresh')) : null,
+    notices.map(n => E('div', { key: n.id, className: 'card', 'data-testid': 'file-access-notice', style: { padding: 8, marginBottom: 6, border: '1px solid rgba(245,158,11,0.3)' } },
+      E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } }, n.message),
+      n.path ? E('div', { style: Object.assign({}, muted, { overflowWrap: 'anywhere' }) }, typeWord(n.type) + n.path) : null,
+      n.resolves ? E('div', { style: muted }, n.resolves) : null,
+      E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+        n.reason === 'retired_key' ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => regrant(n.id) }, 'Re-grant') : null,
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => dismiss(n.id) }, n.reason === 'retired_key' ? 'Leave it off' : 'Hide this notice')))),
+    !data ? E('div', { style: muted }, 'Reading file permissions…')
+      : rows.length === 0 ? E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, 'No file permissions. Cloud models get no file’s contents.')
+      : rows.map(r => E('div', { key: r.status + ':' + r.id, className: 'card', 'data-testid': 'file-access-row', 'data-status': r.status, style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+        E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5, minWidth: 0, overflowWrap: 'anywhere' } },
+          E('span', { style: { fontSize: 10, color: hue[r.status] || '#ddd', fontFamily: 'JetBrains Mono, monospace', marginRight: 6 } }, said[r.status] || r.status),
+          typeWord(r.type), E('b', null, r.path || '(path unknown)'),
+          E('div', { style: muted }, [when(r), r.summary, r.why].filter(Boolean).join(' · '))),
+        live(r) ? E('button', { className: 'settings-btn', style: { fontSize: 11, color: '#ff8080' }, onClick: () => remove(r.id) }, 'Remove') : null)),
+    E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Add'),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' } },
+      E('input', { className: 'input', 'aria-label': 'Path of a file or folder', value: path, onChange: e => setPath(e.target.value), placeholder: 'Path of a file or folder', style: { flex: 1, minWidth: 200 } }),
+      E('select', { 'aria-label': 'File or folder', value: kind, onChange: e => setKind(e.target.value), style: { fontSize: 12 } },
+        E('option', { value: 'file' }, 'File'), E('option', { value: 'folder' }, 'Folder')),
+      kind === 'folder' ? E('select', { 'aria-label': 'Lasts', value: days, onChange: e => setDays(Number(e.target.value)), style: { fontSize: 12 } },
+        [1, 7, 30].map(d => E('option', { key: d, value: d }, d === 1 ? '1 day' : d + ' days'))) : null,
+      E('button', { className: 'settings-btn', style: { fontSize: 12 }, disabled: busy, onClick: add }, busy ? 'Adding…' : 'Add')),
+    E('div', { style: Object.assign({}, muted, { marginTop: 6 }) },
+      'By voice: “what files can the cloud see?”, “let it read my CV”, “take that away”. Asking by voice puts a card on screen; only your click there allows it.'),
+    msg ? E('div', { role: 'status', style: Object.assign({}, muted, { marginTop: 6, color: '#9fd' }) }, msg) : null);
+}
+// The file-access approval card: one card for every path a turn asked for.
+// Each row is what Friday found on disk, not what was asked for. Approve
+// allows exactly the rows shown, and only this click can approve it (voice and
+// text replies can only decline it).
+function FileGrantRequestCard({ a, busy, onDecide }) {
+  const E = React.createElement;
+  const p = a.payload || {};
+  const items = p.items || [];
+  const skipped = p.skipped || [];
+  return E('div', { className: 'card', style: { marginBottom: 6, padding: 8 }, 'data-testid': 'approval-card', 'data-approval-id': a.approval_id, 'data-kind': 'file_grant_request' },
+    E('div', { style: { fontSize: 12, color: '#ddd' } }, a.title),
+    p.reason ? E('div', { style: { fontSize: 11, color: '#999', marginTop: 2 } }, 'Asked because: ' + p.reason) : null,
+    E('ul', { 'data-testid': 'file-grant-items', style: { fontSize: 11, color: '#b8c7dc', margin: '6px 0 0', padding: '0 0 0 16px', maxHeight: 220, overflowY: 'auto' } },
+      items.map((it, i) => E('li', { key: i, style: { overflowWrap: 'anywhere' } },
+        E('b', null, (it.type === 'folder' ? 'Folder ' : 'File ') + it.path),
+        it.summary ? E('div', { style: { color: '#7f93ad' } }, it.summary) : null))),
+    skipped.length ? E('div', { style: { fontSize: 10, color: '#ff8080', marginTop: 4 } },
+      'Not included: ' + skipped.map(s => (s.path || '?') + ' (' + s.error + ')').join('; ')) : null,
+    E('div', { style: { fontSize: 10, color: '#7f93ad', marginTop: 4 } }, a.description),
+    E(ApprovalProvenance, { p: a.provenance }),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: '#00ff80' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'approve') },
+        items.length === 1 ? 'Allow it' : 'Allow all ' + items.length),
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: '#ff0080' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'deny') }, 'Decline')));
+}
 // Scheduled jobs: what they may do on their own. A scheduled or background job
 // can take an outward action (change a calendar, schedule a post, run a
 // non-read command, a connector's send) only with a grant made here: named
@@ -50922,7 +51720,69 @@ function TrackingPanel({
     onClick: () => commit({
       click_method: o.k
     })
-  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
+  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Snap and big mode'), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Snap to targets",
+    value: cfg.snap !== false,
+    onChange: () => commit({
+      snap: cfg.snap === false
+    }),
+    desc: "The cursor locks onto the nearest button, card, link or orb within reach and holds it until you move well away, so neighbours never flicker. The locked target is ringed; a pinch hits it, not where your fingers drift."
+  }), cfg.snap !== false ? sl('snap_radius', 'Snap reach', 'How close the cursor must come to a target to lock on. It lets go at 1.6 times this distance.', 16, 96, 2, v => Math.round(v) + ' px') : null, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Two-hand zoom",
+    value: !!cfg.two_hand_zoom,
+    onChange: () => commit({
+      two_hand_zoom: !cfg.two_hand_zoom
+    }),
+    desc: "Pinch with both hands and move them apart to zoom the galaxy, the 3D views and images. Tracking a second hand costs CPU; off unless you use it. Takes effect the next time hand tracking starts."
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-label)',
+      margin: '10px 0 4px',
+      fontWeight: 500
+    }
+  }, "Big mode"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 6,
+      lineHeight: 1.6
+    }
+  }, "Large targets, fewer things per screen, and the primary actions as big cards, for driving the app by hand. Automatic turns it on with hand tracking and off with it. Anything that sends, deletes or spends needs a held pinch or a spoken yes while it is on; approval cards are unchanged."), /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Big mode",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, [{
+    k: 'auto',
+    l: 'With hand tracking'
+  }, {
+    k: 'on',
+    l: 'Always'
+  }, {
+    k: 'off',
+    l: 'Never'
+  }].map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": (s && s.big_mode || 'auto') === o.k,
+    className: `settings-btn ${(s && s.big_mode || 'auto') === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      if (typeof window !== 'undefined' && window.FridayHandCursor) window.FridayHandCursor.setBigMode(o.k);
+      save({
+        big_mode: o.k
+      });
+    }
+  }, o.l))), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: 'var(--st-dim)',
@@ -52599,10 +53459,10 @@ function AutoRouterControls({ s, save, orReady, compact }) {
   const TIERS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Very high'], ['max', 'Max']];
   const mr = s.model_routing || {};
   const tier = mr.auto_router_cost_tier || 'low';
+  // Only the key being edited: the server deep-merges model_routing, and a
+  // block spread from this page's copy would carry a stale routing mode.
   const setKey = (k, v) => {
-    const next = Object.assign({}, mr);
-    next[k] = v;
-    save({ model_routing: next });
+    save({ model_routing: { [k]: v } });
   };
   const pill = (active, label, onClick, title) => React.createElement("button", {
     key: label,
@@ -52997,6 +53857,30 @@ function SettingsTabSigning() {
 // window on her own profile (services/browser_session.py), never the owner's
 // normal browser. Sign-ins made in that window stay in that profile until they
 // are cleared here. Every route behind this is refused off this computer.
+/* Muted notification kinds (the tray's "Mute this kind"), reversible here.
+   Approvals can never be muted; muted kinds go to the activity log. */
+function SettingsNotificationMutes() {
+  const [mutes, setMutes] = React.useState(null);
+  const load = () => apiFetch('/api/settings').then(r => r.json())
+    .then(d => setMutes(((d || {}).settings || {}).notification_mutes || [])).catch(() => setMutes([]));
+  React.useEffect(() => { load(); }, []);
+  const unmute = m => {
+    const [kind, source] = String(m).split('|');
+    apiFetch('/api/notifications/mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: kind, source: source || '', unmute: true }) })
+      .then(r => r.json()).then(d => setMutes((d && d.mutes) || [])).catch(() => {});
+  };
+  return React.createElement(StSection, { title: 'Muted notifications' },
+    React.createElement('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginBottom: 8, lineHeight: 1.5 } },
+      'Kinds you muted from the tray go to the activity log instead. Approvals always reach you and cannot be muted.'),
+    mutes === null ? null : mutes.length === 0
+      ? React.createElement('div', { className: 'fridayui-muted', style: { fontSize: 11 } }, 'Nothing is muted.')
+      : mutes.map(m => React.createElement('div', { key: m, className: 'notif-mute-row',
+          style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, padding: '3px 0' } },
+          React.createElement('span', null, String(m).replace('|', ' \u00b7 ')),
+          React.createElement('button', { className: 'settings-btn', onClick: () => unmute(m) }, 'Unmute'))));
+}
+
 function SettingsTabBrowser() {
   const [st, setSt] = useState(null);
   const [msg, setMsg] = useState('');
@@ -53578,7 +54462,7 @@ function ScheduledCloudSection() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, "The morning news, evening front page, afternoon briefing, daily creation and heartbeat run on a model on this PC when it has one, at no cost. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
+  }, "The daily creation and heartbeat run on a model on this PC when it has one, at no cost. News (the front pages and briefings) always runs on this PC and waits for it; it never uses a cloud model. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -54971,7 +55855,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
@@ -55673,6 +56557,8 @@ function useApprovalFeed() {
 }
 // Approve or decline from any page. Exactly one decision wins (the server
 // decides under one lock); a page that lost the race is told what happened.
+// decided_by 'owner:ui' marks a click on this page: some cards (file access)
+// can be approved by nothing else.
 function fridayDecideApproval(id, decision) {
   return fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
     method: 'POST',
@@ -55680,7 +56566,8 @@ function fridayDecideApproval(id, decision) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      decision
+      decision,
+      decided_by: 'owner:ui'
     })
   }).then(r => r.json()).then(d => {
     if (d && d.ok) fridayApprovalFeed.drop(id);
@@ -55926,6 +56813,12 @@ function ApprovalCardBody({
   onDecide
 }) {
   // The share card has its own body: the exact payload, edit, and four choices.
+  // A file-access card lists every path it would allow; see FileGrantRequestCard.
+  if (a && a.kind === 'file_grant_request') return /*#__PURE__*/React.createElement(FileGrantRequestCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
   if (a && a.kind === 'local_context_share') return /*#__PURE__*/React.createElement(LocalContextShareCard, {
     a: a,
     busy: busy,
@@ -56817,6 +57710,7 @@ function App() {
         settings: patch
       };
       if (opts.personality !== undefined) body.personality = opts.personality;
+      if (opts.ownerAction) body.owner_action = opts.ownerAction;
       const r = await apiFetch('/api/settings', {
         method: 'POST',
         headers: {
@@ -59022,15 +59916,81 @@ function App() {
     }
     setNotifs(prev => prev.filter(n => (n.id || '') !== id));
   };
+  // Clear all keeps pending approvals: they are decisions, not news.
   const clearAllNotifs = () => {
     notifs.forEach(n => {
-      if (n.id) {
-        dismissedNotifIds.current.add(n.id);
-        _notifPost('/api/notifications/dismiss', n.id);
-      }
+      if (n.id && n.kind !== 'approval_pending') dismissedNotifIds.current.add(n.id);
     });
-    setNotifs([]);
+    apiFetch('/api/notifications/clear-all', { method: 'POST' }).catch(() => {});
+    setNotifs(prev => prev.filter(n => n.kind === 'approval_pending'));
   };
+  // "Mute this kind": that kind goes to the activity log (Settings > General
+  // lists it to unmute). Approvals cannot be muted.
+  const muteNotifKind = n => {
+    apiFetch('/api/notifications/mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: n.kind || '', source: n.source || '' }) }).catch(() => {});
+    setNotifs(prev => prev.filter(x => !(x.kind === n.kind && x.source === n.source)));
+  };
+  // Cards are grouped by job, then kind, then source (the server sets each
+  // card's `group`). A group of two or more cards, and every memory-proposal
+  // group, shows as one group card; a group of one shows as its own card.
+  const notifGroupsOf = list => {
+    const m = new Map();
+    list.forEach(n => {
+      const g = n.group || n.id;
+      if (!m.has(g)) m.set(g, { key: g, memory: g === 'memory_proposals', items: [] });
+      m.get(g).items.push(n);
+    });
+    return [...m.values()].filter(g => g.memory || g.items.length > 1);
+  };
+  const notifGroupedIds = list => new Set(notifGroupsOf(list).flatMap(g => g.items.map(n => n.id)));
+  // Clear group: every card in it except a pending approval, which stays.
+  const clearNotifGroup = g => {
+    g.items.forEach(n => {
+      if (n.id && n.kind !== 'approval_pending') dismissedNotifIds.current.add(n.id);
+    });
+    apiFetch('/api/notifications/clear-group', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: g.key }) }).catch(() => {});
+    setNotifs(prev => prev.filter(n => n.group !== g.key || n.kind === 'approval_pending'));
+  };
+  // Keep or skip one memory proposal: its own approval decides it.
+  const decideMemoryItem = (n, keep) => {
+    const aid = n.meta && n.meta.approval_id;
+    if (!aid) return;
+    dismissedNotifIds.current.add(n.id);
+    setNotifs(prev => prev.filter(x => x.id !== n.id));
+    Promise.resolve(fridayDecideApproval(aid, keep ? 'approve' : 'deny')).catch(() => {});
+  };
+  const notifGroupCards = list => notifGroupsOf(list).map(g => {
+    const k = g.items.length;
+    const title = g.memory ? k + ' memory proposal' + (k === 1 ? '' : 's') + ' to keep or skip'
+      : fridayTM(g.items[0].title || 'Notifications') + ' \u00b7 ' + k + ' cards';
+    const clearable = g.items.some(n => n.kind !== 'approval_pending');
+    return React.createElement("div", { key: 'grp_' + g.key, className: "notif-group",
+      style: { padding: '8px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: 12 } },
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+        React.createElement("div", { className: "notif-group-title",
+          style: { flex: 1, minWidth: 0, fontFamily: 'Inter', fontWeight: 500, color: '#fff' } }, title),
+        clearable && React.createElement("button", { className: "notif-open-btn notif-clear-group",
+          onClick: e => { e.stopPropagation(); clearNotifGroup(g); },
+          title: "Clear this group (approvals stay)" }, "Clear group")),
+      g.items.map(n => React.createElement("div", { key: 'gi_' + n.id, className: "notif-group-item",
+        style: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, color: 'rgba(255,255,255,0.78)' } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          fridayTM(g.memory ? (n.meta && n.meta.detail) || n.body || n.title : n.title || 'Notification'),
+          n.count > 1 && React.createElement("span", { className: "notif-count",
+            style: { fontFamily: 'JetBrains Mono', fontSize: 10, color: 'rgba(255,255,255,0.55)', marginLeft: 6 } },
+            '\u00d7' + n.count)),
+        g.memory ? [
+          React.createElement("button", { key: 'keep', className: "notif-open-btn notif-keep",
+            onClick: e => { e.stopPropagation(); decideMemoryItem(n, true); } }, "Keep"),
+          React.createElement("button", { key: 'skip', className: "notif-open-btn notif-skip",
+            onClick: e => { e.stopPropagation(); decideMemoryItem(n, false); } }, "Skip")
+        ] : n.kind !== 'approval_pending' && React.createElement("button", { "aria-label": "Dismiss",
+          onClick: e => { e.stopPropagation(); clearNotif(n.id); },
+          style: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer',
+                   fontSize: 10, padding: '0 2px', lineHeight: 1 }, title: "Dismiss" }, "\u2715"))));
+  });
   const markNotifRead = id => {
     setNotifs(prev => prev.map(n => (n.id || '') === id ? {
       ...n,
@@ -60224,7 +61184,8 @@ function App() {
     a[w.id] = w;
     return a;
   }, {});
-  const unread = notifs.filter(n => !n.read).length;
+  // The badge counts what needs the owner; FYI cards roll into the digest.
+  const unread = notifs.filter(n => !n.read && n.tier !== 'fyi').length;
   const runningTaskCount = bgTasks.filter(t => (t.status || 'running') === 'running').length;
   const bellBadgeCount = runningTaskCount > 0 ? runningTaskCount : unread;
   const sortedBgTasks = [...bgTasks].sort((a, b) => (b.created || 0) - (a.created || 0));
@@ -61817,10 +62778,17 @@ function App() {
       traceId: p.trace_id,
       taskId: p.task_id
     }));
-  })), notifs.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  })), notifs.length > 0 && notifGroupCards(notifs), notifs.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "notif-empty"
-  }, "No new notifications") : notifs.slice(0, 50).map((n, i) => {
+  }, "No new notifications") : [...notifs].filter(n => !notifGroupedIds(notifs).has(n.id)).sort((a, b) => (a.tier === 'fyi') - (b.tier === 'fyi')).slice(0, 50).map((n, i, arr) => {
     const key = n.id || `n_${i}`;
+    // The digest: FYI cards follow everything that needs the owner, under
+    // one header.
+    const digestHeader = n.tier === 'fyi' && (i === 0 || arr[i - 1].tier !== 'fyi')
+      && /*#__PURE__*/React.createElement("div", { key: 'digest-head', className: "notif-digest-header",
+        style: { padding: '6px 14px 2px', fontFamily: 'JetBrains Mono', fontSize: 9,
+                 letterSpacing: '0.08em', color: 'rgba(255,255,255,0.45)' } },
+        "DIGEST \u00b7 " + arr.filter(x => x.tier === 'fyi').length + " FOR YOUR INFORMATION");
     const isExpanded = !!notifCardExpanded[`notif_${key}`];
     const hasDetail = !!(n.detail || n.body || n.message && n.title && n.message !== n.title);
     // Resolve a deep-link target from the notification's `target` field,
@@ -61907,7 +62875,7 @@ function App() {
       }
     };
     const clickable = hasDetail || !!tgt;
-    return /*#__PURE__*/React.createElement("div", {
+    const row = /*#__PURE__*/React.createElement("div", {
       key: key,
       role: clickable ? 'button' : undefined,
       tabIndex: clickable ? 0 : undefined,
@@ -61945,7 +62913,10 @@ function App() {
         lineHeight: 1.4,
         fontWeight: n.read ? 400 : 500
       }
-    }, fridayTM(n.title || n.message || n.text || 'Notification')), n.time && /*#__PURE__*/React.createElement("div", {
+    }, fridayTM(n.title || n.message || n.text || 'Notification'), n.count > 1 && /*#__PURE__*/React.createElement("span", {
+      className: "notif-count",
+      style: { fontFamily: 'JetBrains Mono', fontSize: 10, color: 'rgba(255,255,255,0.55)', marginLeft: 6 }
+    }, "\u00d7" + n.count)), n.time && /*#__PURE__*/React.createElement("div", {
       style: {
         fontFamily: 'JetBrains Mono',
         fontSize: 10,
@@ -61968,7 +62939,17 @@ function App() {
         color: '#00d4ff',
         marginTop: 1
       }
-    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && /*#__PURE__*/React.createElement("button", { "aria-label": "Dismiss", 
+    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && n.kind && n.kind !== 'approval_pending' && /*#__PURE__*/React.createElement("button", {
+      "aria-label": "Mute this kind",
+      className: "notif-mute",
+      onClick: e => {
+        e.stopPropagation();
+        muteNotifKind(n);
+      },
+      style: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer',
+               fontSize: 10, padding: '0 2px', lineHeight: 1 },
+      title: "Mute this kind (unmute in Settings > General)"
+    }, "\uD83D\uDD15"), n.id && /*#__PURE__*/React.createElement("button", { "aria-label": "Dismiss", 
       onClick: e => {
         e.stopPropagation();
         clearNotif(n.id);
@@ -62025,6 +63006,7 @@ function App() {
         openCreationFolder();
       }
     }, "\uD83D\uDCC1 Open Folder")));
+    return digestHeader ? [digestHeader, row] : row;
   }));
   const shellSettings = /*#__PURE__*/React.createElement("div", {
     className: `settings-panel ${settingsOpen ? 'open' : ''}`
@@ -63033,13 +64015,19 @@ function App() {
       /* Anything waiting on a decision takes the caption's place. Polled
          rather than pushed, because the widget must not depend on the React
          tree having mounted — in the PiP window it has not. */
+      var CAPTION_NEVER_DECIDES = ['file_grant_request', 'file_access_reset'];
       function pollApprovals() {
         if (approvalTimer) clearInterval(approvalTimer);
         var tick = function () {
           fetch('/api/approvals?status=pending')
             .then(function (r) { return r.json(); })
             .then(function (d) {
-              var list = (d && d.approvals) || [];
+              // A file-access or start-fresh card is decided only from its full
+              // card, where every path it would allow is listed; the caption
+              // never offers it.
+              var list = ((d && d.approvals) || []).filter(function (x) {
+                return CAPTION_NEVER_DECIDES.indexOf(x && x.kind) < 0;
+              });
               var a = list[0];
               body.classList.toggle('has-approval', !!a);
               if (a) {
@@ -63060,7 +64048,7 @@ function App() {
         if (!id) return;
         fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision: ok ? 'approve' : 'deny' })
+          body: JSON.stringify({ decision: ok ? 'approve' : 'deny', decided_by: 'owner:caption' })
         }).catch(function () {}).then(function () {
           body.classList.remove('has-approval');
         });

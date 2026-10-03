@@ -667,6 +667,21 @@ def serving() -> dict:
                 continue
     except Exception as e:
         _log.debug("serving(): arbiter view unavailable: %s", e)
+    if not out:
+        # Nothing owned or published: a seat started outside the Arbiter may be
+        # answering anyway. Adopt it (adopt-only) and read again, so every
+        # reader of serving() sees the seat that answers chat.
+        try:
+            from agent_friday.services import residency_arbiter as ra
+            if ra.adopt_live_seats():
+                arb = ra.get_arbiter()
+                for mid, entry in dict(getattr(getattr(arb, "llama", None), "procs", {}) or {}).items():
+                    try:
+                        out[str(mid)] = "http://127.0.0.1:%d" % int(entry[1])
+                    except Exception:
+                        continue
+        except Exception as e:
+            _log.debug("serving(): live adoption unavailable: %s", e)
     try:
         from agent_friday.routing.ollama_manager import get_manager
         mgr = get_manager()

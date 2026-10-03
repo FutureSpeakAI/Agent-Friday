@@ -81,8 +81,12 @@ class TestTheToggleIsWiredToTheGate:
         assert "(s.model_routing || {}).vault_local_only !== false" in _html()
 
     def test_the_save_preserves_the_rest_of_model_routing(self):
-        """_save_settings replaces model_routing wholesale, so the UI must spread."""
-        assert "...(s.model_routing || {})" in _html()
+        """_save_settings deep-merges model_routing (core._DEEP_MERGED_BLOCKS), so
+        the toggle sends only its own key. Spreading the page's copy of the block
+        would carry a stale routing mode back to the server."""
+        html = _html()
+        assert "...(s.model_routing || {})" not in html
+        assert "model_routing: {\n        vault_local_only:" in html.replace("\r\n", "\n")
 
 
 class TestPartialModelRoutingSaveKeepsItsSiblings:
@@ -98,14 +102,14 @@ class TestPartialModelRoutingSaveKeepsItsSiblings:
         identical reason on a different settings block)."""
         original = core._load_settings().get("model_routing")
         yield
-        core._save_settings({"model_routing": original or {}})
+        core._save_settings({"model_routing": original or {}}, owner_routing_change=True)
 
     def test_saving_one_key_does_not_reset_the_block(self, friday_dir, restore_model_routing):
         core._save_settings({"model_routing": {
             "mode": "local_preferred",
             "vault_local_only": True,
             "vault_cloud_fallback": "deny",
-        }})
+        }}, owner_routing_change=True)
         core._save_settings({"model_routing": {"vault_local_only": False}})
         mr = core._load_settings()["model_routing"]
         assert mr["vault_local_only"] is False

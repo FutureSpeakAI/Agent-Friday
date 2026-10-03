@@ -429,7 +429,7 @@ substring blocklist does not survive a shell that supports `;`.
 |---|---|---|---|---|---|
 | 1 | `services/worker_adapters/python_script_adapter.py:61-68` | **arbitrary Python; the prompt IS the source** | child process, same user | `env={**os.environ, "FRIDAY_WORKER": "1"}` — **every key.** *(Until v5.7.0 this also carried `FRIDAY_PASSWORD`, the vault KDF passphrase, because it was bootstrapped into `os.environ` from `start.bat`. It now lives in the keychain / a DPAPI file and is no longer inherited by default. The provider keys are unchanged.)* | wall-clock only |
 | 2 | `services/agent.py:1242-1261` `run_command` | arbitrary PowerShell | child process, same user | full (no `env=`) | 300 s |
-| 3 | `services/code_engine.py:56-57` | `claude --dangerously-skip-permissions` | new console, same user | full | **none** |
+| 3 | `services/code_engine.py` `_run_claude_terminal` | `claude --settings <per-task file>` (ordinary permissions; a PreToolUse hook asks Friday's gate about every action; one approval card per task mints the grant — corrected 2026-10-02, was `--dangerously-skip-permissions`) | new console, same user | full | per-task grant: 400 actions / 2 h, then a renewal card |
 | 4 | `services/agent.py:632-667` `install_package` | `pip install <name>` | child process | full | 180 s |
 | 5 | `services/mcp_client.py:122-146` | every MCP server, stdio | child process | `full_env = os.environ.copy()` | none on the process |
 | 6 | `routes/compute.py:39-52` | reaches (1) via capability `analysis.run` | — | — | **no `@login_required`** |

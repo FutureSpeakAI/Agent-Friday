@@ -221,13 +221,45 @@ def test_command_output_that_carries_a_key_is_redacted(monkeypatch):
     assert "listing" in out and "done" in out
 
 
+def _pages(agent, path, **kw):
+    """Every page read_file gives for `path`, following its continue offsets."""
+    import re
+    pages, offset = [], 1
+    for _ in range(200):
+        out = agent._tool_read_file({"path": str(path), "offset": offset, **kw})
+        pages.append(out)
+        m = re.search(r"Continue with read_file offset=([\d,]+)", out)
+        if not m:
+            return pages
+        offset = int(m.group(1).replace(",", ""))
+    raise AssertionError("read_file never reached the end of the file")
+
+
 def test_file_text_that_carries_a_key_is_redacted(test_home):
+    """A key inside an ordinary file is withheld on EVERY page of it, wherever
+    a page boundary falls, and the rest of the file still reads."""
     import agent_friday.services.agent as agent
     note = test_home / "Documents" / "mixed.txt"
     _write(note, "before " + "x" * 20000 + "\n" + PEM + "after")
-    out = agent._tool_read_file({"path": str(note)})
-    assert "SENTINELKEYMATERIAL" not in out
-    assert "before" in out and "after" in out
+    pages = _pages(agent, note)
+    assert all("SENTINELKEYMATERIAL" not in p for p in pages)
+    assert "before" in pages[0] and "after" in pages[-1]
+
+
+def test_no_window_of_a_file_shows_a_fragment_of_a_key(test_home):
+    """The model chooses offset and limit: a one-line window on a key's body
+    line must not show it (a lone body line is not recognisable as a key).
+    The key sits deep in an ordinary file, past what the opening sniff reads,
+    so the file opens and only the paging stands between the key and the model."""
+    import agent_friday.services.agent as agent
+    note = test_home / "Documents" / "deep.txt"
+    body = "before " + "x" * 20000 + "\n" + PEM + "after\n"
+    _write(note, body)
+    assert "before" in agent._tool_read_file({"path": str(note)}), "the file must open"
+    total = len(body.split("\n"))
+    for offset in range(1, total + 1):
+        out = agent._tool_read_file({"path": str(note), "offset": offset, "limit": 1})
+        assert "SENTINELKEYMATERIAL" not in out, "offset=%d leaked part of the key" % offset
 
 
 # ── egress ────────────────────────────────────────────────────────────────────

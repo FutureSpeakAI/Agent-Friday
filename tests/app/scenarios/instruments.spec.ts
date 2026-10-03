@@ -5,7 +5,7 @@
  * illustrate something worth saying out loud: Friday already ships instruments
  * that know when she is broken. Nothing was reading them.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { BASE } from './scenario';
 
 test.describe('Scenario 28 — her own liveness check', () => {

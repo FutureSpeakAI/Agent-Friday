@@ -250,6 +250,54 @@ def test_unreadable_memory_or_process_list_refuses_a_multi_file_run(friday_tree)
     assert ok, why
 
 
+# Two concurrent runs, machine-wide, whatever the memory: eight concurrent
+# single-file runs once took the commit charge to 96 %.
+
+TWO_RUNS = [(4242, "python -m pytest tests/unit/test_a.py -n 0"),
+            (4243, "python -m pytest tests/unit/test_a.py -n 0"),   # its venv child
+            (5151, "python -m pytest tests/api/test_b.py -n 0")]
+
+
+@pytest.mark.parametrize("ram", [6.5, 50.0])
+def test_a_third_run_waits_while_two_already_run(friday_tree, ram):
+    tree, _ = friday_tree
+    ok, why = decide(bash("pytest tests/unit/test_c.py -n 0", tree), base_cfg(),
+                     ram=ram, running=TWO_RUNS)
+    assert not ok
+    assert "2 pytest runs" in why and "wait" in why.lower()
+
+
+def test_a_launcher_and_its_child_are_one_run(friday_tree):
+    tree, _ = friday_tree
+    ok, why = decide(bash("pytest tests/unit/test_c.py -n 0", tree), base_cfg(),
+                     ram=50.0, running=TWO_RUNS[:2])
+    assert ok, why
+
+
+def test_the_cap_comes_from_config(friday_tree):
+    tree, _ = friday_tree
+    cfg = base_cfg()
+    assert cfg["pytest_max_concurrent_runs"] == 2
+    cfg["pytest_max_concurrent_runs"] = 3
+    ok, why = decide(bash("pytest tests/unit/test_c.py -n 0", tree), cfg,
+                     ram=50.0, running=TWO_RUNS)
+    assert ok, why
+
+
+def test_the_hook_waits_for_a_slot_before_refusing(monkeypatch):
+    """Probed for real, a full machine is re-read until a slot frees or the
+    wait (inside the hook's own timeout) runs out."""
+    reads = iter([TWO_RUNS, TWO_RUNS, TWO_RUNS[:2]])
+    monkeypatch.setattr(g, "running_pytest_processes", lambda: next(reads))
+    clock = [0.0]
+    monkeypatch.setattr(g.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(g.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    assert g.wait_for_pytest_slot(base_cfg()) == TWO_RUNS[:2]
+    reads = iter([TWO_RUNS] * 50)
+    monkeypatch.setattr(g, "running_pytest_processes", lambda: next(reads))
+    assert g.wait_for_pytest_slot(base_cfg()) == TWO_RUNS
+
+
 def test_the_floors_come_from_config(friday_tree):
     tree, _ = friday_tree
     cfg = base_cfg()
@@ -596,3 +644,12 @@ def test_the_lock_path_defaults_to_the_live_checkout(tmp_path):
     cfg_path.write_text(json.dumps({"live_checkout": str(tmp_path / "live")}), encoding="utf-8")
     cfg = g.load_config(cfg_path)
     assert cfg["suite_lock"].replace("\\", "/").endswith("live/.claude/SUITE_LOCK")
+
+
+@pytest.mark.parametrize("wrapper", [
+    '"C:/Program Files/Git/usr/bin/timeout.exe" 1200 ../venv/Scripts/python.exe -m pytest tests/api/test_b.py -n 0',
+    "timeout 300 python -m pytest tests/api/test_b.py -n 0",
+    "env FRIDAY_TESTING=1 python -m pytest tests/api/test_b.py -n 0",
+])
+def test_a_command_wrapper_around_pytest_is_not_a_run_of_its_own(wrapper):
+    assert not g.is_pytest_process(wrapper)

@@ -371,6 +371,8 @@ def generate_briefing():
     try:
         # Pull live sources BEFORE writing the briefing so it never runs on stale
         # cached context. This mirrors the scheduled morning-briefing routine.
+        from agent_friday.services.news_engine import _start_briefing_sources
+        _start_briefing_sources()
         live_context = _gather_live_briefing_context()
 
         prompt = (
@@ -408,6 +410,8 @@ def generate_briefing():
             )
         if not content or not content.strip():
             return jsonify({"status": "error", "message": "Empty briefing generated"}), 502
+        from agent_friday.services.news_engine import _finish_briefing
+        content = _finish_briefing(content)
 
         date_str = datetime.now().strftime('%Y-%m-%d')
         briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
@@ -517,11 +521,20 @@ def front_page_generate():
 @news_bp.route('/api/news/front-page/latest')
 def front_page_latest():
     """The most recent edition (or null if none generated yet)."""
+    # Routines waiting for the local seat, late or missed, with the reason:
+    # shown above the edition so a gap is never silent.
+    try:
+        from agent_friday.services.scheduler import news_routine_notices
+        routines = news_routine_notices()
+    except Exception:
+        routines = []
     listing = _list_front_pages()
     if not listing:
-        return jsonify({"status": "ok", "edition": None, "editions": []})
+        return jsonify({"status": "ok", "edition": None, "editions": [],
+                        "routines": routines})
     latest = _read_front_page(listing[0]["id"])
-    return jsonify({"status": "ok", "edition": latest, "editions": listing})
+    return jsonify({"status": "ok", "edition": latest, "editions": listing,
+                    "routines": routines})
 
 
 @news_bp.route('/api/news/front-pages')
@@ -561,7 +574,9 @@ def front_page_audio():
         return jsonify({"status": "error",
                         "message": "This Front Page has no content to read."}), 400
     try:
-        buf = _synthesize_tts_wav(script, voice=data.get("voice"), style="briefing")
+        from agent_friday.services.news_engine import local_news_run
+        with local_news_run("Front Page read-aloud"):
+            buf = _synthesize_tts_wav(script, voice=data.get("voice"), style="briefing")
         return send_file(buf, mimetype='audio/wav')
     except Exception as e:
         traceback.print_exc()
@@ -1037,6 +1052,48 @@ def api_federation_trust_scores():
         })
     except Exception as e:
         return api_error(e, "Couldn't load the trust scores")
+
+
+@news_bp.route('/api/news/discuss', methods=['POST'])
+def news_discuss_route():
+    """Discuss one story, evidence first, on the local model only."""
+    from agent_friday.services import news_discuss
+    data = request.get_json(silent=True) or {}
+    url, title, mode = str(data.get("url") or ""), str(data.get("title") or ""), str(data.get("mode") or "")
+    if not url.startswith("http") or mode not in news_discuss.MODES:
+        return jsonify({"status": "error", "message": "a story link and one of: " + ", ".join(news_discuss.MODES)}), 400
+    try:
+        if mode == "make":
+            out = news_discuss.make(url, title, str(data.get("make") or "podcast"))
+        else:
+            out = news_discuss.discuss(url, title, mode)
+    except Exception as e:
+        return api_error(e, "Couldn't discuss the story")
+    return jsonify(public_result(out, "Couldn't discuss the story"))
+
+
+@news_bp.route('/api/news/media-diet', methods=['GET'])
+def news_media_diet():
+    """The owner's media diet: rules in force, proposals waiting for a
+    decision (approval cards), and what the rules recently removed."""
+    from agent_friday.services import media_diet
+    pending = [{"approval_id": r.get("approval_id"), "title": r.get("title"),
+                "diff": r.get("action_description"), "created_at": r.get("created_at")}
+               for r in media_diet.pending()]
+    return jsonify({"status": "ok", "rules": media_diet.rules(), "pending": pending,
+                    "receipts": media_diet.recent_receipts()})
+
+
+@news_bp.route('/api/news/media-diet/rule', methods=['DELETE'])
+def news_media_diet_remove():
+    """The owner takes a rule back."""
+    from agent_friday.services import media_diet
+    data = request.get_json(silent=True) or {}
+    try:
+        removed = media_diet.remove(str(data.get("outlet") or ""))
+    except Exception as e:
+        return api_error(e, "Couldn't change the media diet", status=400)
+    return jsonify({"status": "ok", "removed": removed})
 
 
 @news_bp.route('/api/news/source-stats', methods=['GET', 'POST'])

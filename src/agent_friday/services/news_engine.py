@@ -453,6 +453,12 @@ _RSS_CACHE_TTL = 300  # seconds
 _RSS_FETCH_TIMEOUT_S = 8.0
 _RSS_CACHE_LOCK = threading.Lock()
 
+#: Per feed URL: (ETag, Last-Modified, entries) from its last full answer.
+#: The next fetch asks "changed since?"; a 304 reuses the entries, so a feed
+#: that has not moved costs the publisher one empty reply. Pacing is not
+#: changed by this, only the bytes.
+_FEED_VALIDATORS: dict = {}
+
 
 def _clean_feed_text(text):
     """Collapse an HTML/RSS summary into clean one-line plain text.
@@ -527,6 +533,9 @@ def _parse_feed(url, limit=12, timeout=None):
     then never finishes sending. `timeout` defaults to
     `_RSS_FETCH_TIMEOUT_S`; overridable so a test can prove the bound is
     real without waiting out the production value. See KNOWN_ISSUES.md.
+
+    The fetch is conditional when the feed sent an ETag or Last-Modified
+    last time: a 304 answer reuses the entries already parsed.
     """
     now = _time.time()
     with _RSS_CACHE_LOCK:
@@ -536,12 +545,29 @@ def _parse_feed(url, limit=12, timeout=None):
     try:
         import urllib.request
         import feedparser
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
-        })
-        with urllib.request.urlopen(
-                req, timeout=timeout or _RSS_FETCH_TIMEOUT_S) as resp:
-            raw = resp.read()
+        import urllib.error
+        headers = {"User-Agent": "Mozilla/5.0 FridayAgent/1.0"}
+        with _RSS_CACHE_LOCK:
+            etag, modified, before = _FEED_VALIDATORS.get(url) or ("", "", None)
+        if before is not None:
+            if etag:
+                headers["If-None-Match"] = etag
+            if modified:
+                headers["If-Modified-Since"] = modified
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(
+                    req, timeout=timeout or _RSS_FETCH_TIMEOUT_S) as resp:
+                raw = resp.read()
+                etag = resp.headers.get("ETag") or ""
+                modified = resp.headers.get("Last-Modified") or ""
+        except urllib.error.HTTPError as e:
+            if e.code != 304 or before is None:
+                raise
+            # Not modified since the last full answer: the same entries.
+            with _RSS_CACHE_LOCK:
+                _RSS_CACHE[url] = (now, before)
+            return before[:limit]
         d = feedparser.parse(raw)
         out = []
         for e in d.entries[: max(limit * 2, limit)]:
@@ -550,6 +576,10 @@ def _parse_feed(url, limit=12, timeout=None):
                 out.append(norm)
         with _RSS_CACHE_LOCK:
             _RSS_CACHE[url] = (now, out)
+            if etag or modified:
+                _FEED_VALIDATORS[url] = (etag, modified, out)
+            else:
+                _FEED_VALIDATORS.pop(url, None)
         return out[:limit]
     except Exception:
         return []
@@ -947,6 +977,57 @@ def warm_news_cache(limit_per: int = 8) -> None:
         _news_refresh(limit_per)
 
 
+#: The structured sources behind the latest briefing (calendar events, news
+#: items), kept so the run's episode can introduce, time and link each one.
+#: Written beside the run by _notify_briefing; see podcast_news.sidecar_path.
+_LAST_BRIEFING_SOURCES: dict = {}
+
+
+def _start_briefing_sources():
+    """A briefing run's sources are its own: each run starts with none, so a
+    run that gathers nothing never inherits an earlier run's stories."""
+    _LAST_BRIEFING_SOURCES.clear()
+    _LAST_BRIEFING_SOURCES.update({"version": 1, "date": datetime.now().strftime('%Y-%m-%d'),
+                                   "calendar": [], "news": []})
+
+
+def _keep_briefing_sources(**parts):
+    today = datetime.now().strftime('%Y-%m-%d')
+    if _LAST_BRIEFING_SOURCES.get("date") != today:
+        _LAST_BRIEFING_SOURCES.clear()
+        _LAST_BRIEFING_SOURCES.update({"version": 1, "date": today, "calendar": [], "news": []})
+    _LAST_BRIEFING_SOURCES.update(parts)
+
+
+def _save_briefing_sources(date_str):
+    """Save the briefing's structured sources beside the run. Attendees and
+    event descriptions are never kept: the episode needs times and places."""
+    if _LAST_BRIEFING_SOURCES.get("date") != date_str:
+        return
+    try:
+        from agent_friday.services.podcast_news import sidecar_path
+        p = sidecar_path(date_str)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(_LAST_BRIEFING_SOURCES, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"  [briefing] sources not saved for the episode: {e}")
+
+
+def _finish_briefing(content):
+    """The model's briefing with its story ids turned into links from the
+    fetched URLs (and any link it typed removed). Records the link check with
+    the run's sources; a briefing whose stories are not linked is logged."""
+    from agent_friday.services import news_links
+    stories = _LAST_BRIEFING_SOURCES.get("news") or []
+    # Publisher links, not news.google.com redirects, for the stories used.
+    news_links.resolve_links(stories, news_links.cited_ids(content))
+    problems = news_links.link_problems(content, stories)
+    _LAST_BRIEFING_SOURCES["link_check"] = problems
+    if problems:
+        print(f"  [briefing] link check: {'; '.join(problems[:3])}")
+    return news_links.attach_links(content, stories)
+
+
 def _gather_live_briefing_context():
     """Fetch live calendar, unread email, and news for an on-demand briefing.
 
@@ -975,6 +1056,9 @@ def _gather_live_briefing_context():
             cal_err = _google_section_error(cal_events)
             if cal_err:
                 return f"## Today's Calendar\n({cal_err})"
+            _keep_briefing_sources(calendar=[
+                {k: ev.get(k) or "" for k in ("title", "start_time", "end_time", "location")}
+                for ev in (cal_events or [])[:20] if isinstance(ev, dict)])
             if cal_events:
                 lines = []
                 for ev in cal_events[:20]:
@@ -1029,18 +1113,29 @@ def _gather_live_briefing_context():
             cats = [c for c in NEWS_CATEGORIES
                     if prefs.get("categories_enabled", {}).get(c, True)]
             items = _fetch_news_items(categories=cats, limit_per=4)
-            if items:
+            # Today's news only: inside the Briefing's window, and articles.
+            from agent_friday.services import news_seen
+            items = news_seen.current(items, "briefing")
+            # The owner's approved media diet holds here, with a receipt.
+            from agent_friday.services import media_diet
+            items, _ = media_diet.enforce(items, "briefing")
+            # Each story gets an id the model cites; its link is attached by
+            # code from the fetched URL (services/news_links.py), never typed.
+            from agent_friday.services import news_links
+            stories = news_links.number(items)
+            _keep_briefing_sources(news=stories)
+            if stories:
+                boosted_ids = {s["id"] for s, it in zip(stories, [i for i in items if (i.get("title") or "").strip()])
+                               if it.get("boosted")}
                 by_cat = {}
-                for it in items:
-                    by_cat.setdefault(it["category"], []).append(it)
+                for s in stories:
+                    by_cat.setdefault(s.get("category") or "News", []).append(s)
                 blocks = []
                 for cat, group in by_cat.items():
                     lines = []
-                    for it in group:
-                        star = "⭐ " if it["boosted"] else ""
-                        lines.append(
-                            f"- {star}**{it['title']}** ({it['source']})\n  {it['snippet']}\n  {it['url']}"
-                        )
+                    for s in group:
+                        star = "⭐ " if s["id"] in boosted_ids else ""
+                        lines.append(star + news_links.prompt_lines([s], snippet_chars=240))
                     blocks.append(f"### {cat}\n" + "\n".join(lines))
                 note = ""
                 if boosted:
@@ -1049,21 +1144,28 @@ def _gather_live_briefing_context():
                 if banned:
                     note += (f"\n_(These sources are banned and were excluded — do not cite: "
                              f"{', '.join(sorted(banned))}.)_")
-                return "## Live News (RSS)\n" + "\n\n".join(blocks) + note
+                return ("## Live News (RSS)\n" + news_links.CITE_RULE + "\n\n"
+                        + "\n\n".join(blocks) + note)
             # Fallback: optional Brave Search across the top categories, with
             # banned domains excluded. No-ops cleanly when no API key is set.
-            news_blocks = []
+            found = []
             for cat in (cats or ["AI/Tech"])[:2]:
                 meta = category_meta(cat) or {}
-                lines = []
                 for r in _brave_results(meta.get("query", f"latest {cat} news today"), limit=5):
                     dom = r.get("source") or _extract_domain(r.get("url", ""))
                     if dom and dom not in banned:
-                        lines.append(f"- **{r['title']}** ({dom})\n  {r['snippet']}\n  {r['url']}")
-                if lines:
-                    news_blocks.append(f"### {cat}\n" + "\n".join(lines))
-            if news_blocks:
-                return "## Live News (Brave Search fallback)\n" + "\n\n".join(news_blocks)
+                        found.append(dict(r, source=dom, category=cat))
+            from agent_friday.services import media_diet
+            found, _ = media_diet.enforce(found, "briefing")
+            stories = news_links.number(found)
+            _keep_briefing_sources(news=stories)
+            if stories:
+                by_cat = {}
+                for s in stories:
+                    by_cat.setdefault(s.get("category") or "News", []).append(s)
+                return ("## Live News (Brave Search fallback)\n" + news_links.CITE_RULE + "\n\n"
+                        + "\n\n".join("### %s\n%s" % (c, news_links.prompt_lines(g, snippet_chars=240))
+                                      for c, g in by_cat.items()))
             return "## Live News\n(No RSS items available right now.)"
         except Exception as e:
             return f"## Live News\n(News fetch failed: {e})"
@@ -1147,27 +1249,17 @@ WEEKLY_DIGESTS_DIR = FRONT_PAGES_DIR / "weekly"
 # archive including banned sources, and that is disclosed in the output.
 WEEKLY_EDITORIAL_HOUR = 19
 EDITORIALS_DIR = FRIDAY_DIR / "editorials"
-# The four News routines (Front Page, Briefing, Weekly Digest, Editorial) write
-# on the local model, whether a schedule, the News buttons or the offline queue
-# started them. Scheduled runs already carried `task.local_only`; the buttons
-# did not, so a click could reach a cloud model. `news_local_only` (on by
-# default) puts every run inside the same guard the cloud transports refuse in.
-# Fetching the articles still reaches the web: that is reading the news, not
-# writing it. An owner who allowed scheduled jobs onto a cloud model
-# (`scheduled_cloud`) keeps that choice for scheduled runs.
+# Every News path writes and speaks on this computer and costs nothing: the
+# routines (Front Page, Briefing, Weekly Digest, Editorial), the News buttons,
+# the article deep dive and the read-aloud, whoever started them. There is no
+# cloud fallback, no cloud voice and no opt-out; a News run that cannot reach
+# the local seat waits for it and says so. Every run is inside the guard the
+# cloud transports refuse in, which also lifts any scheduled cloud pin for its
+# duration. Fetching the articles still reaches the web: that is reading the
+# news, not writing it.
 def local_news_run(label):
-    """Context manager: this routine's model calls are local-only, when the
-    owner's `news_local_only` setting is on (the default)."""
-    import contextlib
-    try:
-        on = bool((core._load_settings() or {}).get("news_local_only", True))
-    except Exception:
-        on = True
+    """Context manager: this News run's model and voice calls are local-only."""
     from agent_friday.services import local_only_guard
-    # A scheduled run the owner explicitly allowed onto one cloud model
-    # (`scheduled_cloud`) is already pinned to it; that consent stands.
-    if not on or local_only_guard.pinned_model():
-        return contextlib.nullcontext()
     return local_only_guard.local_only(label)
 
 
@@ -1181,9 +1273,8 @@ def _local_news(label):
     return deco
 
 
-# Below this independence_fostering score the editorial is regenerated with a
-# stronger pushback prompt.
-EDITORIAL_INDEPENDENCE_FLOOR = 0.6
+# The editorial's independence score is reported with the editorial; it never
+# triggers a rewrite (a neutral essay scored 0.5 and was regenerated weekly).
 # Shown at the top of every editorial.
 EDITORIAL_DISCLAIMER = (
     "This editorial draws from my full source index, not your curated feed. "
@@ -2064,14 +2155,30 @@ def _front_page_story_titles(edition):
 
     lead = edition.get("lead") or {}
     if lead.get("title"):
-        out.append({"title": lead["title"], "source": lead.get("source", "")})
+        out.append({"title": lead["title"], "source": lead.get("source", ""),
+                    "url": lead.get("url", "")})
         _pub(lead["title"], lead.get("source", ""))
     for sec in edition.get("sections") or []:
         for a in sec.get("articles") or []:
             if a.get("title"):
-                out.append({"title": a["title"], "source": a.get("source", "")})
+                out.append({"title": a["title"], "source": a.get("source", ""),
+                            "url": a.get("url", "")})
                 _pub(a["title"], a.get("source", ""))
     return out
+
+
+def alt_ok(lead_idx, editorial):
+    """The editor's lead note belongs to the lead the editor chose."""
+    return lead_idx == editorial.get("lead_index")
+
+
+def _follow_report(pool):
+    try:
+        from agent_friday.services import news_discuss
+        return news_discuss.follow_report(pool)
+    except Exception as e:
+        _log.warning("follow report failed: %s", e)
+        return []
 
 
 def _previous_front_page(current_id):
@@ -2106,6 +2213,26 @@ def _generate_front_page(slot="morning"):
     calendar_events = _fetch_calendar_today() if slot == "morning" else None
 
     pool, stats = _gather_front_page_pool()
+    # A story that already ran comes back only with something new, as an
+    # update; the rest is held back, and the edition says what.
+    from agent_friday.services import news_seen
+    past = [_read_front_page(e["id"]) for e in _list_front_pages() if e.get("id") != edition_id][:14]
+    # The edition is today's news: inside its window (a per-routine setting),
+    # a story that ran before only as a dated update with something new, no
+    # page that is not an article, and one event from several outlets as one
+    # story listing them all.
+    pool, held_back = news_seen.edition_pool(pool, past, window_h=news_seen.window_hours("front_page"))
+    # The owner's approved media diet holds here, with a receipt.
+    from agent_friday.services import media_diet
+    pool, diet_removed = media_diet.enforce(pool, "front_page")
+    # News value: hard news first (safety, government, courts, the economy),
+    # then analysis, then service pieces; the section is what the story is
+    # about, not the feed it came from; opinion is labelled.
+    for p in pool:
+        p["category"] = news_seen.section_for(p) or p.get("category")
+        p["news_value"] = news_seen.news_value(p)
+        p["opinion"] = news_seen.is_opinion(p)
+    pool = news_seen.rank(pool)
     editorial = _editorialize_front_page(
         pool, slot=slot, prev_stories=prev_titles,
         calendar_events=calendar_events)
@@ -2115,18 +2242,29 @@ def _generate_front_page(slot="morning"):
     def _tag(story):
         """Stamp new_since_last / continuing (+ any thread update) onto a story."""
         u = story.get("url", "")
-        cont = have_prev and u in prev_urls
+        # A story that ran before is back only as an update with something
+        # new (news_seen); the editor's own note is never the update.
+        cont = (have_prev and u in prev_urls) or bool(story.get("update"))
         story["new_since_last"] = bool(have_prev and not cont)
         story["continuing"] = bool(cont)
-        upd = thread_updates.get(u)
-        if cont and upd:
-            story["thread_update"] = upd
+        if cont and story.get("update"):
+            story["thread_update"] = story.get("update_note") or thread_updates.get(u) or ""
         return story
+
+    def _shown(story):
+        """Continuing needs a real update; an empty one is never shown."""
+        return not story.get("continuing") or bool(story.get("update") and story.get("thread_update"))
 
     lead = None
     if pool:
         lead = _tag(dict(pool[lead_idx]))
-        lead["editorial_note"] = editorial["lead_note"]
+        if not _shown(lead):
+            # The lead is new since the last edition, or a dated update.
+            alt = next((i for i, p in enumerate(pool) if _shown(_tag(dict(p)))), None)
+            lead_idx = alt
+            lead = _tag(dict(pool[alt])) if alt is not None else None
+        if lead is not None:
+            lead["editorial_note"] = editorial["lead_note"] if alt_ok(lead_idx, editorial) else ""
 
     # Group remaining stories into sections by category, in interest order.
     rest = [p for i, p in enumerate(pool) if i != lead_idx]
@@ -2134,7 +2272,8 @@ def _generate_front_page(slot="morning"):
     order = sorted(NEWS_CATEGORIES.keys(),
                    key=lambda c: _CATEGORY_WEIGHT.get(c, 0), reverse=True)
     for cat in order:
-        group = [_tag(dict(p)) for p in rest if p["category"] == cat][:6]
+        group = news_seen.cap_per_outlet(
+            [a for a in (_tag(dict(p)) for p in rest if p.get("category") == cat) if _shown(a)], 2)[:6]
         if not group:
             continue
         sections.append({
@@ -2176,6 +2315,10 @@ def _generate_front_page(slot="morning"):
         "competitor_watch": editorial.get("competitor_watch") or [],
         "continuing_threads": continuing_threads,
         "prev_edition_id": (prev or {}).get("id") if prev else None,
+        "held_back": held_back,
+        "diet_removed": [{"title": a.get("title", ""), "source": a.get("source", "")} for a in diet_removed],
+        # Stories the owner follows (Discuss, Follow): what changed, or that nothing did.
+        "follows": _follow_report(pool),
         # "curated" when the editor answered, otherwise the reason it did not.
         # Stored ON the edition so the page can say what it is and a later
         # reader (or a re-run) can tell an un-curated edition from a curated
@@ -2419,6 +2562,7 @@ def _notify_weekly_editorial(ed, manual=False):
 
 def _notify_briefing(date_str, manual=False):
     """Push the 'Daily briefing ready' notification."""
+    _save_briefing_sources(date_str)
     _queue_podcast('briefing', date_str)
     if not (_notif_engine and date_str):
         return
@@ -2484,8 +2628,11 @@ def _generate_weekly_digest():
     week_id = cnow.strftime('%G-W%V')
     editions = _gather_weekly_editions(7)
 
-    # Compact, de-duplicated story list across the week for the prompt.
-    seen, lines = set(), []
+    # Compact, de-duplicated story list across the week for the prompt. Each
+    # story has an id the model picks by; its title and link are attached by
+    # code (services/news_links.py).
+    from agent_friday.services import news_links
+    seen, week = set(), []
     dates = []
     for ed in editions:
         if ed.get("date"):
@@ -2495,8 +2642,18 @@ def _generate_weekly_digest():
             if not key or key in seen:
                 continue
             seen.add(key)
-            lines.append(f"- {s['title']} ({s.get('source','')})")
-    story_block = "\n".join(lines[:120]) or "(no stories archived this week)"
+            week.append(s)
+    from agent_friday.services import media_diet
+    week, _ = media_diet.enforce(week, "weekly")
+    stories = news_links.number(week[:120], prefix="W")
+    story_block = news_links.prompt_lines(stories) or "(no stories archived this week)"
+    try:
+        # The exact lines the model is sent are public headlines.
+        from agent_friday.services.egress_gate import register_public_text
+        for line in story_block.splitlines():
+            register_public_text(line, origin="news-feed")
+    except Exception:
+        pass
     date_range = (f"{min(dates)} – {max(dates)}" if dates
                   else cnow.strftime('%Y-%m-%d'))
 
@@ -2519,11 +2676,12 @@ def _generate_weekly_digest():
             "through-line trends, and give an editorial take on what this means "
             "for the user's work and interests.\n\n"
             "Return ONLY JSON, no prose, in exactly this shape:\n"
-            '{\n  "top_stories": [{"title": "<story>", "why": "<one sentence on '
+            '{\n  "top_stories": [{"id": "<story id, e.g. W3>", "why": "<one sentence on '
             'why it mattered this week>"}],\n  "trends": ["<trend>", "<trend>"],\n'
             '  "editorial": "<3-5 sentence editorial take on what the week means '
             'for the user\'s work and interests>"\n}\n\n'
-            "Give exactly 5 top_stories when there is enough material.\n\n"
+            "Give exactly 5 top_stories when there is enough material. Pick each "
+            "by its id from the list; never write a web address.\n\n"
             "THIS WEEK'S STORIES:\n" + story_block
         )
         system = _get_friday_system_prompt(
@@ -2541,8 +2699,17 @@ def _generate_weekly_digest():
         if isinstance(data, dict):
             ts = data.get("top_stories")
             tr = data.get("trends")
+            news_links.resolve_links(stories, [str((t or {}).get("id") or "")
+                                               for t in ts or [] if isinstance(t, dict)])
+            by_id = {s["id"]: s for s in stories}
+            picked = []
+            for t in ts or []:
+                s = by_id.get(str((t or {}).get("id") or "").strip()) if isinstance(t, dict) else None
+                if s and s["id"] not in {x["id"] for x in picked}:
+                    picked.append({"id": s["id"], "title": s["title"], "source": s["source"],
+                                   "url": s["url"], "why": str(t.get("why") or "").strip()[:300]})
             synth = {
-                "top_stories": [s for s in (ts or []) if isinstance(s, dict)][:5],
+                "top_stories": picked[:5],
                 "trends": [str(t).strip()[:160] for t in (tr or []) if str(t).strip()][:6],
                 "editorial": (data.get("editorial") or fallback["editorial"]).strip()[:1400],
             }
@@ -2632,26 +2799,32 @@ def _generate_weekly_editorial():
     """Write + persist Friday's weekly editorial. Returns the editorial dict.
 
     Draws from the full 7-day archive (banned sources included), scores the draft
-    for independence, and regenerates with a stronger pushback prompt if the
-    independence_fostering score is below EDITORIAL_INDEPENDENCE_FLOOR.
-    Persists markdown at ~/.friday/editorials/YYYY-WNN.md."""
+    for independence and reports the score; an empty draft is retried once with
+    the stronger prompt. Persists markdown at ~/.friday/editorials/YYYY-WNN.md."""
     cnow = _front_page_central_now()
     week_id = cnow.strftime('%G-W%V')
     pool = _gather_editorial_pool(7)
     banned = sorted({(s or "").lower() for s in _load_banned_sources() if s})
 
     # De-duplicated source digest for the prompt; banned sources flagged inline.
-    seen, lines = set(), []
+    # Each article has an id the editorial cites; links are attached by code
+    # from the archived URLs (services/news_links.py), never typed.
+    from agent_friday.services import news_links
+    seen, unique = set(), []
     for a in pool:
         key = (a.get("title") or "")[:90]
         if not key or key in seen:
             continue
         seen.add(key)
-        src = (a.get("source") or a.get("domain") or "").lower()
+        unique.append(a)
+    stories = news_links.number(unique[:160], prefix="E")
+    lines = []
+    for st in stories:
+        src = (st.get("source") or "").lower()
         flag = " [BANNED-SOURCE]" if src in banned else ""
-        lines.append(f"- ({src or 'unknown'}{flag}) {a.get('title','')}: "
-                     f"{(a.get('snippet') or '')[:160]}")
-    article_block = "\n".join(lines[:160]) or "(the archive is thin this week)"
+        lines.append("[%s] (%s%s) %s: %s" % (st["id"], src or "unknown", flag, st["title"],
+                                              st["snippet"][:160]))
+    article_block = "\n".join(lines) or "(the archive is thin this week)"
 
     def _compose(strong):
         directive = EDITORIAL_SYSTEM_PROMPT
@@ -2668,7 +2841,7 @@ def _generate_weekly_editorial():
             "[BANNED-SOURCE]). Write this week's editorial per your directive.\n\n"
             "Banned sources you ARE drawing from this week: "
             + (", ".join(banned) if banned else "(none currently banned)") +
-            "\n\nARTICLES:\n" + article_block)
+            "\n\n" + news_links.CITE_RULE + "\n\nARTICLES:\n" + article_block)
         system = (_get_friday_system_prompt(
                       keywords=user, workspace='briefing',
                       provider=_predict_route_provider(keywords=user, workspace='briefing'),
@@ -2688,16 +2861,31 @@ def _generate_weekly_editorial():
     body = _compose(strong=False)
     score = _editorial_independence_score(body)
     regenerated = False
-    if (score is not None and score < EDITORIAL_INDEPENDENCE_FLOOR) or not body:
+    # The independence score is reported, never used to rewrite: an essay
+    # with no "teach" or "do" phrases scores a neutral 0.5, which sat below
+    # the old 0.6 floor, so most editorials were regenerated "for stronger
+    # pushback" every week. A rubric that can tell an essay from a how-to
+    # comes before any floor; until then only an EMPTY draft is retried.
+    if not body:
         strong_body = _compose(strong=True)
-        strong_score = _editorial_independence_score(strong_body)
-        if strong_body and (not body or strong_score is None
-                            or score is None or strong_score >= score):
-            body, score, regenerated = strong_body, strong_score, True
+        if strong_body:
+            body, score, regenerated = strong_body, _editorial_independence_score(strong_body), True
 
     when = (cnow.strftime('%Y-%m-%d %H:%M %Z')
             or cnow.isoformat(timespec='minutes'))
+    news_links.resolve_links(stories, news_links.cited_ids(body))
+    link_check = news_links.link_problems(body, stories)
+    cited = [st for st in stories if st["id"] in set(news_links.cited_ids(body))]
+    body = news_links.attach_links(body, stories)
     md = _editorial_markdown(week_id, when, body, banned, score, regenerated)
+    try:
+        # The stories the editorial cites, for its episode's source chips.
+        (EDITORIALS_DIR).mkdir(parents=True, exist_ok=True)
+        (EDITORIALS_DIR / f"{week_id}.sources.json").write_text(
+            json.dumps({"version": 1, "week": week_id, "news": cited,
+                        "link_check": link_check}, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"  [weekly-editorial] sources not saved: {e}")
 
     EDITORIALS_DIR.mkdir(parents=True, exist_ok=True)
     (EDITORIALS_DIR / f"{week_id}.md").write_text(md, encoding="utf-8")
@@ -3185,32 +3373,17 @@ def _wiki_title_index():
 
 # ── "Deep Dive" full-article summaries ─────────────────────────────────────
 def _extract_article_text(url):
-    """Fetch a URL and extract readable article text via BeautifulSoup.
+    """Fetch a URL and read its article text (services/page_reader).
 
-    Returns (page_title, text). Strips script/style/nav chrome and joins the
-    article's paragraph text; falls back to whole-container text for thin <p>
-    markup. Raises on network/parse failure, and raises
-    web_safety.UnsafeURLError for a URL (or redirect hop) that points at this
-    machine or its network: the URL comes from a feed, the page, or the voice
-    model, none of which may steer a fetch inward."""
-    from bs4 import BeautifulSoup
-
-    from agent_friday.services.web_safety import safe_get
-    resp = safe_get(url, timeout=15, headers={
-        "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
-    })
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for tag in soup(["script", "style", "nav", "aside", "footer", "header",
-                     "form", "noscript"]):
-        tag.decompose()
-    page_title = soup.title.get_text(strip=True) if soup.title else ""
-    container = soup.find("article") or soup.find("main") or soup.body or soup
-    paras = [p.get_text(" ", strip=True) for p in container.find_all("p")]
-    text = "\n\n".join(p for p in paras if len(p) > 40)
-    if len(text) < 200:  # thin <p> markup — fall back to all container text
-        text = container.get_text("\n", strip=True)
-    return page_title, re.sub(r"\n{3,}", "\n\n", text).strip()
+    Returns (page_title, text): the page's scored blocks, clutter dropped,
+    paragraphs separated by a blank line. The page's links and metadata stay
+    with page_reader (`recent`, `known_meta`). Raises on network/parse
+    failure, and raises web_safety.UnsafeURLError for a URL (or redirect hop)
+    that points at this machine or its network: the URL comes from a feed,
+    the page, or the voice model, none of which may steer a fetch inward."""
+    from agent_friday.services import page_reader
+    page = page_reader.fetch(url, timeout=15)
+    return page.title, page.text
 
 
 # A spoken deep-dive has to answer while the question is still the topic.
@@ -3220,7 +3393,13 @@ def _extract_article_text(url):
 # opening, and the full answer is cached for the next ask when it lands.
 DEEP_DIVE_QUICK_BUDGET_S = 12.0
 DEEP_DIVE_QUICK_MAX_TOKENS = 450
-DEEP_DIVE_QUICK_BODY_CHARS = 6000
+#: Article tokens each read is given, chosen by the headline (page_reader
+#: .select): sized for the local seat's 8,192-token window with the system
+#: prompt and the answer beside it.
+DEEP_DIVE_QUICK_BODY_TOKENS = 900
+DEEP_DIVE_BODY_TOKENS = 2500
+#: A cached read older than this, or made by an older extractor, is read again.
+DEEP_DIVE_CACHE_TTL_S = 7 * 86400
 
 
 def _lead_sentences(body, n=4):
@@ -3230,14 +3409,31 @@ def _lead_sentences(body, n=4):
 
 
 def _read_cached_dive(path):
+    """A cached read, or None when it is missing, unreadable, older than
+    DEEP_DIVE_CACHE_TTL_S or made by an older page reader."""
+    from agent_friday.services import page_reader
     try:
         cached = json.loads(path.read_text(encoding="utf-8"))
+        if cached.get("extractor") != page_reader.VERSION:
+            return None
+        made = datetime.fromisoformat(cached.get("generated_at") or "")
+        if (datetime.now() - made).total_seconds() > DEEP_DIVE_CACHE_TTL_S:
+            return None
         cached["cached"] = True
         return cached
     except Exception:
         return None
 
 
+def _article_header(url):
+    """The page's own one-line header ("Reuters · Oct 2, 2026 · by …"), when
+    the read kept its metadata."""
+    from agent_friday.services import page_reader
+    page = page_reader.recent(url)
+    return page.header if page is not None else page_reader.header_line(page_reader.known_meta(url))
+
+
+@_local_news('News deep dive')
 def _deep_dive_article(url, title=None, refresh=False, quick=False):
     """Fetch an article, summarize it with the local/cloud model, and cache it.
 
@@ -3275,12 +3471,16 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
     headline = title or page_title or url
     if quick:
         return _quick_dive(url, headline, body, quick_path)
-    body = body[:14000]  # keep the prompt bounded
+    from agent_friday.services import page_reader
+    body = page_reader.select_text(body, headline, DEEP_DIVE_BODY_TOKENS)
+    source = _article_header(url)
     prompt = (
         "You are deep-reading a news article for the user. Use what you know about "
         "them (their work, interests, and goals, from your vault/wiki context) to "
         "make the 'implications' specific and personal — not generic.\n\n"
-        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n\nARTICLE TEXT:\n{body}\n\n"
+        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n"
+        + (f"SOURCE: {source}\n" if source else "")
+        + f"\nARTICLE TEXT:\n{body}\n\n"
         "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
         "these keys:\n"
         '  "summary": a 3-paragraph plain-text summary, paragraphs separated by \\n\\n;\n'
@@ -3307,6 +3507,7 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
         "key_quotes": quotes if isinstance(quotes, list) else [],
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "cached": False,
+        "extractor": page_reader.VERSION,
     }
     try:
         DEEP_DIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -3318,11 +3519,16 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
 
 def _quick_dive(url, headline, body, cache_path):
     """The spoken deep-dive: short, and never longer than the budget."""
-    body = body[:DEEP_DIVE_QUICK_BODY_CHARS]
+    from agent_friday.services import page_reader
+    lead = body
+    body = page_reader.select_text(body, headline, DEEP_DIVE_QUICK_BODY_TOKENS)
+    source = _article_header(url)
     prompt = (
         "You are briefing the user, out loud, on one news article. Use what you "
         "know about them to make the implication specific, not generic.\n\n"
-        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n\nARTICLE TEXT:\n{body}\n\n"
+        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n"
+        + (f"SOURCE: {source}\n" if source else "")
+        + f"\nARTICLE TEXT:\n{body}\n\n"
         "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
         "these keys:\n"
         '  "summary": 3-5 plain sentences of what happened: who, what, where, when;\n'
@@ -3332,13 +3538,15 @@ def _quick_dive(url, headline, body, cache_path):
     box = {}
 
     def work():
+        # Its own thread: the local-only mark is per thread, so it is set here.
         try:
-            system = _get_friday_system_prompt(
-                keywords=headline, workspace="news",
-                provider=_predict_route_provider(keywords=headline, workspace="news"),
-                vault_control=_gated_vault_control())
-            raw = _generate_text([{"role": "user", "content": prompt}], system=system,
-                                 max_tokens=DEEP_DIVE_QUICK_MAX_TOKENS, workspace='news')
+            with local_news_run('News deep dive'):
+                system = _get_friday_system_prompt(
+                    keywords=headline, workspace="news",
+                    provider=_predict_route_provider(keywords=headline, workspace="news"),
+                    vault_control=_gated_vault_control())
+                raw = _generate_text([{"role": "user", "content": prompt}], system=system,
+                                     max_tokens=DEEP_DIVE_QUICK_MAX_TOKENS, workspace='news')
         except Exception as e:
             box["error"] = e
             return
@@ -3350,7 +3558,7 @@ def _quick_dive(url, headline, body, cache_path):
             "implications": (parsed.get("implications") or "").strip(),
             "key_quotes": quotes if isinstance(quotes, list) else [],
             "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "cached": False, "quick": True,
+            "cached": False, "quick": True, "extractor": page_reader.VERSION,
         }
         box["result"] = result
         try:
@@ -3368,7 +3576,7 @@ def _quick_dive(url, headline, body, cache_path):
         return {"status": "error", "message": f"Summary generation failed: {box['error']}"}, 502
     return {
         "status": "ok", "url": url, "title": headline, "partial": True,
-        "summary": _lead_sentences(body),
+        "summary": _lead_sentences(lead),
         "implications": "",
         "key_quotes": [],
         "note": ("The full read is still being written; this is the article's own "

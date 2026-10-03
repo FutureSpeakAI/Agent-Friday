@@ -7,7 +7,7 @@
  * before it was fixed, and invisible to every unit test, because the data
  * was right — it just arrived too late to be of any use.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { bootApp, apiJson, openWorkspace } from '../harness';
 import { sampleWhile, assertGrewDuring, assertNotPlaceholder } from '../liveness';
 

@@ -399,6 +399,8 @@ def _choose_daily_mode(date_str):
                 "title": (choice.get("title") or "").strip()}
     except Exception as e:
         print(f"  [daily-creation] mode choice failed ({e}); defaulting to text.")
+        from agent_friday.services import reasoning_trace as _rt
+        _rt.set_reason(f"choosing today's creation mode failed: {e}")
         return {"mode": "micro-essay", "concept": "", "title": ""}
 
 
@@ -587,6 +589,8 @@ def generate_daily_creation(force=False):
             )
         except Exception as e:
             print(f"  [daily-creation] generation failed: {e}")
+            from agent_friday.services import reasoning_trace as _rt
+            _rt.set_reason(f"the daily creation could not be generated: {e}")
             return None
 
         parsed = _parse_creation_json(raw) or {}

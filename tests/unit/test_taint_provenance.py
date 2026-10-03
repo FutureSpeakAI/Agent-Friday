@@ -133,7 +133,7 @@ class TestRecipient:
     def test_an_address_the_user_typed_is_theirs_even_if_an_email_repeats_it(self, _isolate):
         ctx = _turn(f"invite {ATTACKER} to lunch tomorrow")
         _run("search_email", {"query": ""}, ctx)
-        inp = {"title": "Lunch", "attendees": [ATTACKER]}
+        inp = {"title": "Lunch", "start": "2026-09-25T12:00", "attendees": [ATTACKER]}
         out = _run("create_calendar_event", inp, ctx)
         assert not _pending()
         assert _asked_then_ran(_isolate, "create_calendar_event", inp, ctx, out)
@@ -141,7 +141,7 @@ class TestRecipient:
     def test_a_chat_yes_does_not_satisfy_a_flagged_action(self, _isolate):
         ctx = _turn("Check my email and set up the lunch")
         _run("search_email", {"query": ""}, ctx)
-        inp = {"title": "Lunch", "attendees": [ATTACKER]}
+        inp = {"title": "Lunch", "start": "2026-09-25T12:00", "attendees": [ATTACKER]}
         _run("create_calendar_event", inp, ctx)
         ctx = _turn("yes, go ahead")
         out = _run("create_calendar_event", inp, ctx)
@@ -152,7 +152,7 @@ class TestRecipient:
     def test_approving_the_card_buys_exactly_one_call(self, _isolate):
         ctx = _turn("Check my email and set up the lunch")
         _run("search_email", {"query": ""}, ctx)
-        inp = {"title": "Lunch", "attendees": [ATTACKER]}
+        inp = {"title": "Lunch", "start": "2026-09-25T12:00", "attendees": [ATTACKER]}
         _run("create_calendar_event", inp, ctx)
         (card,) = _pending()
         approvals.decide(card["approval_id"], "approve", decided_by="owner")
@@ -166,7 +166,7 @@ class TestRecipient:
     def test_a_denied_card_stays_denied(self, _isolate):
         ctx = _turn("Check my email and set up the lunch")
         _run("search_email", {"query": ""}, ctx)
-        inp = {"title": "Lunch", "attendees": [ATTACKER]}
+        inp = {"title": "Lunch", "start": "2026-09-25T12:00", "attendees": [ATTACKER]}
         _run("create_calendar_event", inp, ctx)
         (card,) = _pending()
         approvals.decide(card["approval_id"], "deny", decided_by="owner")
@@ -179,7 +179,7 @@ class TestRecipient:
         one place an injected action would otherwise go unseen."""
         ctx = {"authenticated": True, "is_background_task": True}
         _run("search_email", {"query": ""}, ctx)
-        _run("create_calendar_event", {"title": "x", "attendees": [ATTACKER]}, ctx)
+        _run("create_calendar_event", {"title": "x", "start": "2026-09-25T12:00", "attendees": [ATTACKER]}, ctx)
         assert not _ran(_isolate, "create_calendar_event")
         assert len(_pending()) == 1
 
@@ -260,7 +260,7 @@ def test_a_crash_in_the_gate_blocks_the_call(_isolate, monkeypatch):
         raise RuntimeError("ledger corrupt")
     monkeypatch.setattr(taint, "evaluate", boom)
     ctx = _turn("invite bob")
-    out = _run("create_calendar_event", {"title": "x", "attendees": ["bob@x.com"]}, ctx)
+    out = _run("create_calendar_event", {"title": "x", "start": "2026-09-25T12:00", "attendees": ["bob@x.com"]}, ctx)
     assert "fail-closed" in out
     assert not _ran(_isolate, "create_calendar_event")
 

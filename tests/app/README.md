@@ -11,8 +11,12 @@ the app.
     npm run test:app      # full suite, including machine-vision judging
     npm run test:vision   # just the vision tier
 
-The Friday server must already be running on :3000. Nothing here starts or
-stops it.
+Tests never write to the owner's live Friday. By default the suite starts a
+scratch server on 127.0.0.1:3197 with a temporary `FRIDAY_HOME` (Playwright's
+`webServer`) and stops it afterwards. Pointing `FRIDAY_BASE` at the live
+server (:3000, or any non-loopback host) is refused unless `LIVE_READONLY=1`,
+and in that mode every non-GET request is blocked and fails the test. Specs
+import `test` and `expect` from `tests/app/fixtures.ts`, which enforces this.
 
 ## The two tiers
 
@@ -72,7 +76,10 @@ Two things to know when a vision test fails:
 
 | Variable | Effect |
 |---|---|
-| `FRIDAY_BASE` | server URL (default `http://localhost:3000`) |
+| `FRIDAY_BASE` | server URL (default: a scratch server started by the config) |
+| `LIVE_READONLY=1` | allow the live server, read-only (non-GET requests blocked) |
+| `FRIDAY_SCRATCH_PORT` | the scratch server's port (default 3197) |
+| `FRIDAY_LIVE_PORT` | the live server's port (default 3000) |
 | `FRIDAY_TEST_SHIM=1` | apply known-break shims — see below |
 | `FRIDAY_TEST_MUTATE=1` | include tests that start real work |
 | `FRIDAY_VISION=off` | skip vision judging |

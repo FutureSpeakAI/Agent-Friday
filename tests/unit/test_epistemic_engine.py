@@ -321,73 +321,39 @@ class TestScoreTurn:
 # ── register_governance_event ─────────────────────────────────────────────────
 
 class TestRegisterGovernanceEvent:
+    """A governance event is kept in its own log and is never a turn."""
 
-    def test_returns_turn_score(self, engine):
-        turn = engine.register_governance_event(severity=0.8)
-        assert isinstance(turn, TurnScore)
+    def test_returns_the_event_not_a_turn(self, engine):
+        out = engine.register_governance_event(0.9, "risky loop")
+        assert isinstance(out, dict)
+        assert out["severity"] == pytest.approx(0.9, abs=0.001) and out["detail"] == "risky loop"
 
-    def test_high_severity_lowers_composite(self, engine):
-        turn = engine.register_governance_event(severity=0.9)
-        assert turn.composite == pytest.approx(0.1, abs=0.001)
+    def test_severity_is_clamped(self, engine):
+        assert engine.register_governance_event(1.5)["severity"] == 1.0
+        assert engine.register_governance_event(-0.5)["severity"] == 0.0
 
-    def test_zero_severity_gives_composite_one(self, engine):
-        turn = engine.register_governance_event(severity=0.0)
-        assert turn.composite == pytest.approx(1.0, abs=0.001)
-
-    def test_max_severity_gives_composite_zero(self, engine):
-        turn = engine.register_governance_event(severity=1.0)
-        assert turn.composite == pytest.approx(0.0, abs=0.001)
-
-    def test_severity_half_gives_composite_half(self, engine):
-        turn = engine.register_governance_event(severity=0.5)
-        assert turn.composite == pytest.approx(0.5, abs=0.001)
-
-    def test_all_dimensions_equal_composite(self, engine):
-        turn = engine.register_governance_event(severity=0.6, detail="test event")
-        assert turn.information_gain == turn.composite
-        assert turn.pushback_rate == turn.composite
-        assert turn.socratic_ratio == turn.composite
-        assert turn.independence_fostering == turn.composite
-
-    def test_severity_clamps_above_one(self, engine):
-        turn = engine.register_governance_event(severity=99.0)
-        assert turn.composite == pytest.approx(0.0, abs=0.001)
-
-    def test_severity_clamps_below_zero(self, engine):
-        turn = engine.register_governance_event(severity=-5.0)
-        assert turn.composite == pytest.approx(1.0, abs=0.001)
-
-    def test_user_message_length_is_zero(self, engine):
-        turn = engine.register_governance_event(severity=0.5)
-        assert turn.user_message_length == 0
-
-    def test_response_length_reflects_detail(self, engine):
-        detail = "something bad happened here"
-        turn = engine.register_governance_event(severity=0.3, detail=detail)
-        assert turn.response_length == len(detail)
-
-    def test_empty_detail_response_length_zero(self, engine):
-        turn = engine.register_governance_event(severity=0.3)
-        assert turn.response_length == 0
-
-    def test_appended_to_history(self, engine):
+    def test_it_is_not_appended_to_the_turn_history(self, engine):
         before = len(engine._history)
-        engine.register_governance_event(severity=0.5)
-        assert len(engine._history) == before + 1
+        engine.register_governance_event(0.9, "x")
+        assert len(engine._history) == before
 
-    @pytest.mark.parametrize("severity", [0.0, 0.25, 0.5, 0.75, 1.0])
-    def test_composite_monotonically_decreasing_with_severity(self, engine, severity):
-        turn = engine.register_governance_event(severity=severity)
-        expected_composite = max(0.0, 1.0 - severity)
-        assert abs(turn.composite - round(expected_composite, 3)) <= 0.001
+    def test_it_leaves_the_rolling_averages_alone(self, engine):
+        engine.score_turn("Is this right?", "Actually, I disagree: the figures show otherwise.")
+        before = engine.get_scores()
+        engine.register_governance_event(0.95, "x")
+        after = engine.get_scores()
+        assert after.get("dimensions") == before.get("dimensions")
+        assert after.get("total_turns_scored") == before.get("total_turns_scored")
+
+    def test_it_is_readable_from_its_own_log(self, engine):
+        engine.register_governance_event(0.8, "first")
+        engine.register_governance_event(0.7, "second")
+        events = engine.governance_events()
+        assert [e["detail"] for e in events][-2:] == ["first", "second"]
 
     def test_timestamp_iso_format(self, engine):
-        turn = engine.register_governance_event(severity=0.5)
-        assert "T" in turn.timestamp
-        assert turn.timestamp.endswith("Z")
-
-
-# ── get_scores / get_prompt_injection ────────────────────────────────────────
+        out = engine.register_governance_event(0.5)
+        assert "T" in out["timestamp"] and out["timestamp"].endswith("Z")
 
 class TestGetScores:
 
@@ -418,14 +384,17 @@ class TestGetPromptInjection:
         out = engine.get_prompt_injection()
         assert isinstance(out, str)
 
-    def test_contains_score_value(self, engine):
-        out = engine.get_prompt_injection()
-        # Should include "0.00" or similar numeric
-        assert any(char.isdigit() for char in out)
+    def test_is_the_fixed_honesty_policy(self, engine):
+        """The injection is fixed text: the honesty rules, never a score to
+        chase (a model told to raise a keyword average is gaming the metric)."""
+        from agent_friday.epistemic_engine import HONESTY_POLICY
+        assert engine.get_prompt_injection() == HONESTY_POLICY
+        assert "Hold a stated position" in HONESTY_POLICY
 
-    def test_contains_dimension_names(self, engine):
+    def test_carries_no_score_and_no_dimension_names(self, engine):
         out = engine.get_prompt_injection()
-        assert "Information gain" in out or "information_gain" in out.lower()
+        assert "information_gain" not in out.lower() and "Information gain" not in out
+        assert not any(ch.isdigit() for ch in out), "a score has leaked into the prompt"
 
 
 if __name__ == "__main__":

@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · Agent Friday™ HIG prototype</title>
+<link rel="stylesheet" href="hig.css">
+<style>
+  .frame { height: calc(100vh - 30px); display: flex; flex-direction: column; }
+  .frame .topbar { position: static; }
+  .frame .settings { flex: 1; }
+  .hit-count { color: var(--fr-dim); font-size: var(--fr-text-sm); padding: 0 10px 6px; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="topbar">
+    <div class="lockup"><span class="p">AGENT FRIDAY<sup>™</sup></span><span class="by">by</span><span class="m">FutureSpeak.AI<sup>™</sup></span></div>
+    <div class="sep"></div>
+    <span class="chip" title="This tab's workspace"><svg viewBox="0 0 24 24" width="14" height="14" style="stroke:url(#triad);fill:none;stroke-width:1.5"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg> Settings</span>
+    <span class="chip"><span class="dot work"></span> Claude Sonnet 5.5 <span class="dim">bound</span> ▾</span>
+    <div class="right">
+      <button class="ibtn" title="Search and commands (Ctrl+K)" aria-label="Search and commands" id="openPalette"></button>
+      <button class="ibtn" title="Chat with Friday" aria-label="Chat with Friday" id="chatBtn"></button>
+      <button class="ibtn" title="Settings (Ctrl+,)" aria-label="Settings" id="gearBtn"></button>
+      <div class="live glass-none" tabindex="0" aria-label="Connected. Hover for this PC's status."><span>● LIVE</span>
+        <div class="pop glass"><dl><dt>Time</dt><dd>19:24:08</dd><dt>Local seat</dt><dd>held · 27B</dd><dt>GPU memory</dt><dd>8.6 / 12 GB</dd><dt>RAM</dt><dd>6.1 / 32 GB</dd><dt>CPU</dt><dd>11%</dd><dt>Disk</dt><dd>42 GB free</dd></dl></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings">
+    <nav class="set-rail" aria-label="Settings pages">
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+        <input id="q" type="search" placeholder="Search, or say it" aria-label="Search settings, or type a sentence">
+        <kbd>/</kbd>
+      </div>
+      <div class="hit-count" id="hits"></div>
+      <div id="rail"></div>
+      <div class="about"><button class="pg" data-page="about">About</button></div>
+    </nav>
+    <main class="set-page" id="page" tabindex="-1">
+      <div class="say" id="say" role="status"></div>
+      <div class="inner" id="inner"></div>
+    </main>
+  </div>
+</div>
+
+<script src="hig.js"></script>
+<script>
+protoNav('settings.html');
+document.getElementById('openPalette').innerHTML = icon('search');
+document.getElementById('chatBtn').innerHTML = icon('chat');
+document.getElementById('gearBtn').innerHTML = icon('gear');
+
+// ── The rail: thirteen pages in four groups, plus About (surface-reorg.md §2.5) ──
+const GROUPS = [
+  { name: 'You and Friday', pages: [['general', 'General', 'user'], ['personality', 'Personality', 'sparkle'], ['voice', 'Voice', 'voice'], ['appearance', 'Appearance & Hologram', 'eye']] },
+  { name: 'Thinking', pages: [['models', 'Models & Brain', 'brain'], ['spending', 'Spending', 'wallet']] },
+  { name: 'Trust and data', pages: [['privacy', 'Privacy & Data', 'shield'], ['permissions', 'Permissions & Approvals', 'check'], ['connectors', 'Connectors', 'plug'], ['notifications', 'Notifications', 'bell']] },
+  { name: 'This PC', pages: [['devices', 'Devices & Backups', 'devices', 'planned'], ['health', 'Health & Diagnostics', 'health', 'status'], ['advanced', 'Advanced', 'wrench']] },
+];
+
+// A row: label, meaning, consequence, provenance (who, when), control, phrases for search and voice.
+// Every value here is fictional.
+const R = (key, label, meaning, cons, prov, ctl, phrases) => ({ key, label, meaning, cons, prov, ctl, phrases: phrases || [] });
+const T = on => ({ kind: 'toggle', on });
+const S = (opts, v) => ({ kind: 'select', opts, v });
+const SEG = (opts, v) => ({ kind: 'seg', opts, v });
+const F = (v, w) => ({ kind: 'field', v, w });
+const B = (label, cls) => ({ kind: 'button', label, cls });
+
+const PAGES = {
+  general: { title: 'General', lede: 'Her name, your name, where she answers, and how far along setup is.', sections: [
+    { title: 'Getting to know you', status: true, lede: 'Setup never really ends; every step here can be re-run.', stats: [['Facts confirmed', '312'], ['Waiting for review', '41', 'warn'], ['Sources fully read', '2 of 4']], rows: [
+      R('general.rerun', 'Re-run a setup step', 'Opens the birth conversation at one step: her name, the vault, routing, how she talks, connections.', 'Nothing changes until you finish the step; the old answer is kept until then.', ['you', '12 days ago'], B('Choose a step…'), ['run setup again']),
+    ] },
+    { title: 'Identity', rows: [
+      R('general.agent_name', 'Her name', 'What she calls herself in chat and by voice. The product is Agent Friday™; this is her.', 'Every greeting, every card and the tray tooltip use the new name from the next reply on.', ['you', 'at birth'], F('Friday', 160), ['call yourself', 'change your name']),
+      R('general.your_name', 'What she calls you', 'The name or word she uses for you. "Boss" is her default.', 'She uses it from the next reply; past messages are not rewritten.', ['default', ''], F('boss', 160), ['call me']),
+      R('general.language', 'Language', 'The language of the interface and of her replies, unless you write to her in another.', 'Voice recognition and speech switch too; a local voice may be missing for some languages and she will say so.', ['default', ''], S(['English (US)', 'English (UK)', 'Español', 'Deutsch'], 'English (US)'), ['speak english']),
+    ] },
+    { title: 'Where she answers', rows: [
+      R('general.local_address', 'Local address', 'The name this PC answers to in a browser, built from her name.', 'Workspace tabs and the tray open at the new address once it resolves; until then they stay on localhost.', ['Friday, by a setup you accepted', '12 days ago'], F('agent.friday', 160), ['local address']),
+      R('general.start_on_login', 'Start when you sign in', 'Starts Friday in the tray when Windows signs you in.', 'Off, she starts only when you open her; routines scheduled before you do are skipped and listed in Activity.', ['you', '9 days ago'], T(true), ['start on login', 'start when I sign in']),
+    ] },
+    { title: 'Danger zone', danger: true, rows: [
+      R('general.delete_profile', 'Delete your profile', 'Removes the answers you gave at setup and the style built from them. Your wiki, mail and files are untouched.', 'She forgets how you like to be spoken to and asks again next time. This cannot be undone.', ['', ''], B('Delete profile…', 'danger'), []),
+    ] },
+  ] },
+  personality: { title: 'Personality', lede: 'How she presents herself, how she talks, and how much she offers on her own.', sections: [
+    { title: 'How she talks', rows: [
+      R('personality.verbosity', 'Length', 'How much she says when you have not asked for detail.', 'Shorter answers drop the evidence line unless you ask; longer ones add what she checked.', ['Friday, by a proposal you accepted', '3 days ago'], SEG(['Terse', 'Balanced', 'Full'], 'Balanced'), ['be brief', 'say more']),
+      R('personality.formality', 'Register', 'How formal she is with you.', 'Changes word choice only; never what she will or will not do.', ['you', 'at birth'], SEG(['Casual', 'Plain', 'Formal'], 'Plain'), ['be more formal']),
+      R('personality.persona', 'Her character', 'The longer description of who she is. Plain text; she reads it before every reply.', 'A large change can shift her tone everywhere at once. Undo keeps the last thirty days of versions.', ['you', '2 days ago'], B('Edit…'), ['edit your personality']),
+    ] },
+    { title: 'On her own', rows: [
+      R('personality.proactive', 'Offers things unprompted', 'Whether she mentions a conflict, a deadline or an idea before you ask.', 'Off, she waits to be asked; countdowns and the morning briefing still run.', ['you', 'at birth'], T(true), ['stop offering things', 'be proactive']),
+      R('personality.quiet_hours', 'Quiet hours', 'When she does not speak first or notify, read from Windows Focus Assist unless you set them.', 'A card that cannot wait still shows, silently, in Needs you.', ['Windows Focus Assist', ''], F('22:00 to 07:00', 160), ['quiet hours']),
+    ] },
+  ] },
+  voice: { title: 'Voice', lede: 'How she listens and speaks.', sections: [
+    { title: 'Readiness', status: true, stats: [['Listening', 'works now', 'ok'], ['Thinking', 'works now', 'ok'], ['Speaking', 'not checked', 'neutral']], rows: [] },
+    { title: 'Engine', rows: [
+      R('voice.engine', 'Voice engine', 'What answers when you press the mic: the local stack on this PC, or Gemini Live in the cloud.', 'Cloud: your microphone audio goes to Google, and questions about your own context go through the local model first. Local: slower on this PC, nothing leaves.', ['you', '5 days ago'], SEG(['Local', 'Cloud'], 'Cloud'), ['use local voice', 'use cloud voice']),
+      R('voice.voice', 'Her voice', 'The voice she speaks with on the chosen engine.', 'Takes effect on the next sentence.', ['you', '5 days ago'], S(['Aoede', 'Kore', 'Puck'], 'Aoede'), ['change your voice']),
+      R('voice.ptt', 'Push to transcribe, everywhere', 'Hold Alt+T in any app, say a sentence, let go; it is typed where you were looking. Transcribed on this PC.', 'Off removes the keyboard hook completely.', ['you', '9 days ago'], T(true), ['push to talk']),
+    ] },
+    { title: 'Listening', rows: [
+      R('voice.interrupt', 'Interrupting her', 'Whether speaking over her stops her.', 'Off, she finishes her sentence; Esc still stops her.', ['default', ''], T(true), ['let me interrupt']),
+      R('voice.silence', 'Pause before she replies', 'How long she waits after you stop talking.', 'Shorter feels quicker and cuts you off more; longer waits for your second thought.', ['default', ''], S(['0.6 s', '0.9 s', '1.4 s'], '0.9 s'), ['wait longer before replying']),
+    ] },
+  ] },
+  appearance: { title: 'Appearance & Hologram', lede: 'The dock, the desktop and how much the hologram does. The scene itself is set from the scene menu.', sections: [
+    { title: 'Desktop', rows: [
+      R('appearance.backdrop', 'Backdrop', 'What the scene stands on. Holographic is the starfield, the grid floor and the film grain; Calm is a quiet gradient. Her avatar and its structures show in both.', 'Calm turns off the stars, the grid and the grain only. The hologram, its moods and its motion while she speaks are unchanged.', ['default', ''], SEG(['Holographic', 'Calm'], 'Holographic'), ['calm backdrop', 'bring the stars back']),
+      R('appearance.landing_mode', 'The start screen', 'When the greeting, your countdowns and the chat field show over the scene.', 'Smart: shown when you return, first thing in the day, before something timed, or when you ask. Always and Never do what they say; "show my day" still works under Never.', ['default', ''], SEG(['Smart', 'Always', 'Never'], 'Smart'), ['always show my day', 'never show my day']),
+      R('appearance.dock', 'Your dock', 'Which workspaces sit in the dock, and in what order.', 'A hidden workspace is still there by voice, in the palette and at its address; only its icon goes.', ['you', '1 day ago'], B('Arrange…'), ['hide health from the dock']),
+      R('appearance.telemetry_in_bar', 'Telemetry in the bar', 'Shows the clock, GPU, RAM, CPU and disk in the top bar instead of behind the connection light.', 'Adds five chips to every page; nothing else changes.', ['default', ''], T(false), ['show telemetry']),
+    ] },
+    { title: 'Motion and size', rows: [
+      R('appearance.reduced_motion', 'Reduce motion', 'Reveals become instant and the dock stops magnifying. The hologram still moves while she speaks.', 'Read from Windows unless you set it here.', ['Windows', ''], T(false), ['reduce motion']),
+      R('appearance.text_size', 'Text size', 'Scales every size in the interface together.', 'Lists get fewer rows per screen; nothing is hidden.', ['default', ''], SEG(['Small', 'Default', 'Large'], 'Default'), ['bigger text']),
+      R('appearance.dazzle', '3D effects', 'Bloom, grain and the holographic views inside workspaces.', 'Off keeps the scene and turns the rest flat; this PC may run cooler.', ['you', '4 days ago'], SEG(['Off', 'Subtle', 'Full'], 'Subtle'), ['turn off 3d']),
+    ] },
+  ] },
+  models: { title: 'Models & Brain', lede: 'Which model does each job, and whether it runs on this PC or in the cloud.', sections: [
+    { title: 'Now answering', status: true, stats: [['Chat', 'Claude Sonnet 5.5 · cloud', 'work'], ['Local seat', 'Bonsai 2 27B · held', 'ok'], ['Where your data goes', 'this PC first', 'ok']], rows: [] },
+    { title: 'Routing', rows: [
+      R('models.routing_mode', 'Where she thinks', 'Local preferred keeps work on this PC and asks before the cloud. Local only never asks. Cloud only sends everything that is not vault-tier.', 'Local only: slower on hard questions, and cloud-only features refuse. Cloud only: every call shows in Left this machine.', ['you', 'at birth'], SEG(['Local preferred', 'Local only', 'Cloud only'], 'Local preferred'), ['think locally', 'use the cloud']),
+      R('models.keep_warm', 'Keep the local brain warm', 'Keeps the 27B loaded between questions so the first answer is quick.', 'Holds about 9 GB of GPU memory while idle; games and video editing may stutter. Off, the first answer after a pause takes about 40 s.', ['you', '2 days ago'], T(true), ['keep the brain warm', 'unload the brain']),
+      R('models.cloud_consent', 'Cloud consent', 'What may ever be sent to a cloud model. One home: Privacy & Data.', 'Set there; this row only shows the current answer.', ['you', '12 days ago'], B('Open in Privacy & Data'), ['cloud consent']),
+    ] },
+    { title: 'The seat for each job', rows: [
+      R('models.seat.chat', 'Chat', 'The model that answers you in chat and voice.', 'A cloud seat shows every turn in Left this machine; a local seat is slower on long documents.', ['you', '2 days ago'], S(['Claude Sonnet 5.5', 'Claude Opus 5.5', 'Bonsai 2 27B (this PC)'], 'Claude Sonnet 5.5'), ['switch to opus', 'use the local model for chat']),
+      R('models.seat.deep', 'Deep work', 'Research, long plans and code changes.', 'Costs the most per call; the budget in Spending caps it.', ['Friday, by a proposal you accepted', '6 days ago'], S(['Claude Opus 5.5', 'Claude Sonnet 5.5', 'Bonsai 2 27B (this PC)'], 'Claude Opus 5.5'), []),
+      R('models.seat.fast', 'Quick replies', 'Short classifications, titles, the first word of a reply.', 'The local seat handles this well; a cloud seat here adds a call to nearly everything.', ['default', ''], S(['Bonsai 2 27B (this PC)', 'Claude Haiku 4.5'], 'Bonsai 2 27B (this PC)'), []),
+      R('models.soup', 'Model Soup', 'A full stack for this PC, solved from a public catalogue: responder, Laya, deep reasoner, image, video, music.', 'Installs only what you tick, each with size and checksum. Your hardware profile never leaves this PC.', ['offered once', '12 days ago'], B('Make me a soup…'), ['make me a model soup']),
+    ] },
+    { title: 'Limits', rows: [
+      R('models.turn_rounds', 'Rounds per turn', 'How many tool calls one question may spend before she stops and reports.', 'Higher finishes more on its own and costs more; lower asks you sooner.', ['default', ''], F('24', 80), ['rounds per turn']),
+      R('models.loop_guard', 'Stop a turn that goes in circles', 'Ends a turn that repeats the same tool call with the same arguments.', 'Off, a stuck turn runs to the round limit and the budget.', ['default', ''], T(true), ['loop guard']),
+    ] },
+  ] },
+  spending: { title: 'Spending', lede: 'What the cloud costs you, and where it stops.', sections: [
+    { title: 'This month', status: true, stats: [['Spent', '$18.40'], ['Deep work', '$11.20'], ['Chat', '$6.10']], rows: [] },
+    { title: 'Limits', rows: [
+      R('spending.daily_alert', 'Daily alert', 'She tells you when a day passes this amount.', 'Nothing stops; you are told once that day.', ['you', '12 days ago'], F('$5', 80), ['warn me at five dollars a day']),
+      R('spending.monthly_stop', 'Monthly hard stop', 'Cloud calls stop for the month at this amount. Local work continues.', 'Routines that need the cloud wait and say so in Activity; chat falls back to the local seat and tells you.', ['you', '12 days ago'], F('$60', 80), ['cap spending at sixty dollars']),
+      R('spending.scheduled_cloud', 'Routines may use the cloud', 'Whether a scheduled routine may call a cloud model when the local seat is busy.', 'Off, a routine waits for the local seat; its run shows as waiting in Routines.', ['default', ''], T(false), ['let routines use the cloud']),
+    ] },
+  ] },
+  privacy: { title: 'Privacy & Data', lede: 'What may leave this machine, what she keeps, and your data.', sections: [
+    { title: 'Privacy check', status: true, stats: [['Egress gate', 'all layers on', 'ok'], ['Vault', 'locked · Windows Hello', 'ok'], ['Left this machine today', '14 sends', '']], rows: [] },
+    { title: 'The vault', rows: [
+      R('privacy.vault_local_only', 'Keep vault content off the cloud', 'Vault-tier notes (finance, health, legal, private) are stripped from cloud prompts, and questions that touch them run on the local model.', 'When no local model is serving, vault questions refuse rather than leak.', ['you', 'at birth'], T(true), ['keep the vault local']),
+      R('privacy.wiki_sections', 'Wiki sections kept off the cloud', 'Sections that never enter the knowledge block a cloud prompt carries.', 'Those pages index locally or not at all; answers about them come from the local seat.', ['Friday, suggested, you accepted', '10 days ago'], B('Choose sections… (2)'), ['keep personal pages local']),
+    ] },
+    { title: 'Cloud consent', rows: [
+      R('privacy.cloud_consent', 'What may be sent to a cloud model', 'Scrubbed text only, text with names, or nothing. The gate still runs, records and discloses under every answer.', 'Nothing: cloud seats are unavailable and the routing mode falls to Local only. Text with names: the ledger shows exactly what went.', ['you', '12 days ago'], SEG(['Nothing', 'Scrubbed', 'With names'], 'Scrubbed'), ['cloud consent', 'send nothing to the cloud']),
+    ] },
+    { title: 'What she keeps', rows: [
+      R('privacy.log', 'Keep a log of conversations and tool use', 'Every conversation and tool call is written to the context log on this PC.', 'Off, she cannot search past conversations or show "why did you do that?" for them.', ['you', 'at birth'], T(true), ['log conversations']),
+      R('privacy.off_record', 'Off the record', 'Nothing is saved: no log, no memory, no wiki update, no receipt. Tools may still create records elsewhere, and she says so when one would.', 'Stays on until you turn it off, across restarts. The scene says so while it is on.', ['you', ''], T(false), ['go off the record', 'back on the record']),
+      R('privacy.retention', 'Keep the log for', 'How long the context log is kept before it is deleted.', 'Shorter means less to search and less at risk; "forever" keeps everything until you delete it.', ['default', ''], S(['30 days', '90 days', '1 year', 'Forever'], 'Forever'), ['keep the log for ninety days']),
+      R('privacy.knows', 'What Friday knows about you', 'Every fact she holds, where it came from, and what it shaped. Correct, forget or export from there.', 'Forgetting a fact removes it from the wiki, the graph, summaries and proposals, with a receipt.', ['', ''], B('Browse…'), ['what do you know about me']),
+    ] },
+    { title: 'Your data', rows: [
+      R('privacy.export', 'Export everything', 'A ZIP of your wiki, conversations, settings and receipts, readable without Friday.', 'Takes a minute; the file is written to a folder you choose and nowhere else.', ['', ''], B('Export…'), ['export my data']),
+    ] },
+    { title: 'Danger zone', danger: true, rows: [
+      R('privacy.erase', 'Erase everything', 'Deletes the wiki, the graph, the vault, conversations, receipts and settings on this PC.', 'Friday starts over as if newly installed. Type ERASE to confirm. There is no undo.', ['', ''], B('Erase everything…', 'danger'), []),
+    ] },
+  ] },
+  permissions: { title: 'Permissions & Approvals', lede: 'What needs your sign-off, what routines may do on their own, and the modes that change both.', sections: [
+    { title: 'Sign-off', rows: [
+      R('permissions.outward', 'Anything that leaves this PC asks first', 'Sending, posting, buying, deleting and publishing wait for a card.', 'Cannot be turned off here; a grant below can allow one kind for a routine, with a count and an end date.', ['the cLaws', ''], B('Open Needs you'), ['what needs me']),
+      R('permissions.grants', 'Grants to routines', 'What a routine may do without asking, each with a count and an end date.', 'A grant ends on its date or its count; every use is a receipt.', ['you', '3 active'], B('Review grants (3)…'), ['show my grants']),
+      R('permissions.computer_control', 'Computer control', 'Whether she may move your mouse and type, per application, while you watch.', 'A live indicator shows in the bar whenever it is active; Ctrl+Shift+Q stops it.', ['you', '2 days ago'], T(true), ['allow computer control', 'stop computer control']),
+    ] },
+    { title: 'Modes', lede: 'A mode is a named set of changes; entering it shows the diff, leaving it restores.', rows: [
+      R('permissions.mode', 'Current mode', 'Normal, Work (personal sources muted, work routines on, until a time), Travel (local only, briefings by voice), or Off the record.', 'Each mode shows what it changes before it starts.', ['you', ''], SEG(['Normal', 'Work', 'Travel'], 'Normal'), ['work mode', 'travel mode']),
+    ] },
+  ] },
+  connectors: { title: 'Connectors', lede: 'Every account and key, each with what she sees, where it runs, and how to revoke it.', sections: [
+    { title: 'Accounts', rows: [
+      R('connectors.google_personal', 'Google · personal', 'Mail, calendar and contacts. Reads here; sends only after a card.', 'Disconnecting keeps what was already read in the wiki; nothing new arrives.', ['you', '12 days ago'], B('Connected · Manage'), ['disconnect google']),
+      R('connectors.google_work', 'Google · work', 'Read-only: the workspace admin has not granted send. Archive, star and read changes stay in Friday.', 'Reconnecting with sending needs the admin\'s consent screen.', ['you', '9 days ago'], B('Read-only · Reconnect'), []),
+    ] },
+    { title: 'Model providers', rows: [
+      R('connectors.anthropic', 'Anthropic', 'Key present. Billed to your account.', 'Removing it disables the Claude seats; routing falls to the next available.', ['you', '12 days ago'], B('Manage key'), []),
+      R('connectors.openrouter', 'OpenRouter', 'Key present.', 'Removing it disables "let Friday decide" seats.', ['you', '8 days ago'], B('Manage key'), []),
+    ] },
+    { title: 'Tools', rows: [
+      R('connectors.mcp', 'MCP servers', 'Programs that add tools she can call. Each lists what it can reach.', 'A server with network access can send what you give it; she says so on the card.', ['', '2 servers'], B('Manage…'), []),
+      R('connectors.phone', 'Phone line', 'A number of hers for texts and calls, through your own Twilio account.', 'Costs per message and minute; shown in Spending.', ['', 'not set up'], B('Set up…'), []),
+    ] },
+  ] },
+  notifications: { title: 'Notifications', lede: 'What reaches the bell, the desktop, and you when you are away.', sections: [
+    { title: 'Where', rows: [
+      R('notifications.bell', 'In the bell', 'Everything: finished tasks, cards, routine results, failures.', 'Always on; this is her record of what happened.', ['default', ''], T(true), []),
+      R('notifications.os', 'Windows notifications', 'A banner from Windows for things that need you and for failures.', 'Off, you learn of a waiting card only from the amber pill in the bar.', ['you', '6 days ago'], T(true), ['stop windows notifications']),
+      R('notifications.phone', 'On your phone', 'Cards and failures by text, when a phone line is set up.', 'Costs per message; needs the phone line in Connectors.', ['', 'needs a phone line'], T(false), []),
+    ] },
+    { title: 'Sound', rows: [
+      R('notifications.sound', 'A sound when something needs you', 'Her notification sound, quiet, under two seconds, never while off the record.', 'Follows the system volume and mute.', ['default', ''], T(true), ['mute notifications']),
+    ] },
+  ] },
+  devices: { title: 'Devices & Backups', lede: 'Other devices that reach her, and the bundle that would bring her back. Planned: nothing here is built yet.', sections: [
+    { title: 'Devices', rows: [
+      R('devices.phone', 'Your phone', 'Approval cards and briefings on your phone, over your own private network.', 'A paired device can decide cards; revoke it here at any time.', ['', 'none paired'], B('Pair a device…'), []),
+    ] },
+    { title: 'Backups', rows: [
+      R('devices.backup', 'Friday Bundle', 'Everything of hers, encrypted with your vault key, to a folder or drive you choose.', 'A backup is only real once a restore rehearsal has passed; the last result shows here.', ['', 'never run'], B('Back up now…'), ['back up']),
+    ] },
+  ] },
+  health: { title: 'Health & Diagnostics', lede: 'How this PC and Friday are doing right now. A status page: nothing here changes a setting.', sections: [
+    { title: 'This PC', status: true, stats: [['GPU memory', '8.6 / 12 GB'], ['RAM', '6.1 / 32 GB'], ['Disk', '42 GB free']], rows: [] },
+    { title: 'Friday', status: true, stats: [['Shell ready in', '2.1 s', 'ok'], ['Approval card in', '140 ms', 'ok'], ['Context compression', '6 runs · 0.9k saved']], rows: [] },
+    { title: 'Work', rows: [
+      R('health.queue', 'Queued work', 'What is parked for idle time, and why.', 'Draining the queue runs it now, on this PC, and may slow the machine.', ['', 'nothing queued'], B('Open Activity → Now'), []),
+      R('health.processes', 'Processes', 'The ten busiest processes, and the ones that are hers.', 'Stopping one of hers ends its task with a receipt.', ['', ''], B('Open Code → Processes'), []),
+    ] },
+  ] },
+  advanced: { title: 'Advanced', lede: 'Rarely needed controls and developer knobs. Nothing here is required for everyday use.', sections: [
+    { title: 'Knowledge graph', rows: [
+      R('advanced.reindex', 'Reindex nightly', 'Rebuilds the graph from the wiki at 03:30, after memory consolidation.', 'Off, new facts join the graph only when you rebuild by hand.', ['default', ''], T(true), ['reindex nightly']),
+      R('advanced.index_where', 'Where indexing runs', 'On this PC, or in the cloud for the embeddings only.', 'Cloud indexing sends page text, scrubbed, to the embedding provider; each batch is in Left this machine.', ['you', 'at birth'], SEG(['This PC', 'Cloud'], 'This PC'), []),
+    ] },
+    { title: 'Developer', rows: [
+      R('advanced.tracking_debug', 'Tracking overlay', 'Draws what the head and hand tracker sees.', 'Costs a few frames per second while on.', ['default', ''], T(false), []),
+      R('advanced.web_fonts', 'Load fonts from Google when missing', 'Only while her own font files are not installed. Each page load would then ask Google for them.', 'On shows Google this PC\'s address once per page load; off uses similar fonts already on this PC.', ['default', ''], T(false), []),
+      R('advanced.decision_shadow', 'Decision backend in shadow mode', 'Runs the new approvals scanner beside the old one and logs disagreements without acting on them.', 'No visible change; adds a line per decision to the log.', ['default', ''], T(false), []),
+    ] },
+  ] },
+  about: { title: 'About', lede: 'Version, updates and credits.', sections: [
+    { title: 'Agent Friday™ by FutureSpeak.AI™', lede: 'Agent Friday™ and FutureSpeak.AI™ are trademarks of FutureSpeak.AI.', rows: [
+      R('about.version', 'Version', '5.14.3, installed 12 days ago.', '', ['', ''], B('Check for updates'), ['what version are you']),
+      R('about.updates', 'Check for new versions weekly', 'Asks GitHub once a week whether a newer release exists. Sends nothing about you or this PC.', 'Off, you check by hand. She never downloads or installs on her own either way.', ['you', '12 days ago'], T(false), ['check for updates weekly']),
+    ] },
+  ] },
+};
+
+// ── Render ──
+const rail = document.getElementById('rail'), inner = document.getElementById('inner'), hits = document.getElementById('hits');
+let current = 'general', changed = {};
+for (const g of GROUPS) {
+  const gl = document.createElement('div'); gl.className = 'group-label label-caps'; gl.textContent = g.name; rail.appendChild(gl);
+  for (const [id, label, ic, tag] of g.pages) {
+    const b = document.createElement('button'); b.className = 'pg'; b.dataset.page = id;
+    b.innerHTML = icon(ic) + '<span>' + label + '</span>' + (tag ? '<span class="tag">' + tag + '</span>' : '');
+    rail.appendChild(b);
+  }
+}
+document.querySelectorAll('.pg').forEach(b => b.addEventListener('click', () => show(b.dataset.page)));
+
+function ctl(row) {
+  const c = row.ctl, k = row.key;
+  if (c.kind === 'toggle') return '<button class="toggle" role="switch" aria-checked="' + (changed[k] !== undefined ? changed[k] : c.on) + '" aria-label="' + row.label + '" data-key="' + k + '"></button>';
+  if (c.kind === 'select') return '<select class="sel" aria-label="' + row.label + '" data-key="' + k + '">' + c.opts.map(o => '<option' + (o === (changed[k] || c.v) ? ' selected' : '') + '>' + o + '</option>').join('') + '</select>';
+  if (c.kind === 'seg') return '<div class="seg" role="group" aria-label="' + row.label + '">' + c.opts.map(o => '<button aria-pressed="' + (o === (changed[k] || c.v)) + '" data-key="' + k + '" data-v="' + o + '">' + o + '</button>').join('') + '</div>';
+  if (c.kind === 'field') return '<input class="fld" value="' + (changed[k] || c.v) + '" aria-label="' + row.label + '" data-key="' + k + '" style="min-width:' + (c.w || 160) + 'px;width:' + (c.w || 160) + 'px">';
+  if (c.kind === 'button') return '<button class="btn ' + (c.cls || '') + '" data-key="' + k + '">' + c.label + '</button>';
+  return '';
+}
+function rowHtml(r) {
+  const isDefault = /^default$/i.test(r.prov[0] || '');
+  const who = isDefault ? 'Default, never changed' : r.prov[0] ? ('Changed by ' + r.prov[0] + (r.prov[1] ? ' · <span class="mono">' + r.prov[1] + '</span>' : '')) : (r.prov[1] ? '<span class="mono">' + r.prov[1] + '</span>' : '');
+  return '<div class="srow" data-key="' + r.key + '" id="row-' + r.key.replace(/\./g, '-') + '">' +
+    '<div class="lbl">' + r.label + '</div>' +
+    '<div class="meaning">' + r.meaning + '</div>' +
+    (r.cons ? '<div class="cons">' + r.cons + '</div>' : '<div></div>') +
+    '<div class="prov">' + (who || '<span>Default</span>') + (r.prov[0] && r.prov[0] !== 'default' && r.prov[0] !== 'Default' && r.prov[1] ? ' · <a href="#" data-undo="' + r.key + '">Undo</a>' : '') + (r.phrases.length ? ' · <span title="Say it to Friday">say: “' + r.phrases[0] + '”</span>' : '') + '</div>' +
+    '<div class="ctl">' + ctl(r) + '</div></div>';
+}
+function statHtml(s) {
+  const dot = s[2] ? '<span class="sd" style="background:var(--fr-' + (s[2] === 'work' ? 'violet' : s[2]) + ')"></span>' : '';
+  return '<div class="stat"><div class="k">' + s[0] + '</div><div class="v">' + dot + s[1] + '</div></div>';
+}
+function show(id, highlightKey) {
+  current = id;
+  const p = PAGES[id];
+  document.querySelectorAll('.pg').forEach(b => b.setAttribute('aria-current', b.dataset.page === id ? 'true' : 'false'));
+  inner.innerHTML = '<header><h1>' + p.title + '</h1><p>' + p.lede + '</p></header>' + p.sections.map(s =>
+    '<section class="' + (s.danger ? 'danger' : '') + '"><h2>' + s.title + (s.status ? ' <span class="status-tag">status</span>' : '') + '</h2>' +
+    (s.lede ? '<p class="lede">' + s.lede + '</p>' : '') +
+    (s.stats ? '<div class="status-grid">' + s.stats.map(statHtml).join('') + '</div>' : '') +
+    s.rows.map(rowHtml).join('') + '</section>').join('');
+  wire();
+  if (highlightKey) {
+    const el = document.getElementById('row-' + highlightKey.replace(/\./g, '-'));
+    if (el) { el.classList.add('hit'); el.scrollIntoView({ block: 'center' }); const c = el.querySelector('.ctl [data-key]'); c && c.focus(); }
+  } else document.getElementById('page').scrollTop = 0;
+}
+function wire() {
+  inner.querySelectorAll('.toggle').forEach(t => t.addEventListener('click', () => {
+    const on = t.getAttribute('aria-checked') !== 'true'; t.setAttribute('aria-checked', on); changed[t.dataset.key] = on; mark(t.dataset.key);
+  }));
+  inner.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+    b.parentElement.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); changed[b.dataset.key] = b.dataset.v; mark(b.dataset.key);
+  }));
+  inner.querySelectorAll('select.sel, input.fld').forEach(s => s.addEventListener('change', () => { changed[s.dataset.key] = s.value; mark(s.dataset.key); }));
+  inner.querySelectorAll('.btn[data-key]').forEach(b => b.addEventListener('click', () => {
+    if (b.classList.contains('danger')) toast('Prototype: a destructive action confirms by naming what it destroys.', true);
+    else toast('Prototype: “' + b.textContent.replace('…', '') + '” would open here.');
+  }));
+  inner.querySelectorAll('[data-undo]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); toast('Restored the previous value. Undo holds for thirty days.'); }));
+}
+function mark(key) {
+  const el = document.getElementById('row-' + key.replace(/\./g, '-'));
+  const prov = el && el.querySelector('.prov');
+  if (prov) prov.innerHTML = 'Changed by you · <span class="mono">just now</span> · <a href="#" data-undo="' + key + '">Undo</a>';
+  wire();
+  toast('Saved. Changed by you, just now; Undo holds for thirty days.');
+}
+
+// ── Search, or say it (HIG §6.3) ──
+const q = document.getElementById('q'), say = document.getElementById('say');
+const ALL = Object.entries(PAGES).flatMap(([pid, p]) => p.sections.flatMap(s => s.rows.map(r => ({ pid, r }))));
+const SENTENCES = [
+  { test: /stop reading (my )?work (e-?)?mail after (\d+)/i, build: m => ({ said: 'Stop reading your work mail after ' + m[3] + ':00.', diff: ['- connectors.google_work.read_hours: always', '+ connectors.google_work.read_hours: 07:00 to ' + m[3] + ':00', '- permissions.mode.work.until: (unset)', '+ permissions.mode.work.until: ' + m[3] + ':00'], cons: 'After ' + m[3] + ':00 nothing new arrives from the work account until morning; routines that read it wait. The personal account is unchanged.', page: 'connectors', key: 'connectors.google_work' }) },
+  { test: /(go )?off the record/i, build: () => ({ said: 'Go off the record.', diff: ['- privacy.off_record: false', '+ privacy.off_record: true'], cons: 'Nothing is saved from now: no log, no memory, no wiki update, no receipt. Stays on until you turn it off.', page: 'privacy', key: 'privacy.off_record' }) },
+  { test: /keep the (local )?brain warm/i, build: () => ({ said: 'Keep the local brain warm.', diff: ['- models.keep_warm: true', '+ models.keep_warm: true (no change)'], cons: 'Already on. It holds about 9 GB of GPU memory while idle.', page: 'models', key: 'models.keep_warm' }) },
+  { test: /unload the brain|free the gpu/i, build: () => ({ said: 'Unload the local brain when idle.', diff: ['- models.keep_warm: true', '+ models.keep_warm: false'], cons: 'Frees about 9 GB of GPU memory while idle; the first answer after a pause takes about 40 s.', page: 'models', key: 'models.keep_warm' }) },
+  { test: /cap (my )?spending at \$?(\d+)/i, build: m => ({ said: 'Cap spending at $' + m[2] + ' a month.', diff: ['- spending.monthly_stop: $60', '+ spending.monthly_stop: $' + m[2]], cons: 'Cloud calls stop for the month at $' + m[2] + '; local work continues and routines that need the cloud wait.', page: 'spending', key: 'spending.monthly_stop' }) },
+];
+function search() {
+  const v = q.value.trim();
+  say.classList.remove('open'); say.innerHTML = '';
+  inner.querySelectorAll('.srow.hit').forEach(e => e.classList.remove('hit'));
+  if (!v) { hits.textContent = ''; return; }
+  const s = SENTENCES.find(x => x.test.test(v));
+  if (s) {
+    const d = s.build(v.match(s.test));
+    hits.textContent = 'A sentence: see the diff';
+    say.classList.add('open');
+    say.innerHTML = '<div class="q">What I heard</div><div>' + d.said + '</div>' +
+      '<div class="diff">' + d.diff.map(l => '<span class="' + (l[0] === '-' ? 'del' : 'add') + '">' + l + '</span>').join('\n') + '</div>' +
+      '<div class="dim" style="font-size:var(--fr-text-md)"><b style="color:var(--fr-label)">If you say yes:</b> ' + d.cons + '</div>' +
+      '<div style="display:flex;gap:6px;margin-top:10px"><button class="btn ok" id="sayYes">Yes</button><button class="btn" id="sayNo">Change it</button><span class="faint" style="font-size:var(--fr-text-sm);align-self:center">Nothing applies before the yes. A conditional yes becomes a revised diff.</span></div>';
+    if (current !== d.page) show(d.page, d.key); else { const el = document.getElementById('row-' + d.key.replace(/\./g, '-')); if (el) { el.classList.add('hit'); el.scrollIntoView({ block: 'center' }); } }
+    document.getElementById('sayYes').addEventListener('click', () => { say.classList.remove('open'); toast('Applied. The diff and your yes are the receipt.'); q.value = ''; hits.textContent = ''; });
+    document.getElementById('sayNo').addEventListener('click', () => { toast('Prototype: she asks one question back, not a guess.'); });
+    return;
+  }
+  const lv = v.toLowerCase();
+  const m = ALL.filter(({ r }) => (r.label + ' ' + r.meaning + ' ' + r.phrases.join(' ')).toLowerCase().includes(lv));
+  hits.textContent = m.length ? m.length + ' row' + (m.length === 1 ? '' : 's') + ' · Enter jumps to the first' : 'No row matches; try a sentence';
+  if (m.length && m[0].pid === current) m.slice(0, 6).forEach(({ r }) => { const el = document.getElementById('row-' + r.key.replace(/\./g, '-')); el && el.classList.add('hit'); });
+  q._first = m[0];
+}
+q.addEventListener('input', search);
+q.addEventListener('keydown', e => { if (e.key === 'Enter' && q._first && !say.classList.contains('open')) show(q._first.pid, q._first.r.key); if (e.key === 'Escape') { q.value = ''; search(); } });
+document.addEventListener('keydown', e => { if (e.key === '/' && document.activeElement !== q && !/input|textarea|select/i.test(document.activeElement.tagName)) { e.preventDefault(); q.focus(); } if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); show('general'); } });
+
+// ── Palette: settings rows are actions too (HIG §8) ──
+const pal = installPalette(() => [
+  { name: 'Settings', items: ALL.slice(0, 400).map(({ pid, r }) => ({ label: r.label, hint: PAGES[pid].title, icon: 'gear', run: () => show(pid, r.key) })) },
+  { name: 'Workspaces', items: [['News'], ['Messages'], ['Calendar'], ['People'], ['Activity'], ['Routines']].map(([w]) => ({ label: 'Open ' + w, icon: w.toLowerCase(), run: () => toast('Prototype: opens ' + w) })) },
+  { name: 'Needs you', items: [{ label: 'Approve: send the follow-up to Dana', hint: 'external send', icon: 'check', run: () => toast('Prototype: the card opens in chat and in Activity → Needs you.') }] },
+]);
+document.getElementById('openPalette').addEventListener('click', pal.open);
+document.getElementById('chatBtn').addEventListener('click', () => toast('Prototype: the chat tray docks on the right.'));
+document.getElementById('gearBtn').addEventListener('click', () => show('general'));
+
+const want = location.hash.replace('#', '');
+show(PAGES[want] ? want : 'general');
+</script>
+</body>
+</html>

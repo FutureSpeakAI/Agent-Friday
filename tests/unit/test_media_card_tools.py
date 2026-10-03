@@ -65,7 +65,7 @@ def test_turn_this_into_an_article_makes_a_linked_draft_and_opens_it(home):
 
 def test_publishing_is_not_a_tool_and_the_tools_are_internal():
     names = {t["name"] for t in mt.TOOLS}
-    assert names == {"media_show", "media_cards", "media_play", "media_turn"}
+    assert names == {"media_show", "media_cards", "media_turn"}
     from agent_friday.governance import action_gate
     for n in names:
         assert n in action_gate.INTERNAL_TOOLS
@@ -81,8 +81,8 @@ def test_media_tools_stay_out_of_the_always_on_catalogue():
     from agent_friday.services import agent
     always_on = {t["name"] for t in agent.CLAUDE_TOOLS if isinstance(t, dict)}
     assert not [n for n in always_on if n.startswith("media_")], "a Media tool is in the always-on catalogue"
-    assert {t["name"] for t in agent.WORKSPACE_TOOLS["media"]} == {"media_show", "media_cards", "media_play", "media_turn"}
-    for n in ("media_show", "media_cards", "media_play", "media_turn"):
+    assert {t["name"] for t in agent.WORKSPACE_TOOLS["media"]} == {"media_show", "media_cards", "media_turn"}
+    for n in ("media_show", "media_cards", "media_turn"):
         assert n in agent.CLAUDE_TOOL_HANDLERS and n in agent.TOOL_RINGS, n + " runs wherever it is named"
     in_media = {t["name"] for t in agent.tools_for_workspace("media")}
     elsewhere = {t["name"] for t in agent.tools_for_workspace("news")}
@@ -100,56 +100,6 @@ def test_voice_still_shares_media_show_and_turn():
     from agent_friday.services import voice_engine
     got = {name for name, _d, _s in voice_engine._voice_shared_tool_specs()}
     assert {"media_show", "media_turn"} <= got
-
-
-def test_a_time_in_the_owners_words_is_a_window(monkeypatch):
-    import datetime as dt
-    now = dt.datetime(2026, 10, 2, 11, 0).timestamp()
-    s, u = mt.period("September", now)
-    assert dt.datetime.fromtimestamp(s) == dt.datetime(2026, 9, 1) and dt.datetime.fromtimestamp(u) == dt.datetime(2026, 10, 1)
-    s, u = mt.period("this week", now)
-    assert dt.datetime.fromtimestamp(s) == dt.datetime(2026, 9, 28) and dt.datetime.fromtimestamp(u) == dt.datetime(2026, 10, 5)
-    s, u = mt.period("June 2025", now)
-    assert dt.datetime.fromtimestamp(s) == dt.datetime(2025, 6, 1)
-    assert mt.period("whenever", now) == (None, None)
-
-
-def test_show_me_septembers_videos_filters_by_kind_and_time(home, monkeypatch):
-    import json, time, datetime as dt
-    sept = dt.datetime(2026, 9, 15, 9, 0).timestamp()
-    mi.create_card(kind="draft", title="A September note", body="Written in September.", status="draft")
-    sep = mi.query(view="all", q="September note")["cards"][0]
-    mi.patch(sep["id"], when=dt.datetime(2026, 9, 15, 9, 0).strftime("%Y-%m-%d %H:%M"))
-    monkeypatch.setattr(mt, "_window", lambda inp: (dt.datetime(2026, 9, 1).timestamp(), dt.datetime(2026, 10, 1).timestamp()) if inp.get("when") else (None, None))
-    out = json.loads(mt._tool_media_cards({"when": "September"}))
-    assert [c["title"] for c in out["cards"]] == ["A September note"], "only what has its date in September"
-    out = json.loads(mt._tool_media_cards({}))
-    assert out["count"] >= 2
-    out = json.loads(mt._tool_media_show({"kind": "videos", "when": "September"}))
-    assert out["count"] == 0 and home[-1]["kind"] == "video" and home[-1]["workspace"] == "media"
-
-
-def test_play_the_last_podcast_about_x_opens_the_quick_look_where_it_was_said(home, monkeypatch):
-    import json
-    from agent_friday.services import media_transcripts as tr
-    # an audio card whose transcript says the words
-    rec = mi.create_card(kind="draft", title="Harbour talk", body="", status="draft")
-    monkeypatch.setattr(mi, "query", lambda **kw: {"cards": [dict(rec, kind="episode", duration="9:40")] if "policy" in (kw.get("q") or "") else [], "total": 1, "counts": {}, "projects": []})
-    monkeypatch.setattr(tr, "hit_time", lambda c, q: 83.0)
-    out = json.loads(mt._tool_media_play({"query": "AI policy", "kind": "podcast"}))
-    assert out["status"] == "playing" and out["card"]["title"] == "Harbour talk"
-    assert out["say"] == "Playing Harbour talk, from 1:23 where you said it."
-    nav = home[-1]
-    assert nav["type"] == "navigate" and nav["workspace"] == "media" and nav["card"] == rec["id"] and nav["play"] is True and nav["at"] == 83.0
-    out = json.loads(mt._tool_media_play({"query": "nothing like this"}))
-    assert out["status"] == "not_found"
-
-
-def test_the_page_opens_the_quick_look_for_a_play_target():
-    from pathlib import Path
-    js = (Path(__file__).resolve().parents[2] / "static" / "media_ws.js").read_text(encoding="utf-8")
-    assert "if (t.card && t.play) {" in js and "'friday:media-quicklook'" in js
-    assert "mediaRef.current.currentTime = at" in js, "the player starts where the words were said"
 
 
 def test_navigate_to_knows_a_card(home):

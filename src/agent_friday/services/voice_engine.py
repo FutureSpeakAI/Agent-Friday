@@ -242,6 +242,20 @@ def _tool_check_email(inp):
 # Kept as a plain spec so _build_voice_live_tools can render google.genai
 # FunctionDeclarations without importing types at module load.
 _VOICE_LIVE_TOOLS = [
+    ("local_models_advise",
+     "What local AI models this computer can run and how. Use for 'what's the "
+     "biggest model I can run', 'could I run X', 'what would I need for X', "
+     "'pretend I had 24 gigabytes', 'what's using my graphics memory'. Pass the "
+     "user's words as question; put a named model in model; a pretend size in "
+     "pretend_vram_gb. Say the result's spoken sentence aloud as it is; it "
+     "already says 'about' where a number is an estimate. It installs nothing: "
+     "if they want it installed, say Settings, Models, Get, which asks them "
+     "first.",
+     {"question": ("string", "The user's words."),
+      "model": ("string", "A model name or Hugging Face id, when one is named."),
+      "pretend_vram_gb": ("number", "A pretend graphics-memory size in GB."),
+      "pretend_ram_gb": ("number", "A pretend RAM size in GB.")},
+     ["question"]),
     ("query_calendar",
      "Get the user's calendar — today's and tomorrow's events with times, "
      "locations, and attendees. Use whenever they ask 'what's next', 'what's on "
@@ -644,16 +658,22 @@ _VOICE_SHARED_TOOLS = (
     # too, declared in _VOICE_LIVE_TOOLS with the manners a spoken reply needs;
     # a name has one declaration, so they are not borrowed from the registry.
     # Podcasts, by voice: make one ("from my notes on X"), play and steer it,
-    # and "what's the source for that?". make_podcast only queues, so it
+    # "what's the source for that?", and "make the briefing two hosts"
+    # (podcast_format). make_podcast only queues, so it
     # answers inside the bridge's limit; private episodes are described to a
     # cloud voice only through podcast_tools._private_summary.
     "make_podcast",
     "podcast_list",
     "media_show",
-    "media_play",
     "media_turn",
     "podcast_play",
     "podcast_source",
+    "podcast_format",
+    # A media preference heard in conversation becomes a proposal card.
+    "media_diet_note",
+    # Discuss a story, evidence first (compare, primary source, background,
+    # claim check, follow, local angle, make a podcast or notes).
+    "discuss_story",
     # Friday's own look: "evolve now", "undo that look", "go back to last
     # month's look", "turn evolution off", "what changed?". The same tool the
     # screen uses, so what she says is what the history shows.
@@ -663,6 +683,16 @@ _VOICE_SHARED_TOOLS = (
     "hologram_window",
     # Call mode: "I'm on a call", "the call is over", "ask me first on calls".
     "call_mode",
+    # The tray: "what's in my notifications", "clear them", "mute these".
+    "notifications",
+    # File access: "what files can the cloud see?", "let it read my CV",
+    # "take that away", "re-grant the old one". Asking raises the same card
+    # the panel's approvals use; the yes is a click on screen, never a word.
+    "file_access",
+    # Big mode and the hand cursor: "big mode", "big mode off", "next card",
+    # "select", "back". select never fires a guarded action.
+    "big_mode",
+    "hand_cursor",
 )
 
 
@@ -1235,6 +1265,10 @@ def _voice_tool_run(name, args, send_client, session=None):
                                  "detail": ""})
                 except Exception:
                     pass
+        if name == "local_models_advise":
+            from agent_friday.services.local_models_tools import (
+                _tool_local_models_advise)
+            return _governed("local_models_advise", _tool_local_models_advise, args)
         if name in ("navigate_workspace", "navigate"):
             # Pause speech while the action runs; resume + report after.
             try:
@@ -1566,6 +1600,17 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
     """
     from agent_friday import brand
     text = brand.spoken(text)
+    # Inside a local-only run (every News path) the voice is this computer's,
+    # with no cloud fallback: no local voice means a visible refusal, never
+    # Gemini.
+    from agent_friday.services import local_only_guard as _log_guard
+    if _log_guard.is_active() and not _log_guard.pinned_model():
+        _buf = _synthesize_tts_wav_local(text)
+        if _buf is not None:
+            return _buf
+        raise _log_guard.CloudRefused(
+            "%s is local-only and no local voice engine is ready, so it is not "
+            "spoken rather than sent to Gemini TTS." % _log_guard.label())
     try:
         _pii_lookup = core._scrub_pii(text)[1]
     except Exception:
@@ -1636,6 +1681,8 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
 
 def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
     """The Gemini-TTS synthesis path (cloud). Raises on any failure."""
+    from agent_friday.services import local_only_guard as _log_guard
+    _log_guard.refuse_if_active("google-gemini", "gemini-tts")
     from agent_friday import brand
     text = brand.spoken(text)
     import wave
@@ -2226,7 +2273,9 @@ def _build_live_context() -> str:
                 except Exception:
                     score = 0.0
                 items.append((name, score, role))
-            items.sort(key=lambda x: x[1], reverse=True)
+            # By name, not by score: an order by score is a rank, and a rank
+            # of people is a judgement that stays home.
+            items.sort(key=lambda x: str(x[0]).lower())
             top = items[:8]
             if top:
                 lines = [f"- {n}" + (f" ({r})" if r else '') for n, _s, r in top]

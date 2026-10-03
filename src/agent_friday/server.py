@@ -126,7 +126,7 @@ ROUTE_MODULES = [
     'gmail_send',
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',
     'learning', 'liveness', 'local_address', 'media', 'meetings', 'memory_proposals', 'memtrace', 'messages',
-    'news', 'notifications', 'orchestrator', 'owner_security', 'ownership',
+    'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership',
     'persona', 'phone', 'platform', 'podcasts', 'privacy_consent', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'setup_chat', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',
     'work_plan',
     'updates', 'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
@@ -582,15 +582,6 @@ if not _TESTING:
         _podcast_engine.start_worker()
     except Exception as _pw_e:
         print(f"  Podcasts: render worker not started ({_pw_e})")
-
-    # Media library index: built in the background at boot and kept fresh with a
-    # cheap periodic change check, so the Library is never an empty grid over a
-    # full creations folder (services/media_index.py).
-    try:
-        from agent_friday.services import media_index as _media_index
-        _media_index.start_background()
-    except Exception as _mi_e:
-        print(f"  Media: library indexer not started ({_mi_e})")
 
     # Offline-first resilience: probe connectivity every 30s, auto-switch to
     # local inference when offline, flush the queue + refresh feeds when back.

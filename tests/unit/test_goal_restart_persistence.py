@@ -18,9 +18,42 @@ import importlib
 
 import pytest
 
+#: approvals' decision hooks as this file found them: every module registers
+#: its own once, at import, and never again.
+_HOOKS_AT_START: dict = {}
+
+
+def _hooks_now() -> dict:
+    from agent_friday.services import approvals
+    return {kind: list(fns) for kind, fns in approvals._HOOKS.items()}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _hooks_at_start():
+    from agent_friday.services import goals  # noqa: F401  (registers its own at import)
+    _HOOKS_AT_START.update(_hooks_now())
+    yield
+
 
 @pytest.fixture(autouse=True)
-def _iso(tmp_path, monkeypatch):
+def _modules_as_found():
+    """The simulated restart is this file's alone. A reload re-runs a module's
+    top level in place, so approvals starts again with no decision hooks and
+    goals with its default executor; every later test in the process would
+    find card approvals that run nothing. Each test hands the two modules back
+    exactly as it found them."""
+    from agent_friday.services import approvals, goals
+    saved = [(m, dict(vars(m))) for m in (approvals, goals)]
+    yield
+    for m, before in saved:
+        ns = vars(m)
+        for name in [n for n in ns if n not in before]:
+            del ns[name]
+        ns.update(before)
+
+
+@pytest.fixture(autouse=True)
+def _iso(_modules_as_found, tmp_path, monkeypatch):
     from agent_friday.services import goals as goals_mod
     from agent_friday.services import approvals as approvals_mod
     from agent_friday.services import dissent_gate as dg
@@ -126,3 +159,9 @@ def test_list_goals_reads_every_file_after_reload(tmp_path, monkeypatch):
 
     all_goals = {g["goal_id"] for g in goals.list_goals()}
     assert {g1["goal_id"], g2["goal_id"]} <= all_goals
+
+
+def test_the_simulated_restart_leaves_every_hook_registered():
+    """Runs after the reloads above: a card approved anywhere else in this
+    process still reaches the module that raised it."""
+    assert _hooks_now() == _HOOKS_AT_START

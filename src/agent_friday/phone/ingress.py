@@ -280,10 +280,14 @@ def _register_media_ws(app: Flask) -> None:
         return
     sock = Sock(app)
 
+    from agent_friday.services import reasoning_trace as _rt
+
     @sock.route("/twilio/media")
+    @_rt.traced("phone", "Phone call")
     def media(ws):
         refusal, r = _check("media", ws=True)
         if refusal is not None:
+            _rt.set_reason("the call's media stream was refused: %s" % refusal)
             ws.close(reason=1008)
             return
         from agent_friday.phone import live_call

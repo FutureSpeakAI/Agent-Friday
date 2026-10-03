@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 START = "// ═══ PODCASTS — player, Studio view, News chip"
 END = "const NEWS_PODCAST_ROUTINE = {"
@@ -42,3 +44,14 @@ def test_type_comes_from_the_brand_faces():
     for token in ("--fr-font-body", "--fr-font-display", "--fr-font-mono"):
         assert token in b
     assert not re.search(r"fontSize: \d", b), "sizes use the --fr-text-* scale"
+
+
+@pytest.mark.parametrize("page", ["index.html", "ui_parts/app.html"])
+def test_listen_to_front_page_plays_the_local_episode_not_a_live_cloud_voice(page):
+    """The button asks for the edition's episode (spoken on this computer) and
+    plays it in the podcast player; it never starts the live voice anchor."""
+    src = (ROOT / page).read_text(encoding="utf-8")
+    i = src.index("Listen to Front Page")
+    button = src[max(0, i - 400):i]
+    assert "playFrontPageEpisode" in button and "startAnchorBriefing" not in button
+    assert "/api/podcasts/listen" in src and "fridayPodcast('play'" in src
