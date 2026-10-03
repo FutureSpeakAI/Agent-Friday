@@ -1614,30 +1614,34 @@ def chat():
                     head = head + "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur_block + "\n"
             except Exception:
                 pass
+            # What this chat's panel holds rides in the tail, with what this
+            # message chose: it changes as the work does (a step, a hand edit,
+            # an approval), and the head stays the same bytes from turn to turn.
+            # It is appended to `tail`, never to `sp`: `sp` was split above.
             # The panel's artifacts in this conversation, and any hand edit the
             # model has not yet seen (services/artifacts.context_block).
             try:
                 from agent_friday.services import artifacts as _art
-                sp = sp + _art.context_block(_conversation_id)
+                tail = tail + _art.context_block(_conversation_id)
             except Exception:
                 pass
             # The codebase this chat's panel is bound to, if any (services/codebases).
             try:
                 from agent_friday.services import codebases as _cbs
-                sp = sp + _cbs.context_block(_conversation_id)
+                tail = tail + _cbs.context_block(_conversation_id)
             except Exception:
                 pass
             # The project this chat is filed in: its standing instructions, files
             # and codebases (services/projects). A chat outside one gets nothing.
             try:
                 from agent_friday.services import projects as _projs
-                sp = sp + _projs.context_block(_conversation_id)
+                tail = tail + _projs.context_block(_conversation_id)
             except Exception:
                 pass
             # A plan awaiting approval, or approved and under way (services/plans).
             try:
                 from agent_friday.services import plans as _plans
-                sp = sp + _plans.context_block(_conversation_id)
+                tail = tail + _plans.context_block(_conversation_id)
             except Exception:
                 pass
             if voice_mode:
