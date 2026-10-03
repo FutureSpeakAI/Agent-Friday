@@ -200,6 +200,13 @@ def start(kind: str, label: str = "", *, model: str = None, seat: str = None,
                 "status": "running", "started": _now(), "ended": None,
                 "events": [], "sources": [],
                 "tokens": {"in": 0, "out": 0, "reasoning": 0},
+                # Where the turn's wall time went, summed over its model
+                # calls: `prefill_tokens` the seats READ, `cache_tokens` they
+                # found already in the slot, `duration_ms` of the calls, and
+                # the first call's `ttft_ms`. The spec's baseline tables
+                # (cache-miss share, prefill p90, TTFT) regenerate from these.
+                "timing": {"duration_ms": 0, "prefill_tokens": 0,
+                           "cache_tokens": 0, "ttft_ms": None, "calls": 0},
                 "reasoning_chars": 0, "tool_calls": 0, "truncated": False,
                 "archived": None, "off_record": _off_record(),
             }
@@ -217,7 +224,8 @@ def _header(tr: Dict[str, Any]) -> Dict[str, Any]:
     return {k: tr.get(k) for k in (
         "trace_id", "parent_id", "root_id", "kind", "label", "model", "seat",
         "provider", "models", "task_id", "turn_id", "status", "started", "ended",
-        "sources", "tokens", "reasoning_chars", "tool_calls", "truncated", "archived")}
+        "sources", "tokens", "timing", "reasoning_chars", "tool_calls", "truncated",
+        "archived")}
 
 
 def _emit_locked(trace_id: str, event: Dict[str, Any]) -> None:
@@ -337,13 +345,30 @@ def mark_source(source: str, *, trace_id: str = None, model: str = None,
 
 def model_call(model: str = None, *, seat: str = None, provider: str = None,
                trace_id: str = None, tokens_in: int = None, tokens_out: int = None,
-               reasoning_tokens: int = None) -> None:
-    """Record one completed model call's identity and token counts."""
+               reasoning_tokens: int = None, duration_ms: int = None,
+               prefill_tokens: int = None, cache_tokens: int = None,
+               ttft_ms: int = None) -> None:
+    """Record one completed model call's identity, token counts and timing.
+
+    `prefill_tokens` / `cache_tokens` are llama-server's `prompt_n` /
+    `cache_n` (what the seat read against what it already held); `ttft_ms`
+    is the wait to the first token; `duration_ms` the whole call."""
     try:
         with _LOCK:
             tr = _resolve(trace_id)
             if tr is None:
                 return
+            timing = tr.setdefault("timing", {"duration_ms": 0, "prefill_tokens": 0,
+                                              "cache_tokens": 0, "ttft_ms": None,
+                                              "calls": 0})
+            timing["calls"] += 1
+            for key, val in (("duration_ms", duration_ms),
+                             ("prefill_tokens", prefill_tokens),
+                             ("cache_tokens", cache_tokens)):
+                if isinstance(val, (int, float)) and val > 0:
+                    timing[key] += int(val)
+            if timing.get("ttft_ms") is None and isinstance(ttft_ms, (int, float)) and ttft_ms >= 0:
+                timing["ttft_ms"] = int(ttft_ms)
             if model:
                 if not tr.get("model"):
                     tr["model"] = model
@@ -359,10 +384,15 @@ def model_call(model: str = None, *, seat: str = None, provider: str = None,
             _append_event_locked(tr, {"type": "model_call", "model": model, "seat": seat,
                                       "provider": provider, "tokens_in": tokens_in,
                                       "tokens_out": tokens_out,
-                                      "reasoning_tokens": reasoning_tokens})
+                                      "reasoning_tokens": reasoning_tokens,
+                                      "duration_ms": duration_ms,
+                                      "prefill_tokens": prefill_tokens,
+                                      "cache_tokens": cache_tokens,
+                                      "ttft_ms": ttft_ms})
             _flush_buffer_locked(tr["trace_id"])
             _emit_locked(tr["trace_id"], {"type": "model_call", "model": model, "seat": seat,
-                                          "tokens": dict(tr["tokens"])})
+                                          "tokens": dict(tr["tokens"]),
+                                          "timing": dict(tr["timing"])})
     except Exception as e:
         _log.debug("reasoning_trace.model_call failed: %s", e)
 
@@ -476,9 +506,13 @@ def after_oai_round(resp: Dict[str, Any], msg: Dict[str, Any], *, model: str = N
             else:
                 mark_source(SOURCE_NOT_EXPOSED, model=model,
                             detail=("%d reasoning tokens billed" % rtok) if rtok else None)
+        tm = resp.get("timings") if isinstance(resp.get("timings"), dict) else {}
         model_call(model, seat=seat, provider=provider,
                    tokens_in=usage.get("prompt_tokens"), tokens_out=usage.get("completion_tokens"),
-                   reasoning_tokens=rtok)
+                   reasoning_tokens=rtok,
+                   duration_ms=resp.get("_duration_ms"),
+                   prefill_tokens=tm.get("prompt_n"), cache_tokens=tm.get("cache_n"),
+                   ttft_ms=resp.get("_ttft_ms"))
         content = (msg.get("content") or "").strip() if isinstance(msg.get("content"), str) else ""
         if content and msg.get("tool_calls"):
             note(content)          # what the model said before calling its tools

@@ -11648,7 +11648,9 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         _round_cost = None
         try:
             from agent_friday.services import cost_meter as _cm
-            _round_cost = _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx)
+            _round_cost = _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx,
+                                    duration_ms=int((resp.get("_duration_ms") or 0)
+                                                    if isinstance(resp, dict) else 0))
         except Exception:
             pass
 

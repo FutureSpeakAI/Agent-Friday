@@ -1190,7 +1190,8 @@ def auto_router_cost_tier(settings=None):
     return tier if tier in AUTO_ROUTER_COST_TIERS else AUTO_ROUTER_DEFAULT_TIER
 
 
-def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
+def _consume_sse_completion(resp, on_delta=None, reasoning_source=None,
+                            started_at=None):
     """Assemble an OpenAI-compatible SSE stream into ONE response dict.
 
     The returned dict is shape-identical to a non-streamed
@@ -1243,6 +1244,11 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
     served_model = None
     usage = None
     timings = None           # llama-server puts them on the last chunk
+    # Time to first token, measured from `started_at` (the moment the request
+    # was sent) to the first content or reasoning delta. The seat's own
+    # `timings.prompt_ms` says how long it READ; this says how long the user
+    # WAITED, which includes the queue in front of the slot.
+    first_token_at = None
 
     # DECODE THE STREAM AS UTF-8 EXPLICITLY. `decode_unicode=True` tells
     # requests to decode using `resp.encoding`, and requests derives that from
@@ -1294,6 +1300,9 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
                 finish_reason = choice["finish_reason"]
             delta = choice.get("delta") or {}
             piece = delta.get("content")
+            if first_token_at is None and (piece or delta.get("reasoning_content")
+                                           or delta.get("reasoning")):
+                first_token_at = _time.time()
             if piece:
                 content_parts.append(piece)
                 if on_delta:
@@ -1355,6 +1364,8 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
         out["usage"] = usage
     if timings:
         out["timings"] = timings
+    if started_at and first_token_at:
+        out["_ttft_ms"] = int((first_token_at - started_at) * 1000)
     return out
 
 
@@ -1953,16 +1964,31 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 _want_stream = False
             resp = (_consume_sse_completion(
                         r, on_delta=on_delta or DELTA_SINK.get(),
-                        reasoning_source=("full" if local_bypass else "provider"))
+                        reasoning_source=("full" if local_bypass else "provider"),
+                        started_at=_t0)
                     if _want_stream else r.json())
             if isinstance(resp, dict):
                 resp["_reasoning_local"] = bool(local_bypass)
+                # Wall time of the whole call, so costs.db and the reasoning
+                # trace carry a duration for LOCAL rows too (they carried none:
+                # 789 local chat rows, `dur>0: 0`), and the seat's own timings
+                # (prompt_n, cache_n, prompt_ms) ride with it to the trace.
+                resp["_duration_ms"] = int((_time.time() - _t0) * 1000)
             # Publish the seat's timings (llama-server) to whoever asked for
             # them -- the voice session records `prompt_n` as prefill_tokens.
             _tsink = TIMINGS_SINK.get()
             if _tsink is not None and isinstance(resp, dict) and resp.get("timings"):
                 try:
                     _tsink(resp["timings"])
+                except Exception:
+                    pass
+            if local_bypass and isinstance(resp, dict) and resp.get("timings"):
+                # The prefix-cache audit: how much of the prompt the seat
+                # re-read, and the alarm when the hit rate over the last 50
+                # local calls falls under 80%.
+                try:
+                    from agent_friday.services import prompt_cache as _pc
+                    _pc.observe_seat_timings(resp["timings"])
                 except Exception:
                     pass
             # Attribute cost to the model the provider ACTUALLY served (an
