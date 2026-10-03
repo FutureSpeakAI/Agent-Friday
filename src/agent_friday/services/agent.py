@@ -11994,6 +11994,19 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tname, {"raw": str(_raw)[:300]}, _arg_error, _tool_ms)
                 _ledger_tool_call(tname, _arg_error, _tool_ms, orb_id, session_ctx)
+                # The same bad call, sent again and again, is a loop like any
+                # other: the guard sees it before the error goes back, or a model
+                # that keeps resending the same arguments is never stopped.
+                _loop_hit = (_loop_guard.observe(tname, _raw if isinstance(_raw, dict)
+                                                 else {"raw": str(_raw)[:300]})
+                             if _loop_guard is not None else None)
+                if _loop_hit:
+                    _pilot_outcome(session_ctx, "error")
+                    _orb(status='error', label='Loop detected', progress=1.0)
+                    _led_done()
+                    return _tb.limit_message("loop", detail=_loop_hit,
+                                             used=_round,
+                                             model=str(model or "")), tool_trace
                 convo.append({"role": "tool", "tool_call_id": tcid,
                               "content": _arg_error})
                 continue
