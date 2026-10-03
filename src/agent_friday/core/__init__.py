@@ -2163,6 +2163,8 @@ DEFAULT_SETTINGS = {
     # The four News routines write on the local model (news_engine.local_news_run).
     "news_local_only": True,
     "news_local_area": "",
+    # Hours a story stays eligible for each routine's edition (news_seen).
+    "news_edition_window_hours": {"front_page": 36, "briefing": 36},
     "news_local_sources": [],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
@@ -2527,6 +2529,11 @@ DEFAULT_SETTINGS = {
     "podcasts": {
         "enabled_for_routines": {"front_page": True, "briefing": True,
                                  "weekly": True, "editorial": True},
+        # Who is on each show: "solo" (Friday alone) or "duo" (two hosts).
+        # "any" is every episode not made by a routine. Recommended values;
+        # podcast_engine.RECOMMENDED_FORMAT is the same table.
+        "format": {"briefing": "solo", "front_page": "solo", "editorial": "solo",
+                   "weekly": "duo", "any": "duo"},
         "length": {"front_page": "short", "briefing": "short",
                    "weekly": "standard", "editorial": "standard"},
         "hosts": {"a": {"name": "Friday", "voice": "af_heart"},

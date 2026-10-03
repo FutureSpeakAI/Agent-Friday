@@ -2134,6 +2134,11 @@ def _tool_run_command(inp):
     bad = blocked_command_token(cmd)
     if bad is not None:
         return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
+    # Never a second copy of the local model while one is already answering.
+    from agent_friday.services import seat_guard as _seat_guard
+    _second = _seat_guard.second_seat_refusal(cmd)
+    if _second:
+        return _second
     # The governance check already refuses these; this is the backstop.
     from agent_friday.governance.action_gate import classify_command
     if classify_command(cmd)[0] == "forbidden":
@@ -8140,6 +8145,10 @@ except Exception as _mte:  # never let optional deps break the agent import
 try:
     from agent_friday.services import podcast_tools as _podcast_tools
     _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    from agent_friday.services import media_diet as _media_diet
+    _media_diet.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
+    from agent_friday.services import news_discuss as _news_discuss
+    _news_discuss.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
     from agent_friday.services import media_card_tools as _media_card_tools
     _media_card_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
 except Exception as _pte:  # never let optional deps break the agent import

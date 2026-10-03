@@ -947,6 +947,57 @@ def warm_news_cache(limit_per: int = 8) -> None:
         _news_refresh(limit_per)
 
 
+#: The structured sources behind the latest briefing (calendar events, news
+#: items), kept so the run's episode can introduce, time and link each one.
+#: Written beside the run by _notify_briefing; see podcast_news.sidecar_path.
+_LAST_BRIEFING_SOURCES: dict = {}
+
+
+def _start_briefing_sources():
+    """A briefing run's sources are its own: each run starts with none, so a
+    run that gathers nothing never inherits an earlier run's stories."""
+    _LAST_BRIEFING_SOURCES.clear()
+    _LAST_BRIEFING_SOURCES.update({"version": 1, "date": datetime.now().strftime('%Y-%m-%d'),
+                                   "calendar": [], "news": []})
+
+
+def _keep_briefing_sources(**parts):
+    today = datetime.now().strftime('%Y-%m-%d')
+    if _LAST_BRIEFING_SOURCES.get("date") != today:
+        _LAST_BRIEFING_SOURCES.clear()
+        _LAST_BRIEFING_SOURCES.update({"version": 1, "date": today, "calendar": [], "news": []})
+    _LAST_BRIEFING_SOURCES.update(parts)
+
+
+def _save_briefing_sources(date_str):
+    """Save the briefing's structured sources beside the run. Attendees and
+    event descriptions are never kept: the episode needs times and places."""
+    if _LAST_BRIEFING_SOURCES.get("date") != date_str:
+        return
+    try:
+        from agent_friday.services.podcast_news import sidecar_path
+        p = sidecar_path(date_str)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(_LAST_BRIEFING_SOURCES, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"  [briefing] sources not saved for the episode: {e}")
+
+
+def _finish_briefing(content):
+    """The model's briefing with its story ids turned into links from the
+    fetched URLs (and any link it typed removed). Records the link check with
+    the run's sources; a briefing whose stories are not linked is logged."""
+    from agent_friday.services import news_links
+    stories = _LAST_BRIEFING_SOURCES.get("news") or []
+    # Publisher links, not news.google.com redirects, for the stories used.
+    news_links.resolve_links(stories, news_links.cited_ids(content))
+    problems = news_links.link_problems(content, stories)
+    _LAST_BRIEFING_SOURCES["link_check"] = problems
+    if problems:
+        print(f"  [briefing] link check: {'; '.join(problems[:3])}")
+    return news_links.attach_links(content, stories)
+
+
 def _gather_live_briefing_context():
     """Fetch live calendar, unread email, and news for an on-demand briefing.
 
@@ -975,6 +1026,9 @@ def _gather_live_briefing_context():
             cal_err = _google_section_error(cal_events)
             if cal_err:
                 return f"## Today's Calendar\n({cal_err})"
+            _keep_briefing_sources(calendar=[
+                {k: ev.get(k) or "" for k in ("title", "start_time", "end_time", "location")}
+                for ev in (cal_events or [])[:20] if isinstance(ev, dict)])
             if cal_events:
                 lines = []
                 for ev in cal_events[:20]:
@@ -1029,18 +1083,29 @@ def _gather_live_briefing_context():
             cats = [c for c in NEWS_CATEGORIES
                     if prefs.get("categories_enabled", {}).get(c, True)]
             items = _fetch_news_items(categories=cats, limit_per=4)
-            if items:
+            # Today's news only: inside the Briefing's window, and articles.
+            from agent_friday.services import news_seen
+            items = news_seen.current(items, "briefing")
+            # The owner's approved media diet holds here, with a receipt.
+            from agent_friday.services import media_diet
+            items, _ = media_diet.enforce(items, "briefing")
+            # Each story gets an id the model cites; its link is attached by
+            # code from the fetched URL (services/news_links.py), never typed.
+            from agent_friday.services import news_links
+            stories = news_links.number(items)
+            _keep_briefing_sources(news=stories)
+            if stories:
+                boosted_ids = {s["id"] for s, it in zip(stories, [i for i in items if (i.get("title") or "").strip()])
+                               if it.get("boosted")}
                 by_cat = {}
-                for it in items:
-                    by_cat.setdefault(it["category"], []).append(it)
+                for s in stories:
+                    by_cat.setdefault(s.get("category") or "News", []).append(s)
                 blocks = []
                 for cat, group in by_cat.items():
                     lines = []
-                    for it in group:
-                        star = "⭐ " if it["boosted"] else ""
-                        lines.append(
-                            f"- {star}**{it['title']}** ({it['source']})\n  {it['snippet']}\n  {it['url']}"
-                        )
+                    for s in group:
+                        star = "⭐ " if s["id"] in boosted_ids else ""
+                        lines.append(star + news_links.prompt_lines([s], snippet_chars=240))
                     blocks.append(f"### {cat}\n" + "\n".join(lines))
                 note = ""
                 if boosted:
@@ -1049,21 +1114,28 @@ def _gather_live_briefing_context():
                 if banned:
                     note += (f"\n_(These sources are banned and were excluded — do not cite: "
                              f"{', '.join(sorted(banned))}.)_")
-                return "## Live News (RSS)\n" + "\n\n".join(blocks) + note
+                return ("## Live News (RSS)\n" + news_links.CITE_RULE + "\n\n"
+                        + "\n\n".join(blocks) + note)
             # Fallback: optional Brave Search across the top categories, with
             # banned domains excluded. No-ops cleanly when no API key is set.
-            news_blocks = []
+            found = []
             for cat in (cats or ["AI/Tech"])[:2]:
                 meta = category_meta(cat) or {}
-                lines = []
                 for r in _brave_results(meta.get("query", f"latest {cat} news today"), limit=5):
                     dom = r.get("source") or _extract_domain(r.get("url", ""))
                     if dom and dom not in banned:
-                        lines.append(f"- **{r['title']}** ({dom})\n  {r['snippet']}\n  {r['url']}")
-                if lines:
-                    news_blocks.append(f"### {cat}\n" + "\n".join(lines))
-            if news_blocks:
-                return "## Live News (Brave Search fallback)\n" + "\n\n".join(news_blocks)
+                        found.append(dict(r, source=dom, category=cat))
+            from agent_friday.services import media_diet
+            found, _ = media_diet.enforce(found, "briefing")
+            stories = news_links.number(found)
+            _keep_briefing_sources(news=stories)
+            if stories:
+                by_cat = {}
+                for s in stories:
+                    by_cat.setdefault(s.get("category") or "News", []).append(s)
+                return ("## Live News (Brave Search fallback)\n" + news_links.CITE_RULE + "\n\n"
+                        + "\n\n".join("### %s\n%s" % (c, news_links.prompt_lines(g, snippet_chars=240))
+                                      for c, g in by_cat.items()))
             return "## Live News\n(No RSS items available right now.)"
         except Exception as e:
             return f"## Live News\n(News fetch failed: {e})"
@@ -2054,14 +2126,30 @@ def _front_page_story_titles(edition):
 
     lead = edition.get("lead") or {}
     if lead.get("title"):
-        out.append({"title": lead["title"], "source": lead.get("source", "")})
+        out.append({"title": lead["title"], "source": lead.get("source", ""),
+                    "url": lead.get("url", "")})
         _pub(lead["title"], lead.get("source", ""))
     for sec in edition.get("sections") or []:
         for a in sec.get("articles") or []:
             if a.get("title"):
-                out.append({"title": a["title"], "source": a.get("source", "")})
+                out.append({"title": a["title"], "source": a.get("source", ""),
+                            "url": a.get("url", "")})
                 _pub(a["title"], a.get("source", ""))
     return out
+
+
+def alt_ok(lead_idx, editorial):
+    """The editor's lead note belongs to the lead the editor chose."""
+    return lead_idx == editorial.get("lead_index")
+
+
+def _follow_report(pool):
+    try:
+        from agent_friday.services import news_discuss
+        return news_discuss.follow_report(pool)
+    except Exception as e:
+        _log.warning("follow report failed: %s", e)
+        return []
 
 
 def _previous_front_page(current_id):
@@ -2096,6 +2184,18 @@ def _generate_front_page(slot="morning"):
     calendar_events = _fetch_calendar_today() if slot == "morning" else None
 
     pool, stats = _gather_front_page_pool()
+    # A story that already ran comes back only with something new, as an
+    # update; the rest is held back, and the edition says what.
+    from agent_friday.services import news_seen
+    past = [_read_front_page(e["id"]) for e in _list_front_pages() if e.get("id") != edition_id][:14]
+    # The edition is today's news: inside its window (a per-routine setting),
+    # a story that ran before only as a dated update with something new, no
+    # page that is not an article, and one event from several outlets as one
+    # story listing them all.
+    pool, held_back = news_seen.edition_pool(pool, past, window_h=news_seen.window_hours("front_page"))
+    # The owner's approved media diet holds here, with a receipt.
+    from agent_friday.services import media_diet
+    pool, diet_removed = media_diet.enforce(pool, "front_page")
     editorial = _editorialize_front_page(
         pool, slot=slot, prev_stories=prev_titles,
         calendar_events=calendar_events)
@@ -2105,18 +2205,29 @@ def _generate_front_page(slot="morning"):
     def _tag(story):
         """Stamp new_since_last / continuing (+ any thread update) onto a story."""
         u = story.get("url", "")
-        cont = have_prev and u in prev_urls
+        # A story that ran before is back only as an update with something
+        # new (news_seen); the editor's own note is never the update.
+        cont = (have_prev and u in prev_urls) or bool(story.get("update"))
         story["new_since_last"] = bool(have_prev and not cont)
         story["continuing"] = bool(cont)
-        upd = thread_updates.get(u)
-        if cont and upd:
-            story["thread_update"] = upd
+        if cont and story.get("update"):
+            story["thread_update"] = story.get("update_note") or thread_updates.get(u) or ""
         return story
+
+    def _shown(story):
+        """Continuing needs a real update; an empty one is never shown."""
+        return not story.get("continuing") or bool(story.get("update") and story.get("thread_update"))
 
     lead = None
     if pool:
         lead = _tag(dict(pool[lead_idx]))
-        lead["editorial_note"] = editorial["lead_note"]
+        if not _shown(lead):
+            # The lead is new since the last edition, or a dated update.
+            alt = next((i for i, p in enumerate(pool) if _shown(_tag(dict(p)))), None)
+            lead_idx = alt
+            lead = _tag(dict(pool[alt])) if alt is not None else None
+        if lead is not None:
+            lead["editorial_note"] = editorial["lead_note"] if alt_ok(lead_idx, editorial) else ""
 
     # Group remaining stories into sections by category, in interest order.
     rest = [p for i, p in enumerate(pool) if i != lead_idx]
@@ -2124,7 +2235,7 @@ def _generate_front_page(slot="morning"):
     order = sorted(NEWS_CATEGORIES.keys(),
                    key=lambda c: _CATEGORY_WEIGHT.get(c, 0), reverse=True)
     for cat in order:
-        group = [_tag(dict(p)) for p in rest if p["category"] == cat][:6]
+        group = [a for a in (_tag(dict(p)) for p in rest if p.get("category") == cat) if _shown(a)][:6]
         if not group:
             continue
         sections.append({
@@ -2166,6 +2277,10 @@ def _generate_front_page(slot="morning"):
         "competitor_watch": editorial.get("competitor_watch") or [],
         "continuing_threads": continuing_threads,
         "prev_edition_id": (prev or {}).get("id") if prev else None,
+        "held_back": held_back,
+        "diet_removed": [{"title": a.get("title", ""), "source": a.get("source", "")} for a in diet_removed],
+        # Stories the owner follows (Discuss, Follow): what changed, or that nothing did.
+        "follows": _follow_report(pool),
         # "curated" when the editor answered, otherwise the reason it did not.
         # Stored ON the edition so the page can say what it is and a later
         # reader (or a re-run) can tell an un-curated edition from a curated
@@ -2409,6 +2524,7 @@ def _notify_weekly_editorial(ed, manual=False):
 
 def _notify_briefing(date_str, manual=False):
     """Push the 'Daily briefing ready' notification."""
+    _save_briefing_sources(date_str)
     _queue_podcast('briefing', date_str)
     if not (_notif_engine and date_str):
         return
@@ -2474,8 +2590,11 @@ def _generate_weekly_digest():
     week_id = cnow.strftime('%G-W%V')
     editions = _gather_weekly_editions(7)
 
-    # Compact, de-duplicated story list across the week for the prompt.
-    seen, lines = set(), []
+    # Compact, de-duplicated story list across the week for the prompt. Each
+    # story has an id the model picks by; its title and link are attached by
+    # code (services/news_links.py).
+    from agent_friday.services import news_links
+    seen, week = set(), []
     dates = []
     for ed in editions:
         if ed.get("date"):
@@ -2485,8 +2604,18 @@ def _generate_weekly_digest():
             if not key or key in seen:
                 continue
             seen.add(key)
-            lines.append(f"- {s['title']} ({s.get('source','')})")
-    story_block = "\n".join(lines[:120]) or "(no stories archived this week)"
+            week.append(s)
+    from agent_friday.services import media_diet
+    week, _ = media_diet.enforce(week, "weekly")
+    stories = news_links.number(week[:120], prefix="W")
+    story_block = news_links.prompt_lines(stories) or "(no stories archived this week)"
+    try:
+        # The exact lines the model is sent are public headlines.
+        from agent_friday.services.egress_gate import register_public_text
+        for line in story_block.splitlines():
+            register_public_text(line, origin="news-feed")
+    except Exception:
+        pass
     date_range = (f"{min(dates)} – {max(dates)}" if dates
                   else cnow.strftime('%Y-%m-%d'))
 
@@ -2509,11 +2638,12 @@ def _generate_weekly_digest():
             "through-line trends, and give an editorial take on what this means "
             "for the user's work and interests.\n\n"
             "Return ONLY JSON, no prose, in exactly this shape:\n"
-            '{\n  "top_stories": [{"title": "<story>", "why": "<one sentence on '
+            '{\n  "top_stories": [{"id": "<story id, e.g. W3>", "why": "<one sentence on '
             'why it mattered this week>"}],\n  "trends": ["<trend>", "<trend>"],\n'
             '  "editorial": "<3-5 sentence editorial take on what the week means '
             'for the user\'s work and interests>"\n}\n\n'
-            "Give exactly 5 top_stories when there is enough material.\n\n"
+            "Give exactly 5 top_stories when there is enough material. Pick each "
+            "by its id from the list; never write a web address.\n\n"
             "THIS WEEK'S STORIES:\n" + story_block
         )
         system = _get_friday_system_prompt(
@@ -2531,8 +2661,17 @@ def _generate_weekly_digest():
         if isinstance(data, dict):
             ts = data.get("top_stories")
             tr = data.get("trends")
+            news_links.resolve_links(stories, [str((t or {}).get("id") or "")
+                                               for t in ts or [] if isinstance(t, dict)])
+            by_id = {s["id"]: s for s in stories}
+            picked = []
+            for t in ts or []:
+                s = by_id.get(str((t or {}).get("id") or "").strip()) if isinstance(t, dict) else None
+                if s and s["id"] not in {x["id"] for x in picked}:
+                    picked.append({"id": s["id"], "title": s["title"], "source": s["source"],
+                                   "url": s["url"], "why": str(t.get("why") or "").strip()[:300]})
             synth = {
-                "top_stories": [s for s in (ts or []) if isinstance(s, dict)][:5],
+                "top_stories": picked[:5],
                 "trends": [str(t).strip()[:160] for t in (tr or []) if str(t).strip()][:6],
                 "editorial": (data.get("editorial") or fallback["editorial"]).strip()[:1400],
             }
@@ -2631,17 +2770,24 @@ def _generate_weekly_editorial():
     banned = sorted({(s or "").lower() for s in _load_banned_sources() if s})
 
     # De-duplicated source digest for the prompt; banned sources flagged inline.
-    seen, lines = set(), []
+    # Each article has an id the editorial cites; links are attached by code
+    # from the archived URLs (services/news_links.py), never typed.
+    from agent_friday.services import news_links
+    seen, unique = set(), []
     for a in pool:
         key = (a.get("title") or "")[:90]
         if not key or key in seen:
             continue
         seen.add(key)
-        src = (a.get("source") or a.get("domain") or "").lower()
+        unique.append(a)
+    stories = news_links.number(unique[:160], prefix="E")
+    lines = []
+    for st in stories:
+        src = (st.get("source") or "").lower()
         flag = " [BANNED-SOURCE]" if src in banned else ""
-        lines.append(f"- ({src or 'unknown'}{flag}) {a.get('title','')}: "
-                     f"{(a.get('snippet') or '')[:160]}")
-    article_block = "\n".join(lines[:160]) or "(the archive is thin this week)"
+        lines.append("[%s] (%s%s) %s: %s" % (st["id"], src or "unknown", flag, st["title"],
+                                              st["snippet"][:160]))
+    article_block = "\n".join(lines) or "(the archive is thin this week)"
 
     def _compose(strong):
         directive = EDITORIAL_SYSTEM_PROMPT
@@ -2658,7 +2804,7 @@ def _generate_weekly_editorial():
             "[BANNED-SOURCE]). Write this week's editorial per your directive.\n\n"
             "Banned sources you ARE drawing from this week: "
             + (", ".join(banned) if banned else "(none currently banned)") +
-            "\n\nARTICLES:\n" + article_block)
+            "\n\n" + news_links.CITE_RULE + "\n\nARTICLES:\n" + article_block)
         system = (_get_friday_system_prompt(
                       keywords=user, workspace='briefing',
                       provider=_predict_route_provider(keywords=user, workspace='briefing'),
@@ -2687,7 +2833,19 @@ def _generate_weekly_editorial():
 
     when = (cnow.strftime('%Y-%m-%d %H:%M %Z')
             or cnow.isoformat(timespec='minutes'))
+    news_links.resolve_links(stories, news_links.cited_ids(body))
+    link_check = news_links.link_problems(body, stories)
+    cited = [st for st in stories if st["id"] in set(news_links.cited_ids(body))]
+    body = news_links.attach_links(body, stories)
     md = _editorial_markdown(week_id, when, body, banned, score, regenerated)
+    try:
+        # The stories the editorial cites, for its episode's source chips.
+        (EDITORIALS_DIR).mkdir(parents=True, exist_ok=True)
+        (EDITORIALS_DIR / f"{week_id}.sources.json").write_text(
+            json.dumps({"version": 1, "week": week_id, "news": cited,
+                        "link_check": link_check}, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"  [weekly-editorial] sources not saved: {e}")
 
     EDITORIALS_DIR.mkdir(parents=True, exist_ok=True)
     (EDITORIALS_DIR / f"{week_id}.md").write_text(md, encoding="utf-8")

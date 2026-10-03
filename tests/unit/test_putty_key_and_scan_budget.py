@@ -80,7 +80,11 @@ def test_key_at_the_head_and_tail_of_an_oversized_run_is_found():
 
 def test_decode_work_is_bounded_by_characters_not_seconds(monkeypatch):
     used = _work_counter(monkeypatch)
-    blob = base64.b64encode(os.urandom(1_000_000)).decode()
+    # A fixed seed: a fresh random megabyte now and then decodes to something
+    # a secret pattern matches, which made this test fail at random. The
+    # budget is what is under test, not the patterns.
+    import random
+    blob = base64.b64encode(random.Random(20261002).randbytes(1_000_000)).decode()
     assert not sp.contains_secret(blob)
     assert used[0] <= sp._DECODE_BUDGET_CHARS + 8, used[0]
     assert sp._DECODE_BUDGET_CHARS <= 3_000_000

@@ -208,9 +208,16 @@ INTERNAL_TOOLS = frozenset({
     "knowledge_communities", "inspect_image", "inspect_audio", "save_output",
     "speak_text", "list_voices", "read_session_output", "load_tools",
     # Podcasts: an episode is written and spoken on this computer and saved in
-    # Friday's own folder; playing it steers the owner's own screen.
-    "make_podcast", "podcast_list", "podcast_play", "podcast_source",
+    # Friday's own folder; playing it steers the owner's own screen; the
+    # format is the owner's own podcast setting on this computer.
+    "make_podcast", "podcast_list", "podcast_play", "podcast_source", "podcast_format",
     "media_show", "media_cards", "media_turn",
+    # A media diet note only proposes: an approval card in the owner's own
+    # approvals; the rule is applied by the approved card, with a receipt.
+    "media_diet_note",
+    # Discuss reads the web through the guarded fetcher and the local model;
+    # it writes only the owner's own files (follows, notes, a queued episode).
+    "discuss_story",
     # Friday's own look: it changes only the owner's own desktop and history.
     # A step authored by a cloud model sends numbers only, through the spend
     # guard and the egress gate like any model call; it reaches no one.
