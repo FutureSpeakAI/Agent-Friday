@@ -354,11 +354,34 @@ def _confirmed_action_response(message, session_ctx):
                                  "Couldn't resume the approved action"))
 
 
-def _conv_context(cid, limit=100):
-    """This conversation's replayable turns — never another conversation's."""
+try:
+    # The brain's seat warms its prompt head the moment it is ready
+    # (services/seat_warm); registered here because the chat routes are
+    # loaded by every server and the hook must exist before the first seat.
+    from agent_friday.services import seat_warm as _seat_warm
+    _seat_warm.install()
+except Exception:
+    pass
+
+
+def _conv_context(cid, limit=None):
+    """This conversation's replayable turns — never another conversation's.
+
+    The window starts where `_history_start` says: by token budget, in whole
+    20-message steps, over the stored rows. A fixed `[-100:]` slice moved the
+    start by two rows on every turn past 100 messages, so the seat's prefix
+    cache matched nothing and the whole history was re-read (measured 43 s
+    against 0.43 s when the prefix held). The budget walks back from the
+    newest row and the start is deterministic in the stored rows, so it is
+    the same after a restart. `limit` is an optional hard cap on top.
+    """
     from agent_friday.services import conversations as _conv
+    rows = _conv.messages(cid)
+    rows = rows[_history_start(rows):]
+    if limit:
+        rows = rows[-int(limit):]
     out = []
-    for m in _conv.messages(cid, limit):
+    for m in rows:
         # System lines (seat changes, interruption notices) are transparency
         # surfaces, not conversation, and are never replayed into model context.
         if m.get('role') in ('system', 'system_report'):
@@ -1145,7 +1168,7 @@ def chat():
         # char count is above the soft limit — older turns get summarised.
         # THIS conversation's history. Reading the global list here is what
         # let two open chats contaminate each other's context.
-        raw_history = _conv_context(_conversation_id, 100)
+        raw_history = _conv_context(_conversation_id)
         messages = _compress_trajectory(raw_history)
         # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
         # memory too -- including this assistant's own earlier answers -- so a
