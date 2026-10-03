@@ -171,6 +171,29 @@ def test_compact_drops_what_is_empty_and_trims_lists():
     assert out == {"e": {"f": 0}, "h": list(range(8))}
 
 
+def test_a_task_with_no_status_is_counted_and_the_snapshot_still_encodes(monkeypatch, arbiter):
+    """A task row can carry no status (one seeded by hand, or read back from a
+    journal entry that never recorded one): it is counted as unknown, and the
+    snapshot still goes out as JSON with sorted keys, as /api/situation sends it."""
+    import json
+    from agent_friday.services import agent
+    monkeypatch.setattr(agent, "TASKS", {
+        "t1": {"task_id": "t1", "name": "Research", "status": "running", "started": time.time()},
+        "t2": {"task_id": "t2", "name": "No status yet"}})
+    snap = situation.snapshot()
+    assert snap["activity"]["tasks"]["counts"] == {"running": 1, "unknown": 1}
+    json.dumps(snap, sort_keys=True)
+
+
+def test_a_section_whose_keys_are_not_text_still_encodes(monkeypatch):
+    import json
+    monkeypatch.setattr(situation, "SECTIONS", situation.SECTIONS + (
+        ("odd", lambda now: {None: 1, "a": {2: "b"}}),))
+    snap = situation.snapshot()
+    assert snap["odd"] == {"None": 1, "a": {"2": "b"}}
+    json.dumps(snap, sort_keys=True)
+
+
 def test_a_failing_section_costs_only_that_section(monkeypatch):
     monkeypatch.setattr(situation, "SECTIONS", situation.SECTIONS + (
         ("broken", lambda now: 1 / 0),))

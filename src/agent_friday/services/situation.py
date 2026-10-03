@@ -225,7 +225,8 @@ def _activity(now: float) -> dict:
                  for t in agent.TASKS.values()]
     counts: dict = {}
     for t in tasks:
-        counts[t["status"]] = counts.get(t["status"], 0) + 1
+        status = str(t["status"] or "unknown")
+        counts[status] = counts.get(status, 0) + 1
     active = [t for t in tasks if t["status"] in ("running", "queued",
                                                   "queued-for-seat")]
     for t in active:
@@ -263,13 +264,24 @@ SECTIONS = (("desktop", _desktop), ("machine", _machine), ("models", _models),
             ("activity", _activity), ("spend", _spend))
 
 
+def _text_keys(value: Any) -> Any:
+    """`value` with every dict key as text. JSON sorts keys, and one key that
+    is not text beside ones that are (a count keyed by a missing value) makes
+    encoding the whole snapshot fail, not one section."""
+    if isinstance(value, dict):
+        return {(k if isinstance(k, str) else str(k)): _text_keys(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_text_keys(v) for v in value]
+    return value
+
+
 def snapshot() -> dict:
     """Everything above, each section on its own so one failure costs one part."""
     start_cpu_sampler()
     now = time.time()
     out = {"at": now}
     for name, fn in SECTIONS:
-        out[name] = _safe(fn, now)
+        out[name] = _text_keys(_safe(fn, now))
     out["took_ms"] = round((time.time() - now) * 1000, 1)
     return out
 
