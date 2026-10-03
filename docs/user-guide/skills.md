@@ -189,7 +189,7 @@ If improvement is < 0.5%, the candidate is accepted as a marginal pass (within n
 
 ## Auto-Research Loop
 
-Inspired by Andrej Karpathy's work on self-improving AI systems.
+Inspired by Microsoft's SkillOpt research on self-improving skills (github.com/microsoft/SkillOpt, MIT).
 
 ### Trigger Conditions
 
