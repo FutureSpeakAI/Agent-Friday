@@ -146,6 +146,23 @@ def test_restore_puts_a_thing_back_and_the_card_returns(client, home):
     assert client.post("/api/media/trash/..%2F..%2Fetc/restore").status_code in (400, 404)
 
 
+def test_the_trash_lists_the_most_recently_moved_first_even_within_one_second(home, monkeypatch):
+    """An entry's name holds whole seconds and a random tail, so it cannot order
+    two things moved in the same second; the manifest's moved_at does."""
+    import itertools
+    import types
+    tails = iter(["ffffffffffff", "000000000000"])          # the earlier entry gets the larger tail
+    ticks = itertools.count(1000.0, 1.0)
+    monkeypatch.setattr(tidy, "uuid", types.SimpleNamespace(uuid4=lambda: types.SimpleNamespace(hex=next(tails))))
+    monkeypatch.setattr(tidy, "time", types.SimpleNamespace(strftime=lambda fmt: "20261003-120000", time=lambda: next(ticks)))
+    cards = {c["title"]: c for c in mi.query(view="all", limit=100)["cards"]}
+    assert tidy.trash_card(cards["Blank"]["id"], reason="first")["status"] == "ok"
+    assert tidy.trash_card(cards["Harbour 3"]["id"], reason="second")["status"] == "ok"
+    listed = tidy.trash_list()
+    assert sorted((e["entry"] for e in listed), reverse=True)[0].endswith("-ffffff"), "by name, the earlier move would come first"
+    assert [e["reason"] for e in listed] == ["second", "first"], "the later move is listed first, whatever the names sort to"
+
+
 def test_delete_from_a_card_is_the_same_recoverable_trash_never_a_hard_delete(client, home):
     cards = {c["title"]: c for c in mi.query(view="all", limit=100)["cards"]}
     blank = cards["Blank"]

@@ -310,12 +310,22 @@ def trash_card(card_id: str, reason: str = "deleted") -> Dict[str, Any]:
     return {"status": "ok", "entry": stamp, "files": len(moved)}
 
 
+def _moved_at(rec: Dict[str, Any]) -> float:
+    try:
+        return float(rec.get("moved_at") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def trash_list() -> List[Dict[str, Any]]:
+    """The trash's entries, the most recently moved first. An entry's name holds
+    whole seconds and a random tail, so it cannot order two things moved in the
+    same second; the manifest's own moved_at does."""
     root = trash_dir()
     if not root.exists():
         return []
     out = []
-    for d in sorted(root.iterdir(), reverse=True):
+    for d in root.iterdir():
         m = d / "manifest.json"
         if d.is_dir() and m.exists():
             try:
@@ -324,6 +334,7 @@ def trash_list() -> List[Dict[str, Any]]:
                 out.append(rec)
             except Exception:
                 continue
+    out.sort(key=lambda rec: (_moved_at(rec), str(rec.get("entry") or "")), reverse=True)
     return out
 
 
