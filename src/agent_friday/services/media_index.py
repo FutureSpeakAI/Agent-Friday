@@ -558,6 +558,8 @@ def _scan_podcasts(con: sqlite3.Connection) -> int:
             privacy="shared" if ep.get("privacy") == "public" else "private",
             published_at=None, text=text,
             extra={"duration_s": ep.get("duration_s"), "show": ep.get("show"), "stage": ep.get("stage_detail"), "chapters": ep.get("chapters") or [],
+                   # The card's path is the episode's folder; this is the file inside it that plays.
+                   "audio": str(ep.get("audio") or full.get("audio") or ""),
                    "routine": att.get("routine") if routine else None, "run_id": att.get("run_id") if routine else None},
         )
         _upsert(con, c)
@@ -1044,6 +1046,10 @@ def _row_to_card(r: sqlite3.Row, ov: Optional[sqlite3.Row]) -> Dict[str, Any]:
             c["thumb"] = c["file_url"]          # the original, until the preview pass has been
     if c["path"]:
         c["filename"] = Path(c["path"]).name
+        if c["source_kind"] == "episode" and ex.get("audio"):
+            # An episode's path is its folder; the file the card plays, and the
+            # one its type and size describe, is the audio inside it.
+            c["filename"] = Path(str(ex["audio"])).name
     _merge_preview(c, ov)
     c["editable_text"] = c["kind"] in TEXT_KINDS or (c["source_kind"] in ("draft_html", "legacy_item"))
     return c
