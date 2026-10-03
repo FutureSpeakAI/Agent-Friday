@@ -861,8 +861,6 @@ def chat_stream():
                              "X-Accel-Buffering": "no"})
 
 
-@chat_bp.route('/api/chat', methods=['POST'])
-@_traced_turn
 def _ag_tools_for_turn(workspace, conversation_id):
     """A turn's tool catalogue: the always-on tools, the workspace's own, and
     the hub's when the chat is in the hub (services/agent.tools_for_workspace)."""
@@ -870,6 +868,8 @@ def _ag_tools_for_turn(workspace, conversation_id):
     return _tfw(workspace, conversation_id=conversation_id)
 
 
+@chat_bp.route('/api/chat', methods=['POST'])
+@_traced_turn
 @_privacy_hold_turn
 def chat():
     """Text chat — powered by Anthropic Claude.
