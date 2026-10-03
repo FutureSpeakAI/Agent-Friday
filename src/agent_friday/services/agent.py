@@ -552,8 +552,12 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
-    {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Extracts real text from PDF and .docx files (never raw bytes). Returns up to 500000 chars.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute or home-relative path, e.g. ~/Projects/foo/bar.py or ~/wiki/notes.md"}}, "required": ["path"]}},
+    {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Extracts real text from PDF and .docx files (never raw bytes). Returns one page at a time: up to 2,000 lines or 8,192 characters, whichever comes first; a partial page ends with the line range shown and the offset to continue from.",
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "Absolute or home-relative path, e.g. ~/Projects/foo/bar.py or ~/wiki/notes.md"},
+         "offset": {"type": "integer", "description": "1-based line to start from (default 1). Use the offset a previous page named to continue."},
+         "limit": {"type": "integer", "description": "Maximum lines to return (default and ceiling 2,000)."}},
+         "required": ["path"]}},
     {"name": "search_files", "description": "Find files by name on the local filesystem — the tool for 'find my resume in Downloads' or 'what's the latest report in Documents'. Searches Documents, Downloads, Desktop, and Friday's creations by default (configurable in Settings). Never searches the vault. Set content_query to also search inside extractable text (md/txt now; PDF/docx once read; hollow for other binary formats). Returns paths, names, sizes, and modified times, newest first by default.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "Filename substring/fuzzy match, e.g. 'resume' or 'cv'. Leave blank to list a root's newest files."},
@@ -1006,8 +1010,11 @@ def _tool_read_file(inp):
     # stays withheld. Registration must happen on the exact string that will
     # actually reach the gate, which is only known after the scrub hook runs.
     _log_context("file_read", {"path": str(p), "bytes": len(text)})
-    limit = 500_000
-    out = text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
+    # One page per call, and a partial page says where the next one starts.
+    # The ceiling here is the executor's, so a file read is never cut twice.
+    page, info = _tool_output.window_lines(text, offset=(inp or {}).get("offset") or 1,
+                                           limit=(inp or {}).get("limit"))
+    out = page + _tool_output.page_note(info)
     if result.truncated:
         out += "\n...[extraction truncated to the first pages of this document]"
     # Key material pasted inside an otherwise ordinary file never reaches the model.
@@ -2165,7 +2172,13 @@ def _tool_run_command(inp):
         # Whatever the command printed, key blocks and vendor tokens are
         # withheld: the path scan above is best-effort, this is the backstop.
         out = _cred.redact_secrets(out)
-        return out[:100_000] if out else f"(exit {proc.returncode}, no output)"
+        # The executor keeps the END of a command's output (where the error
+        # is), names what was cut and saves the whole text; this is only a
+        # sanity ceiling against a runaway printer.
+        if len(out) > 1_000_000:
+            out = (f"[first {len(out) - 1_000_000:,} chars of {len(out):,} dropped]\n"
+                   + out[-1_000_000:])
+        return out if out else f"(exit {proc.returncode}, no output)"
     except subprocess.TimeoutExpired:
         return "Command timed out after 300s."
     except Exception as e:
@@ -8986,6 +8999,8 @@ def _task_log_tool(session_ctx, name, args):
 
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
+from agent_friday.services import tool_args as _tool_args
+from agent_friday.services import tool_output as _tool_output
 
 #: Verb prefixes a model habitually invents in front of a tool's real name.
 #: Example: a seat calls `mcp_higgsfield_get_balance` when the registered
@@ -9061,6 +9076,21 @@ def _restore_placeholders(value, pii_lookup):
     return value
 
 
+def _schema_for_tool(name):
+    """The registered input schema for a tool, or None when it has none.
+
+    Looks in the always-on registry and every workspace's extras, so a tool
+    that is sent on demand is checked the same way as a resident one.
+    """
+    found = _tool_args.schema_for(name, CLAUDE_TOOLS)
+    if found is None:
+        for extra in WORKSPACE_TOOLS.values():
+            found = _tool_args.schema_for(name, extra)
+            if found is not None:
+                break
+    return found
+
+
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -9096,6 +9126,17 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
                     f"Retry with an exact name from your tool list, or tell "
                     f"the user you could not do it. Do not describe an "
                     f"outcome: there isn't one.")
+
+    # Arguments are checked against the tool's own schema before any gate
+    # sees them. A call that does not fit never runs: the model gets back
+    # what was wrong and what it sent, and no receipt says the tool ran.
+    # (A tool passed with handler= and no registered schema is not checked.)
+    _checked, _arg_error = _tool_args.check(
+        name, tool_input if tool_input is not None else {}, _schema_for_tool(name))
+    if _arg_error:
+        _receipts.record(name, ok=False, denied=True, detail="invalid arguments")
+        return _arg_error
+    tool_input = _checked
 
     ctx = _hooks.HookContext(
         tool_name=name,
@@ -9182,10 +9223,12 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=True)
 
     # Cap result size to prevent token explosion in the model context window.
-    # The voice path already caps at 8 KB; apply the same limit uniformly here.
-    _TOOL_RESULT_MAX = 8192
-    if isinstance(result, str) and len(result) > _TOOL_RESULT_MAX:
-        result = result[:_TOOL_RESULT_MAX] + f"\n[truncated — {len(result)} chars total]"
+    # The cut keeps the part that matters for the kind of tool (start of a
+    # file, end of a command, both ends of a page), names the window shown
+    # and the way to get the rest, and keeps the full text on disk. See
+    # services/tool_output.py.
+    if isinstance(result, str):
+        result = _tool_output.clip_result(name, result)
 
     # ── Every date in a tool result carries a code-computed weekday, so
     # the model never derives one itself. ──
@@ -10943,6 +10986,17 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     _rounds_left = int(_round_cap) if _round_cap else None
     _loop_guard = _tb.LoopGuard() if _tb.loop_guard_enabled() else None
 
+    # ── Fewer tools up front, on the cloud too. ──
+    # Every schema on every round was ~46k tokens a call. The cloud now gets
+    # the same opening set as the local seat (the resident tools plus the
+    # loader) and loads the rest by name or query through `load_tools`; a
+    # tool called without its schema still runs and its schema arrives for
+    # the next round (see services/tool_catalogue.py).
+    from agent_friday.services import tool_catalogue as _TC
+    _all_tools = tools_for_workspace(workspace)
+    _sent_tools = (_TC.opening_set(_all_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
+                   if _TC.enabled() and _all_tools else list(_all_tools))
+
     # ── Per-task cloud tally. ──
     # ADVISORY: it warns, it does not stop. See prompt_cache.task_budget for the
     # measurement that demoted it from a ceiling. At the
@@ -11038,7 +11092,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 "model": model or ANTHROPIC_MODEL_DEFAULT,
                 "max_tokens": max_tokens,
                 "messages": convo,
-                "tools": tools_for_workspace(workspace),
+                "tools": _sent_tools,
             }
             _sys = safe_system
             if _steer_inject:
@@ -11254,6 +11308,31 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 # input no longer enters the world-readable process record.
                 _orb_safe(process_update, orb_id, label=f"{tu.name}…")
                 _t_tool = _time.time()
+
+                # `load_tools`: the schemas asked for (by name or by query)
+                # join the next request. Nothing executes and no gate is
+                # involved: this is a description being handed over.
+                if tu.name == _TC.LOADER_NAME:
+                    _a = tu.input if isinstance(tu.input, dict) else {}
+                    _want = _a.get("names") or []
+                    if isinstance(_want, str):
+                        _want = [_want]
+                    _new, _msg = _TC.expand(_all_tools, _want, _sent_tools,
+                                            query=str(_a.get("query") or ""))
+                    if _new:
+                        _sent_tools = list(_sent_tools) + list(_new)
+                    tool_trace.append({"name": tu.name, "input": _a, "result": _msg})
+                    _rtrace.tool_finished(tu.name, _a, _msg)
+                    tool_results.append({"type": "tool_result", "tool_use_id": tu.id,
+                                         "content": _msg})
+                    continue
+                # A tool called without its schema still runs (dispatch is by
+                # name); the schema arrives for the next round so a second
+                # attempt is well-formed.
+                if _TC.enabled() and tu.name not in {_TC._name_of(t) for t in _sent_tools}:
+                    _late, _ = _TC.expand(_all_tools, [tu.name], _sent_tools)
+                    if _late:
+                        _sent_tools = list(_sent_tools) + list(_late)
 
                 # ── Zero-trust continuous vault authorization ──────────
                 # Gate every tool call through vault check_action before
@@ -11871,14 +11950,19 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             if tname == _TC.LOADER_NAME:
                 _pilot_call((session_ctx or {}).get("_laya_pilot"),
                             "increment", "loader_calls")
+                _query = ""
                 try:
                     _raw0 = fn.get("arguments")
                     _a = (json.loads(_raw0) if isinstance(_raw0, str)
                           else (_raw0 or {}))
                     _want = _a.get("names") or []
+                    if isinstance(_want, str):
+                        _want = [_want]
+                    _query = str(_a.get("query") or "")
                 except Exception:
                     _want = []
-                _new, _msg = _TC.expand(_catalogue_all or [], _want, oai_tools)
+                _new, _msg = _TC.expand(_catalogue_all or [], _want, oai_tools,
+                                        query=_query)
                 if _new:
                     try:
                         from agent_friday.routing.model_router import (
@@ -11914,17 +11998,47 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             # Dispatch uses /api/chat so num_ctx takes effect (the
             # OpenAI-compatible endpoint silently discards `options`), which
             # is why the object shape must be handled here.
+            #
+            # And when the string is NOT JSON, the call does not run with
+            # {}: the model is told exactly what it sent and that nothing
+            # happened, and the schema is pulled in so the retry fits.
             _raw = fn.get("arguments")
-            if isinstance(_raw, dict):
-                targs = _raw
-            elif isinstance(_raw, str) and _raw.strip():
-                try:
-                    targs = json.loads(_raw)
-                except Exception:
-                    targs = {}
-            else:
-                targs = {}
             _t_tool = _time.time()
+            targs = _tool_args.parse(_raw)
+            _arg_error = None
+            if isinstance(targs, _tool_args.ParseFailure):
+                _arg_error = targs.message(tname)
+                targs = {}
+            else:
+                _schema = _tool_args.schema_for(tname, oai_tools)
+                if _schema is None and _catalogue_all:
+                    _schema = _tool_args.schema_for(tname, _catalogue_all)
+                if _schema is None:
+                    _schema = _schema_for_tool(tname)
+                targs, _arg_error = _tool_args.check(tname, targs, _schema)
+            if _arg_error:
+                if _catalogue_all and tname != _TC.LOADER_NAME:
+                    _known = {(t.get("function") or t).get("name")
+                              for t in (oai_tools or [])}
+                    if tname not in _known:
+                        _late, _ = _TC.expand(_catalogue_all, [tname], oai_tools)
+                        if _late:
+                            try:
+                                from agent_friday.routing.model_router import (
+                                    anthropic_to_openai_tools as _a2o)
+                                oai_tools = (oai_tools or []) + _a2o(_late)
+                            except Exception:
+                                pass
+                _receipts.record(tname, ok=False, denied=True, detail="invalid arguments")
+                tool_trace.append({"name": tname, "input": _raw if isinstance(_raw, (str, dict)) else str(_raw),
+                                   "result": _arg_error})
+                _rtrace.tool_finished(tname, {"raw": str(_raw)[:300]}, _arg_error)
+                _tool_ms = int((_time.time() - _t_tool) * 1000)
+                _orb_tool_trace(orb_id, tname, {"raw": str(_raw)[:300]}, _arg_error, _tool_ms)
+                _ledger_tool_call(tname, _arg_error, _tool_ms, orb_id, session_ctx)
+                convo.append({"role": "tool", "tool_call_id": tcid,
+                              "content": _arg_error})
+                continue
 
             # ── Zero-trust continuous vault authorization. ──
             # ONLY vault-tier (TIER_2/TIER_3) data is gated here; the provider

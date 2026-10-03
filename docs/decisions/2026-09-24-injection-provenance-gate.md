@@ -84,10 +84,13 @@ Line numbers are at bf1d5866, before this work.
 Deliberately outside the checkpoint, with the reason:
 
 * **The owner's own REST actions** (Studio buttons, `/api/flow`, calendar
-  insert from the UI, the vibe-coding terminals, which launch
-  `claude --dangerously-skip-permissions`). They are the owner acting, not
-  Friday. Friday could reach them only through loopback: `run_command` now
-  refuses that, and `browse_web` already blocks private addresses.
+  insert from the UI). They are the owner acting, not Friday. Friday could
+  reach them only through loopback: `run_command` now refuses that, and
+  `browse_web` already blocks private addresses. The vibe-coding terminals
+  were in this list while they launched `claude --dangerously-skip-permissions`;
+  they are now inside the checkpoint: one approval card per task mints a
+  scoped grant, and every action the session takes asks Friday's gate
+  through a per-task hook (`services/claude_code_tasks.py`).
 * **Deterministic open/navigate intents** (`chat.py:598/627`): the user's own
   words, same turn, local and reversible.
 * **Higgsfield's direct connector call** (`higgsfield_generate.py:99`,

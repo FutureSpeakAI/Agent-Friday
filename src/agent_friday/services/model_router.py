@@ -1959,6 +1959,18 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 resp["_reasoning_local"] = bool(local_bypass)
             # Publish the seat's timings (llama-server) to whoever asked for
             # them -- the voice session records `prompt_n` as prefill_tokens.
+            # The prompt-cache audit, per turn: how much of the prompt the
+            # seat reused and how long the rest took to read. This is the
+            # measurement behind the stable-prefix assembly; a turn that
+            # repeats its prefix shows reused close to prompt.
+            try:
+                _tm = resp.get("timings") if isinstance(resp, dict) else None
+                if isinstance(_tm, dict) and _tm.get("prompt_n") is not None:
+                    print("[prompt-cache] reused=%s prompt=%s prompt_ms=%s model=%s"
+                          % (_tm.get("cache_n"), _tm.get("prompt_n"),
+                             _tm.get("prompt_ms"), model), flush=True)
+            except Exception:
+                pass
             _tsink = TIMINGS_SINK.get()
             if _tsink is not None and isinstance(resp, dict) and resp.get("timings"):
                 try:
@@ -3103,48 +3115,6 @@ FRIDAY_SYSTEM_PROMPT = (
     "actually receive a result from that tool this turn, tell the user plainly that you don't have it — "
     "never invent calendar events, emails, search results, URLs, or any other tool output. It is always "
     "better to say 'I couldn't get that' than to make something up.\n\n"
-    "== AVAILABLE TOOLS ==\n"
-    "Use these tools proactively and in combination:\n"
-    "  FILE SYSTEM (Ring 0-1, always allowed):\n"
-    "  • read_file(path) — Read ANY file on the filesystem. Absolute or ~/relative paths.\n"
-    "  • write_file(path, content, mode) — Write or append to ANY file. Creates dirs automatically.\n"
-    "  • read_wiki(path) / search_wiki(query) — Search and read personal wiki\n"
-    "  • propose_wiki_update / correct_wiki — Maintain the knowledge base\n"
-    "  • learn_skill(action, name, content) — Create/modify/delete skill YAML files in ~/.friday/skills/\n"
-    "    Skill YAML fields: name, description, trigger_patterns, tool_chain, prompt_template, success_criteria\n"
-    "  NETWORK (Ring 2, requires auth — always true in normal session):\n"
-    "  • search_web(query) — DuckDuckGo search with snippets and URLs\n"
-    "  • browse_web(url) — Fetch any URL and return full text content\n"
-    "  • run_command(command) — Execute PowerShell commands (non-destructive by policy)\n"
-    "  • open_url(url) — Open a URL / web page in the user's web browser (opens a real browser tab on screen)\n"
-    "  • open_path(path) — Open a local file or folder, or launch an app (Notepad, Explorer, Word, Chrome, Spotify…)\n"
-    "  • navigate(workspace) — Switch the Friday desktop UI to a workspace on-screen (news, messages, calendar, studio…)\n"
-    "  • navigate_to(kind, query) — Open one exact thing on the desktop: an email thread, a file, a wiki page, a Settings section, a day, a contact; new_tab=true opens it in its own maximized Chrome tab\n"
-    "  • set_workspace_layout(fullscreen_chat, workspace?, position?) — Fullscreen with the chat tray beside it, back to normal, or in part of the screen (a half, a third, two thirds); remembered per workspace\n"
-    "  • show_my_day(mode?) — Show the start screen's countdowns, chat field and mic now; mode smart, always or never sets when they show on their own\n"
-    "  • set_chat_tray(visible?, side?, size?) — Show or hide the chat tray, or put it on the left or the right in a third, a half or two thirds\n"
-    "  • organize_email(action, query) — Archive, label, move, star or Trash the mail a Gmail search finds: ONE approval card; read it back, and on a yes call answer_card\n"
-    "  • organize_files / organize_wiki(action, items|pages, to) — Move, rename or trash files; move, rename, tag, archive or trash wiki pages. One item now, a batch on one card; undo_action puts it back\n"
-    "  • search_email(query) — Search/read recent Gmail (built-in read-only Google integration)\n"
-    "  • draft_email(to, subject, body) — Compose email (needs a write-enabled Gmail connection)\n"
-    "  • query_calendar() — Today's & tomorrow's Google Calendar events (built-in integration)\n"
-    "  • spawn_task(name, prompt, description) — Launch long-running background tasks\n"
-    "  DATA & CONTEXT:\n"
-    "  • check_situation(detail, pin) — What is happening now: open workspaces, CPU/RAM/GPU/disk, loaded models, running work, queue, spend\n"
-    "  • query_trust_graph(name) — Look up anyone in the trust graph\n"
-    "  • get_career_pipeline() — Job search status\n"
-    "  • get_briefing() — Most recent daily briefing\n"
-    "  • write_clipboard(text) — Copy to clipboard\n"
-    "  SELF-IMPROVEMENT INTROSPECTION (Ring 0, read-only):\n"
-    "  • epistemic_score(limit) — Score your own recent responses on confidence calibration, hedging, source attribution, uncertainty, and specificity\n"
-    "  • personality_show() — Read your current personality config (traits, style, maturity, temperature)\n"
-    "  • personality_check_sycophancy(limit) — Flag sycophancy (reflexive agreement, flattery, over-deference) in your recent replies\n"
-    "  OS CONTROL (Ring 3, requires Computer Control enabled in Settings):\n"
-    "  • screenshot() — Capture screen (always use first, to see what's there)\n"
-    "  • move_mouse(x, y) / click(x, y, button) — Mouse control\n"
-    "  • type_text(text) / press_key(key) — Keyboard control\n"
-    "  • scroll(direction, amount) — Scroll\n"
-    "  • install_package(package, manager, check_only) — Install pip/npm packages\n\n"
     "== COMPUTER CONTROL ==\n"
     "Computer control (screenshot, click, type, etc.) requires the user to enable it in Settings > "
     "Computer Control. When you need it and it's not enabled, say so. When it IS enabled: "
@@ -3180,6 +3150,35 @@ try:
     _rtt(FRIDAY_SYSTEM_PROMPT)
 except Exception:
     pass
+
+
+_TOOLS_BLOCK_REGISTERED = set()
+
+
+def _tools_prompt_block() -> str:
+    """The "== TOOLS ==" section, generated from the tool registry.
+
+    The hand-written list this replaces disagreed with the real tools (it
+    named a search backend the tool no longer prefers and a file-read limit
+    the executor never honoured). Generated text cannot drift: one line per
+    resident tool from its own description, plus the loader. It carries no
+    user data, so it is registered gate-exempt like the constant above, once
+    per distinct text.
+    """
+    try:
+        from agent_friday.services import tool_catalogue as _tc
+        from agent_friday.services.agent import CLAUDE_TOOLS as _tools
+        text = _tc.prompt_block(_tools)
+    except Exception:
+        return ""
+    if text and text not in _TOOLS_BLOCK_REGISTERED:
+        try:
+            from agent_friday.services.egress_gate import register_trusted_text as _reg
+            _reg(text)
+        except Exception:
+            pass
+        _TOOLS_BLOCK_REGISTERED.add(text)
+    return text
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3561,10 +3560,20 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     _T2 = getattr(_VaultTier, 'PRIVATE', 2)
     _T3 = getattr(_VaultTier, 'SENSITIVE', 3)
 
-    sections = []  # list of (tier, text)
+    # Two lists, not one. Everything that is the same for every turn of a
+    # conversation (persona, the generated tool text, the workspace) goes
+    # first; everything chosen by THIS message (wiki matches, memories,
+    # skills, the screen, the clock) goes after the clock header, which is
+    # `prompt_cache.VOLATILE_MARKER`. A local seat reuses its prompt cache
+    # only up to the first changed byte, so a per-message block near the top
+    # made it re-read the whole prompt every turn (43 s measured); and the
+    # cloud caches the prefix above the marker. Render order is orthogonal
+    # to tier, authority and gating: each section keeps its own.
+    _stable, _volatile = [], []  # lists of (tier, text)
+    _phase = ["stable"]
 
     def add(text, tier=_T1):
-        sections.append((tier, text))
+        (_stable if _phase[0] == "stable" else _volatile).append((tier, text))
 
     def classify(text, fallback_tier=_T2):
         if vault_control is not None:
@@ -3575,6 +3584,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         return fallback_tier
 
     add(FRIDAY_SYSTEM_PROMPT, _T1)
+    _tools_text = _tools_prompt_block()
+    if _tools_text:
+        add(_tools_text, _T1)
 
     # Layer 0: Always-on daily context (briefing headlines, career pipeline,
     # countdowns, trust circle, personality). The chat endpoint should never
@@ -3592,6 +3604,8 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     except Exception as _e:
         add(f"\n== TODAY'S CONTEXT ==\n(load failed: {_e})", _T1)
 
+    # Today's context is the same for every turn of the day; the workspace
+    # is the same for every turn of the conversation. Both stay in the head.
     # Layer 1: Active workspace context (from frontend) — may show finance/health
     # data, so classify by what's actually in the payload.
     if workspace_context:
@@ -3604,6 +3618,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         if workspace_context.get('focus'):
             add(f"Current focus: {workspace_context['focus']}", _T2)
         sources_consulted.append('workspace')
+    _phase[0] = "volatile"
 
     # Layer 2: Vault data (personality always included). Friday's own state is
     # not personal data about the user, so it stays public.
@@ -3855,9 +3870,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # position for an instruction the model must not override.
     try:
         from agent_friday.services.clock import clock_context_block
-        add(clock_context_block(), _T1)
+        _clock_section = (_T1, clock_context_block())
     except Exception:
-        pass
+        _clock_section = None
     # LIVE CAPABILITY STATE, right behind the clock and for the same reason:
     # it is true of the machine right now, not of anything remembered. It
     # rides in the volatile tail (after prompt_cache.VOLATILE_MARKER) so a
@@ -3887,6 +3902,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
                            turn=_presence.current_turn())
         except Exception:
             pass
+    # Stable first, then the clock header (the cache boundary), then what
+    # this message chose.
+    sections = _stable + ([_clock_section] if _clock_section else []) + _volatile
     try:
         from agent_friday.services import retrieval_ledger as _rl
         from agent_friday.services.egress_gate import is_local_provider as _is_local
