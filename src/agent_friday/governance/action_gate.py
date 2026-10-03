@@ -154,6 +154,13 @@ OUTWARD_TOOLS = frozenset({
     # raises the card with the files, scan and licence check; the card's
     # decision hook publishes on approval (SELF_GATED below).
     "publish_artifact",
+    # A command, or Claude's agent, run as a process on this PC inside a
+    # codebase's folder (services/codebase_tasks). Both reach past the browser
+    # frame, and the agent reaches the provider's API, so both are outward.
+    # They are also SELF_GATED: the first of a task raises one card, and its
+    # approval mints a grant scoped to that codebase that the rest of the task
+    # spends (consume_grant). Nothing runs on a denied or unanswered card.
+    "codebase_run", "codebase_agent",
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
@@ -309,7 +316,14 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # By the seed image they upload: services/seed_images.py.
                          "generate_video", "generate_music",
                          # By how many items and where: services/item_actions.
-                         "organize_files", "organize_wiki", "undo_action"})
+                         "organize_files", "organize_wiki", "undo_action",
+                         # By which codebase (classify, below): reading one is
+                         # internal; changing a codebase Friday made, under her
+                         # own folder, is internal and every change is an
+                         # undoable step; changing a folder the user pointed at
+                         # is judged as any write outside Friday's output is;
+                         # with no codebase in scope, outward.
+                         "codebase_edit", "codebase_undo", "codebase_read"})
 
 #: Tools whose outward case is decided on a card even in an interactive chat,
 #: never by a yes/no question. generate_video and generate_music are outward

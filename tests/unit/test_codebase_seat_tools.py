@@ -45,7 +45,12 @@ def test_the_three_tools_are_declared_inside_and_by_voice():
         assert name in [v[0] for v in voice_engine._VOICE_LIVE_TOOLS], name
     assert "which" in _tool("codebase_seat")["input_schema"]["properties"] and "model" in _tool("codebase_seat")["input_schema"]["properties"]
     src = inspect.getsource(voice_engine._voice_tool_run)
-    assert 'if name in ("codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent"):' in src
+    # The voice dispatch names the three in the branch that sets the call's
+    # conversation for the codebase tools (it carries the others beside them).
+    import re as _re
+    branch = next(m.group(1) for m in _re.finditer(r"if name in \(([^)]*)\):", src) if '"codebase_seat"' in m.group(1))
+    for name in ("codebase_seat", "codebase_key", "codebase_costs"):
+        assert '"%s"' % name in branch, name
 
 
 def test_use_opus_for_this_one_changes_the_seat_and_speaks_it(monkeypatch):
