@@ -77,6 +77,18 @@ def lib_document(doc_id):
     return jsonify({"status": "ok", "document": d})
 
 
+@library_bp.route("/api/library/section/<int:section_id>")
+@login_required
+def lib_section(section_id):
+    p, bad = _principal()
+    if bad:
+        return bad
+    d = api.section_passages(runtime.prepare(p), p, section_id)
+    if not d:
+        return jsonify({"status": "denied", "error": "source no longer in your Library"}), 404
+    return jsonify({"status": "ok", "section": d})
+
+
 @library_bp.route("/api/library/search")
 @login_required
 def lib_search():
@@ -198,6 +210,11 @@ def lib_add():
     if bad:
         return bad
     b = request.get_json(silent=True) or {}
+    if b.get("root"):                       # a folder Friday already lists (Documents, Downloads, ...)
+        try:
+            b["path"] = str(sf.roots()[str(b["root"])])
+        except (KeyError, Exception):
+            return jsonify({"status": "denied", "error": "that is not one of your folders"}), 400
     try:
         ev = grants.add_scope(p, b.get("path", ""), recursive=bool(b.get("recursive", True)),
                               glob=b.get("glob") or None, source="you")

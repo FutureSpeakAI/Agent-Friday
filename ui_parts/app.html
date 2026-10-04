@@ -1487,6 +1487,10 @@ function fridayCitationize(src){
     let host='link';try{host=url.replace(/^https?:\/\//,'').split('/')[0]}catch(e){}
     return '<a href="'+esc(url)+'" target="_blank" rel="noopener" class="friday-cite" title="'+esc(url)+'" style="'+base+'background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.4);color:#00d4ff;text-decoration:none;">🔗 '+esc(host)+'</a>';
   });
+  // The owner's Library: [lib:doc#block] opens the Reader at that paragraph (Shift-click:
+  // the 3D shelves). One that this turn's search did not return is inert.
+  out=out.replace(/\[unverified-lib:\d+#\d+\]/g,()=>'<span class="friday-cite friday-cite-unverified" title="'+esc('Not from this turn\u2019s search of your Library')+'" style="'+base+'background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);color:#f87171;cursor:help;text-decoration:line-through;">\u26a0 source</span>');
+  out=out.replace(/\[lib:(\d+)#(\d+)\]/g,(_,d,b)=>chip('rgba(0,212,255,0.12)','rgba(0,212,255,0.4)','#00d4ff','Library source','Open this source in your Library \u00b7 Shift-click to see it in 3D',' role="link" tabindex="0" data-lib-doc="'+d+'" data-lib-block="'+b+'"'));
   out=out.replace(/\[wiki:([^\]]+)\]/g,(_,p)=>chip('rgba(123,97,255,0.14)','rgba(123,97,255,0.45)','#b794f6','📄 '+p.trim(),'Open in Knowledge · '+p.trim(),' role="link" tabindex="0" data-kw-page="'+esc(p.trim())+'"'));
   out=out.replace(/\[news:([^\]]+)\]/g,(_,p)=>{const outlet=p.split('/')[0].trim();return chip('rgba(245,158,11,0.14)','rgba(245,158,11,0.45)','#fbbf24','📰 '+outlet,'News · '+p.trim())});
   // B6: raw memory-system artifacts must never render as-is in prose. The
@@ -1507,6 +1511,15 @@ if(typeof window!=='undefined'){window.fridayCitationize=fridayCitationize;}
 // Open Knowledge from anywhere: the desktop opens its window; a standalone
 // tab or the chat-only window opens a Knowledge tab; Knowledge's own tab
 // navigates in place.
+function fridayOpenLibrary(t){
+  const nav={workspace:'library',lib:{doc:Number(t.doc),block:Number(t.block)}};
+  if(t.shift)nav.view3d=true;
+  if(STANDALONE_WS==='library'){fridayNavigate(nav);return}
+  if(STANDALONE_WS||window.__FRIDAY_CHROME__==='chat'||!window.fridayOpenWorkspace){
+    fridayOpenWorkspaceTab('library',{libdoc:String(t.doc),libblock:String(t.block)});return;
+  }
+  window.fridayOpenWorkspace(nav);
+}
 function fridayOpenKnowledge(target){
   const t=Object.assign({workspace:'knowledge'},target||{});
   if(STANDALONE_WS==='knowledge'){fridayNavigate(t);return}
@@ -1518,10 +1531,11 @@ function fridayOpenKnowledge(target){
 }
 if(typeof document!=='undefined'){
   const kwChip=e=>{
-    const el=e.target&&e.target.closest?e.target.closest('.friday-cite[data-kw-page], .friday-cite[data-kw-query]'):null;
+    const el=e.target&&e.target.closest?e.target.closest('.friday-cite[data-kw-page], .friday-cite[data-kw-query], .friday-cite[data-lib-block]'):null;
     if(!el)return;
     if(e.type==='keydown'&&e.key!=='Enter'&&e.key!==' ')return;
     e.preventDefault();
+    if(el.getAttribute('data-lib-block')){fridayOpenLibrary({doc:el.getAttribute('data-lib-doc'),block:el.getAttribute('data-lib-block'),shift:!!e.shiftKey});return}
     const page=el.getAttribute('data-kw-page');
     if(page)fridayOpenKnowledge({page});else fridayOpenKnowledge({query:el.getAttribute('data-kw-query'),view:'split'});
   };
@@ -1532,7 +1546,7 @@ if(typeof document!=='undefined'){
    model reply, a fetched page or an imported note can never run script in
    Friday's own origin. Anything that is not a whole, allowed tag is escaped. */
 const FRIDAY_MD_TAGS = new Set('p br hr h1 h2 h3 h4 h5 h6 strong b em i u s del ins code pre blockquote ul ol li a img span div table thead tbody tfoot tr th td sup sub details summary kbd mark small'.split(' '));
-const FRIDAY_MD_ATTRS = new Set(['class', 'title', 'href', 'target', 'rel', 'src', 'alt', 'role', 'tabindex', 'style', 'colspan', 'rowspan', 'align', 'start', 'width', 'height', 'open', 'data-kw-page', 'data-kw-query']);
+const FRIDAY_MD_ATTRS = new Set(['class', 'title', 'href', 'target', 'rel', 'src', 'alt', 'role', 'tabindex', 'style', 'colspan', 'rowspan', 'align', 'start', 'width', 'height', 'open', 'data-kw-page', 'data-kw-query', 'data-lib-doc', 'data-lib-block']);
 /* An image loads the moment it paints, so it is the one element whose address
    is never taken from a reply: only inline raster data and Friday's own origin
    qualify. A remote address (https:, http:, //host, a backslash form, a
@@ -1722,7 +1736,7 @@ function sanitizeVoiceTranscript(raw){
   // transcript (rendered as plain text, no fridayCitationize pass) they'd
   // show as raw [memory:…]/[conversation:…] brackets or stray 💬 markers.
   // Strip the token, keep the words.
-  t=t.replace(/\[(?:memory|conversation|wiki|news|web|unverified-web):[^\]\n]{0,160}\]/gi,' ');
+  t=t.replace(/\[(?:memory|conversation|wiki|news|web|unverified-web|lib|unverified-lib):[^\]\n]{0,160}\]/gi,' ');
   t=t.replace(/💬\s*(?=\d{4}-\d{2}-\d{2})/g,'');
   // 7. Collapse whitespace the removals left behind.
   t=t.replace(/[ \t]{2,}/g,' ').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/^\s+|\s+$/g,'');
@@ -23100,7 +23114,7 @@ function App(){
   const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces,agentSettings.held_features]);
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
-  const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
+  const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,library:window.LibraryWS?<window.LibraryWS/>:<div style={{color:'#888',fontSize:12,padding:20}}>The Library did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   // A bundle workspace (installed from the salon) has no React component of its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
 const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id].bundle)?<window.FridayBundleFrame wsId={id}/>:<div>Coming soon</div>;
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});

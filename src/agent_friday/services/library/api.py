@@ -161,8 +161,9 @@ def block(store: Store, principal: str, block_id: int) -> dict | None:
             heading = store.dec(sect["heading"], doc["shelf"])
         except VaultLocked:
             heading = None
+    from agent_friday.services.library import search as _search
     return {"id": row["id"], "doc": "d:%d" % row["doc_id"], "doc_id": row["doc_id"], "title": doc["title"],
-            "kind": row["kind"], "page": row["page"], "pages": doc["pages"], "bbox": bbox, "text": text,
+            "kind": row["kind"], "page": row["page"], "para": _search._para_number(store, row), "pages": doc["pages"], "bbox": bbox, "text": text,
             "t_start": row["t_start"], "t_end": row["t_end"], "section": heading, "neighbours": near,
             "page_image": doc["kind"] == "pdf", "doc_kind": doc["kind"]}
 
@@ -173,3 +174,30 @@ def receipt(store: Store, search_id: str) -> dict | None:
         return None
     data = json.loads(row["data"])
     return data
+
+
+def section_passages(store: Store, principal: str, section_id: int) -> dict | None:
+    """A section's passages as plain text with the block each one starts at, for
+    the 3D reading plane."""
+    sec = store.one("SELECT * FROM sections WHERE id=?", (section_id,))
+    if not sec:
+        return None
+    doc = tree.TreeBuilder(store, principal).visible_docs().get(sec["doc_id"])
+    if not doc:
+        return None
+    try:
+        heading = store.dec(sec["heading"], doc["shelf"])
+    except VaultLocked:
+        return None
+    out = []
+    for p in store.q("SELECT id, block_ids, text FROM passages WHERE section_id=? ORDER BY id", (section_id,)):
+        try:
+            text = store.dec(p["text"], doc["shelf"])
+        except VaultLocked:
+            return None
+        ids = json.loads(p["block_ids"] or "[]")
+        first = store.one("SELECT id, page, t_start FROM blocks WHERE id=?", (ids[0],)) if ids else None
+        out.append({"id": p["id"], "text": text, "block": first["id"] if first else None,
+                    "page": first["page"] if first else None, "t_start": first["t_start"] if first else None})
+    return {"id": "s:%d" % section_id, "doc": "d:%d" % sec["doc_id"], "doc_id": sec["doc_id"], "heading": heading,
+            "page_from": sec["page_from"], "page_to": sec["page_to"], "passages": out}
