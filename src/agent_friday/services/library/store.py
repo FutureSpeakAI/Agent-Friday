@@ -82,15 +82,123 @@ def principal_dir(principal: str) -> Path:
     return library_root() / principal
 
 
+_PLAIN_HEADER = b"SQLite format 3\x00"
+
+
+def cipher_module():
+    """The optional SQLCipher binding, or None. With it the whole index is
+    encrypted at rest; without it the index is a plain SQLite file, protected
+    by the Windows account like Friday's other indexes."""
+    try:
+        from sqlcipher3 import dbapi2
+        return dbapi2
+    except Exception:
+        return None
+
+
+def _key_clause(key: bytes) -> str:
+    return "\"x'%s'\"" % key.hex()
+
+
+def _is_plain(path: Path) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return f.read(16) == _PLAIN_HEADER
+    except OSError:
+        return False
+
+
+def _encrypt_in_place(path: Path, key: bytes, mod) -> None:
+    """Rewrite a plain index as an encrypted one (sqlcipher_export), then swap."""
+    tmp = path.with_name(path.name + ".enc")
+    if tmp.exists():
+        tmp.unlink()
+    plain = mod.connect(str(path), isolation_level=None)
+    try:
+        ver = plain.execute("PRAGMA user_version").fetchone()[0]
+        plain.execute("ATTACH DATABASE ? AS enc KEY " + _key_clause(key), (str(tmp),))
+        plain.execute("SELECT sqlcipher_export('enc')")
+        plain.execute("PRAGMA enc.user_version=%d" % int(ver))
+        plain.execute("DETACH DATABASE enc")
+    finally:
+        plain.close()
+    for suffix in ("-wal", "-shm"):
+        side = path.with_name(path.name + suffix)
+        if side.exists():
+            side.unlink()
+    os.replace(tmp, path)
+
+
+def index_key(directory: Path) -> bytes | None:
+    """The 32-byte key of a principal's index, held beside it under the Windows
+    account's protection (the credential store), or None when the optional
+    SQLCipher binding is not installed."""
+    if cipher_module() is None:
+        return None
+    from agent_friday.services import credential_store as cs
+    kp = directory / "index.key"
+    if kp.exists():
+        try:
+            k = cs.read_secret(kp)
+            if len(k) == 32:
+                return k
+        except Exception:
+            return None            # an unreadable key is not replaced: that would orphan the index
+    k = os.urandom(32)
+    directory.mkdir(parents=True, exist_ok=True)
+    cs.write_secret(kp, k)
+    try:
+        cs.harden_permissions(kp)
+    except Exception:
+        pass
+    return k
+
+
+class IndexUnreadable(Exception):
+    """The encrypted index could not be opened with its key."""
+
+
 class Store:
     def __init__(self, path: Path, *, seal: Callable[[str], str] | None = None,
-                 unseal: Callable[[str], str] | None = None):
+                 unseal: Callable[[str], str] | None = None, key: bytes | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._seal, self._unseal = seal, unseal
-        self.db = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None)
-        self.db.row_factory = sqlite3.Row
+        self.note = ""
+        mod = cipher_module() if key else None
+        self.encrypted = False
+        if mod is not None:
+            try:
+                if self.path.exists() and _is_plain(self.path):
+                    _encrypt_in_place(self.path, key, mod)
+                self.db = mod.connect(str(self.path), check_same_thread=False, isolation_level=None)
+                self.db.execute("PRAGMA key = " + _key_clause(key))
+                self.db.execute("SELECT count(*) FROM sqlite_master").fetchone()
+                self.db.row_factory = mod.Row
+                self.encrypted = True
+            except Exception:
+                # The index is derived data (the files are the truth): set the unreadable
+                # copy aside and start a fresh one; the next sweep reads the documents again.
+                try:
+                    self.db.close()
+                except Exception:
+                    pass
+                aside = self.path.with_name(self.path.name + ".unreadable")
+                if self.path.exists():
+                    os.replace(self.path, aside)
+                for suffix in ("-wal", "-shm"):
+                    side = self.path.with_name(self.path.name + suffix)
+                    if side.exists():
+                        side.unlink()
+                self.note = "The Library's index could not be opened and was set aside; documents are being read again."
+                self.db = mod.connect(str(self.path), check_same_thread=False, isolation_level=None)
+                self.db.execute("PRAGMA key = " + _key_clause(key))
+                self.db.row_factory = mod.Row
+                self.encrypted = True
+        else:
+            self.db = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None)
+            self.db.row_factory = sqlite3.Row
         with self._lock:
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA secure_delete=ON")
@@ -404,7 +512,8 @@ def store_for(principal: str = OWNER) -> Store:
     with _stores_lock:
         st = _stores.get(key)
         if st is None:
-            st = Store(principal_dir(principal) / "library.sqlite")
+            d = principal_dir(principal)
+            st = Store(d / "library.sqlite", key=index_key(d))
             _stores[key] = st
         return st
 

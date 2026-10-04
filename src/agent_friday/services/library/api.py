@@ -54,6 +54,8 @@ def status(store: Store, principal: str, indexer_pending: int = 0) -> dict:
         "encoder": {"available": embed.available(), **embed.status()},
         "laya": {"loaded": route.laya_available()},
         "index_bytes": store.size_bytes(),
+        "index_encrypted": bool(getattr(store, "encrypted", False)),
+        "index_note": getattr(store, "note", ""),
         "empty": not scopes,
         "kg_learn": _kg_choice(),
     }

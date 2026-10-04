@@ -414,7 +414,7 @@
           nav('failures', 'Couldn’t read', counts.failed + ((status && status.skipped.length) || 0)),
           nav('vault', 'Vault shelf', status ? (status.vault.unlocked ? status.vault.documents : 'locked') : null),
           nav('pc', 'Browse this PC'),
-          h('div', { className: 'lb-foot' }, 'Indexed on this PC · nothing sent. The index sits on this PC, protected by your Windows account; private documents are encrypted with your vault key.')),
+          h('div', { className: 'lb-foot' }, 'Indexed on this PC · nothing sent. ' + (status && status.index_encrypted ? 'The index is encrypted, with a key held under your Windows account.' : 'The index sits on this PC, protected by your Windows account.') + ' Private documents are also encrypted with your vault key.')),
         main,
         inspector && h('aside', { className: 'lb-insp', 'aria-label': 'Details' },
           sel && detail ? h(React.Fragment, null,
