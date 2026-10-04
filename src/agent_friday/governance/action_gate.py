@@ -156,12 +156,23 @@ OUTWARD_TOOLS = frozenset({
     # raises one card for the whole batch; services/item_actions changes
     # exactly the conversations it lists, on approval.
     "organize_email",
+    # Publishing a page to the web (services/publish_web). The tool only
+    # raises the card with the files, scan and licence check; the card's
+    # decision hook publishes on approval (SELF_GATED below).
+    "publish_artifact",
+    # A command, or Claude's agent, run as a process on this PC inside a
+    # codebase's folder (services/codebase_tasks). Both reach past the browser
+    # frame, and the agent reaches the provider's API, so both are outward.
+    # They are also SELF_GATED: the first of a task raises one card, and its
+    # approval mints a grant scoped to that codebase that the rest of the task
+    # spends (consume_grant). Nothing runs on a denied or unanswered card.
+    "codebase_run", "codebase_agent",
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
 #: action itself (draft_email only queues; gmail_send sends on approval).
 SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
-                        "career_update_tracker",
+                        "career_update_tracker", "publish_artifact", "workspace_swap",
                         # Friday's browser (services/browser_session.py): when
                         # classified outward, the handler submits or fills
                         # only on an approved card for exactly what the page
@@ -171,7 +182,12 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         # reaches past this PC, raises ONE card and runs on
                         # approval; one local change runs with an undo.
                         "organize_email", "organize_files", "organize_wiki",
-                        "undo_action"})
+                        "undo_action",
+                        # A command or Claude's agent in a codebase's own folder
+                        # (services/codebase_tasks): the first of a task raises
+                        # ONE card; its approval mints a grant scoped to that
+                        # codebase, which the handlers spend with consume_grant.
+                        "codebase_run", "codebase_agent"})
 
 #: Friday's own tools that stay inside: reading, searching, drafting, local
 #: files the confirmation gate already asks about, memory writes the taint
@@ -194,6 +210,10 @@ INTERNAL_TOOLS = frozenset({
     # reads state the server already holds. None reaches anyone else.
     "navigate_to", "check_situation", "set_workspace_layout", "show_my_day",
     "set_chat_tray",
+    # The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show the
+    # preview beside it, enter or leave build mode. The owner's own screen and
+    # Friday's own records; nothing reaches anyone else.
+    "open_project", "show_preview", "build_mode",
     "get_career_pipeline", "get_briefing", "spawn_task", "propose_wiki_update",
     # Voice's hand-over to the full agent: a background task like spawn_task,
     # whose own actions come back through this checkpoint one by one.
@@ -212,6 +232,25 @@ INTERNAL_TOOLS = frozenset({
     # Background research reads the web and runs local models; its report
     # lands in the conversation. Nothing it does reaches another person.
     "deep_research",
+    # The artifact panel's one tool writes only to Friday's own artifact store
+    # under the Friday home, versioned and never sent anywhere
+    # (services/artifacts). Off the record it writes nothing at all.
+    "artifact_put",
+    # A plan is an artifact in that same store; approving one is the user's
+    # decision, which the model only reports (services/plans).
+    "plan_first", "plan_approve", "plan_milestone",
+    # A plain-project zip of a codebase, handed to the user; reads only.
+    "codebase_export",
+    # Improving a bundle workspace opens a codebase chat; the swap raises ONE
+    # card and installs only on approval (services/workspace_bundles).
+    "improve_workspace", "workspace_swap",
+    # A codebase's own seats, key profile and cost total: the user's choice,
+    # disclosed in the header line (services/codebases, spec §4.7).
+    "codebase_seat", "codebase_key", "codebase_costs",
+    # Which engine edits a codebase: the user's choice, disclosed. (Running
+    # that engine, codebase_agent, and a command, codebase_run, are outward
+    # and self-gated: one card per task, services/codebase_tasks.)
+    "codebase_engine",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
@@ -301,7 +340,14 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # By the seed image they upload: services/seed_images.py.
                          "generate_video", "generate_music",
                          # By how many items and where: services/item_actions.
-                         "organize_files", "organize_wiki", "undo_action"})
+                         "organize_files", "organize_wiki", "undo_action",
+                         # By which codebase (classify, below): reading one is
+                         # internal; changing a codebase Friday made, under her
+                         # own folder, is internal and every change is an
+                         # undoable step; changing a folder the user pointed at
+                         # is judged as any write outside Friday's output is;
+                         # with no codebase in scope, outward.
+                         "codebase_edit", "codebase_undo", "codebase_read"})
 
 #: Tools whose outward case is decided on a card even in an interactive chat,
 #: never by a yes/no question. generate_video and generate_music are outward
@@ -602,6 +648,26 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
             return OUTWARD, f"the office command could not be classified ({e})"
     if tool_name == "write_file":
         return classify_write(a.get("path"))
+    if tool_name in ("codebase_edit", "codebase_undo", "codebase_read"):
+        # A codebase Friday made lives under ~/.friday/codebases and is hers to
+        # change; an existing folder the user pointed at is their files, so a
+        # change there is judged as any write outside Friday's output is.
+        try:
+            from agent_friday.services import codebases as _cb
+            cbid = str(a.get("codebase_id") or "").strip()
+            if not cbid:
+                from agent_friday.services.agent import _CURRENT_CONVERSATION
+                rec = _cb.for_conversation(_CURRENT_CONVERSATION.get())
+                cbid = rec["id"] if rec else ""
+            if not cbid or _cb.load(cbid) is None:
+                return OUTWARD, "no codebase is in scope for this call"
+            if tool_name == "codebase_read":
+                return INTERNAL, "it only reads a codebase file"
+            if _cb.is_managed(cbid):
+                return INTERNAL, "it changes a codebase Friday made, under her own folder"
+            return classify_write(str(_cb.repo_path(cbid) / "x"))
+        except Exception as e:
+            return OUTWARD, f"the codebase action could not be classified ({e})"
     if tool_name in ("browser_click", "browser_type"):
         # A click that submits, sends, pays or confirms, typing into a payment
         # field, and Enter in a form are outward; a password field is
@@ -859,6 +925,15 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
                 _grants_file().write_text(json.dumps(gs, indent=1), encoding="utf-8")
                 return dict(g)
     return None
+
+
+def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
+    """One use of a grant for `scope`, spent by a self-gated tool that checks
+    its own grant (a codebase task: scope "codebase:<id>"). None when no grant
+    covers the tool, has uses left, or is still in time."""
+    if not tool_name or not scope:
+        return None
+    return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
 # ── 4. Receipts ─────────────────────────────────────────────────────────────

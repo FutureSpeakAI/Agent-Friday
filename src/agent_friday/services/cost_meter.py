@@ -428,7 +428,7 @@ def _resolve_attr(session_ctx, explicit):
     tid = sc.get("task_id")
     if tid:
         attr.update(lookup_task_attribution(tid))
-    for key in ("workspace", "kind", "schedule_id", "run_id"):
+    for key in ("workspace", "kind", "schedule_id", "run_id", "key_profile", "codebase"):
         if sc.get(key) is not None:
             attr[key] = sc.get(key)
     for key, val in (explicit or {}).items():
@@ -474,6 +474,12 @@ def _conn():
             for _c in ("cache_read_tokens", "cache_write_tokens"):
                 if _c not in _cols:
                     _CONN.execute(f"ALTER TABLE cost_calls ADD COLUMN {_c} INT DEFAULT 0")
+            # ── Whose key, which codebase (salon spec §4.7). ──
+            # A call made for a codebase under a guest key is that payer's
+            # spend, and Costs must be able to say so. Added by migration.
+            for _c in ("key_profile", "codebase"):
+                if _c not in _cols:
+                    _CONN.execute(f"ALTER TABLE cost_calls ADD COLUMN {_c} TEXT")
             _CONN.commit()
         return _CONN
 
@@ -507,8 +513,9 @@ def flush():
         conn.executemany(
             "INSERT INTO cost_calls (ts, provider, model, input_tokens, "
             "output_tokens, cost_usd, duration_ms, workspace, kind, "
-            "schedule_id, run_id, cache_read_tokens, cache_write_tokens) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "schedule_id, run_id, cache_read_tokens, cache_write_tokens, "
+            "key_profile, codebase) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         conn.commit()
     return len(rows)
 
@@ -516,7 +523,7 @@ def flush():
 def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
            session_ctx=None, workspace=None, kind=None, schedule_id=None,
            run_id=None, cost_usd=None, cache_read_tokens=0,
-           cache_write_tokens=0, speed=None):
+           cache_write_tokens=0, speed=None, key_profile=None, codebase=None):
     """Record one model call. Buffered; flushed off the hot path.
 
     ``cost_usd`` overrides the locally computed price — used when the provider
@@ -533,7 +540,7 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
         cache_write_tokens = int(cache_write_tokens or 0)
         attr = _resolve_attr(session_ctx, {
             "workspace": workspace, "kind": kind,
-            "schedule_id": schedule_id, "run_id": run_id})
+            "schedule_id": schedule_id, "run_id": run_id, "key_profile": key_profile, "codebase": codebase})
         if cost_usd is not None:
             cost = round(float(cost_usd), 6)
         else:
@@ -561,7 +568,8 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
                output_tokens, cost, int(duration_ms or 0),
                attr.get("workspace") or "", attr.get("kind") or "chat",
                attr.get("schedule_id"), attr.get("run_id"),
-               cache_read_tokens, cache_write_tokens)
+               cache_read_tokens, cache_write_tokens,
+               attr.get("key_profile"), attr.get("codebase"))
         with _BUFFER_LOCK:
             _BUFFER.append(row)
             over = len(_BUFFER) >= 50
@@ -683,8 +691,29 @@ def summary(rng="today", frm=None, to=None):
             "by_workspace": _group("workspace"),
             "by_model": _group("model"),
             "by_kind": _group("kind"),
+            # Whose key paid, and for which codebase (salon spec §4.7).
+            "by_key_profile": _group("key_profile"),
+            "by_codebase": _group("codebase"),
         }
     return out
+
+
+def codebase_costs(codebase: str, rng: str = "all") -> dict:
+    """What one codebase has cost, split by whose key paid."""
+    flush()
+    conn = _conn()
+    start, end = _range_bounds(rng)
+    with _CONN_LOCK:
+        rows = conn.execute(
+            "SELECT COALESCE(key_profile,'mine'), COUNT(*), COALESCE(SUM(cost_usd),0) FROM cost_calls "
+            "WHERE codebase=? AND ts>=? AND ts<=? GROUP BY key_profile", (codebase, start, end)).fetchall()
+    by_key = {(r[0] or "mine"): round(r[2], 4) for r in rows}
+    return {"codebase": codebase, "total_usd": round(sum(by_key.values()), 4), "by_key_profile": by_key,
+            "calls": sum(r[1] for r in rows)}
+
+
+def codebase_total(codebase: str, rng: str = "all") -> float:
+    return codebase_costs(codebase, rng)["total_usd"]
 
 
 def timeseries(rng="month", bucket="day"):

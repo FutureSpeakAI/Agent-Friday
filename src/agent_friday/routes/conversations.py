@@ -58,7 +58,7 @@ _log = logging.getLogger("friday.conversations")
 _PATCHABLE = ("title", "status", "seat", "pinned_at", "project")
 
 #: What a project may have set over HTTP.
-_PROJECT_PATCHABLE = ("name", "seat", "instructions", "color", "archived")
+_PROJECT_PATCHABLE = ("name", "seat", "instructions", "color", "archived", "type")
 
 
 def _project_seats() -> dict:
@@ -81,6 +81,9 @@ def _summary(conv: dict, project_seats: dict | None = None) -> dict:
         # which is the right answer for them.
         "pinned_at": conv.get("pinned_at"),
         "project": conv.get("project"),
+        # The codebase this chat's panel is bound to (services/codebases), or
+        # None. The panel shows Preview, Files and Changes when it is set.
+        "codebase": conv.get("codebase"),
         "seat": conv.get("seat"),
         # What this chat will ACTUALLY run on once its project's default is
         # taken into account. The sidebar shows this, because a chat in a
@@ -107,6 +110,10 @@ def _project_summary(proj: dict, counts: dict | None = None) -> dict:
         "created_at": proj.get("created_at"),
         "updated_at": proj.get("updated_at"),
         "conversations": (counts or {}).get(pid, 0),
+        # what every chat in the project inherits (Chat Hub M2)
+        "type": proj.get("type") or "general",
+        "files": len(proj.get("files") or []),
+        "codebases": list(proj.get("codebases") or []),
     }
 
 
@@ -259,6 +266,7 @@ def create_project():
         seat=data.get("seat") if isinstance(data.get("seat"), dict) else None,
         instructions=str(data.get("instructions") or ""),
         color=data.get("color"),
+        type=str(data.get("type") or "general"),
     )
     _log.info("created project %s (%r)", proj.get("id"), proj.get("name"))
     return jsonify({"status": "ok", "project": _project_summary(proj)}), 201
@@ -316,6 +324,112 @@ def delete_project(pid):
     return jsonify({"status": "ok", "deleted": pid, "detached": detached,
                     "note": ("%d conversation(s) were moved out of the project "
                              "and kept" % detached) if detached else None})
+
+
+# ── A project's files and codebases (Chat Hub M2) ─────────────────────────────
+# A project holds files its chats can read, and the codebases the Build panel
+# works on. Both are kept by services/projects; every chat filed in the project
+# is told about them each turn (projects.context_block).
+
+@conversations_bp.route("/api/projects/<pid>/files", methods=["GET"])
+def project_files(pid):
+    if _proj.load(pid) is None:
+        return jsonify({"status": "error", "error": "no such project: %s" % pid}), 404
+    return jsonify({"status": "ok", "files": _proj.list_files(pid)})
+
+
+@conversations_bp.route("/api/projects/<pid>/files", methods=["POST"])
+def project_add_file(pid):
+    if _proj.load(pid) is None:
+        return jsonify({"status": "error", "error": "no such project: %s" % pid}), 404
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "")
+    if data.get("content_base64") is not None:
+        import base64
+        try:
+            blob = base64.b64decode(str(data.get("content_base64")), validate=True)
+        except Exception:
+            return jsonify({"status": "error", "error": "content_base64 is not base64"}), 400
+    else:
+        blob = str(data.get("content") or "").encode("utf-8")
+    try:
+        entry = _proj.add_file(pid, name, blob)
+    except RuntimeError as e:          # off the record: nothing is written
+        return jsonify({"status": "error", "error": str(e)}), 409
+    except ValueError as e:
+        code = 413 if "large" in str(e) or "cap" in str(e) else 400
+        return jsonify({"status": "error", "error": str(e)}), code
+    return jsonify({"status": "ok", "file": entry}), 201
+
+
+@conversations_bp.route("/api/projects/<pid>/files/<path:name>", methods=["GET"])
+def project_file(pid, name):
+    blob = _proj.read_file(pid, name) if _proj.load(pid) is not None else None
+    if blob is None:
+        return jsonify({"status": "error", "error": "no such file"}), 404
+    import mimetypes
+    mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    if mime.startswith("text/") or mime in ("application/json",):
+        mime += "; charset=utf-8"
+    from flask import Response
+    return Response(blob, mimetype=mime)
+
+
+@conversations_bp.route("/api/projects/<pid>/files/<path:name>", methods=["DELETE"])
+def project_remove_file(pid, name):
+    if _proj.load(pid) is None:
+        return jsonify({"status": "error", "error": "no such project: %s" % pid}), 404
+    try:
+        removed = _proj.remove_file(pid, name)
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 409
+    if not removed:
+        return jsonify({"status": "error", "error": "no such file"}), 404
+    return jsonify({"status": "ok", "removed": name})
+
+
+@conversations_bp.route("/api/projects/<pid>/codebases", methods=["POST"])
+def project_connect_codebase(pid):
+    data = request.get_json(silent=True) or {}
+    cid = str(data.get("codebase") or "")
+    try:
+        proj = _proj.connect_codebase(pid, cid)
+    except KeyError as e:
+        return jsonify({"status": "error", "error": "no such %s" % e.args[0]}), 404
+    return jsonify({"status": "ok", "project": _project_summary(proj)})
+
+
+@conversations_bp.route("/api/projects/<pid>/codebases/<cid>", methods=["DELETE"])
+def project_disconnect_codebase(pid, cid):
+    try:
+        proj = _proj.disconnect_codebase(pid, cid)
+    except KeyError as e:
+        return jsonify({"status": "error", "error": "no such %s" % e.args[0]}), 404
+    return jsonify({"status": "ok", "project": _project_summary(proj)})
+
+
+@conversations_bp.route("/api/conversations/<cid>/codebase", methods=["POST"])
+def conversation_codebase(cid):
+    """Bind this chat to a codebase (the Build switch, chat-hub.md M3a), or
+    unbind it with {codebase: null}. Both sides are written together."""
+    from agent_friday.services import codebases as _cb
+    if _conv.load(cid) is None:
+        return jsonify({"status": "error", "error": "no such conversation: %s" % cid}), 404
+    data = request.get_json(silent=True) or {}
+    target = data.get("codebase")
+    if target:
+        if _cb.load(str(target)) is None:
+            return jsonify({"status": "error", "error": "no such codebase: %s" % target}), 404
+        _cb.bind(str(target), cid)
+    else:
+        current = (_conv.load(cid) or {}).get("codebase")
+        _conv.patch(cid, codebase=None)
+        if current:
+            rec = _cb.load(current)
+            if rec is not None and rec.get("conversation_id") == cid:
+                rec["conversation_id"] = None
+                _cb._save(rec)
+    return jsonify({"status": "ok", "conversation": _summary(_conv.load(cid), _project_seats())})
 
 
 @conversations_bp.route("/api/conversations/<cid>/messages", methods=["GET"])

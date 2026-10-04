@@ -1,0 +1,1452 @@
+"""Codebases: a chat's panel with a repository behind it.
+
+docs/design/active/vibe-coding-salon.md §4.1, §4.8, Phase 2. "+ Codebase"
+opens a chat whose panel has Preview, Files and Changes. What backs it:
+
+* **A git repository** at `~/.friday/codebases/<id>/repo/`, or an existing
+  folder the user points at, which gets a `salon/<slug>` branch rather than
+  commits on its own branch.
+* **Every applied change is a commit** with an author line naming the model
+  and the key profile, a one-line summary Friday writes for people, and a
+  step receipt under `.friday/receipts/` (files with hashes, the commit,
+  tests, the preview screenshot hash, network events, model, key, cost).
+  Friday may not say "done" unless the receipt shows it.
+* **Undo is a revert and is itself a step.** It walks backwards through the
+  steps not yet undone and never oscillates; the receipts say which step an
+  undo removed.
+* **The preview is one document.** The frame (§4.3) renders `index.html`
+  with its relative stylesheets and scripts inlined, so a static codebase
+  runs with no process and no install. Pinned remote scripts (esm.sh) stay.
+* **The model is told** the files (small ones inline, large ones by name)
+  and the last steps each turn, and edits with `codebase_edit`.
+
+Tier is B0 here. B1/B2 arrive with Phase 4 and change nothing in this file's
+contract: a codebase is a repo plus a box, and this module owns the repo.
+"""
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import logging
+import os
+import re
+import secrets
+import subprocess
+import threading
+import time
+import zipfile
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from agent_friday.paths import contained, safe_name
+
+_log = logging.getLogger(__name__)
+
+CONTEXT_HEADER = "== CODEBASE (this chat's panel: Preview, Files, Changes) =="
+TEMPLATES = ("static", "react", "bundle")
+_LOCK = threading.RLock()
+_POPEN_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+_SKIP_DIRS = {".git", ".friday", "node_modules", "__pycache__", ".venv", "venv"}
+_INLINE_MAX = 12_000          # a file this size or smaller rides in the prompt
+_CONTEXT_MAX = 40_000         # all inlined files together
+_TEXT_EXT = (".html", ".htm", ".css", ".js", ".mjs", ".jsx", ".ts", ".tsx", ".json", ".md", ".txt",
+             ".svg", ".csv", ".yaml", ".yml", ".toml", ".py")
+
+
+class NothingToUndo(Exception):
+    """Every step has been undone already; only the starting point is left."""
+
+
+# ── places ───────────────────────────────────────────────────────────────────
+
+def _root() -> Path:
+    from agent_friday import core
+    return Path(core.FRIDAY_DIR) / "codebases"
+
+
+def new_id() -> str:
+    return "cb-" + secrets.token_hex(4)
+
+
+def slug_for(title: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", str(title or "").lower()).strip("-")[:40].strip("-")
+    return s or "codebase"
+
+
+def _dir(cid: str) -> Path:
+    return _root() / safe_name(cid, what="codebase id")
+
+
+def _load_raw(cid: str) -> Optional[dict]:
+    p = _dir(cid) / "codebase.json"
+    if not p.is_file():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def load(cid: str) -> Optional[dict]:
+    return _with_defaults(_load_raw(cid))
+
+
+def _save(rec: dict) -> dict:
+    d = _dir(rec["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / "codebase.json.tmp"
+    tmp.write_text(json.dumps(rec, indent=1, default=str), encoding="utf-8")
+    tmp.replace(d / "codebase.json")
+    return rec
+
+
+def list_all() -> list:
+    root = _root()
+    if not root.exists():
+        return []
+    out = []
+    for d in sorted(p for p in root.iterdir() if p.is_dir()):
+        rec = load(d.name)
+        if rec:
+            out.append(rec)
+    out.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return out
+
+
+def repo_path(cid: str) -> Path:
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    return Path(rec["repo"])
+
+
+#: A command's output kept per run, and how many runs a codebase keeps.
+RUN_OUTPUT_MAX_CHARS = 20_000
+RUNS_KEPT = 200
+RUN_TIMEOUT_S = 300
+_NOT_HERSELF = ("That folder is Friday's own source. Friday edits a copy of herself, never a live checkout "
+                "(salon spec §4.9, Phase 7); pick another folder.")
+
+
+def is_friday_checkout(path) -> bool:
+    """True when `path` is, or lies inside, a checkout of Friday's own source
+    (any clone or worktree: the package root beside a .git entry). The salon
+    never works on one in place: Friday edits a copy of herself."""
+    try:
+        p = Path(path).resolve()
+    except (OSError, RuntimeError):
+        return False
+    for d in (p, *p.parents):
+        if (d / "src" / "agent_friday" / "core" / "__init__.py").exists() and (d / ".git").exists():
+            return True
+    return False
+
+
+def is_managed(cid: str) -> bool:
+    """True when the repo is Friday's own, under the codebases folder."""
+    rec = load(cid)
+    if rec is None:
+        return False
+    try:
+        contained(_root(), Path(rec["repo"]).resolve().relative_to(_root().resolve()))
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+# ── git ──────────────────────────────────────────────────────────────────────
+
+_GIT_IDENTITY = ["-c", "user.name=Friday", "-c", "user.email=friday@local",
+                 "-c", "core.autocrlf=false", "-c", "commit.gpgsign=false"]
+
+
+def _git(repo, *args, check=True, timeout=60) -> subprocess.CompletedProcess:
+    cp = subprocess.run(["git", "-C", str(repo), *_GIT_IDENTITY, *args], capture_output=True,
+                        text=True, timeout=timeout, creationflags=_POPEN_FLAGS)
+    if check and cp.returncode != 0:
+        raise RuntimeError("git %s failed: %s" % (args[0] if args else "", (cp.stderr or cp.stdout).strip()[:300]))
+    return cp
+
+
+# ── templates ────────────────────────────────────────────────────────────────
+
+_FRAME_NOTE = "<!-- Runs in Friday's sandboxed frame: one document, relative css/js inlined, packages only from https://esm.sh pinned to exact versions. -->\n"
+
+
+def template_files(template: str, title: str) -> dict:
+    """The starting files of a new codebase, by template."""
+    slug = slug_for(title)
+    if template == "static":
+        return {
+            "index.html": _FRAME_NOTE + (
+                "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+                "<title>%s</title>\n<link rel=\"stylesheet\" href=\"styles.css\">\n</head>\n<body>\n"
+                "<main>\n  <h1>%s</h1>\n  <p class=\"lead\">Say what this should do, and Friday changes it. Every change is a step you can undo.</p>\n"
+                "  <ul id=\"items\"></ul>\n  <form id=\"add\"><input id=\"text\" placeholder=\"Add something\u2026\" autocomplete=\"off\"><button>Add</button></form>\n"
+                "</main>\n<script src=\"app.js\"></script>\n</body>\n</html>\n" % (title, title)),
+            "styles.css": (
+                ":root{--bg:#0b0e14;--fg:#e6eef8;--accent:#00d4ff;--line:rgba(255,255,255,.08)}\n"
+                "html,body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,sans-serif;line-height:1.5}\n"
+                "main{max-width:720px;margin:0 auto;padding:32px 20px}\nh1{color:var(--accent);font-size:22px;margin:0 0 6px}\n"
+                ".lead{color:rgba(230,238,248,.7);margin:0 0 18px}\n#items{list-style:none;padding:0;margin:0 0 14px}\n"
+                "#items li{padding:8px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}\n"
+                "#add{display:flex;gap:8px}#add input{flex:1;padding:8px 10px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--fg)}\n"
+                "#add button{padding:8px 14px;border:0;border-radius:6px;background:var(--accent);color:#04121a;font-weight:600;cursor:pointer}\n"),
+            "app.js": (
+                "// Plain, framework-free. State lives in memory while the page is open.\n"
+                "const items = [];\nconst list = document.getElementById('items');\nconst form = document.getElementById('add');\n"
+                "const text = document.getElementById('text');\nfunction render() {\n  list.innerHTML = '';\n  items.forEach((it, i) => {\n"
+                "    const li = document.createElement('li');\n    li.textContent = it;\n    const del = document.createElement('button');\n"
+                "    del.textContent = '\\u00d7';\n    del.onclick = () => { items.splice(i, 1); render(); };\n    li.appendChild(del);\n    list.appendChild(li);\n  });\n}\n"
+                "form.onsubmit = e => { e.preventDefault(); if (text.value.trim()) { items.unshift(text.value.trim()); text.value = ''; render(); } };\nrender();\n"),
+            "README.md": "# %s\n\nMade in Friday's salon. Static app: one page, runs in the browser.\n" % title,
+        }
+    if template == "react":
+        return {
+            "index.html": _FRAME_NOTE + (
+                "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+                "<title>%s</title>\n<link rel=\"stylesheet\" href=\"styles.css\">\n</head>\n<body>\n<div id=\"root\">Loading\u2026</div>\n"
+                "<script type=\"text/jsx\" src=\"app.jsx\"></script>\n"
+                "<script type=\"module\">\n// esbuild-wasm compiles the JSX above in the browser; packages come from esm.sh at exact versions (spike S1).\n"
+                "const CDN = 'https://esm.sh';\nconst PINS = { 'react': 'react@18.3.1', 'react-dom/client': 'react-dom@18.3.1/client', 'react/jsx-runtime': 'react@18.3.1/jsx-runtime' };\n"
+                "const esbuild = await import('https://esm.sh/esbuild-wasm@0.25.12/esm/browser.min.js');\n"
+                "await esbuild.initialize({ wasmURL: 'https://esm.sh/esbuild-wasm@0.25.12/esbuild.wasm', worker: false });\n"
+                "const src = document.querySelector('script[type=\"text/jsx\"]').textContent;\n"
+                "const plugin = { name: 'cdn', setup(b) {\n  b.onResolve({ filter: /.*/ }, a => {\n    if (a.path === '/app.jsx') return { path: a.path, namespace: 'local' };\n"
+                "    if (a.path.startsWith('http')) return { path: a.path, namespace: 'http' };\n    if ((a.path.startsWith('/') || a.path.startsWith('.')) && a.namespace === 'http') return { path: new URL(a.path, a.importer).href, namespace: 'http' };\n"
+                "    if (PINS[a.path]) return { path: CDN + '/' + PINS[a.path], namespace: 'http' };\n    return { errors: [{ text: 'unpinned import refused: ' + a.path }] };\n  });\n"
+                "  b.onLoad({ filter: /.*/, namespace: 'local' }, () => ({ contents: src, loader: 'jsx' }));\n"
+                "  b.onLoad({ filter: /.*/, namespace: 'http' }, async a => ({ contents: await (await fetch(a.path)).text(), loader: 'js' }));\n} };\n"
+                "try {\n  const out = await esbuild.build({ entryPoints: ['/app.jsx'], bundle: true, write: false, format: 'iife', jsx: 'automatic', plugins: [plugin], target: 'es2020' });\n"
+                "  const s = document.createElement('script'); s.textContent = out.outputFiles[0].text; document.body.appendChild(s);\n"
+                "} catch (e) { document.getElementById('root').textContent = 'Build failed: ' + (e && e.message || e); }\n</script>\n</body>\n</html>\n" % title),
+            "app.jsx": (
+                "import React, { useState } from 'react';\nimport { createRoot } from 'react-dom/client';\n\n"
+                "function App() {\n  const [count, setCount] = useState(0);\n  return (\n    <main>\n      <h1>%s</h1>\n"
+                "      <p className=\"lead\">A React app, built in the browser. Ask Friday for changes; each one is a step you can undo.</p>\n"
+                "      <button onClick={() => setCount(count + 1)}>Clicked {count} times</button>\n    </main>\n  );\n}\n\n"
+                "createRoot(document.getElementById('root')).render(<App />);\n" % title),
+            "styles.css": (
+                "html,body{margin:0;background:#0b0e14;color:#e6eef8;font-family:Inter,system-ui,sans-serif}\nmain{max-width:720px;margin:0 auto;padding:32px 20px}\n"
+                "h1{color:#00d4ff;font-size:22px;margin:0 0 6px}.lead{color:rgba(230,238,248,.7)}\nbutton{padding:8px 14px;border:0;border-radius:6px;background:#00d4ff;color:#04121a;font-weight:600;cursor:pointer}\n"),
+            "README.md": "# %s\n\nMade in Friday's salon. React in the frame: JSX compiled in the browser, packages pinned on esm.sh.\n" % title,
+        }
+    if template == "bundle":
+        manifest = {
+            "id": slug, "name": title, "version": "0.1.0",
+            "author": {"name": "you", "pubkey": ""},
+            "authored_by_agent": True, "friday_api": 1,
+            "capabilities": {"read": [], "write": [], "network": ["none"]},
+            "integrity": {"sha256": ""},
+        }
+        return {
+            "manifest.json": json.dumps(manifest, indent=2) + "\n",
+            "index.html": _FRAME_NOTE + (
+                "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>%s</title>\n"
+                "<style>html,body{margin:0;background:#0b0e14;color:#e6eef8;font-family:Inter,system-ui,sans-serif}main{padding:18px}h1{color:#00d4ff;font-size:18px;margin:0 0 8px}</style>\n"
+                "</head>\n<body>\n<main>\n  <h1>%s</h1>\n  <p>A workspace bundle: one HTML file, installed disabled, granted nothing until you say so.</p>\n</main>\n"
+                "<script>\n// Everything crosses to Friday by postMessage to the broker; nothing else is reachable from here.\n"
+                "window.addEventListener('message', e => { if (e.data && e.data.__friday) console.log('broker:', e.data); });\n</script>\n</body>\n</html>\n" % (title, title)),
+            "icon.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" rx=\"14\" fill=\"#0b0e14\"/><circle cx=\"32\" cy=\"32\" r=\"16\" fill=\"none\" stroke=\"#00d4ff\" stroke-width=\"4\"/></svg>\n",
+            "README.md": "# %s\n\nA workspace bundle for Friday (workspace-ecosystem.md §4.2). One HTML file, no build step.\n" % title,
+        }
+    raise ValueError("unknown template %r; one of %s" % (template, ", ".join(TEMPLATES)))
+
+
+# ── creating ─────────────────────────────────────────────────────────────────
+
+def create(title: str, template: str = "static", *, conversation_id: Optional[str] = None,
+           existing_path: Optional[str] = None, files: Optional[dict] = None) -> dict:
+    if existing_path and is_friday_checkout(existing_path):
+        raise ValueError(_NOT_HERSELF)
+    """A new codebase from a template, or an existing folder on a salon branch.
+    ``files`` seeds the tree in place of the template's files (an installed
+    bundle's version, say) while the record keeps the template's name."""
+    title = str(title or "").strip() or "Untitled"
+    slug = slug_for(title)
+    cid = new_id()
+    now = datetime.now().isoformat(timespec="seconds")
+    if existing_path:
+        folder = Path(os.path.expanduser(str(existing_path)))
+        if not folder.is_dir():
+            raise ValueError("that folder does not exist: %s" % existing_path)
+        folder = folder.resolve()
+        if not (folder / ".git").exists():
+            _git(folder, "init", "-q")
+            if _git(folder, "rev-parse", "--verify", "HEAD", check=False).returncode != 0:
+                _git(folder, "add", "-A")
+                _git(folder, "commit", "-q", "--allow-empty", "-m", "Start: %s (as found)" % title)
+        branch = "salon/" + slug
+        _git(folder, "checkout", "-q", "-B", branch)
+        rec = {"id": cid, "title": title, "slug": slug, "template": None, "tier": "B0",
+               "repo": str(folder), "branch": branch, "existing": True,
+               "conversation_id": conversation_id, "created_at": now,
+               "seats": dict(DEFAULT_SEATS), "key_profile": "mine"}
+    else:
+        if template not in TEMPLATES:
+            raise ValueError("unknown template %r; one of %s" % (template, ", ".join(TEMPLATES)))
+        repo = _dir(cid) / "repo"
+        repo.mkdir(parents=True, exist_ok=False)
+        _git(repo, "init", "-q", "-b", "main")
+        for path, content in (files if files is not None else template_files(template, title)).items():
+            if not path or ".." in path.split("/") or path.startswith(("/", "\\", ".git", ".friday")) or "\\" in path:
+                raise ValueError("not a file path inside the codebase: %r" % path)
+            (repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (repo / path).write_text(content, encoding="utf-8", newline="\n")
+        (repo / ".gitignore").write_text(".friday/\nnode_modules/\n", encoding="utf-8", newline="\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "Start: %s" % title)
+        rec = {"id": cid, "title": title, "slug": slug, "template": template, "tier": "B0",
+               "repo": str(repo), "branch": "main", "existing": False,
+               "conversation_id": conversation_id, "created_at": now,
+               "seats": dict(DEFAULT_SEATS), "key_profile": "mine"}
+    (Path(rec["repo"]) / ".friday" / "receipts").mkdir(parents=True, exist_ok=True)
+    _save(rec)
+    if conversation_id:
+        bind(cid, conversation_id)
+    return rec
+
+
+def bind(cid: str, conversation_id: str) -> None:
+    """The conversation carries the codebase id, the way a project chat carries a project."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    rec["conversation_id"] = conversation_id
+    _save(rec)
+    try:
+        from agent_friday.services import conversations as _convs
+        _convs.patch(conversation_id, codebase=cid)
+    except Exception as e:
+        _log.warning("could not bind conversation %s to codebase %s: %s", conversation_id, cid, e)
+
+
+def set_project(cid: str, pid: Optional[str]) -> None:
+    """The project this codebase is connected to (services/projects owns the
+    list on the project's side; both are written together)."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    rec["project"] = pid or None
+    _save(rec)
+
+
+def set_workspace(cid: str, ws_id: Optional[str]) -> None:
+    """Mark the codebase as the one that improves a bundle workspace."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    rec["workspace_id"] = ws_id
+    _save(rec)
+
+
+def head(cid: str) -> str:
+    """The working tree's HEAD commit, or "" when there is none."""
+    cp = _git(repo_path(cid), "rev-parse", "--verify", "HEAD", check=False)
+    return cp.stdout.strip() if cp.returncode == 0 else ""
+
+
+def _playwright():
+    """The Playwright sync API module, or None when it is not installed."""
+    try:
+        from playwright import sync_api
+        return sync_api
+    except Exception:
+        return None
+
+
+def smoke(cid: str) -> dict:
+    """The self-testing loop's first rung (§4.11 item 1): load the preview in
+    a headless browser and collect page errors and console errors. Says when
+    it could not run rather than passing by default."""
+    sha = head(cid)
+    pw = _playwright()
+    if pw is None:
+        return {"ran": False, "ok": None, "errors": [], "note": "browser check not run: Playwright is not installed",
+                "sha": sha, "ms": 0}
+    t0 = time.time()
+    errors: list = []
+    try:
+        html = preview(cid)
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch()
+            try:
+                page = browser.new_page()
+                page.on("pageerror", lambda e: errors.append("page error: %s" % e))
+                page.on("console", lambda m: errors.append("console %s: %s" % (m.type, m.text)) if m.type == "error" else None)
+                page.set_content(html, wait_until="load")
+                page.wait_for_timeout(1500)
+            finally:
+                browser.close()
+    except Exception as e:
+        return {"ran": False, "ok": None, "errors": [], "note": "browser check not run: %s" % e, "sha": sha,
+                "ms": int((time.time() - t0) * 1000)}
+    return {"ran": True, "ok": not errors, "errors": errors[:20], "note": "", "sha": sha,
+            "ms": int((time.time() - t0) * 1000)}
+
+
+def for_conversation(conversation_id: Optional[str]) -> Optional[dict]:
+    if not conversation_id:
+        return None
+    try:
+        from agent_friday.services import conversations as _convs
+        conv = _convs.load(conversation_id) or {}
+    except Exception:
+        return None
+    cbid = conv.get("codebase")
+    return load(cbid) if cbid else None
+
+
+# ── files ────────────────────────────────────────────────────────────────────
+
+def _check_rel(repo: Path, rel: str) -> Path:
+    s = str(rel or "")
+    if not s or "\x00" in s or "\\" in s or s.startswith("/") or ":" in s:
+        raise ValueError("invalid path %r" % rel)
+    first = s.split("/", 1)[0]
+    if first in (".git", ".friday") or any(part in ("", ".", "..") for part in s.split("/")):
+        raise ValueError("invalid path %r" % rel)
+    return contained(repo, s)
+
+
+def files(cid: str) -> list:
+    repo = repo_path(cid)
+    out = []
+    for dirpath, dirnames, filenames in os.walk(repo):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
+        for fn in sorted(filenames):
+            p = Path(dirpath) / fn
+            rel = p.relative_to(repo).as_posix()
+            if rel == ".gitignore":
+                continue
+            try:
+                size = p.stat().st_size
+            except OSError:
+                continue
+            out.append({"path": rel, "bytes": size, "text": p.suffix.lower() in _TEXT_EXT})
+        if len(out) >= 400:
+            break
+    out.sort(key=lambda f: f["path"])
+    return out
+
+
+def path_of(cid: str, rel: str) -> Path:
+    """The absolute path a codebase-relative `rel` names, resolved as `read`
+    resolves it: a path outside the working tree (`..`, an absolute path, `.git`,
+    `.friday`, a link that leaves it) raises ValueError. A caller that must judge
+    the file itself (the credential deny-list) judges this path."""
+    return _check_rel(repo_path(cid), rel)
+
+
+def read(cid: str, rel: str) -> Optional[str]:
+    p = path_of(cid, rel)
+    if not p.is_file():
+        return None
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+# ── steps ────────────────────────────────────────────────────────────────────
+
+def _receipt_dir(repo: Path) -> Path:
+    d = repo / ".friday" / "receipts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _write_receipt(repo: Path, rec: dict) -> None:
+    (_receipt_dir(repo) / (rec["commit"] + ".json")).write_text(json.dumps(rec, indent=1, default=str), encoding="utf-8")
+
+
+def _read_receipt(repo: Path, sha: str) -> Optional[dict]:
+    p = _receipt_dir(repo) / (sha + ".json")
+    if not p.is_file():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _runs_file(cid: str) -> Path:
+    return _dir(cid) / "runs.json"
+
+
+def runs(cid: str, limit: int = 30) -> list:
+    """The codebase's command runs, newest first (chat-hub.md M3b)."""
+    try:
+        p = _runs_file(cid)
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+    except Exception:
+        data = []
+    data = [r for r in data if isinstance(r, dict)]
+    data.reverse()
+    return data[:max(1, int(limit or 30))]
+
+
+def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S) -> dict:
+    """One command in the codebase's own folder (the Terminal, chat-hub.md M3b).
+
+    The same refusals as the chat's run_command apply before anything runs: a
+    read aimed at key material, the blocklist, Friday's own API. A checkout of
+    Friday's own source is refused: the salon edits a copy of her, never the
+    live one. The output is redacted and bounded, and the run is kept on the
+    codebase (newest first) and announced on the bus. Nothing here decides
+    whether the command MAY run: that is the gate's (services/codebase_tasks).
+    """
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    command = str(command or "").strip()
+    if not command:
+        return {"status": "refused", "say": "There is no command to run."}
+    repo = repo_path(cid)
+    if is_friday_checkout(repo):
+        return {"status": "refused", "say": _NOT_HERSELF}
+    from agent_friday.services import credential_paths as _cred
+    why = _cred.scan_command(command)
+    if why:
+        return {"status": "refused", "say": _cred.refusal_command(why)}
+    from agent_friday.core import blocked_command_token
+    bad = blocked_command_token(command)
+    if bad is not None:
+        return {"status": "refused", "say": "Blocked by cLaws safety: the command matches the blocklist token %r." % bad}
+    from agent_friday.governance.action_gate import classify_command
+    if classify_command(command)[0] == "forbidden":
+        return {"status": "refused", "say": "Blocked: that command addresses Friday's own local API, which trusts this machine as the owner. It was not run."}
+    t0 = time.time()
+    try:
+        proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], cwd=str(repo),
+                              capture_output=True, text=True, timeout=timeout_s, creationflags=_POPEN_FLAGS)
+        out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
+        code = proc.returncode
+        status = "ok"
+    except subprocess.TimeoutExpired:
+        out, code, status = "(timed out after %ds)" % timeout_s, -1, "timeout"
+    except Exception as e:
+        out, code, status = "(could not run: %s)" % e, -1, "error"
+    try:
+        out = _cred.redact_secrets(out)
+    except Exception:
+        pass
+    if len(out) > RUN_OUTPUT_MAX_CHARS:
+        out = out[:RUN_OUTPUT_MAX_CHARS] + "\n[truncated: %d chars in all]" % len(out)
+    entry = {"id": "run-" + secrets.token_hex(4), "command": command[:2000], "exit": code, "status": status,
+             "output": out, "duration_s": round(time.time() - t0, 2), "ts": time.time(),
+             "at": datetime.now().isoformat(timespec="seconds")}
+    with _LOCK:
+        try:
+            p = _runs_file(cid)
+            data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+        except Exception:
+            data = []
+        data = [r for r in data if isinstance(r, dict)]
+        data.append(entry)
+        data = data[-RUNS_KEPT:]
+        tmp = _runs_file(cid).with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=1, default=str), encoding="utf-8")
+        tmp.replace(_runs_file(cid))
+    try:
+        from agent_friday.services import desktop_bus as _bus
+        _bus.broadcast({"type": "codebase_run", "codebase_id": cid, "conversation_id": rec.get("conversation_id") or "",
+                        "run_id": entry["id"], "exit": code}, kind="chat")
+    except Exception:
+        pass
+    return dict(entry, status=status)
+
+
+def step(cid: str, changes: dict, summary: str, *, author: str = "friday", model: str = "",
+         key_profile: str = "mine", tests: Optional[dict] = None, cost_usd: Optional[float] = None) -> Optional[dict]:
+    """Apply `changes` ({path: text, or None to delete}) as one commit with a
+    receipt. Returns the step, or None when nothing changed."""
+    with _LOCK:
+        repo = repo_path(cid)
+        targets = {rel: _check_rel(repo, rel) for rel in (changes or {})}
+        if not targets:
+            return None
+        deleted, written = [], []
+        for rel, p in targets.items():
+            content = changes[rel]
+            if content is None:
+                if p.exists():
+                    p.unlink()
+                    deleted.append(rel)
+                continue
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(str(content), encoding="utf-8", newline="\n")
+            written.append(rel)
+        _git(repo, "add", "-A")
+        if _git(repo, "diff", "--cached", "--quiet", check=False).returncode == 0:
+            return None
+        who = "you" if author == "you" else ("%s via %s" % (model or "Friday", key_profile or "mine"))
+        summary = " ".join(str(summary or "Change").split())[:200]
+        _git(repo, "commit", "-q", "-m", summary, "--author", "%s <salon@local>" % who)
+        sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        rec = {
+            "commit": sha, "kind": "step", "summary": summary, "author": author, "who": who,
+            "model": model, "key_profile": key_profile, "cost_usd": cost_usd,
+            "files": [{"path": rel, "bytes": targets[rel].stat().st_size,
+                       "sha256": hashlib.sha256(targets[rel].read_bytes()).hexdigest()} for rel in written],
+            "deleted": deleted, "tests": tests, "preview_hash": None, "network_events": [],
+            "ts": time.time(), "at": datetime.now().isoformat(timespec="seconds"),
+        }
+        _write_receipt(repo, rec)
+        out = {"sha": sha, "kind": "step", "summary": summary, "author": author, "who": who, "receipt": rec}
+        _announce(cid, out)
+        return out
+
+
+def commit_working_tree(cid: str, summary: str, *, author: str = "friday", model: str = "", key_profile: str = "mine",
+                        extra: Optional[dict] = None) -> Optional[dict]:
+    """Everything changed in the folder by someone other than Friday's own
+    edits (an engine that ran in it) becomes ONE step with a receipt, or None
+    when nothing changed. `extra` rides on the receipt (engine, hosts, tier)."""
+    with _LOCK:
+        repo = repo_path(cid)
+        _git(repo, "add", "-A")
+        if _git(repo, "diff", "--cached", "--quiet", check=False).returncode == 0:
+            return None
+        written, deleted = [], []
+        for line in _git(repo, "diff", "--cached", "--name-status").stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            status, rel = parts[0][:1], parts[-1]
+            if rel.startswith(".friday/"):
+                continue
+            (deleted if status == "D" else written).append(rel)
+        who = "you" if author == "you" else ("%s via %s" % (model or author or "Friday", key_profile or "mine"))
+        summary = " ".join(str(summary or "Change").split())[:200]
+        _git(repo, "commit", "-q", "-m", summary, "--author", "%s <salon@local>" % who)
+        sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        files = []
+        for rel in written:
+            p = repo / rel
+            if p.is_file():
+                files.append({"path": rel, "bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()})
+        rec = {
+            "commit": sha, "kind": "step", "summary": summary, "author": author, "who": who,
+            "model": model, "key_profile": key_profile, "cost_usd": None,
+            "files": files, "deleted": deleted, "tests": None, "preview_hash": None, "network_events": [],
+            "ts": time.time(), "at": datetime.now().isoformat(timespec="seconds"),
+        }
+        rec.update({k: v for k, v in (extra or {}).items() if k not in rec or rec[k] in (None, [], "")})
+        _write_receipt(repo, rec)
+        out = {"sha": sha, "kind": "step", "summary": summary, "author": author, "who": who, "receipt": rec}
+        _announce(cid, out)
+        return out
+
+
+ENGINES = ("friday", "claude_agent")
+
+
+def set_engine(cid: str, engine: str, *, by: str = "you") -> dict:
+    """Which engine edits this codebase: Friday's own loop, or Claude's agent
+    on this PC (B1, with the disclosure). Announced in the chat."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    engine = str(engine or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if engine in ("claude", "claude_code", "claudes_agent", "claude_s_agent"):
+        engine = "claude_agent"
+    if engine not in ENGINES:
+        raise ValueError("engine must be 'friday' or 'claude_agent'")
+    old = rec["seats"].get("engine") or "friday"
+    rec["seats"]["engine"] = engine
+    _save(rec)
+    name = {"friday": "Friday", "claude_agent": "Claude's agent (a process on this PC; it can read this PC's files)"}
+    _system_line(rec, "Engine change: %s \u2192 %s (%s)." % (name[old], name[engine], by))
+    return rec
+
+
+def write(cid: str, rel: str, content: str) -> Optional[dict]:
+    """A hand edit in the Files tab: a step authored by "you"."""
+    return step(cid, {rel: content}, "You edited %s" % rel, author="you", model="", key_profile="")
+
+
+def _log_entries(repo: Path, limit: int = 200) -> list:
+    cp = _git(repo, "log", "--format=%H%x1f%an%x1f%s%x1f%at", "-n", str(limit))
+    out = []
+    for line in cp.stdout.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) != 4:
+            continue
+        sha, who, summary, ts = parts
+        kind = "undo" if summary.startswith("Undo: ") else ("start" if summary.startswith("Start: ") else "step")
+        out.append({"sha": sha, "who": who, "summary": summary, "ts": int(ts or 0), "kind": kind})
+    return out
+
+
+def steps(cid: str, limit: int = 50) -> list:
+    """Newest first: sha, kind, summary, who, when, the receipt, and for an
+    undo which step it removed."""
+    repo = repo_path(cid)
+    out = []
+    for e in _log_entries(repo, limit):
+        r = _read_receipt(repo, e["sha"]) or {}
+        e = dict(e)
+        e["receipt"] = r or None
+        e["author"] = r.get("author") or ("you" if e["who"] == "you" else "friday")
+        e["at"] = datetime.fromtimestamp(e["ts"]).isoformat(timespec="seconds") if e["ts"] else None
+        if e["kind"] == "undo":
+            e["undoes"] = r.get("undoes")
+        out.append(e)
+    return out
+
+
+def undo(cid: str) -> dict:
+    """Revert the newest step not yet undone. Walks backwards: after undoing
+    step 3, the next undo removes step 2, never step 3 again."""
+    with _LOCK:
+        repo = repo_path(cid)
+        entries = _log_entries(repo, 500)
+        undone = set()
+        for e in entries:
+            if e["kind"] == "undo":
+                r = _read_receipt(repo, e["sha"]) or {}
+                if r.get("undoes"):
+                    undone.add(r["undoes"])
+        target = next((e for e in entries if e["kind"] == "step" and e["sha"] not in undone), None)
+        if target is None:
+            raise NothingToUndo("every step has been undone; only the starting point is left")
+        cp = _git(repo, "revert", "--no-commit", "--no-edit", target["sha"], check=False)
+        if cp.returncode != 0:
+            _git(repo, "revert", "--abort", check=False)
+            raise RuntimeError("that step cannot be undone cleanly: %s" % (cp.stderr or cp.stdout).strip()[:200])
+        summary = "Undo: %s" % target["summary"]
+        _git(repo, "commit", "-q", "-m", summary, "--author", "you <salon@local>")
+        sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        rec = {"commit": sha, "kind": "undo", "summary": summary, "author": "you", "who": "you",
+               "undoes": target["sha"], "files": [], "deleted": [], "tests": None, "preview_hash": None,
+               "network_events": [], "model": "", "key_profile": "", "cost_usd": None,
+               "ts": time.time(), "at": datetime.now().isoformat(timespec="seconds")}
+        _write_receipt(repo, rec)
+        out = {"sha": sha, "kind": "undo", "summary": summary, "author": "you", "undoes": target["sha"], "receipt": rec}
+        _announce(cid, out)
+        return out
+
+
+def _announce(cid: str, st: dict) -> None:
+    """Tell every open chat page a step landed. No content rides along; the
+    panel re-reads the codebase."""
+    try:
+        from agent_friday.services import desktop_bus
+        rec = load(cid) or {}
+        desktop_bus.broadcast({"type": "codebase_step", "codebase_id": cid,
+                               "conversation_id": rec.get("conversation_id"),
+                               "sha": st["sha"], "kind": st["kind"], "summary": st["summary"],
+                               "author": st.get("author")}, kind="chat")
+    except Exception:
+        pass
+
+
+def diff(cid: str, sha: str) -> str:
+    repo = repo_path(cid)
+    if not re.fullmatch(r"[0-9a-f]{7,40}", str(sha or "")):
+        raise ValueError("invalid commit")
+    return _git(repo, "show", "--format=", "--no-color", sha).stdout
+
+
+# ── the preview document ─────────────────────────────────────────────────────
+
+_LINK_RE = re.compile(r"""<link\b[^>]*\brel\s*=\s*["']stylesheet["'][^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>""", re.I)
+_SCRIPT_RE = re.compile(r"""<script\b([^>]*)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>\s*</script>""", re.I | re.S)
+
+
+def preview(cid: str) -> str:
+    """index.html with its relative stylesheets and scripts inlined: one
+    document the sandboxed frame can run. Remote pinned scripts stay."""
+    repo = repo_path(cid)
+    index = repo / "index.html"
+    if not index.is_file():
+        return ("<!doctype html><html><body style=\"background:#0b0e14;color:#e6eef8;font-family:Inter,system-ui\">"
+                "<p style=\"padding:20px\">No index.html in this codebase yet. Ask Friday to make the first page.</p></body></html>")
+    html = index.read_text(encoding="utf-8", errors="replace")
+
+    def local(src: str) -> Optional[str]:
+        if re.match(r"^[a-z]+:|^//", src, re.I):
+            return None
+        try:
+            p = _check_rel(repo, src.split("?", 1)[0].split("#", 1)[0].lstrip("./"))
+        except ValueError:
+            return None
+        if not p.is_file():
+            return None
+        return p.read_text(encoding="utf-8", errors="replace")
+
+    def link(m):
+        css = local(m.group(1))
+        return m.group(0) if css is None else "<style>" + css.replace("</style", "<\\/style") + "</style>"
+
+    def script(m):
+        before, src, after = m.group(1), m.group(2), m.group(3)
+        js = local(src)
+        if js is None:
+            return m.group(0)
+        attrs = (before + " " + after).strip()
+        attrs = re.sub(r"\s+", " ", attrs)
+        return "<script%s>%s</script>" % ((" " + attrs) if attrs else "", js.replace("</script", "<\\/script"))
+
+    html = _LINK_RE.sub(link, html)
+    html = _SCRIPT_RE.sub(script, html)
+    return html
+
+
+# ── seats, keys and the header line (§4.7, Phase 3) ─────────────────────────
+# A codebase carries a small routing record: which seat takes small edits,
+# which takes big ones, and whose key pays. The header is one line built from
+# it, the resident brain and the meter; it changes the instant any of those
+# changes, and every change is a system line in the chat (seat_transparency's
+# rule, per codebase).
+
+DEFAULT_SEATS = {"small_edit_seat": "local", "heavy_seat": None, "engine": "friday"}
+SEAT_WHICH = {"small": "small_edit_seat", "heavy": "heavy_seat"}
+_HEAVY_WORDS = ("feature", "new page", "rewrite", "refactor", "several files", "whole app", "redesign",
+                "from scratch", "migrate", "add a screen", "new screen", "build a", "big change")
+_HEAVY_CHARS = 400
+_HEAVY_FILES = 3
+_HEAVY_LINES = 200
+
+
+def _with_defaults(rec: Optional[dict]) -> Optional[dict]:
+    """An older record reads the same defaults a new one is written with."""
+    if rec is None:
+        return None
+    seats = dict(DEFAULT_SEATS)
+    seats.update({k: v for k, v in (rec.get("seats") or {}).items() if k in DEFAULT_SEATS})
+    rec["seats"] = seats
+    rec.setdefault("key_profile", "mine")
+    rec.setdefault("project", None)
+    return rec
+
+
+_RESIDENT_CACHE: dict = {"at": 0.0, "value": None}
+_RESIDENT_TTL_S = 15.0
+
+
+def _resident_brain() -> Optional[tuple]:
+    """(model_id, label) of the local model resident right now, or None on a
+    cloud-only machine. The arbiter's status is asked first: it knows what it
+    is serving without probing anything, and the header is read after every
+    step. The probing path is the fallback, and the answer is kept 15 s."""
+    now = time.time()
+    if now - _RESIDENT_CACHE["at"] < _RESIDENT_TTL_S:
+        return _RESIDENT_CACHE["value"]
+    value = None
+    try:
+        from agent_friday.services import residency_arbiter as _ra
+        st = _ra.get_arbiter().status() or {}
+        mids = [m for m in list(st.get("resident_llama_server") or []) + list(st.get("resident_ollama") or []) if m]
+        plan = st.get("plan_seats") or {}
+        brain = plan.get("interactive_brain") or plan.get("brain")
+        if mids:
+            mid = brain if brain in mids else mids[0]
+            value = (mid, model_short(mid))
+    except Exception:
+        try:
+            from agent_friday.services import local_seats as _ls
+            serving = _ls.serving() or {}
+            if serving:
+                mid = next(iter(serving))
+                value = (mid, model_short(mid))
+        except Exception:
+            value = None
+    _RESIDENT_CACHE.update(at=now, value=value)
+    return value
+
+
+def model_short(model_id: str) -> str:
+    """The name people say: the catalogue's short label ("Opus 5.5"), else a
+    local id's family ("bonsai2:27b" -> "Bonsai2"), else the id itself."""
+    mid = str(model_id or "")
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        for prov in get_provider_registry().list_providers():
+            meta = (prov.get("model_meta") or {}).get(mid)
+            if meta and (meta.get("short") or meta.get("label")):
+                return str(meta.get("short") or meta.get("label"))
+    except Exception:
+        pass
+    if ":" in mid:
+        fam = mid.split(":", 1)[0]
+        return fam[:1].upper() + fam[1:]
+    return mid
+
+
+def model_from_words(words: str) -> Optional[str]:
+    """A model id from an exact id or a catalogue label, case-insensitive; None
+    when nothing matches. Never a guess: the header will name the result."""
+    w = " ".join(str(words or "").split()).lower()
+    if not w:
+        return None
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        for prov in get_provider_registry().list_providers():
+            for mid, meta in (prov.get("model_meta") or {}).items():
+                names = {mid.lower(), str(meta.get("label") or "").lower(), str(meta.get("short") or "").lower()}
+                names.discard("")
+                if w in names:
+                    return mid
+    except Exception:
+        pass
+    if re.fullmatch(r"[a-z0-9][a-z0-9._:-]{2,}", w) and ("-" in w or ":" in w):
+        return w
+    return None
+
+
+def guest_keys(cid: str) -> list:
+    """The guest keys this codebase knows (label, provider, added_at, cap_usd); none yet by default."""
+    p = repo_path(cid) / ".friday" / "keys.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return [k for k in (data.get("keys") or []) if isinstance(k, dict) and k.get("label")]
+    except Exception:
+        return []
+
+
+GUEST_PROVIDERS = ("anthropic",)
+
+
+def _keys_path(cid: str) -> Path:
+    return repo_path(cid) / ".friday" / "keys.json"
+
+
+def _write_keys(cid: str, keys: list) -> None:
+    p = _keys_path(cid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"keys": keys}, indent=2), encoding="utf-8")
+
+
+def _store_name(cid: str, label: str) -> str:
+    """The credential store's name for this codebase's guest key: the store
+    keeps only letters, digits, dashes and underscores, so the name is built
+    from those and can never collide with a provider's own key."""
+    slug = re.sub(r"[^a-z0-9]+", "-", label.strip().lower()).strip("-") or "key"
+    return "codebase_%s_%s" % (re.sub(r"[^A-Za-z0-9]", "", cid), slug)
+
+
+def add_guest_key(cid: str, label: str, provider: str, key: str, *, cap_usd: Optional[float] = None,
+                  by: str = "you") -> dict:
+    """Another party's key for this codebase only. The secret goes to the
+    credential store; the record here holds everything but it."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    label = " ".join(str(label or "").split())
+    provider = str(provider or "").strip().lower()
+    if not label or len(label) > 40 or label.lower() == "mine":
+        raise ValueError("a guest key needs a short name for whose it is (not 'mine')")
+    if provider not in GUEST_PROVIDERS:
+        raise ValueError("guest keys are supported for %s only, for now" % ", ".join(GUEST_PROVIDERS))
+    if not str(key or "").strip():
+        raise ValueError("the key itself is missing")
+    keys = guest_keys(cid)
+    if any(k["label"].lower() == label.lower() for k in keys):
+        raise ValueError("this codebase already has a key called %r; remove it first" % label)
+    cap = None
+    if cap_usd not in (None, "", 0, "0"):
+        try:
+            cap = round(float(cap_usd), 2)
+        except (TypeError, ValueError):
+            raise ValueError("the cap must be a dollar amount")
+        if cap <= 0:
+            raise ValueError("the cap must be a dollar amount above zero")
+    from agent_friday.services import credential_store as _cs
+    name = _store_name(cid, label)
+    _cs.set_provider_key(name, str(key).strip())
+    meta = {"label": label, "provider": provider, "added_at": _now_iso(), "cap_usd": cap, "store_name": name, "by": by}
+    keys.append(meta)
+    _write_keys(cid, keys)
+    _system_line(rec, "Guest key added: %s's key (%s), for this codebase only%s."
+                 % (label, provider.capitalize(), (", capped at $%.2f" % cap) if cap else ""))
+    return dict(meta)
+
+
+def remove_guest_key(cid: str, label: str, *, by: str = "you") -> bool:
+    """Delete the key and its record, say so, and return the codebase to the owner's key if it was in use."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    keys = guest_keys(cid)
+    hit = [k for k in keys if k["label"].lower() == str(label or "").strip().lower()]
+    if not hit:
+        return False
+    meta = hit[0]
+    from agent_friday.services import credential_store as _cs
+    try:
+        _cs.delete_provider_key(meta["store_name"])
+    except Exception as e:
+        _log.warning("could not delete the stored guest key %s: %s", meta["store_name"], e)
+    _write_keys(cid, [k for k in keys if k is not meta])
+    back = ""
+    if (rec.get("key_profile") or "mine") == meta["label"]:
+        rec["key_profile"] = "mine"
+        rec.pop("key_rejected", None)
+        _save(rec)
+        back = " This codebase runs on your key again."
+    _system_line(rec, "%s's key was removed and deleted.%s" % (meta["label"], back))
+    return True
+
+
+def guest_key_secret(cid: str, label: str) -> Optional[str]:
+    hit = [k for k in guest_keys(cid) if k["label"] == label]
+    if not hit:
+        return None
+    from agent_friday.services import credential_store as _cs
+    return _cs.get_provider_key(hit[0]["store_name"])
+
+
+def guest_key_for_turn(session_ctx: Optional[dict]) -> Optional[dict]:
+    """The guest key a turn runs on, from the turn's session context, or None for the owner's key."""
+    sc = session_ctx or {}
+    cid, label = sc.get("codebase"), sc.get("key_profile")
+    if not cid or not label or label == "mine":
+        return None
+    hit = [k for k in guest_keys(cid) if k["label"] == label]
+    if not hit:
+        return None
+    secret = guest_key_secret(cid, label)
+    if not secret:
+        return None
+    return {"codebase": cid, "label": label, "provider": hit[0]["provider"], "secret": secret, "cap_usd": hit[0].get("cap_usd")}
+
+
+def guest_key_over_cap(cid: str, label: str) -> Optional[dict]:
+    """{spent, cap} when the payer's own cap is reached; None when there is no cap or room remains.
+    The cap is the user's limit; Friday adds none of her own."""
+    hit = [k for k in guest_keys(cid) if k["label"] == label]
+    if not hit or not hit[0].get("cap_usd"):
+        return None
+    try:
+        from agent_friday.services import cost_meter as _cm
+        spent = float((_cm.codebase_costs(cid).get("by_key_profile") or {}).get(label, 0.0) or 0.0)
+    except Exception:
+        return None
+    cap = float(hit[0]["cap_usd"])
+    return {"spent": round(spent, 4), "cap": cap} if spent >= cap else None
+
+
+def mark_key_rejected(cid: str, label: str, reason: str, *, by: str = "provider") -> dict:
+    """A guest key the provider refused: the header turns red and names whose
+    key failed; the key profile stays as it was. Nothing falls back."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    rec["key_rejected"] = ("%s's key was rejected: %s. Nothing was sent on your key; fix or replace it under "
+                           "Settings \u2192 Accounts & Keys, or say \"use my key\"." % (label, reason))
+    _save(rec)
+    _system_line(rec, "Key rejected: %s's key was refused by the provider (%s). Nothing fell back to your key." % (label, reason))
+    return rec
+
+
+def clear_key_rejected(cid: str) -> None:
+    rec = load(cid)
+    if rec is not None and rec.pop("key_rejected", None) is not None:
+        _save(rec)
+        _announce_header_only(rec)
+
+
+def _announce_header_only(rec: dict) -> None:
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.broadcast({"type": "codebase_header", "codebase_id": rec["id"], "conversation_id": rec.get("conversation_id")}, kind="chat")
+    except Exception:
+        pass
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _system_line(rec: dict, text: str, kind: str = "seat_change") -> None:
+    """A seat_transparency-style line in the codebase's chat, and the header event on the bus."""
+    conv_id = rec.get("conversation_id")
+    if conv_id:
+        try:
+            from agent_friday.services import conversations as _convs
+            _convs.append(conv_id, {"role": "system", "kind": kind, "text": "\u2699 " + text, "ts": time.time()})
+        except Exception as e:
+            _log.warning("could not write the seat line into %s: %s", conv_id, e)
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.broadcast({"type": "codebase_header", "codebase_id": rec["id"], "conversation_id": conv_id,
+                               "text": text}, kind="chat")
+    except Exception:
+        pass
+
+
+def set_seat(cid: str, which: str, model: str, *, by: str = "you") -> dict:
+    """Change the small-edit or heavy seat. "local" means the resident brain;
+    an empty model clears the heavy seat. Announced in the chat."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    field = SEAT_WHICH.get(str(which or "").strip().lower())
+    if not field:
+        raise ValueError("which must be 'small' or 'heavy'")
+    model = " ".join(str(model or "").split())
+    if field == "small_edit_seat" and not model:
+        raise ValueError("the small-edit seat needs a model, or 'local' for the resident brain")
+    if field == "heavy_seat" and not model:
+        model = None
+    old = rec["seats"].get(field)
+    rec["seats"][field] = model
+    _save(rec)
+    label = "small edits" if field == "small_edit_seat" else "big edits"
+    def name(m):
+        return "the local model (this PC)" if m == "local" else (model_short(m) if m else "none")
+    _system_line(rec, "Seat change: %s %s \u2192 %s (%s)." % (label, name(old), name(model), by))
+    return rec
+
+
+def set_key_profile(cid: str, profile: str, *, by: str = "you") -> dict:
+    """Whose key pays for this codebase: "mine", or the label of a guest key it knows."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    profile = " ".join(str(profile or "").split())
+    known = [k["label"] for k in guest_keys(cid)]
+    if profile != "mine" and profile not in known:
+        raise ValueError("no guest key called %r on this codebase; add one under Settings \u2192 Accounts & Keys first" % profile)
+    old = rec.get("key_profile") or "mine"
+    rec["key_profile"] = profile
+    rec.pop("key_rejected", None)
+    _save(rec)
+    def name(p):
+        return "your key" if p == "mine" else "%s's key" % p
+    _system_line(rec, "Key change: %s \u2192 %s (%s)." % (name(old), name(profile), by))
+    return rec
+
+
+def is_heavy(cid: str, message: str, last_step: Optional[dict] = None) -> bool:
+    """Small or big, by a rule Friday can explain: length, the words that name a
+    feature or a rewrite, an approved plan under way, or a last step that touched
+    many files or lines."""
+    text = str(message or "")
+    low = text.lower()
+    if len(text) > _HEAVY_CHARS:
+        return True
+    if any(w in low for w in _HEAVY_WORDS):
+        return True
+    rec = load(cid)
+    if rec and rec.get("conversation_id"):
+        try:
+            from agent_friday.services import plans as _plans
+            plan = _plans.current(rec["conversation_id"])
+            meta = ((plan or {}).get("meta") or {}).get("plan") or {}
+            if meta.get("approved") and any(m.get("status") in ("todo", "doing") for m in meta.get("milestones") or []):
+                return True
+        except Exception:
+            pass
+    st = last_step
+    if st is None and rec:
+        try:
+            st = (steps(cid, limit=1) or [None])[0]
+        except Exception:
+            st = None
+    if st:
+        r = st.get("receipt") or {}
+        files_n = len(r.get("files") or []) + len(r.get("deleted") or [])
+        lines_n = int(r.get("lines_changed") or 0)
+        if files_n > _HEAVY_FILES or lines_n > _HEAVY_LINES:
+            return True
+    return False
+
+
+def seat_for(cid: str, message: str) -> Optional[dict]:
+    """The seat this turn should run on, as the router takes it ({"model": id}),
+    or None to follow Friday's default (which is the resident brain). The heavy
+    seat takes big edits, and everything when no local model is resident."""
+    rec = load(cid)
+    if rec is None:
+        return None
+    heavy = (rec.get("seats") or {}).get("heavy_seat")
+    if not heavy:
+        return None
+    if _resident_brain() is None or is_heavy(cid, message):
+        return {"model": heavy}
+    small = (rec.get("seats") or {}).get("small_edit_seat") or "local"
+    return None if small == "local" else {"model": small}
+
+
+def seat_for_conversation(conversation_id: Optional[str], message: str) -> Optional[dict]:
+    rec = for_conversation(conversation_id)
+    return seat_for(rec["id"], message) if rec else None
+
+
+def header(cid: str) -> dict:
+    """The one line above the panel, and its spoken form."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    seats = rec.get("seats") or DEFAULT_SEATS
+    resident = _resident_brain()
+    heavy = seats.get("heavy_seat")
+    small = seats.get("small_edit_seat") or "local"
+    key = rec.get("key_profile") or "mine"
+    try:
+        from agent_friday.services import cost_meter as _cm
+        cost = float(_cm.codebase_total(cid) or 0.0)
+    except Exception:
+        cost = 0.0
+    key_text = "your key" if key == "mine" else "%s's key" % key
+    heavy_name = model_short(heavy) if heavy else None
+    if small == "local":
+        if resident is not None:
+            parts = ["%s (this PC) for small edits" % resident[1],
+                     ("%s for big ones" % heavy_name) if heavy_name else "no heavy seat yet"]
+            local_resident = True
+        else:
+            parts = [("no local model resident: %s for everything" % heavy_name) if heavy_name
+                     else "no local model resident and no heavy seat: pick one for this codebase"]
+            local_resident = False
+    else:
+        parts = ["%s for small edits" % model_short(small), ("%s for big ones" % heavy_name) if heavy_name else "no heavy seat yet"]
+        local_resident = resident is not None
+    text = " \u00b7 ".join([rec["title"]] + parts + [key_text, "this codebase: $%.2f" % cost])
+    spoken = ("%s: %s; %s; so far %s." % (rec["title"], "; ".join(parts), key_text,
+              _spoken_money(cost))).replace(" (this PC)", " on this PC")
+    return {"text": text, "spoken": spoken, "small": small, "heavy": heavy, "key": key, "cost_usd": round(cost, 2),
+            "local_resident": local_resident, "resident_model": resident[0] if resident else None,
+            "red": bool(rec.get("key_rejected")), "note": rec.get("key_rejected") or ""}
+
+
+def _spoken_money(usd: float) -> str:
+    cents = int(round(usd * 100))
+    if cents == 0:
+        return "nothing"
+    if cents < 100:
+        return "%d cents" % cents
+    d, c = divmod(cents, 100)
+    return "%d dollar%s" % (d, "" if d == 1 else "s") + (" %d" % c if c else "")
+
+
+# ── point-and-say: the pick, and a non-model patcher for simple edits ───────
+# (§4.11 item 2). The user selects an element in the preview; the pick is told
+# to the model next turn so "make this bigger" has a referent. Simple property
+# edits never go through a model: one CSS rule, appended as a step by "you".
+
+_SELECTOR_RE = re.compile(r"^[A-Za-z0-9 _#.\->:\[\]=\"',()*+~]{1,300}$")
+_VALUE_RE = re.compile(r"^[A-Za-z0-9#%.,\- ()]{1,60}$")
+SAFE_PROPS = frozenset({
+    "font-size", "font-weight", "font-style", "color", "background", "background-color", "display",
+    "visibility", "padding", "margin", "border", "border-radius", "text-align", "text-decoration",
+    "width", "max-width", "opacity", "letter-spacing", "line-height", "gap",
+})
+QUICK_ACTIONS = {
+    "bigger": ("font-size", "1.25em"), "smaller": ("font-size", "0.85em"), "bolder": ("font-weight", "700"),
+    "hide": ("display", "none"), "center": ("text-align", "center"), "rounder": ("border-radius", "12px"),
+}
+_SCALED = {"bigger": 1.25, "smaller": 0.85}
+_PICK_CSS_NOTE = "/* point-and-say (Friday pick): one rule per quick edit, each its own step */"
+
+
+def quick_value(action: str, font_px) -> tuple:
+    """The rule a quick action writes. "bigger" means bigger than the element
+    is now, so when its computed size is known the value is absolute: a
+    relative em would resolve against the parent, not the element."""
+    prop, value = QUICK_ACTIONS[action]
+    if action in _SCALED and font_px:
+        try:
+            px = float(font_px)
+        except (TypeError, ValueError):
+            px = 0
+        if 4 <= px <= 400:
+            value = "%dpx" % max(6, round(px * _SCALED[action]))
+    return prop, value
+
+
+def _check_selector(selector: str) -> str:
+    s = " ".join(str(selector or "").split())
+    if not s or not _SELECTOR_RE.match(s) or any(c in s for c in "{};/\\"):
+        raise ValueError("that is not a plain CSS selector")
+    return s
+
+
+def set_pick(cid: str, pick: dict) -> dict:
+    """Remember what the user pointed at in the preview."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    pick = pick or {}
+    sel = _check_selector(pick.get("selector"))
+    tag = re.sub(r"[^a-z0-9-]", "", str(pick.get("tag") or "").lower())[:32]
+    text = " ".join(str(pick.get("text") or "").split())[:200]
+    snippet = str(pick.get("snippet") or "")
+    if len(snippet) > 400:
+        raise ValueError("the snippet is too long")
+    rect = pick.get("rect") if isinstance(pick.get("rect"), dict) else None
+    if rect is not None:
+        rect = {k: float(rect.get(k) or 0) for k in ("x", "y", "w", "h")}
+    try:
+        font_px = float(pick.get("font_px")) if pick.get("font_px") is not None else None
+    except (TypeError, ValueError):
+        font_px = None
+    stored = {"selector": sel, "tag": tag, "text": text, "snippet": snippet, "rect": rect, "font_px": font_px,
+              "at": datetime.now().isoformat(timespec="seconds")}
+    rec["pick"] = stored
+    _save(rec)
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.broadcast({"type": "codebase_pick", "codebase_id": cid, "conversation_id": rec.get("conversation_id"),
+                               "selector": sel, "tag": tag}, kind="chat")
+    except Exception:
+        pass
+    return stored
+
+
+def clear_pick(cid: str) -> bool:
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    had = rec.get("pick") is not None
+    rec["pick"] = None
+    _save(rec)
+    return had
+
+
+def quick_style(cid: str, selector: str, prop: str, value: str) -> dict:
+    """One CSS rule for the picked element, as a step by "you". No model."""
+    sel = _check_selector(selector)
+    prop = str(prop or "").strip().lower()
+    value = " ".join(str(value or "").split())
+    if prop not in SAFE_PROPS:
+        raise ValueError("%r is not one of the simple properties a quick edit may set" % prop)
+    low = value.lower()
+    if not _VALUE_RE.match(value) or "url(" in low or "expression" in low or "javascript" in low:
+        raise ValueError("that value is not a plain CSS value")
+    repo = repo_path(cid)
+    changes: dict = {}
+    target = "styles.css" if (repo / "styles.css").is_file() else "friday-pick.css"
+    current = read(cid, target) or ""
+    if target == "friday-pick.css" and not current:
+        current = _PICK_CSS_NOTE + "\n"
+        index = read(cid, "index.html")
+        if index and 'href="friday-pick.css"' not in index:
+            link = '<link rel="stylesheet" href="friday-pick.css">'
+            m = re.search(r"</head>", index, re.I)
+            changes["index.html"] = (index[:m.start()] + link + "\n" + index[m.start():]) if m else (link + "\n" + index)
+    elif _PICK_CSS_NOTE not in current:
+        current = current.rstrip("\n") + "\n\n" + _PICK_CSS_NOTE + "\n"
+    changes[target] = current.rstrip("\n") + "\n%s { %s: %s; }\n" % (sel, prop, value)
+    st = step(cid, changes, "You styled %s: %s %s" % (sel, prop, value), author="you", model="", key_profile="")
+    if st is None:
+        raise RuntimeError("that rule is already there")
+    return st
+
+
+# ── export: a plain project, no lock-in ─────────────────────────────────────
+
+_EXPORT_NOTE = "Exported from Friday's salon as a plain project: no lock-in, nothing of Friday's inside."
+
+
+def export_zip(cid: str) -> tuple:
+    """(filename, bytes): the working tree under one folder named by the slug,
+    with a plain README and nothing of Friday's (§4.11 item 10). Reads only;
+    the codebase is untouched."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    repo = Path(rec["repo"])
+    slug = rec["slug"]
+    readme = None
+    entries = []
+    for f in files(cid):
+        p = repo / f["path"]
+        if not p.is_file():
+            continue
+        data = p.read_bytes()
+        if f["path"] == "README.md":
+            readme = data.decode("utf-8", "replace")
+            continue
+        entries.append((f["path"], data))
+    if readme is None:
+        readme = "# %s\n\n" % rec["title"]
+    if _EXPORT_NOTE not in readme:
+        readme = readme.rstrip("\n") + "\n\n---\n\n" + _EXPORT_NOTE + " Open index.html in a browser, or serve the folder with any static server.\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(slug + "/README.md", readme.encode("utf-8"))
+        for rel, data in entries:
+            z.writestr(slug + "/" + rel, data)
+    return slug + ".zip", buf.getvalue()
+
+
+# ── what the model is told ───────────────────────────────────────────────────
+
+def context_block_for(cid: str) -> str:
+    rec = load(cid)
+    if rec is None:
+        return ""
+    lines = ["", "", CONTEXT_HEADER,
+             "Codebase %s \u00b7 \"%s\" \u00b7 %s \u00b7 tier %s (the browser frame: one index.html, relative css/js inlined, no server, packages only from https://esm.sh pinned to exact versions)."
+             % (rec["id"], rec["title"], rec.get("template") or "existing folder", rec.get("tier", "B0")),
+             "Change files with codebase_edit(files={path: full new content, or null to delete}, summary=one plain line for the user). "
+             "Every call is a step the user can undo with \"undo that\" (codebase_undo). Read a file you were not shown with codebase_read. "
+             "Do not say a change is done until the tool result names the step. "
+             "For a BIG ask (a new feature, several files), call plan_first with a short plan and 3-7 milestones and stop; "
+             "build only after the user approves it."]
+    try:
+        hd = header(cid)
+        lines.append("Seats: %s. Say the route on each step (\"edited by %s\"). The user changes seats with codebase_seat "
+                     "(\"use Opus for this one\") and the key with codebase_key; codebase_costs answers \"how much has this cost\"."
+                     % (hd["text"], model_short(hd["resident_model"]) if hd.get("resident_model") else (model_short(hd["heavy"]) if hd.get("heavy") else "the seat")))
+    except Exception:
+        pass
+    if rec.get("workspace_id"):
+        ws_label = rec["workspace_id"]
+        try:
+            from agent_friday.services import workspace_bundles as _wb
+            ws_label = (_wb.get(rec["workspace_id"]) or {}).get("label") or ws_label
+        except Exception:
+            pass
+        lines.append("This codebase IMPROVES THE WORKSPACE \"%s\" (id %s), a bundle in the user's dock. Its live version keeps "
+                     "running until the user approves a swap: when they are happy, call workspace_swap (or they press the panel's "
+                     "\"Swap in\"), which raises ONE card; never say it is live before that. Keep manifest.json's friday_api 1 and "
+                     "capabilities.network [\"none\"]. Never use the reserved status colours or anything close to them: amber #f59e0b, "
+                     "green #00ff80 / #00ff66, pink #ff0080, red #ff0033 / #ef4444, yellow #ffcc00; the brand check refuses them."
+                     % (ws_label, rec["workspace_id"]))
+    from agent_friday.services import credential_paths as _cred
+    repo = repo_path(cid)
+    budget = _CONTEXT_MAX
+    lines.append("Files:")
+    for f in files(cid):
+        text = None
+        if f["text"] and f["bytes"] <= _INLINE_MAX and budget - f["bytes"] > 0:
+            # Nothing of a key rides in the prompt (read_file's rule, services/
+            # credential_paths). A file that is key material by name, place or
+            # content is listed and never shown, and a key or token pasted inside
+            # a file that is shown is withheld from its text. Only the files that
+            # would be shown are judged; the rest are listed by name alone.
+            try:
+                p = _check_rel(repo, f["path"])
+                if _cred.check(p):
+                    lines.append("--- %s (%d bytes, withheld: key material) ---" % (f["path"], f["bytes"]))
+                    continue
+                if p.is_file():
+                    text = _cred.redact_secrets(p.read_text(encoding="utf-8", errors="replace"))
+            except Exception:   # a link out of the tree, an unreadable file, what cannot be judged: not shown
+                text = None
+        if text is not None:
+            budget -= len(text)
+            lines.append("--- %s (%d bytes) ---" % (f["path"], f["bytes"]))
+            lines.append(text.rstrip("\n"))
+        else:
+            lines.append("--- %s (%d bytes, not shown; codebase_read to see it) ---" % (f["path"], f["bytes"]))
+    lines.append("Last steps (newest first):")
+    for s in steps(cid, limit=6):
+        lines.append("- %s \u00b7 %s \u00b7 %s" % (s["sha"][:7], s["kind"], s["summary"]))
+    pick = rec.get("pick")
+    if isinstance(pick, dict) and pick.get("selector"):
+        lines.append("The user POINTED AT this element in the preview (when they say \"this\" or \"that\", they mean it): "
+                     "<%s> \u00b7 selector `%s` \u00b7 text \"%s\" \u00b7 snippet `%s` \u00b7 picked %s. "
+                     "Edit the rule or markup that governs it; it stays selected until they pick another."
+                     % (pick.get("tag") or "element", pick["selector"], pick.get("text") or "", (pick.get("snippet") or "")[:200], pick.get("at") or ""))
+    return "\n".join(lines) + "\n"
+
+
+def context_block(conversation_id: Optional[str]) -> str:
+    rec = for_conversation(conversation_id)
+    return context_block_for(rec["id"]) if rec else ""

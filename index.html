@@ -984,6 +984,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         body.chrome-chat .chat-sidebar {
             display: flex; visibility: visible !important;
+            top: var(--fr-topbar-h, 36px);
         }
         /* The panel gives up the width rather than sitting under the column.
            Same reasoning as the dock: a composer you cannot reach is not a
@@ -998,6 +999,17 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .chat-sidebar-scroll {
             flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 6px 10px;
+        }
+        /* The chat tab wears the one top bar (unified-shell.md §4): the bar
+           is the one element of the hidden layer shown again, and the sidebar
+           and the panel start under it, by its own height. */
+        body.chrome-chat .top-bar { visibility: visible !important; }
+        body.chrome-chat .chat-panel,
+        body.chrome-chat .chat-panel.open { top: var(--fr-topbar-h, 36px) !important; height: calc(100vh - var(--fr-topbar-h, 36px)) !important; }
+        /* At phone width the chip keeps its glyph and drops the title, so the
+           model selector stays whole. */
+        @media (max-width: 720px) {
+            body.chrome-chat [data-testid="shell-chat-name"] > span + span { display: none; }
         }
         /* A 268px column on a phone leaves no chat. Below that width the
            sidebar steps aside entirely rather than splitting a screen that
@@ -3712,6 +3724,14 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday3d_records.js"></script>
     <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
     <script src="/static/friday_mail.js"></script>
+    <!-- The chart renderer the panel and published chart pages share (defines window.FridayChart). -->
+    <script src="/static/friday_chart.js"></script>
+    <!-- The artifact panel beside every chat (defines window.FridayArtifactHost). -->
+    <script src="/static/friday_artifacts.js"></script>
+    <!-- Publish to web: the card body and the Settings section (defines window.FridayPublishCard). -->
+    <script src="/static/friday_publish.js"></script>
+    <script src="/static/friday_bundles.js"></script>
+    <script src="/static/friday_salon.js"></script>
 
     <script>
         // --- UI INTERACTION LOGIC ---
@@ -8591,7 +8611,18 @@ function fridayDockGroups(reg) {
       accent: w.accent || 'cyan',
       held: w.held || ''
     }))
-  })).filter(g => g.items.length);
+  })).filter(g => g.items.length).concat(fridayMineGroup());
+}
+// The bundle workspaces the owner built in the salon (services/workspace_bundles),
+// injected by the server as window.FRIDAY_INSTALLED_BUNDLES so the dock, the
+// windows and the standalone tab know them at load. They form the "Mine" group;
+// `bundle: true` is what sends their body to the sandboxed bundle frame.
+function fridayMineGroup() {
+  const items = (window.FRIDAY_INSTALLED_BUNDLES || []).map(w => ({
+    id: w.id, ico: w.glyph || '\u{1F9E9}', icon: w.icon || 'code', label: w.label, core: true,
+    aka: w.aliases || [], blurb: w.blurb || '', accent: w.accent || 'cyan', bundle: true
+  }));
+  return items.length ? [{ name: 'Mine', items }] : [];
 }
 // ═══ HELD FEATURES ═══
 // Features held back from this release. Each keeps its code, panels and data;
@@ -10135,11 +10166,73 @@ if (typeof document !== 'undefined') {
    Friday's own origin. Anything that is not a whole, allowed tag is escaped. */
 const FRIDAY_MD_TAGS = new Set('p br hr h1 h2 h3 h4 h5 h6 strong b em i u s del ins code pre blockquote ul ol li a img span div table thead tbody tfoot tr th td sup sub details summary kbd mark small'.split(' '));
 const FRIDAY_MD_ATTRS = new Set(['class', 'title', 'href', 'target', 'rel', 'src', 'alt', 'role', 'tabindex', 'style', 'colspan', 'rowspan', 'align', 'start', 'width', 'height', 'open', 'data-kw-page', 'data-kw-query']);
+/* An image loads the moment it paints, so it is the one element whose address
+   is never taken from a reply: only inline raster data and Friday's own origin
+   qualify. A remote address (https:, http:, //host, a backslash form, a
+   reference link that resolves to one) becomes a click-to-load placeholder. */
 function fridaySafeUrl(v, isImg) {
   const t = String(v).replace(/[\u0000- \u007f-\u009f]+/g, '').toLowerCase();
-  if (/^(https?:|mailto:)/.test(t)) return !(isImg && t.startsWith('mailto:'));
-  if (isImg && /^data:image\/(png|jpe?g|gif|webp);/.test(t)) return true;
-  return !/^[a-z][a-z0-9+.\-]*:/.test(t);
+  if (isImg) {
+    if (/^data:image\/(png|jpe?g|gif|webp);/.test(t)) return true;
+    return !/^[a-z][a-z0-9+.\-]*:/.test(t) && !/^[\\\/]{2}/.test(t);
+  }
+  return /^(https?:|mailto:)/.test(t) || !/^[a-z][a-z0-9+.\-]*:/.test(t);
+}
+function fridayRemoteImage(v) {
+  const t = String(v).replace(/[\u0000- \u007f-\u009f]+/g, '');
+  if (!/^(?:https?:)?[\\\/]{2}/i.test(t) && !/^https?:/i.test(t)) return null;
+  let u;
+  try {
+    u = new URL(t.replace(/\\/g, '/'), 'https://placeholder.invalid/');
+  } catch (e) {
+    return null;
+  }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname) return null;
+  return {url: u.href, host: u.hostname};
+}
+/* Click-to-load: the owner's click is the consent. The page never sets a remote
+   src; the server fetches the picture behind the SSRF guard and the page shows
+   the bytes from a blob: URL, with the host named beside it. */
+function fridayLoadRemoteImage(el) {
+  const url = el.getAttribute('data-remote-src');
+  const host = el.getAttribute('data-host') || '';
+  if (!url || el.getAttribute('data-loading')) return;
+  el.setAttribute('data-loading', '1');
+  el.textContent = 'Loading from ' + host + '…';
+  fetch('/api/remote-image', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url: url})}).then(r => r.ok ? r.blob() : r.json().then(j => {
+    throw new Error(j && j.error || 'refused');
+  }, () => {
+    throw new Error('refused');
+  })).then(blob => {
+    const objUrl = URL.createObjectURL(blob);
+    const img = document.createElement('img');
+    img.alt = 'Picture loaded from ' + host;
+    img.src = objUrl;
+    img.style.maxWidth = '100%';
+    img.style.display = 'block';
+    const cap = document.createElement('span');
+    cap.textContent = 'Loaded from ' + host + ' at your request';
+    cap.style.cssText = 'display:block;font-size:11px;opacity:.7';
+    const wrap = document.createElement('span');
+    wrap.style.display = 'block';
+    wrap.appendChild(img);
+    wrap.appendChild(cap);
+    el.replaceWith(wrap);
+  }).catch(err => {
+    el.removeAttribute('data-loading');
+    el.textContent = 'Couldn’t load from ' + host + ': ' + (err && err.message || 'failed') + ' — click to try again';
+  });
+}
+if (typeof document !== 'undefined') {
+  const remoteImgClick = e => {
+    const el = e.target && e.target.closest ? e.target.closest('.friday-remote-img[data-remote-src]') : null;
+    if (!el) return;
+    if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    fridayLoadRemoteImage(el);
+  };
+  document.addEventListener('click', remoteImgClick);
+  document.addEventListener('keydown', remoteImgClick);
 }
 function fridaySanitizeMarkup(html) {
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -10177,6 +10270,7 @@ function fridaySanitizeMarkup(html) {
       continue;
     }
     let attrs = '';
+    let remote = null;
     let a;
     ATTR.lastIndex = 0;
     while ((a = ATTR.exec(m[3])) !== null) {
@@ -10184,11 +10278,19 @@ function fridaySanitizeMarkup(html) {
       if (!FRIDAY_MD_ATTRS.has(an)) continue;
       const raw = a[2] !== undefined ? a[2] : a[3] !== undefined ? a[3] : a[4] !== undefined ? a[4] : '';
       const val = dec(raw);
-      if ((an === 'href' || an === 'src') && !fridaySafeUrl(val, an === 'src')) continue;
+      if ((an === 'href' || an === 'src') && !fridaySafeUrl(val, an === 'src')) {
+        if (an === 'src' && name === 'img') remote = fridayRemoteImage(val) || remote;
+        continue;
+      }
       if (an === 'src' && name !== 'img') continue;
       if (an === 'href' && name !== 'a') continue;
-      if (an === 'style' && /url\s*\(|expression|@import|\\|behavior|javascript/i.test(val)) continue;
+      if (an === 'style' && /\b(?:url|image-set|image|src|cross-fade|element|paint)\s*\(|expression|@import|\\|behavior|javascript/i.test(val)) continue;
       attrs += ' ' + an + '="' + esc(val) + '"';
+    }
+    if (name === 'img' && remote) {
+      out += '<span class="friday-remote-img" role="button" tabindex="0" data-remote-src="' + esc(remote.url) + '" data-host="' + esc(remote.host) + '" title="' + esc('Load ' + remote.url + ' — ' + fridayName() + ' asks ' + remote.host + ' for it only when you click') + '" style="display:inline-block;padding:4px 8px;border:1px dashed rgba(255,255,255,0.35);border-radius:6px;font-size:12px;cursor:pointer">Remote image blocked — click to load from ' + esc(remote.host) + '</span>';
+      i = TAG.lastIndex;
+      continue;
     }
     out += '<' + name + attrs + (m[4] ? ' /' : '') + '>';
     i = TAG.lastIndex;
@@ -10354,7 +10456,8 @@ function WsTools({
   title,
   emoji,
   histOpen,
-  onHistory
+  onHistory,
+  onImproveNote
 }) {
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
     title: `Chat with ${fridayName()} about ${title} \u2014 tweak the layout, add features, undo changes`,
@@ -10391,7 +10494,26 @@ function WsTools({
       fontSize: 12,
       color: histOpen ? '#00d4ff' : undefined
     }
-  }, "\uD83D\uDD52"));
+  }, "\uD83D\uDD52"), /*#__PURE__*/React.createElement("button", {
+    /* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens
+       its codebase chat in the salon; a native one is told plainly that
+       improving it means Friday's own source, which is not built
+       (static/friday_bundles.js). The answer goes to the window's own line
+       when it has one (FWin), else to a toast (the tab's bar). */
+    title: `Improve ${title} in the salon`,
+    "aria-label": `Improve ${title}`,
+    "data-ws-improve": id,
+    onClick: e => {
+      e.stopPropagation();
+      if (!window.fridayImproveWorkspace) return;
+      window.fridayImproveWorkspace(id, title).then(msg => {
+        if (onImproveNote) onImproveNote(msg || '');else if (msg && window.fridayToast) window.fridayToast(msg);
+      });
+    },
+    style: {
+      fontSize: 12
+    }
+  }, "\uD83D\uDEE0\uFE0F"));
 }
 function WsCustomizedMark({
   id
@@ -10716,6 +10838,7 @@ function FWin({
   // The browser refused the tab (pop-ups blocked for this site): the window
   // stays, with a line under its title bar saying how to allow it.
   const [tabBlocked, setTabBlocked] = useState(false);
+  const [improveNote, setImproveNote] = useState('');
   // Two arrival paths, because the window may or may not already exist. A flag
   // read on mount covers "Settings opened this workspace just now"; an event
   // covers "the window was already open, so nothing is going to mount." Both
@@ -10782,7 +10905,8 @@ function FWin({
     title: title,
     emoji: emoji,
     histOpen: histOpen,
-    onHistory: () => setHistOpen(v => !v)
+    onHistory: () => setHistOpen(v => !v),
+    onImproveNote: setImproveNote
   }), /*#__PURE__*/React.createElement("button", Object.assign({}, menu.bind, {
     // Resting here opens the snap layouts (unified-shell.md §11.3).
     title: maxed ? `Restore ${title} to its own size` : `Maximize ${title}`,
@@ -10832,7 +10956,12 @@ function FWin({
     }
   }, "\u2197"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close ' + title, title: 'Close ' + title, 
     onClick: onClose
-  }, "\xD7"))), tabBlocked && /*#__PURE__*/React.createElement("div", {
+  }, "\xD7"))), improveNote && /*#__PURE__*/React.createElement("div", {
+    className: "fwin-tab-blocked",
+    role: "alert",
+    "data-ws-improve-note": id,
+    onClick: () => setImproveNote('')
+  }, improveNote), tabBlocked && /*#__PURE__*/React.createElement("div", {
     className: "fwin-tab-blocked",
     role: "alert"
   }, /*#__PURE__*/React.createElement("span", null, "The browser blocked the new tab. Allow pop-ups for ", /*#__PURE__*/React.createElement("b", null, window.location.host), " (the blocked pop-up icon at the right end of the address bar), then click \u2197 again. This window stays open until then."), /*#__PURE__*/React.createElement("button", {
@@ -11538,6 +11667,15 @@ function fridayResizeCursor(dir) {
 // passes its own conversation (transcript, input, seat, send) plus the
 // shared services (settings, voice, audio devices). `mode` is 'panel' or
 // 'window'.
+// The artifact panel beside a chat (static/friday_artifacts.js, spec
+// docs/design/active/vibe-coding-salon.md §4.2). ChatSurface renders through
+// this shell so the panel is one column added next to the chat, never a
+// change inside it. When the script is absent the shell is a Fragment.
+function FridayChatShell(props) {
+  const Host = window.FridayArtifactHost;
+  if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace }, props.children);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, props.children);
+}
 function ChatSurface(props) {
   const {
     mode,
@@ -11600,7 +11738,7 @@ function ChatSurface(props) {
     voiceStatus
   } = props;
   const trayMenu = useSnapMenuOpener();
-  return /*#__PURE__*/React.createElement(React.Fragment, null, React.createElement("div", {
+  return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace }, React.createElement("div", {
     "data-chat-head": "",
     style: {
       display: 'flex',
@@ -12804,7 +12942,7 @@ function ConversationWindow({
       if (stopped) return;
       let m = null;
       try { m = JSON.parse(e.data); } catch (_) { return; }
-      if (!m || m.type !== 'approval_result') return;
+      if (!m || (m.type !== 'approval_result' && m.type !== 'codebase_run')) return;
       if (m.conversation_id && m.conversation_id !== cid) return;
       openConvQuiet(cid);
     };
@@ -47946,6 +48084,31 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
       body: JSON.stringify({ name: name }),
     }).then(() => onRefresh()).catch(() => {});
   };
+  // "+ Codebase" (docs/design/active/vibe-coding-salon.md §0, §1.1): a third
+  // button in this row. It creates a conversation that carries a codebase id,
+  // the same way a project chat carries a project, and the chat's panel then
+  // shows Preview, Files and Changes (static/friday_artifacts.js).
+  const [cbMenu, setCbMenu] = useState(false);
+  const newCodebase = (template) => {
+    setCbMenu(false);
+    const name = prompt(template === 'existing' ? 'Name this codebase' : 'Name this codebase (e.g. Rent tracker)');
+    if (!name) return;
+    const body = { title: name };
+    if (template === 'existing') {
+      const path = prompt('Folder on this PC to open (' + fridayName() + ' works on a salon branch, never on yours)');
+      if (!path) return;
+      body.path = path;
+    } else body.template = template;
+    api('/api/codebases', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(d => {
+      // api() already returns the parsed body.
+      if (d && d.conversation) onOpenConversation(d.conversation.id);
+      else if (d && d.error) note(d);
+      onRefresh();
+    }).catch(() => {});
+  };
 
   const onAct = (c, what, arg) => {
     const patch = body => api(
@@ -48010,7 +48173,23 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
           padding: '7px 9px', color: 'rgba(255,255,255,0.65)',
           fontFamily: 'JetBrains Mono', fontSize: 11,
         },
-      }, '+ Project')),
+      }, '+ Project'),
+      E('button', {
+        onClick: () => setCbMenu(v => !v), title: 'New codebase: a chat whose panel runs the thing you are building',
+        'aria-label': 'New codebase', 'aria-expanded': cbMenu,
+        style: {
+          cursor: 'pointer', background: cbMenu ? 'rgba(0,212,255,0.10)' : 'transparent',
+          border: '1px solid rgba(255,255,255,0.14)', borderRadius: 8,
+          padding: '7px 9px', color: 'rgba(255,255,255,0.65)',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, '+ Codebase')),
+    cbMenu ? E('div', { 'data-codebase-menu': '', style: { margin: '0 10px 8px', padding: 6, border: '1px solid rgba(0,212,255,0.25)', borderRadius: 8, background: 'rgba(10,14,26,0.96)' } },
+      E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 9.5, letterSpacing: '.08em', color: 'rgba(255,255,255,0.45)', padding: '2px 8px 6px' } }, 'START FROM'),
+      E(MenuItem, { onClick: () => newCodebase('static') }, 'A page or small app (HTML, CSS, JS)'),
+      E(MenuItem, { onClick: () => newCodebase('react') }, 'A React app, built in the browser'),
+      E(MenuItem, { onClick: () => newCodebase('bundle') }, 'A new workspace for the dock'),
+      E(MenuItem, { onClick: () => newCodebase('existing') }, 'A folder already on this PC')) : null,
 
     E('input', {
       value: q, onChange: e => setQ(e.target.value),
@@ -48058,7 +48237,16 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
                 },
               }, prettyModel(pseat)) : null,
               E('span', { style: { fontSize: 9, opacity: 0.4 } },
-                rows.length || '')),
+                rows.length || ''),
+              // What the project holds for its chats (chat-hub.md M2): files
+              // they can read, codebases the Build panel works on.
+              (p.files || (p.codebases && p.codebases.length)) ? E('span', {
+                'data-project-counts': p.id,
+                title: (p.files ? p.files + ' file' + (p.files === 1 ? '' : 's') : '') +
+                       (p.files && p.codebases && p.codebases.length ? ', ' : '') +
+                       (p.codebases && p.codebases.length ? p.codebases.length + ' codebase' + (p.codebases.length === 1 ? '' : 's') : ''),
+                style: { fontSize: 8.5, opacity: 0.45, flexShrink: 0 },
+              }, (p.files ? '\u{1F4CE}' + p.files : '') + (p.codebases && p.codebases.length ? ' \u2692' + p.codebases.length : '')) : null),
             E('button', {
               onClick: () => setEditing(p), title: 'Project settings',
               'aria-label': 'Settings for ' + p.name,
@@ -48108,7 +48296,9 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
     editing ? E(ProjectSettings, {
       project: editing, apiFetch: apiFetch,
       onClose: () => setEditing(null),
-      onSaved: () => { setEditing(null); onRefresh(); },
+      // A file added or a codebase connected refreshes the list and keeps the
+      // editor open (keep = true); a save closes it.
+      onSaved: keep => { if (keep !== true) setEditing(null); onRefresh(); },
     }) : null);
 }
 
@@ -48119,6 +48309,39 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
   const [seat, setSeat] = useState(project.seat || null);
   const [picking, setPicking] = useState(false);
   const [saving, setSaving] = useState(false);
+  // What every chat in the project inherits besides the seat and the
+  // instructions: its files and its connected codebases (Chat Hub M2).
+  const [files, setFiles] = useState(null);
+  const [codebases, setCodebases] = useState([]);
+  const [connected, setConnected] = useState(project.codebases || []);
+  const [fileNote, setFileNote] = useState('');
+  const base = '/api/projects/' + encodeURIComponent(project.id);
+  const loadFiles = () => apiFetch(base + '/files').then(r => r.json()).then(d => setFiles(d.files || [])).catch(() => setFiles([]));
+  useEffect(() => {
+    loadFiles();
+    apiFetch('/api/codebases').then(r => r.json()).then(d => setCodebases(d.codebases || [])).catch(() => {});
+    apiFetch(base).then(r => r.json()).then(d => setConnected((d.project && d.project.codebases) || [])).catch(() => {});
+  }, [project.id]);
+  const addFile = e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = String(reader.result).split(',')[1] || '';
+      apiFetch(base + '/files', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: f.name, content_base64: b64 }) })
+        .then(r => r.json().then(j => { setFileNote(r.ok ? '' : (j.error || 'Not added.')); loadFiles(); onSaved && onSaved(true); }))
+        .catch(() => setFileNote('Not added.'));
+    };
+    reader.readAsDataURL(f);
+    e.target.value = '';
+  };
+  const removeFile = n => apiFetch(base + '/files/' + encodeURIComponent(n), { method: 'DELETE' })
+    .then(() => { loadFiles(); onSaved && onSaved(true); }).catch(() => {});
+  const toggleCodebase = (cid, on) => (on
+    ? apiFetch(base + '/codebases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codebase: cid }) })
+    : apiFetch(base + '/codebases/' + encodeURIComponent(cid), { method: 'DELETE' }))
+    .then(r => r.json()).then(d => { setConnected((d.project && d.project.codebases) || []); onSaved && onSaved(true); }).catch(() => {});
 
   const save = () => {
     setSaving(true);
@@ -48223,6 +48446,27 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
       rows: 4, className: 'input',
       style: { width: '100%', resize: 'vertical', fontSize: 11 },
     }),
+
+    label('Files the chats in this project can read'),
+    E('div', { 'data-project-files': project.id, style: { fontSize: 11, fontFamily: 'JetBrains Mono' } },
+      files === null ? E('div', { style: { color: 'rgba(255,255,255,0.45)' } }, 'Reading…')
+        : !files.length ? E('div', { style: { color: 'rgba(255,255,255,0.45)' } }, 'No files yet. Text files are quoted to her each turn; the rest are named.')
+        : files.map(f => E('div', { key: f.name, 'data-project-file': f.name, style: { display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0' } },
+            E('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#cfefff' } }, f.name),
+            E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, f.bytes < 1024 ? f.bytes + ' B' : Math.round(f.bytes / 1024) + ' KB'),
+            E('button', { onClick: () => removeFile(f.name), title: 'Remove this file from the project', 'aria-label': 'Remove ' + f.name,
+              style: { background: 'none', border: 'none', color: '#ff8095', cursor: 'pointer', fontSize: 11 } }, 'remove'))),
+      E('label', { style: { display: 'inline-block', marginTop: 6, cursor: 'pointer', color: '#cfefff', border: '1px solid rgba(0,212,255,0.35)', borderRadius: 8, padding: '4px 10px' } },
+        '+ Add a file', E('input', { type: 'file', onChange: addFile, 'aria-label': 'Add a file to the project', style: { display: 'none' } })),
+      fileNote ? E('div', { role: 'status', style: { color: '#ffd28a', marginTop: 4 } }, fileNote) : null),
+
+    label('Codebases the Build panel works on'),
+    E('div', { 'data-project-codebases': project.id, style: { fontSize: 11, fontFamily: 'JetBrains Mono' } },
+      !codebases.length ? E('div', { style: { color: 'rgba(255,255,255,0.45)' } }, 'No codebases yet. Start one with "+ Codebase" beside the chats.')
+        : codebases.map(c => E('label', { key: c.id, style: { display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0', cursor: 'pointer' } },
+            E('input', { type: 'checkbox', checked: connected.indexOf(c.id) >= 0, onChange: e => toggleCodebase(c.id, e.target.checked), 'aria-label': 'Connect ' + c.title }),
+            E('span', { style: { color: '#cfefff' } }, c.title),
+            E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, c.template || '')))),
 
     E('div', {
       style: {
@@ -51032,7 +51276,10 @@ function SettingsTabPrivacy({
     s: s,
     save: save,
     part: "privacy"
-  })), /*#__PURE__*/React.createElement(StSection, {
+  })), window.FridayPublishSettings ? /*#__PURE__*/React.createElement(window.FridayPublishSettings, {
+    s: s,
+    save: save
+  }) : null, /*#__PURE__*/React.createElement(StSection, {
     title: "Conversation logging"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Log conversations and tool use",
@@ -51048,6 +51295,13 @@ function SettingsTabPrivacy({
       off_record: !s.off_record
     }),
     desc: "Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Artifact panel beside the chat",
+    value: s.artifact_panel_enabled !== false,
+    onChange: () => save({
+      artifact_panel_enabled: s.artifact_panel_enabled === false
+    }),
+    desc: "When " + fridayName() + " makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."
   }), /*#__PURE__*/React.createElement(StRow, {
     label: "Keep the log for",
     desc: "Older entries are deleted automatically."
@@ -51967,6 +52221,10 @@ function WorkspaceHistory({ wsId, label, onClose, top }) {
       /*#__PURE__*/React.createElement("span", { className: 'card-title' }, "History — " + (label || wsId)),
       /*#__PURE__*/React.createElement("span", { style: { flex: 1 } }),
       /*#__PURE__*/React.createElement("button", { style: _btn, onClick: onClose }, "Close")),
+    // A bundle workspace also has installed versions with one-click rollback
+    // (static/friday_bundles.js); the studio's own snapshots follow below.
+    window.FridayBundleHistory && WS_BY_ID[wsId] && WS_BY_ID[wsId].bundle
+      ? /*#__PURE__*/React.createElement(window.FridayBundleHistory, { wsId: wsId, label: label }) : null,
     /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginBottom: 10 } },
       currentKeys.length
         ? (fridayName() + " has customized this workspace: ") + currentKeys.join(", ") + ". Every step below is reversible — reverting is snapshotted too."
@@ -55323,7 +55581,13 @@ function SettingsTabCosts() {
     title: "By kind"
   }, breakdown(s && s.by_kind)), /*#__PURE__*/React.createElement(StSection, {
     title: "By workspace"
-  }, breakdown(s && s.by_workspace)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
+  }, breakdown(s && s.by_workspace)), /*#__PURE__*/React.createElement(StSection, {
+    title: "By key"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({ fontSize: 10, color: dim, marginBottom: 12, lineHeight: 1.5 }, mono)
+  }, "Whose key paid: yours, or a guest key a codebase runs on (Settings \u2192 Accounts & Keys, the Salon section)."), breakdown(s && s.by_key_profile)), /*#__PURE__*/React.createElement(StSection, {
+    title: "By codebase"
+  }, breakdown(s && s.by_codebase)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
     title: "Scheduled jobs this month"
   }, (costSched || []).map(r => /*#__PURE__*/React.createElement("div", {
     key: r.schedule_id,
@@ -55855,7 +56119,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
@@ -56824,6 +57088,20 @@ function ApprovalCardBody({
     busy: busy,
     onDecide: onDecide
   });
+  // A workspace swap card shows what would change, the checks it passed and a
+  // sandboxed preview of the improved page (static/friday_bundles.js).
+  if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return /*#__PURE__*/React.createElement(window.FridayWorkspaceSwapCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
+  // A publish card shows what would go public, the scan, the licences and a
+  // sandboxed preview (static/friday_publish.js).
+  if (a && a.kind === 'publish_web' && window.FridayPublishCard) return /*#__PURE__*/React.createElement(window.FridayPublishCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
   return /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -56981,6 +57259,18 @@ function ApprovalPopups() {
 // The context slot of the top bar in a workspace tab: which workspace this is,
 // the way to it on the desktop (where the scene menu sits on the desktop), and
 // the workspace's own tools, as a desktop window's title bar has them.
+// The chat tab's context slot (unified-shell.md §4): the chat's own title in
+// the chip a workspace tab wears, never the product's name and never hers.
+function ShellChatName({
+  title
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: "ws-tab-name",
+    "data-testid": "shell-chat-name"
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, "\uD83D\uDCAC"), /*#__PURE__*/React.createElement("span", null, title || 'Chat'));
+}
 function ShellTabName({
   ws,
   histOpen,
@@ -57186,6 +57476,15 @@ function App() {
       if (ev && ev.type === 'chat_tray') {
         try {
           window.dispatchEvent(new CustomEvent('friday:chat-tray', { detail: ev }));
+        } catch (_) {}
+        return;
+      }
+      // The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show
+      // the preview, build mode. The artifact host answers preview and build
+      // for its own chat; the page answers open_conversation below.
+      if (ev && ev.type === 'hub') {
+        try {
+          window.dispatchEvent(new CustomEvent('friday:hub', { detail: ev }));
         } catch (_) {}
         return;
       }
@@ -61180,6 +61479,11 @@ function App() {
     workflows: /*#__PURE__*/React.createElement(WorkflowsWS, null),
     settings: /*#__PURE__*/React.createElement(SettingsWS, null)
   };
+  // A bundle workspace (installed from the salon) has no React component of
+  // its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
+  const fridayBundleBody = id => (window.FridayBundleFrame && WS_BY_ID[id] && WS_BY_ID[id].bundle)
+    ? /*#__PURE__*/React.createElement(window.FridayBundleFrame, { wsId: id })
+    : /*#__PURE__*/React.createElement("div", null, "Coming soon");
   const wsInfo = WS.reduce((a, w) => {
     a[w.id] = w;
     return a;
@@ -61366,6 +61670,29 @@ function App() {
   };
   // Ctrl+Alt+C hides or shows the tray; Friday's change (set_chat_tray) is
   // applied by the page in front, which says so.
+  const hubDo = useRef({});
+  hubDo.current = { openConversation, showChat };
+  useEffect(() => {
+    const onHub = e => {
+      const d = e && e.detail || {};
+      if (d.action !== 'open_conversation' || !d.conversation_id) return;
+      if (document.visibilityState !== 'visible') return;
+      const t = hubDo.current;
+      let applied = false;
+      try {
+        t.openConversation(d.conversation_id);
+        if (window.__FRIDAY_CHROME__ !== 'chat') t.showChat(true);
+        applied = true;
+      } catch (_) {}
+      if (d.id) apiFetch('/api/desktop/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: d.id, result: { applied: applied, conversation_id: d.conversation_id } })
+      }).catch(() => {});
+    };
+    window.addEventListener('friday:hub', onHub);
+    return () => window.removeEventListener('friday:hub', onHub);
+  }, []);
   const trayDo = useRef({});
   trayDo.current = {
     open: chatOpen,
@@ -61696,19 +62023,31 @@ function App() {
   // and the modals they open (docs/design/active/unified-shell.md). Defined
   // once; the desktop and the tab each draw these same elements.
   const shellTab = STANDALONE_WS && STANDALONE_WS !== 'settings' ? wsInfo[STANDALONE_WS] || null : null;
+  // A chat in its own tab (?chrome=chat) wears the same bar (unified-shell.md
+  // §4): the lockup leads back to the desktop with this chat open, the context
+  // slot names the chat, and the controls whose panels live in the hidden layer
+  // (notifications, Quick Draft, the chat tray, fullscreen, settings) are not
+  // offered; the model selector, the clock and the lights stay.
+  const shellChat = window.__FRIDAY_CHROME__ === 'chat';
+  const shellConv = shellChat ? convList.find(c => c.id === convId) || null : null;
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const [tabHistOpen, setTabHistOpen] = useState(false);
   const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);
   const shellTopBar = /*#__PURE__*/React.createElement("div", {
     className: `top-bar ${topBarHidden ? 'hidden' : ''}`,
-    "data-testid": "friday-top-bar"
+    "data-testid": "friday-top-bar",
+    "data-shell-kind": shellChat ? 'chat' : shellTab ? 'tab' : 'desktop'
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
       gap: 8
     }
-  }, /*#__PURE__*/React.createElement(FridayLockup, shellTab ? {
+  }, /*#__PURE__*/React.createElement(FridayLockup, shellChat ? {
+    size: 15,
+    href: '/?conversation=' + encodeURIComponent(convId || ''),
+    title: 'Back to the desktop, with this chat open'
+  } : shellTab ? {
     size: 15,
     href: '/?workspace=' + encodeURIComponent(shellTab.id),
     title: 'Back to the desktop, with this workspace open'
@@ -61728,7 +62067,9 @@ function App() {
   // top bar itself, not this half of it, whose sides clip on a narrow
   // window. With no top or left the menu sits where it would flow, right
   // under the button.
-  shellTab ? /*#__PURE__*/React.createElement(ShellTabName, {
+  shellChat ? /*#__PURE__*/React.createElement(ShellChatName, {
+    title: shellConv && shellConv.title
+  }) : shellTab ? /*#__PURE__*/React.createElement(ShellTabName, {
     ws: shellTab,
     histOpen: tabHistOpen,
     onHistory: () => setTabHistOpen(v => !v)
@@ -61962,7 +62303,7 @@ function App() {
       fontSize: 13,
       userSelect: 'none'
     }
-  }, "|"), !shellTab && orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
+  }, "|"), !shellChat && !shellTab && orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
     onClick: clearOrbs,
     disabled: clearingOrbs,
     title: orbiting.length + ' orb(s) in orbit. Clears everything that has '
@@ -62032,7 +62373,7 @@ function App() {
     }
   }, clock.toLocaleTimeString('en-US', {
     hour12: false
-  })), /*#__PURE__*/React.createElement("button", {
+  })), !shellChat && /*#__PURE__*/React.createElement("button", {
     ref: bellRef,
     onClick: toggleNotifs,
     style: {
@@ -62068,7 +62409,7 @@ function App() {
       fontWeight: 700,
       fontFamily: 'Orbitron, sans-serif'
     }
-  }, bellBadgeCount)), /*#__PURE__*/React.createElement("button", {
+  }, bellBadgeCount)), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: toggleQuickDraft,
     style: {
       background: 'none',
@@ -62083,7 +62424,7 @@ function App() {
     style: {
       fontSize: 13
     }
-  }, "\u270D\uFE0F")), /*#__PURE__*/React.createElement("button", {
+  }, "\u270D\uFE0F")), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: toggleChat,
     style: {
       background: 'none',
@@ -62098,7 +62439,7 @@ function App() {
     style: {
       fontSize: 13
     }
-  }, "\uD83D\uDCAC")), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCAC")), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: () => layoutRef.current.toggleLayout(),
     style: {
       background: 'none',
@@ -62111,7 +62452,7 @@ function App() {
     "aria-label": fsOn ? 'Leave fullscreen with chat' : 'Fullscreen with chat',
     "aria-pressed": !!fsOn,
     "data-testid": "fs-chat-toggle"
-  }, '⤢'), !shellTab && /*#__PURE__*/React.createElement("button", {
+  }, '⤢'), !shellChat && !shellTab && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       if (cameraOn) {
         setCameraControlsOpen(o => !o);
@@ -62150,7 +62491,7 @@ function App() {
     title: ("Computer control ACTIVE \u2014 " + fridayName() + " can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate.")
   }, /*#__PURE__*/React.createElement("span", {
     className: "cc-dot"
-  }), /*#__PURE__*/React.createElement("span", null, "CC LIVE")), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("span", null, "CC LIVE")), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setSettingsOpen(!settingsOpen);
       if (!settingsOpen) setChatOpen(false);
@@ -63402,7 +63743,7 @@ function App() {
     return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
       value: { map: wsCustMap, setCust }
     }, /*#__PURE__*/React.createElement(ApprovalPopups, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
-      /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")))
+      /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || fridayBundleBody(sw.id)))
       : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
         'There is no workspace called “' + STANDALONE_WS + '”. ',
         /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, ('Back to the ' + fridayName() + ' desktop'))), shellWsChat, shellChatPanel, shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, shellPalette, shellShortcuts, shellQuickPost, shellPodcast, shellTaskModal);
@@ -63688,7 +64029,7 @@ function App() {
       onFocus: () => bringFront(id)
     }, /*#__PURE__*/React.createElement(Safe, {
       name: w.label
-    }, wsMap[id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")));
+    }, wsMap[id] || fridayBundleBody(id)));
   }), convWins.map((cw, i) => /*#__PURE__*/React.createElement(ConversationWindow, {
     key: cw.cid,
     convId: cw.cid,

@@ -400,7 +400,7 @@ if (typeof document !== 'undefined') {
 // always holds every workspace so a deep link resolves whichever subset the
 // dock renders.
 function fridayDockGroups(reg){const R=reg||{};
-  return(R.groups||[]).map(g=>({name:g.label,items:(R.workspaces||[]).filter(w=>w.group===g.id).map(w=>({id:w.id,ico:w.glyph,icon:w.icon||w.id,label:w.label,core:!!w.core,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan',held:w.held||''}))})).filter(g=>g.items.length)}
+  return(R.groups||[]).map(g=>({name:g.label,items:(R.workspaces||[]).filter(w=>w.group===g.id).map(w=>({id:w.id,ico:w.glyph,icon:w.icon||w.id,label:w.label,core:!!w.core,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan',held:w.held||''}))})).filter(g=>g.items.length).concat(fridayMineGroup())}
 // ═══ HELD FEATURES ═══
 // Features held back from this release. Each keeps its code, panels and data;
 // while its switch in settings.held_features is off, no surface offers it.
@@ -416,6 +416,8 @@ function fridayHeldOn(feature,settings){
 function fridayWsHeld(w){
   const ws=typeof w==='string'?WS_BY_ID[fridayWorkspaceId(w)]:w;
   return !!(ws&&ws.held&&!fridayHeldOn(ws.held))}
+// The bundle workspaces the owner built in the salon (services/workspace_bundles), injected by the server as window.FRIDAY_INSTALLED_BUNDLES; the "Mine" group. `bundle: true` sends their body to the sandboxed bundle frame.
+function fridayMineGroup(){const items=(window.FRIDAY_INSTALLED_BUNDLES||[]).map(w=>({id:w.id,ico:w.glyph||'\u{1F9E9}',icon:w.icon||'code',label:w.label,core:true,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan',bundle:true}));return items.length?[{name:'Mine',items}]:[]}
 const DOCK_GROUPS=fridayDockGroups(window.FRIDAY_WORKSPACE_REGISTRY);
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
 const WS_BY_ID=WS.reduce((m,w)=>(m[w.id]=w,m),{});
@@ -1531,11 +1533,73 @@ if(typeof document!=='undefined'){
    Friday's own origin. Anything that is not a whole, allowed tag is escaped. */
 const FRIDAY_MD_TAGS = new Set('p br hr h1 h2 h3 h4 h5 h6 strong b em i u s del ins code pre blockquote ul ol li a img span div table thead tbody tfoot tr th td sup sub details summary kbd mark small'.split(' '));
 const FRIDAY_MD_ATTRS = new Set(['class', 'title', 'href', 'target', 'rel', 'src', 'alt', 'role', 'tabindex', 'style', 'colspan', 'rowspan', 'align', 'start', 'width', 'height', 'open', 'data-kw-page', 'data-kw-query']);
+/* An image loads the moment it paints, so it is the one element whose address
+   is never taken from a reply: only inline raster data and Friday's own origin
+   qualify. A remote address (https:, http:, //host, a backslash form, a
+   reference link that resolves to one) becomes a click-to-load placeholder. */
 function fridaySafeUrl(v, isImg) {
   const t = String(v).replace(/[\u0000- \u007f-\u009f]+/g, '').toLowerCase();
-  if (/^(https?:|mailto:)/.test(t)) return !(isImg && t.startsWith('mailto:'));
-  if (isImg && /^data:image\/(png|jpe?g|gif|webp);/.test(t)) return true;
-  return !/^[a-z][a-z0-9+.\-]*:/.test(t);
+  if (isImg) {
+    if (/^data:image\/(png|jpe?g|gif|webp);/.test(t)) return true;
+    return !/^[a-z][a-z0-9+.\-]*:/.test(t) && !/^[\\\/]{2}/.test(t);
+  }
+  return /^(https?:|mailto:)/.test(t) || !/^[a-z][a-z0-9+.\-]*:/.test(t);
+}
+function fridayRemoteImage(v) {
+  const t = String(v).replace(/[\u0000- \u007f-\u009f]+/g, '');
+  if (!/^(?:https?:)?[\\\/]{2}/i.test(t) && !/^https?:/i.test(t)) return null;
+  let u;
+  try {
+    u = new URL(t.replace(/\\/g, '/'), 'https://placeholder.invalid/');
+  } catch (e) {
+    return null;
+  }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname) return null;
+  return {url: u.href, host: u.hostname};
+}
+/* Click-to-load: the owner's click is the consent. The page never sets a remote
+   src; the server fetches the picture behind the SSRF guard and the page shows
+   the bytes from a blob: URL, with the host named beside it. */
+function fridayLoadRemoteImage(el) {
+  const url = el.getAttribute('data-remote-src');
+  const host = el.getAttribute('data-host') || '';
+  if (!url || el.getAttribute('data-loading')) return;
+  el.setAttribute('data-loading', '1');
+  el.textContent = 'Loading from ' + host + '…';
+  fetch('/api/remote-image', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url: url})}).then(r => r.ok ? r.blob() : r.json().then(j => {
+    throw new Error(j && j.error || 'refused');
+  }, () => {
+    throw new Error('refused');
+  })).then(blob => {
+    const objUrl = URL.createObjectURL(blob);
+    const img = document.createElement('img');
+    img.alt = 'Picture loaded from ' + host;
+    img.src = objUrl;
+    img.style.maxWidth = '100%';
+    img.style.display = 'block';
+    const cap = document.createElement('span');
+    cap.textContent = 'Loaded from ' + host + ' at your request';
+    cap.style.cssText = 'display:block;font-size:11px;opacity:.7';
+    const wrap = document.createElement('span');
+    wrap.style.display = 'block';
+    wrap.appendChild(img);
+    wrap.appendChild(cap);
+    el.replaceWith(wrap);
+  }).catch(err => {
+    el.removeAttribute('data-loading');
+    el.textContent = 'Couldn’t load from ' + host + ': ' + (err && err.message || 'failed') + ' — click to try again';
+  });
+}
+if (typeof document !== 'undefined') {
+  const remoteImgClick = e => {
+    const el = e.target && e.target.closest ? e.target.closest('.friday-remote-img[data-remote-src]') : null;
+    if (!el) return;
+    if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    fridayLoadRemoteImage(el);
+  };
+  document.addEventListener('click', remoteImgClick);
+  document.addEventListener('keydown', remoteImgClick);
 }
 function fridaySanitizeMarkup(html) {
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1573,6 +1637,7 @@ function fridaySanitizeMarkup(html) {
       continue;
     }
     let attrs = '';
+    let remote = null;
     let a;
     ATTR.lastIndex = 0;
     while ((a = ATTR.exec(m[3])) !== null) {
@@ -1580,11 +1645,19 @@ function fridaySanitizeMarkup(html) {
       if (!FRIDAY_MD_ATTRS.has(an)) continue;
       const raw = a[2] !== undefined ? a[2] : a[3] !== undefined ? a[3] : a[4] !== undefined ? a[4] : '';
       const val = dec(raw);
-      if ((an === 'href' || an === 'src') && !fridaySafeUrl(val, an === 'src')) continue;
+      if ((an === 'href' || an === 'src') && !fridaySafeUrl(val, an === 'src')) {
+        if (an === 'src' && name === 'img') remote = fridayRemoteImage(val) || remote;
+        continue;
+      }
       if (an === 'src' && name !== 'img') continue;
       if (an === 'href' && name !== 'a') continue;
-      if (an === 'style' && /url\s*\(|expression|@import|\\|behavior|javascript/i.test(val)) continue;
+      if (an === 'style' && /\b(?:url|image-set|image|src|cross-fade|element|paint)\s*\(|expression|@import|\\|behavior|javascript/i.test(val)) continue;
       attrs += ' ' + an + '="' + esc(val) + '"';
+    }
+    if (name === 'img' && remote) {
+      out += '<span class="friday-remote-img" role="button" tabindex="0" data-remote-src="' + esc(remote.url) + '" data-host="' + esc(remote.host) + '" title="' + esc('Load ' + remote.url + ' — ' + fridayName() + ' asks ' + remote.host + ' for it only when you click') + '" style="display:inline-block;padding:4px 8px;border:1px dashed rgba(255,255,255,0.35);border-radius:6px;font-size:12px;cursor:pointer">Remote image blocked — click to load from ' + esc(remote.host) + '</span>';
+      i = TAG.lastIndex;
+      continue;
     }
     out += '<' + name + attrs + (m[4] ? ' /' : '') + '>';
     i = TAG.lastIndex;
@@ -1783,9 +1856,18 @@ function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
     <button onClick={onCancel} style={{marginTop:7,background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:10}}>put it back in the box</button>
   </div>;
 }
-function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
+// The artifact panel beside a chat (static/friday_artifacts.js, spec
+// docs/design/active/vibe-coding-salon.md §4.2). ChatSurface renders through
+// this shell so the panel is one column added next to the chat, never a
+// change inside it. When the script is absent the shell is a Fragment.
+function FridayChatShell(props){
+  const Host=window.FridayArtifactHost;
+  if(Host) return <Host convId={props.convId} mode={props.mode} traySide={props.traySide} trayFrac={props.trayFrac} onTrayPlace={props.onTrayPlace}>{props.children}</Host>;
+  return <React.Fragment>{props.children}</React.Fragment>;
+}
+function ChatSurface({mode,convId,traySide,trayFrac,onTrayPlace,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
   const trayMenu=useSnapMenuOpener();
-  return(<>
+  return(<FridayChatShell convId={convId} mode={mode} traySide={traySide} trayFrac={trayFrac} onTrayPlace={onTrayPlace}>
       <div data-chat-head="" style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',rowGap:6,padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -1944,7 +2026,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
           <button className="btn" style={{flexShrink:0}} onClick={()=>sendChat()}>Send</button>
         </div>
       </div>
-  </>);
+  </FridayChatShell>);
 }
 
 // Workspaces that need more room than the default 660x460 window, with a
@@ -1965,12 +2047,14 @@ function WsIcon({ws,glyph}){
 // versions), the mark that Friday has customized it, and its body with that
 // customization applied. A desktop window draws the tools in its title bar; a
 // workspace tab draws them in the top bar, beside the workspace's name.
-function WsTools({id,title,emoji,histOpen,onHistory}){
+function WsTools({id,title,emoji,histOpen,onHistory,onImproveNote}){
   return(<>
     <button title={`Chat with ${fridayName()} about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji)}} style={{fontSize:12}}>💬</button>
     <button title={`Talk to ${fridayName()} about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button>
     {/* The 40 snapshots workspace_studio keeps, reachable without asking Friday out loud. */}
     <button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} aria-pressed={!!histOpen} onClick={e=>{e.stopPropagation();onHistory()}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>
+    {/* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens its codebase chat in the salon; a native one is told plainly that improving it means Friday's own source, which is not built (static/friday_bundles.js). The answer goes to the window's own line when it has one (FWin), else to a toast (the tab's bar). */}
+    <button title={`Improve ${title} in the salon`} aria-label={`Improve ${title}`} data-ws-improve={id} onClick={e=>{e.stopPropagation();if(!window.fridayImproveWorkspace)return;window.fridayImproveWorkspace(id,title).then(msg=>{if(onImproveNote)onImproveNote(msg||'');else if(msg&&window.fridayToast)window.fridayToast(msg)})}} style={{fontSize:12}}>🛠️</button>
   </>);
 }
 function WsCustomizedMark({id}){
@@ -2072,7 +2156,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   const box=snap.box||{x:pos.x,y:pos.y,w:size.w,h:size.h};
   const[histOpen,setHistOpen]=useState(false);
   // The browser refused the tab (pop-ups blocked): the window stays and says why.
-  const[tabBlocked,setTabBlocked]=useState(false);
+  const[tabBlocked,setTabBlocked]=useState(false);const [improveNote,setImproveNote]=useState('');
   useEffect(()=>{
     if(window.__fridayOpenHistoryFor===id){delete window.__fridayOpenHistoryFor;setHistOpen(true)}
     const onOpen=e=>{if(e&&e.detail&&e.detail.workspace===id){delete window.__fridayOpenHistoryFor;setHistOpen(true)}};
@@ -2086,8 +2170,8 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
       if(snap.slot){const rel=box.w?(e.clientX-box.x)/box.w:0.5;dOff.current={x:Math.round(rel*size.w),y:e.clientY-box.y,free:true,sx:e.clientX,sy:e.clientY}}
       else dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};
       setDragging(true)}}>
-      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)}/>{/* Resting on maximise opens the snap layouts (unified-shell.md §11.3). */}<button {...menu.bind} title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} aria-haspopup="menu" data-fwin-max={id} onClick={e=>{e.stopPropagation();toggleMax()}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{menu.open&&<SnapMenu {...menu.menu} anchor={menu.anchor.current} kind="workspace" current={snap.slot} onPick={s=>snap.setSlot(s,'owner')} onChat={f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}/>}{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
-    </div>{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
+      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote}/>{/* Resting on maximise opens the snap layouts (unified-shell.md §11.3). */}<button {...menu.bind} title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} aria-haspopup="menu" data-fwin-max={id} onClick={e=>{e.stopPropagation();toggleMax()}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{menu.open&&<SnapMenu {...menu.menu} anchor={menu.anchor.current} kind="workspace" current={snap.slot} onPick={s=>snap.setSlot(s,'owner')} onChat={f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}/>}{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
+    </div>{improveNote&&<div className="fwin-tab-blocked" role="alert" data-ws-improve-note={id} onClick={()=>setImproveNote('')}>{improveNote}</div>}{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
     {histOpen&&<WorkspaceHistory wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();e.preventDefault();startResize(e,'se')}}/>{fridayEdgeHandles(startResize)}
     <SnapPreview box={snap.previewBox} slot={snap.preview}/>
@@ -16634,9 +16718,11 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Knowledge indexing">
       <KnowledgeSettings s={s} save={save} part="privacy"/>
     </StSection>
+    {window.FridayPublishSettings ? <window.FridayPublishSettings s={s} save={save}/> : null}
     <StSection title="Conversation logging">
       <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
       <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
+      <StToggle label="Artifact panel beside the chat" value={s.artifact_panel_enabled!==false} onChange={()=>save({artifact_panel_enabled:s.artifact_panel_enabled===false})} desc={"When " + fridayName() + " makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."}/>
       <StRow label="Keep the log for" desc="Older entries are deleted automatically.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
       </StRow>
@@ -17370,6 +17456,7 @@ function WorkspaceHistory({wsId,label,onClose,top}){
         <span style={{flex:1}}/>
         <button style={_btn} onClick={onClose}>Close</button>
       </div>
+      {window.FridayBundleHistory&&WS_BY_ID[wsId]&&WS_BY_ID[wsId].bundle?<window.FridayBundleHistory wsId={wsId} label={label}/>:null}
       <div style={{..._dim,marginBottom:10}}>{currentKeys.length
         ?(fridayName() + ' has customized this workspace: ')+currentKeys.join(', ')+'. Every step below is reversible — reverting is snapshotted too.'
         :'This workspace is at its baseline. Nothing has been customized.'}</div>
@@ -19401,7 +19488,13 @@ function SettingsTabCosts() {
     title: "By kind"
   }, breakdown(s && s.by_kind)), /*#__PURE__*/React.createElement(StSection, {
     title: "By workspace"
-  }, breakdown(s && s.by_workspace)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
+  }, breakdown(s && s.by_workspace)), /*#__PURE__*/React.createElement(StSection, {
+    title: "By key"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({ fontSize: 10, color: dim, marginBottom: 12, lineHeight: 1.5 }, mono)
+  }, "Whose key paid: yours, or a guest key a codebase runs on (Settings \u2192 Accounts & Keys, the Salon section)."), breakdown(s && s.by_key_profile)), /*#__PURE__*/React.createElement(StSection, {
+    title: "By codebase"
+  }, breakdown(s && s.by_codebase)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
     title: "Scheduled jobs this month"
   }, (costSched || []).map(r => /*#__PURE__*/React.createElement("div", {
     key: r.schedule_id,
@@ -19939,7 +20032,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
@@ -20547,6 +20640,10 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   // A file-access card lists every path it would allow; see FileGrantRequestCard.
   if (a && a.kind === 'file_grant_request') return <FileGrantRequestCard a={a} busy={busy} onDecide={onDecide}/>;
   if (a && a.kind === 'local_context_share') return <LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>;
+  // A publish card shows what would go public, the scan, the licences and a
+  // sandboxed preview (static/friday_publish.js).
+  if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return <window.FridayWorkspaceSwapCard a={a} busy={busy} onDecide={onDecide}/>;
+  if (a && a.kind === 'publish_web' && window.FridayPublishCard) return <window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>;
   return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
     {a.action_description && <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}
@@ -20597,6 +20694,10 @@ function ApprovalPopups() {
 }
 // The context slot of the top bar in a workspace tab: which workspace this is,
 // and the way to it on the desktop (where the scene menu sits on the desktop).
+// The chat tab's context slot (unified-shell.md §4): the chat's own title in the chip a workspace tab wears, never the product's name and never hers.
+function ShellChatName({title}){
+  return(<span className="ws-tab-name" data-testid="shell-chat-name"><span aria-hidden="true">💬</span><span>{title||'Chat'}</span></span>);
+}
 function ShellTabName({ws,histOpen,onHistory}){
   // Which workspace this is, the way to it on the desktop, and the workspace's
   // own tools, as a desktop window's title bar has them.
@@ -23000,6 +23101,8 @@ function App(){
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
   const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
+  // A bundle workspace (installed from the salon) has no React component of its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
+const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id].bundle)?<window.FridayBundleFrame wsId={id}/>:<div>Coming soon</div>;
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read&&n.tier!=='fyi').length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
@@ -23334,12 +23437,16 @@ function App(){
   // and the modals they open (docs/design/active/unified-shell.md). Defined
   // once; the desktop and the tab each draw these same elements.
   const shellTab=STANDALONE_WS&&STANDALONE_WS!=='settings'?(wsInfo[STANDALONE_WS]||null):null;
+  // A chat in its own tab (?chrome=chat) wears the same bar (unified-shell.md §4): the lockup leads back to the desktop with this chat open, the context slot names the chat, and the controls whose panels live in the hidden layer are not offered.
+  const shellChat=window.__FRIDAY_CHROME__==='chat';
+  const shellConv=shellChat?(convList.find(c=>c.id===convId)||null):null;
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const[tabHistOpen,setTabHistOpen]=useState(false);
   const shellMeeting = <MeetingRecIndicator/>;
-  const shellTopBar = <div className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar">
+  const shellTopBar = <div className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar" data-shell-kind={shellChat?'chat':shellTab?'tab':'desktop'}>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
-        {shellTab?<FridayLockup size={15} href={'/?workspace='+encodeURIComponent(shellTab.id)} title="Back to the desktop, with this workspace open"/>
+        {shellChat?<FridayLockup size={15} href={'/?conversation='+encodeURIComponent(convId||'')} title="Back to the desktop, with this chat open"/>
+          :shellTab?<FridayLockup size={15} href={'/?workspace='+encodeURIComponent(shellTab.id)} title="Back to the desktop, with this workspace open"/>
           :<FridayLockup size={15} onClick={()=>toggle('system')} title="Open System workspace"/>}
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {/* Scene selector dropdown */}
@@ -23347,7 +23454,7 @@ function App(){
             top bar itself, not this half of it, whose sides clip on a narrow
             window. With no top or left the menu sits where it would flow,
             right under the button. */}
-        {shellTab?<ShellTabName ws={shellTab} histOpen={tabHistOpen} onHistory={()=>setTabHistOpen(v=>!v)}/>:(<div ref={sceneMenuRef}>
+        {shellChat?<ShellChatName title={shellConv&&shellConv.title}/>:shellTab?<ShellTabName ws={shellTab} histOpen={tabHistOpen} onHistory={()=>setTabHistOpen(v=>!v)}/>:(<div ref={sceneMenuRef}>
           <button onClick={()=>{setSceneMenuOpen(o=>!o);setModelMenuOpen(false)}}
             style={{background:'rgba(0,0,0,0.35)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(0,212,255,0.45)'}}
@@ -23630,30 +23737,30 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <StandaloneApprovals/>
         <span className="top-bar-clock" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
-        <button ref={bellRef} onClick={toggleNotifs}
+        {!shellChat&&(<button ref={bellRef} onClick={toggleNotifs}
           style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#ddd',cursor:'pointer',fontSize:14,position:'relative'}}
           title={runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications'}
           aria-label={runningTaskCount>0?`${runningTaskCount} tasks running, open notifications`:'Open notifications'}>
           <span style={{fontSize:13}}>&#x1F514;</span>
           {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
             style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0e1a',fontWeight:700,fontFamily:'Orbitron, sans-serif'}}>{bellBadgeCount}</span>}
-        </button>
-        <button onClick={toggleQuickDraft}
+        </button>)}
+        {!shellChat&&(<button onClick={toggleQuickDraft}
           style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
           title="Quick Draft" aria-label="Open Quick Draft">
           <span style={{fontSize:13}}>&#x270D;&#xFE0F;</span>
-        </button>
-        <button onClick={toggleChat}
+        </button>)}
+        {!shellChat&&(<button onClick={toggleChat}
           style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
           title={chatOpen?'Close chat':('Open chat with ' + fridayName())}
           aria-label={chatOpen?'Close chat':('Open chat with ' + fridayName())}>
           <span style={{fontSize:13}}>&#x1F4AC;</span>
-        </button>
-        <button onClick={()=>layoutRef.current.toggleLayout()}
+        </button>)}
+        {!shellChat&&(<button onClick={()=>layoutRef.current.toggleLayout()}
           style={{background:'none',border:'none',color:fsOn?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
           title={fsOn?'Back to the normal layout (Ctrl+Shift+F)':'Fullscreen with the chat beside it (Ctrl+Shift+F)'}
-          aria-label={fsOn?'Leave fullscreen with chat':'Fullscreen with chat'} aria-pressed={!!fsOn} data-testid="fs-chat-toggle">⤢</button>
-        {!shellTab&&(<button onClick={()=>{if(cameraOn){setCameraControlsOpen(o=>!o)}else{toggleCamera()}}}
+          aria-label={fsOn?'Leave fullscreen with chat':'Fullscreen with chat'} aria-pressed={!!fsOn} data-testid="fs-chat-toggle">⤢</button>)}
+        {!shellTab&&!shellChat&&(<button onClick={()=>{if(cameraOn){setCameraControlsOpen(o=>!o)}else{toggleCamera()}}}
           onContextMenu={e=>{e.preventDefault();if(cameraOn){toggleCamera()}else{toggleCamera();}}}
           style={{background:'none',border:'none',color:cameraOn?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14,filter:cameraOn?'drop-shadow(0 0 6px rgba(0,212,255,0.6))':'none'}}
           title={cameraOn?'Camera ON — click for controls (right-click to stop)':'Camera Mode'}
@@ -23661,11 +23768,11 @@ function App(){
           <span>&#x1F4F7;</span>{cameraOn&&cameraSendIndicator&&<span style={{position:'relative',top:-6,marginLeft:-4,fontSize:10,color:'#00d4ff'}}>&#x1F441;</span>}
         </button>)}
         {ccGranted&&<span className="cc-indicator" title={("Computer control ACTIVE — " + fridayName() + " can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate.")}><span className="cc-dot"/><span>CC LIVE</span></span>}
-        <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}}
+        {!shellChat&&(<button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}}
           style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#bbb',cursor:'pointer',fontSize:15}}
           title="Settings" aria-label="Open settings">
           <span>&#x2699;</span>
-        </button>
+        </button>)}
         <ArbiterStrip/>
         {/* Offline-first badge — appears only when the network monitor reports
             we're offline or degraded; shows whether local inference is up. */}
@@ -24007,7 +24114,7 @@ function App(){
     return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
       <ApprovalPopups/>
       {shellMeeting}{shellTopBar}{shellKillSwitch}
-      {sw?<StandaloneShell ws={sw} histOpen={tabHistOpen} onCloseHistory={()=>setTabHistOpen(false)}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
+      {sw?<StandaloneShell ws={sw} histOpen={tabHistOpen} onCloseHistory={()=>setTabHistOpen(false)}><Safe name={sw.label}>{wsMap[sw.id]||fridayBundleBody(sw.id)}</Safe></StandaloneShell>
         :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the {fridayName()} desktop</a></div>}
       {shellWsChat}{shellChatPanel}{shellTrace}{shellActivity}{shellNotifs}{shellSettings}{shellQuickDraft}{shellPalette}{shellShortcuts}{shellQuickPost}{shellPodcast}{shellTaskModal}
     </WsCustomCtx.Provider>);
@@ -24092,7 +24199,7 @@ function App(){
     </div>}
 
     {/* Floating Windows */}
-    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
+    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||fridayBundleBody(id)}</Safe></FWin>)})}
 
     {/* Workspace Studio — contextual per-workspace chat (💬 button on each window) */}
     {shellWsChat}

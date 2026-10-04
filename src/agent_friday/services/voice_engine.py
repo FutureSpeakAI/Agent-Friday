@@ -325,6 +325,58 @@ _VOICE_LIVE_TOOLS = [
      "Switch the Friday desktop UI to a workspace on-screen for the user. It is "
      "the user's own screen, so no approval is needed. Workspaces: {workspace_ids}.",
      {"workspace": ("string", "Workspace id or spoken name, e.g. 'news', 'settings'.")}, ["workspace"]),
+    ("improve_workspace",
+     "Open the codebase chat that improves one of the user's own workspaces ('improve the "
+     "chore wheel'). Say you are opening it while it runs; then say the chat is open and "
+     "that nothing goes live until they approve the swap. Only a workspace the user built "
+     "(under Mine) can be improved; for a native one (News, Messages and the rest) the "
+     "result says improving it means Friday's own source, which is not built yet: say that "
+     "plainly, do not promise it.",
+     {"workspace": ("string", "Workspace id or spoken name, e.g. 'chore wheel', 'news'.")}, ["workspace"]),
+    ("workspace_swap",
+     "When the user says they are happy with the change to their workspace, ask to swap it in. "
+     "This raises ONE card on screen; read the card's spoken line back as one sentence and "
+     "wait for their yes, no, or change it. Never say the workspace is swapped before the "
+     "card is approved. If the result is refused, say why in one line.",
+     {}, []),
+    ("codebase_seat",
+     "Change which model the current codebase chat uses: 'use Opus for this one' means which='heavy' "
+     "and model='Opus 5.5'; 'use the local model for small edits' means which='small', model='local'. "
+     "Speak the result's say line as is; it is the user's choice and needs no approval.",
+     {"which": ("string", "'small' or 'heavy'."), "model": ("string", "The model as the user said it, or 'local'.")},
+     ["which", "model"]),
+    ("codebase_key",
+     "Change whose key pays for the current codebase chat: 'use Alex's key' means profile='Alex'; "
+     "'use my key' means profile='mine'. Speak the result's say line as is; if refused, say the key "
+     "is not on this codebase and can be added under Settings, Accounts and Keys.",
+     {"profile": ("string", "'mine' or a guest key's label.")}, ["profile"]),
+    ("codebase_costs",
+     "Answer 'how much has this cost?' for the current codebase chat from the meter. Speak the result's "
+     "say line as is; never estimate.", {}, []),
+    ("codebase_engine",
+     "Change which engine edits the current codebase: 'use Claude's agent for this codebase' means "
+     "engine='claude_agent'; 'let Friday edit it' means engine='friday'. Speak the result's say line as is, "
+     "including the disclosure that Claude's agent runs as a process on this PC.",
+     {"engine": ("string", "'friday' or 'claude_agent'.")}, ["engine"]),
+    ("codebase_agent",
+     "Run one task with Claude's agent in the current codebase when its engine is claude_agent ('have the "
+     "agent add a search box'). Say the agent is working while it runs; then speak the result's say line as is.",
+     {"task": ("string", "What the agent should do.")}, ["task"]),
+    ("codebase_run",
+     "Run one shell command in the current codebase's folder ('run the tests', 'build it'). The first command "
+     "of a task raises one card; speak the result's say line as is, then the exit code and the gist of the output.",
+     {"command": ("string", "The command, as it would be typed.")}, ["command"]),
+    ("open_project",
+     "Open one of the user's projects: its latest chat comes to the front ('open my Friday project'). "
+     "HUB_OK means the page showed it; HUB_SAVED means no page did; HUB_FAIL names the projects that exist.",
+     {"project": ("string", "The project, as the user said it.")}, ["project"]),
+    ("show_preview",
+     "Show the preview beside the current chat ('show me the preview'): the codebase's page or the chat's artifacts.",
+     {}, []),
+    ("build_mode",
+     "Enter build mode in the current chat (its panel becomes the Build panel for one of the project's codebases) "
+     "or leave it ('build mode', 'build mode with the rent tracker', 'leave build mode').",
+     {"on": ("boolean", "true to enter, false to leave."), "codebase": ("string", "Which codebase, if named.")}, []),
     ("delegate_to_friday",
      "Hand ANY request to the full Friday agent, with every tool it has in chat "
      "(email drafting, files, the wiki, browsing, research, workflows, anything the "
@@ -1371,6 +1423,29 @@ def _voice_tool_run(name, args, send_client, session=None):
             # conversation that asked, which this call's session names.
             from agent_friday.services import agent as _ag
             _fn = getattr(_ag, "_tool_" + name)
+            _cid = session.get("conversation_id") if isinstance(session, dict) else None
+            _tok = _ag._CURRENT_CONVERSATION.set(_cid)
+            try:
+                return _governed(name, _fn, args)
+            finally:
+                _ag._CURRENT_CONVERSATION.reset(_tok)
+        if name in ("codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent", "codebase_run",
+                    "open_project", "show_preview", "build_mode"):
+            from agent_friday.services import agent as _ag
+            _fn = {"codebase_seat": _ag._tool_codebase_seat, "codebase_key": _ag._tool_codebase_key,
+                   "codebase_costs": _ag._tool_codebase_costs, "codebase_engine": _ag._tool_codebase_engine,
+                   "codebase_agent": _ag._tool_codebase_agent, "codebase_run": _ag._tool_codebase_run,
+                   "open_project": _ag._tool_open_project, "show_preview": _ag._tool_show_preview,
+                   "build_mode": _ag._tool_build_mode}[name]
+            _cid = session.get("conversation_id") if isinstance(session, dict) else None
+            _tok = _ag._CURRENT_CONVERSATION.set(_cid)
+            try:
+                return _governed(name, _fn, args)
+            finally:
+                _ag._CURRENT_CONVERSATION.reset(_tok)
+        if name in ("improve_workspace", "workspace_swap"):
+            from agent_friday.services import agent as _ag
+            _fn = _ag._tool_improve_workspace if name == "improve_workspace" else _ag._tool_workspace_swap
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:
