@@ -166,5 +166,5 @@ def test_a_plain_yes_through_the_tool_still_sends():
     out = ve._tool_answer_share_request(
         {"request_id": aid, "decision": "approve"},
         session={"owner_text": "send it"})
-    assert "he approved" in out.lower(), out
+    assert "they approved" in out.lower(), out
     assert _status(aid) == "approved"
