@@ -3,10 +3,12 @@
 A footnote token lets forget find the chats that cited a document, but a quoted
 passage can also sit in saved chats that never cited it, in the conversation
 memory's search index, in the older chat history, in the context log, in the
-reasoning traces and in the last search held in memory. So forget fingerprints the document before it is
-deleted (every run of eight words, hashed, never stored) and sweeps each of those
-stores for any run of eight or more of those words, replacing it with
-"[forgotten source]". An abridged quote or an unquoted copy goes with it.
+reasoning traces, in the background tasks' journal and in the last search held in
+memory. So forget fingerprints the document before it is deleted (every run of eight
+words, hashed, never stored) and sweeps each of those stores for any run of eight or
+more of those words, replacing it with "[forgotten source]". An abridged quote or an
+unquoted copy goes with it. (Replies that read the Library are kept out of the memory
+index and the day's summaries in the first place; see usage.py and cite.py.)
 """
 from __future__ import annotations
 
@@ -220,6 +222,24 @@ def _traces(fp) -> tuple[int, str | None]:
     return r["archived"] + r["live"] + r["pending"], (("the reasoning traces: " + r["incomplete"]) if r["incomplete"] else None)
 
 
+def _tasks(fp) -> tuple[int, str | None]:
+    """Background tasks: the journal on disk (events, state, ledger, checkpoints) and the live task table."""
+    n, problem = 0, None
+    try:
+        from agent_friday.services import task_journal
+        n += task_journal.redact(lambda t: scrub(t, fp))["records"]
+    except Exception as e:  # noqa: BLE001
+        problem = "the task journal (%s)" % type(e).__name__
+    try:
+        from agent_friday.services import agent as _agent, reasoning_trace
+        with _agent.TASKS_LOCK:
+            for t in _agent.TASKS.values():
+                n += reasoning_trace._redact_inplace(t, lambda x: scrub(x, fp))
+    except Exception as e:  # noqa: BLE001
+        problem = problem or "the live task table (%s)" % type(e).__name__
+    return n, problem
+
+
 def sweep_all(fp: set[int], doc_id: int | None = None) -> dict:
     """Run every sweep; returns how many records each changed and, under "incomplete", the
     stores that could not be swept (so the owner is told, not reassured)."""
@@ -230,7 +250,7 @@ def sweep_all(fp: set[int], doc_id: int | None = None) -> dict:
         out = {"chats": 0}
         incomplete.append("the saved chats (%s)" % type(e).__name__)
     for name, fn in (("memory", _memory_index), ("history", _legacy_history), ("context_log", _context_logs),
-                     ("traces", _traces)):
+                     ("traces", _traces), ("tasks", _tasks)):
         n, problem = fn(fp)
         out[name] = n
         if problem:

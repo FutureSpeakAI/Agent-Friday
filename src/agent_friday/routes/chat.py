@@ -386,6 +386,9 @@ def _conv_context(cid, limit=100):
         role = 'user' if m.get('role') == 'user' else 'assistant'
         text = m.get('text') or ''
         if text:
+            if role == 'assistant' and (m.get('meta') or {}).get('library'):
+                # A reply that read the Library is recognised wherever history is replayed or summarised.
+                _library_cite.remember_library_reply(text)
             out.append({"role": role, "content": text})
     return out
 
@@ -2331,6 +2334,7 @@ def chat():
                 'openai' if _provider == 'openai' else 'cloud')
             _seat_model = (_route_info.get('model')
                            or settings.get('orchestrator_model') or '')
+        _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -2341,8 +2345,10 @@ def chat():
             'sources': sources,
             'model': _seat_model,
             'seat': _seat_class,
-            'library': _library_cite.used_library(tool_trace),
+            'library': _lib_turn,
         }
+        if _lib_turn:
+            _library_cite.remember_library_reply(reply)
         if _seat_notice:
             friday_msg['seat_notice'] = _seat_notice
         if _fallback_chain:
@@ -2392,7 +2398,7 @@ def chat():
             try:
                 threading.Thread(
                     target=_index_chat_turn,
-                    args=(message, reply, session_id, user_msg['id'], friday_msg['id']),
+                    args=(message, reply, session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
                     daemon=True,
                 ).start()
             except Exception:
@@ -2851,6 +2857,8 @@ def chat_send():
             role = 'user' if msg.get('role') == 'user' else 'assistant'
             text = msg.get('text', '')
             if text:
+                if role == 'assistant' and msg.get('library'):
+                    _library_cite.remember_library_reply(text)
                 messages.append({"role": role, "content": text})
         # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
         # memory too -- including this assistant's own earlier answers -- so a
@@ -2979,6 +2987,7 @@ def chat_send():
             'workspace': workspace,
         }
         reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
+        _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -2989,8 +2998,10 @@ def chat_send():
             'sources': sources,
             'model': _seat_model,
             'seat': _seat_class,
-            'library': _library_cite.used_library(tool_trace),
+            'library': _lib_turn,
         }
+        if _lib_turn:
+            _library_cite.remember_library_reply(reply)
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
         if _send_seat_notice:
@@ -3009,7 +3020,7 @@ def chat_send():
             try:
                 threading.Thread(
                     target=_index_chat_turn,
-                    args=(message, reply, _session_id, user_msg['id'], friday_msg['id']),
+                    args=(message, reply, _session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
                     daemon=True,
                 ).start()
             except Exception:

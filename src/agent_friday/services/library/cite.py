@@ -10,11 +10,14 @@ unchanged since it was read. A block that fails becomes plain words.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
-from agent_friday.services.library import grants, principal as pr, versions
+from agent_friday.services.library import grants, principal as pr, usage, versions
 from agent_friday.services.library.store import store_for
 
 TOKEN_RE = re.compile(r"\[(unverified-)?lib:(\d+)#(\d+)\]")
@@ -140,20 +143,80 @@ def used_library(tool_trace) -> bool:
 
 ELIDED = "[An earlier answer drawn from your Library; it stays on this PC.]"
 
+# Saved replies that read the Library, by digest, so a reply with no footnote (a spoken one, one that
+# quoted without citing) is still recognised when history is replayed or summarised. Memory only; it is
+# rebuilt from the conversation store each time a conversation's context is built.
+_REPLIES: "OrderedDict[str, None]" = OrderedDict()
+_REPLIES_MAX = 4000
+_REPLIES_LOCK = threading.Lock()
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha1(" ".join(text.split()).encode("utf-8")).hexdigest()
+
+
+def remember_library_reply(text) -> None:
+    """A saved assistant reply that used the Library (see is_library_reply)."""
+    if not isinstance(text, str) or not text.strip():
+        return
+    with _REPLIES_LOCK:
+        _REPLIES[_digest(text)] = None
+        _REPLIES.move_to_end(_digest(text))
+        while len(_REPLIES) > _REPLIES_MAX:
+            _REPLIES.popitem(last=False)
+
+
+def is_library_reply(text) -> bool:
+    """A saved reply that quotes the Library: it carries a footnote or an evidence fence, or it was saved
+    by a turn that read the Library."""
+    if not isinstance(text, str) or not text:
+        return False
+    if "[lib:" in text or "[unverified-lib:" in text or "<evidence-" in text:
+        return True
+    with _REPLIES_LOCK:
+        return _digest(text) in _REPLIES
+
+
+def stand_in(text):
+    """`text`, or the stand-in line when it is a reply that read the Library."""
+    return ELIDED if is_library_reply(text) else text
+
+
+def turn_used_library(tool_trace, conversation_id: str | None = None) -> bool:
+    """Did this turn read Library text? Its tool trace says for a chat turn; a spoken turn and a read_file
+    of a Library document left a mark on the conversation instead. The mark is always taken."""
+    read = usage.consume(conversation_id)
+    return bool(used_library(tool_trace) or read)
+
 
 def elide_for_cloud(messages: list, settings: dict | None) -> int:
     """Before history goes to a cloud model, an earlier assistant turn that quoted the
     Library is replaced by a one-line stand-in, unless the owner allows cloud answers
     from the Library. Returns how many turns were replaced. In place, like the PII
-    scrub that follows it."""
+    scrub that follows it (a message with block content gets a new list, so shared
+    blocks are not touched)."""
     if (settings or {}).get("library_cloud_answers"):
         return 0
     n = 0
     for m in messages:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
         c = m.get("content")
-        if m.get("role") == "assistant" and isinstance(c, str) and ("[lib:" in c or "[unverified-lib:" in c):
-            m["content"] = ELIDED
-            n += 1
+        if isinstance(c, str):
+            if is_library_reply(c):
+                m["content"] = ELIDED
+                n += 1
+        elif isinstance(c, list):
+            blocks, changed = [], False
+            for blk in c:
+                if isinstance(blk, dict) and blk.get("type") == "text" and is_library_reply(blk.get("text")):
+                    blocks.append(dict(blk, text=ELIDED))
+                    changed = True
+                    n += 1
+                else:
+                    blocks.append(blk)
+            if changed:
+                m["content"] = blocks
     return n
 
 

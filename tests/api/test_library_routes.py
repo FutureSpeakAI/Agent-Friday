@@ -166,3 +166,24 @@ def test_a_request_without_the_session_token_gets_nothing_from_the_library(clien
     client.environ_base.pop("HTTP_X_FRIDAY_TOKEN", None)
     for url in ("/api/library/status", "/api/library/tree", "/api/library/raw/1", "/api/library/page/1/1.webp"):
         assert client.get(url).status_code == 403, url
+
+
+def test_the_gate_is_told_what_each_change_names(client, tmp_path, monkeypatch):
+    from agent_friday.governance import action_gate
+    seen = []
+    real = action_gate.authorize
+
+    def spy(tool_name, args, session_ctx=None, **kw):
+        seen.append((tool_name, dict(args or {}), dict(session_ctx or {})))
+        return real(tool_name, args, session_ctx, **kw)
+
+    monkeypatch.setattr(action_gate, "authorize", spy)
+    root = _lib(tmp_path)
+    j = _add(client, root)
+    client.post("/api/library/shelf", json={"doc_id": 1, "shelf": "vault", "confirm": False, "note": "not forwarded"})
+    client.post("/api/library/remove", json={"scope_id": j["scope"]["id"]})
+    ops = {name: args for name, args, _ctx in seen}
+    assert ops["library_add"]["path"] == str(root) or ops["library_add"].get("path")
+    assert ops["library_shelf"] == {"doc_id": 1, "shelf": "vault"}, ops["library_shelf"]
+    assert ops["library_remove"] == {"scope_id": j["scope"]["id"]}
+    assert all(ctx.get("screen_click") is True for _n, _a, ctx in seen)

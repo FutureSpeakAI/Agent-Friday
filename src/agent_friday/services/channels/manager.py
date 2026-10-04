@@ -268,7 +268,7 @@ def _run_agent(text: str) -> str:
         [{"role": "user", "content": text}],
         system=_system_prompt(keywords=text),
         system_builder=lambda provider: _gated_system_prompt(provider, keywords=text),
-        workspace="chat")
+        workspace="chat", session_ctx={"origin": "channel"})
     return reply or ""
 
 

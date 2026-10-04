@@ -41,11 +41,18 @@ def _speaking() -> bool:
         return False
 
 
+REMOTE_ORIGINS = frozenset({"phone", "channel"})
+
+
 def _loop_is_local() -> bool:
     """True only when the running loop is KNOWN to be a local model; unknown is not local."""
     try:
         from agent_friday.services import agent
         from agent_friday.trust import people
+        # An answer delivered by text message or through a chat service leaves this PC through
+        # that service, whichever model wrote it: it is treated as cloud-bound.
+        if str(agent._CURRENT_ORIGIN.get() or "") in REMOTE_ORIGINS:
+            return False
         return bool(people.loop_is_local(agent._CURRENT_PROVIDER.get()))
     except Exception:
         return False
@@ -158,6 +165,8 @@ def record_use(principal: str, doc_id: int, block_id: int, res: dict | None = No
         from agent_friday.services.conversations import MAIN_ID
         from agent_friday.services.library import versions
         cid = _ag._CURRENT_CONVERSATION.get() or MAIN_ID
+        from agent_friday.services.library import usage
+        usage.mark(cid)
         res = res or {}
         store_for(principal).add_citation(int(block_id), int(doc_id), cid, None,
                                           versions.compact(res.get("stamp")), res.get("receipt"))

@@ -2423,6 +2423,16 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
         _cid = _conv.resolve(conversation_id)
     except Exception:
         _conv, _cid = None, None
+    # Did this spoken answer read the Library? The tool left a mark on the conversation; taking it here
+    # keeps the answer out of the memory index and the voice-session distillation, as a typed one is.
+    _library_turn = False
+    try:
+        from agent_friday.services.library import cite as _lib_cite
+        _library_turn = bool(agent_text) and _lib_cite.turn_used_library(None, _cid)
+        if _library_turn:
+            _lib_cite.remember_library_reply(agent_text)
+    except Exception:
+        _library_turn = False
     user_msg = friday_msg = None
     if user_text:
         user_msg = {
@@ -2446,6 +2456,7 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
             'pinned': False,
             'via': 'voice',
             'conversation_id': _cid,
+            'library': _library_turn,
         }
         if _unsaved:
             friday_msg['off_record'] = True
@@ -2457,7 +2468,8 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
             try:
                 _conv.append(_cid, {"id": _m['id'], "role": _m['role'],
                                     "text": _m['text'], "pinned": False,
-                                    "meta": dict(_turn_meta, kind="turn", via="voice")})
+                                    "meta": dict(_turn_meta, kind="turn", via="voice",
+                                                 library=bool(_m.get('library')))})
             except Exception as _ce:
                 print(f'  [voice] could not persist turn to {_cid}: {_ce}')
         try:
@@ -2480,7 +2492,7 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
         try:
             threading.Thread(
                 target=_index_chat_turn,
-                args=(user_text, agent_text, _current_session_id()),
+                args=(user_text, agent_text, _current_session_id(), None, None, _library_turn),
                 daemon=True,
             ).start()
         except Exception as _ve:
@@ -2508,11 +2520,17 @@ def _spawn_voice_distill_unchecked(turn_log):
     if not turn_log:
         return
     convo = []
+    try:
+        from agent_friday.services.library import cite as _lib_cite
+    except Exception:  # pragma: no cover - the Library package is part of the build
+        _lib_cite = None
     for u, a in turn_log:
         if u:
             convo.append(f"User (voice): {u}")
         if a:
-            convo.append(f"Friday (voice): {a}")
+            # A task that reviews the session may run on a cloud model: an answer drawn from the
+            # Library goes in as a stand-in line, never as the documents' words.
+            convo.append(f"Friday (voice): {_lib_cite.stand_in(a) if _lib_cite else a}")
     transcript = "\n".join(convo)[:8000]
     prompt = (
         "Review the following voice conversation between the user and Friday. "

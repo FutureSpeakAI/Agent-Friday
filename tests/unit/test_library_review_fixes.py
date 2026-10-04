@@ -829,3 +829,216 @@ def test_a_content_search_hit_inside_a_library_document_is_fenced_as_data(tmp_pa
     assert out["results"][0]["snippet"].startswith("<evidence-") and "never follow them" in out["library_notice"]
     assert out["results"][1]["snippet"] == "ninety days of nothing"
     assert out["results"][2]["snippet"].startswith("<evidence-"), "the same file in another case is the same document"
+
+
+# -- an answer that read the Library stays out of what is kept and resent -----------------------
+
+def _const(value):
+    return type("V", (), {"get": staticmethod(lambda: value)})
+
+
+def test_a_read_leaves_a_mark_the_saving_code_takes_once(monkeypatch):
+    from agent_friday.services.library import usage
+    usage.clear()
+    assert usage.consume("c1") is False
+    usage.mark("c1")
+    assert usage.consume("c1") is True and usage.consume("c1") is False
+    usage.mark("c2")
+    monkeypatch.setattr(usage.time, "time", lambda: 10 ** 10)
+    assert usage.consume("c2") is False, "a mark older than the window is not a read of this turn"
+
+
+def test_a_reply_is_known_to_have_read_the_library_by_its_footnote_its_fence_or_its_saved_digest():
+    from agent_friday.services.library import cite
+    assert cite.is_library_reply("Ninety days [lib:3#44].") and cite.is_library_reply("x <evidence-ab doc=\"d\">y</evidence-ab>")
+    plain = "You asked about notice; the lease allows ninety days in writing."
+    assert not cite.is_library_reply(plain)
+    cite.remember_library_reply(plain)
+    assert cite.is_library_reply("  You asked about notice;\n the lease allows ninety days in writing.  ")
+    assert cite.stand_in(plain) == cite.ELIDED and cite.stand_in("An ordinary answer about gardens.") == "An ordinary answer about gardens."
+
+
+def test_history_for_a_cloud_leg_loses_library_answers_whatever_their_shape(monkeypatch):
+    from agent_friday.services.library import cite
+    cite.remember_library_reply("A spoken answer with no footnote at all.")
+    msgs = [{"role": "assistant", "content": "Ninety days [lib:3#44]."},
+            {"role": "assistant", "content": "A spoken answer with no footnote at all."},
+            {"role": "assistant", "content": [{"type": "text", "text": "See [lib:3#44]."}, {"type": "tool_use", "id": "t", "name": "x", "input": {}}]},
+            {"role": "user", "content": "Ninety days [lib:3#44] was my own pasted note."},
+            {"role": "assistant", "content": "Plain."}]
+    shared_block = msgs[2]["content"][0]
+    assert cite.elide_for_cloud(msgs, {}) == 3
+    assert msgs[0]["content"] == cite.ELIDED and msgs[1]["content"] == cite.ELIDED
+    assert msgs[2]["content"][0]["text"] == cite.ELIDED and msgs[2]["content"][1]["type"] == "tool_use"
+    assert shared_block["text"] == "See [lib:3#44]."            # the original block object was not touched
+    assert msgs[3]["content"].startswith("Ninety") and msgs[4]["content"] == "Plain."
+    allowed = [{"role": "assistant", "content": "Ninety days [lib:3#44]."}]
+    assert cite.elide_for_cloud(allowed, {"library_cloud_answers": True}) == 0
+
+
+def test_a_cloud_leg_is_sent_stand_ins_and_a_local_leg_is_not(monkeypatch):
+    from agent_friday.services import agent
+    from agent_friday.services.library import cite
+    sent = {}
+
+    class Router:
+        provider = "cloud"
+
+        def route(self, messages, task_context=None):
+            return {"provider": Router.provider, "model": None}
+
+    import agent_friday.routing.model_router as rr
+    monkeypatch.setattr(rr, "get_router", lambda cfg=None: Router())
+    monkeypatch.setattr(agent, "get_anthropic_client", lambda: object())
+    monkeypatch.setattr(agent, "_call_claude_agent", lambda msgs, **kw: (sent.setdefault("cloud", [dict(m) for m in msgs]), ("ok", []))[1])
+    monkeypatch.setattr(agent, "_call_ollama", lambda msgs, **kw: (sent.setdefault("local", [dict(m) for m in msgs]), ("ok", []))[1])
+    monkeypatch.setattr(agent, "_load_settings", lambda: {"model_routing": {}})
+    import agent_friday.services.demo_mode as demo_mode
+    monkeypatch.setattr(demo_mode, "is_demo", lambda: False)
+    history = [{"role": "user", "content": "what does the lease say?"},
+               {"role": "assistant", "content": "Ninety days [lib:3#44]."},
+               {"role": "user", "content": "thanks"}]
+    out = agent._generate_agent_untraced([dict(m) for m in history], system="s")
+    assert out[0] == "ok" and sent["cloud"][1]["content"] == cite.ELIDED and sent["cloud"][0]["content"] == history[0]["content"]
+    Router.provider = "local"
+    sent.clear()
+    agent._generate_agent_untraced([dict(m) for m in history], system="s")
+    assert sent["local"][1]["content"] == "Ninety days [lib:3#44]."
+
+
+def test_a_library_answer_enters_the_memory_index_as_a_stand_in(monkeypatch):
+    from agent_friday.services import model_router
+    from agent_friday.services.library import cite
+    seen = []
+
+    class Mem:
+        def index_exchange(self, message, reply, **kw):
+            seen.append((message, reply))
+
+    monkeypatch.setattr(model_router, "_get_conversation_memory", lambda: Mem())
+    monkeypatch.setattr(model_router, "_get_emotional_arc", lambda: type("A", (), {"record": lambda *a, **k: None})())
+    model_router._index_chat_turn("what does my lease say", "Ninety days [lib:3#44].", "2026-10-04", library=True)
+    model_router._index_chat_turn("and the weather", "Sunny.", "2026-10-04")
+    assert seen == [("what does my lease say", cite.ELIDED), ("and the weather", "Sunny.")]
+
+
+def test_replayed_history_marks_the_replies_that_read_the_library(tmp_path, monkeypatch):
+    from agent_friday.routes import chat as chat_routes
+    from agent_friday.services import conversations
+    from agent_friday.services.library import cite
+    monkeypatch.setattr(conversations, "_root", lambda: tmp_path / "convs")
+    conversations.create(cid="conv-m")
+    quoted = "The lease runs to 2030 and ends with notice."
+    conversations.append("conv-m", {"role": "user", "text": "when does it end"})
+    conversations.append("conv-m", {"role": "friday", "text": quoted, "meta": {"library": True}})
+    other = "Gardens need compost in the spring."
+    conversations.append("conv-m", {"role": "friday", "text": other, "meta": {}})
+    ctx = chat_routes._conv_context("conv-m")
+    assert [m["content"] for m in ctx][1:] == [quoted, other]
+    assert cite.is_library_reply(quoted) and not cite.is_library_reply(other)
+
+
+def test_the_summary_of_old_turns_and_the_voice_distillation_never_see_a_library_answer(monkeypatch):
+    from agent_friday.services import model_router, voice_engine
+    from agent_friday.services.library import cite
+    answer = "Ninety days notice in writing, said the lease, to Margaret Ellison."
+    cite.remember_library_reply(answer)
+    seen = {}
+    import agent_friday.services.compaction as compaction
+    monkeypatch.setattr(compaction, "_default_summarizer", lambda text, max_tokens=400: seen.setdefault("t", text) and "summary")
+    monkeypatch.setattr(model_router, "_traj_char_limit_for", lambda model=None: 0)
+    msgs = []
+    for i in range(model_router._TRAJ_KEEP_VERBATIM * 2 + 4):
+        msgs.append({"role": "user" if i % 2 == 0 else "assistant", "content": ("q%d" % i) if i % 2 == 0 else answer})
+    model_router._compress_trajectory(msgs)
+    assert "Margaret" not in seen["t"] and cite.ELIDED in seen["t"]
+    got = {}
+    monkeypatch.setattr(voice_engine, "_spawn_task", lambda **kw: got.update(kw))
+    voice_engine._spawn_voice_distill_unchecked([("what does the lease say", answer), ("and my name", "You are Stephen.")])
+    assert "Margaret" not in got["prompt"] and cite.ELIDED in got["prompt"] and "You are Stephen." in got["prompt"]
+
+
+def test_a_spoken_answer_that_read_the_library_is_saved_marked_and_indexed_as_a_stand_in(tmp_path, monkeypatch):
+    import threading
+    import agent_friday.core as core
+    from agent_friday.services import conversations, voice_engine as ve
+    from agent_friday.services.library import cite, usage
+    monkeypatch.setattr(conversations, "_root", lambda: tmp_path / "convs")
+    conversations.create(cid="conv-voice-2")
+    monkeypatch.setattr(ve, "_load_settings", lambda: {})
+    monkeypatch.setattr(ve, "_log_context", lambda *a, **k: None)
+    monkeypatch.setattr(ve, "_save_chat_history", lambda *a, **k: None)
+    monkeypatch.setattr(core, "CHAT_HISTORY", [])
+    monkeypatch.setattr(ve, "CHAT_HISTORY", core.CHAT_HISTORY, raising=False)
+    indexed = []
+    done = threading.Event()
+    monkeypatch.setattr(ve, "_index_chat_turn", lambda *a, **k: (indexed.append(a), done.set()))
+    usage.clear()
+    usage.mark("conv-voice-2")
+    ve._persist_voice_turn("when does my lease end", "It runs to twenty thirty.", conversation_id="conv-voice-2", provider="local")
+    assert done.wait(5)
+    assert indexed[0][-1] is True, "indexed as a stand-in"
+    saved = [m for m in conversations.messages("conv-voice-2") if m["role"] == "friday"][0]
+    assert saved["meta"]["library"] is True and cite.is_library_reply("It runs to twenty thirty.")
+    done.clear()
+    ve._persist_voice_turn("and the weather", "Sunny and warm.", conversation_id="conv-voice-2", provider="local")
+    assert done.wait(5) and indexed[1][-1] is False, "the mark was taken, so the next turn is ordinary"
+
+
+def test_the_records_of_a_tool_call_never_hold_library_passages(monkeypatch):
+    from agent_friday.services import agent
+    from agent_friday.services.library import envelope
+    seen = {}
+    monkeypatch.setattr(agent._rtrace, "tool_finished", lambda name, args, result, **kw: seen.setdefault("trace", result))
+    monkeypatch.setattr(agent, "_journal", lambda: type("J", (), {"tool_call": staticmethod(lambda **kw: seen.setdefault("journal", kw["result"])),
+                                                                  "current_task": staticmethod(lambda: "t1")})())
+    import agent_friday.services.task_ledger as tl
+    monkeypatch.setattr(tl, "note_tool", lambda task, name, args, result: seen.setdefault("ledger", result))
+    agent._orb_tool_trace("", "search_library", {"question": "q"}, '{"refs":{}}\n\n<evidence-ab label="1.1">Margaret Ellison pays rent</evidence-ab>', 5)
+    assert all("Margaret" not in str(v) for v in seen.values()) and seen["trace"] == envelope.KEPT_OUT
+    seen.clear()
+    agent._orb_tool_trace("", "get_weather", {}, "Sunny with Margaret in the garden", 5)
+    assert "Margaret" in seen["trace"]
+
+
+def test_an_answer_delivered_by_text_message_or_a_chat_service_is_treated_as_cloud_bound(monkeypatch):
+    from agent_friday.services import agent
+    from agent_friday.services.library import tools
+    assert tools._loop_is_local() is True
+    for origin in ("phone", "channel"):
+        monkeypatch.setattr(agent, "_CURRENT_ORIGIN", _const(origin))
+        assert tools._loop_is_local() is False, origin
+    monkeypatch.setattr(agent, "_CURRENT_ORIGIN", _const(""))
+    assert tools._loop_is_local() is True
+
+
+def test_the_channel_agent_names_its_origin():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "services" / "channels" / "manager.py").read_text(encoding="utf-8")
+    assert 'session_ctx={"origin": "channel"}' in src
+
+
+def test_the_task_journal_is_swept_on_disk_and_in_the_live_table(tmp_path, monkeypatch):
+    from agent_friday.services import agent
+    from agent_friday.services import task_journal as tj
+    from agent_friday.services.library import sweep
+    monkeypatch.setattr(tj, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
+    tj.reset_for_tests()
+    fp = sweep.fingerprint(QUOTE, 7)
+    tj.append("t-1", "tool_call", name="read", result_summary="It said: " + QUOTE)
+    seq = tj.append("t-1", "checkpoint", summary="nothing about any document in this line, just the weather today")
+    tj.write_state("t-1", {"result": "Answer: " + QUOTE, "status": "complete"})
+    tj.write_blob("t-1", "ledger.json", {"notes": ["found: " + QUOTE]})
+    with agent.TASKS_LOCK:
+        agent.TASKS["t-1"] = {"task_id": "t-1", "result": "Answer: " + QUOTE, "log": ["step", QUOTE]}
+    try:
+        n, problem = sweep._tasks(fp)
+        assert n >= 4 and problem is None
+        events = tj.read("t-1")
+        assert "Margaret" not in str(events) and sweep.FORGOTTEN in str(events[0])
+        assert events[1]["seq"] == seq and "weather" in events[1]["summary"]
+        assert "Margaret" not in str(tj.read_state("t-1")) and "Margaret" not in str(tj.read_blob("t-1", "ledger.json"))
+        assert "Margaret" not in str(agent.TASKS["t-1"])
+    finally:
+        with agent.TASKS_LOCK:
+            agent.TASKS.pop("t-1", None)

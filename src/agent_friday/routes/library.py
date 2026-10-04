@@ -48,12 +48,16 @@ def _not_another_site():
     return None
 
 
-def _gated(op: str):
+#: What a change names, so the receipt of its decision names it too (never any document text).
+_TARGET_KEYS = ("doc_id", "target_id", "scope_id", "path", "shelf", "recursive", "glob")
+
+
+def _gated(op: str, args: dict | None = None):
     """A change to the Library goes through the action gate like every other state change:
     the owner's verified click on the screen is the decision, so it is classed internal and
-    receipted; anything else is held."""
+    receipted (with the target it names); anything else is held."""
     from agent_friday.governance import action_gate
-    v = action_gate.authorize(op, {}, {"screen_click": True, "surface": "library-workspace"})
+    v = action_gate.authorize(op, args or {}, {"screen_click": True, "surface": "library-workspace"})
     if v.action != "allow":
         return jsonify({"status": "denied", "error": f"held: {v.reason}"}), 403
     return None
@@ -66,7 +70,11 @@ def _same_origin_json(op: str = ""):
         return jsonify({"status": "error", "error": "JSON body required"}), 415
     if not screen_click.screen_session(request):
         return jsonify({"status": "denied", "error": "this change must come from the Library page"}), 403
-    return _gated(op) if op else None
+    if not op:
+        return None
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
+    return _gated(op, {k: body[k] for k in _TARGET_KEYS if k in body and isinstance(body[k], (str, int, bool, type(None)))})
 
 
 @library_bp.route("/api/library/status")

@@ -2110,6 +2110,11 @@ def _compress_trajectory(messages, model=None):
     for m in old_turns:
         role = 'USER' if m.get('role') == 'user' else 'FRIDAY'
         text = (m.get('content') or '')[:2000]  # cap per turn
+        if role == 'FRIDAY':
+            # The summary of old turns is written once and replayed in every later turn, to whichever
+            # model serves them; an answer drawn from the Library does not go into it.
+            from agent_friday.services.library import cite as _library_cite
+            text = _library_cite.stand_in(text)
         transcript_lines.append(f"{role}: {text}")
     transcript = '\n'.join(transcript_lines)
 
@@ -2216,12 +2221,16 @@ def _current_session_id():
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None):
+def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
     Called from a daemon thread off the chat hot path. Never raises. Off the
     record nothing is indexed (services/off_record).
+
+    `library`: the reply read the user's Library. The memory, the day's summary, the dreaming pass
+    and the graph all read this index, so a Library answer enters it as a stand-in line: the
+    question is kept, the documents' words are not copied (the chat itself keeps the answer).
     """
     try:
         from agent_friday.services import off_record
@@ -2230,6 +2239,9 @@ def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id
     except Exception:
         pass
     try:
+        if library:
+            from agent_friday.services.library import cite as _library_cite
+            reply = _library_cite.ELIDED
         mem = _get_conversation_memory()
         mem.index_exchange(
             message, reply, session_id=session_id,

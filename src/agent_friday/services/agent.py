@@ -37,6 +37,10 @@ _CURRENT_KEY_PROFILE: ContextVar = ContextVar("friday_tool_key_profile", default
 #: provider), and the provider a handler may ask about during one call.
 #: A handler that hands out a person's record asks this, and treats
 #: "unknown" as "not local": people trust stays home (trust/people.py).
+#: Where the running tool call's request came from when it is not the owner's own screen ("phone",
+#: "channel"): the answer is delivered through a third party, so a handler that hands out the owner's
+#: documents treats it as cloud-bound.
+_CURRENT_ORIGIN: ContextVar = ContextVar("friday_tool_origin", default="")
 _LOOP_PROVIDER: ContextVar = ContextVar("friday_loop_provider", default=None)
 _CURRENT_PROVIDER: ContextVar = ContextVar("friday_tool_provider", default=None)
 import subprocess
@@ -324,6 +328,19 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     # Provider primitives. The routed provider is tried first with the
     # router-chosen model; fallbacks use each provider's OWN configured default
     # (model=None) so a cloud model id never leaks into a local/OpenAI call.
+    def _cloud_messages():
+        """What a cloud leg is sent: earlier Library answers are replaced by a stand-in unless the owner
+        allowed cloud answers. Decided here, for the leg that is about to send, so a fallback from a
+        local leg is judged at send time too."""
+        try:
+            from agent_friday.services.library import cite as _library_cite
+            _copy = [dict(m) if isinstance(m, dict) else m for m in messages]
+            if _library_cite.elide_for_cloud(_copy, settings):
+                return _copy
+        except Exception:
+            pass
+        return messages
+
     def _via_claude(use_model):
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
@@ -333,7 +350,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # configured CLOUD model, never a foreign id.
         from agent_friday.services.model_router import _claude_safe_model
         return _call_claude_agent(
-            messages, workspace=workspace, system=_system_for('cloud'),
+            _cloud_messages(), workspace=workspace, system=_system_for('cloud'),
             model=_claude_safe_model(use_model or model, settings),
             max_tokens=max_tokens, temperature=temperature,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
@@ -345,7 +362,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # model rides its RESOLVED provider (openrouter/groq/…, GAP-3 fix);
         # the fallback attempt (use_model=None) keeps the legacy single-slot.
         return _call_openai(
-            messages, system=_system_for('openai'), model=use_model,
+            _cloud_messages(), system=_system_for('openai'), model=use_model,
             max_tokens=max_tokens, temperature=temperature,
             orb_label=orb_label, tools=(tools or tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
@@ -10268,6 +10285,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # Whose key this turn runs on, for the handlers that write receipts
         # (salon spec §4.7).
         _kp_tok = _CURRENT_KEY_PROFILE.set(str(_sc.get("key_profile") or ""))
+        _origin_tok = _CURRENT_ORIGIN.set(str(_sc.get("origin") or ""))
         # The loop that is running knows what it talks to; the session's
         # provider is the ROUTED intent, built once and stale after a
         # local-to-cloud fallback. The loop wins; the session only fills in
@@ -10280,6 +10298,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _refused = _cred_paths.REFUSED.get()
         finally:
             _CURRENT_PROVIDER.reset(_prov_tok)
+            _CURRENT_ORIGIN.reset(_origin_tok)
             _CURRENT_SURFACE.reset(_surface_tok)
             _CURRENT_KEY_PROFILE.reset(_kp_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
@@ -11754,6 +11773,13 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
     Also the single place every executed tool call — allowed or vault-denied,
     on either loop — passes, so the task journal's tool_call event is written
     here (task-visibility.md TV3), before the orb early-return."""
+    try:
+        # The records below (reasoning trace, task ledger, task journal, the orb's steps) outlive the
+        # documents: Library passages are replaced by a stand-in before any of them sees the result.
+        from agent_friday.services.library import envelope as _lib_env
+        result = _lib_env.keep_out_of_records(name, result)
+    except Exception:
+        pass
     _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
                           duration_ms=int(duration_ms or 0))
     try:
