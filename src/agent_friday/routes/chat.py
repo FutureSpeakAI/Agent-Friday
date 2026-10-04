@@ -145,20 +145,23 @@ def _gate_vision_prompt(text: str) -> str:
 
 
 
-def _cloud_tool_set(pilot=None):
+def _cloud_tool_set(pilot=None, base=None):
     """(tools, catalogue_all) for a cloud OpenAI-format turn.
 
     With the catalogue on, the cloud sends the opening set (resident tools
     plus the loader) and the loop loads the rest by name or query; with it
     off, every schema goes as before. Same shape as the local-seat branch.
+    `base` is the turn's catalogue (`_ag_tools_for_turn`: the always-on tools,
+    the workspace's own, the hub's in a hub chat); the always-on ones without.
     """
+    base = CLAUDE_TOOLS if base is None else base
     try:
         from agent_friday.services import tool_catalogue as _TCat
-        if _TCat.enabled() and CLAUDE_TOOLS:
-            return _TCat.opening_set(CLAUDE_TOOLS, pilot=pilot), CLAUDE_TOOLS
+        if _TCat.enabled() and base:
+            return _TCat.opening_set(base, pilot=pilot), base
     except Exception:
         pass
-    return CLAUDE_TOOLS, None
+    return base, None
 
 
 def _fit_tools(model_id, tools, prompt_cost=0, intent=None,
@@ -397,6 +400,20 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     # Off the record the conversation store keeps these in memory only
     # (services/off_record), and the mirror rows are marked never to be written.
     _unsaved = _prov.stops_storage(_settings)
+    # A fenced ```friday-artifact block in the reply (services/artifacts) is
+    # stored as an artifact and replaced with a pointer BEFORE the reply is
+    # written anywhere, so the transcript never carries a second copy.
+    try:
+        from agent_friday.services import artifacts as _art
+        _clean, _art_recs = _art.absorb_fenced(
+            cid, friday_msg.get('text') or '', settings=_settings)
+        if _art_recs:
+            friday_msg['text'] = _clean
+            friday_msg['artifact_events'] = [
+                {"artifact_id": r["id"], "version": r["version"],
+                 "kind": r["kind"], "title": r["title"]} for r in _art_recs]
+    except Exception as _e:
+        print(f"  [artifacts] fenced block not absorbed: {_e}")
     try:
         _conv.append(cid, {"id": user_msg.get('id'), "role": "user",
                            "text": user_msg.get('text') or '',
@@ -874,6 +891,13 @@ def chat_stream():
                              "X-Accel-Buffering": "no"})
 
 
+def _ag_tools_for_turn(workspace, conversation_id):
+    """A turn's tool catalogue: the always-on tools, the workspace's own, and
+    the hub's when the chat is in the hub (services/agent.tools_for_workspace)."""
+    from agent_friday.services.agent import tools_for_workspace as _tfw
+    return _tfw(workspace, conversation_id=conversation_id)
+
+
 @chat_bp.route('/api/chat', methods=['POST'])
 @_traced_turn
 @_privacy_hold_turn
@@ -1275,6 +1299,16 @@ def chat():
                 _conv_seat = _convs.effective_seat(_conversation_id)
             except Exception:
                 pass
+            # A codebase chat's own routing record (salon spec §4.7): the heavy
+            # seat takes big edits, and everything when no local model is
+            # resident. None means "follow the default", which is the brain.
+            try:
+                from agent_friday.services import codebases as _cbs_seat
+                _cb_seat = _cbs_seat.seat_for_conversation(_conversation_id, message)
+                if _cb_seat:
+                    _conv_seat = _cb_seat
+            except Exception:
+                pass
             # A conversation bound to a model that is GONE.
             #
             # A binding to a missing model 404s and falls through to the cloud.
@@ -1580,6 +1614,36 @@ def chat():
                     head = head + "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur_block + "\n"
             except Exception:
                 pass
+            # What this chat's panel holds rides in the tail, with what this
+            # message chose: it changes as the work does (a step, a hand edit,
+            # an approval), and the head stays the same bytes from turn to turn.
+            # It is appended to `tail`, never to `sp`: `sp` was split above.
+            # The panel's artifacts in this conversation, and any hand edit the
+            # model has not yet seen (services/artifacts.context_block).
+            try:
+                from agent_friday.services import artifacts as _art
+                tail = tail + _art.context_block(_conversation_id)
+            except Exception:
+                pass
+            # The codebase this chat's panel is bound to, if any (services/codebases).
+            try:
+                from agent_friday.services import codebases as _cbs
+                tail = tail + _cbs.context_block(_conversation_id)
+            except Exception:
+                pass
+            # The project this chat is filed in: its standing instructions, files
+            # and codebases (services/projects). A chat outside one gets nothing.
+            try:
+                from agent_friday.services import projects as _projs
+                tail = tail + _projs.context_block(_conversation_id)
+            except Exception:
+                pass
+            # A plan awaiting approval, or approved and under way (services/plans).
+            try:
+                from agent_friday.services import plans as _plans
+                tail = tail + _plans.context_block(_conversation_id)
+            except Exception:
+                pass
             if voice_mode:
                 # Constant while voice mode is on, so it belongs to the head;
                 # at its end, not its start, so it never moves the prefix.
@@ -1639,6 +1703,16 @@ def chat():
             # later -- possibly from the System workspace with no turn running.
             "conversation_id": _conv_id_from(data) or "",
         }
+        # Every metered call in a codebase chat is that codebase's spend, under
+        # whose key it runs (salon spec §4.7): the meter reads both from here.
+        try:
+            from agent_friday.services import codebases as _sess_ctx_cb
+            _cb_rec = _sess_ctx_cb.for_conversation(_conversation_id)
+            if _cb_rec:
+                _sess_ctx['codebase'] = _cb_rec['id']
+                _sess_ctx['key_profile'] = _cb_rec.get('key_profile') or 'mine'
+        except Exception:
+            pass
         # Wire this turn into the ask-first action flow: stamps the session id so
         # the confirmation gate is live, and grants a pending action when this
         # message is the user's "yes" to a question Friday asked last turn.
@@ -1800,17 +1874,21 @@ def chat():
             # assembler" rule in docs/design/active/one-tool-registry.md:
             # two builders, two answers.
             _catalogue_all = None
+            # The turn's catalogue (services/agent.tools_for_workspace): the
+            # always-on tools, the workspace's own, and the hub's when this
+            # chat is in the hub. One assembler for every seat.
+            _turn_catalogue = _ag_tools_for_turn(workspace, _conversation_id)
             try:
                 from agent_friday.services import tool_catalogue as _TCat
-                if _TCat.enabled() and CLAUDE_TOOLS:
-                    _local_tools = _TCat.opening_set(CLAUDE_TOOLS, pilot=_pilot)
-                    _catalogue_all = CLAUDE_TOOLS
+                if _TCat.enabled() and _turn_catalogue:
+                    _local_tools = _TCat.opening_set(_turn_catalogue, pilot=_pilot)
+                    _catalogue_all = _turn_catalogue
                     _tool_note = ''
             except Exception:
                 _catalogue_all = None
             if _catalogue_all is None:
                 _local_tools, _tool_note = _fit_tools(
-                    _route_info.get('model'), CLAUDE_TOOLS,
+                    _route_info.get('model'), _turn_catalogue,
                     prompt_cost=_prompt_cost, intent=_intent,
                     system=system_prompt, messages=messages)
             if _tool_note:
@@ -1818,7 +1896,7 @@ def chat():
                 # Make the loss legible to the person, not only to the model.
                 try:
                     _kept_n = {str(t.get('name')) for t in (_local_tools or [])}
-                    _lost = sorted(str(t.get('name')) for t in CLAUDE_TOOLS
+                    _lost = sorted(str(t.get('name')) for t in _turn_catalogue
                                    if str(t.get('name')) not in _kept_n)
                     _tool_surface = {
                         "kept": len(_kept_n),
@@ -1947,7 +2025,8 @@ def chat():
                 # keeps the legacy single-slot settings behavior.
                 # The cloud gets the same opening set as the local seat and
                 # loads the rest through load_tools (services/tool_catalogue).
-                _cloud_tools, _cloud_catalogue = _cloud_tool_set(_pilot)
+                _cloud_tools, _cloud_catalogue = _cloud_tool_set(
+                    _pilot, _ag_tools_for_turn(workspace, _conversation_id))
                 reply, tool_trace = _call_openai(
                     messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
@@ -2002,7 +2081,8 @@ def chat():
                     tools=_local_tools, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                 )
             if _provider == 'openai':
-                _cloud_tools, _cloud_catalogue = _cloud_tool_set(_pilot)
+                _cloud_tools, _cloud_catalogue = _cloud_tool_set(
+                    _pilot, _ag_tools_for_turn(workspace, _conversation_id))
                 return _call_openai(
                     _retry_messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
@@ -2049,7 +2129,7 @@ def chat():
             ), []
 
         reply, tool_trace, _integrity_meta = validate_toolcall_integrity(
-            reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
+            reply, tool_trace, [t['name'] for t in _ag_tools_for_turn(workspace, _conversation_id)],
             redispatch=_redispatch_for_integrity,
             redispatch_no_tools=_redispatch_no_tools,
         )
@@ -2365,7 +2445,11 @@ def chat():
             pass
 
         return jsonify(public_result({
-            "response": reply,
+            # The persisted text: a fenced artifact block has been replaced by
+            # its pointer there (see _persist_turn), and the page shows that.
+            "response": friday_msg.get('text') if friday_msg.get('text') is not None else reply,
+            # Which artifacts this turn put in the panel, so the page opens it.
+            "artifact_events": friday_msg.get('artifact_events') or [],
             # WHO ACTUALLY ANSWERED. Every refusal path here already reports
             # the model (seat_missing, cloud_only_no_key, local_only_refused) —
             # the SUCCESS path did not, which left the only way to find out
@@ -2681,6 +2765,26 @@ def chat_send():
                 prompt = prompt + pinned_block(_conversation_id)
             except Exception:
                 pass
+            try:
+                from agent_friday.services import artifacts as _art
+                prompt = prompt + _art.context_block(_conversation_id)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import codebases as _cbs
+                prompt = prompt + _cbs.context_block(_conversation_id)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import projects as _projs
+                prompt = prompt + _projs.context_block(_conversation_id)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import plans as _plans
+                prompt = prompt + _plans.context_block(_conversation_id)
+            except Exception:
+                pass
             # Assembled here, not by `_get_friday_system_prompt`: the policy
             # and the override strip are applied here, last.
             return seal_system_prompt(prompt, "/api/chat/send prompt")
@@ -2712,6 +2816,15 @@ def chat_send():
                 _conv_seat_model = (_cs.get('model') or '').strip()
         except Exception as _cse:
             print(f"  [chat/send] could not read the conversation seat: {_cse}")
+        # The codebase's routing record wins over the conversation's binding
+        # for this turn (salon spec §4.7): big edits to the heavy seat.
+        try:
+            from agent_friday.services import codebases as _cbs_seat
+            _cb_seat = _cbs_seat.seat_for_conversation(_conversation_id, message)
+            if _cb_seat and _cb_seat.get('model'):
+                _conv_seat_model = str(_cb_seat['model']).strip()
+        except Exception:
+            pass
 
         _send_provider = _predict_route_provider(
             keywords=message, workspace=workspace, has_tools=True)
@@ -2744,6 +2857,16 @@ def chat_send():
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "conversation_id": _conversation_id,
         }
+        # Every metered call in a codebase chat is that codebase's spend, under
+        # whose key it runs (salon spec §4.7): the meter reads both from here.
+        try:
+            from agent_friday.services import codebases as _sess_ctx_cb
+            _cb_rec = _sess_ctx_cb.for_conversation(_conversation_id)
+            if _cb_rec:
+                _sess_ctx['codebase'] = _cb_rec['id']
+                _sess_ctx['key_profile'] = _cb_rec.get('key_profile') or 'mine'
+        except Exception:
+            pass
         # Same ask-first action flow as /api/chat: enforce confirmation and honor
         # a "yes" reply to a question Friday asked on the previous turn.
         _sess_ctx = prepare_confirmation_ctx(_session_id, message, _sess_ctx)
@@ -2783,7 +2906,7 @@ def chat_send():
             )
 
         reply, tool_trace, _send_integrity = validate_toolcall_integrity(
-            reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
+            reply, tool_trace, [t['name'] for t in _ag_tools_for_turn(workspace, _conversation_id)],
             redispatch=_send_redispatch,
         )
         if _send_integrity.get('final_leaks') or _send_integrity.get('final_claims'):

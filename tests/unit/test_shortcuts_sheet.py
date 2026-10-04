@@ -194,6 +194,7 @@ CENSUS = [
     (r"e\.key !== 'Escape'", ["Esc"]),         # interrupting her while she speaks
     (r"e\.key === 'Escape'", ["Esc"]),         # closing what is open
     (r"\.friday-cite\[data-kw-page\]", None),  # Enter or Space on a focused citation: its own button keys
+    (r"\.friday-remote-img\[data-remote-src\]", None),  # Enter or Space on a focused remote-image placeholder: its own button keys
     (r"fridayLandingInput\(", None),           # the landing judge noting that a key was pressed
     (r"fridaySceneKey\(e\)", None),            # keeps the scene's arrows from it while a workspace is open
 ]
