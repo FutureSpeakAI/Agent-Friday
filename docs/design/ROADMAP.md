@@ -301,6 +301,14 @@ Phases 1–8 total about 12 agent-weeks.
     (red-first, no-op detector, a check that could have failed) is the right
     chapter for the loop being built now. Fold it in; do not build the button.
 
+**Built on a branch, waiting for the train**
+
+12. **The Library and its 3D shelves** (`library.md`). Documents the owner adds are read on
+    this PC and answered with page-exact footnotes; the 3D file browser becomes the Library's
+    Shelves view. Built on `feat/library-shelves`; the evidence, the Reader, the consent record
+    and the red-team set have tests; a split of real documents and a real-GPU frame rate are
+    still owed.
+
 **Dead — delete or archive**
 
 `hostname-onboarding.md` (delete). `findings-graph.md` (delete; kill criterion

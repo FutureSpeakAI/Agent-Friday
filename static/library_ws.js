@@ -200,6 +200,7 @@
         if (!t || (t.workspace && t.workspace !== 'library')) return;
         if (t.view === 'shelves' || t.view === '3d' || t.view3d) { setStage('shelves'); setView('shelves'); }
         else if (t.view === 'list') { setStage('list'); setView('docs'); }
+        else if (t.view === 'pc') { setView('pc'); }
         if (t.q) { setQ(String(t.q)); setView('ask'); }
         const lib = t.lib || (t.libblock ? { doc: Number(t.libdoc), block: Number(t.libblock) } : null);
         if (lib && (lib.block || lib.doc)) {
@@ -473,6 +474,7 @@
     key: 'view',
     keys: ['view', 'lib', 'q', 'libdoc', 'libblock'],
     sections: [
+      { id: 'pc', label: 'Browse this PC', aliases: ['this pc', 'my pc', 'file browser'] },
       { id: 'list', label: 'Documents', aliases: ['documents', 'list', 'files'] },
       { id: 'shelves', label: 'Shelves', aliases: ['3d', 'shelf', 'spatial'] }
     ]
