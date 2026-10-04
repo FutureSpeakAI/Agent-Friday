@@ -237,6 +237,8 @@ def describe_source(tool_name: str, tool_input: Optional[dict]) -> str:
         return "your email"
     if "calendar" in t or t.endswith("_day_calendar_events"):
         return "an event on your calendar"
+    if t == "search_library":
+        return "a document in your Library"
     if t in ("read_file", "search_files", "inspect_image", "inspect_audio") or "file" in t:
         p = str(inp.get("path") or inp.get("file_path") or inp.get("file_id") or "")
         name = re.split(r"[\\/]", p)[-1] if p else ""

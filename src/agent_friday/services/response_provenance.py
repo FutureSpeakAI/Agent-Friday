@@ -28,7 +28,7 @@ _provenance_logger = logging.getLogger("friday.provenance")
 
 # Citation forms that assert a sourced fact — used by warn_if_ungrounded_claim
 # to detect a reply that cites something despite zero executed tools.
-_ASSERTION_CITATION_RE = re.compile(r"\[(?:web|wiki|news):[^\]]+\]")
+_ASSERTION_CITATION_RE = re.compile(r"\[(?:web|wiki|news|lib):[^\]]+\]")
 
 
 def _strip_trailing_punct(url: str) -> str:

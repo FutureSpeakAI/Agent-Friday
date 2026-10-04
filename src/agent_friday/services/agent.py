@@ -9220,6 +9220,15 @@ try:
 except Exception as _fge:  # never let optional deps break the agent import
     print(f"  [FILE ACCESS] registration skipped: {_fge}")
 
+# The Library (search_library, library_status, library_show): the owner's own
+# documents, read on this PC and answered with footnotes. Read-only; adding,
+# removing and forgetting go through file_access cards. See services/library/.
+try:
+    from agent_friday.services.library import tools as _library_tools
+    _library_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _lbe:  # never let optional deps break the agent import
+    print(f"  [LIBRARY] registration skipped: {_lbe}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.
@@ -13354,6 +13363,9 @@ CLAUDE_TOOLS[:] = [t for t in CLAUDE_TOOLS if t.get("name") not in HUB_TOOL_NAME
 # wherever they are named. A name not registered in this build is skipped.
 ON_DEMAND_TOOLS = (
     "file_access",           # file grants: asks raise the owner's card
+    "search_library",        # the Library: labelled passages from the owner's documents
+    "library_status",
+    "library_show",
     "notifications",         # the tray: read, clear, mute
     "local_models_advise",   # Settings > Models: what this PC can run
     "hand_cursor",           # the hand cursor and big mode, by voice

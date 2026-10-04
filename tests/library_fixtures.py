@@ -111,3 +111,30 @@ def write_docs(folder, docs: dict):
             p.write_text(body, encoding="utf-8")
         out[name] = p
     return out
+
+
+def install_fake_encoder(monkeypatch):
+    """A deterministic stand-in for the sentence encoder: hashed bag-of-words,
+    unit length. Lexical overlap is similarity, which is enough to test the
+    routing logic without loading a model."""
+    import hashlib
+    import re
+
+    import numpy as np
+
+    from agent_friday.services.library import embed
+
+    def vec(text: str):
+        v = np.zeros(embed.DIM, dtype=np.float32)
+        for w in re.findall(r"[a-z0-9]{3,}", text.lower()):
+            h = int(hashlib.md5(w.encode()).hexdigest(), 16)
+            v[h % embed.DIM] += 1.0 if (h >> 20) % 2 else -1.0 + 2.0   # keep positive weights
+        n = float(np.linalg.norm(v))
+        return v / n if n else v
+
+    def fake_embed(texts, batch=16):
+        return np.vstack([vec(t) for t in texts]) if texts else np.zeros((0, embed.DIM), dtype=np.float32)
+
+    monkeypatch.setattr(embed, "available", lambda: True)
+    monkeypatch.setattr(embed, "embed", fake_embed)
+    return fake_embed

@@ -85,7 +85,7 @@ import re
 # provenance layer judged the backing. Counting it as "no citation" would
 # punish the model twice for one fault and send a correct reply round again.
 CITATION_RE = re.compile(
-    r"\[(?:web|unverified-web|wiki|news|memory|conversation):[^\]]+\]")
+    r"\[(?:web|unverified-web|wiki|news|memory|conversation|lib|unverified-lib):[^\]]+\]")
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 

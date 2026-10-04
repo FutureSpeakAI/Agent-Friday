@@ -2590,6 +2590,8 @@ CITATION_INSTRUCTIONS = (
     "  [memory:YYYY-MM-DD/\"short quote\"]     — something established in a past conversation\n"
     "  [conversation:YYYY-MM-DD/\"short quote\"] — same as memory; either form is fine\n"
     "  [web:https://full-url]               — a public web page\n"
+    "  [1.2]                                — a passage from the user's Library, by the label "
+    "search_library gave it (the label is the whole citation)\n"
     "Rules:\n"
     "  • Put the citation immediately after the sentence it supports.\n"
     "  • Cite ONLY sources actually present in your context or tool results — "

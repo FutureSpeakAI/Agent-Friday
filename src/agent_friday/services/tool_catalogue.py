@@ -163,7 +163,7 @@ def resident(tools: list) -> list:
 _PILOT_READ_TOOLS = {
     "apps": ("query_calendar", "search_email", "list_tasks", "find_calendar_events"),
     "knowledge": ("search_wiki", "read_wiki", "knowledge_query"),
-    "files": ("search_files", "read_file"),
+    "files": ("search_files", "read_file", "search_library"),
 }
 _PILOT_SCHEMA_CHARS = 6000
 

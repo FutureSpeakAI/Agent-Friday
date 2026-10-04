@@ -198,6 +198,10 @@ INTERNAL_TOOLS = frozenset({
     # reaches no one (services/local_models_tools).
     "local_models_advise",
     "search_web", "browse_web", "read_file", "search_files",
+    # The Library: reads the owner's own index (search_library, library_status)
+    # or moves the owner's own screen (library_show). Adding, removing and
+    # forgetting are file_access cards, decided on screen.
+    "search_library", "library_status", "library_show",
     "write_clipboard", "query_trust_graph", "query_calendar", "revert_workspace",
     "list_workspace_history", "find_calendar_events", "search_email",
     "search_drive", "read_doc", "list_tasks", "complete_task", "create_task",

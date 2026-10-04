@@ -82,6 +82,7 @@ from agent_friday.services.model_router import (
     _vault_cloud_fallback,
     _vault_local_only,
 )  # noqa: E501
+from agent_friday.services.library import cite as _library_cite
 from agent_friday.services.response_provenance import (
     mark_unverified_citations as _mark_unverified_citations,
     warn_if_ungrounded_claim as _warn_if_ungrounded_claim,
@@ -2188,6 +2189,9 @@ def chat():
         # The print below is best-effort only — under the tray's pythonw launch
         # these stdout lines were NOT reaching ~/.friday/server_stderr.log when
         # checked, so the response field is the signal to rely on, not the log.
+        # Footnotes from the owner's Library: labels become [lib:doc#block] tokens,
+        # backed only by what search_library returned this turn (services/library/cite).
+        reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
         _cite_meta = None
         if cite_sources:
             from agent_friday.services import citation_enforcement as _ce

@@ -215,7 +215,7 @@ class Store:
 
     def replace_content(self, doc_id: int, *, title: str, pages: int | None, shelf: str, blocks: list[dict],
                         sections: list[dict], passages: list[dict], doc_profile: str,
-                        section_profiles: dict[int, str], ocr_pages: int = 0, sha256: str | None = None) -> None:
+                        section_profiles: dict[int, str], ocr_pages: int = 0, sha256: str | None = None) -> dict:
         """Atomically replace everything stored for a document. `blocks` carry
         `ord`; `sections` carry their local `id`/`parent`/`first`/`last`;
         `passages` carry `section` (local id), `blocks` (ordinals), `text`."""
@@ -263,6 +263,7 @@ class Store:
                        "state_detail=NULL, indexed_at=?, ocr_pages=?, sha256=COALESCE(?, sha256) WHERE id=?",
                        (title, pages, shelf, INDEX_VERSION, time.time(), ocr_pages, sha256, doc_id))
                 self.x("COMMIT")
+                return {"sections": sec_ids}          # passages carry their new "id" in place
             except Exception:
                 self.x("ROLLBACK")
                 raise
@@ -308,6 +309,18 @@ class Store:
                          "WHERE folder_id IS NOT NULL) AND id NOT IN (SELECT DISTINCT parent_id FROM folders "
                          "WHERE parent_id IS NOT NULL)").rowcount:
                 pass
+
+    def put_vectors(self, rows: list[tuple[str, int, int | None, bytes]]) -> None:
+        """(node_kind, node_id, doc_id, float16 blob) rows, replacing any existing."""
+        with self._lock:
+            self.x("BEGIN")
+            try:
+                for r in rows:
+                    self.x("INSERT OR REPLACE INTO vectors(node_kind, node_id, doc_id, vec) VALUES(?,?,?,?)", r)
+                self.x("COMMIT")
+            except Exception:
+                self.x("ROLLBACK")
+                raise
 
     # -- receipts and citations (nothing is written off the record) -----------
 

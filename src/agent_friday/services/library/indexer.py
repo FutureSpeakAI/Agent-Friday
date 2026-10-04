@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from agent_friday.services.library import extract as _ext
-from agent_friday.services.library import procrun, structure
+from agent_friday.services.library import procrun, structure, vectors
 from agent_friday.services.library.store import INDEX_VERSION, Store, store_for, OWNER
 from agent_friday.services.library.textclean import safe_title
 
@@ -153,10 +153,16 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
                 pa["section"] = s["id"]
                 passages.append(pa)
             profiles[s["id"]] = structure.section_profile(s, kids.get(s["id"], []))
-        store.replace_content(doc_id, title=title, pages=res.get("pages"), shelf=chosen, blocks=blocks,
-                              sections=sections, passages=passages,
-                              doc_profile=structure.document_profile(title, sections),
-                              section_profiles=profiles, ocr_pages=res.get("ocr_pages") or 0, sha256=sha)
+        doc_profile = structure.document_profile(title, sections)
+        stored = store.replace_content(doc_id, title=title, pages=res.get("pages"), shelf=chosen, blocks=blocks,
+                                       sections=sections, passages=passages, doc_profile=doc_profile,
+                                       section_profiles=profiles, ocr_pages=res.get("ocr_pages") or 0, sha256=sha)
+        try:
+            vectors.index_document_vectors(store, doc_id, sections=sections, passages=passages,
+                                           doc_profile=doc_profile, section_profiles=profiles,
+                                           sec_ids=stored["sections"])
+        except Exception:  # noqa: BLE001 - a document without vectors is still keyword-searchable
+            pass
     except _ext.CapExceeded as e:
         store.set_state(doc_id, "failed:" + str(e))
         return {"state": "failed", "doc_id": doc_id, "detail": str(e)}
@@ -193,6 +199,10 @@ def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob
             store.purge_document(row["id"])
             out["purged"] += 1
     store.drop_empty_folders()
+    try:
+        vectors.refresh_folders(store)
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 
