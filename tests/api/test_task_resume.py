@@ -202,6 +202,49 @@ def test_the_resumed_run_sees_the_work_that_was_already_done(monkeypatch, task):
     assert "result of read_file" in str(seen["messages"])
 
 
+def test_the_resumed_run_replays_no_thinking_from_the_crashed_one(monkeypatch, task):
+    """Saved thinking was produced under the crashed run's system prompt and
+    tool set; replayed into a resumed request it is rejected or dropped by
+    models that check it, so the resume sends none."""
+    calls = {"n": 0}
+
+    class _Thinks:
+        def create(self, **kw):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise _Crash("the desktop server went away")
+            usage = types.SimpleNamespace(input_tokens=1, output_tokens=1)
+            return types.SimpleNamespace(content=[
+                types.SimpleNamespace(type="thinking", thinking="plan", signature="SIG-OLD"),
+                types.SimpleNamespace(type="text", text="step 1"),
+                types.SimpleNamespace(type="tool_use", id="t0", name="read_file", input={"q": 0}),
+            ], stop_reason="tool_use", usage=usage)
+
+    monkeypatch.setattr(ag, "get_anthropic_client",
+                        lambda: types.SimpleNamespace(messages=_Thinks()))
+    monkeypatch.setattr(ag, "_execute_tool", lambda name, args, **kw: f"result of {name}")
+    with pytest.raises(_Crash):
+        ag._call_claude_agent([{"role": "user", "content": "go"}],
+                              session_ctx={"task_id": task})
+    assert "SIG-OLD" in str(tr.read(task)["convo"]), "the checkpoint keeps what was produced"
+
+    seen = {}
+
+    class _Msgs:
+        def create(self, **kw):
+            seen["messages"] = kw["messages"]
+            return types.SimpleNamespace(
+                content=[types.SimpleNamespace(type="text", text="done")],
+                stop_reason="end_turn",
+                usage=types.SimpleNamespace(input_tokens=1, output_tokens=1))
+
+    monkeypatch.setattr(ag, "get_anthropic_client",
+                        lambda: types.SimpleNamespace(messages=_Msgs()))
+    tr.resume(task)
+    assert "result of read_file" in str(seen["messages"])
+    assert "SIG-OLD" not in str(seen["messages"])
+
+
 def test_resume_is_refused_when_there_is_nothing_to_resume():
     with pytest.raises(tr.ResumeRefused) as e:
         tr.resume("never-existed")

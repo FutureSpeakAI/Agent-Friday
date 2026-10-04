@@ -338,6 +338,29 @@ def should_compact(messages, model=None, cfg=None, *, window=None, reserve_token
     return effective_tokens(messages, model) > _budget(window, cfg, reserve_tokens)
 
 
+_THINKING_TYPES = ("thinking", "redacted_thinking")
+
+
+def strip_thinking(messages):
+    """``messages`` with every thinking block removed from assistant turns.
+
+    A thinking block is valid only against the exact history it was produced
+    in. Once compaction or trimming rewrites that history, replaying the kept
+    turns' thinking is an error (or is silently dropped) on models that check
+    it, so a rewritten transcript carries none. An assistant turn left with no
+    content keeps a short text block (the API rejects an empty one),
+    so roles still alternate."""
+    out = []
+    for m in messages:
+        c = m.get("content") if isinstance(m, dict) else None
+        if m.get("role") == "assistant" and isinstance(c, list) and any(
+                isinstance(b, dict) and b.get("type") in _THINKING_TYPES for b in c):
+            kept = [b for b in c if not (isinstance(b, dict) and b.get("type") in _THINKING_TYPES)]
+            m = {**m, "content": kept or [{"type": "text", "text": "(continued)"}]}
+        out.append(m)
+    return out
+
+
 def _merge_adjacent(messages):
     """Merge consecutive same-role messages that both carry string content, so
     inserting the summary can't create an illegal two-in-a-row-role sequence for

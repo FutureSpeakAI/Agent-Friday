@@ -11876,6 +11876,38 @@ def _guest_auth_failed(guest, exc):
                        "Settings \u2192 Accounts & Keys, or say \"use my key\"." % (guest["label"], status or name))
 
 
+def _refusal_message(resp) -> str:
+    """What the user reads when the model declined a request (stop_reason
+    "refusal"): that it was declined, the category the provider gave, and that
+    nothing ran."""
+    details = getattr(resp, "stop_details", None)
+    category = getattr(details, "category", None) if details is not None else None
+    if category is None and isinstance(details, dict):
+        category = details.get("category")
+    model = getattr(resp, "model", None) or "The model"
+    why = f" (its safety check flagged it as {category})" if category else ""
+    return (f"{model} declined this request{why}, so nothing was done. "
+            "You can rephrase it, or choose a different model for it.")
+
+
+def _append_steer(convo: list, text: str) -> None:
+    """Add an operator steer to the newest user turn and leave it there.
+
+    The system prompt and earlier turns stay byte-identical for the whole
+    loop: editing either one mid-task invalidates the thinking the model
+    already produced, and re-bills the cached prefix. The steer is appended
+    after any tool results in the newest user turn instead."""
+    block = {"type": "text", "text": f"Operator instruction for the rest of this task: {text}"}
+    last = convo[-1] if convo else None
+    if not last or last.get("role") != "user":
+        convo.append({"role": "user", "content": [block]})
+        return
+    content = last.get("content")
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}] if content else []
+    convo[-1] = {**last, "content": list(content or []) + [block]}
+
+
 def _call_claude_agent(*args, **kwargs):
     """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
     _tok = _LOOP_PROVIDER.set("anthropic")
@@ -11965,13 +11997,17 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             # only if the transcript is still over budget.
             _new = _compaction.compress_new_output(
                 convo, _hr_mark[0], model=model or ANTHROPIC_MODEL_DEFAULT, seat="cloud")
-            _new = _compaction.maybe_compact(
+            _summed = _compaction.maybe_compact(
                 _new, model=model or ANTHROPIC_MODEL_DEFAULT, summarizer=_claude_summary,
                 reserve_tokens=int(max_tokens or 0) + int(
                     (_compaction.schema_tokens(CLAUDE_TOOLS) + _compaction.schema_tokens(safe_system))
                     * _compaction.calibration(model or ANTHROPIC_MODEL_DEFAULT)),
                 seat="cloud", ledger=_ledger, task_id=_ledger_task,
                 taint_key=_compaction_taint_key(session_ctx))
+            # A rewritten history no longer matches the one the kept turns'
+            # thinking was produced against; the provider rejects or drops
+            # replayed thinking after such an edit, so it is removed here.
+            _new = _compaction.strip_thinking(_summed) if _summed is not _new else _new
             if _new is not convo:
                 convo[:] = _new
         except Exception as _ce:
@@ -12162,6 +12198,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                                 session_ctx=session_ctx)
             if _steer_inject:
                 _tj_loop.steer(_steer_inject, source="operator-file", session_ctx=session_ctx)
+                _append_steer(convo, _steer_inject)
 
             kwargs = {
                 "model": model or ANTHROPIC_MODEL_DEFAULT,
@@ -12170,8 +12207,6 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 "tools": _sent_tools,
             }
             _sys = safe_system
-            if _steer_inject:
-                _sys = (_sys or '') + f"\n\n[OPERATOR STEER — FOLLOW THIS IMMEDIATELY]: {_steer_inject}"
             if _sys:
                 kwargs["system"] = _sys
             # Claude 5 models think by default but return empty thinking text
@@ -12324,6 +12359,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 _final_text = "".join(text_parts).strip()
                 if not _final_text:
                     _pilot_outcome(session_ctx, "error")
+                    # A declined request comes back as stop_reason "refusal"
+                    # with no text; the user is told it was declined, never
+                    # handed an empty reply.
+                    if getattr(resp, "stop_reason", None) == "refusal":
+                        _final_text = _refusal_message(resp)
                 return (_final_text, tool_trace)
 
             # Promote orb category to whatever tool family is most active this round.
