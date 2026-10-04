@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import pytest
 
+from tests.api.turn_context_helpers import (
+    CHAT_ROUTES, capture_requests, chat_requests, route_to, turn_prompt, whole_request)
+
 from agent_friday.services import situation
 
 HEADER = "== SITUATION (pinned; live, read at the start of this turn) =="
@@ -12,21 +15,7 @@ HEADER = "== SITUATION (pinned; live, read at the start of this turn) =="
 
 @pytest.fixture
 def captured(patch_app):
-    seen = []
-
-    def fake_agent(messages, *a, **k):
-        seen.append(k.get("system") if "system" in k else (a[0] if a else ""))
-        return ("ok", [])
-
-    def fake_text(*a, **k):
-        seen.append(k.get("system") or "")
-        return "ok"
-
-    for name in ("_generate_agent", "_call_claude_agent", "_oai_agentic_loop"):
-        patch_app(name, fake_agent)
-    for name in ("_generate_text", "_call_claude", "_call_ollama", "_call_openai"):
-        patch_app(name, fake_text)
-    return seen
+    return capture_requests(patch_app)
 
 
 @pytest.fixture
@@ -40,8 +29,10 @@ def _main_id(client):
     return client.get("/api/conversations").get_json()["main_id"]
 
 
-@pytest.mark.parametrize("route", ["/api/chat", "/api/chat/send"])
-def test_a_pinned_conversation_carries_the_live_situation(client, captured, pins, route):
+@pytest.mark.parametrize("route,provider", CHAT_ROUTES)
+def test_a_pinned_conversation_carries_the_live_situation(client, captured, pins, monkeypatch,
+                                                          route, provider):
+    route_to(monkeypatch, provider)
     cid = _main_id(client)
     pins.set_pinned(cid, True)
     try:
@@ -49,15 +40,18 @@ def test_a_pinned_conversation_carries_the_live_situation(client, captured, pins
     finally:
         pins.set_pinned(cid, False)
     assert r.status_code == 200, r.get_data(as_text=True)[:400]
-    systems = [s for s in captured if isinstance(s, str) and s]
-    assert systems and all(HEADER in s for s in systems)
-    assert all("Situation at " in s.split(HEADER, 1)[1] for s in systems)
+    prompts = [turn_prompt(q, route, said="how is it going?")
+               for q in chat_requests(captured, route)]
+    assert prompts and all(HEADER in s for s in prompts)
+    assert all("Situation at " in s.split(HEADER, 1)[1] for s in prompts)
 
 
-@pytest.mark.parametrize("route", ["/api/chat", "/api/chat/send"])
-def test_an_unpinned_conversation_does_not(client, captured, pins, route):
+@pytest.mark.parametrize("route,provider", CHAT_ROUTES)
+def test_an_unpinned_conversation_does_not(client, captured, pins, monkeypatch, route, provider):
+    route_to(monkeypatch, provider)
     r = client.post(route, json={"message": "how is it going?",
                                  "conversation_id": _main_id(client)})
     assert r.status_code == 200
-    systems = [s for s in captured if isinstance(s, str) and s]
-    assert systems and not any(HEADER in s for s in systems)
+    assert chat_requests(captured, route)
+    # Every word of the request, system and messages alike.
+    assert HEADER not in whole_request(captured)

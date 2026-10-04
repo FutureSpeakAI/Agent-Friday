@@ -251,6 +251,28 @@ except Exception:
     pass
 
 
+#: The marks around the per-turn context at the top of the newest user turn
+#: (see _prep_for). The opening line says who wrote it, so the clock and the
+#: retrieved notes are read as Friday's context, never as the user's words.
+TURN_CONTEXT_OPEN = "[CONTEXT FOR THIS TURN — retrieved by Friday, not written by the user]"
+TURN_CONTEXT_CLOSE = "[END OF CONTEXT]"
+
+
+def turn_context_block(tail: str) -> str:
+    """The per-turn context as it opens the newest user turn.
+
+    Each mark is a paragraph of its own. The egress gate judges message text
+    paragraph by paragraph and recognises Friday's own registered text (the
+    placeholder note, the clock) only as a whole paragraph: a mark on the line
+    next to one fused them, and the note, which names identifier types, was
+    withheld on a guarded cloud turn. Derived text cannot claim authority over
+    the action policy (strip_authority_overrides)."""
+    from agent_friday.services.action_policy import strip_authority_overrides
+    return (TURN_CONTEXT_OPEN + "\n\n"
+            + strip_authority_overrides(tail, source="/api/chat turn context").strip()
+            + "\n\n" + TURN_CONTEXT_CLOSE + "\n\n")
+
+
 def _scrub_messages_pii(messages, lookup) -> None:
     """Mask private values in every message for a cloud call, in place.
 
@@ -1696,10 +1718,7 @@ def chat():
             # thinking, invalidates it. Moving retrieved text out of system
             # authority also keeps it from being read as an instruction.
             if _last_user_msg is not None and tail.strip():
-                from agent_friday.services.action_policy import strip_authority_overrides
-                _ctx = ("[CONTEXT FOR THIS TURN — retrieved by Friday, not written by the user]\n"
-                        + strip_authority_overrides(tail, source="/api/chat turn context").strip()
-                        + "\n[END OF CONTEXT]\n\n")
+                _ctx = turn_context_block(tail)
                 if provider == 'local':
                     _last_user_msg['content'] = _ctx + _last_user_text
                 else:

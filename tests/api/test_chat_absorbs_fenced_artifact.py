@@ -12,6 +12,9 @@ import json
 
 import pytest
 
+from tests.api.turn_context_helpers import (
+    CHAT_ROUTES, capture_requests, chat_requests, route_to, turn_prompt, whole_request)
+
 from agent_friday.services import artifacts as art
 
 
@@ -63,41 +66,28 @@ def test_a_fenced_block_in_the_reply_lands_in_the_store_and_leaves_a_pointer(cli
 
 @pytest.fixture
 def captured(patch_app):
-    seen = []
-
-    def fake_agent(messages, *a, **k):
-        seen.append(k.get("system") if "system" in k else (a[0] if a else ""))
-        return ("ok", [])
-
-    def fake_text(*a, **k):
-        seen.append(k.get("system") or "")
-        return "ok"
-
-    for name in ("_generate_agent", "_call_claude_agent", "_oai_agentic_loop"):
-        patch_app(name, fake_agent)
-    for name in ("_generate_text", "_call_claude", "_call_ollama", "_call_openai"):
-        patch_app(name, fake_text)
-    return seen
+    return capture_requests(patch_app)
 
 
-@pytest.mark.parametrize("route", ["/api/chat", "/api/chat/send"])
-def test_the_prompt_carries_the_artifact_ledger_and_a_hand_edit_once(client, captured, route):
+@pytest.mark.parametrize("route,provider", CHAT_ROUTES)
+def test_the_prompt_carries_the_artifact_ledger_and_a_hand_edit_once(client, captured, monkeypatch,
+                                                                     route, provider):
+    route_to(monkeypatch, provider)
     cid = _new_conv(client)
     a = art.put(cid, kind="markdown", title="Pitch", content="alpha\n")
     art.edit(cid, a["id"], content="ALPHA\n")
     r = client.post(route, json={"message": "tighten it", "conversation_id": cid})
     assert r.status_code == 200, r.data[:300]
-    prompts = [p for p in captured if p]
-    assert prompts, "no system prompt reached the model"
-    joined = "\n".join(prompts)
+    joined = "\n".join(turn_prompt(q, route, said="tighten it") for q in chat_requests(captured, route))
     assert art.CONTEXT_HEADER in joined
     assert a["id"] in joined and "Pitch" in joined
     assert "edited by the user" in joined and "+ALPHA" in joined
     captured.clear()
     client.post(route, json={"message": "and again", "conversation_id": cid})
-    joined = "\n".join(p for p in captured if p)
+    joined = "\n".join(turn_prompt(q, route, said="and again") for q in chat_requests(captured, route))
     assert a["id"] in joined
-    assert "edited by the user" not in joined
+    # Shown once: nowhere in the second turn's request, system or messages.
+    assert "edited by the user" not in whole_request(captured)
 
 
 def test_another_conversation_is_not_told(client, captured):
@@ -105,5 +95,5 @@ def test_another_conversation_is_not_told(client, captured):
     other = _new_conv(client)
     art.put(other, kind="markdown", title="Elsewhere", content="x")
     client.post("/api/chat", json={"message": "hi", "conversation_id": cid})
-    joined = "\n".join(p for p in captured if p)
-    assert "Elsewhere" not in joined
+    assert chat_requests(captured, "/api/chat")
+    assert "Elsewhere" not in whole_request(captured)
