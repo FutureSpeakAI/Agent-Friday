@@ -831,7 +831,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "get_career_pipeline", "description": "Get the current job-search pipeline status from the wiki.",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "get_briefing", "description": "Get the most recent daily briefing summary.",
+    {"name": "get_briefing", "description": "Read the most recent daily briefing Friday has written: a ranked summary of the day's important stories by section. The result starts with the file name, which carries its date; if that date is not today, say which day the briefing is from. Returns 'No briefings found.' when none exists.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "learn_skill", "description": "Create, modify, delete, or list skill YAML files in ~/.friday/skills/. Skills are reusable workflow definitions Friday can load. Use this for self-improvement — when you notice a pattern worth encoding. Actions: create, modify, delete, list, read.",
      "input_schema": {"type": "object", "properties": {
@@ -5744,18 +5744,21 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "generate_image",
     "description": (
-        "Generate a REAL image from a text prompt using Google's Gemini image "
-        "models (Nano Banana Pro / Nano Banana 2) and save it to the user's "
-        "creations folder. Use this whenever the user asks you to 'draw', "
+        "Generate an image from a text prompt with the image model set in the "
+        "creative seat (an on-device model, a Higgsfield or kie.ai model, or "
+        "Google's Gemini Nano Banana models) and save it to the user's creations "
+        "folder. Use this whenever the user asks you to 'draw', "
         "'create/make/generate an image/picture/art of', 'paint', 'illustrate', "
-        "or design a visual. You CAN make images — do not say you can't. The "
-        "result file shows up in the Studio gallery; tell the user it's ready and "
-        "give the title. A holographic progress orb appears while it renders."),
+        "or design a visual. An on-device model sends nothing out; a cloud model "
+        "receives the prompt after the egress check. The result file shows up in "
+        "the Studio gallery; tell the user it's ready and give the title, or say "
+        "plainly why nothing was made. A holographic progress orb appears while "
+        "it renders."),
     "input_schema": {
         "type": "object",
         "properties": {
             "prompt": {"type": "string", "description": "Vivid description of the image to generate."},
-            "model": {"type": "string", "description": "Image model: 'gemini-nano-banana-pro' (highest quality, default) or 'gemini-nano-banana-2' (faster). Optional."},
+            "model": {"type": "string", "description": "Optional image model id for this call, overriding the creative seat, e.g. 'gemini-nano-banana-pro' (highest quality) or 'gemini-nano-banana-2' (faster)."},
             "style": {"type": "string", "description": "Optional style preset: photorealistic, cinematic, digital-art, watercolor, oil-painting, anime, 3d-render, neon, minimalist, sketch — or free-text."},
             "aspect_ratio": {"type": "string", "description": "Optional aspect ratio: 1:1 (default), 3:4, 4:3, 9:16, 16:9."},
             "n": {"type": "integer", "description": "How many COPIES of the same prompt to render (1-8, default 1). Each gets its own random seed, so they vary. For DIFFERENT images use `prompts` instead."},
@@ -6620,19 +6623,19 @@ def _tool_scroll(inp):
 CLAUDE_TOOLS.extend([
     {
         "name": "move_mouse",
-        "description": "Move the mouse cursor to screen coordinates. Requires computer control permission (user must enable in Settings > Computer Control). Take a screenshot first to locate elements.",
+        "description": "Move the mouse cursor to a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Approvals).",
         "input_schema": {"type": "object", "properties": {
-            "x": {"type": "integer", "description": "X pixels from left edge"},
-            "y": {"type": "integer", "description": "Y pixels from top edge"},
+            "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot image."},
+            "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot image."},
         }, "required": ["x", "y"]},
     },
     {
         "name": "click",
-        "description": "Click the mouse at screen coordinates. Requires computer control permission.",
+        "description": "Click at a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Approvals).",
         "input_schema": {"type": "object", "properties": {
-            "x": {"type": "integer"},
-            "y": {"type": "integer"},
-            "button": {"type": "string", "enum": ["left", "right", "middle"]},
+            "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot image."},
+            "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot image."},
+            "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Mouse button; left when omitted."},
         }, "required": ["x", "y"]},
     },
     {

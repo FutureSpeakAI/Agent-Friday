@@ -284,8 +284,10 @@ _VOICE_LIVE_TOOLS = [
      {"query": ("string", "Keywords across headline/snippet/source. Blank = top stories."),
       "limit": ("integer", "Max stories (1-25, default 8).")}, []),
     ("get_briefing",
-     "Read Friday's own daily news briefing for today: the curated, ranked "
-     "summary of the day's important stories across sections. Use it FIRST when "
+     "Read the most recent daily news briefing Friday has written: the curated, ranked "
+     "summary of the day's important stories across sections. Its first line is the "
+     "file name, which carries the date; if that is not today, say which day it is "
+     "from. Use it when "
      "the user asks for the news, the briefing, 'what's happening in the world' "
      "or a rundown of the day, then go through it story by story, in plain facts "
      "(who, what, where), without teasing.",

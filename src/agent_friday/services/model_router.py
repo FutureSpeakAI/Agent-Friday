@@ -2192,7 +2192,7 @@ def _get_context_compressor(cfg):
 # Long-horizon memory: every chat turn is embedded (all-MiniLM-L6-v2, the same
 # model the context pruner uses) and stored on disk at
 # ~/.friday/memory/conversations/. Later turns retrieve semantically relevant
-# past exchanges and can cite them inline ([conversation:DATE:"quote"]).
+# past exchanges and can cite them inline ([conversation:DATE/"quote"]).
 # Built lazily on first use; degrades to a safe no-op if chromadb is absent.
 _CONVERSATION_MEMORY = None
 _CONVERSATION_MEMORY_LOCK = threading.Lock()
@@ -2211,7 +2211,7 @@ def _get_conversation_memory():
 
 def _current_session_id():
     """A conversation id for grouping turns. Friday uses the calendar date so it
-    lines up with the [conversation:YYYY-MM-DD:"quote"] citation format and the
+    lines up with the [conversation:YYYY-MM-DD/"quote"] citation format and the
     /api/sources/dossier/<session_id> endpoint."""
     return datetime.now().strftime("%Y-%m-%d")
 
@@ -2557,7 +2557,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==",
             "These are real excerpts from earlier conversations with this user. "
             "Use them for continuity. When you rely on one to make a factual "
-            "claim, you may cite it as [conversation:DATE:\"short quote\"].",
+            "claim, you may cite it as [conversation:DATE/\"short quote\"].",
         ]
         used = 0
         for h in kept:
@@ -3128,8 +3128,8 @@ FRIDAY_SYSTEM_PROMPT = (
     "never invent calendar events, emails, search results, URLs, or any other tool output. It is always "
     "better to say 'I couldn't get that' than to make something up.\n\n"
     "== COMPUTER CONTROL ==\n"
-    "Computer control (screenshot, click, type, etc.) requires the user to enable it in Settings > "
-    "Computer Control. When you need it and it's not enabled, say so. When it IS enabled: "
+    "Computer control (screenshot, click, type, etc.) requires the user to enable it in Settings → "
+    "Privacy & Approvals. When you need it and it's not enabled, say so. When it IS enabled: "
     "always take a screenshot first — you will SEE the captured image. Give click/move coordinates "
     "in the pixel space of that screenshot image (top-left is 0,0); Friday maps them to the real "
     "screen automatically, so do not try to convert resolutions yourself. "
@@ -3137,7 +3137,7 @@ FRIDAY_SYSTEM_PROMPT = (
     "== SELF-IMPROVEMENT ==\n"
     "You can build your own skills with learn_skill. A skill is a YAML file defining a reusable "
     "workflow. When you notice the user asking for the same type of thing repeatedly, encode it. "
-    "Loaded from ~/.friday/skills/ on server restart. List existing skills with action='list'.\n\n"
+    "A new or edited skill takes effect on the next turn. List existing skills with action='list'.\n\n"
     "== TASK DELEGATION ==\n"
     "For multi-step work taking more than ~10s, use spawn_task to run it in the background:\n"
     "- 'Research X' → spawn_task(name='Research X', prompt='Deep research on X...')\n"
