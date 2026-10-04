@@ -53395,7 +53395,7 @@ function VoiceStackCard({ s, save, mc }) {
     apiFetch('/api/voice/prove', { method: 'POST' }).then(r => r.json()).then(take).catch(() => {});
   }, [take]);
   const engines = mc && mc.ttsEngines || TTS_ENGINES_FALLBACK;
-  const sel = s.local_voice_tts_engine || 'kokoro';
+  const sel = s.local_voice_tts_engine || 'piper';
   const stages = manifest && manifest.stages || {};
   const policyRow = (key, label) => /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 } },
     /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.7, minWidth: 90 } }, label),
@@ -53623,7 +53623,7 @@ function SettingsTabVoice({
   }), /*#__PURE__*/React.createElement(PushToTranscribeRows, {
     s: s,
     save: save
-  }), (s.voice_engine || 'local') !== 'gemini' && (s.local_voice_tts_engine || 'kokoro') === 'piper' && /*#__PURE__*/React.createElement(StRow, {
+  }), (s.voice_engine || 'local') !== 'gemini' && (s.local_voice_tts_engine || 'piper') === 'piper' && /*#__PURE__*/React.createElement(StRow, {
     label: "Piper voice",
     desc: "The on-device voice the local engines speak with."
   }, /*#__PURE__*/React.createElement("select", {

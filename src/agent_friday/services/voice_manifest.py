@@ -117,9 +117,9 @@ def read_selection(settings: dict | None = None) -> dict:
                 "model": str(s.get("local_voice_asr_model") or "auto"),
                 "device_policy": _policy(s.get("voice_ear_gpu"))},
         "mind": {"engine": "seat", "reply_cap": _reply_cap(s)},
-        "mouth": {"engine": str(s.get("local_voice_tts_engine") or "kokoro").strip().lower(),
+        "mouth": {"engine": str(s.get("local_voice_tts_engine") or "piper").strip().lower(),
                   "voice": (str(s.get("local_voice_kokoro_voice") or "af_heart")
-                            if str(s.get("local_voice_tts_engine") or "kokoro").lower() == "kokoro"
+                            if str(s.get("local_voice_tts_engine") or "piper").lower() == "kokoro"
                             else str(s.get("local_voice_tts_voice") or "en_US-amy-medium")),
                   "device_policy": _policy(s.get("voice_mouth_gpu"))},
         "idle_unload_s": int(s.get("voice_idle_unload_s") or 600),

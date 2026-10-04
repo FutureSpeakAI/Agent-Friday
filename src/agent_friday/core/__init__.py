@@ -2249,14 +2249,16 @@ DEFAULT_SETTINGS = {
     # working in applications that wanted it.
     "push_to_transcribe_hold_ms": 150,
     "local_voice_tts_voice": "en_US-amy-medium",  # Tier-1 Piper voice id
-    # Which synthesizer local voice speaks with. Kokoro is the default (local
-    # voice spec D4): Apache-2.0, the better voice, on the graphics card when
-    # it fits and on the processor when it does not (the session says which).
-    # Piper's upstream went GPL-3.0 in Oct 2025, so it is no longer a default;
-    # an installed Piper stays the last-resort floor for a phrase Kokoro
-    # cannot speak (services/voice_workers.build_mouth).
-    #   "kokoro" — Kokoro-82M (Apache-2.0); GPU when it fits, else CPU
+    # Which synthesizer local voice speaks with. Piper is the default: it is
+    # what the CPU tier installs (voice-local-lite), so a fresh machine speaks.
+    # Kokoro is the better voice, chosen here; it runs on the graphics card
+    # when it fits and on the processor when it does not (the session says
+    # which), with Piper as the floor for a phrase it cannot speak
+    # (services/voice_workers.build_mouth). Local voice spec D4 (Kokoro as the
+    # default) waits on a default that falls back to Piper when Kokoro is not
+    # installed.
     #   "piper"  — CPU-only; GPL-3.0 upstream since Oct 2025
+    #   "kokoro" — Kokoro-82M (Apache-2.0); GPU when it fits, else CPU
     # These three MUST live here. `_load_settings_raw()` drops any persisted key
     # absent from DEFAULT_SETTINGS, so a key the service layer reads but this
     # dict does not declare is a control that saves, reports success, and
