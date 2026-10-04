@@ -1042,3 +1042,10 @@ def test_the_task_journal_is_swept_on_disk_and_in_the_live_table(tmp_path, monke
     finally:
         with agent.TASKS_LOCK:
             agent.TASKS.pop("t-1", None)
+
+
+def test_a_title_in_a_tool_result_never_carries_a_credential():
+    from agent_friday.services.library import envelope
+    token = "ghp_" + "Zk3Qm9Tx5Rv2Wn8Yb4Hc7Ld1Pf6Sj0Ua3Ve"  # pragma: allowlist secret
+    out = envelope.title_text("Release notes " + token + " for the mirror")
+    assert token not in out and "Release notes" in out

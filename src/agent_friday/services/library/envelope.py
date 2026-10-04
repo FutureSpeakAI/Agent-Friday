@@ -31,7 +31,7 @@ _ATTR = re.compile(r'["<>&\r\n]')
 def title_text(value, limit: int = 60) -> str:
     """A document's title as words in a tool result: no control or zero-width character, no
     bracket or quote that could pass for markup or a citation label, one line, cut at `limit`."""
-    t = re.sub(r"[<>\[\]\"`]", " ", _CTRL.sub("", str(value or "")))
+    t = re.sub(r"[<>\[\]\"`]", " ", _CTRL.sub("", withhold.title(str(value or ""))))
     t = " ".join(t.split())
     return (t[: limit - 1].rstrip() + "\u2026") if len(t) > limit else t
 
