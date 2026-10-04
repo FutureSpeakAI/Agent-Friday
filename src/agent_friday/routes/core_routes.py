@@ -143,6 +143,20 @@ def _local_address_script() -> str:
     return f'<script>window.__FRIDAY_LOCAL_ADDRESS__={data};</script>'
 
 
+def _installed_bundles_script() -> str:
+    """The bundle workspaces installed from the salon (services/workspace_bundles),
+    registry-shaped and nothing more, so the dock, the windows and the standalone
+    tab know them at load. `<` is escaped so a label cannot close the script."""
+    try:
+        from agent_friday.services import workspace_bundles as _wb
+        keep = ("id", "label", "group", "core", "icon", "glyph", "accent", "blurb", "aliases", "tab", "boundary", "current")
+        items = [{k: w.get(k) for k in keep if k in w} for w in _wb.list_installed()]
+    except Exception:
+        items = []
+    data = json.dumps(items).replace('<', '\\u003c')
+    return f'<script>window.FRIDAY_INSTALLED_BUNDLES={data};</script>'
+
+
 def _web_fonts_head() -> str:
     """The Google Fonts link, only when services/web_fonts says to add it."""
     try:
@@ -161,7 +175,7 @@ def _serve_index(extra_head: str = ''):
         )
         # Inject early in <head> so the token is available before any fetch calls.
         _html = _html.replace('<head>', f'<head>\n{_token_script}{_local_address_script()}'
-                                        f'{_web_fonts_head()}{extra_head}', 1)
+                                        f'{_installed_bundles_script()}{_web_fonts_head()}{extra_head}', 1)
         return Response(_html, content_type='text/html')
     except FileNotFoundError:
         return ("index.html not found. It is tracked in git — restore it with "

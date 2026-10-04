@@ -19,6 +19,8 @@ duplicates — Flask will not warn you, it will just ignore them.
 """
 from flask import Blueprint, jsonify, request
 
+from agent_friday.core import login_required
+
 workspace_undo_bp = Blueprint("workspace_undo", __name__)
 
 
@@ -27,12 +29,26 @@ def _ws():
     return ws
 
 
+@workspace_undo_bp.after_request
+def _undo_headers(resp):
+    resp.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    return resp
+
+
+@workspace_undo_bp.errorhandler(ValueError)
+def _undo_bad_id(e):
+    return jsonify({"ok": False, "error": str(e) or "invalid request"}), 400
+
+
 @workspace_undo_bp.route("/api/workspace/<ws_id>/history", methods=["GET"])
+@login_required
 def ws_history(ws_id):
     return jsonify(_ws().history(ws_id))
 
 
 @workspace_undo_bp.route("/api/workspace/<ws_id>/undo", methods=["POST"])
+@login_required
 def ws_undo(ws_id):
     doc, err = _ws().undo_last(ws_id)
     if err:
@@ -43,6 +59,7 @@ def ws_undo(ws_id):
 
 
 @workspace_undo_bp.route("/api/workspace/<ws_id>/restore-as-of", methods=["POST"])
+@login_required
 def ws_restore_as_of(ws_id):
     when = (request.get_json(silent=True) or {}).get("when")
     if not when:

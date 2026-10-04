@@ -321,8 +321,9 @@ def test_a_tab_carries_the_workspace_tools_its_customization_and_the_rocket(brow
         page.goto(base + "/w/news", wait_until="domcontentloaded")
         page.wait_for_selector('[data-testid="ws-tab-tools"] button', timeout=60000)
         tools = page.locator('[data-testid="ws-tab-tools"] button')
+        # The salon's "Improve this workspace" comes last, after the history.
         assert [tools.nth(i).get_attribute("aria-label") for i in range(tools.count())] == [
-            "Workspace chat for News", "Start voice for News", "Version history for News"]
+            "Workspace chat for News", "Start voice for News", "Version history for News", "Improve News"]
         page.wait_for_selector('.ws-tab .ws-custom-root[data-ws="news"] >> text=Do the thing', timeout=15000)
         assert page.locator('[data-testid="ws-tab-name"] [title^="Friday has customized"]').count() == 1
         tools.nth(2).click()

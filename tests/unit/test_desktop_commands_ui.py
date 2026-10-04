@@ -14,6 +14,7 @@ import pathlib
 import socketserver
 import threading
 import time
+import urllib.parse
 
 import pytest
 
@@ -33,8 +34,16 @@ class _Server:
         self.lock = threading.Lock()
 
     def events(self, route):
-        with self.lock:
-            cmds, self.commands = self.commands, []
+        """One event stream. Commands go down the desktop's own stream and no
+        other, as the real server sends them (services/desktop_bus: only the
+        desktop holds the command stream): the page also holds a chat stream on
+        this address (kind=chat), and a command handed to that one is heard by
+        nobody, so the page would never answer it."""
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(route.request.url).query)
+        cmds = []
+        if (query.get("kind") or ["desktop"])[0] == "desktop":
+            with self.lock:
+                cmds, self.commands = self.commands, []
         body = "retry: 250\n\ndata: %s\n\n" % json.dumps({"type": "hello"})
         body += "".join("data: %s\n\n" % json.dumps(c) for c in cmds)
         route.fulfill(status=200, headers={"Content-Type": "text/event-stream",
