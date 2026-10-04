@@ -5609,7 +5609,7 @@ window.addEventListener('DOMContentLoaded',function(){
             const list = () => { try { return (src && src.orbs()) || []; } catch (_) { return []; } };
             const find = id => list().find(o => o.id === id) || null;
             const call = (fn, ...a) => { try { if (src && src[fn]) return src[fn](...a); } catch (_) {} return null; };
-            const her = () => (typeof fridayName === 'function' ? fridayName() : 'Friday');
+            const her = () => fridayName();
             const name = o => FridayOrbLife.speakable(o);
             const Name = o => { const s = name(o); return s.charAt(0).toUpperCase() + s.slice(1); };
 
@@ -30620,7 +30620,7 @@ function TaskRecordsCard() {
 }
 fridayDeclareNav('system', {
   key: 'tab',
-  keys: ['tab'],
+  keys: ['tab', 'task'],
   sections: [{
     id: 'self-improvement',
     label: 'Self-improvement'

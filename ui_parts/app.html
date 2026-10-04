@@ -8582,7 +8582,7 @@ function TaskRecordsCard(){
     {obs&&obs.revoked&&<div style={{marginTop:6,fontSize:10,color:'#888'}}>Observer credential revoked.</div>}
   </div>);
 }
-fridayDeclareNav('system',{key:'tab',keys:['tab'],sections:[{id:'self-improvement',label:'Self-improvement'},{id:'approvals',label:'Approvals'}]});
+fridayDeclareNav('system',{key:'tab',keys:['tab','task'],sections:[{id:'self-improvement',label:'Self-improvement'},{id:'approvals',label:'Approvals'}]});
 function SystemWS(){
   const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
   // One helper, popped out of its orb (TaskFocus): {tab:'task', task:<id>}.
