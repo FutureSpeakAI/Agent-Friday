@@ -2003,7 +2003,7 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
         system = _get_friday_system_prompt(
             keywords=prompt, workspace='briefing',
             provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
-            vault_control=_gated_vault_control())
+            vault_control=_gated_vault_control(), tools_block=False)
         _attr_before = _attribution_mark()
         # OUTPUT BUDGET, and why it is not 1800 any more.
         #
@@ -2687,7 +2687,7 @@ def _generate_weekly_digest():
         system = _get_friday_system_prompt(
             keywords=prompt, workspace='briefing',
             provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
-            vault_control=_gated_vault_control())
+            vault_control=_gated_vault_control(), tools_block=False)
         # Route through the user's configured provider (same as chat), not a
         # hard-coded Anthropic call — so the digest synthesizes real content on
         # Ollama/OpenAI setups instead of silently falling back to the canned
@@ -2843,7 +2843,7 @@ def _generate_weekly_editorial():
         system = (_get_friday_system_prompt(
                       keywords=user, workspace='briefing',
                       provider=_predict_route_provider(keywords=user, workspace='briefing'),
-                      vault_control=_gated_vault_control())
+                      vault_control=_gated_vault_control(), tools_block=False)
                   + "\n\n" + directive)
         # Route through the user's configured provider (same as chat). The old
         # bare _call_claude() here had NO fallback, so on a non-Anthropic setup
@@ -3489,7 +3489,7 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
         system = _get_friday_system_prompt(
             keywords=headline, workspace="news",
             provider=_predict_route_provider(keywords=headline, workspace="news"),
-            vault_control=_gated_vault_control())
+            vault_control=_gated_vault_control(), tools_block=False)
         raw = _generate_text([{"role": "user", "content": prompt}],
                              system=system, max_tokens=2000, workspace='news')
     except Exception as e:
@@ -3542,7 +3542,7 @@ def _quick_dive(url, headline, body, cache_path):
                 system = _get_friday_system_prompt(
                     keywords=headline, workspace="news",
                     provider=_predict_route_provider(keywords=headline, workspace="news"),
-                    vault_control=_gated_vault_control())
+                    vault_control=_gated_vault_control(), tools_block=False)
                 raw = _generate_text([{"role": "user", "content": prompt}], system=system,
                                      max_tokens=DEEP_DIVE_QUICK_MAX_TOKENS, workspace='news')
         except Exception as e:

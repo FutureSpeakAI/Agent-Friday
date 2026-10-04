@@ -2916,7 +2916,7 @@ def _log_policy_failure():
 
 
 def _get_friday_system_prompt(keywords='', workspace='', *, provider,
-                              vault_control, vault_fallback='redact'):
+                              vault_control, vault_fallback='redact', tools_block=True):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
@@ -3027,7 +3027,8 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     try:
         system_prompt, _ = _build_context_prompt(
             keywords or '', workspace, provider=provider,
-            vault_control=vault_control, vault_fallback=vault_fallback)
+            vault_control=vault_control, vault_fallback=vault_fallback,
+            tools_block=tools_block)
         # Vault, wiki and self-knowledge text arrives here. It is content Friday
         # holds, not instructions it was given, so an "you have full authority"
         # sentence inside it is data being quoted -- never a licence.
@@ -3567,7 +3568,8 @@ def _payload_dump_dir():
 
 def _build_context_prompt(message, workspace='', workspace_context=None,
                           vision_description=None, provider='cloud',
-                          vault_control=None, vault_fallback='redact', pilot=None):
+                          vault_control=None, vault_fallback='redact', pilot=None,
+                          tools_block=True):
     """Build an enriched system prompt with all relevant context layers.
 
     When `vault_control` is provided, each context section is tagged with a
@@ -3611,7 +3613,10 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         return fallback_tier
 
     add(FRIDAY_SYSTEM_PROMPT, _T1)
-    _tools_text = _tools_prompt_block()
+    # A job that passes no tools (the front page, a deep dive, a digest, the
+    # calendar note) gets no tool catalogue: it is thousands of tokens of
+    # pure cost there, and on a small local model it invites pretend calls.
+    _tools_text = _tools_prompt_block() if tools_block else ""
     if _tools_text:
         add(_tools_text, _T1)
 

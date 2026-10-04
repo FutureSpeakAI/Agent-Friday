@@ -944,7 +944,7 @@ def _day_annotation(day, events):
             system = _get_friday_system_prompt(
                 keywords=titles, workspace="chat",
                 provider=_predict_route_provider(keywords=titles, workspace="chat"),
-                vault_control=_gated_vault_control())
+                vault_control=_gated_vault_control(), tools_block=False)
             note = _generate_text([{"role": "user", "content": (
                 "In ONE short sentence (max 22 words), give me a warm, sharp "
                 "heads-up about my day given these events. No preamble.\n\n"
