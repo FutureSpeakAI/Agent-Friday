@@ -188,7 +188,7 @@ def _seal_or_block(payload, provider):
 
 
 def _call_claude(messages, system=None, model=None, max_tokens=16384, temperature=None,
-                 report=None):
+                 report=None, schema=None):
     """Call Claude with structured messages. Returns the text response.
 
     report: an optional dict the call fills with "model", the model the
@@ -201,6 +201,9 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-5 / claude-opus-5)
     temperature: accepted for backward-compat but IGNORED — newer Claude
         models (Opus 5+, Sonnet 5+) reject the deprecated param.
+    schema: a JSON schema the reply must match. Sent as structured outputs
+        (output_config.format), which the API guarantees; the caller keeps
+        its parser as the fallback for a leg that cannot honour it.
     """
     # A local-only run (a scheduled job pinned to the local seat) must not reach
     # a paid provider, even through a fallback leg. This is the last point before
@@ -227,7 +230,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
             if isinstance(report, dict):
                 report.update({"model": _alt, "via": "openrouter"})
             return _call_openai(messages, system=system, model=_alt,
-                                max_tokens=max_tokens, provider=_one_key.OPENROUTER)[0]
+                                max_tokens=max_tokens, provider=_one_key.OPENROUTER,
+                                schema=schema)[0]
         raise RuntimeError(
             "No cloud AI key is set. Add an Anthropic or an OpenRouter key in "
             "Settings → Accounts & Keys (one is enough)."
@@ -246,6 +250,10 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     }
     if system:
         kwargs["system"] = system
+    if schema is not None:
+        # Through extra_body so the installed SDK need not know the field.
+        kwargs["extra_body"] = {"output_config": {"format": {
+            "type": "json_schema", "schema": schema}}}
     # Ask Claude 5 models for their reasoning summary (see
     # reasoning_trace.anthropic_thinking); older models are left as they were.
     from agent_friday.services import reasoning_trace as _rt
@@ -457,9 +465,18 @@ def _claude_safe_model(candidate, settings):
     return None  # primitive's own configured default (ANTHROPIC_MODEL_DEFAULT)
 
 
+def _schema_refused(exc) -> bool:
+    """An error that says the provider would not take the response schema."""
+    if getattr(exc, "status_code", None) not in (None, 400, 422):
+        return False
+    text = str(exc).lower()
+    return any(k in text for k in ("output_config", "response_format", "json_schema",
+                                   "schema", "format", "400", "422"))
+
+
 def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
                    temperature=None, orb_label=None, workspace=None,
-                   system_builder=None):
+                   system_builder=None, schema=None):
     """Single-shot text generation via the user's CONFIGURED provider.
 
     Briefings, the front page, and editorials are not chat, but they should run
@@ -487,6 +504,11 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     for that leg (fail closed) rather than falling back to `system`, which
     may have been gated for a different, less restrictive provider. Omit it
     (the default) to keep the previous single-prompt behavior unchanged.
+
+    schema: a JSON schema the reply must match. Each leg sends it the way its
+    provider enforces it (Claude structured outputs, llama-server / OpenAI
+    json_schema, Ollama format); a leg that refuses it is retried once
+    without it, so the caller's own parser remains the fallback.
 
     Returns the response text.
     """
@@ -558,26 +580,29 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # Provider primitives. The routed provider is tried first with the
     # router-chosen model; fallbacks use each provider's OWN configured default
     # (model=None) so a cloud model id never leaks into a local/OpenAI call.
-    def _via_claude(use_model):
+    def _via_claude(use_model, _schema=None):
         # Mirror the chat path exactly: same shared client, same primitive.
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
         return _call_claude(messages, system=_system_for('cloud'),
                             model=_claude_safe_model(use_model or model, settings),
-                            max_tokens=max_tokens, temperature=temperature)
+                            max_tokens=max_tokens, temperature=temperature,
+                            **({"schema": _schema} if _schema is not None else {}))
 
-    def _via_openai(use_model):
+    def _via_openai(use_model, _schema=None):
         # The routed model rides its RESOLVED provider (openrouter/groq/…);
         # the fallback attempt (use_model=None) keeps the legacy single-slot.
         return _call_openai(messages, system=_system_for('openai'), model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
                             orb_label=orb_label,
-                            provider=routed_provider_name if use_model else None)[0]
+                            provider=routed_provider_name if use_model else None,
+                            **({"schema": _schema} if _schema is not None else {}))[0]
 
-    def _via_ollama(use_model):
+    def _via_ollama(use_model, _schema=None):
         return _call_ollama(messages, system=_system_for('local'), model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
-                            orb_label=orb_label)[0]
+                            orb_label=orb_label,
+                            **({"schema": _schema} if _schema is not None else {}))[0]
 
     # Try the routed provider first, then fall back through the others. This
     # guarantees that if ANY provider the chat path can reach is up, generation
@@ -614,7 +639,15 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     for name, fn, use_model in attempts:
         _leg = f"{name} ({use_model})" if use_model else name
         try:
-            text = fn(use_model)
+            try:
+                text = fn(use_model, schema) if schema is not None else fn(use_model)
+            except Exception as _se:
+                if schema is None or not _schema_refused(_se):
+                    raise
+                # This leg cannot enforce the schema; the caller's parser can.
+                _log.warning("%s refused the response schema (%s); retrying without it",
+                             _leg, _se)
+                text = fn(use_model)
             if text and text.strip():
                 if name != "cloud":
                     # The Anthropic leg records its own call; a local or
@@ -739,8 +772,11 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='⚡',
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
-                 catalogue_all=None, provider=None):
+                 catalogue_all=None, provider=None, schema=None):
     """Call a local Ollama model. Returns (text, tool_trace).
+
+    `schema` (single-shot calls only): a JSON schema the reply must match,
+    enforced by the seat's grammar (llama-server json_schema, Ollama format).
 
     `catalogue_all` is the FULL tool registry when `tools` is only a catalogue
     (services/tool_catalogue.py). The loop needs it to satisfy `load_tools`.
@@ -881,6 +917,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                 # answered "No such tool", with the model correctly told
                 # browse_web did not exist.
                 catalogue_all=catalogue_all,
+                schema=schema,
             )
 
     if not ollama.is_available():
@@ -994,6 +1031,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                     num_ctx=_ctx,
                     think=_think,
                     timeout=_to,
+                    format=(schema if not _oai_tools else None),
                 )
             except Exception:
                 try:
@@ -1363,7 +1401,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
                  provider=None, fallback_models=None, stream=None,
-                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False):
+                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False,
+                 schema=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
 
     Two configuration paths:
@@ -1675,6 +1714,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 _cloud_mt = _mt or _tbud.cloud_output_tokens(model)
                 if _cloud_mt:
                     payload["max_tokens"] = int(_cloud_mt)
+            if schema is not None and not _oai_tools:
+                # A JSON schema the reply must match: llama-server turns it
+                # into a grammar, and OpenAI-compatible clouds enforce it.
+                payload["response_format"] = {"type": "json_schema", "json_schema": {
+                    "name": "result", "schema": schema, "strict": True}}
             if _oai_tools:
                 payload["tools"] = _oai_tools
                 payload["tool_choice"] = "auto"

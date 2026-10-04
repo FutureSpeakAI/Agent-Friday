@@ -1800,6 +1800,51 @@ def _news_archiver_loop():
         _time.sleep(_NEWS_ARCHIVE_TTL)
 
 
+# ── Response schemas ───────────────────────────────────────────────────────
+# Each JSON reply is requested with its schema, which every provider leg
+# enforces (Claude structured outputs, llama-server json_schema, Ollama
+# format). `_extract_json_block` stays as the repair path for a leg that
+# cannot. Strict schemas: every object closed, every listed key required.
+
+_STR = {"type": "string"}
+_INT = {"type": "integer"}
+
+
+def _obj(props, required=None):
+    return {"type": "object", "properties": props,
+            "required": list(props if required is None else required),
+            "additionalProperties": False}
+
+
+def _list_of(item):
+    return {"type": "array", "items": item}
+
+
+DIVE_SCHEMA = _obj({"summary": _STR, "implications": _STR, "key_quotes": _list_of(_STR)})
+
+DIGEST_SCHEMA = _obj({
+    "top_stories": _list_of(_obj({"id": _STR, "why": _STR})),
+    "trends": _list_of(_STR),
+    "editorial": _STR,
+})
+
+
+def _front_page_schema(categories, want_day_ctx=False, has_prev=False):
+    props = {
+        "lead_index": _INT,
+        "lead_note": _STR,
+        "headline": _STR,
+        "section_context": _obj({c: _STR for c in categories}),
+        "contrarian_corner": _obj({"index": _INT, "note": _STR}),
+        "competitor_watch": _list_of(_obj({"index": _INT, "note": _STR})),
+    }
+    if want_day_ctx:
+        props["day_in_context"] = _STR
+    if has_prev:
+        props["thread_updates"] = _list_of(_obj({"index": _INT, "update": _STR}))
+    return _obj(props)
+
+
 def _extract_json_block(text):
     """Pull the first JSON object out of an LLM reply (tolerates code fences)."""
     if not text:
@@ -1935,8 +1980,8 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             prev_block = (
                 "\n\nThese stories appeared in the PREVIOUS edition. For any of "
                 "today's candidates that continue one of these threads, note "
-                "what's NEW about it today in `thread_updates` (keyed by the "
-                "candidate's index) rather than repeating the same context:\n"
+                "what's NEW about it today in `thread_updates` (one entry per "
+                "candidate, by its index) rather than repeating the same context:\n"
                 + pv)
 
         # ── Your day in context: cross-reference news with the schedule. ──
@@ -1973,7 +2018,8 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             '  "competitor_watch": [{"index": <int candidate index>, "note": '
             '"<positioning implication for Friday>"}]'
             + (',\n  "day_in_context": "<2-3 sentences>"' if want_day_ctx else "")
-            + (',\n  "thread_updates": {"<index>": "<what is new today>"}' if prev_block else "")
+            + (',\n  "thread_updates": [{"index": <int candidate index>, '
+               '"update": "<what is new today>"}]' if prev_block else "")
             + "\n}")
 
         prompt = (
@@ -1997,7 +2043,7 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             "frameworks, list them with brief analysis of the positioning "
             "implications for Friday. Empty list if none.\n"
             + prev_block + cal_block + "\n\n"
-            "Return ONLY JSON, no prose, in exactly this shape:\n" + shape +
+            "Reply with a JSON object in this shape:\n" + shape +
             "\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
         )
         system = _get_friday_system_prompt(
@@ -2025,7 +2071,9 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
         _budget = 900 + 120 * max(1, len(cats_present)) + (400 if prev_block else 0)
         raw = _generate_text([{"role": "user", "content": prompt}],
                              system=system, max_tokens=max(2400, _budget * 3),
-                             orb_label="📰 Front Page", workspace='news')
+                             orb_label="📰 Front Page", workspace='news',
+                             schema=_front_page_schema(cats_present, want_day_ctx,
+                                                       bool(prev_block)))
         # Who ANSWERED, not who the router aimed at — the ladder can move the
         # call between legs, and naming the intended seat in a failure report
         # sends the reader to look at the wrong model.
@@ -2078,6 +2126,11 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
         # Thread updates: candidate index → story URL (string JSON keys → int).
         thread_updates = {}
         tu = data.get("thread_updates")
+        if isinstance(tu, list):
+            # The requested shape: [{"index": i, "update": "..."}]. A reply in
+            # the older {"<index>": "..."} form is still read below.
+            tu = {(u or {}).get("index"): (u or {}).get("update")
+                  for u in tu if isinstance(u, dict)}
         if isinstance(tu, dict):
             for k, v in tu.items():
                 try:
@@ -2675,7 +2728,7 @@ def _generate_weekly_digest():
             "editions. Synthesize the week's top 5 stories, identify the "
             "through-line trends, and give an editorial take on what this means "
             "for the user's work and interests.\n\n"
-            "Return ONLY JSON, no prose, in exactly this shape:\n"
+            "Reply with a JSON object in this shape:\n"
             '{\n  "top_stories": [{"id": "<story id, e.g. W3>", "why": "<one sentence on '
             'why it mattered this week>"}],\n  "trends": ["<trend>", "<trend>"],\n'
             '  "editorial": "<3-5 sentence editorial take on what the week means '
@@ -2694,7 +2747,8 @@ def _generate_weekly_digest():
         # "quieter week" placeholder when no Anthropic key is present.
         raw = _generate_text([{"role": "user", "content": prompt}],
                              system=system, max_tokens=1600,
-                             orb_label="📅 Weekly Digest", workspace='briefing')
+                             orb_label="📅 Weekly Digest", workspace='briefing',
+                             schema=DIGEST_SCHEMA)
         data = _extract_json_block(raw)
         if isinstance(data, dict):
             ts = data.get("top_stories")
@@ -3479,8 +3533,7 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
         f"ARTICLE HEADLINE: {headline}\nURL: {url}\n"
         + (f"SOURCE: {source}\n" if source else "")
         + f"\nARTICLE TEXT:\n{body}\n\n"
-        "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
-        "these keys:\n"
+        "Reply with a JSON object with these keys:\n"
         '  "summary": a 3-paragraph plain-text summary, paragraphs separated by \\n\\n;\n'
         '  "implications": 2-4 sentences on what this specifically means for the user;\n'
         '  "key_quotes": an array of 2-4 short verbatim quote strings from the article.'
@@ -3491,7 +3544,8 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
             provider=_predict_route_provider(keywords=headline, workspace="news"),
             vault_control=_gated_vault_control(), tools_block=False)
         raw = _generate_text([{"role": "user", "content": prompt}],
-                             system=system, max_tokens=2000, workspace='news')
+                             system=system, max_tokens=2000, workspace='news',
+                             schema=DIVE_SCHEMA)
     except Exception as e:
         return {"status": "error", "message": ExceptionText(f"Summary generation failed: {e}")}, 502
     parsed = _extract_json_block(raw) or {}
@@ -3508,8 +3562,11 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
         "extractor": page_reader.VERSION,
     }
     try:
-        DEEP_DIVE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        # A reply that did not parse is shown once but never cached as the
+        # article's summary: the next request writes a real one.
+        if parsed.get("summary"):
+            DEEP_DIVE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     except Exception:
         pass
     return result, 200
@@ -3527,8 +3584,7 @@ def _quick_dive(url, headline, body, cache_path):
         f"ARTICLE HEADLINE: {headline}\nURL: {url}\n"
         + (f"SOURCE: {source}\n" if source else "")
         + f"\nARTICLE TEXT:\n{body}\n\n"
-        "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
-        "these keys:\n"
+        "Reply with a JSON object with these keys:\n"
         '  "summary": 3-5 plain sentences of what happened: who, what, where, when;\n'
         '  "implications": 1-2 sentences on what this means for the user;\n'
         '  "key_quotes": an array of at most 2 short verbatim quotes from the article.'
@@ -3544,7 +3600,8 @@ def _quick_dive(url, headline, body, cache_path):
                     provider=_predict_route_provider(keywords=headline, workspace="news"),
                     vault_control=_gated_vault_control(), tools_block=False)
                 raw = _generate_text([{"role": "user", "content": prompt}], system=system,
-                                     max_tokens=DEEP_DIVE_QUICK_MAX_TOKENS, workspace='news')
+                                     max_tokens=DEEP_DIVE_QUICK_MAX_TOKENS, workspace='news',
+                                     schema=DIVE_SCHEMA)
         except Exception as e:
             box["error"] = e
             return
@@ -3560,8 +3617,9 @@ def _quick_dive(url, headline, body, cache_path):
         }
         box["result"] = result
         try:
-            DEEP_DIVE_DIR.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            if parsed.get("summary"):        # never cache an unparsed reply
+                DEEP_DIVE_DIR.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         except Exception:
             pass
 

@@ -423,7 +423,9 @@ class OllamaManager:
 
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
                         max_tokens=4096, num_ctx=None, timeout=120,
-                        think=None, keep_alive=None):
+                        think=None, keep_alive=None, format=None):
+        """`format`: a JSON schema the reply must match (Ollama enforces it
+        with a grammar), or None for free text."""
         options = {"temperature": temperature, "num_predict": max_tokens}
         # An explicit context is a placement decision, not a detail. Left unset
         # gemma4 reports num_ctx 262144 and spills most of itself onto the CPU
@@ -488,6 +490,8 @@ class OllamaManager:
             native["tools"] = tools
         if think is False:
             native["think"] = False
+        if format is not None:
+            native["format"] = format
         resp = self._post("/api/chat", native, timeout=timeout)
 
         # ── The reserve is a guard here, not a gauge. ──
