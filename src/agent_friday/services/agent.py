@@ -11909,14 +11909,20 @@ def _append_steer(convo: list, text: str) -> None:
     already produced, and re-bills the cached prefix. The steer is appended
     after any tool results in the newest user turn instead."""
     block = {"type": "text", "text": f"Operator instruction for the rest of this task: {text}"}
-    last = convo[-1] if convo else None
+    # A trailing tool-change message must stay last (the API allows a system
+    # message only at the end or before an assistant turn), so the steer goes
+    # into the user turn just before it; both are still unsent.
+    i = len(convo) - 1
+    while i >= 0 and isinstance(convo[i], dict) and convo[i].get("role") == "system":
+        i -= 1
+    last = convo[i] if i >= 0 else None
     if not last or last.get("role") != "user":
         convo.append({"role": "user", "content": [block]})
         return
     content = last.get("content")
     if isinstance(content, str):
         content = [{"type": "text", "text": content}] if content else []
-    convo[-1] = {**last, "content": list(content or []) + [block]}
+    convo[i] = {**last, "content": list(content or []) + [block]}
 
 
 def _call_claude_agent(*args, **kwargs):
@@ -12118,6 +12124,22 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     _all_tools = tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
     _sent_tools = (_TC.opening_set(_all_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
                    if _TC.enabled() and _all_tools else list(_all_tools))
+    # SENSITIVE (the request every cloud turn sends). A loaded tool must not
+    # change the `tools` array mid-task: models that check replayed thinking
+    # reject or drop it, and the cached prefix is re-billed. Where the model
+    # accepts mid-conversation tool changes, every tool is declared from the
+    # first request (non-resident ones deferred) and a load is surfaced by an
+    # appended tool_addition message (services/tool_catalogue.py).
+    _opening_names = [_TC._name_of(t) for t in _sent_tools]
+    _tool_changes = bool(_TC.enabled() and _all_tools
+                         and _TC.tool_changes_supported(model or ANTHROPIC_MODEL_DEFAULT))
+    _declared_tools = _TC.declared_tools(_all_tools, _sent_tools) if _tool_changes else None
+    if not _tool_changes and any(_TC.is_tool_change(m) for m in convo):
+        # A transcript from a run that used the beta, replayed without it.
+        convo[:] = _compaction.strip_thinking(_TC.drop_tool_changes(convo))
+
+    def _surfaced_names():
+        return [n for n in (_TC._name_of(t) for t in _sent_tools) if n not in _opening_names]
 
     # ── Per-task cloud tally. ──
     # ADVISORY: it warns, it does not stop. See prompt_cache.task_budget for the
@@ -12145,6 +12167,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             iter_count += 1
             if iter_count > 1:
                 _compact_convo()
+                if _tool_changes:
+                    # Compaction may have summarised an earlier tool_addition away.
+                    _TC.ensure_surfaced(convo, _surfaced_names())
             # ── Operator filesystem controls ───────────────────────────
             # Drop ~/.friday/AGENT_STOP to kill a runaway agent immediately.
             _stop_path = FRIDAY_DIR / "AGENT_STOP"
@@ -12215,8 +12240,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 "model": model or ANTHROPIC_MODEL_DEFAULT,
                 "max_tokens": max_tokens,
                 "messages": convo,
-                "tools": _sent_tools,
+                "tools": _declared_tools if _tool_changes else _sent_tools,
             }
+            if _tool_changes:
+                kwargs["extra_headers"] = {"anthropic-beta": _TC.TOOL_CHANGES_BETA}
             _sys = safe_system
             if _sys:
                 kwargs["system"] = _sys
@@ -12279,6 +12306,17 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             try:
                 resp = client.messages.create(**kwargs)
             except Exception as _gexc:
+                if _tool_changes and _TC.is_tool_change_rejection(_gexc):
+                    # The provider refused the beta: send the grown tool list
+                    # instead, with no thinking to replay against it.
+                    _log.warning("mid-conversation tool changes refused for %s; "
+                                 "sending the tool list instead: %s", kwargs.get("model"), _gexc)
+                    _TC.refuse_tool_changes(kwargs.get("model"))
+                    _tool_changes = False
+                    convo[:] = _compaction.strip_thinking(_TC.drop_tool_changes(convo))
+                    if _rounds_left is not None:
+                        _rounds_left += 1
+                    continue
                 _guest_auth_failed(_guest, _gexc)      # raises for a refused guest key; never falls back
                 raise
             _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
@@ -12432,6 +12470,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
 
             # Execute tools and feed results back
             tool_results = []
+            _tools_grew = False
             for tu in tool_uses:
                 # B3: the step entry is appended AFTER execution (with status +
                 # timing, tier-redacted args) by _orb_tool_trace — the raw tool
@@ -12451,6 +12490,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                                             query=str(_a.get("query") or ""))
                     if _new:
                         _sent_tools = list(_sent_tools) + list(_new)
+                        _tools_grew = True
                     tool_trace.append({"name": tu.name, "input": _a, "result": _msg})
                     _rtrace.tool_finished(tu.name, _a, _msg)
                     tool_results.append({"type": "tool_result", "tool_use_id": tu.id,
@@ -12463,6 +12503,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     _late, _ = _TC.expand(_all_tools, [tu.name], _sent_tools)
                     if _late:
                         _sent_tools = list(_sent_tools) + list(_late)
+                        _tools_grew = True
 
                 # ── Zero-trust continuous vault authorization ──────────
                 # Gate every tool call through vault check_action before
@@ -12539,6 +12580,12 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     "content": result,
                 })
             convo.append({"role": "user", "content": tool_results})
+            if _tool_changes:
+                _TC.ensure_surfaced(convo, _surfaced_names())
+            elif _tools_grew and _TC.checks_replayed_thinking(kwargs.get("model")):
+                # Without the beta the next request's tools differ from the
+                # ones the earlier thinking was produced under.
+                convo[:] = _compaction.strip_thinking(convo)
 
             # ── CRASH CHECKPOINT (services/task_resume) ──
             # Exactly here and nowhere else: every tool_use in `convo` now has

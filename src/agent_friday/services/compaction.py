@@ -191,6 +191,9 @@ def schema_tokens(obj):
     schemas, a system prompt) -- same 4-chars basis as `estimate_tokens`."""
     if not obj:
         return 0
+    if isinstance(obj, list):
+        # A deferred tool is not in the context until it is surfaced.
+        obj = [t for t in obj if not (isinstance(t, dict) and t.get("defer_loading"))]
     try:
         return len(obj if isinstance(obj, str) else json.dumps(obj, default=str)) // _CHARS_PER_TOKEN
     except Exception:

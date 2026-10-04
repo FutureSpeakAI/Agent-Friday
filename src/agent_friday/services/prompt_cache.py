@@ -431,10 +431,15 @@ def _mark_last_tool(tools, model):
     if _tokens(json.dumps(tools, default=str)) < _min_cacheable(model):
         return tools, False
     out = list(tools)
-    last = out[-1]
-    if not isinstance(last, dict) or "cache_control" in last:
+    # Deferred tools are not in the context until surfaced; the breakpoint
+    # goes on the last tool that is.
+    li = len(out) - 1
+    while li > 0 and isinstance(out[li], dict) and out[li].get("defer_loading"):
+        li -= 1
+    last = out[li]
+    if not isinstance(last, dict) or "cache_control" in last or last.get("defer_loading"):
         return tools, False
-    out[-1] = {**last, "cache_control": _EPHEMERAL}
+    out[li] = {**last, "cache_control": _EPHEMERAL}
     return out, True
 
 
@@ -460,14 +465,19 @@ def _mark_last_message(messages):
     if not isinstance(messages, list) or not messages:
         return messages, False
     out = list(messages)
-    last = out[-1]
+    # A system message (a tool_addition) takes no breakpoint: mark the newest
+    # user or assistant turn before it.
+    li = len(out) - 1
+    while li > 0 and isinstance(out[li], dict) and out[li].get("role") == "system":
+        li -= 1
+    last = out[li]
     if not isinstance(last, dict):
         return messages, False
     content = last.get("content")
     if isinstance(content, str):
         if not content:
             return messages, False
-        out[-1] = {**last, "content": [{"type": "text", "text": content,
+        out[li] = {**last, "content": [{"type": "text", "text": content,
                                         "cache_control": _EPHEMERAL}]}
         return out, True
     if isinstance(content, list) and content:
@@ -476,7 +486,7 @@ def _mark_last_message(messages):
             return messages, False
         new_content = list(content)
         new_content[-1] = {**tail, "cache_control": _EPHEMERAL}
-        out[-1] = {**last, "content": new_content}
+        out[li] = {**last, "content": new_content}
         return out, True
     return messages, False
 
@@ -498,6 +508,8 @@ def _flatten_blocks(messages):
     """
     flat = []
     for mi, m in enumerate(messages):
+        if isinstance(m, dict) and m.get("role") == "system":
+            continue        # tool changes take no breakpoint
         content = m.get("content") if isinstance(m, dict) else None
         if isinstance(content, list):
             flat.extend((mi, bi) for bi in range(len(content)))
