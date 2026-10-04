@@ -109,7 +109,7 @@ def test_the_model_can_refine_the_picture():
 def test_the_prompt_forbids_the_reflexive_list_and_the_bridge_shows_the_state():
     rule = vp.VOICE_LENGTH_RULE
     assert "Do NOT default to 'one, two or three things'" in rule
-    assert "connected paragraphs" in rule and "note_conversation_state" in rule
+    assert "connected paragraphs" in rule and "note_conversation_state" in vp.VOICE_STATE_NOTE_RULE
     for cue in ("tell me more", "keep it short", "news", "explanation", "story"):
         assert cue in rule
     src = inspect.getsource(rv).replace("\r\n", "\n")

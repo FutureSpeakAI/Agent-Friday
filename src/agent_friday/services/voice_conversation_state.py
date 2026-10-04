@@ -119,12 +119,12 @@ def priorities(state: dict, n: int = 3) -> list:
 
 
 _DEPTH_WORDS = {
-    "deep": ("he wants depth right now: take real room, about a minute of talking, in "
+    "deep": ("they want depth right now: take real room, about a minute of talking, in "
              "connected paragraphs that build on each other, with the reasons, a concrete "
-             "example and what it means for him, the way a person explains; no list unless "
-             "he asked for options or steps"),
+             "example and what it means for them, the way a person explains; no list unless "
+             "they asked for options or steps"),
     "normal": "a natural, complete answer in a few spoken sentences; no reflexive list",
-    "brief": "he wants it short: a sentence or two, and nothing extra",
+    "brief": "they want it short: a sentence or two, and nothing extra",
 }
 
 
@@ -134,7 +134,7 @@ def render(state: dict) -> str:
     bits = []
     pr = priorities(s)
     if pr:
-        bits.append("what he cares about right now: " + ", ".join(pr))
+        bits.append("what they care about right now: " + ", ".join(pr))
     bits.append("how much to say: " + _DEPTH_WORDS.get(s.get("depth"), _DEPTH_WORDS["normal"]))
     if s.get("open"):
         bits.append("still open from earlier: " + " | ".join(s["open"]))

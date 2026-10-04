@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import pytest
 
+from tests.api.turn_context_helpers import (
+    CHAT_ROUTES, capture_requests, chat_requests, route_to, turn_prompt, whole_request)
+
 from agent_friday.services import codebases as cb
 from agent_friday.services import conversations as convs
 
@@ -19,39 +22,34 @@ def _root(monkeypatch, tmp_path):
 
 @pytest.fixture
 def captured(patch_app):
-    seen = []
-
-    def fake_agent(messages, *a, **k):
-        seen.append(k.get("system") if "system" in k else (a[0] if a else ""))
-        return ("ok", [])
-
-    def fake_text(*a, **k):
-        seen.append(k.get("system") or "")
-        return "ok"
-
-    for name in ("_generate_agent", "_call_claude_agent", "_oai_agentic_loop"):
-        patch_app(name, fake_agent)
-    for name in ("_generate_text", "_call_claude", "_call_ollama", "_call_openai"):
-        patch_app(name, fake_text)
-    return seen
+    return capture_requests(patch_app)
 
 
-@pytest.mark.parametrize("route", ["/api/chat", "/api/chat/send"])
-def test_the_prompt_carries_the_codebase_files_and_steps(client, captured, route):
+@pytest.mark.parametrize("route,provider", CHAT_ROUTES)
+def test_the_prompt_carries_the_codebase_files_and_steps(client, captured, monkeypatch,
+                                                         route, provider):
+    route_to(monkeypatch, provider)
     d = client.post("/api/codebases", json={"title": "Rent Tracker", "template": "static"}).get_json()
     cid, cbid = d["conversation"]["id"], d["codebase"]["id"]
     cb.step(cbid, {"index.html": "<h1>rent</h1>"}, "Rent heading")
     r = client.post(route, json={"message": "make it bigger", "conversation_id": cid})
     assert r.status_code == 200, r.data[:300]
-    joined = "\n".join(p for p in captured if p)
+    joined = "\n".join(turn_prompt(q, route, said="make it bigger")
+                       for q in chat_requests(captured, route))
     assert cb.CONTEXT_HEADER in joined and cbid in joined
     assert "<h1>rent</h1>" in joined and "Rent heading" in joined
     assert "codebase_edit" in joined
 
 
-def test_a_plain_chat_is_told_nothing_about_codebases(client, captured):
+@pytest.mark.parametrize("route,provider", CHAT_ROUTES)
+def test_a_plain_chat_is_told_nothing_about_codebases(client, captured, monkeypatch,
+                                                      route, provider):
+    route_to(monkeypatch, provider)
     client.post("/api/codebases", json={"title": "Elsewhere", "template": "static"})
     cid = client.post("/api/conversations", json={"title": "Plain"}).get_json()["conversation"]["id"]
-    client.post("/api/chat", json={"message": "hi", "conversation_id": cid})
-    joined = "\n".join(p for p in captured if p)
+    client.post(route, json={"message": "hi", "conversation_id": cid})
+    assert chat_requests(captured, route)
+    # Every word of the request, system and messages: the per-turn content is
+    # not in the system prompt on /api/chat, so a system-only check is empty.
+    joined = whole_request(captured)
     assert cb.CONTEXT_HEADER not in joined and "Elsewhere" not in joined

@@ -1,11 +1,12 @@
-"""On the local seat the system prompt is the same bytes on every turn.
+"""On every seat the system prompt is the same bytes on every turn.
 
 What this message chose (wiki matches, memories, skills, the clock) rides at
 the top of the newest user turn; the system message is the stable head with
 the action policy sealed last. So llama-server reuses its cache for the
-system prompt and the whole history and reads only the new turn. On the
-cloud the same tail follows the head in the system prompt, below the cache
-marker, and the policy is still last.
+system prompt and the whole history and reads only the new turn, and on the
+cloud the cached prefix and the earlier turns' thinking stay valid. On the
+cloud the context is its own text block, so the egress gate judges it apart
+from the user's words.
 """
 from __future__ import annotations
 
@@ -77,8 +78,10 @@ def test_the_local_system_prompt_is_identical_across_turns_and_the_tail_rides_in
     assert last["content"].rstrip().endswith("what is the weather tomorrow")
 
 
-def test_the_cloud_keeps_the_tail_in_the_system_prompt_with_the_policy_last(
+def test_the_cloud_system_prompt_is_identical_across_turns_and_the_tail_rides_in_the_user_turn(
         client, monkeypatch, wired):
+    """SENSITIVE path. A system prompt that changes every turn re-bills the
+    whole replayed history and invalidates the earlier turns' thinking."""
     _route(monkeypatch, "cloud")
     seen = []
 
@@ -86,14 +89,22 @@ def test_the_cloud_keeps_the_tail_in_the_system_prompt_with_the_policy_last(
         seen.append(copy.deepcopy({"messages": messages, **kwargs}))
         return "ok", []
     monkeypatch.setattr(chat, "_call_claude_agent", dispatch)
-    r = client.post("/api/chat", json={"message": "tell me about cats"})
-    assert r.status_code == 200, r.get_data(as_text=True)[:300]
-    assert len(seen) == 1
-    system = seen[0]["system"]
-    head, tail = system.split(VOLATILE_MARKER, 1)
-    assert "== PERSONA ==" in head and "skill for tell me about cats" in tail
-    assert system.rstrip().endswith(ACTION_PERMISSION_POLICY)
-    assert not seen[0]["messages"][-1]["content"].startswith("[CONTEXT FOR THIS TURN")
+    r1 = client.post("/api/chat", json={"message": "tell me about cats"})
+    assert r1.status_code == 200, r1.get_data(as_text=True)[:300]
+    cid = (r1.get_json() or {}).get("conversation_id")
+    r2 = client.post("/api/chat", json={"message": "what is the weather tomorrow",
+                                        **({"conversation_id": cid} if cid else {})})
+    assert r2.status_code == 200, r2.get_data(as_text=True)[:300]
+    assert len(seen) == 2
+    s1, s2 = seen[0]["system"], seen[1]["system"]
+    assert s1 == s2, "the system prompt changed between two cloud turns"
+    assert VOLATILE_MARKER not in s1 and "skill for" not in s1
+    assert "== PERSONA ==" in s1 and s1.rstrip().endswith(ACTION_PERMISSION_POLICY)
+    last = seen[1]["messages"][-1]
+    assert last["role"] == "user" and isinstance(last["content"], list)
+    ctx, said = last["content"][0]["text"], last["content"][-1]["text"]
+    assert ctx.startswith("[CONTEXT FOR THIS TURN") and "skill for what is the weather tomorrow" in ctx
+    assert said == "what is the weather tomorrow"
 
 
 def test_a_guarded_cloud_turn_keeps_the_newest_user_message_scrubbed(
@@ -115,6 +126,6 @@ def test_a_guarded_cloud_turn_keeps_the_newest_user_message_scrubbed(
     r = client.post("/api/chat", json={"message": "Discuss Private appointment with sender@example.test"})
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     assert len(seen) == 1
-    last = seen[0]["messages"][-1]["content"]
+    last = str(seen[0]["messages"][-1]["content"])
     assert "sender@example.test" not in last and "Private appointment" not in last, last
     assert seen[0]["pii_lookup"]

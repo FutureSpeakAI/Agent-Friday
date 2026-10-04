@@ -117,7 +117,7 @@ def test_the_voice_tool_revises_and_asks_again():
         {"request_id": aid, "decision": "approve"},
         session={"owner_text": "yes, but take out the part about my sister"})
     low = out.lower()
-    assert "he approved" not in low and not low.startswith("recorded:"), (
+    assert "they approved" not in low and "he approved" not in low and not low.startswith("recorded:"), (
         "the model must not be told he approved it: " + out)
     assert _status(aid) == "pending"
     p = _payload(aid)
@@ -166,5 +166,5 @@ def test_a_plain_yes_through_the_tool_still_sends():
     out = ve._tool_answer_share_request(
         {"request_id": aid, "decision": "approve"},
         session={"owner_text": "send it"})
-    assert "he approved" in out.lower(), out
+    assert "they approved" in out.lower(), out
     assert _status(aid) == "approved"

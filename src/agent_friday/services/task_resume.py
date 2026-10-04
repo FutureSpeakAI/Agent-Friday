@@ -443,7 +443,11 @@ def resume(task_id, *, confirm_pending: bool = False,
         return _resume_from_ledger(task_id, verdict)
 
     blob = read(task_id) or {}
-    convo = blob.get("convo") or []
+    # A resume is a new request under the system prompt and tool set of the
+    # resumed run, not the ones the saved thinking was produced against, so
+    # the saved turns are replayed without their thinking blocks.
+    from agent_friday.services.compaction import strip_thinking
+    convo = strip_thinking(blob.get("convo") or [])
     tool_trace = blob.get("tool_trace") or []
 
     ctx = dict(session_ctx or {})
