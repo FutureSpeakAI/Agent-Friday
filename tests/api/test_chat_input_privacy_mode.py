@@ -54,4 +54,9 @@ def test_sonnet_chat_input_and_context_obey_recorded_consent(
         assert "Private appointment" not in sent
         assert "sender@example.test" not in sent
         assert seen[0]["pii_lookup"]
-        assert chat.PRIVACY_PLACEHOLDERS_NOTE in seen[0]["system"]
+        # The note rides with the per-turn context in the newest user turn,
+        # never in the system prompt (which stays the same every turn).
+        assert chat.PRIVACY_PLACEHOLDERS_NOTE not in seen[0]["system"]
+        turn = seen[0]["messages"][-1]["content"]
+        turn_text = turn if isinstance(turn, str) else "".join(b.get("text", "") for b in turn)
+        assert chat.PRIVACY_PLACEHOLDERS_NOTE in turn_text

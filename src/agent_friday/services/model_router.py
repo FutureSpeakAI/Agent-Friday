@@ -1627,6 +1627,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             convo.append({"role": "system", "content": _sys_content})
         for m in messages:
             content = m.get("content", "")
+            if isinstance(content, list) and content and all(
+                    isinstance(b, dict) and b.get("type") == "text" for b in content):
+                # Text blocks (a turn carrying its context block ahead of the
+                # user's words) are one message here, never dropped.
+                content = "\n\n".join(str(b.get("text") or "") for b in content)
             if isinstance(content, str):
                 convo.append({"role": m.get("role", "user"), "content": content})
 

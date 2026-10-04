@@ -1554,9 +1554,8 @@ def chat():
         if cite_sources:
             _extra_system += CITATION_INSTRUCTIONS
 
-        # The newest user turn carries this turn's context on the local seat
-        # (see _prep_for); the original text is kept so a cloud fallback can
-        # put it back and carry the context in the system prompt instead.
+        # The newest user turn carries this turn's context (see _prep_for);
+        # the original text is kept so each provider's prep starts from it.
         _last_user_msg = (messages[-1] if messages and messages[-1].get('role') == 'user'
                           and isinstance(messages[-1].get('content'), str) else None)
         _last_user_text = _last_user_msg.get('content') if _last_user_msg is not None else None
@@ -1571,13 +1570,14 @@ def chat():
             message chose: the clock, wiki matches, memories, skills, the
             screen, session continuity, the pinned situation.
 
-            On the local seat the TAIL rides at the top of the newest user
-            turn and the system message is HEAD alone, so llama-server
-            reuses its cache for the system prompt and the whole history and
-            reads only the new turn (measured: 43 s a turn re-reading a
-            ~21k-token prompt, 0.43 s when the prefix repeated). On the
-            cloud the tail follows the head in the system prompt, below
-            `prompt_cache.VOLATILE_MARKER`, and the policy is sealed last.
+            The TAIL rides at the top of the newest user turn and the system
+            message is HEAD alone, with the policy sealed last. On the local
+            seat llama-server then reuses its cache for the system prompt and
+            the whole history and reads only the new turn (measured: 43 s a
+            turn re-reading a ~21k-token prompt, 0.43 s when the prefix
+            repeated); on the cloud the cached prefix and the earlier turns'
+            thinking stay valid. Only a turn with no plain-text user message
+            keeps the tail in the system prompt.
             """
             # Start from the user's own text: a previous local prep may have
             # wrapped it, and the cloud scrub below must see (and keep) the
@@ -1688,12 +1688,29 @@ def chat():
             # This route assembles its own prompt rather than going through
             # `_get_friday_system_prompt`, so the policy and the override
             # strip are applied here, last.
-            if provider == 'local' and _last_user_msg is not None and tail.strip():
+            # SENSITIVE (the sealed /api/chat prompt). The per-turn context
+            # (clock, memories, wiki matches, continuity, pinned situation)
+            # rides in the newest user turn on every seat, never in the system
+            # prompt: a system prompt that changes every turn re-bills the
+            # whole replayed history and, on models that check replayed
+            # thinking, invalidates it. Moving retrieved text out of system
+            # authority also keeps it from being read as an instruction.
+            if _last_user_msg is not None and tail.strip():
                 from agent_friday.services.action_policy import strip_authority_overrides
-                _last_user_msg['content'] = (
-                    "[CONTEXT FOR THIS TURN — retrieved by Friday, not written by the user]\n"
-                    + strip_authority_overrides(tail, source="/api/chat turn context").strip()
-                    + "\n[END OF CONTEXT]\n\n" + _last_user_text)
+                _ctx = ("[CONTEXT FOR THIS TURN — retrieved by Friday, not written by the user]\n"
+                        + strip_authority_overrides(tail, source="/api/chat turn context").strip()
+                        + "\n[END OF CONTEXT]\n\n")
+                if provider == 'local':
+                    _last_user_msg['content'] = _ctx + _last_user_text
+                else:
+                    # Its own text block, so the egress gate judges the
+                    # context and the user's words separately: a withheld
+                    # context paragraph never takes the message with it. The
+                    # message is the scrubbed copy for a guarded cloud turn.
+                    _cur = _last_user_msg.get('content')
+                    _blocks = (list(_cur) if isinstance(_cur, list)
+                               else [{"type": "text", "text": _cur or ""}])
+                    _last_user_msg['content'] = [{"type": "text", "text": _ctx}] + _blocks
                 return seal_system_prompt(head, "/api/chat prompt"), src, lookup
             return seal_system_prompt(head + tail, "/api/chat prompt"), src, lookup
 
