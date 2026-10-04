@@ -720,6 +720,7 @@ _VOICE_SHARED_TOOLS = (
     "make_podcast",
     "podcast_list",
     "media_show",
+    "media_play",
     "media_turn",
     "podcast_play",
     "podcast_source",

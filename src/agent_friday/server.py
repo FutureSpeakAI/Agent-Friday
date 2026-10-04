@@ -590,6 +590,15 @@ if not _TESTING:
     except Exception as _pw_e:
         print(f"  Podcasts: render worker not started ({_pw_e})")
 
+    # Media library index: built in the background at boot and kept fresh with a
+    # cheap periodic change check, so the Library is never an empty grid over a
+    # full creations folder (services/media_index.py).
+    try:
+        from agent_friday.services import media_index as _media_index
+        _media_index.start_background()
+    except Exception as _mi_e:
+        print(f"  Media: library indexer not started ({_mi_e})")
+
     # Offline-first resilience: probe connectivity every 30s, auto-switch to
     # local inference when offline, flush the queue + refresh feeds when back.
     threading.Thread(target=_network_monitor_loop, daemon=True).start()
