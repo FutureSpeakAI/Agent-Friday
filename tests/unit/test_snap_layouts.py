@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
 import functools
 import http.server
 import json
@@ -465,6 +466,7 @@ def test_dragging_to_an_edge_previews_holds_and_snaps(site):
     # The edge-hold dwell steps on a clock the test moves, so each size is
     # reached at its own time however slow the machine (FRIDAY_SNAP_HOLD_MS).
     s.page.clock.install()
+    s.page.clock.pause_at(_dt.datetime.now() + _dt.timedelta(seconds=1))   # time stands still between steps
     s.page.mouse.move(bar["x"] + 40, bar["y"] + bar["height"] / 2)
     s.page.mouse.down()
     for x in (300, 150, 60, 4):
