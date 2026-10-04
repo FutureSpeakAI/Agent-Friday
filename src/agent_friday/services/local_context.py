@@ -211,8 +211,8 @@ def pick_local_seat() -> tuple:
                       "this privately — that takes a moment. Say so in one "
                       "short sentence.")
     return None, ("Friday has no local model installed, so she cannot read "
-                  "his private data without sending it to a cloud model, and "
-                  "she will not do that. Tell him plainly, and offer to set "
+                  "the user's private data without sending it to a cloud model, and "
+                  "she will not do that. Tell the user plainly, and offer to set "
                   "up a local model in Settings.")
 
 
@@ -226,13 +226,20 @@ def local_answer(question: str, seat: Optional[str] = None) -> tuple:
         seat, _note = pick_local_seat()
     if not seat:
         return "", None
-    system, meta = _build_voice_system_prompt(settings)
+    system, meta = _build_voice_system_prompt(settings, seat=seat)
     user = _voice_user_message(RELAY_NOTE + question, settings, volatile=meta.get("volatile"))
-    text, _trace = _generate_agent(
-        [{"role": "user", "content": user}], system=system, model=seat, max_tokens=600,
-        session_ctx={"authenticated": True, "provider": "local", "is_voice": True,
-                     "surface": "voice-live-relay"},
-        workspace=settings.get("active_workspace") or "")
+    try:
+        text, _trace = _generate_agent(
+            [{"role": "user", "content": user}], system=system, model=seat, max_tokens=600,
+            session_ctx={"authenticated": True, "provider": "local", "is_voice": True,
+                         "surface": "voice-live-relay",
+                         # The prompt is gated for the LOCAL seat: a dead seat
+                         # fails here, it never rides a cloud leg.
+                         "pin_to_seat": True},
+            workspace=settings.get("active_workspace") or "")
+    except Exception as e:  # noqa: BLE001 - the seat failed: no answer, said as such
+        _log.warning("local answer failed on %s: %s: %s", seat, type(e).__name__, e)
+        return "", None
     return (text or "").strip(), seat
 
 
@@ -324,7 +331,7 @@ def _send(approval_id, conversation_id, text, payload=None, *,
             "record of what would leave the machine, so she held it back.")
         _deliver(conversation_id,
                  "That context was not sent: Friday could not record what "
-                 "would have left the machine, so she held it back. Tell him "
+                 "would have left the machine, so she held it back. Tell the user "
                  "so in one sentence.", "notice")
         SENT_LOG.append({"approval_id": approval_id,
                          "conversation_id": conversation_id, "text": text,
@@ -469,8 +476,8 @@ def _on_decision(rec: dict) -> None:
         _send(aid, cid, str(p.get("text") or ""), p)
         approvals.mark_used(aid, "local_context", {"version": p.get("version")})
     else:
-        _deliver(cid, "He chose not to share that context. Carry on without it, and do "
-                      "not ask for it again unless he brings it up.", "declined")
+        _deliver(cid, "The user chose not to share that context. Carry on without it, and do "
+                      "not ask for it again unless they bring it up.", "declined")
 
 
 def register() -> None:
@@ -675,10 +682,10 @@ def decide_by_voice(approval_id: str, owner_words: str, room_mode: bool, claimed
         # not on the card yet. Nothing is decided here.
         return {"ok": False, "revise": True,
                 "instruction": condition_from(owner_words),
-                "error": ("his yes had a condition attached, so it is not an "
+                "error": ("their yes had a condition attached, so it is not an "
                           "approval of the text on the card")}
     if verdict is None or verdict != claimed:
-        return {"ok": False, "error": ("his own words did not " + ("approve" if claimed == "approve" else "decline")
+        return {"ok": False, "error": ("their own words did not " + ("approve" if claimed == "approve" else "decline")
                                        + " it" + (" (in a room of several people, a spoken OK must name Friday)"
                                                   if room_mode else ""))}
     rec, won = approvals.decide_with_outcome(approval_id, verdict, decided_by="owner:/voice/")

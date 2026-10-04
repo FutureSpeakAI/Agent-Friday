@@ -178,6 +178,9 @@ class TurnReceipt:
         # prefix-cache acceptance), how many clauses the mouth spoke, and
         # when the first clause was complete (ms since the turn began).
         self.prefill_tokens = None
+        # First-token deadline: None, "filler" (a hang-on line was spoken) or
+        # "abort" (nothing came by the hard limit; the turn was stopped).
+        self.deadline_hit = None
         self.clauses = None
         self.first_clause_ms = None
         self._t0 = time.perf_counter()
@@ -267,6 +270,8 @@ class TurnReceipt:
                 parts.append("tts_error=1")
             if self.brain_failed:
                 parts.append("brain_failed=1")
+            if self.deadline_hit:
+                parts.append(f"deadline_hit={_fmt(self.deadline_hit)}")
             if self.prefill_tokens is not None:
                 parts.append(f"prefill_tokens={_fmt(self.prefill_tokens)}")
             if self.clauses is not None:

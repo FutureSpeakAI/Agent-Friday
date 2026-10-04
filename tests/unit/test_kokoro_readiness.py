@@ -323,17 +323,18 @@ def test_load_wires_espeak_before_importing_kokoro(monkeypatch):
         "espeak must be wired BEFORE kokoro/misaki is imported"
 
 
-@pytest.mark.skipif(
-    not kv._module_installed("espeakng_loader"),
-    reason="espeakng_loader not installed in this environment")
-def test_ensure_espeak_fallback_really_points_at_the_bundled_library():
-    """Not a mock: this asserts the helper actually resolves the library that
-    pip installed, which is the thing misaki's hardcoded Windows path misses."""
+def test_ensure_espeak_fallback_never_loads_espeak_into_this_process(monkeypatch):
+    """espeak-ng and phonemizer are GPL-3.0: Friday reaches them only through
+    the separate helper program (services/g2p_fallback). Preparing Kokoro puts
+    the pipe-backed stand-in in place of misaki.espeak and imports neither."""
+    from agent_friday.services import g2p_fallback
+    monkeypatch.delitem(sys.modules, "misaki.espeak", raising=False)
+    before = {m for m in sys.modules if m.startswith(("phonemizer", "espeakng_loader"))}
     out = kv.ensure_espeak_fallback()
+    after = {m for m in sys.modules if m.startswith(("phonemizer", "espeakng_loader"))}
     assert out["wired"] is True, out.get("detail")
-    assert out["library"], "a wired fallback must name the library it found"
-    from phonemizer.backend.espeak.wrapper import EspeakWrapper
-    assert EspeakWrapper._ESPEAK_LIBRARY
+    assert after == before, "espeak/phonemizer were loaded into Friday's process"
+    assert sys.modules["misaki.espeak"].EspeakFallback is g2p_fallback.PipeFallback
 
 
 # ------------------------------------- out-of-dictionary proper nouns
@@ -352,7 +353,10 @@ def test_attach_espeak_fallback_repairs_a_missing_fallback(fake_misaki):
     out = kv.attach_espeak_fallback(p)
     assert out["fallback"] is True, out.get("detail")
     assert out["repaired"] is True
-    assert isinstance(p.g2p.fallback, fake_misaki)
+    # The pipe-backed fallback, not misaki's in-process espeak one.
+    from agent_friday.services.g2p_fallback import PipeFallback
+    assert isinstance(p.g2p.fallback, PipeFallback)
+    assert not isinstance(p.g2p.fallback, fake_misaki)
 
 
 def test_attach_espeak_fallback_leaves_an_existing_fallback_alone():

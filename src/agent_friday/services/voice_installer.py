@@ -149,6 +149,96 @@ TARGETS = {
 }
 
 
+# The local voice stack's pinned artifacts (services/voice_artifacts.py): one
+# install target each, refused until both pins (revision + SHA-256, or an
+# exact package version) are set.
+def _artifact_targets() -> dict:
+    from agent_friday.services.voice_artifacts import ARTIFACTS
+    out = {}
+    for aid, a in ARTIFACTS.items():
+        out[aid] = {"label": "%s (%s MB, %s)" % (a["label"], a["size_mb"], a["licence"]),
+                    "disk_gb": max(0.1, round(a["size_mb"] * 2.2 / 1024, 1)),
+                    "stages": [], "artifact": aid}
+    return out
+
+
+TARGETS.update(_artifact_targets())
+
+
+def _sha256_file(path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            if _CANCEL.is_set():
+                raise RuntimeError("cancelled")
+            b = f.read(8 << 20)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+def _safe_extract(archive, dest) -> None:
+    """Unpack a .tar.bz2 under `dest` only: a member naming an absolute path,
+    a parent directory, or a link is refused (no write outside `dest`)."""
+    import tarfile
+    from pathlib import Path
+    dest = Path(dest).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, "r:bz2") as t:
+        members = t.getmembers()
+        for m in members:
+            target = (dest / m.name).resolve()
+            if m.issym() or m.islnk() or not (target == dest or dest in target.parents):
+                raise RuntimeError("refused archive member %r" % m.name)
+        t.extractall(dest, members=members, filter="data")
+
+
+def _install_artifact(aid: str) -> None:
+    """Fetch one pinned artifact, check its hash, then put it in place.
+    A mismatch deletes the download and fails; nothing unverified lands."""
+    from pathlib import Path
+    from agent_friday.services import voice_artifacts as va
+    ok, why = va.pinned(aid)
+    if not ok:
+        raise RuntimeError("not installed: %s. Nothing was downloaded." % why)
+    a = va.ARTIFACTS[aid]
+    for dep in a.get("requires") or []:
+        _install_artifact(dep)
+    if a["kind"] == "pip":
+        rc = _run_pip_stage(["install", va.pip_spec(aid)])
+        if rc != 0:
+            raise RuntimeError(f"pip exited with code {rc} — see log")
+        return
+    from agent_friday.core import runtime_dir
+    # The same root voice_front / voice_ear_stream read from.
+    dest = Path(runtime_dir()) / a["dest"]
+    if a["kind"] == "file" and dest.exists() and _sha256_file(dest) == a["sha256"]:
+        _append_log(f"present and verified: {dest.name}")
+        return
+    stage = Path(str(dest) + ".download")
+    # The installer owns its staging folder; a downloader only writes a file.
+    stage.parent.mkdir(parents=True, exist_ok=True)
+    if stage.exists():
+        stage.unlink()
+    _download(va.url_for(aid), stage, a["size_mb"])
+    got = _sha256_file(stage)
+    if got != a["sha256"]:
+        stage.unlink()
+        raise RuntimeError("%s failed its checksum (got %s…, pinned %s…); the "
+                           "download was deleted and nothing was installed"
+                           % (a["label"], got[:12], a["sha256"][:12]))
+    _append_log(f"verified sha256 {got[:12]}… for {a['label']}")
+    if a["kind"] == "archive":
+        _safe_extract(stage, dest)
+        stage.unlink()
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        stage.replace(dest)
+    _append_log(f"installed {a['label']} -> {dest}")
+
+
 def _download(url: str, dest, size_mb: int) -> None:
     """Stream one allowlisted asset to disk with a size line in the log.
     Skips a file that already exists at a plausible size."""
@@ -318,6 +408,8 @@ def _run_job(target: str):
             if not ok:
                 raise RuntimeError(getattr(eng, "last_error", "") or
                                    "model download failed")
+        elif spec.get("artifact"):
+            _install_artifact(spec["artifact"])
         else:
             for stage in spec["stages"]:
                 if _CANCEL.is_set():
@@ -373,6 +465,12 @@ def start(target: str) -> dict:
         ok, why = _disk_ok(TARGETS[target]["disk_gb"])
         if not ok:
             return {"state": "error", "error": why}
+        if TARGETS[target].get("artifact"):
+            from agent_friday.services.voice_artifacts import pinned
+            ok, why = pinned(TARGETS[target]["artifact"])
+            if not ok:
+                return {"state": "error",
+                        "error": "%s. Nothing was downloaded." % why}
         # REFUSE rather than replace a library this process is holding open.
         # pip will happily overwrite torch/lib/*.dll underneath a live process;
         # what the user gets is a native "entry point could not be located"

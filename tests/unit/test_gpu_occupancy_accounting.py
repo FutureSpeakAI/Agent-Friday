@@ -63,12 +63,15 @@ def test_our_own_seats_are_not_double_counted(monkeypatch):
 
     ours = 4000
     g = hwp.refresh_display_reserve(_profile(), ours_resident_mib=ours)["gpus"][0]
-    reserve = g.get("vram_display_reserve_mib")
-    assert reserve == ACTUAL_USED - ours, (
-        f"expected {ACTUAL_USED}-{ours} foreign, got {reserve}")
-    # Without the subtraction the reserve would be the full 11,557 and the
+    # Occupancy has its own field: it is a now-figure the next refresh
+    # replaces, never a display reserve that only a larger value could follow.
+    foreign = g.get("vram_foreign_mib")
+    assert foreign == ACTUAL_USED - ours, (
+        f"expected {ACTUAL_USED}-{ours} foreign, got {foreign}")
+    assert "vram_display_reserve_mib" not in g
+    # Without the subtraction the budget would be the full 11,557 and the
     # arbiter would refuse to place anything at all, including our own seats.
-    assert reserve < ACTUAL_USED
+    assert hwp.effective_baseline_mib(g, "windows") == foreign < ACTUAL_USED
 
 
 def test_floor_still_wins_when_foreign_is_smaller(monkeypatch):

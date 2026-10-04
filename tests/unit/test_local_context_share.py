@@ -149,7 +149,7 @@ def test_the_voice_tools_use_his_words_from_the_call(world, monkeypatch):
                              {"request_id": rec["approval_id"], "decision": "approve"},
                              lambda f: None, session={"conversation_id": CID,
                                                       "owner_text": "okay, send it"})
-    assert out.startswith("Recorded: he approved")
+    assert out.startswith("Recorded: they approved")
 
 
 def test_revise_by_voice_changes_the_draft_on_his_machine(world):

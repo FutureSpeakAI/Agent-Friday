@@ -811,8 +811,8 @@ class LocalVoiceEngine:
                                  "whatever is resident.")
             return out
         if s.get("local_voice_kokoro_allow_cpu"):
-            out["reason"] = ("Kokoro on CPU by explicit opt-in: roughly realtime "
-                             "synthesis, too slow to converse.")
+            out["reason"] = ("Kokoro on the CPU: no graphics card is available "
+                             "to it, so it speaks more slowly.")
             return out
         out.update(engine=None, device=None, will_refuse=True,
                    reason="Kokoro needs a CUDA GPU and this environment's PyTorch "

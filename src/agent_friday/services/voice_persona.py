@@ -67,9 +67,14 @@ VOICE_LENGTH_RULE = (
     "'go on' or 'why?' means go longer; 'keep it short', 'just the headline' or "
     "'bottom line' means go shorter until they say otherwise. A note headed 'the "
     "conversation so far' tells you what they care about right now and how much "
-    "to say: follow it, and call note_conversation_state when you notice their "
-    "priorities or the depth they want shift. Long answers come in short "
-    "sentences with natural pauses so they can follow and interrupt.\n"
+    "to say: follow it. Long answers come in short sentences with natural pauses "
+    "so they can follow and interrupt.\n"
+)
+
+#: Added to VOICE_LENGTH_RULE where the note_conversation_state tool is declared.
+VOICE_STATE_NOTE_RULE = (
+    "Call note_conversation_state when you notice their priorities or the depth "
+    "they want shift.\n"
 )
 
 #: The evidence standard for every piece of news, in any medium.
@@ -149,14 +154,17 @@ def strip_text_chat_hints(context: str, *, keep_tone: bool) -> str:
 
     Voice sets its length by the moment (VOICE_LENGTH_RULE) and its tone from
     the persona; the chat settings' "be reasonably brief" and "professional"
-    lines contradicted both.
+    lines contradicted both, and the text-chat length line gives way to the
+    voice rule rather than being said twice.
     """
-    from agent_friday.core import COMMUNICATION_STYLE_HINTS, RESPONSE_LENGTH_HINTS
-    hints = list(RESPONSE_LENGTH_HINTS.values())
+    from agent_friday.core import (
+        ADAPTIVE_LENGTH_LINE, COMMUNICATION_STYLE_HINTS, LEGACY_LENGTH_LINE,
+        RESPONSE_LENGTH_HINTS)
+    hints = list(RESPONSE_LENGTH_HINTS.values()) + [LEGACY_LENGTH_LINE, ADAPTIVE_LENGTH_LINE]
     if not keep_tone:
         hints += list(COMMUNICATION_STYLE_HINTS.values())
     for h in hints:
-        context = context.replace(h + "\n", "").replace(h, "")
+        context = context.replace("- " + h + "\n", "").replace(h + "\n", "").replace(h, "")
     return context
 
 

@@ -32,7 +32,7 @@ last gate between a lease and the display driver — called
 `display_reserve_mib()` directly: 256 MiB on a single-monitor Windows box,
 with NO clamp to `MIN_DISPLAY_RESERVE_MIB`. The planner, meanwhile, budgets
 against `effective_baseline_mib()`, which DOES fold in the clamp (by way of
-`live_display_mib()`'s own `max(val, MIN_DISPLAY_RESERVE_MIB[...])`) once a
+`refresh_display_reserve()`'s clamp of the live reading to the floor) once a
 live sample has been written into the profile. So the number the gate
 actually enforces (256) and the number the planner assumes (>= 2,560) have
 disagreed since the day both were written. A display was lost on the
@@ -43,7 +43,7 @@ that level.
 it takes the SAME formula `hardware_profile.display_reserve_mib()` already
 computes (256 base + per-monitor + HiDPI + indirect-adapter increments) and
 clamps it up to `MIN_DISPLAY_RESERVE_MIB` for the machine's OS family — the
-exact clamp `live_display_mib()` already applies to its own reading, just
+exact clamp `refresh_display_reserve()` already applies to the live reading, just
 applied to the OTHER of the two reserve computations that fed into
 `vram_headroom()`'s hole. No new number is invented; nothing here is a
 `working`/`away`/`yield` level, a VRAM slack, or a RAM-available floor.
@@ -94,14 +94,21 @@ def resolve_display_reserve(profile: dict) -> dict:
     `_CACHE_TTL_S` for exactly that reason.
     """
     fam = (profile.get("os") or {}).get("family", "linux")
+    # The floor is the card's own: measured idle draw plus a margin when the
+    # Arbiter took an idle baseline, the fixed OS minimum otherwise
+    # (hardware_profile.display_reserve_floor_mib). One GPU drives the gate.
+    # Pure and cheap, so it is computed on every call and keys the cache
+    # together with the OS family; only the display probe is cached.
+    gpus = profile.get("gpus") or []
+    floor_mib = int(hwp.display_reserve_floor_mib(fam, gpus[0] if gpus else None))
     now = time.time()
     cached = _CACHE["result"]
     if (cached is not None and _CACHE["os_family"] == fam
+            and cached["sources"]["min_display_reserve_mib"] == floor_mib
             and (now - _CACHE["ts"]) < _CACHE_TTL_S):
         return dict(cached)
 
     formula_mib = int(hwp.display_reserve_mib())
-    floor_mib = int(hwp.MIN_DISPLAY_RESERVE_MIB.get(fam, 512))
 
     if formula_mib >= floor_mib:
         mib, basis = formula_mib, "formula"

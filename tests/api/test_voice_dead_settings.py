@@ -46,7 +46,7 @@ def test_dead_setting_voice_silence_ms_reaches_the_endpointer():
     """The local ws handler builds its VADEndpointer from voice_silence_ms."""
     import agent_friday.routes.voice as rv
     src = inspect.getsource(rv)
-    assert 'VADEndpointer(silence_ms=int(settings.get("voice_silence_ms")' in src
+    assert 'VADEndpointer(silence_ms=int(_num_setting(settings, "voice_silence_ms"' in src
     from agent_friday.services.local_voice import VADEndpointer
     assert VADEndpointer(silence_ms=1234, use_silero=False).silence_ms == 1234
 

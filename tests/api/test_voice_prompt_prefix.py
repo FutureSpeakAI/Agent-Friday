@@ -22,6 +22,10 @@ def _wire(monkeypatch, rv, clock):
     monkeypatch.setattr(rv, "_vault_cloud_fallback", lambda: "warn")
     monkeypatch.setattr("agent_friday.routing.model_router.provider_family",
                         lambda m: "local")
+    # The local voice turn is pinned to the resolved local seat, which is
+    # what makes its provider "local".
+    monkeypatch.setattr("agent_friday.services.local_seats.resolve",
+                        lambda role, configured=None: "seat")
 
 
 def test_voice_prompt_is_prefix_stable(monkeypatch):

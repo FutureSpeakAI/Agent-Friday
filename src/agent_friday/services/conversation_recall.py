@@ -94,7 +94,7 @@ def split_by_provenance(hits: list, provider: str = prov.GEMINI):
 
 
 def format_hits(hits: list) -> str:
-    return "\n".join(f"- {h['date']} ({h['via']}, {'him' if h['role'] == 'user' else 'Friday'}): "
+    return "\n".join(f"- {h['date']} ({h['via']}, {'the user' if h['role'] == 'user' else 'Friday'}): "
                      f"{h['text']}" for h in hits)
 
 
@@ -122,6 +122,6 @@ def recent_voice_pin(max_sessions: int = 3, max_chars: int = 900, windows=None) 
     for s in recent:
         when = datetime.fromtimestamp(s["ts"]).strftime("%a %b %d, %I:%M %p")
         said = " / ".join(x for x in s["lines"] if x)
-        out.append(f"- {when}: he said: {said}" if said else f"- {when}")
+        out.append(f"- {when}: the user said: {said}" if said else f"- {when}")
     text = "\n".join(out)
     return text[:max_chars] + "\n"

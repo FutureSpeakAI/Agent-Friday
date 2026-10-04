@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
 import functools
 import http.server
 import json
@@ -462,16 +463,23 @@ def test_in_a_workspace_tab_the_arrows_stay_out_of_the_scene(site):
 def test_dragging_to_an_edge_previews_holds_and_snaps(site):
     s = site().desktop().open_news()
     bar = s.page.locator(".fwin .fwin-title").bounding_box()
+    # The edge-hold dwell steps on a clock the test moves, so each size is
+    # reached at its own time however slow the machine (FRIDAY_SNAP_HOLD_MS).
+    s.page.clock.install()
+    s.page.clock.pause_at(_dt.datetime.now() + _dt.timedelta(seconds=1))   # time stands still between steps
     s.page.mouse.move(bar["x"] + 40, bar["y"] + bar["height"] / 2)
     s.page.mouse.down()
     for x in (300, 150, 60, 4):
         s.page.mouse.move(x, 420)
-    s.page.wait_for_timeout(150)
+    s.page.clock.run_for(150)
+    s.page.wait_for_timeout(50)
     assert s.boxes()["preview"] == "left_half"
-    s.page.wait_for_timeout(800)
+    s.page.clock.run_for(800)
+    s.page.wait_for_timeout(50)
     assert s.boxes()["preview"] == "left_two_thirds"
     s.page.mouse.up()
-    s.page.wait_for_timeout(400)
+    s.page.clock.run_for(400)
+    s.page.wait_for_timeout(50)
     g = s.boxes()
     assert g["snap"] == "left_two_thirds" and g["preview"] is None, g
     _exact(g["win"], {"x": 0, "y": g["area"]["y"], "width": round(g["area"]["w"] * 2 / 3), "height": g["area"]["h"]})
@@ -482,7 +490,8 @@ def test_dragging_to_an_edge_previews_holds_and_snaps(site):
     for x in (300, 500, 700):
         s.page.mouse.move(x, 400)
     s.page.mouse.up()
-    s.page.wait_for_timeout(400)
+    s.page.clock.run_for(400)
+    s.page.wait_for_timeout(50)
     assert s.boxes()["snap"] is None
 
 

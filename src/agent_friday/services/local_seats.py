@@ -682,6 +682,9 @@ def serving() -> dict:
                         continue
         except Exception as e:
             _log.debug("serving(): live adoption unavailable: %s", e)
+    # The voice front (services/voice_front) is a seat for live voice turns
+    # only: one cached slot, so nothing else is offered onto it.
+    out = {m: b for m, b in out.items() if not str(m).startswith("voice-front:")}
     try:
         from agent_friday.routing.ollama_manager import get_manager
         mgr = get_manager()

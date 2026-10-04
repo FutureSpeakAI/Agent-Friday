@@ -2180,15 +2180,18 @@ DEFAULT_SETTINGS = {
     "voice_proactive": True,               # Live API proactivity.proactive_audio
     "voice_context_compression": True,     # Live API sliding-window compression; ON by default so the context-window cap never silently terminates a long voice session (pairs with session_resumption renewal)
     "voice_barge_grace_ms": 800,           # ignore mic this long after Friday starts speaking (echo-canceller warmup)
-    "voice_barge_sustain_ms": 200,         # deliberate speech must persist this long to interrupt playback
-    # Interruption mode — how the Live API treats detected mic activity while
-    # Friday is speaking. On SPEAKERS the mic re-captures Friday's own audio;
-    # Gemini's VAD mistakes that echo for a barge-in and fires an interruption
-    # that cuts her off mid-sentence. "speaker" = NO_INTERRUPTION (Google's
-    # recommended echo-safe setting — her turn always finishes). "headphones" =
-    # START_OF_ACTIVITY_INTERRUPTS (true barge-in; only safe when there's no
-    # speaker bleed). Default speaker-safe because most users are on speakers.
-    "voice_interruption_mode": "auto",     # "auto"/"headphones" (barge-in, default) | "no-barge" (open-speakers echo-safe: no native interruption)
+    "voice_barge_sustain_ms": 200,         # Gemini Live speaker-safe mode: deliberate speech must persist this long (two of its ~171 ms mic frames) to interrupt playback
+    "voice_local_barge_sustain_ms": 170,   # local voice: the same, over its ~85 ms mic frames (two frames), so she stops within ~300 ms of the first word
+    # Interruption mode — what talking over Friday does. Escape stops her in
+    # every mode. On SPEAKERS the mic re-captures her own voice, which is why
+    # the open-speaker mode exists.
+    #   Gemini Live: "auto" (default; also "headphones", "speaker") =
+    #     START_OF_ACTIVITY_INTERRUPTS, she stops when Gemini hears you start
+    #     talking; "no-barge" = speaker-safe: NO_INTERRUPTION, and Friday's own
+    #     echo-aware detector stops her when you are clearly louder than her
+    #     voice in the mic.
+    #   Local voice: "auto" = that echo-aware detector; "no-barge" = Esc only.
+    "voice_interruption_mode": "auto",     # "auto" (talk over her) | "no-barge" (Gemini Live: speaker-safe; local: Esc only)
     "voice_room_mode": "one",              # "one" person talking to Friday | "room" (several people; she answers only when addressed)
     # ── The two limits that exist only in voice, both the owner's to set ──
     # Policy (2026-09-29): a limit that applies only to voice is the owner's
@@ -2200,6 +2203,9 @@ DEFAULT_SETTINGS = {
     # to the background. It subtracts no capability: the work continues and
     # reports back. 0 means no limit, which risks a silent conversation.
     "voice_tool_hard_limit_s": 20,
+    # Local voice: seconds without a first word before Friday says "Hang on."
+    # (the turn is stopped honestly at voice_tool_hard_limit_s). 0 = off.
+    "voice_first_token_filler_s": 6,
     # In "room" mode a spoken approval counts only when it names Friday
     # ("Friday, send it"), because voices are not told apart until Household
     # Identity lands. This is the ONE voice limit left ON by default, and it is
@@ -2243,25 +2249,29 @@ DEFAULT_SETTINGS = {
     # working in applications that wanted it.
     "push_to_transcribe_hold_ms": 150,
     "local_voice_tts_voice": "en_US-amy-medium",  # Tier-1 Piper voice id
-    # Which synthesizer the Tier-1 (CPU) path uses. Piper is the default and
-    # stays the default: it is the only local synthesizer that runs acceptably
-    # without a GPU. Kokoro is an ADDITION, selected explicitly, and refuses
-    # rather than silently degrading when it cannot run (see kokoro_voice.py).
-    #   "piper"  — faster-whisper's companion; CPU-capable; GPL-3.0 since Oct 2025
-    #   "kokoro" — Kokoro-82M (Apache-2.0); needs CUDA; higher quality
+    # Which synthesizer local voice speaks with. Piper is the default: it is
+    # what the CPU tier installs (voice-local-lite), so a fresh machine speaks.
+    # Kokoro is the better voice, chosen here; it runs on the graphics card
+    # when it fits and on the processor when it does not (the session says
+    # which), with Piper as the floor for a phrase it cannot speak
+    # (services/voice_workers.build_mouth). Local voice spec D4 (Kokoro as the
+    # default) waits on a default that falls back to Piper when Kokoro is not
+    # installed.
+    #   "piper"  — CPU-only; GPL-3.0 upstream since Oct 2025
+    #   "kokoro" — Kokoro-82M (Apache-2.0); GPU when it fits, else CPU
     # These three MUST live here. `_load_settings_raw()` drops any persisted key
     # absent from DEFAULT_SETTINGS, so a key the service layer reads but this
     # dict does not declare is a control that saves, reports success, and
     # reverts on the next read (docs/decisions/2026-09-04-five-dead-settings.md).
-    "local_voice_tts_engine": "piper",
+    "local_voice_tts_engine": "piper",   # the CPU tier's voice; Kokoro is chosen explicitly (services/local_voice.py)
     "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
-    "local_voice_kokoro_allow_cpu": False,    # let Kokoro run on CPU (slow; off by design)
+    "local_voice_kokoro_allow_cpu": True,     # Kokoro may run on the CPU when the card is busy (slower; the session says so) rather than Piper speaking
     # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
     # tier. Override the ASR id to a sibling (e.g. the English-only streaming
     # model) if desired; the TTS pair (FastPitch+HiFi-GAN) is fixed for v1.
     "local_voice_gpu_asr_model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
     "local_voice_gpu_tts": "fastpitch-hifigan",
-    "voice_silence_ms": 800,               # trailing silence (ms) that ends a local-voice turn
+    "voice_silence_ms": 500,               # trailing silence (ms) that ends a local-voice turn (spec P2: 500; the streaming ear has the transcript ready at the endpoint)
     # Clean-sheet voice (docs/design/active/voice-system-clean-sheet.md §8.1):
     # per-stage GPU policy read by services/voice_manifest.read_selection()
     # and enforced by its proofs ("required" refuses a CPU engine); idle
@@ -2270,6 +2280,17 @@ DEFAULT_SETTINGS = {
     "voice_ear_gpu": "if_free",            # never | if_free | required
     "voice_mouth_gpu": "if_free",          # never | if_free | required
     "voice_idle_unload_s": 600,            # GPU voice worker idle unload (s)
+    # ── The voice front (local voice spec §4.1, §6) ──
+    # The small fast model that answers live voice turns on its own seat; the
+    # brain takes deep work asynchronously. Read by services/voice_front.
+    "voice_front_model": "qwen3-4b-instruct-2507",   # qwen3-4b-instruct-2507 | qwen3-1.7b
+    # The brain during a call: "auto" = beside the front when the card holds
+    # both, else parked for the call; "parked"; "resident".
+    "voice_brain_during_calls": "auto",
+    # Where a deep question asked by voice goes: "local_only" (the brain,
+    # or after the call) | "follow_model_routing" (the owner's routing,
+    # cloud included, behind the same gates).
+    "voice_async_routing": "local_only",
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".
@@ -2726,6 +2747,21 @@ DEFAULT_SETTINGS = {
     # fastest engine measured and checked on this PC, else laya's own fp32.
     # "torch-fp32" | "torch-int8" | "onnx-int8" pin one.
     "laya_runtime": "auto",
+    # How hard a local reasoning seat thinks (services/reasoning_policy, read
+    # by the model router's local payload). "auto" lets the turn's shape
+    # decide; "medium" | "xhigh" | "none" pin one effort on every turn;
+    # "default" sends nothing and leaves the model to its own. Declared here
+    # because `_load_settings_raw` keeps only declared keys: a value written
+    # to settings.json for an undeclared key is dropped on every read.
+    "local_reasoning_effort": "auto",
+    # What "auto" may do with a Laya 2 turn-shape verdict. `deep_xhigh` lets a
+    # deep coding or analysis turn think at xhigh. `reflex_thinking_off` lets
+    # a reflex-shaped turn the brain still answers skip thinking; it ships
+    # off until the strict tool-call harness holds within 2 points on those
+    # shapes with thinking off. With both as shipped, an ordinary turn sends
+    # `medium`, as before.
+    "local_reasoning_effort_policy": {"reflex_thinking_off": False,
+                                      "deep_xhigh": True},
     # ── Creative policy (services/creative_policy.py) ──
     # What Friday refuses to generate, written down where the user can read
     # and set it. Before this existed there was nothing legible for a seat to
@@ -2788,6 +2824,16 @@ DEFAULT_SETTINGS = {
         "enabled": True,
         "min_tokens_to_compress": 1000,  # skip compression below this payload size
     },
+    # ── Display reserve (services/hardware_profile.display_reserve_floor_mib) ──
+    # "adaptive": the desktop is granted its measured idle VRAM draw plus
+    # 512 MiB, never under 1 GiB on Windows, once the Arbiter has taken an idle
+    # baseline; unmeasured machines keep the fixed 2,560 MiB. "fixed" pins the
+    # old constant everywhere. The breach handler is unchanged in both modes.
+    "display_reserve_mode": "adaptive",
+    # When the brain's seat answers /health, send its canonical prompt head as
+    # a one-token request so the first real turn after a restart reads only
+    # itself (services/seat_warm). False leaves the first turn to pay the read.
+    "seat_prefix_warm": True,
     # ── Model Routing (Ollama local inference) ──
     # mode: cloud_only (default, no change), smart, local_preferred, local_only
     "model_routing": {
@@ -3719,8 +3765,17 @@ COMMUNICATION_STYLE_HINTS = {
 }
 
 
+#: How long Friday talks, for every surface: adaptive, never a fixed cap.
+ADAPTIVE_LENGTH_LINE = ("Match your length to the moment: a sentence or two for quick "
+                        "back-and-forth, fuller answers for the news, explanations and stories.")
+#: The absolute length line earlier SOUL.md defaults shipped with. A personality
+#: file that still carries it reads the adaptive line in its place.
+LEGACY_LENGTH_LINE = "Keep responses short and sharp — like texting a smart colleague."
+
+
 def _settings_system_prefix(settings, personality):
     """Build the prefix that gets prepended to every chat system prompt."""
+    personality = (personality or "").replace(LEGACY_LENGTH_LINE, ADAPTIVE_LENGTH_LINE)
     length_hint = RESPONSE_LENGTH_HINTS.get(settings.get('response_length', 'standard'), '')
     style_hint = COMMUNICATION_STYLE_HINTS.get(settings.get('communication_style', 'professional'), '')
     # TWO SETTINGS ABOUT CITATIONS, ONE PROMPT. `include_sources` (default

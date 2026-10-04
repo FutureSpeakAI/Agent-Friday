@@ -323,7 +323,10 @@ def test_build_mouth_serves_piper_when_kokoro_is_refused(broker, monkeypatch):
         def synthesize_stream(self, text, cancel=None):
             yield b"\x00\x01" * 2400
     monkeypatch.setattr(vw, "PiperMouth", _Piper)
-    monkeypatch.setattr("agent_friday.core._load_settings", lambda: {})
+    # Kokoro on the CPU is the next step by default (local voice spec P0);
+    # with it turned off, Piper is the floor.
+    monkeypatch.setattr("agent_friday.core._load_settings",
+                        lambda: {"local_voice_kokoro_allow_cpu": False})
     eng = vw.build_mouth({"engine": "kokoro", "voice": "af_heart",
                           "device_policy": "if_free"})
     assert eng.name == "piper" and eng.device == "cpu"

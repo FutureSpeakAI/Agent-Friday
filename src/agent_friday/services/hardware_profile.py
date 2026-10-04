@@ -255,6 +255,45 @@ MIN_DISPLAY_RESERVE_MIB = {"windows": 2560, "darwin": 1024, "linux": 512}
 # nothing and would start rejecting real multi-monitor draws.
 MAX_DISPLAY_FRACTION = 0.5
 
+# The ADAPTIVE floor. A fixed 2,560 MiB is 31% of an 8 GB card and 42% of a
+# 6 GB one, and it is what keeps a 27B that needs 5,950 MiB off an 8 GB card
+# whose desktop actually holds 900. When the idle draw HAS been measured
+# (`vram_baseline_mib`, taken by the Arbiter at boot before anything of ours
+# is resident), the desktop is granted that draw plus a margin, never less
+# than the unmeasured default for the OS family. When nothing was measured the
+# fixed MIN_DISPLAY_RESERVE_MIB stays, because under-reserving is what breaks
+# screens. The breach handler and the idle-baseline cache stay as the net.
+ADAPTIVE_RESERVE_MARGIN_MIB = 512
+ADAPTIVE_RESERVE_MIN_MIB = dict(DEFAULT_VRAM_BASELINE_MIB)
+
+
+def _display_reserve_mode() -> str:
+    """'adaptive' (default) or 'fixed', from settings; never raises."""
+    try:
+        from agent_friday.core import _load_settings
+        mode = str((_load_settings() or {}).get("display_reserve_mode")
+                   or "adaptive").strip().lower()
+    except Exception:
+        mode = "adaptive"
+    return "fixed" if mode == "fixed" else "adaptive"
+
+
+def display_reserve_floor_mib(os_family: str, gpu: dict | None = None) -> int:
+    """The least VRAM the desktop is granted on this card. PURE given its
+    inputs and the settings mode.
+
+    measured idle draw -> max(ADAPTIVE_RESERVE_MIN_MIB[os], draw + 512 MiB);
+    nothing measured, or mode 'fixed' -> MIN_DISPLAY_RESERVE_MIB[os].
+    """
+    fixed = MIN_DISPLAY_RESERVE_MIB.get(os_family, 512)
+    measured = (gpu or {}).get("vram_baseline_mib")
+    if (not isinstance(measured, int) or measured < 0
+            or _display_reserve_mode() == "fixed"):
+        return fixed
+    return max(ADAPTIVE_RESERVE_MIN_MIB.get(os_family, 512),
+               measured + ADAPTIVE_RESERVE_MARGIN_MIB)
+
+
 _DISPLAY_CACHE: tuple = (0.0, None)
 _DISPLAY_TTL_S = 20.0
 
@@ -284,7 +323,9 @@ def live_display_mib(os_family: str) -> int | None:
     ships to Windows will hit that same wall.
 
     Returns None when it cannot tell, which the caller reads as "keep the
-    cached floor" rather than as zero.
+    cached floor" rather than as zero. The reading is RAW: the clamp up to
+    the card's floor (display_reserve_floor_mib) belongs to the caller,
+    refresh_display_reserve(), which knows which card it is budgeting.
     """
     # Platform guard BEFORE the cache read: keying the cache by value alone
     # let a cached Windows reading leak out of a non-Windows call.
@@ -330,7 +371,6 @@ def live_display_mib(os_family: str) -> int | None:
         return None
     if val <= 0:
         return None
-    val = max(val, MIN_DISPLAY_RESERVE_MIB.get(os_family, 512))
     globals()["_DISPLAY_CACHE"] = (now, val)
     return val
 
@@ -366,12 +406,23 @@ def effective_baseline_mib(gpu: dict, os_family: str) -> int:
     # budget to zero and refuse every seat in silence. Still pure: the test is a
     # comparison between two fields of the profile it was handed.
     total = gpu.get("vram_total_mib")
-    if (isinstance(reserve, int) and isinstance(total, int) and total > 0
-            and reserve >= total):
-        return floor
-    if isinstance(reserve, int) and reserve > floor:
-        return reserve
-    return floor
+    # The same ceiling refresh_display_reserve() applies on the way in: a
+    # display reserve above half the card is not a compositor, whatever wrote
+    # it. One such value (10,401 MiB on a 12,282 MiB card, left behind by an
+    # earlier fallback) would have given the planner 857 MiB and refused every
+    # seat. A phantom is ignored here, not scaled.
+    if isinstance(reserve, int) and isinstance(total, int) and total > 0:
+        if reserve >= total or reserve > int(total * MAX_DISPLAY_FRACTION):
+            reserve = None
+    out = reserve if (isinstance(reserve, int) and reserve > floor) else floor
+    # VRAM another tenant holds right now (a training run, a second Friday),
+    # written by refresh_display_reserve() from the device's own `memory.used`
+    # minus what we have resident, and REPLACED on every refresh, never
+    # ratcheted. The planner must not plan into it while it is there.
+    foreign = gpu.get("vram_foreign_mib")
+    if isinstance(foreign, int) and foreign > out:
+        out = foreign
+    return out
 
 
 #: The rejection log fires once per sampling cycle, and the arbiter samples
@@ -442,8 +493,13 @@ def refresh_display_reserve(profile: dict, *, ours_resident_mib: int = 0) -> dic
     """
     fam = (profile.get("os_family")
            or ("windows" if sys.platform.startswith("win") else "linux"))
-    live = live_display_mib(fam)
-    if live is None:
+    gpus = profile.get("gpus", [])
+    # One probe serves every card; the clamp is per card, to that card's own
+    # measured floor, so a machine whose desktop draws 900 MiB is not booked
+    # for 2,560 by a reading that honestly said 900.
+    floors = {id(g): display_reserve_floor_mib(fam, g) for g in gpus}
+    raw = live_display_mib(fam)
+    if raw is None:
         return profile
 
     # ── Physical sanity, because the counter is not bounded by the card ──────
@@ -476,11 +532,20 @@ def refresh_display_reserve(profile: dict, *, ours_resident_mib: int = 0) -> dic
     # flooring to something plausible is how this comes back in six months with
     # nobody able to see it happening.
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-    for g in profile.get("gpus", []):
+    for g in gpus:
         idx = g.get("index")
         total = g.get("vram_total_mib")
+        live = max(raw, floors[id(g)])
         ceiling = (int(total * MAX_DISPLAY_FRACTION)
                    if isinstance(total, int) and total > 0 else None)
+        # Heal a stored phantom: an older build's fallback could leave a
+        # display reserve above the ceiling in the cached profile, where it
+        # stayed because nothing below could ever beat it.
+        stored = g.get("vram_display_reserve_mib")
+        if (ceiling is not None and isinstance(stored, int)
+                and stored > ceiling):
+            g.pop("vram_display_reserve_mib", None)
+            g.pop("vram_display_reserve_at", None)
         if ceiling is not None and live > ceiling:
             rejection = {
                 "raw_mib": live,
@@ -509,14 +574,29 @@ def refresh_display_reserve(profile: dict, *, ours_resident_mib: int = 0) -> dic
             # against our own seats would double-count them and refuse every
             # placement, which is the failure the `vram_baseline_mib` comment
             # in `detect_gpus` warns about.
+            #
+            # The figure is written to its OWN field, `vram_foreign_mib`, and
+            # REPLACED on every refresh. It used to be written into the
+            # display reserve, where only a larger value could ever follow it:
+            # one sample taken while our own seat was not yet counted as ours
+            # booked that seat as a 10,401 MiB "desktop" that no later reading
+            # could lower, and the planner refused every fit on a 12 GB card.
+            # Occupancy is a now-figure; a display reserve is a floor. They
+            # do not share a field.
             foreign = _foreign_occupancy_mib(g, ours_resident_mib)
-            if foreign is not None and foreign > rejection["kept_mib"]:
-                g["vram_display_reserve_mib"] = foreign
-                g["vram_display_reserve_at"] = stamp
-                rejection["kept_mib"] = foreign
-                rejection["fallback"] = "device-used-minus-ours"
+            if foreign is not None:
+                g["vram_foreign_mib"] = foreign
+                g["vram_foreign_at"] = stamp
                 rejection["ours_resident_mib"] = int(ours_resident_mib or 0)
+                rejection["foreign_mib"] = foreign
+                if foreign > rejection["kept_mib"]:
+                    rejection["kept_mib"] = foreign
+                    rejection["fallback"] = "device-used-minus-ours"
+                else:
+                    rejection["fallback"] = "cached-floor"
             else:
+                g.pop("vram_foreign_mib", None)
+                g.pop("vram_foreign_at", None)
                 rejection["fallback"] = "cached-floor"
 
             _log_rejection(
@@ -532,6 +612,9 @@ def refresh_display_reserve(profile: dict, *, ours_resident_mib: int = 0) -> dic
         g["vram_display_reserve_mib"] = live
         g["vram_display_reserve_at"] = stamp
         g.pop("vram_display_reserve_rejected", None)
+        # A sane counter reading already counts every tenant that is not us.
+        g.pop("vram_foreign_mib", None)
+        g.pop("vram_foreign_at", None)
         _DISPLAY_REJECTIONS.pop(idx, None)
     return profile
 

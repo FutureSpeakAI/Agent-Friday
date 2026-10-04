@@ -188,7 +188,7 @@ def _seal_or_block(payload, provider):
 
 
 def _call_claude(messages, system=None, model=None, max_tokens=16384, temperature=None,
-                 report=None):
+                 report=None, schema=None):
     """Call Claude with structured messages. Returns the text response.
 
     report: an optional dict the call fills with "model", the model the
@@ -201,6 +201,9 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-5 / claude-opus-5)
     temperature: accepted for backward-compat but IGNORED — newer Claude
         models (Opus 5+, Sonnet 5+) reject the deprecated param.
+    schema: a JSON schema the reply must match. Sent as structured outputs
+        (output_config.format), which the API guarantees; the caller keeps
+        its parser as the fallback for a leg that cannot honour it.
     """
     # A local-only run (a scheduled job pinned to the local seat) must not reach
     # a paid provider, even through a fallback leg. This is the last point before
@@ -227,7 +230,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
             if isinstance(report, dict):
                 report.update({"model": _alt, "via": "openrouter"})
             return _call_openai(messages, system=system, model=_alt,
-                                max_tokens=max_tokens, provider=_one_key.OPENROUTER)[0]
+                                max_tokens=max_tokens, provider=_one_key.OPENROUTER,
+                                schema=schema)[0]
         raise RuntimeError(
             "No cloud AI key is set. Add an Anthropic or an OpenRouter key in "
             "Settings → Accounts & Keys (one is enough)."
@@ -246,6 +250,10 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     }
     if system:
         kwargs["system"] = system
+    if schema is not None:
+        # Through extra_body so the installed SDK need not know the field.
+        kwargs["extra_body"] = {"output_config": {"format": {
+            "type": "json_schema", "schema": schema}}}
     # Ask Claude 5 models for their reasoning summary (see
     # reasoning_trace.anthropic_thinking); older models are left as they were.
     from agent_friday.services import reasoning_trace as _rt
@@ -457,9 +465,18 @@ def _claude_safe_model(candidate, settings):
     return None  # primitive's own configured default (ANTHROPIC_MODEL_DEFAULT)
 
 
+def _schema_refused(exc) -> bool:
+    """An error that says the provider would not take the response schema."""
+    if getattr(exc, "status_code", None) not in (None, 400, 422):
+        return False
+    text = str(exc).lower()
+    return any(k in text for k in ("output_config", "response_format", "json_schema",
+                                   "schema", "format", "400", "422"))
+
+
 def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
                    temperature=None, orb_label=None, workspace=None,
-                   system_builder=None):
+                   system_builder=None, schema=None):
     """Single-shot text generation via the user's CONFIGURED provider.
 
     Briefings, the front page, and editorials are not chat, but they should run
@@ -487,6 +504,11 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     for that leg (fail closed) rather than falling back to `system`, which
     may have been gated for a different, less restrictive provider. Omit it
     (the default) to keep the previous single-prompt behavior unchanged.
+
+    schema: a JSON schema the reply must match. Each leg sends it the way its
+    provider enforces it (Claude structured outputs, llama-server / OpenAI
+    json_schema, Ollama format); a leg that refuses it is retried once
+    without it, so the caller's own parser remains the fallback.
 
     Returns the response text.
     """
@@ -558,26 +580,29 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # Provider primitives. The routed provider is tried first with the
     # router-chosen model; fallbacks use each provider's OWN configured default
     # (model=None) so a cloud model id never leaks into a local/OpenAI call.
-    def _via_claude(use_model):
+    def _via_claude(use_model, _schema=None):
         # Mirror the chat path exactly: same shared client, same primitive.
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
         return _call_claude(messages, system=_system_for('cloud'),
                             model=_claude_safe_model(use_model or model, settings),
-                            max_tokens=max_tokens, temperature=temperature)
+                            max_tokens=max_tokens, temperature=temperature,
+                            **({"schema": _schema} if _schema is not None else {}))
 
-    def _via_openai(use_model):
+    def _via_openai(use_model, _schema=None):
         # The routed model rides its RESOLVED provider (openrouter/groq/…);
         # the fallback attempt (use_model=None) keeps the legacy single-slot.
         return _call_openai(messages, system=_system_for('openai'), model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
                             orb_label=orb_label,
-                            provider=routed_provider_name if use_model else None)[0]
+                            provider=routed_provider_name if use_model else None,
+                            **({"schema": _schema} if _schema is not None else {}))[0]
 
-    def _via_ollama(use_model):
+    def _via_ollama(use_model, _schema=None):
         return _call_ollama(messages, system=_system_for('local'), model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
-                            orb_label=orb_label)[0]
+                            orb_label=orb_label,
+                            **({"schema": _schema} if _schema is not None else {}))[0]
 
     # Try the routed provider first, then fall back through the others. This
     # guarantees that if ANY provider the chat path can reach is up, generation
@@ -614,7 +639,15 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     for name, fn, use_model in attempts:
         _leg = f"{name} ({use_model})" if use_model else name
         try:
-            text = fn(use_model)
+            try:
+                text = fn(use_model, schema) if schema is not None else fn(use_model)
+            except Exception as _se:
+                if schema is None or not _schema_refused(_se):
+                    raise
+                # This leg cannot enforce the schema; the caller's parser can.
+                _log.warning("%s refused the response schema (%s); retrying without it",
+                             _leg, _se)
+                text = fn(use_model)
             if text and text.strip():
                 if name != "cloud":
                     # The Anthropic leg records its own call; a local or
@@ -739,8 +772,11 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='⚡',
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
-                 catalogue_all=None, provider=None):
+                 catalogue_all=None, provider=None, schema=None):
     """Call a local Ollama model. Returns (text, tool_trace).
+
+    `schema` (single-shot calls only): a JSON schema the reply must match,
+    enforced by the seat's grammar (llama-server json_schema, Ollama format).
 
     `catalogue_all` is the FULL tool registry when `tools` is only a catalogue
     (services/tool_catalogue.py). The loop needs it to satisfy `load_tools`.
@@ -881,6 +917,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                 # answered "No such tool", with the model correctly told
                 # browse_web did not exist.
                 catalogue_all=catalogue_all,
+                schema=schema,
             )
 
     if not ollama.is_available():
@@ -994,6 +1031,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                     num_ctx=_ctx,
                     think=_think,
                     timeout=_to,
+                    format=(schema if not _oai_tools else None),
                 )
             except Exception:
                 try:
@@ -1135,6 +1173,39 @@ def announce_tool(name, args=None):
 #: prefix-cache acceptance, and it is measured, not assumed.
 TIMINGS_SINK = _contextvars.ContextVar("friday_timings_sink", default=None)
 
+#: The running turn's cancel flag (a `threading.Event`), same mechanism as
+#: DELTA_SINK. The local voice path sets it to the turn's barge event. Once it
+#: is set the transport stops reading the seat's stream and closes it (the
+#: closed connection is what makes llama-server stop generating), and the
+#: agent loops start no further round and act on nothing from the cut round.
+#: Unset, as it is for every other caller, it changes nothing.
+TURN_CANCEL = _contextvars.ContextVar("friday_turn_cancel", default=None)
+
+
+def turn_cancelled() -> bool:
+    """Has the caller cancelled the turn running in this context?"""
+    ev = TURN_CANCEL.get()
+    return bool(ev is not None and ev.is_set())
+
+
+# How long a local call waits for a seat that answers 503 "Loading model"
+# before giving up. llama-server answers that way from the moment it binds
+# its port until the weights are read: 11.9 s median, 31.3 s p90 for the 27B.
+# Routines used to take the 503 as a failed call and degrade (the 07:00
+# edition shipped degraded against a still-loading seat); a seat that says it
+# is loading is a seat that will answer, so the transport waits, bounded, and
+# every caller above it inherits the patience.
+SEAT_LOADING_WAIT_S = 180.0
+SEAT_LOADING_POLL_S = 2.0
+
+
+def _body_says_loading(resp) -> bool:
+    try:
+        text = (resp.text or "")[:2000].lower()
+    except Exception:
+        return False
+    return "loading model" in text or "loading" in text and "model" in text
+
 AUTO_ROUTER_MODEL = "openrouter/auto"
 
 #: The cost-priority knob, in OpenRouter's own vocabulary. Their default is
@@ -1190,7 +1261,8 @@ def auto_router_cost_tier(settings=None):
     return tier if tier in AUTO_ROUTER_COST_TIERS else AUTO_ROUTER_DEFAULT_TIER
 
 
-def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
+def _consume_sse_completion(resp, on_delta=None, reasoning_source=None,
+                            started_at=None):
     """Assemble an OpenAI-compatible SSE stream into ONE response dict.
 
     The returned dict is shape-identical to a non-streamed
@@ -1243,6 +1315,11 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
     served_model = None
     usage = None
     timings = None           # llama-server puts them on the last chunk
+    # Time to first token, measured from `started_at` (the moment the request
+    # was sent) to the first content or reasoning delta. The seat's own
+    # `timings.prompt_ms` says how long it READ; this says how long the user
+    # WAITED, which includes the queue in front of the slot.
+    first_token_at = None
 
     # DECODE THE STREAM AS UTF-8 EXPLICITLY. `decode_unicode=True` tells
     # requests to decode using `resp.encoding`, and requests derives that from
@@ -1266,63 +1343,111 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
             getattr(resp, "encoding", "")).lower() in ("iso-8859-1", "latin-1", "latin_1"):
         resp.encoding = "utf-8"
 
-    for raw in resp.iter_lines(decode_unicode=True):
-        if not raw:
-            continue
-        # OpenRouter sends ": OPENROUTER PROCESSING" keepalive comments while
-        # it waits on an upstream. They are not events; treating them as JSON
-        # is how a stream reader dies three seconds into a cold start.
-        if raw.startswith(":"):
-            continue
-        if not raw.startswith("data:"):
-            continue
-        data = raw[5:].strip()
-        if data == "[DONE]":
-            break
+    _cancel = TURN_CANCEL.get()
+    cancelled = False
+    # A cancel must close the stream even while the seat is still prefilling
+    # and has sent nothing yet: the per-line check below never runs until a
+    # line arrives, and with one slot the next turn would queue behind the
+    # abandoned prompt. A watcher closes the response the moment the turn is
+    # cancelled; the blocked read then ends and is treated as the cut.
+    _stream_done = threading.Event()
+    if _cancel is not None:
+        def _close_on_cancel():
+            while not _stream_done.is_set():
+                if _cancel.wait(0.05):
+                    if not _stream_done.is_set():
+                        try:
+                            resp.close()
+                        except Exception:
+                            pass
+                    return
+        threading.Thread(target=_close_on_cancel, daemon=True,
+                         name="sse-cancel-watch").start()
+    try:
+        for raw in resp.iter_lines(decode_unicode=True):
+            if _cancel is not None and _cancel.is_set():
+                cancelled = True
+                break
+            if not raw:
+                continue
+            # OpenRouter sends ": OPENROUTER PROCESSING" keepalive comments while
+            # it waits on an upstream. They are not events; treating them as JSON
+            # is how a stream reader dies three seconds into a cold start.
+            if raw.startswith(":"):
+                continue
+            if not raw.startswith("data:"):
+                continue
+            data = raw[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except Exception:
+                continue
+            if chunk.get("model"):
+                served_model = chunk["model"]
+            if chunk.get("usage"):
+                usage = chunk["usage"]
+            if chunk.get("timings"):
+                timings = chunk["timings"]
+            for choice in chunk.get("choices") or []:
+                if choice.get("finish_reason"):
+                    finish_reason = choice["finish_reason"]
+                delta = choice.get("delta") or {}
+                piece = delta.get("content")
+                if first_token_at is None and (piece or delta.get("reasoning_content")
+                                               or delta.get("reasoning")):
+                    first_token_at = _time.time()
+                if piece:
+                    content_parts.append(piece)
+                    if on_delta:
+                        try:
+                            on_delta(piece)
+                        except Exception:
+                            pass
+                # `reasoning_content` is llama.cpp's and DeepSeek's spelling,
+                # `reasoning` is OpenRouter's. No on_delta: progressive rendering
+                # shows the answer, not the scratchpad.
+                _think = delta.get("reasoning_content") or delta.get("reasoning")
+                if _think and isinstance(_think, str):
+                    reasoning_parts.append(_think)
+                    if reasoning_source and _rt_sink is not None:
+                        _rt_sink(_think, reasoning_source, model=served_model)
+                # Tool calls arrive fragmented: the id/name land on the first
+                # chunk for an index, the arguments accrete character-wise after.
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = tool_calls.setdefault(
+                        idx, {"id": None, "type": "function",
+                              "function": {"name": None, "arguments": ""}})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        slot["function"]["arguments"] += fn["arguments"]
+
+    except Exception:
+        # The watcher closed the response under a blocked read: that is the
+        # cut, not a transport failure. Anything else is still an error.
+        if not (_cancel is not None and _cancel.is_set()):
+            raise
+        cancelled = True
+    finally:
+        _stream_done.set()
+    if _cancel is not None and _cancel.is_set():
+        cancelled = True
+
+    if cancelled:
         try:
-            chunk = json.loads(data)
+            resp.close()
         except Exception:
-            continue
-        if chunk.get("model"):
-            served_model = chunk["model"]
-        if chunk.get("usage"):
-            usage = chunk["usage"]
-        if chunk.get("timings"):
-            timings = chunk["timings"]
-        for choice in chunk.get("choices") or []:
-            if choice.get("finish_reason"):
-                finish_reason = choice["finish_reason"]
-            delta = choice.get("delta") or {}
-            piece = delta.get("content")
-            if piece:
-                content_parts.append(piece)
-                if on_delta:
-                    try:
-                        on_delta(piece)
-                    except Exception:
-                        pass
-            # `reasoning_content` is llama.cpp's and DeepSeek's spelling,
-            # `reasoning` is OpenRouter's. No on_delta: progressive rendering
-            # shows the answer, not the scratchpad.
-            _think = delta.get("reasoning_content") or delta.get("reasoning")
-            if _think and isinstance(_think, str):
-                reasoning_parts.append(_think)
-                if reasoning_source and _rt_sink is not None:
-                    _rt_sink(_think, reasoning_source, model=served_model)
-            # Tool calls arrive fragmented: the id/name land on the first
-            # chunk for an index, the arguments accrete character-wise after.
-            for tc in delta.get("tool_calls") or []:
-                idx = tc.get("index", 0)
-                slot = tool_calls.setdefault(
-                    idx, {"id": None, "type": "function",
-                          "function": {"name": None, "arguments": ""}})
-                if tc.get("id"):
-                    slot["id"] = tc["id"]
-                fn = tc.get("function") or {}
-                if fn.get("name"):
-                    slot["function"]["name"] = fn["name"]
-                if fn.get("arguments"):
-                    slot["function"]["arguments"] += fn["arguments"]
+            pass
+        # A tool call the stream was cut in the middle of is not a call the
+        # model made; the words before the cut are all this round said.
+        tool_calls = {}
+        finish_reason = "cancelled"
 
     message = {"role": "assistant", "content": "".join(content_parts)}
     if reasoning_parts:
@@ -1355,6 +1480,8 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
         out["usage"] = usage
     if timings:
         out["timings"] = timings
+    if started_at and first_token_at:
+        out["_ttft_ms"] = int((first_token_at - started_at) * 1000)
     return out
 
 
@@ -1363,8 +1490,15 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
                  provider=None, fallback_models=None, stream=None,
-                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False):
+                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False,
+                 schema=None, turn_shape=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
+
+    ``turn_shape`` is Laya 2's tier-1 verdict for this turn (services/
+    reflex_turn), or None. It only chooses the local seat's reasoning effort
+    (services/reasoning_policy); a caller that carries it in
+    ``session_ctx["turn_shape"]`` need not pass it twice, and a per-round
+    override in ``_over`` outranks both.
 
     Two configuration paths:
 
@@ -1627,6 +1761,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             convo.append({"role": "system", "content": _sys_content})
         for m in messages:
             content = m.get("content", "")
+            if isinstance(content, list) and content and all(
+                    isinstance(b, dict) and b.get("type") == "text" for b in content):
+                # Text blocks (a turn carrying its context block ahead of the
+                # user's words) are one message here, never dropped.
+                content = "\n\n".join(str(b.get("text") or "") for b in content)
             if isinstance(content, str):
                 convo.append({"role": m.get("role", "user"), "content": content})
 
@@ -1670,6 +1809,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 _cloud_mt = _mt or _tbud.cloud_output_tokens(model)
                 if _cloud_mt:
                     payload["max_tokens"] = int(_cloud_mt)
+            if schema is not None and not _oai_tools:
+                # A JSON schema the reply must match: llama-server turns it
+                # into a grammar, and OpenAI-compatible clouds enforce it.
+                payload["response_format"] = {"type": "json_schema", "json_schema": {
+                    "name": "result", "schema": schema, "strict": True}}
             if _oai_tools:
                 payload["tools"] = _oai_tools
                 payload["tool_choice"] = "auto"
@@ -1717,18 +1861,27 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # this codebase was passing anything at all.
             #
             # Settable, because the right default is a product decision and
-            # because a hard task genuinely wants the depth: set
+            # because a hard task genuinely wants the depth: pin
             # `local_reasoning_effort` to "xhigh" to restore the old
-            # behaviour, or "off" to disable thinking outright. Only applied
-            # to seats we serve ourselves, and never over an explicit caller.
+            # behaviour, or "off" to disable thinking outright. On "auto" the
+            # turn's shape decides (services/reasoning_policy): a deep turn
+            # thinks at xhigh, a reflex-shaped one may think not at all once
+            # the harness gate has passed, and every other turn keeps medium.
+            # Only applied to seats we serve ourselves, and never over an
+            # explicit caller.
             if local_bypass and not _no_think and "reasoning_effort" not in payload:
                 try:
-                    _eff = ((_load_settings() or {}).get(
-                        "local_reasoning_effort") or "medium").strip().lower()
-                    if _eff in ("off", "none", "disabled"):
+                    from agent_friday.services import reasoning_policy as _rp
+                    _shape = _over.get("turn_shape")
+                    if _shape is None:
+                        _shape = (turn_shape if turn_shape is not None
+                                  else (session_ctx or {}).get("turn_shape"))
+                    _eff = _rp.reasoning_effort_for_turn(_shape, _load_settings() or {})
+                    if _eff == "none":
                         payload.setdefault("chat_template_kwargs", {})[
                             "enable_thinking"] = False
-                    elif _eff not in ("default", "auto", ""):
+                        payload["reasoning_effort"] = "none"
+                    elif _eff:
                         payload["reasoning_effort"] = _eff
                 except Exception:
                     pass
@@ -1926,6 +2079,25 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                     r = requests.post(f"{base_url}/chat/completions",
                                       headers=headers, json=payload,
                                       timeout=timeout_s)
+            # 503 "Loading model" from a seat we serve ourselves: wait for it.
+            # Not for a cloud 503 (that is the fallback chain's business) and
+            # not past SEAT_LOADING_WAIT_S, after which the 503 raises as
+            # before and the caller's own handling takes over.
+            if r.status_code == 503 and local_bypass and _body_says_loading(r):
+                _deadline = _t0 + SEAT_LOADING_WAIT_S
+                while r.status_code == 503 and _time.time() < _deadline:
+                    _health(False, int((_time.time() - _t0) * 1000), status=503)
+                    try:
+                        r.close()
+                    except Exception:
+                        pass
+                    _time.sleep(SEAT_LOADING_POLL_S)
+                    r = requests.post(f"{base_url}/chat/completions",
+                                      headers=headers,
+                                      json=(dict(payload, stream=True) if _want_stream else payload),
+                                      timeout=timeout_s, stream=_want_stream)
+                    if r.status_code == 503 and not _body_says_loading(r):
+                        break
             try:
                 if r.status_code >= 400:
                     # requests' str() is "400 Client Error: Bad Request for
@@ -1953,10 +2125,16 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 _want_stream = False
             resp = (_consume_sse_completion(
                         r, on_delta=on_delta or DELTA_SINK.get(),
-                        reasoning_source=("full" if local_bypass else "provider"))
+                        reasoning_source=("full" if local_bypass else "provider"),
+                        started_at=_t0)
                     if _want_stream else r.json())
             if isinstance(resp, dict):
                 resp["_reasoning_local"] = bool(local_bypass)
+                # Wall time of the whole call, so costs.db and the reasoning
+                # trace carry a duration for LOCAL rows too (they carried none:
+                # 789 local chat rows, `dur>0: 0`), and the seat's own timings
+                # (prompt_n, cache_n, prompt_ms) ride with it to the trace.
+                resp["_duration_ms"] = int((_time.time() - _t0) * 1000)
             # Publish the seat's timings (llama-server) to whoever asked for
             # them -- the voice session records `prompt_n` as prefill_tokens.
             # The prompt-cache audit, per turn: how much of the prompt the
@@ -1975,6 +2153,15 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             if _tsink is not None and isinstance(resp, dict) and resp.get("timings"):
                 try:
                     _tsink(resp["timings"])
+                except Exception:
+                    pass
+            if local_bypass and isinstance(resp, dict) and resp.get("timings"):
+                # The prefix-cache audit: how much of the prompt the seat
+                # re-read, and the alarm when the hit rate over the last 50
+                # local calls falls under 80%.
+                try:
+                    from agent_friday.services import prompt_cache as _pc
+                    _pc.observe_seat_timings(resp["timings"])
                 except Exception:
                     pass
             # Attribute cost to the model the provider ACTUALLY served (an
@@ -2197,7 +2384,7 @@ def _get_context_compressor(cfg):
 # Long-horizon memory: every chat turn is embedded (all-MiniLM-L6-v2, the same
 # model the context pruner uses) and stored on disk at
 # ~/.friday/memory/conversations/. Later turns retrieve semantically relevant
-# past exchanges and can cite them inline ([conversation:DATE:"quote"]).
+# past exchanges and can cite them inline ([conversation:DATE/"quote"]).
 # Built lazily on first use; degrades to a safe no-op if chromadb is absent.
 _CONVERSATION_MEMORY = None
 _CONVERSATION_MEMORY_LOCK = threading.Lock()
@@ -2216,7 +2403,7 @@ def _get_conversation_memory():
 
 def _current_session_id():
     """A conversation id for grouping turns. Friday uses the calendar date so it
-    lines up with the [conversation:YYYY-MM-DD:"quote"] citation format and the
+    lines up with the [conversation:YYYY-MM-DD/"quote"] citation format and the
     /api/sources/dossier/<session_id> endpoint."""
     return datetime.now().strftime("%Y-%m-%d")
 
@@ -2569,7 +2756,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==",
             "These are real excerpts from earlier conversations with this user. "
             "Use them for continuity. When you rely on one to make a factual "
-            "claim, you may cite it as [conversation:DATE:\"short quote\"].",
+            "claim, you may cite it as [conversation:DATE/\"short quote\"].",
         ]
         used = 0
         for h in kept:
@@ -2892,6 +3079,15 @@ except Exception:
     pass
 
 
+def honest_limits_block() -> str:
+    """The HONEST LIMITS section every chat and background prompt carries.
+
+    Constant text, so it sits in the stable prefix. Fail visibly, never
+    substitute quietly: the main chat window gets the same rules as background
+    work."""
+    return "\n\n== HONEST LIMITS ==\n" + REFUSAL_HONESTY_DIRECTIVE + "\n"
+
+
 def _strip_overrides(text, source):
     """Neutralise action-authority overrides in DERIVED prompt content.
 
@@ -2916,7 +3112,7 @@ def _log_policy_failure():
 
 
 def _get_friday_system_prompt(keywords='', workspace='', *, provider,
-                              vault_control, vault_fallback='redact'):
+                              vault_control, vault_fallback='redact', tools_block=True):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
@@ -2981,7 +3177,7 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     # local stack, or
     # describing capabilities she does not have — and improvisation about
     # yourself is indistinguishable from lying about yourself.
-    prefix += "\n\n== HONEST LIMITS ==\n" + REFUSAL_HONESTY_DIRECTIVE + "\n"
+    prefix += honest_limits_block()
     try:
         from agent_friday.services.self_account import describe as _self_account
         _acct = _self_account()
@@ -3027,7 +3223,8 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     try:
         system_prompt, _ = _build_context_prompt(
             keywords or '', workspace, provider=provider,
-            vault_control=vault_control, vault_fallback=vault_fallback)
+            vault_control=vault_control, vault_fallback=vault_fallback,
+            tools_block=tools_block)
         # Vault, wiki and self-knowledge text arrives here. It is content Friday
         # holds, not instructions it was given, so an "you have full authority"
         # sentence inside it is data being quoted -- never a licence.
@@ -3088,7 +3285,8 @@ FRIDAY_SYSTEM_PROMPT = (
     "- You run the Asimov's cLaws ethical AI framework\n"
     "- Your user's personal details, family, career, and contacts are loaded from the Sovereign Vault and wiki\n"
     "- You adapt to your user over time through personality evolution and cognitive memory\n\n"
-    "PERSONALITY: You are family, not a tool. Keep responses short and sharp — like texting a smart colleague. "
+    "PERSONALITY: You are family, not a tool. Match your length to the moment: a sentence or two for quick "
+    "back-and-forth, fuller answers for the news, explanations and stories. "
     "Use humor. Be direct. Never be sycophantic. Push back when the user needs it. "
     "You call them 'boss' sometimes, but you're equals. Think Jarvis with a good editor's instincts.\n\n"
     "== AUTONOMOUS OPERATION ==\n"
@@ -3142,8 +3340,8 @@ FRIDAY_SYSTEM_PROMPT = (
     "never invent calendar events, emails, search results, URLs, or any other tool output. It is always "
     "better to say 'I couldn't get that' than to make something up.\n\n"
     "== COMPUTER CONTROL ==\n"
-    "Computer control (screenshot, click, type, etc.) requires the user to enable it in Settings > "
-    "Computer Control. When you need it and it's not enabled, say so. When it IS enabled: "
+    "Computer control (screenshot, click, type, etc.) requires the user to enable it in Settings → "
+    "Privacy & Approvals. When you need it and it's not enabled, say so. When it IS enabled: "
     "always take a screenshot first — you will SEE the captured image. Give click/move coordinates "
     "in the pixel space of that screenshot image (top-left is 0,0); Friday maps them to the real "
     "screen automatically, so do not try to convert resolutions yourself. "
@@ -3151,7 +3349,7 @@ FRIDAY_SYSTEM_PROMPT = (
     "== SELF-IMPROVEMENT ==\n"
     "You can build your own skills with learn_skill. A skill is a YAML file defining a reusable "
     "workflow. When you notice the user asking for the same type of thing repeatedly, encode it. "
-    "Loaded from ~/.friday/skills/ on server restart. List existing skills with action='list'.\n\n"
+    "A new or edited skill takes effect on the next turn. List existing skills with action='list'.\n\n"
     "== TASK DELEGATION ==\n"
     "For multi-step work taking more than ~10s, use spawn_task to run it in the background:\n"
     "- 'Research X' → spawn_task(name='Research X', prompt='Deep research on X...')\n"
@@ -3566,7 +3764,8 @@ def _payload_dump_dir():
 
 def _build_context_prompt(message, workspace='', workspace_context=None,
                           vision_description=None, provider='cloud',
-                          vault_control=None, vault_fallback='redact', pilot=None):
+                          vault_control=None, vault_fallback='redact', pilot=None,
+                          tools_block=True):
     """Build an enriched system prompt with all relevant context layers.
 
     When `vault_control` is provided, each context section is tagged with a
@@ -3610,7 +3809,10 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         return fallback_tier
 
     add(FRIDAY_SYSTEM_PROMPT, _T1)
-    _tools_text = _tools_prompt_block()
+    # A job that passes no tools (the front page, a deep dive, a digest, the
+    # calendar note) gets no tool catalogue: it is thousands of tokens of
+    # pure cost there, and on a small local model it invites pretend calls.
+    _tools_text = _tools_prompt_block() if tools_block else ""
     if _tools_text:
         add(_tools_text, _T1)
 

@@ -339,6 +339,130 @@ def expand(all_tools: list, names, already: list, query: str = "",
     return new, " ".join(bits)
 
 
+# ── Loading tools mid-task without editing the request (Claude) ─────────────
+#
+# Claude models that check replayed thinking compare the `tools` array of
+# every request with the one each thinking block was produced under; the
+# array also renders first, so growing it re-bills the whole cached prefix.
+# On the models that accept the beta below, the cloud loop declares every
+# tool from the first request, the non-resident ones with defer_loading, and
+# a load surfaces a tool with an appended system message carrying a
+# `tool_addition` block. The `tools` array never changes during a task.
+
+TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
+
+#: Models that accept TOOL_CHANGES_BETA (Claude Sonnet 5 and Haiku do not).
+TOOL_CHANGE_MODELS = frozenset({
+    "claude-opus-5", "claude-opus-5-5", "claude-opus-4-8",
+    "claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1",
+    "claude-sonnet-5-5",
+})
+
+#: Models whose provider refused the beta in this process: the loop falls
+#: back to sending the grown tool list, and does not pay the 400 again.
+_REFUSED_TOOL_CHANGES: set = set()
+
+_TOOL_CHANGE_TYPES = ("tool_addition", "tool_removal")
+
+
+def _model_id(model) -> str:
+    return str(model or "").strip().lower().split("/")[-1]
+
+
+def tool_changes_supported(model) -> bool:
+    """True when the cloud loop should declare deferred tools and surface them
+    with `tool_addition`. `FRIDAY_TOOL_CHANGES=0` switches it off."""
+    raw = str(os.environ.get("FRIDAY_TOOL_CHANGES", "")).strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    m = _model_id(model)
+    return m in TOOL_CHANGE_MODELS and m not in _REFUSED_TOOL_CHANGES
+
+
+def refuse_tool_changes(model) -> None:
+    _REFUSED_TOOL_CHANGES.add(_model_id(model))
+
+
+def checks_replayed_thinking(model) -> bool:
+    """Models whose provider validates replayed thinking against the history."""
+    return _model_id(model) in TOOL_CHANGE_MODELS
+
+
+def declared_tools(all_tools: list, opening: list) -> list:
+    """`opening` in full, then every other loadable tool with defer_loading.
+
+    Built once per task, in registry order, so it is byte-identical every
+    round. A deferred tool costs nothing in context until it is surfaced."""
+    out = list(opening or [])
+    seen = {_name_of(t) for t in out}
+    pool = list(all_tools or [])
+    try:
+        from agent_friday.services.agent import WORKSPACE_TOOLS as _ws_tools
+        for _lst in _ws_tools.values():
+            pool.extend(_lst)
+    except Exception:
+        pass
+    for t in pool:
+        n = _name_of(t)
+        if not n or n in seen or n == LOADER_NAME or not isinstance(t, dict):
+            continue
+        seen.add(n)
+        out.append({**t, "defer_loading": True})
+    return out
+
+
+def is_tool_change(msg) -> bool:
+    """A system message that only adds or removes tools."""
+    if not isinstance(msg, dict) or msg.get("role") != "system":
+        return False
+    c = msg.get("content")
+    return isinstance(c, list) and bool(c) and all(
+        isinstance(b, dict) and b.get("type") in _TOOL_CHANGE_TYPES for b in c)
+
+
+def surfaced_in(convo: list) -> set:
+    names = set()
+    for m in convo or []:
+        if is_tool_change(m):
+            for b in m["content"]:
+                if b.get("type") == "tool_addition":
+                    names.add(((b.get("tool") or {}).get("name")) or "")
+    return names
+
+
+def ensure_surfaced(convo: list, names) -> list:
+    """Append a `tool_addition` for each of `names` not yet surfaced in
+    `convo`. Mutates and returns `convo`. Called only while the newest
+    message is unsent (after the tool results, or at the start of a round), so
+    extending a trailing tool-change message edits nothing the model saw."""
+    have = surfaced_in(convo)
+    missing = [n for n in dict.fromkeys(names or []) if n and n not in have]
+    if not missing:
+        return convo
+    blocks = [{"type": "tool_addition", "tool": {"type": "tool_reference", "name": n}}
+              for n in missing]
+    if convo and is_tool_change(convo[-1]):
+        convo[-1] = {**convo[-1], "content": list(convo[-1]["content"]) + blocks}
+    else:
+        convo.append({"role": "system", "content": blocks})
+    return convo
+
+
+def drop_tool_changes(convo: list) -> list:
+    """`convo` without tool-change messages, for a request sent without the beta."""
+    return [m for m in (convo or []) if not is_tool_change(m)]
+
+
+def is_tool_change_rejection(exc) -> bool:
+    """A 400 that refuses the beta or its message shapes, not some other fault."""
+    if getattr(exc, "status_code", None) != 400:
+        return False
+    text = str(exc).lower()
+    return any(k in text for k in ("tool_addition", "tool_reference", "defer_loading",
+                                   "mid-conversation-tool-changes", "anthropic-beta",
+                                   "role 'system'", "role \"system\"", "system role"))
+
+
 # ── The prompt's own tool text, generated from the registry ──────────────────
 
 def prompt_block(tools: list, resident_names=None) -> str:

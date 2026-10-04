@@ -944,11 +944,16 @@ def _day_annotation(day, events):
             system = _get_friday_system_prompt(
                 keywords=titles, workspace="chat",
                 provider=_predict_route_provider(keywords=titles, workspace="chat"),
-                vault_control=_gated_vault_control())
+                vault_control=_gated_vault_control(), tools_block=False)
             note = _generate_text([{"role": "user", "content": (
                 "In ONE short sentence (max 22 words), give me a warm, sharp "
                 "heads-up about my day given these events. No preamble.\n\n"
-                + titles)}], system=system, max_tokens=120, workspace='calendar').strip().strip('"')
+                + titles)}], system=system, max_tokens=2048, workspace='calendar').strip().strip('"')
+            # On a thinking model the reasoning counts toward max_tokens, so
+            # the budget is sized for it; the sentence itself stays short. An
+            # empty reply is never cached as the day's note.
+            if not note:
+                raise ValueError("empty day note")
         except Exception:
             note = f"{len(events)} event{'s' if len(events) != 1 else ''} today. You've got this."
     cache[key] = note

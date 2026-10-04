@@ -427,6 +427,7 @@ either by the installer or on first use, and are governed by their own terms.
 * **ComfyUI** unrecorded - GPL-3.0-only. no (operator-provisioned under ~/.friday/runtime/ComfyUI; driven over HTTP)
 * **ComfyUI-GGUF / ComfyUI-CogVideoXWrapper custom nodes** unrecorded - Apache-2.0 (both, upstream) - confirm. no (operator-provisioned)
 * **kokoro-onnx wheel + voices-v1.0.bin** >=0.4 / model-files-v1.0 - MIT (kokoro-onnx); voices Apache-2.0 (Kokoro-82M). no (optional; fetched by services/voice_installer.py on user request)
+* **phonemizer-fork + espeakng-loader (espeak-ng)** 3.3.2 / 0.2.4 - GPL-3.0-or-later. no (optional pronunciation helper for names; fetched by services/voice_installer.py only on the owner's request, licence shown first; runs as its own program, agent_friday/voice/espeak_helper.py, over a pipe and is never loaded into Friday's process)
 * **PyTorch CUDA wheels (download.pytorch.org/whl/cu126) + nemo_toolkit** >=2.6 - BSD-3-Clause (torch) + NVIDIA CUDA/cuDNN redistributable EULA; nemo_toolkit Apache-2.0. no (optional GPU voice; fetched by services/voice_installer.py on user request)
 
 ## License texts

@@ -107,6 +107,7 @@ from agent_friday.services.model_router import (
     _get_vault_control,
     _predict_route_provider,
     _seal_or_block,
+    turn_cancelled as _turn_cancelled,
 )  # noqa: E501
 from agent_friday.services import tool_hooks as _hooks
 from agent_friday.services import taint as _taint_mod
@@ -472,8 +473,24 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     except Exception:
         pass
 
+    # A TURN PINNED TO ITS SEAT RUNS THERE OR FAILS. The local voice path
+    # promises the owner a local mind; a dead or busy seat must surface as an
+    # honest failure the session can speak, never as a cloud model quietly
+    # answering a "local" turn (the resilience ladder above would do exactly
+    # that). `model` is the seat; nothing else is tried.
+    _pinned = bool((session_ctx or {}).get("pin_to_seat"))
+    if _pinned:
+        if not model:
+            raise RuntimeError("this turn is pinned to a local seat and none is named")
+        attempts = [('local', _via_ollama, model)]
+
     errors = []
     for name, fn, use_model in attempts:
+        # A turn its caller cancelled (a voice barge-in) is over. The next leg
+        # would answer a question the user has already talked past, possibly
+        # on a cloud provider.
+        if _turn_cancelled():
+            return "", []
         # Name the model each leg actually tried — "local: HTTP 404" without
         # the model id is undiagnosable from the log.
         _leg = f"{name} ({use_model})" if use_model else name
@@ -503,6 +520,10 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             attribution.note_fallback(errors[-1])
         except Exception:
             pass
+    if _pinned:
+        _pilot_outcome(session_ctx, "error")
+        raise RuntimeError("the local seat %s could not answer (%s); nothing else was "
+                           "tried" % (model, "; ".join(errors[-1:]) or "no reply"))
     if vault_access:
         _pilot_outcome(session_ctx, "error")
         # Refuse rather than raise: the caller surfaces this as the reply, and
@@ -848,7 +869,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "get_career_pipeline", "description": "Get the current job-search pipeline status from the wiki.",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "get_briefing", "description": "Get the most recent daily briefing summary.",
+    {"name": "get_briefing", "description": "Read the most recent daily briefing Friday has written: a ranked summary of the day's important stories by section. The result starts with the file name, which carries its date; if that date is not today, say which day the briefing is from. Returns 'No briefings found.' when none exists.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "learn_skill", "description": "Create, modify, delete, or list skill YAML files in ~/.friday/skills/. Skills are reusable workflow definitions Friday can load. Use this for self-improvement — when you notice a pattern worth encoding. Actions: create, modify, delete, list, read.",
      "input_schema": {"type": "object", "properties": {
@@ -4355,7 +4376,10 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                                  # A scheduled job's outward actions need a grant
                                  # scoped to that schedule (governance/action_gate).
                                  # Only the scheduler sets it; see _spawn_task.
-                                 "schedule_id": _task_schedule_id(task_id)},
+                                 "schedule_id": _task_schedule_id(task_id),
+                                 # A private-voice handoff runs on its local
+                                 # seat or fails (see _spawn_task).
+                                 "pin_to_seat": _task_pinned(task_id)},
                     orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
                     workspace='task', on_route=_log_route, tools=_tools_override,
                 )
@@ -4451,7 +4475,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                          "task_id": task_id,
                          # As the main leg: a card raised while steering reports
                          # into the same conversation, not into Main.
-                         "conversation_id": _task_conversation_id(task_id)},
+                         "conversation_id": _task_conversation_id(task_id),
+                         "pin_to_seat": _task_pinned(task_id)},
                     orb_label=f"steer: {steer_msg[:18]}", orb_category='monitoring', orb_icon='🎯',
                     workspace='task',
                 )
@@ -4772,6 +4797,12 @@ def _report_task_completion(task_id, name, status, result_text):
     _post_task_result_to_conversation(task_id, name, status, result_text)
 
 
+def _task_pinned(task_id) -> bool:
+    """Was this task spawned pinned to its local seat?"""
+    with TASKS_LOCK:
+        return bool((TASKS.get(task_id) or {}).get('pin_to_seat'))
+
+
 def _post_task_result_to_conversation(task_id, name, status, result_text):
     """Land a finished task's outcome in the conversation that asked for it.
 
@@ -4813,8 +4844,12 @@ def _post_task_result_to_conversation(task_id, name, status, result_text):
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
-                runner=None):
+                runner=None, pin_to_seat=False):
     """Spawn a background task.
+
+    pin_to_seat: run every leg on `model` (a local seat) and nowhere else; a
+        failure is the task's failure, never a cloud leg answering for it.
+        Private-voice handoffs set it (local voice spec P3).
 
     runner: optional callable ``runner(task_id) -> {"status", "result"}`` that
         does the task's work INSTEAD of the agent loop, for structured work
@@ -4887,6 +4922,7 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'chain': chain,
             'chain_step': chain_step,
             'model': model,
+            'pin_to_seat': bool(pin_to_seat and model),
             # Who this task answers to. `reconcile` reads this to decide where
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.
@@ -5827,18 +5863,21 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "generate_image",
     "description": (
-        "Generate a REAL image from a text prompt using Google's Gemini image "
-        "models (Nano Banana Pro / Nano Banana 2) and save it to the user's "
-        "creations folder. Use this whenever the user asks you to 'draw', "
+        "Generate an image from a text prompt with the image model set in the "
+        "creative seat (an on-device model, a Higgsfield or kie.ai model, or "
+        "Google's Gemini Nano Banana models) and save it to the user's creations "
+        "folder. Use this whenever the user asks you to 'draw', "
         "'create/make/generate an image/picture/art of', 'paint', 'illustrate', "
-        "or design a visual. You CAN make images — do not say you can't. The "
-        "result file shows up in the Studio gallery; tell the user it's ready and "
-        "give the title. A holographic progress orb appears while it renders."),
+        "or design a visual. An on-device model sends nothing out; a cloud model "
+        "receives the prompt after the egress check. The result file shows up in "
+        "the Studio gallery; tell the user it's ready and give the title, or say "
+        "plainly why nothing was made. A holographic progress orb appears while "
+        "it renders."),
     "input_schema": {
         "type": "object",
         "properties": {
             "prompt": {"type": "string", "description": "Vivid description of the image to generate."},
-            "model": {"type": "string", "description": "Image model: 'gemini-nano-banana-pro' (highest quality, default) or 'gemini-nano-banana-2' (faster). Optional."},
+            "model": {"type": "string", "description": "Optional image model id for this call, overriding the creative seat, e.g. 'gemini-nano-banana-pro' (highest quality) or 'gemini-nano-banana-2' (faster)."},
             "style": {"type": "string", "description": "Optional style preset: photorealistic, cinematic, digital-art, watercolor, oil-painting, anime, 3d-render, neon, minimalist, sketch — or free-text."},
             "aspect_ratio": {"type": "string", "description": "Optional aspect ratio: 1:1 (default), 3:4, 4:3, 9:16, 16:9."},
             "n": {"type": "integer", "description": "How many COPIES of the same prompt to render (1-8, default 1). Each gets its own random seed, so they vary. For DIFFERENT images use `prompts` instead."},
@@ -5873,18 +5912,18 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "generate_music",
     "description": (
-        "Write a DEMO PREVIEW of a track — a text description of the music, "
-        "not audio. Use when the user asks you to 'make/write/compose a "
-        "song/track/beat/score/jingle'. Say plainly that this produces a "
-        "written preview rather than a playable file, and offer it on those "
-        "terms; do not describe the result as a song the user can listen to. "
-        "The installed google-genai exposes no batch music surface (only "
-        "Lyria RealTime streaming), so no audio is rendered by this path. "
-        "Higgsfield's account catalogue does list an audio model "
-        "('sonilo_music'), but nothing has generated audio on this machine "
-        "yet, so it is not offered here until it has. Accepts lyrics with "
-        "[verse]/[chorus] tags and a mood-reference image, which shape the "
-        "written preview."),
+        "Compose a music track and save it to the creations folder. Use when "
+        "the user asks you to 'make/write/compose a song/track/beat/score/"
+        "jingle'. When a music service is available (Google Lyria, or the "
+        "Higgsfield audio model set in the creative seat) the result is real, "
+        "playable audio. When none is (no key, or an installed SDK without "
+        "batch Lyria), the result is a written preview describing the track, "
+        "not audio. The result's `output` field says which one was made "
+        "('audio' or 'written_preview'); tell the user exactly that, and never "
+        "describe a written preview as a song they can listen to. Lyrics with "
+        "[verse]/[chorus] tags enable vocals; a seed image sets the mood (an "
+        "image from outside the creations folder needs the owner's approval "
+        "to upload)."),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -6227,16 +6266,24 @@ def _creative_result_summary(res, kind):
         extra = ""
         if kind in ("video", "music") and res.get("mode"):
             extra = f" ({res['mode']})"
+        # The result says which kind of thing was made, so the model can tell
+        # the user: a real file, or a written preview standing in for one.
+        output = "written_preview" if status == "demo" else (
+            "audio" if kind == "music" else kind)
         if status == "demo":
             msg = (res.get("message") or
                    f"Cloud {kind} is unavailable — wrote a demo preview.") + \
-                  f" Saved to the gallery: {names}."
+                  f" Saved to the gallery: {names}. This is a written preview, not a " \
+                  f"playable or viewable {kind} file; tell the user that plainly."
         else:
             msg = (f"Generated {len(files)} {kind}{'s' if len(files) != 1 else ''}{extra} "
                    f"with {res.get('model')}. Saved to the creations folder: {names}. "
                    f"It's now in the Studio gallery. Tell the user it's ready.")
+            if kind == "music":
+                msg += " This is real, playable audio."
         return json.dumps({
             "status": status,
+            "output": output,
             "message": msg,
             "files": files,
             "model": res.get("model"),
@@ -6703,19 +6750,19 @@ def _tool_scroll(inp):
 CLAUDE_TOOLS.extend([
     {
         "name": "move_mouse",
-        "description": "Move the mouse cursor to screen coordinates. Requires computer control permission (user must enable in Settings > Computer Control). Take a screenshot first to locate elements.",
+        "description": "Move the mouse cursor to a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Approvals).",
         "input_schema": {"type": "object", "properties": {
-            "x": {"type": "integer", "description": "X pixels from left edge"},
-            "y": {"type": "integer", "description": "Y pixels from top edge"},
+            "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot image."},
+            "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot image."},
         }, "required": ["x", "y"]},
     },
     {
         "name": "click",
-        "description": "Click the mouse at screen coordinates. Requires computer control permission.",
+        "description": "Click at a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Approvals).",
         "input_schema": {"type": "object", "properties": {
-            "x": {"type": "integer"},
-            "y": {"type": "integer"},
-            "button": {"type": "string", "enum": ["left", "right", "middle"]},
+            "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot image."},
+            "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot image."},
+            "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Mouse button; left when omitted."},
         }, "required": ["x", "y"]},
     },
     {
@@ -11977,6 +12024,44 @@ def _guest_auth_failed(guest, exc):
                        "Settings \u2192 Accounts & Keys, or say \"use my key\"." % (guest["label"], status or name))
 
 
+def _refusal_message(resp) -> str:
+    """What the user reads when the model declined a request (stop_reason
+    "refusal"): that it was declined, the category the provider gave, and that
+    nothing ran."""
+    details = getattr(resp, "stop_details", None)
+    category = getattr(details, "category", None) if details is not None else None
+    if category is None and isinstance(details, dict):
+        category = details.get("category")
+    model = getattr(resp, "model", None) or "The model"
+    why = f" (its safety check flagged it as {category})" if category else ""
+    return (f"{model} declined this request{why}, so nothing was done. "
+            "You can rephrase it, or choose a different model for it.")
+
+
+def _append_steer(convo: list, text: str) -> None:
+    """Add an operator steer to the newest user turn and leave it there.
+
+    The system prompt and earlier turns stay byte-identical for the whole
+    loop: editing either one mid-task invalidates the thinking the model
+    already produced, and re-bills the cached prefix. The steer is appended
+    after any tool results in the newest user turn instead."""
+    block = {"type": "text", "text": f"Operator instruction for the rest of this task: {text}"}
+    # A trailing tool-change message must stay last (the API allows a system
+    # message only at the end or before an assistant turn), so the steer goes
+    # into the user turn just before it; both are still unsent.
+    i = len(convo) - 1
+    while i >= 0 and isinstance(convo[i], dict) and convo[i].get("role") == "system":
+        i -= 1
+    last = convo[i] if i >= 0 else None
+    if not last or last.get("role") != "user":
+        convo.append({"role": "user", "content": [block]})
+        return
+    content = last.get("content")
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}] if content else []
+    convo[i] = {**last, "content": list(content or []) + [block]}
+
+
 def _call_claude_agent(*args, **kwargs):
     """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
     _tok = _LOOP_PROVIDER.set("anthropic")
@@ -12066,13 +12151,17 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             # only if the transcript is still over budget.
             _new = _compaction.compress_new_output(
                 convo, _hr_mark[0], model=model or ANTHROPIC_MODEL_DEFAULT, seat="cloud")
-            _new = _compaction.maybe_compact(
+            _summed = _compaction.maybe_compact(
                 _new, model=model or ANTHROPIC_MODEL_DEFAULT, summarizer=_claude_summary,
                 reserve_tokens=int(max_tokens or 0) + int(
                     (_compaction.schema_tokens(CLAUDE_TOOLS) + _compaction.schema_tokens(safe_system))
                     * _compaction.calibration(model or ANTHROPIC_MODEL_DEFAULT)),
                 seat="cloud", ledger=_ledger, task_id=_ledger_task,
                 taint_key=_compaction_taint_key(session_ctx))
+            # A rewritten history no longer matches the one the kept turns'
+            # thinking was produced against; the provider rejects or drops
+            # replayed thinking after such an edit, so it is removed here.
+            _new = _compaction.strip_thinking(_summed) if _summed is not _new else _new
             if _new is not convo:
                 convo[:] = _new
         except Exception as _ce:
@@ -12172,6 +12261,22 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     _all_tools = tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
     _sent_tools = (_TC.opening_set(_all_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
                    if _TC.enabled() and _all_tools else list(_all_tools))
+    # SENSITIVE (the request every cloud turn sends). A loaded tool must not
+    # change the `tools` array mid-task: models that check replayed thinking
+    # reject or drop it, and the cached prefix is re-billed. Where the model
+    # accepts mid-conversation tool changes, every tool is declared from the
+    # first request (non-resident ones deferred) and a load is surfaced by an
+    # appended tool_addition message (services/tool_catalogue.py).
+    _opening_names = [_TC._name_of(t) for t in _sent_tools]
+    _tool_changes = bool(_TC.enabled() and _all_tools
+                         and _TC.tool_changes_supported(model or ANTHROPIC_MODEL_DEFAULT))
+    _declared_tools = _TC.declared_tools(_all_tools, _sent_tools) if _tool_changes else None
+    if not _tool_changes and any(_TC.is_tool_change(m) for m in convo):
+        # A transcript from a run that used the beta, replayed without it.
+        convo[:] = _compaction.strip_thinking(_TC.drop_tool_changes(convo))
+
+    def _surfaced_names():
+        return [n for n in (_TC._name_of(t) for t in _sent_tools) if n not in _opening_names]
 
     # ── Per-task cloud tally. ──
     # ADVISORY: it warns, it does not stop. See prompt_cache.task_budget for the
@@ -12199,6 +12304,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             iter_count += 1
             if iter_count > 1:
                 _compact_convo()
+                if _tool_changes:
+                    # Compaction may have summarised an earlier tool_addition away.
+                    _TC.ensure_surfaced(convo, _surfaced_names())
             # ── Operator filesystem controls ───────────────────────────
             # Drop ~/.friday/AGENT_STOP to kill a runaway agent immediately.
             _stop_path = FRIDAY_DIR / "AGENT_STOP"
@@ -12213,7 +12321,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
 
             # The user's Stop, on the turn they are watching. A kill file is an
             # operator control, not a button; this is the button.
-            if core.turn_stop_requested():
+            if core.turn_stop_requested() or _turn_cancelled():
                 from agent_friday.services import turn_budget as _tbs
                 _pilot_outcome(session_ctx, "refused")
                 _orb_safe(process_update, orb_id, status='completed',
@@ -12263,16 +12371,17 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                                 session_ctx=session_ctx)
             if _steer_inject:
                 _tj_loop.steer(_steer_inject, source="operator-file", session_ctx=session_ctx)
+                _append_steer(convo, _steer_inject)
 
             kwargs = {
                 "model": model or ANTHROPIC_MODEL_DEFAULT,
                 "max_tokens": max_tokens,
                 "messages": convo,
-                "tools": _sent_tools,
+                "tools": _declared_tools if _tool_changes else _sent_tools,
             }
+            if _tool_changes:
+                kwargs["extra_headers"] = {"anthropic-beta": _TC.TOOL_CHANGES_BETA}
             _sys = safe_system
-            if _steer_inject:
-                _sys = (_sys or '') + f"\n\n[OPERATOR STEER — FOLLOW THIS IMMEDIATELY]: {_steer_inject}"
             if _sys:
                 kwargs["system"] = _sys
             # Claude 5 models think by default but return empty thinking text
@@ -12331,9 +12440,50 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 pass
             _t0 = _time.time()
             _pilot_model_round(session_ctx, "cloud")
+            # Stream the turn so the UI shows the text as it is written. The
+            # local and OpenAI transports already publish every text delta to
+            # model_router.DELTA_SINK and /api/chat/stream carries it to the
+            # browser; create() showed nothing until the whole answer was
+            # back. The final message is taken from the stream, so everything
+            # below sees the same object create() returned: usage, trace,
+            # signed thinking blocks echoed back verbatim, tool_use. Only
+            # text deltas reach the sink -- thinking is the scratchpad, never
+            # the answer -- and a sink that fails cannot cost the turn. A
+            # client without stream() (a wrapper, a fake) takes create().
             try:
-                resp = client.messages.create(**kwargs)
+                _stream_fn = getattr(client.messages, "stream", None)
+                if callable(_stream_fn):
+                    from agent_friday.services.model_router import DELTA_SINK as _DS
+                    _sink = _DS.get()
+                    with _stream_fn(**kwargs) as _stream:
+                        for _ev in _stream:
+                            if _sink is None or getattr(_ev, "type", None) != "content_block_delta":
+                                continue
+                            _delta = getattr(_ev, "delta", None)
+                            if getattr(_delta, "type", None) != "text_delta":
+                                continue
+                            _piece = getattr(_delta, "text", None)
+                            if not _piece:
+                                continue
+                            try:
+                                _sink(_piece)
+                            except Exception:
+                                pass
+                        resp = _stream.get_final_message()
+                else:
+                    resp = client.messages.create(**kwargs)
             except Exception as _gexc:
+                if _tool_changes and _TC.is_tool_change_rejection(_gexc):
+                    # The provider refused the beta: send the grown tool list
+                    # instead, with no thinking to replay against it.
+                    _log.warning("mid-conversation tool changes refused for %s; "
+                                 "sending the tool list instead: %s", kwargs.get("model"), _gexc)
+                    _TC.refuse_tool_changes(kwargs.get("model"))
+                    _tool_changes = False
+                    convo[:] = _compaction.strip_thinking(_TC.drop_tool_changes(convo))
+                    if _rounds_left is not None:
+                        _rounds_left += 1
+                    continue
                 _guest_auth_failed(_guest, _gexc)      # raises for a refused guest key; never falls back
                 raise
             _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
@@ -12425,6 +12575,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 _final_text = "".join(text_parts).strip()
                 if not _final_text:
                     _pilot_outcome(session_ctx, "error")
+                    # A declined request comes back as stop_reason "refusal"
+                    # with no text; the user is told it was declined, never
+                    # handed an empty reply.
+                    if getattr(resp, "stop_reason", None) == "refusal":
+                        _final_text = _refusal_message(resp)
                 return (_final_text, tool_trace)
 
             # Promote orb category to whatever tool family is most active this round.
@@ -12482,6 +12637,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
 
             # Execute tools and feed results back
             tool_results = []
+            _tools_grew = False
             for tu in tool_uses:
                 # B3: the step entry is appended AFTER execution (with status +
                 # timing, tier-redacted args) by _orb_tool_trace — the raw tool
@@ -12501,6 +12657,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                                             query=str(_a.get("query") or ""))
                     if _new:
                         _sent_tools = list(_sent_tools) + list(_new)
+                        _tools_grew = True
                     tool_trace.append({"name": tu.name, "input": _a, "result": _msg})
                     _rtrace.tool_finished(tu.name, _a, _msg)
                     tool_results.append({"type": "tool_result", "tool_use_id": tu.id,
@@ -12513,6 +12670,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     _late, _ = _TC.expand(_all_tools, [tu.name], _sent_tools)
                     if _late:
                         _sent_tools = list(_sent_tools) + list(_late)
+                        _tools_grew = True
 
                 # ── Zero-trust continuous vault authorization ──────────
                 # Gate every tool call through vault check_action before
@@ -12589,6 +12747,12 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     "content": result,
                 })
             convo.append({"role": "user", "content": tool_results})
+            if _tool_changes:
+                _TC.ensure_surfaced(convo, _surfaced_names())
+            elif _tools_grew and _TC.checks_replayed_thinking(kwargs.get("model")):
+                # Without the beta the next request's tools differ from the
+                # ones the earlier thinking was produced under.
+                convo[:] = _compaction.strip_thinking(convo)
 
             # ── CRASH CHECKPOINT (services/task_resume) ──
             # Exactly here and nowhere else: every tool_use in `convo` now has
@@ -12871,7 +13035,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
         # stop. `core.turn_stop_requested()` already returns False rather than
         # raising, and `Path.exists()` answers False for an unreadable path.
         _stop_file = FRIDAY_DIR / "AGENT_STOP"
-        if core.turn_stop_requested() or _stop_file.exists():
+        if core.turn_stop_requested() or _turn_cancelled() or _stop_file.exists():
             _pilot_outcome(session_ctx, "refused")
             if _stop_file.exists():
                 try:
@@ -12906,6 +13070,15 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             _retry_over = None
         else:
             resp = send_fn(convo, oai_tools)
+        # Cancelled while this round ran (a voice barge-in): its text and its
+        # tool calls, including channel-format calls in the text, are never
+        # acted on.
+        if _turn_cancelled():
+            _pilot_outcome(session_ctx, "refused")
+            _orb(status='completed', label='Stopped', progress=1.0)
+            _led_done()
+            return _tb.stopped_message(used=_round,
+                                       model=str(model or "")), tool_trace
 
         usage = resp.get("usage", {}) or {}
         # Attribute spend to the model the provider ACTUALLY served when it
@@ -12944,7 +13117,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
         _round_cost = None
         try:
             from agent_friday.services import cost_meter as _cm
-            _round_cost = _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx)
+            _round_cost = _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx,
+                                    duration_ms=int((resp.get("_duration_ms") or 0)
+                                                    if isinstance(resp, dict) else 0))
         except Exception:
             pass
 

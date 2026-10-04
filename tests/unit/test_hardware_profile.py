@@ -280,8 +280,19 @@ def test_a_live_display_draw_beats_a_stale_idle_floor(monkeypatch):
 
 
 def test_the_reserve_never_lowers_the_cached_floor(monkeypatch):
-    """Being wrong downward breaks screens; wrong upward only costs a seat."""
+    """Being wrong downward breaks screens; wrong upward only costs a seat.
+
+    A live reading under the measured idle draw is clamped up to the card's
+    floor: the idle draw plus the 512 MiB margin (adaptive) or 2,560 (fixed).
+    Either way the budget never falls under what the desktop was measured
+    holding."""
     monkeypatch.setattr(hp, "live_display_mib", lambda fam: 800)
+    monkeypatch.setattr(hp, "_display_reserve_mode", lambda: "adaptive")
+    prof = {"os_family": "windows",
+            "gpus": [{"index": 0, "vram_baseline_mib": 3000}]}
+    hp.refresh_display_reserve(prof)
+    assert hp.effective_baseline_mib(prof["gpus"][0], "windows") == 3512
+    monkeypatch.setattr(hp, "_display_reserve_mode", lambda: "fixed")
     prof = {"os_family": "windows",
             "gpus": [{"index": 0, "vram_baseline_mib": 3000}]}
     hp.refresh_display_reserve(prof)

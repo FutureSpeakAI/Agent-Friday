@@ -216,6 +216,8 @@ Workflows workspace. See [scheduled jobs](scheduled-jobs.md).
 | `local_voice_gpu_asr_model` | `"nvidia/nemotron-3.5-asr-streaming-0.6b"` | Speech recognition on the GPU tier. |
 | `local_voice_gpu_tts` | `"fastpitch-hifigan"` | Speech on the GPU tier. |
 | `voice_silence_ms` | `800` | Silence that ends your turn. |
+| `voice_interruption_mode` | `"auto"` | What talking over Friday does on the local voice. `auto`: she stops once you are clearly louder than her own voice coming back through the mic. `no-barge`: Esc only. Esc stops her in every mode. Gemini Live reads it too (below). |
+| `voice_local_barge_sustain_ms` | `170` | How long you must talk over her before she stops (two of the local voice's ~85 ms mic frames). |
 | `voice_ear_gpu`, `voice_mouth_gpu` | `"if_free"` | GPU use for listening and speaking: `never`, `if_free` or `required`. |
 | `voice_idle_unload_s` | `600` | Unload idle GPU voice workers after this long. |
 | `voice_tools` | `true` | Let voice sessions use tools (through the same approval checkpoint). |
@@ -229,8 +231,10 @@ Gemini Live (`voice_engine: "gemini"`) tuning: `tts_voice` (`"Aoede"`),
 `voice_temperature` (`null`: SDK default), `voice_max_tokens` (0: unlimited),
 `voice_affective` (`true`), `voice_proactive` (`true`),
 `voice_context_compression` (`true`), `voice_barge_grace_ms` (`800`),
-`voice_barge_sustain_ms` (`200`), and `voice_interruption_mode` (`"auto"`;
-`headphones` also allows barge-in; `no-barge` turns it off).
+`voice_barge_sustain_ms` (`200`), and `voice_interruption_mode` (`"auto"`:
+she stops when Gemini hears you start talking, best with headphones;
+`no-barge`: speaker-safe, she stops only when you are clearly louder than
+her own voice coming back through the mic; Esc stops her in both).
 
 Cloud voices: `elevenlabs_model` (`"eleven_flash_v2_5"`), `elevenlabs_voice_id`,
 `inworld_model` (`"inworld-tts-2-flash"`), `inworld_voice_id`,

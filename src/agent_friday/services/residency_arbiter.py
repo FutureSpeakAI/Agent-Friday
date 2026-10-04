@@ -615,6 +615,55 @@ _RESERVED_SERVE_FLAGS = {"-m", "--model", "--alias", "--host", "--port",
                          "--chat-template-file"}
 
 
+def _host_ram_total_mib():
+    """Total host RAM in MiB from the hardware profile's own reader, or None."""
+    try:
+        total = int((hwp.detect_ram() or {}).get("total_mib") or 0)
+        return total or None
+    except Exception:
+        return None
+
+
+# ── Seat-ready hooks ─────────────────────────────────────────────────────────
+# Callables run, each on its own daemon thread, the moment a seat answers
+# /health (spawned here or adopted from outside). The first consumer warms
+# the brain's prompt prefix with a one-token request so the first real turn
+# after a restart reads the new turn, not the whole head (measured: the first
+# request after a start read a median 18,958 tokens in 44.7 s). A hook that
+# raises is logged and ignored; a hook never holds the Arbiter's lock.
+SEAT_READY_HOOKS: list = []
+_SEAT_READY_THREADS: list = []
+
+
+def on_seat_ready(fn):
+    """Register `fn(model_id, port)`; returns `fn` so it works as a decorator."""
+    if fn not in SEAT_READY_HOOKS:
+        SEAT_READY_HOOKS.append(fn)
+    return fn
+
+
+def _fire_seat_ready(model_id: str, port: int) -> None:
+    for fn in list(SEAT_READY_HOOKS):
+        def _run(fn=fn):
+            try:
+                fn(model_id, port)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [arbiter] seat-ready hook {getattr(fn, '__name__', fn)} "
+                      f"failed for {model_id}: {type(e).__name__}: {e}")
+        t = threading.Thread(target=_run, name=f"seat-ready-{model_id}",
+                             daemon=True)
+        _SEAT_READY_THREADS.append(t)
+        t.start()
+
+
+def join_seat_ready_hooks(timeout: float = 5.0) -> None:
+    """Wait for in-flight hooks (tests and shutdown)."""
+    for t in list(_SEAT_READY_THREADS):
+        t.join(timeout)
+        if not t.is_alive():
+            _SEAT_READY_THREADS.remove(t)
+
+
 def _merge_declared_args(cmd: list, declared: list) -> list:
     """Apply a model's declared llama-server flags over the default command.
 
@@ -1104,6 +1153,11 @@ class LlamaServerBackend:
     @staticmethod
     def _declared_serve_args(model_id):
         """Extra llama-server flags this model was measured with, or []."""
+        # The voice front is not in the model store (it is a role, not a
+        # brain choice the Model Soup offers); its flags live with it.
+        if str(model_id).startswith("voice-front:"):
+            from agent_friday.services.voice_front import SERVE_ARGS
+            return list(SERVE_ARGS)
         try:
             from agent_friday.services import model_store as _ms
             rec = _ms.get(model_id) or {}
@@ -1167,6 +1221,28 @@ class LlamaServerBackend:
     # greedy output is byte-identical with and without them.
     PROMPT_CACHE_RAM_MIB = 3072
     CTX_CHECKPOINTS = 4
+
+    # The 3072 above is the 16 GB machine's number. With `-np 1` every
+    # scheduled or background job on the brain's slot evicts the chat's
+    # state, and the chat gets it back without a re-read only if the host
+    # cache still holds it: a 20k-token q4_0 prompt is ~0.35 GiB of KV plus
+    # ~0.15 GiB of recurrent state per checkpoint, and the morning's
+    # scheduled prompts are 25-30k tokens each, so at 3072 MiB the chat's
+    # entry was usually gone by the time the user came back (measured: 51%
+    # of requests re-read >= 2,000 tokens; 148 "making room" evictions).
+    # A machine with 24 GB or more of RAM gives the cache 6144 MiB; a 16 GB
+    # machine keeps 3072 and accepts the re-read after a background job.
+    PROMPT_CACHE_RAM_MIB_LARGE = 6144
+    PROMPT_CACHE_LARGE_HOST_MIB = 24576
+
+    @classmethod
+    def prompt_cache_ram_mib(cls, host_total_mib=None) -> int:
+        """`--cache-ram` for this host: by total RAM, never by guess."""
+        total = (host_total_mib if host_total_mib is not None
+                 else _host_ram_total_mib())
+        if isinstance(total, int) and total >= cls.PROMPT_CACHE_LARGE_HOST_MIB:
+            return cls.PROMPT_CACHE_RAM_MIB_LARGE
+        return cls.PROMPT_CACHE_RAM_MIB
 
     def _kv_cache_type(self) -> str:
         """The KV cache type to spawn seats with. Settings override, then the
@@ -1277,7 +1353,7 @@ class LlamaServerBackend:
                # the compute buffer, not the model, and it is the difference
                # between the pinned pair fitting and not.
                "-b", "512", "-ub", "512",
-               "--cache-ram", str(self.PROMPT_CACHE_RAM_MIB),
+               "--cache-ram", str(self.prompt_cache_ram_mib()),
                "--ctx-checkpoints", str(self.CTX_CHECKPOINTS)]
         # `-b 512 -ub 512` is measured on gemma4:12b and is not universal
         # either. On Bonsai 2 27B, -ub 2048 lifted prompt processing from 370
@@ -1425,6 +1501,7 @@ class LlamaServerBackend:
                             "fine-tune's name" % (model_id, why))
                 self.procs[model_id] = (proc, port)
                 _publish_endpoints(self.procs)
+                _fire_seat_ready(model_id, port)
                 return round(time.time() - t0, 2)
             time.sleep(1.5)
         # TERMINATE IS A REQUEST; THE VRAM IS NOT FREE UNTIL THE PROCESS IS.
@@ -1729,6 +1806,7 @@ class LlamaServerBackend:
                     continue
                 self.procs[model_id] = (AdoptedProc(pid), port)
                 adopted.append(f"{model_id} on :{port} (pid {pid})")
+                _fire_seat_ready(model_id, port)
             if adopted:
                 _publish_endpoints(self.procs)
         for line in adopted:
@@ -2488,6 +2566,17 @@ class Arbiter:
                                   "model_id": "z-image-turbo-fp8",
                                   "displaced": displaced,
                                   "expires_at": time.time() + ttl_s}
+                elif kind == "voice_call":
+                    # Local voice mode V-B (front solo): the pinned seats are
+                    # parked for the call so the voice front and the mouth
+                    # fit; release restores them exactly as the other kinds
+                    # do. The front itself is served by services/voice_front,
+                    # outside the plan, so nothing is loaded here.
+                    displaced = self._evict_pinned()
+                    self.lease = {"kind": kind, "role": "voice",
+                                  "model_id": None,
+                                  "displaced": displaced,
+                                  "expires_at": time.time() + ttl_s}
                 elif kind == "bench_job":
                     # A benchmark needs the card to itself and starts no
                     # server: the seats stand down, the bench runs its own
@@ -2511,11 +2600,19 @@ class Arbiter:
                 self._rollback()
                 return {"ok": False, "error": str(e), "rolled_back": True}
 
-    def release(self):
-        """Give the GPU back and restore the default plan."""
+    def release(self, kind=None):
+        """Give the GPU back and restore the default plan.
+
+        ``kind`` names the lease the caller holds: when the held lease is a
+        different one (its own expired and another job took the card), it
+        is not the caller's to release, and nothing happens.
+        """
         with self._lock:
             if self.lease is None:
                 return {"ok": True, "note": "no lease held"}
+            if kind is not None and self.lease.get("kind") != kind:
+                return {"ok": True, "note": "the held lease is %s, not %s"
+                        % (self.lease.get("kind"), kind)}
             kind = self.lease["kind"]
             self.state = STATE_TRANSITIONING
             t0 = time.time()
@@ -2540,6 +2637,21 @@ class Arbiter:
             except Exception as e:
                 self.state = STATE_DEGRADED
                 return {"ok": False, "error": str(e)}
+
+    def renew(self, kind, ttl_s):
+        """Extend the held lease of `kind` by `ttl_s` from now.
+
+        Only a voice call renews: its length is the conversation's, so its
+        holder renews while the call lives and a crashed holder still lets the
+        lease expire (``expire_if_due``) and the parked seats come back.
+        """
+        with self._lock:
+            if self.lease is None or self.lease.get("kind") != kind:
+                return {"ok": False, "error": "no %s lease held" % kind}
+            if kind != "voice_call":
+                return {"ok": False, "error": "lease %s does not renew" % kind}
+            self.lease["expires_at"] = time.time() + float(ttl_s)
+            return {"ok": True, "expires_at": self.lease["expires_at"]}
 
     def expire_if_due(self):
         """A crashed lease holder must not strand the GPU."""

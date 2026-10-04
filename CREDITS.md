@@ -141,6 +141,18 @@ Friday's context compression (`services/context_compressor.py`) uses Headroom
 when its compiled core is installed, and passes text through unchanged when it
 is not.
 
+## Works With
+
+### espeak-ng (github.com/espeak-ng/espeak-ng) and phonemizer (github.com/bootphon/phonemizer)
+License: GPL-3.0-or-later | the espeak-ng and phonemizer authors
+
+Friday works with espeak-ng to pronounce names Kokoro's dictionary does not
+know. It is an optional install, shown with its licence before it is offered,
+and it runs as its own helper program (`agent_friday/voice/espeak_helper.py`)
+that Friday talks to over a pipe; Friday never imports or loads it, and this
+repository contains none of its code or binaries. Without it, Friday spells
+such names out.
+
 ## Open Source Dependencies
 Every third-party component Friday ships, installs or downloads, with its
 version, license and license text, is listed in THIRD_PARTY_LICENSES.md; the

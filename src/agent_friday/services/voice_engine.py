@@ -17,6 +17,7 @@ import time as _time
 import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
+import copy
 import difflib as _difflib
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -284,8 +285,10 @@ _VOICE_LIVE_TOOLS = [
      {"query": ("string", "Keywords across headline/snippet/source. Blank = top stories."),
       "limit": ("integer", "Max stories (1-25, default 8).")}, []),
     ("get_briefing",
-     "Read Friday's own daily news briefing for today: the curated, ranked "
-     "summary of the day's important stories across sections. Use it FIRST when "
+     "Read the most recent daily news briefing Friday has written: the curated, ranked "
+     "summary of the day's important stories across sections. Its first line is the "
+     "file name, which carries the date; if that is not today, say which day it is "
+     "from. Use it when "
      "the user asks for the news, the briefing, 'what's happening in the world' "
      "or a rundown of the day, then go through it story by story, in plain facts "
      "(who, what, where), without teasing.",
@@ -390,21 +393,21 @@ _VOICE_LIVE_TOOLS = [
       "title": ("string", "A short title for the task list, e.g. 'Draft reply to the school'.")},
      ["request"]),
     ("ask_local_for_context",
-     "Ask the user's LOCAL model a question that needs his private data, and use "
+     "Ask the user's LOCAL model a question that needs their private data, and use "
      "this INSTEAD of answering from anything you were told, whenever a request "
-     "reaches his mail, his vault, his wiki, his files, his contacts, his "
-     "finances or his health — as well as his notes, calendar, memory, the people "
-     "in his life and his preferences. Example: 'What do they enjoy doing on "
+     "reaches their mail, vault, wiki, files, contacts, "
+     "finances or health — as well as their notes, calendar, memory, the people "
+     "in their life and their preferences. Example: 'What do they enjoy doing on "
      "weekends, and what is on their calendar next weekend?'. The local model "
-     "reads the raw data here on his machine; you receive only a summary with the "
+     "reads the raw data here on their machine; you receive only a summary with the "
      "identifiers replaced — names become placeholders like [their partner] — and "
-     "he approves that exact text on a card (or by voice) before any of it "
-     "reaches you. Reach for this rather than guessing or asking him to read "
+     "they approve that exact text on a card (or by voice) before any of it "
+     "reaches you. Reach for this rather than guessing or asking them to read "
      "something out: it is how private work gets done without the private part "
-     "leaving his PC. Say one short sentence that you're asking his OK to share "
-     "some context, then carry on. The approved context is handed to you when he "
-     "decides; if he declines, carry on without it.",
-     {"question": ("string", "The question for his local model, in full.")}, ["question"]),
+     "leaving their PC. Say one short sentence that you're asking their OK to share "
+     "some context, then carry on. The approved context is handed to you when they "
+     "decide; if they decline, carry on without it.",
+     {"question": ("string", "The question for their local model, in full.")}, ["question"]),
     ("navigate_to",
      "Open ONE specific thing on the user's Friday desktop, on screen: an email "
      "thread, the mail a Gmail search finds, a file, a wiki page or graph node, a "
@@ -436,7 +439,7 @@ _VOICE_LIVE_TOOLS = [
      "RAM, GPU memory and disk, which models are loaded or serving, running turns, "
      "tasks and scheduled jobs, and today's spend. Use it for any question about "
      "current activity or load ('what are you working on', 'is the GPU busy', 'what "
-     "did today cost'). Keep `detail` at brief for speech and read back only what he "
+     "did today cost'). Keep `detail` at brief for speech and read back only what they "
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
@@ -546,53 +549,53 @@ _VOICE_LIVE_TOOLS = [
       "decision": ("string", "approve or decline.")},
      ["card_id", "decision"]),
     ("run_workflow",
-     "Start one of the user's stored workflows (his routines) by name, spoken. "
-     "A workflow's own steps run wherever it says to run them, including on his "
+     "Start one of the user's stored workflows (their routines) by name, spoken. "
+     "A workflow's own steps run wherever it says to run them, including on their "
      "LOCAL model, so this is how a spoken request reaches private work without "
      "any of it passing through you. It returns as soon as the first step is "
      "queued: say one short sentence that it has started, keep the conversation "
      "going, and do NOT guess what it produced — the outcome comes back to you. "
      "If you are not sure of the exact name, call workflow_status with no name "
-     "first and read him the list. Any outward step inside it still raises an "
+     "first and read them the list. Any outward step inside it still raises an "
      "approval card, exactly as in chat.",
      {"name": ("string", "The workflow's name or slug, as it is stored.")}, ["name"]),
     ("workflow_status",
      "How one of the user's stored workflows is doing — per-step state for its "
-     "most recent run. Called with no name it LISTS his stored workflows, which "
-     "is what to use when he asks what routines he has, or when you need the "
+     "most recent run. Called with no name it LISTS their stored workflows, which "
+     "is what to use when they ask what routines they have, or when you need the "
      "exact name before starting one. Read it back as a sentence, not a table.",
      {"name": ("string", "The workflow to report on. Omit to list them all.")}, []),
     ("note_conversation_state",
      "Update your running picture of this conversation when you notice it shift: "
-     "what the user cares about right now, how much detail he wants, and what is "
+     "what the user cares about right now, how much detail they want, and what is "
      "still open. It shapes the 'conversation so far' note you are shown.",
-     {"priorities": ("string", "The topics he cares about now, most important first, comma-separated."),
+     {"priorities": ("string", "The topics they care about now, most important first, comma-separated."),
       "depth": ("string", "brief, normal or deep."),
       "open_threads": ("string", "Questions or tasks still open, separated by | (optional).")}, []),
     ("search_past_conversations",
      "Search earlier conversations with the user, voice and chat, with dates: "
-     "what he said, what you told him, what was decided. Use it whenever he "
+     "what they said, what you told them, what was decided. Use it whenever they "
      "refers to something from before ('what did we say about...', 'remember "
      "when...'). Matches from earlier calls with you come back directly; matches "
-     "from conversations that stayed on his PC are summarised by his local model "
-     "and shown to him on a card before any of it reaches you.",
+     "from conversations that stayed on their PC are summarised by their local model "
+     "and shown to them on a card before any of it reaches you.",
      {"query": ("string", "What to look for, in a few words."),
       "since": ("string", "Only on or after this date, YYYY-MM-DD (optional)."),
       "until": ("string", "Only on or before this date, YYYY-MM-DD (optional).")}, ["query"]),
     ("answer_share_request",
      "Record the user's spoken decision on a pending share request (the card from "
-     "ask_local_for_context). Call it only right after he says it: 'send it' / "
-     "'yes' approves; 'don't send it' / 'no' declines. It counts only if his own "
+     "ask_local_for_context). Call it only right after they say it: 'send it' / "
+     "'yes' approves; 'don't send it' / 'no' declines. It counts only if their own "
      "words said so.",
      {"request_id": ("string", "The id from ask_local_for_context."),
       "decision": ("string", "approve or decline")}, ["request_id", "decision"]),
     ("revise_share_request",
-     "Change a pending share request's text as the user asks, before he approves "
-     "it: pass his instruction, e.g. 'change Saturday to Sunday' or 'leave out the "
-     "part about the dentist'. The change is made on his machine and shown on the "
+     "Change a pending share request's text as the user asks, before they approve "
+     "it: pass their instruction, e.g. 'change Saturday to Sunday' or 'leave out the "
+     "part about the dentist'. The change is made on their machine and shown on the "
      "card; you do not see the text. Then ask whether to send it.",
      {"request_id": ("string", "The id from ask_local_for_context."),
-      "instruction": ("string", "His instruction, in his words.")}, ["request_id", "instruction"]),
+      "instruction": ("string", "Their instruction, in their words.")}, ["request_id", "instruction"]),
     ("spawn_task",
      "Start a long-running background task (a 'workflow') that keeps working "
      "while the conversation continues — deep research, multi-step analysis, "
@@ -625,10 +628,54 @@ _VOICE_LIVE_TOOLS = [
 ]
 
 
-def _tool_ask_friday(inp):
+def _ask_friday_local(question: str, session: dict) -> str:
+    """ask_friday from the LOCAL voice front (local voice spec P3).
+
+    The brain serving: it answers, pinned to its seat (never a cloud leg),
+    and the answer goes back to the front unsealed, because both are on this
+    machine. The brain parked for the call: in Private ("local_only") the
+    question waits for the end of the call; in Automatic it goes to the
+    owner's routing as a background task, whose legs are gated per provider
+    exactly as a typed task's are, and its answer comes back over the live
+    channel.
+    """
+    from agent_friday.routes.voice import (_build_voice_system_prompt,
+                                           _voice_reply_cap, _voice_user_message)
+    from agent_friday.services.agent import _generate_agent
+    seat = _brain_serving()
+    if seat is None:
+        if _async_routing(session) == "local_only":
+            return _queue_after_call(session, question, "A question from a voice call")
+        return _tool_delegate_to_friday(
+            {"request": question, "title": "A question from a voice call"}, session)
+    settings = _load_settings() or {}
+    system, _meta = _build_voice_system_prompt(settings, seat=seat)
+    user = _voice_user_message(
+        "Friday's fast voice handed you this question during a live call because "
+        "it needs your full memory or deeper thought. Answer it plainly in a few "
+        "spoken sentences; the voice will say your answer aloud.\n\n" + question,
+        settings, volatile=_meta.get("volatile"))
+    try:
+        from agent_friday.services import presence as _presence
+        with _presence.acting_as(_presence.FRIDAY):
+            text, _trace = _generate_agent(
+                [{"role": "user", "content": user}], system=system, model=seat,
+                max_tokens=_voice_reply_cap(settings),
+                session_ctx={"authenticated": True, "provider": "local",
+                             "is_voice": True, "surface": "voice-local-deep",
+                             "pin_to_seat": True},
+                workspace=settings.get("active_workspace") or "")
+    except Exception as e:
+        _log.error("ask_friday (local) failed: %s: %s", type(e).__name__, e)
+        return f"Friday's deeper mind could not answer ({type(e).__name__}). Say so plainly."
+    return (text or "").strip()
+
+
+def _tool_ask_friday(inp, session=None):
     """Dispatch the question to the LOCAL agent pipeline with the full contract
     (the same `_generate_agent` a local voice turn uses, on the resident
     brain seat, reply cap 300), then seal the answer for google-gemini.
+    From the local voice front it goes to ``_ask_friday_local`` instead.
 
     The seal is applied HERE, not only by the Live tool-call runner, so the
     withheld-whole guarantee (`_gate_voice_tool_result`: a withheld result is
@@ -641,6 +688,8 @@ def _tool_ask_friday(inp):
     question = str((inp or {}).get("question") or "").strip()
     if not question:
         return "ask_friday needs a question."
+    if _local_session(session):
+        return _ask_friday_local(question, session)
     settings = _load_settings() or {}
     try:
         from agent_friday.services import local_seats
@@ -650,7 +699,7 @@ def _tool_ask_friday(inp):
     if not seat:
         return ("Friday's local model is not loaded right now, so the user's "
                 "context cannot be reached from this session. Say so plainly.")
-    system, _meta = _build_voice_system_prompt(settings)
+    system, _meta = _build_voice_system_prompt(settings, seat=seat)
     # The relay note and the volatile context ride in the USER turn: the
     # seat's template re-prefills the whole prompt on any system-message
     # change, so the system text stays the one the
@@ -658,8 +707,9 @@ def _tool_ask_friday(inp):
     from agent_friday.routes.voice import _voice_user_message
     user = _voice_user_message(
         "You are answering a question RELAYED from a cloud voice session. "
-        "Answer in one to three plain spoken sentences; the answer will be "
-        "read aloud by another model. Do not mention the relay.\n\n"
+        "Answer in plain spoken prose with no markdown, sized to the question as "
+        "your voice length rule says; the answer will be read aloud by another "
+        "model. Do not mention the relay.\n\n"
         + question, settings, volatile=_meta.get("volatile"))
     try:
         # Friday's own brain answering her own voice session: her label.
@@ -669,7 +719,10 @@ def _tool_ask_friday(inp):
                 [{"role": "user", "content": user}], system=system, model=seat,
                 max_tokens=_voice_reply_cap(settings),
                 session_ctx={"authenticated": True, "provider": "local",
-                             "is_voice": True, "surface": "voice-live-relay"},
+                             "is_voice": True, "surface": "voice-live-relay",
+                             # The prompt is gated for the LOCAL seat: a dead
+                             # seat fails here, it never rides a cloud leg.
+                             "pin_to_seat": True},
                 workspace=settings.get("active_workspace") or "")
     except Exception as e:
         _log.error("ask_friday failed: %s: %s", type(e).__name__, e, exc_info=True)
@@ -806,6 +859,106 @@ def _voice_tool_names():
     given.
     """
     return [t[0] for t in _VOICE_LIVE_TOOLS] + [n for n, _d, _s in _voice_shared_tool_specs()]
+
+
+#: Ceiling on the rendered voice tool contract (local voice spec §2, P1). The
+#: front model prefills it on every cold start; the 124-tool registry (~22.8K
+#: tokens) is what put local voice at a 63-199 s first token.
+VOICE_CONTRACT_MAX_TOKENS = 9000
+
+#: Never declared to any voice engine, curated or full (voice_engine
+#: decision: shell execution from a speech recogniser is its own risk class;
+#: delegate_to_friday's gated background agent reaches it).
+VOICE_NEVER_DECLARED = frozenset({"run_command"})
+
+
+def _native_tool_schema(props, required):
+    """A _VOICE_LIVE_TOOLS (props, required) pair as JSON schema. "array" is a
+    list of strings; every other type is a scalar (the Live renderer's rule)."""
+    out = {}
+    for pname, (ptype, pdesc) in props.items():
+        if ptype == "array":
+            out[pname] = {"type": "array", "items": {"type": "string"},
+                          "description": pdesc}
+        else:
+            out[pname] = {"type": ptype if ptype in ("string", "integer", "number",
+                                                     "boolean") else "string",
+                          "description": pdesc}
+    schema = {"type": "object", "properties": out}
+    if required:
+        schema["required"] = list(required)
+    return schema
+
+
+_LEAD_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _lead_sentence(text) -> str:
+    """The first sentence of a declaration's description."""
+    return _LEAD_SENTENCE.split(str(text or "").strip(), maxsplit=1)[0]
+
+
+def _compact_declaration(tool: dict) -> dict:
+    """The same declaration with each description cut to its lead sentence:
+    name, schema, types and required fields unchanged."""
+    t = copy.deepcopy(tool)
+    f = t["function"]
+    f["description"] = _lead_sentence(f.get("description"))
+    for prop in ((f.get("parameters") or {}).get("properties") or {}).values():
+        if isinstance(prop, dict) and "description" in prop:
+            prop["description"] = _lead_sentence(prop["description"])
+    return t
+
+
+def build_voice_tool_contract(full: bool = False, compact: bool = True) -> dict:
+    """The voice tool contract as OpenAI-style declarations, for ANY engine.
+
+    ``full=False`` is the curated contract every voice engine shares: the
+    native voice tools plus the borrowed ones, from the same tables
+    ``_build_voice_live_tools`` renders for Gemini Live and in the same order
+    (``_voice_tool_names()`` is the name list). ``full=True`` adds the rest of
+    the text registry (local voice spec §12.3). ``run_command`` is absent
+    from both.
+
+    ``compact`` (the default; the local voice front's rendering) keeps every
+    name and schema and cuts each description to its lead sentence. The
+    curated surface has grown past 60 tools, and in full it is ~12.5K tokens,
+    over the ceiling that keeps the front's cold prefill fast; its lead
+    sentences are ~8.2K. Gemini Live renders its own declarations, in full,
+    from the same tables (``_build_voice_live_tools``).
+
+    Returns ``{"tools": [...], "names": [...], "tokens": int, "fits": bool}``;
+    ``fits`` holds the curated contract to ``VOICE_CONTRACT_MAX_TOKENS``.
+    """
+    tools = []
+    for name, desc, props, required in _VOICE_LIVE_TOOLS:
+        tools.append({"type": "function", "function": {
+            "name": name, "description": _navigate_tool_description(desc),
+            "parameters": _native_tool_schema(props, required)}})
+    for name, desc, schema in _voice_shared_tool_specs():
+        tools.append({"type": "function", "function": {
+            "name": name, "description": desc, "parameters": schema}})
+    if full:
+        try:
+            from agent_friday.services.agent import CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS
+            have = {t["function"]["name"] for t in tools}
+            for t in CLAUDE_TOOLS:
+                n = t.get("name") if isinstance(t, dict) else None
+                if not n or n in have or n not in CLAUDE_TOOL_HANDLERS:
+                    continue
+                tools.append({"type": "function", "function": {
+                    "name": n, "description": t.get("description") or n,
+                    "parameters": t.get("input_schema")
+                    or {"type": "object", "properties": {}}}})
+        except Exception as e:  # pragma: no cover - import-time failure
+            _log.error("full voice toolkit unavailable (registry import failed): %s", e)
+    tools = [t for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED]
+    if compact:
+        tools = [_compact_declaration(t) for t in tools]
+    tokens = len(json.dumps(tools, ensure_ascii=False)) // 4
+    return {"tools": tools, "names": [t["function"]["name"] for t in tools],
+            "tokens": tokens,
+            "fits": full or tokens <= VOICE_CONTRACT_MAX_TOKENS}
 
 
 def _navigate_tool_description(desc):
@@ -987,6 +1140,47 @@ def _news_args_for_session(args: dict, session) -> dict:
     return out
 
 
+def _local_session(session) -> bool:
+    """Is this tool call from the LOCAL voice front (not Gemini Live)?"""
+    return isinstance(session, dict) and session.get("engine") == "local"
+
+
+def _async_routing(session) -> str:
+    """Where deep work asked by voice goes (local voice spec §6/§7.2):
+    "local_only" (Private) or "follow_model_routing" (Automatic)."""
+    v = (session or {}).get("async_routing") if isinstance(session, dict) else None
+    if not v:
+        v = (_load_settings() or {}).get("voice_async_routing")
+    v = str(v or "local_only").strip().lower()
+    return v if v in ("local_only", "follow_model_routing") else "local_only"
+
+
+def _brain_serving():
+    """The brain seat when it is serving right now, else None."""
+    try:
+        from agent_friday.services import local_seats
+        seat = local_seats.resolve("brain")
+        return seat if seat and seat in (local_seats.serving() or {}) else None
+    except Exception:
+        return None
+
+
+#: What the front is told when deep work must wait for the end of the call
+#: (Private, brain parked for the call).
+QUEUED_AFTER_CALL = (
+    "QUEUED_AFTER_CALL: Friday's deeper mind is parked while you two talk, and "
+    "this conversation is set to stay on this computer, so it will work on "
+    "this as soon as the call ends and the answer will be in this "
+    "conversation. Tell the user in one short sentence that you'll dig into "
+    "it after you hang up. Do not guess the answer.")
+
+
+def _queue_after_call(session, request: str, title: str = "") -> str:
+    session.setdefault("after_call", []).append(
+        {"request": str(request), "title": str(title or request[:60])})
+    return QUEUED_AFTER_CALL
+
+
 def _voice_ctx(session=None) -> dict:
     """The governance context of a voice tool call.
 
@@ -996,6 +1190,11 @@ def _voice_ctx(session=None) -> dict:
     Main) and tools that need the owner's words see them, as in chat.
     """
     ctx = {"authenticated": True, "surface": "voice-live", "taint_key": "voice-live"}
+    if _local_session(session):
+        # The local voice front: the model reading these results is on this
+        # machine, so the vault's zero-trust check judges it as local.
+        ctx.update({"surface": "voice-local", "taint_key": "voice-local",
+                    "provider": "local", "is_voice": True})
     if isinstance(session, dict):
         if session.get("conversation_id"):
             ctx["conversation_id"] = session["conversation_id"]
@@ -1013,6 +1212,12 @@ def _voice_local_only() -> bool:
         return True          # cannot tell: behave as restricted
 
 
+#: The task prompt a spoken request is handed over with.
+_DELEGATE_PROMPT = ("The user asked for this in a live voice conversation. Do it fully, "
+                    "with whatever tools it needs, then report the real outcome in a few "
+                    "plain sentences that can be spoken aloud.\n\nRequest: ")
+
+
 def _tool_delegate_to_friday(inp, session=None):
     """Hand a spoken request to the full agent as a background task.
 
@@ -1027,6 +1232,25 @@ def _tool_delegate_to_friday(inp, session=None):
     request = str(inp.get("request") or "").strip()
     if not request:
         return "delegate_to_friday needs the request itself. Ask the user what they want done."
+    if _local_session(session) and (_async_routing(session) == "local_only"
+                                    or _voice_local_only()):
+        # Private voice (or local-only mode): the work runs on the local
+        # brain, pinned to it, or waits for the end of the call when the
+        # brain is parked for it. Never a cloud leg (local voice spec P3).
+        seat = _brain_serving()
+        title = str(inp.get("title") or "").strip() or request[:60]
+        if seat is None:
+            return _queue_after_call(session, request, title)
+        from agent_friday.services.agent import _spawn_task
+        task_id = _spawn_task(
+            title, _DELEGATE_PROMPT + request,
+            description="Handed over from a voice conversation", model=seat,
+            tools=None, conversation_id=session.get("conversation_id"),
+            orb_icon="🎙", pin_to_seat=True)
+        return (f"DELEGATED:{task_id} Friday's deeper mind is working on it on this "
+                f"computer. Say one short sentence that you're on it and keep "
+                f"talking; the outcome will be handed back to you when it is done. "
+                f"Do not guess the result.")
     if _voice_local_only():
         return ("NOT DONE: local-only mode is on, so a cloud voice session cannot hand "
                 "work to Friday. Tell the user; they can ask in chat, or turn local-only off.")
@@ -1041,9 +1265,7 @@ def _tool_delegate_to_friday(inp, session=None):
             seat = None
     from agent_friday.services.agent import _spawn_task
     title = str(inp.get("title") or "").strip() or request[:60]
-    prompt = ("The user asked for this in a live voice conversation. Do it fully, "
-              "with whatever tools it needs, then report the real outcome in a few "
-              "plain sentences that can be spoken aloud.\n\nRequest: " + request)
+    prompt = _DELEGATE_PROMPT + request
     task_id = _spawn_task(title, prompt, description="Handed over from a voice conversation",
                           model=seat, tools=None, conversation_id=cid, orb_icon="🎙")
     return (f"DELEGATED:{task_id} Friday is working on it in the background. Say one "
@@ -1139,11 +1361,11 @@ def _voice_room_mode() -> bool:
 
 
 def _tool_ask_local_for_context(inp, session=None):
-    """Ask the local model for private context; share it only as he approves.
+    """Ask the local model for private context; share it only as they approve.
 
     Returns at once: the local answer can take longer than a voice tool may
     hold the line. The work runs on a thread that raises the payload card (or
-    shares under his conversation grant) and hands the outcome to the call
+    shares under their conversation grant) and hands the outcome to the call
     (services/local_context, services/voice_live_channel).
     """
     question = str((inp or {}).get("question") or "").strip()
@@ -1156,9 +1378,9 @@ def _tool_ask_local_for_context(inp, session=None):
     rid = _start_local_share(question, cid)
     tail = (f" The request id is {rid}." if rid else
             " You will be told the request id when the card is up.")
-    return ("ASKING: his local model is answering, and he will see exactly what would be "
+    return ("ASKING: their local model is answering, and they will see exactly what would be "
             "shared on a card before you receive any of it. Say one short sentence that "
-            "you're asking his OK to share some context, then carry on." + tail)
+            "you're asking their OK to share some context, then carry on." + tail)
 
 
 def _start_local_share(question, cid, answer_fn=None):
@@ -1181,12 +1403,12 @@ def _start_local_share(question, cid, answer_fn=None):
         rid[0] = out.get("approval_id")
         done.set()
         if out.get("status") == "pending":
-            _vlc.deliver(cid, (f"The share request {out['approval_id']} is on his screen. Tell him "
-                               f"in one short sentence that you're asking his OK to share some "
-                               f"context from his local model. He can say 'send it', 'don't send "
+            _vlc.deliver(cid, (f"The share request {out['approval_id']} is on their screen. Tell them "
+                               f"in one short sentence that you're asking their OK to share some "
+                               f"context from their local model. They can say 'send it', 'don't send "
                                f"it', or ask you to change it."), kind="notice")
         elif out.get("status") in ("unavailable", "withheld"):
-            _vlc.deliver(cid, "No context came back from his local model: " + str(out.get("reason")),
+            _vlc.deliver(cid, "No context came back from their local model: " + str(out.get("reason")),
                          kind="notice")
     threading.Thread(target=_work, name="ask-local-context", daemon=True).start()
     done.wait(3.0)          # a card raised quickly gets its id into the reply
@@ -1233,8 +1455,8 @@ def _tool_search_past_conversations(inp, session=None):
                 return _lc.local_answer(question + "\n\nWhat the earlier conversations say:\n"
                                         + snippets)
             rid = _start_local_share(f"From earlier conversations: {query}", cid, _answer)
-            parts.append(f"{len(rest)} more match(es) are in conversations that stayed on his "
-                         f"PC. His local model is summarising them, and he will see exactly what "
+            parts.append(f"{len(rest)} more match(es) are in conversations that stayed on their "
+                         f"PC. Their local model is summarising them, and they will see exactly what "
                          f"would be shared on a card first"
                          + (f" (request id {rid})." if rid else "."))
     if not parts:
@@ -1243,7 +1465,7 @@ def _tool_search_past_conversations(inp, session=None):
 
 
 def _tool_answer_share_request(inp, session=None):
-    """His spoken decision on a share card; it counts only if his own words say so."""
+    """Their spoken decision on a share card; it counts only if their own words say so."""
     inp = inp or {}
     rid = str(inp.get("request_id") or "").strip()
     claimed = {"approve": "approve", "send": "approve", "yes": "approve",
@@ -1260,24 +1482,24 @@ def _tool_answer_share_request(inp, session=None):
         # asked again about the text he has now actually seen.
         rev = _lc.revise_by_voice(rid, res.get("instruction") or "")
         if not rev.get("ok"):
-            return ("NOT SENT, and nothing was decided: his yes had a "
+            return ("NOT SENT, and nothing was decided: their yes had a "
                     "condition attached, so it is not consent to the text on "
                     "the card, and the change could not be made ("
                     + str(rev.get("error")) + "). Say that in one sentence, "
-                    "ask him how he wants it changed, and send nothing.")
+                    "ask them how they want it changed, and send nothing.")
         # What changed, in counts. The draft is still unapproved, so none of
         # its words may come back out here.
-        return ("NOT SENT: his yes had a condition, so the card was changed "
-                "on his screen instead of being sent - "
-                + _lc.change_summary(rid) + ". Read back what he asked you to "
-                "change, in his own words, then ask him to say 'send it' or "
+        return ("NOT SENT: their yes had a condition, so the card was changed "
+                "on their screen instead of being sent - "
+                + _lc.change_summary(rid) + ". Read back what they asked you to "
+                "change, in their own words, then ask them to say 'send it' or "
                 "'don't send it'. Do not read the card's own text aloud.")
     if not res.get("ok"):
         return ("NOT RECORDED: " + str(res.get("error"))
-                + ". Ask him directly whether to send it or not.")
+                + ". Ask them directly whether to send it or not.")
     if res.get("status") == "approved":
-        return "Recorded: he approved it. The context is on its way to you; wait for it."
-    return "Recorded: he declined. Nothing was shared; carry on without it."
+        return "Recorded: they approved it. The context is on its way to you; wait for it."
+    return "Recorded: they declined. Nothing was shared; carry on without it."
 
 
 def _tool_revise_share_request(inp):
@@ -1286,9 +1508,9 @@ def _tool_revise_share_request(inp):
     res = _lc.revise_by_voice(str(inp.get("request_id") or "").strip(),
                               str(inp.get("instruction") or ""))
     if res.get("ok"):
-        return ("Updated on his screen. Ask him to check the card and say 'send it' or "
+        return ("Updated on their screen. Ask them to check the card and say 'send it' or "
                 "'don't send it'.")
-    return "NOT CHANGED: " + str(res.get("error")) + ". Tell him, and ask how to change it."
+    return "NOT CHANGED: " + str(res.get("error")) + ". Tell them, and ask how to change it."
 
 
 def _voice_tool_run(name, args, send_client, session=None):
@@ -1319,7 +1541,7 @@ def _voice_tool_run(name, args, send_client, session=None):
             except Exception:
                 pass
             try:
-                return _governed("ask_friday", _tool_ask_friday, args)
+                return _governed("ask_friday", lambda a: _tool_ask_friday(a, session), args)
             finally:
                 try:
                     send_client({"type": "stage", "stage": "mind", "state": "idle",
@@ -2290,6 +2512,23 @@ def _load_live_context() -> str:
     return text
 
 
+# Yearly dates counted down in the live context: (label, month, day).
+_COUNTDOWN_DATES = (("Summer Solstice", 6, 21), ("Independence Day", 7, 4), ("New Year", 1, 1))
+
+
+def _upcoming_countdowns(today, horizon_days: int = 90) -> list:
+    """Lines for each yearly date's next occurrence within `horizon_days`."""
+    out = []
+    for label, month, day in _COUNTDOWN_DATES:
+        d = date(today.year, month, day)
+        if d < today:
+            d = date(today.year + 1, month, day)
+        delta = (d - today).days
+        if delta <= horizon_days:
+            out.append((delta, f"- {label}: {delta} days away ({d.isoformat()})"))
+    return [line for _delta, line in sorted(out)]
+
+
 def _build_live_context() -> str:
     """Uncached body of _load_live_context()."""
     parts = [f"TODAY: {date.today().isoformat()}"]
@@ -2322,18 +2561,7 @@ def _build_live_context() -> str:
 
     # Upcoming countdowns (<=90 days)
     try:
-        today_d = date.today()
-        events = [
-            {"label": "Summer Solstice", "date": "2026-06-21"},
-            {"label": "Independence Day", "date": "2026-07-04"},
-            {"label": "New Year", "date": "2027-01-01"},
-        ]
-        cd = []
-        for ev in events:
-            d = date.fromisoformat(ev['date'])
-            delta = (d - today_d).days
-            if 0 <= delta <= 90:
-                cd.append(f"- {ev['label']}: {delta} days away ({ev['date']})")
+        cd = _upcoming_countdowns(date.today())
         if cd:
             parts.append("UPCOMING:\n" + "\n".join(cd))
     except Exception:

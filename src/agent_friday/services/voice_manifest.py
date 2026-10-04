@@ -49,9 +49,13 @@ PROOF_LINE = "Friday is ready to speak with you right now."
 PROOF_WAV = Path(__file__).resolve().parent.parent / "resources" / "voice_proof.wav"
 PROOF_WORDS = ("friday", "time", "right", "now")
 
-#: GPU policy per stage (§8.1 B). ``required`` refuses rather than falling to
-#: the CPU; ``never`` keeps the card for the seat; ``if_free`` is the default.
-GPU_POLICIES = ("never", "if_free", "required")
+#: GPU policy per stage (§8.1 B). ``preferred`` (the default) uses the card
+#: when it fits and the CPU otherwise, and says which; ``if_free`` is its older
+#: name and behaves the same; ``never`` keeps the card for the seat;
+#: ``required`` refuses a CPU EAR, but a MOUTH under ``required`` degrades to
+#: the CPU with the reason shown: a session is never refused for its mouth.
+GPU_POLICIES = ("never", "preferred", "if_free", "required")
+_GPU_IF_IT_FITS = ("preferred", "if_free")
 
 
 def _now() -> float:
@@ -127,7 +131,8 @@ def _reply_cap(s: dict) -> int:
         n = int(s.get("voice_max_tokens") or 0)
     except Exception:
         n = 0
-    return 300 if n <= 0 else max(64, min(n, 2048))
+    # The same default as routes/voice._VOICE_REPLY_TOKENS_DEFAULT.
+    return 400 if n <= 0 else max(64, min(n, 2048))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -230,7 +235,16 @@ def _run_mind(selection: dict, progress) -> dict:
 
     Returns ``{"seat", "base", "window", "tools", "prompt_tokens",
     "timings", "content"}``. Raises ProofRefused when there is no seat.
+
+    With a voice front installed (local voice spec P1) the proof runs against
+    the FRONT, which is what answers the session's turns, with the voice tool
+    contract: the brain's 40-50K-token contract is what made this proof take
+    175-199 s.
     """
+    from agent_friday.services import voice_front as _vf
+    _front = _vf.selected_model(_settings())
+    if _vf.installed(_front):
+        return _run_front_mind(_front, progress)
     from agent_friday.services import local_seats
     seat = local_seats.resolve("brain")
     if not seat:
@@ -316,6 +330,64 @@ def _run_mind(selection: dict, progress) -> dict:
                            f"{seat} answered with no completion.",
                            {"label": "Prove again", "kind": "retry"})
     return {"seat": seat, "base": base, "contract": contract,
+            "timings": resp.get("timings") or {}, "usage": resp.get("usage") or {},
+            "content": (msg.get("content") or "")[:40]}
+
+
+#: The mind proof's code when a voice front is installed but no call holds it
+#: (``_run_front_mind``). Not a failure: the session arms the front itself.
+FRONT_ARMS_WITH_CALL = "voice_front_arms_with_call"
+
+
+def _run_front_mind(model: str, progress) -> dict:
+    """The mind proof against the voice front: arm it, then one short
+    completion carrying the voice tool contract."""
+    import urllib.request
+    from agent_friday.services import voice_front as _vf
+    from agent_friday.services.voice_engine import (VOICE_CONTRACT_MAX_TOKENS,
+                                                    build_voice_tool_contract)
+    spec = _vf.FRONT_MODELS[model]
+    seat = _vf.get()
+    # The proof never loads the front itself: loading the 4B beside a
+    # resident brain is the over-commit the call's lease exists to prevent,
+    # and a proof has no call to hold it. It proves a front a call is
+    # already serving; otherwise the front is proven by the call's own arm
+    # (load + prefill), which refuses the session honestly if it fails.
+    if not (seat.model == model and seat.holders() and seat.healthy()):
+        raise ProofRefused(FRONT_ARMS_WITH_CALL,
+                           f"{spec['label']} is installed; it starts when a call "
+                           f"starts and is proven then.", None)
+    if progress:
+        progress(f"asking {spec['label']}")
+    contract = build_voice_tool_contract()
+    body = {"model": _vf.seat_id(model), "max_tokens": 8, "temperature": 0,
+            "messages": [{"role": "system", "content": "You are Friday. Reply with one word."},
+                         {"role": "user", "content": "Say OK."}],
+            "tools": contract["tools"],
+            # Qwen3 hybrids think first unless told not to; the front never
+            # thinks on a voice turn.
+            "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(seat.base + "/v1/chat/completions",
+                                 data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"},
+                                 method="POST")
+    with urllib.request.urlopen(req, timeout=60) as r:
+        resp = json.loads(r.read().decode())
+    chs = resp.get("choices") or []
+    msg = (chs[0].get("message") or {}) if chs else {}
+    if not (msg.get("content") or msg.get("tool_calls")):
+        raise ProofRefused("voice_stage_unproven",
+                           f"{spec['label']} answered with no completion.",
+                           {"label": "Prove again", "kind": "retry"})
+    return {"seat": _vf.seat_id(model), "base": seat.base,
+            "contract": {"tools": contract["names"], "fits": contract["fits"],
+                         "floor_present": True, "window": spec["ctx"],
+                         "tool_tokens": contract["tokens"],
+                         "knowledge_graph": False, "memory": False,
+                         "front": True,
+                         "reason": "" if contract["fits"] else (
+                             f"The voice tool contract is {contract['tokens']:,} "
+                             f"tokens, over its {VOICE_CONTRACT_MAX_TOKENS:,}-token ceiling.")},
             "timings": resp.get("timings") or {}, "usage": resp.get("usage") or {},
             "content": (msg.get("content") or "")[:40]}
 
@@ -553,7 +625,7 @@ class VoiceManifest:
                                "GPU policy is 'required' for the ear and no GPU "
                                "engine is admitted in this phase.",
                                {"label": "Set GPU to 'if free'", "kind": "settings"})
-        if sel.get("device_policy") == "if_free" and effective.get("device") != "cuda":
+        if sel.get("device_policy") in _GPU_IF_IT_FITS and effective.get("device") != "cuda":
             reason = "you chose GPU if free; serving on the CPU"
         self._prove_ok("ear", effective, ms,
                        f"{len(pcm) / 2 / 16000:.1f} s of audio → {text!r}", reason)
@@ -570,16 +642,18 @@ class VoiceManifest:
                                f"The mouth returned {seconds:.2f} s of audio for a "
                                f"nine-word line; that is not speech.",
                                {"label": "Prove again", "kind": "retry"})
-        reason = ""
-        if sel.get("device_policy") == "required" and effective.get("device") != "cuda":
-            raise ProofRefused("local_voice_gpu_refused",
-                               "GPU policy is 'required' for the voice and it is "
-                               "serving on the CPU.",
-                               {"label": "Set GPU to 'if free'", "kind": "settings"})
+        # The mouth is never refused for where it runs: a voice on the CPU
+        # still speaks, and the reason says what was asked and what serves.
         if effective.get("engine") != sel.get("engine"):
             reason = f"you chose {sel.get('engine')}; serving {effective.get('engine')}"
-        elif sel.get("device_policy") == "if_free" and effective.get("device") != "cuda":
+        elif sel.get("device_policy") == "required" and effective.get("device") != "cuda":
+            reason = "you required the GPU and it was refused; serving on the CPU"
+        elif sel.get("device_policy") in _GPU_IF_IT_FITS and effective.get("device") != "cuda":
             reason = "you chose GPU if free; serving on the CPU"
+        else:
+            reason = ""
+        if effective.get("degraded"):
+            reason = (reason + " — " if reason else "") + str(effective["degraded"])
         self._prove_ok("mouth", effective, ms,
                        f"{seconds:.1f} s of audio from a {len(PROOF_LINE.split())}-word line",
                        reason)

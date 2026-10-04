@@ -61,6 +61,7 @@ from agent_friday.services.agent import (
 from agent_friday.services.model_router import (
     CITATION_INSTRUCTIONS,
     _build_context_prompt,
+    honest_limits_block,
     _build_emotional_tone_block,
     _build_memory_context_block,
     _build_session_continuity_block,
@@ -251,6 +252,28 @@ except Exception:
     pass
 
 
+#: The marks around the per-turn context at the top of the newest user turn
+#: (see _prep_for). The opening line says who wrote it, so the clock and the
+#: retrieved notes are read as Friday's context, never as the user's words.
+TURN_CONTEXT_OPEN = "[CONTEXT FOR THIS TURN — retrieved by Friday, not written by the user]"
+TURN_CONTEXT_CLOSE = "[END OF CONTEXT]"
+
+
+def turn_context_block(tail: str) -> str:
+    """The per-turn context as it opens the newest user turn.
+
+    Each mark is a paragraph of its own. The egress gate judges message text
+    paragraph by paragraph and recognises Friday's own registered text (the
+    placeholder note, the clock) only as a whole paragraph: a mark on the line
+    next to one fused them, and the note, which names identifier types, was
+    withheld on a guarded cloud turn. Derived text cannot claim authority over
+    the action policy (strip_authority_overrides)."""
+    from agent_friday.services.action_policy import strip_authority_overrides
+    return (TURN_CONTEXT_OPEN + "\n\n"
+            + strip_authority_overrides(tail, source="/api/chat turn context").strip()
+            + "\n\n" + TURN_CONTEXT_CLOSE + "\n\n")
+
+
 def _scrub_messages_pii(messages, lookup) -> None:
     """Mask private values in every message for a cloud call, in place.
 
@@ -374,11 +397,34 @@ def _confirmed_action_response(message, session_ctx):
                                  "Couldn't resume the approved action"))
 
 
-def _conv_context(cid, limit=100):
-    """This conversation's replayable turns — never another conversation's."""
+try:
+    # The brain's seat warms its prompt head the moment it is ready
+    # (services/seat_warm); registered here because the chat routes are
+    # loaded by every server and the hook must exist before the first seat.
+    from agent_friday.services import seat_warm as _seat_warm
+    _seat_warm.install()
+except Exception:
+    pass
+
+
+def _conv_context(cid, limit=None):
+    """This conversation's replayable turns — never another conversation's.
+
+    The window starts where `_history_start` says: by token budget, in whole
+    20-message steps, over the stored rows. A fixed `[-100:]` slice moved the
+    start by two rows on every turn past 100 messages, so the seat's prefix
+    cache matched nothing and the whole history was re-read (measured 43 s
+    against 0.43 s when the prefix held). The budget walks back from the
+    newest row and the start is deterministic in the stored rows, so it is
+    the same after a restart. `limit` is an optional hard cap on top.
+    """
     from agent_friday.services import conversations as _conv
+    rows = _conv.messages(cid)
+    rows = rows[_history_start(rows):]
+    if limit:
+        rows = rows[-int(limit):]
     out = []
-    for m in _conv.messages(cid, limit):
+    for m in rows:
         # System lines (seat changes, interruption notices) are transparency
         # surfaces, not conversation, and are never replayed into model context.
         if m.get('role') in ('system', 'system_report'):
@@ -1201,7 +1247,7 @@ def chat():
         # char count is above the soft limit — older turns get summarised.
         # THIS conversation's history. Reading the global list here is what
         # let two open chats contaminate each other's context.
-        raw_history = _conv_context(_conversation_id, 100)
+        raw_history = _conv_context(_conversation_id)
         messages = _compress_trajectory(raw_history)
         # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
         # memory too -- including this assistant's own earlier answers -- so a
@@ -1272,6 +1318,21 @@ def chat():
             except Exception as _ce:
                 # Compression is best-effort — never block a chat on it.
                 print(f"  [HEADROOM] skipped: {_ce}")
+
+        # ── Laya 2 tier 1, in shadow: the turn's shape before the brain. ──
+        # Scores the message against the synthetic prototypes within a
+        # 50 ms budget and logs the verdict (never the text) to
+        # runtime/laya2/reflex_shadow.jsonl. The verdict rides in the session
+        # context as ADVICE for the local seat's reasoning effort
+        # (services/reasoning_policy); nothing on the governance path reads it
+        # and no route is taken on it. A missing or slow encoder yields a
+        # degraded verdict, which changes nothing downstream.
+        _turn_shape = None
+        try:
+            from agent_friday.services import reflex_turn as _reflex
+            _turn_shape = _reflex.shadow(message, _conversation_id)
+        except Exception:
+            _turn_shape = None
 
         # ── Model Routing: decide local vs cloud BEFORE building the prompt. ──
         # The routing decision drives the whole privacy posture downstream:
@@ -1558,9 +1619,8 @@ def chat():
         if cite_sources:
             _extra_system += CITATION_INSTRUCTIONS
 
-        # The newest user turn carries this turn's context on the local seat
-        # (see _prep_for); the original text is kept so a cloud fallback can
-        # put it back and carry the context in the system prompt instead.
+        # The newest user turn carries this turn's context (see _prep_for);
+        # the original text is kept so each provider's prep starts from it.
         _last_user_msg = (messages[-1] if messages and messages[-1].get('role') == 'user'
                           and isinstance(messages[-1].get('content'), str) else None)
         _last_user_text = _last_user_msg.get('content') if _last_user_msg is not None else None
@@ -1575,13 +1635,14 @@ def chat():
             message chose: the clock, wiki matches, memories, skills, the
             screen, session continuity, the pinned situation.
 
-            On the local seat the TAIL rides at the top of the newest user
-            turn and the system message is HEAD alone, so llama-server
-            reuses its cache for the system prompt and the whole history and
-            reads only the new turn (measured: 43 s a turn re-reading a
-            ~21k-token prompt, 0.43 s when the prefix repeated). On the
-            cloud the tail follows the head in the system prompt, below
-            `prompt_cache.VOLATILE_MARKER`, and the policy is sealed last.
+            The TAIL rides at the top of the newest user turn and the system
+            message is HEAD alone, with the policy sealed last. On the local
+            seat llama-server then reuses its cache for the system prompt and
+            the whole history and reads only the new turn (measured: 43 s a
+            turn re-reading a ~21k-token prompt, 0.43 s when the prefix
+            repeated); on the cloud the cached prefix and the earlier turns'
+            thinking stay valid. Only a turn with no plain-text user message
+            keeps the tail in the system prompt.
             """
             # Start from the user's own text: a previous local prep may have
             # wrapped it, and the cloud scrub below must see (and keep) the
@@ -1598,7 +1659,7 @@ def chat():
             from agent_friday.services.prompt_cache import VOLATILE_MARKER as _VM
             _cut = (sp or '').find(_VM)
             head, tail = ((sp or '')[:_cut], (sp or '')[_cut:]) if _cut > 0 else ((sp or ''), '')
-            head = _settings_system_prefix(settings, personality) + head
+            head = _settings_system_prefix(settings, personality) + honest_limits_block() + head
             # v5 personalization: fold in the LOCAL user model + learned heuristics
             # (the same blocks _get_friday_system_prompt injects). /api/chat builds
             # its prompt via _build_context_prompt directly, so without this the
@@ -1652,12 +1713,17 @@ def chat():
             if voice_mode:
                 # Constant while voice mode is on, so it belongs to the head;
                 # at its end, not its start, so it never moves the prefix.
-                head = head + (
+                # The length rule is the one every voice path shares, and the
+                # text-chat length hint gives way to it.
+                from agent_friday.services.voice_persona import (
+                    VOICE_LENGTH_RULE, strip_text_chat_hints)
+                head = strip_text_chat_hints(head, keep_tone=True) + (
                     "\n\n=== VOICE MODE ACTIVE ===\n"
                     "The user is speaking to you via microphone. Your reply will be read aloud.\n"
-                    "Rules: Keep it SHORT (1-3 sentences). Never use markdown — no asterisks, "
-                    "headers, bullet points, or code blocks. Use natural speech patterns and "
-                    "contractions. Ask a follow-up question to keep the conversation flowing.\n"
+                    + VOICE_LENGTH_RULE +
+                    "Never use markdown — no asterisks, headers, bullet points, or code blocks. "
+                    "Use natural speech patterns and contractions. Ask a follow-up when the "
+                    "conversation is open-ended.\n"
                     "=========================\n"
                 )
             if _extra_system:
@@ -1688,12 +1754,26 @@ def chat():
             # This route assembles its own prompt rather than going through
             # `_get_friday_system_prompt`, so the policy and the override
             # strip are applied here, last.
-            if provider == 'local' and _last_user_msg is not None and tail.strip():
-                from agent_friday.services.action_policy import strip_authority_overrides
-                _last_user_msg['content'] = (
-                    "[CONTEXT FOR THIS TURN — retrieved by Friday, not written by the user]\n"
-                    + strip_authority_overrides(tail, source="/api/chat turn context").strip()
-                    + "\n[END OF CONTEXT]\n\n" + _last_user_text)
+            # SENSITIVE (the sealed /api/chat prompt). The per-turn context
+            # (clock, memories, wiki matches, continuity, pinned situation)
+            # rides in the newest user turn on every seat, never in the system
+            # prompt: a system prompt that changes every turn re-bills the
+            # whole replayed history and, on models that check replayed
+            # thinking, invalidates it. Moving retrieved text out of system
+            # authority also keeps it from being read as an instruction.
+            if _last_user_msg is not None and tail.strip():
+                _ctx = turn_context_block(tail)
+                if provider == 'local':
+                    _last_user_msg['content'] = _ctx + _last_user_text
+                else:
+                    # Its own text block, so the egress gate judges the
+                    # context and the user's words separately: a withheld
+                    # context paragraph never takes the message with it. The
+                    # message is the scrubbed copy for a guarded cloud turn.
+                    _cur = _last_user_msg.get('content')
+                    _blocks = (list(_cur) if isinstance(_cur, list)
+                               else [{"type": "text", "text": _cur or ""}])
+                    _last_user_msg['content'] = [{"type": "text", "text": _ctx}] + _blocks
                 return seal_system_prompt(head, "/api/chat prompt"), src, lookup
             return seal_system_prompt(head + tail, "/api/chat prompt"), src, lookup
 
@@ -1703,6 +1783,9 @@ def chat():
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "provider": _provider,
+            # Laya 2's tier-1 verdict for this turn (or None): read only by
+            # the local payload's reasoning-effort choice.
+            "turn_shape": _turn_shape,
             # Which conversation this turn belongs to. An approval card raised
             # here carries it, so services/approval_executor can report the
             # outcome back into this chat when the owner approves the card
@@ -2762,7 +2845,7 @@ def chat_send():
             _send_sources[:] = sources or []
             # Prepend user-configured agent personality + response prefs + cLaws
             personality = _load_agent_personality()
-            prompt = _settings_system_prefix(settings, personality) + (prompt or '')
+            prompt = _settings_system_prefix(settings, personality) + honest_limits_block() + (prompt or '')
             # Cross-session memory: recall relevant past exchanges + carry
             # forward the last session summary + adapt tone from the
             # accumulated arc. Rebuilt per provider along with everything

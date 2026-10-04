@@ -84,7 +84,7 @@ def test_a_local_only_fact_goes_through_the_card(store, monkeypatch):
     now = _new_conv("Today")
     out = ve._tool_search_past_conversations({"query": "boat trip"}, session=_session(now))
     assert "north marina" not in out, "local-only content was returned directly"
-    assert "stayed on his PC" in out and "appr_x" in out
+    assert "stayed on their PC" in out and "appr_x" in out
     assert started and started[0][1] == now
 
 
