@@ -660,8 +660,9 @@ def _tool_ask_friday(inp):
     from agent_friday.routes.voice import _voice_user_message
     user = _voice_user_message(
         "You are answering a question RELAYED from a cloud voice session. "
-        "Answer in one to three plain spoken sentences; the answer will be "
-        "read aloud by another model. Do not mention the relay.\n\n"
+        "Answer in plain spoken prose with no markdown, sized to the question as "
+        "your voice length rule says; the answer will be read aloud by another "
+        "model. Do not mention the relay.\n\n"
         + question, settings, volatile=_meta.get("volatile"))
     try:
         # Friday's own brain answering her own voice session: her label.

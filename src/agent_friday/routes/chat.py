@@ -1647,12 +1647,17 @@ def chat():
             if voice_mode:
                 # Constant while voice mode is on, so it belongs to the head;
                 # at its end, not its start, so it never moves the prefix.
-                head = head + (
+                # The length rule is the one every voice path shares, and the
+                # text-chat length hint gives way to it.
+                from agent_friday.services.voice_persona import (
+                    VOICE_LENGTH_RULE, strip_text_chat_hints)
+                head = strip_text_chat_hints(head, keep_tone=True) + (
                     "\n\n=== VOICE MODE ACTIVE ===\n"
                     "The user is speaking to you via microphone. Your reply will be read aloud.\n"
-                    "Rules: Keep it SHORT (1-3 sentences). Never use markdown — no asterisks, "
-                    "headers, bullet points, or code blocks. Use natural speech patterns and "
-                    "contractions. Ask a follow-up question to keep the conversation flowing.\n"
+                    + VOICE_LENGTH_RULE +
+                    "Never use markdown — no asterisks, headers, bullet points, or code blocks. "
+                    "Use natural speech patterns and contractions. Ask a follow-up when the "
+                    "conversation is open-ended.\n"
                     "=========================\n"
                 )
             if _extra_system:

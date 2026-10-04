@@ -3697,8 +3697,17 @@ COMMUNICATION_STYLE_HINTS = {
 }
 
 
+#: How long Friday talks, for every surface: adaptive, never a fixed cap.
+ADAPTIVE_LENGTH_LINE = ("Match your length to the moment: a sentence or two for quick "
+                        "back-and-forth, fuller answers for the news, explanations and stories.")
+#: The absolute length line earlier SOUL.md defaults shipped with. A personality
+#: file that still carries it reads the adaptive line in its place.
+LEGACY_LENGTH_LINE = "Keep responses short and sharp — like texting a smart colleague."
+
+
 def _settings_system_prefix(settings, personality):
     """Build the prefix that gets prepended to every chat system prompt."""
+    personality = (personality or "").replace(LEGACY_LENGTH_LINE, ADAPTIVE_LENGTH_LINE)
     length_hint = RESPONSE_LENGTH_HINTS.get(settings.get('response_length', 'standard'), '')
     style_hint = COMMUNICATION_STYLE_HINTS.get(settings.get('communication_style', 'professional'), '')
     # TWO SETTINGS ABOUT CITATIONS, ONE PROMPT. `include_sources` (default

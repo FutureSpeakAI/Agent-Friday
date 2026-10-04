@@ -702,7 +702,7 @@ def _mark_if_stale(result, fname, started_at, user_spoke_at, now):
 # The persona, the adaptive length rule, the news rules and the vault-aware
 # personal-questions rule are shared with the briefings: services/voice_persona.py.
 from agent_friday.services.voice_persona import (  # noqa: E402
-    VOICE_ANCHOR_RULES, VOICE_LENGTH_RULE, compose_live_instruction,
+    VOICE_ANCHOR_RULES, VOICE_LENGTH_RULE, VOICE_STATE_NOTE_RULE, compose_live_instruction,
     persona_due, persona_reminder, strip_text_chat_hints, vault_rule,
 )
 
@@ -1538,24 +1538,7 @@ def _build_voice_system_prompt(settings=None, description=None):
         "aloud. An asterisk is SPOKEN as 'asterisk', so a bulleted list is "
         "unlistenable. Numbered points must be said the way a person says "
         "them: 'first … second …', inside ordinary sentences.\n"
-        # LENGTH. This is the local path's ONLY brevity control that the
-        # model itself can honour, and it has to be concrete: "reasonably
-        # concise" produced 183-word answers to "how does your vault work"
-        # — over a minute of uninterruptible speech for
-        # one question. Even frontier speech-to-speech models still need an
-        # explicit "avoid long answers" line; no model choice removes this.
-        "LENGTH — THIS IS SPOKEN, SO LENGTH IS TIME. Answer in ONE to THREE "
-        "short sentences, under about 60 spoken words. That is the DEFAULT "
-        "for every turn, including questions about yourself, your systems, "
-        "the vault, or how you work. Give the single most useful answer, "
-        "then STOP and let them respond — a voice reply is a turn in a "
-        "conversation, not a briefing. Never deliver a list, a walkthrough, "
-        "or a multi-paragraph explanation unless they explicitly ask you to "
-        "go deep ('walk me through', 'give me the full version', 'go on'), "
-        "and even then deliver it in chunks and stop for their reply between "
-        "them. If the honest answer is genuinely long, say the headline in "
-        "one sentence and offer the detail: 'The short version is X — want "
-        "the long one?'\n"
+        + VOICE_LENGTH_RULE
         + ("Your reasoning also runs locally, so you CAN discuss private "
            "vault content — it never leaves the machine.\n\n"
            if _is_local_brain else "\n")
@@ -1567,6 +1550,14 @@ def _build_voice_system_prompt(settings=None, description=None):
             vault_fallback=_vault_cloud_fallback())
     except Exception as e:
         full_ctx = f"(context load failed: {e})"
+    # The same length rule and persona as the cloud voice: the text-chat
+    # length hint gives way to VOICE_LENGTH_RULE, and the saved persona opens
+    # and closes the prompt so the character holds for the whole session.
+    try:
+        _style = _get_voice_style_prompt()
+    except Exception:
+        _style = ""
+    full_ctx = strip_text_chat_hints(full_ctx, keep_tone=not _style)
     # Volatile blocks go AFTER the context (whose clock block is its last
     # section), so the byte-identical prefix survives across turns.
     try:
@@ -1604,7 +1595,8 @@ def _build_voice_system_prompt(settings=None, description=None):
         ACTION_PERMISSION_POLICY, seal_system_prompt, strip_authority_overrides)
     volatile = strip_authority_overrides(
         volatile.replace(ACTION_PERMISSION_POLICY, ""), source="voice volatile context")
-    return (seal_system_prompt(voice_prefix + full_ctx, "local voice prompt"),
+    return (seal_system_prompt(compose_live_instruction(_style, voice_prefix + full_ctx),
+                               "local voice prompt"),
             {"is_local_brain": _is_local_brain, "provider": _prov,
              "volatile": volatile})
 
@@ -2688,7 +2680,7 @@ if sock is not None:
             "You are Agent Friday, a sovereign personal AI assistant.\n"
             + (_cloud_self + "\n" if _cloud_self else "")
             + "You are having a LIVE VOICE conversation — be natural and speak like a person.\n"
-            + VOICE_LENGTH_RULE +
+            + VOICE_LENGTH_RULE + (VOICE_STATE_NOTE_RULE if (_load_settings() or {}).get("voice_tools", True) else "") +
             "NEVER use markdown formatting — no asterisks, headers, or bullet points. Speak naturally.\n"
             "Use contractions. When it fits, ask a follow-up question to keep the conversation flowing.\n"
             "Never state that an action succeeded unless the tool result in this turn says so. "
