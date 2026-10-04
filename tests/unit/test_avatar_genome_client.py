@@ -31,7 +31,7 @@ const MOODS = {
   EXECUTING: { baseColor: 0xffaa00, accentColor: 0xff3300, bloomStrength: 1.2, grain: 0.04 },
 };
 const structures = {}, scene = { remove() {}, add() {} };
-const coreCubes = [], cathedralRings = [], astrolabeRings = [], shannonNodes = [], quantumRings = [], matrixLines = [];
+const coreCubes = [], cathedralRings = [], astrolabeRings = [], shannonNodes = [];
 let targetStructure = 'CUBES', currentStructure = 'CUBES', builds = 0;
 function buildAllStructures() { builds++; }
 function setGroupOpacity() {}
@@ -115,7 +115,12 @@ WIRING_SCENE = [
     "if (FridayGenome.rand('CUBES') < FridayGenome.EX('CUBES', 'sparsity', 0.15)) continue;",
     "for(let i=1; i<=FridayGenome.EX('ASTROLABE', 'rings', 8); i++) {",
     "const nTubes = FridayGenome.EX('CABLES', 'tubes', 80);",
-    "for(let i=0; i<FridayGenome.EX('NONE', 'lines', 100); i++) {",
+    "FridayHopf.build(gNone, { lines: FridayGenome.EX('NONE', 'lines', 100) });",
+    "FridayWormhole.build(gWorm, { rings: FridayGenome.EX('WORMHOLE', 'rings', 20) });",
+    "FridayBlackHole.build(gHole, { dust: FridayGenome.EX('BLACKHOLE', 'dust', 320), lowCost: !!window.__fridayLowCost,",
+    "FridayDyson.build(gIco, { shells: FridayGenome.EX('ICOSAHEDRON', 'shells', 3),",
+    "coarse: FridayGenome.EX('ICOSAHEDRON', 'detail_delta', 0) < 0, rand: () => FridayGenome.rand('ICOSAHEDRON') });",
+    "FridayDirac.animate(delta, Object.assign({ wave: FridayGenome.EX('QUANTUM', 'wave', 10) }, herState));",
     "const nPillars = FridayGenome.EX('DOME', 'pillars', 8);",
     "edenLady = FridayRez.build(gEden, FridayGenome.EX('EDEN', 'stage', 0));",
     "for(let i=0; i<FridayGenome.EX('NETWORK', 'nodes', 120); i++) {",

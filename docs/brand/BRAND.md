@@ -213,7 +213,7 @@ with care.
 - Bloom: Unreal bloom around strength 0.9, radius 0.55, threshold 0.25, scaled by mood.
 - Shader: a chromatic offset of about 0.003, film grain of about 0.04, faint scanlines.
 - Moods: each sets a base colour, an accent, a rotation speed, a bloom strength and a grain level. The table lives in `index.html` (`MOODS`). Speaking is green.
-- Structures: thirteen, in order of evolution, from the Genesis Lattice to Giga Earth (Rez). Each is named for a person or idea from computing and mathematics.
+- Structures: fifteen, in order of evolution, from the Genesis Lattice to Giga Earth (Rez), then the Einstein-Rosen Bridge and Hawking Radiation. Each is named for a person or idea from computing, mathematics and physics.
 - The scene animates while Friday is speaking or working, and is still when she is idle.
 
 ## Vocabulary

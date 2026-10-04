@@ -94,14 +94,18 @@ def _by_kind(cards):
     return {c["kind"]: c for c in cards}
 
 
-def test_one_card_per_source_and_none_for_the_routine_show(home):
+def test_one_card_per_source_and_the_routine_show_is_listed_too(home):
     counts = mi.reindex()
-    assert counts == {"creations": 2, "documents": 1, "podcasts": 1, "drafts": 1, "legacy": 1, "posts": 1, "media": 0}
+    assert counts == {"creations": 2, "documents": 1, "podcasts": 2, "drafts": 1, "legacy": 1, "posts": 1, "media": 0,
+                      "daily": 0, "timelines": 0, "pipeline_runs": 0, "projects": 0, "comfy": 0}
     cards = mi.query(view="all")["cards"]
     kinds = sorted(c["kind"] for c in cards)
-    assert kinds == ["article", "deck", "draft", "episode", "image", "post", "post"], "the legacy item of type post is a post card too"
-    titles = {c["title"] for c in cards}
-    assert "Friday's Front Page" not in titles, "the routine show belongs to News, on its run"
+    assert kinds == ["article", "deck", "draft", "episode", "episode", "image", "post", "post"], "the legacy item of type post is a post card too"
+    # The routine show's episode is a card like any other (nothing is silently missing);
+    # it is marked as News's and names the run that made it.
+    routine = [c for c in cards if c["title"] == "Friday's Front Page"][0]
+    assert routine["origin"] == "routine" and routine["sources"][0].startswith("News · Friday's Front Page")
+    assert routine["extra"]["routine"] == "front_page"
 
 
 def test_a_render_is_a_page_of_the_document_not_a_card(home):
@@ -114,11 +118,14 @@ def test_a_render_is_a_page_of_the_document_not_a_card(home):
 def test_every_source_status_maps_onto_the_five_words(home):
     mi.reindex()
     by = _by_kind(mi.query(view="all")["cards"])
-    assert by["image"]["status"] == "published" and by["image"]["privacy"] == "private" and by["image"]["published_at"] == "Kept on this PC"
+    # A thing made and kept on this PC is "kept", never "published": the Published
+    # view is honest, and only a publication record moves a creation into it.
+    assert by["image"]["status"] == "kept" and by["image"]["privacy"] == "private" and by["image"]["published_at"] is None
     assert by["draft"]["status"] == "draft" and by["draft"]["extra"]["channel"] == "EMAIL REPLY"
     v2 = [c for c in mi.query(view="all")["cards"] if c["source_kind"] == "post"][0]
     assert v2["status"] == "draft"                              # v2 DRAFT
-    assert by["episode"]["status"] == "published"               # ready, kept
+    assert by["episode"]["status"] == "kept"                    # ready, kept
+    assert mi.STAGES == ("idea", "draft", "review", "scheduled", "published") and "kept" in mi.STATUSES
     legacy = [c for c in mi.query(view="all")["cards"] if c["source_kind"] == "legacy_item"][0]
     assert legacy["status"] == "draft"                          # legacy 'drafting'
     for st in ("idea", "drafting", "review", "scheduled", "published"):
@@ -142,7 +149,9 @@ def test_the_default_views_and_the_counts(home):
     mi.reindex()
     res = mi.query(view="progress")
     assert {c["kind"] for c in res["cards"]} == {"draft", "post"} and len(res["cards"]) == 3
-    assert res["counts"]["published"] == 4 and res["counts"]["progress"] == 3 and res["counts"]["all"] == 7
+    assert res["counts"]["published"] == 0 and res["counts"]["kept"] == 5 and res["counts"]["progress"] == 3 and res["counts"]["all"] == 8
+    assert {c["kind"] for c in mi.query(view="kept")["cards"]} == {"image", "article", "deck", "episode"}
+    assert mi.query(view="published")["cards"] == [], "nothing here went anywhere"
     assert mi.query(view="all", kind="imageset")["cards"][0]["kind"] == "image"
     assert [c["title"] for c in mi.query(view="all", q="ferry")["cards"]] == ["Ferry"]
     assert mi.query(view="all", unsigned=True)["counts"]["unsigned"] == 6
@@ -234,7 +243,7 @@ def test_read_aloud_makes_a_signed_audio_card_from_a_text_card(home, monkeypatch
     res = mi.turn_into(src["id"], "audio")
     assert res["status"] == "ok", res
     card = mi.get(res["card"]["id"])
-    assert card["kind"] == "audio" and card["status"] == "published" and card["published_at"] == "Kept on this PC"
+    assert card["kind"] == "audio" and card["status"] == "kept" and card["published_at"] is None
     assert card["path"].endswith(".wav") and Path(card["path"]).stat().st_size > 44
     assert card["duration"] == "0:00" or card["extra"]["duration_s"] > 0
     assert [v for _t, v in spoken] == ["af_heart", "af_heart"] and spoken[0][0].startswith("The 06:40")

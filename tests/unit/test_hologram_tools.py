@@ -113,22 +113,35 @@ def test_calibrate_is_answered_by_the_page(store):
 
 def test_reset_restores_the_feel_but_keeps_the_calibration_and_the_other_tabs(store):
     store["tracking"].update({"zoom_in_max": 2.4, "neutral_face_width": 0.23,
-                              "dock_depth": 0.3, "debug_overlay": True})
+                              "dock_depth": 0.3, "debug_overlay": True,
+                              "viewing_distance_cm": 80, "screen_width_cm": 34})
     out = ht.handle({"action": "reset"})
     t = store["tracking"]
     assert t["zoom_in_max"] == 1.8
     assert t["neutral_face_width"] == 0.23 and t["dock_depth"] == 0.3 and t["debug_overlay"] is True
+    # Where they sit and how big the screen is are not the feel.
+    assert t["viewing_distance_cm"] == 80 and t["screen_width_cm"] == 34
     assert "defaults" in out
 
 
 def test_status_is_a_sentence_about_the_window(store):
     out = ht.handle({"action": "status"})
-    assert "one point eight times bigger" in out
+    assert "one point eight times nearer the glass" in out
+    assert "sixty centimetres from a screen it measures itself" in out
     assert "not calibrated" in out
     store["tracking"]["neutral_face_width"] = 0.2
     assert "calibrated to where you sit" in ht.handle({"action": "status"})
     store["tracking"]["depth_strength"] = 0
-    assert "zoom is off" in ht.handle({"action": "status"})
+    assert "Leaning in and out is off" in ht.handle({"action": "status"})
+
+
+def test_the_windows_scale_is_set_by_voice_and_clamped(store):
+    out = ht.handle({"action": "set", "viewing_distance_cm": 80})
+    assert store["tracking"]["viewing_distance_cm"] == 80
+    assert "eighty" in out and "viewing_distance_cm" not in out
+    ht.handle({"action": "set", "screen_width_cm": 500})
+    assert store["tracking"]["screen_width_cm"] == 120
+    assert "a screen one hundred and twenty centimetres wide" in ht.handle({"action": "status"})
 
 
 def test_numbers_are_spoken():
@@ -136,3 +149,4 @@ def test_numbers_are_spoken():
     assert ht.say_number(2) == "two"
     assert ht.say_number(0.35) == "zero point three five"
     assert ht.say_number(1.25) == "one point two five"
+    assert ht.say_number(120) == "one hundred and twenty" and ht.say_number(300) == "three hundred"
