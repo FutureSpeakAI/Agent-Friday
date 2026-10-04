@@ -18,7 +18,9 @@ import sys
 
 
 def _out(obj) -> None:
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    # ASCII-escaped JSON: the pipe's console encoding (cp1252 on Windows)
+    # cannot carry IPA, and an escaped line reads the same on any encoding.
+    sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
 
 
