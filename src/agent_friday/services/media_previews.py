@@ -258,11 +258,6 @@ def ensure_all(cards: Optional[List[Dict[str, Any]]] = None, *, sync: Optional[b
             if c is None:
                 break
             _run_one(c)
-        # A card the background worker already holds is skipped by the queue,
-        # so the pass is done only when that build has finished too.
-        end = time.time() + timeout
-        while time.time() < end and (_QUEUE or _STATE["building"]):
-            time.sleep(0.05)
         _close_browser()
     else:
         end = time.time() + timeout
