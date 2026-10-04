@@ -3,20 +3,66 @@ The one thing that talks to a model is `answer.py`, through the local-call
 module, to the model seat on this PC."""
 from __future__ import annotations
 
-import re
+import ast
 import socket
 from pathlib import Path
 
 from tests.library_fixtures import install_fake_encoder, isolate_library, make_pdf, release_library, write_docs
 
 PKG = Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "services" / "library"
-BANNED = re.compile(r"^\s*(?:import|from)\s+(requests|urllib3|httpx|aiohttp|http\.client|urllib\.request|socket|websocket|ftplib|smtplib)\b",
-                    re.M)
+BANNED_MODULES = ("requests", "urllib3", "httpx", "aiohttp", "http.client", "urllib.request", "socket", "websocket",
+                  "websockets", "ftplib", "smtplib", "telnetlib", "imaplib", "poplib", "xmlrpc.client", "ssl")
+
+
+def _imported_names(tree: ast.AST) -> set[str]:
+    """Every module a source file can load: import statements in any form (several names on one line,
+    `from urllib import request`, inside a function), and `__import__` / `import_module` with a literal."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            names.add(base)
+            names.update(f"{base}.{a.name}" for a in node.names)
+        elif isinstance(node, ast.Call):
+            fn = node.func
+            called = getattr(fn, "id", None) or getattr(fn, "attr", None)
+            if called in ("__import__", "import_module") and node.args and isinstance(node.args[0], ast.Constant):
+                names.add(str(node.args[0].value))
+    return names
+
+
+def _banned(name: str) -> bool:
+    return any(name == b or name.startswith(b + ".") for b in BANNED_MODULES)
 
 
 def test_no_module_of_the_package_imports_an_http_client_or_a_socket():
-    hits = [(f.name, m.group(1)) for f in PKG.glob("*.py") for m in BANNED.finditer(f.read_text(encoding="utf-8"))]
+    hits = [(f.name, n) for f in sorted(PKG.glob("*.py"))
+            for n in sorted(_imported_names(ast.parse(f.read_text(encoding="utf-8")))) if _banned(n)]
     assert hits == [], hits
+
+
+def test_the_detector_sees_every_way_to_load_a_network_module():
+    source = ("import json, socket\n"
+              "from urllib import request\n"
+              "x = __import__('http.client')\n"
+              "import importlib\n"
+              "y = importlib.import_module('ssl')\n"
+              "def f():\n"
+              "    import requests as r\n")
+    found = sorted(n for n in _imported_names(ast.parse(source)) if _banned(n))
+    assert found == ["http.client", "requests", "socket", "ssl", "urllib.request"], found
+
+
+def test_the_only_process_the_package_starts_is_its_own_worker():
+    users = sorted(f.name for f in PKG.glob("*.py")
+                   if any(n in ("subprocess", "os.system", "os.popen") or n.startswith("subprocess.")
+                          for n in _imported_names(ast.parse(f.read_text(encoding="utf-8")))))
+    assert users == ["procrun.py"], users
+    src = (PKG / "procrun.py").read_text(encoding="utf-8")
+    for word in ("curl", "wget", "Invoke-WebRequest", "powershell"):
+        assert word not in src, word
 
 
 def test_a_full_index_and_search_opens_no_connection(tmp_path, monkeypatch):
