@@ -741,6 +741,14 @@ _VOICE_SHARED_TOOLS = (
     # "take that away", "re-grant the old one". Asking raises the same card
     # the panel's approvals use; the yes is a click on screen, never a word.
     "file_access",
+    # The Library: "what does the Ellison deposition say about the lease?",
+    # "open that", "show me page fourteen", "next passage", "what's in my
+    # Library?". Adding, removing and forgetting are file_access cards; a spoken
+    # yes never changes the Library. Library text reaches a cloud voice model only
+    # when the owner has allowed it and the document carries its own permission.
+    "search_library",
+    "library_show",
+    "library_status",
     # Big mode and the hand cursor: "big mode", "big mode off", "next card",
     # "select", "back". select never fires a guarded action.
     "big_mode",
