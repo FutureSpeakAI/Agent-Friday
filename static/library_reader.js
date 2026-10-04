@@ -69,6 +69,98 @@
       h('canvas', { ref: cvRef, className: 'lr-box', 'aria-hidden': 'true' }));
   }
 
+  // ── Reader v2: pdf.js, vendored and hardened ────────────────────────────────
+  // The original file is drawn by pdf.js from this server's own files only: no
+  // font or script evaluation (isEvalSupported false), no XFA forms, no annotation
+  // layer (so no link in a document is ever followed), and every resource
+  // (character maps, fonts, image decoders, the worker) comes from the vendored
+  // copy. It adds text selection over the original layout; the page image above
+  // stays as the fallback when this cannot load.
+  const PDFJS_BASE = '/static/vendor/pdfjs-6.4.299/';
+  let pdfjsPromise = null;
+  function loadPdfJs() {
+    if (!pdfjsPromise) {
+      pdfjsPromise = import(PDFJS_BASE + 'legacy/pdf.min.mjs').then(m => {
+        m.GlobalWorkerOptions.workerSrc = PDFJS_BASE + 'legacy/pdf.worker.min.js';
+        return m;
+      }).catch(() => null);
+    }
+    return pdfjsPromise;
+  }
+  function usePdfJs() {
+    const [m, setM] = useState(null);
+    useEffect(() => { let live = true; loadPdfJs().then(x => { if (live) setM(x); }); return () => { live = false; }; }, []);
+    return m;
+  }
+  function pdfOptions(doc) {
+    const tok = window.__FRIDAY_API_TOKEN || '';
+    return {
+      url: '/api/library/raw/' + doc,
+      httpHeaders: tok ? { 'X-Friday-Token': tok } : {},
+      isEvalSupported: false,
+      enableXfa: false,
+      useSystemFonts: false,
+      cMapUrl: PDFJS_BASE + 'cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: PDFJS_BASE + 'standard_fonts/',
+      wasmUrl: PDFJS_BASE + 'wasm/',
+      iccUrl: PDFJS_BASE + 'iccs/',
+      verbosity: 0
+    };
+  }
+  function PdfJsPage({ pdfjs, doc, page, box, onPages, onFail }) {
+    const holder = useRef(null), cvRef = useRef(null), textRef = useRef(null), boxRef = useRef(null);
+    const [pdf, setPdf] = useState(null);
+    useEffect(() => {
+      let live = true, task = null;
+      setPdf(null);
+      try {
+        task = pdfjs.getDocument(pdfOptions(doc));
+        task.promise.then(p => { if (live) { setPdf(p); onPages && onPages(p.numPages); } }).catch(() => live && onFail && onFail());
+      } catch (_) { onFail && onFail(); }
+      return () => { live = false; try { task && task.destroy(); } catch (_) {} };
+    }, [doc]);
+    useEffect(() => {
+      if (!pdf) return undefined;
+      let live = true, renderTask = null, textLayer = null;
+      pdf.getPage(Math.min(Math.max(1, page), pdf.numPages)).then(pg => {
+        if (!live) return;
+        const base = pg.getViewport({ scale: 1 });
+        const width = Math.min(holder.current ? holder.current.clientWidth || 900 : 900, 1000);
+        const viewport = pg.getViewport({ scale: width / base.width });
+        const cv = cvRef.current, dpr = window.devicePixelRatio || 1;
+        cv.width = Math.floor(viewport.width * dpr); cv.height = Math.floor(viewport.height * dpr);
+        cv.style.width = viewport.width + 'px'; cv.style.height = viewport.height + 'px';
+        const ctx = cv.getContext('2d');
+        renderTask = pg.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null });
+        renderTask.promise.catch(() => {});
+        const tl = textRef.current;
+        tl.replaceChildren();
+        tl.style.width = viewport.width + 'px'; tl.style.height = viewport.height + 'px';
+        tl.style.setProperty('--scale-factor', String(viewport.scale));
+        tl.style.setProperty('--total-scale-factor', String(viewport.scale));
+        try {
+          textLayer = new pdfjs.TextLayer({ textContentSource: pg.streamTextContent(), container: tl, viewport });
+          textLayer.render().catch(() => {});
+        } catch (_) {}
+        const bx = boxRef.current;
+        bx.width = viewport.width; bx.height = viewport.height;
+        const g = bx.getContext('2d');
+        g.clearRect(0, 0, bx.width, bx.height);
+        if (box) {
+          g.strokeStyle = cssVar('--fr-cyan', '#00d4ff'); g.lineWidth = 2;
+          const s = viewport.scale;
+          g.strokeRect(box[0] * s - 3, box[1] * s - 3, (box[2] - box[0]) * s + 6, (box[3] - box[1]) * s + 6);
+        }
+      }).catch(() => live && onFail && onFail());
+      return () => { live = false; try { renderTask && renderTask.cancel(); } catch (_) {} try { textLayer && textLayer.cancel(); } catch (_) {} };
+    }, [pdf, page, box]);
+    return h('div', { className: 'lr-page lr-pdfjs', ref: holder },
+      h('canvas', { ref: cvRef, 'aria-label': 'The page' }),
+      h('div', { ref: textRef, className: 'lr-textlayer' }),
+      h('canvas', { ref: boxRef, className: 'lr-box', 'aria-hidden': 'true' }));
+  }
+
   function LibraryReader(props) {
     const { block, doc, page: wantPage, onClose, onStep } = props;
     const [b, setB] = useState(null);
@@ -89,7 +181,12 @@
     useEffect(() => { if (!block && wantPage) setPage(wantPage); }, [wantPage, block]);
     const docId = b ? b.doc_id : doc;
     const isPdf = b ? b.page_image : !!doc;
-    const img = usePage(docId, page, !!isPdf && !!docId);
+    const pdfjs = usePdfJs();
+    const [v2Failed, setV2Failed] = useState(false);
+    const [v2Pages, setV2Pages] = useState(null);
+    const useV2 = !!(pdfjs && isPdf && docId && !v2Failed);
+    const img = usePage(docId, page, !!isPdf && !!docId && !useV2);
+    useEffect(() => { setV2Failed(false); }, [docId]);
     const timed = b && b.t_start != null;
     useEffect(() => {
       const a = audioRef.current;
@@ -98,14 +195,14 @@
     useEffect(() => {
       const k = e => {
         if (e.key === 'Escape') { e.preventDefault(); onClose && onClose(); }
-        else if (e.key === 'ArrowRight' && isPdf) setPage(p => Math.min(img.pages || p + 1, p + 1));
+        else if (e.key === 'ArrowRight' && isPdf) setPage(p => Math.min((useV2 ? v2Pages : img.pages) || p + 1, p + 1));
         else if (e.key === 'ArrowLeft' && isPdf) setPage(p => Math.max(1, p - 1));
         else if (e.key === 'ArrowDown' && onStep) { e.preventDefault(); onStep(1); }
         else if (e.key === 'ArrowUp' && onStep) { e.preventDefault(); onStep(-1); }
       };
       window.addEventListener('keydown', k);
       return () => window.removeEventListener('keydown', k);
-    }, [isPdf, img.pages, onClose, onStep]);
+    }, [isPdf, img.pages, v2Pages, useV2, onClose, onStep]);
 
     if (err) return h('div', { className: 'lr-root' }, h('div', { className: 'lr-empty' }, err, h('button', { className: 'btn', onClick: onClose }, 'Back')));
     const where = b ? [b.title, b.page ? 'p. ' + b.page : (timed ? clock(b.t_start) : null)].filter(Boolean).join(' · ') : 'Page ' + page;
@@ -115,13 +212,14 @@
         h('div', { className: 'lr-where' }, where),
         isPdf && h('div', { className: 'lr-pager' },
           h('button', { className: 'btn', disabled: page <= 1, onClick: () => setPage(p => Math.max(1, p - 1)), 'aria-label': 'Previous page' }, '‹'),
-          h('span', { className: 'lr-num' }, page + (img.pages ? ' / ' + img.pages : '')),
-          h('button', { className: 'btn', disabled: img.pages ? page >= img.pages : false, onClick: () => setPage(p => p + 1), 'aria-label': 'Next page' }, '›'))),
+          h('span', { className: 'lr-num' }, page + ((useV2 ? v2Pages : img.pages) ? ' / ' + (useV2 ? v2Pages : img.pages) : '')),
+          h('button', { className: 'btn', disabled: (useV2 ? v2Pages : img.pages) ? page >= (useV2 ? v2Pages : img.pages) : false, onClick: () => setPage(p => p + 1), 'aria-label': 'Next page' }, '›'))),
       h('div', { className: 'lr-cols' },
         isPdf && h('div', { className: 'lr-left' },
-          img.error ? h('div', { className: 'lr-empty' }, img.error)
-            : img.url ? h(PageWithBox, { img, box: b && b.page === page ? b.bbox : null })
-              : h('div', { className: 'lr-empty' }, 'Reading the page…')),
+          useV2 ? h(PdfJsPage, { pdfjs, doc: docId, page, box: b && b.page === page ? b.bbox : null, onPages: setV2Pages, onFail: () => setV2Failed(true) })
+            : img.error ? h('div', { className: 'lr-empty' }, img.error)
+              : img.url ? h(PageWithBox, { img, box: b && b.page === page ? b.bbox : null })
+                : h('div', { className: 'lr-empty' }, 'Reading the page…')),
         h('div', { className: 'lr-right' },
           b && b.section && h('div', { className: 'lr-section' }, b.section),
           timed && b.doc_kind === 'media' && h('audio', { ref: audioRef, controls: true, preload: 'metadata', src: '/api/library/raw/' + b.doc_id, style: { width: '100%' } }),
@@ -142,6 +240,11 @@
 .lr-page{position:relative;display:inline-block;max-width:100%;border:1px solid var(--fr-glass-edge);border-radius:8px;overflow:hidden;background:#fff}
 .lr-page img{display:block;max-width:100%;height:auto}
 .lr-box{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.lr-pdfjs{position:relative;width:100%;max-width:1000px;background:#fff}
+.lr-pdfjs canvas:first-child{display:block}
+.lr-textlayer{position:absolute;inset:0;overflow:clip;line-height:1}
+.lr-textlayer span,.lr-textlayer br{color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0}
+.lr-textlayer ::selection{background:rgba(0,212,255,.3)}
 .lr-section{font-family:var(--fr-font-display);font-size:var(--fr-text-2xs);letter-spacing:var(--fr-track-label);text-transform:uppercase;color:var(--fr-dim);margin-bottom:6px}
 .lr-text{max-width:72ch;font-size:var(--fr-text-base);line-height:1.55;user-select:text}
 .lr-text p{margin:0 0 10px;white-space:pre-wrap;overflow-wrap:anywhere}

@@ -261,7 +261,7 @@ SENSITIVE_FILE_RE = re.compile(
 
 # Never scan these (binary / generated / vendored). Staged-but-gitignored files
 # normally won't appear, but guard anyway.
-SKIP_PATH_SUBSTR = ("node_modules/", "/dist/", "/build/", ".min.js", ".lock",
+SKIP_PATH_SUBSTR = ("node_modules/", "/dist/", "/build/", ".min.js", ".lock", "static/vendor/",
                     "package-lock.json", "yarn.lock")
 SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".pdf", ".woff",
             ".woff2", ".ttf", ".eot", ".zip", ".gz", ".bundle", ".wav", ".mp3",

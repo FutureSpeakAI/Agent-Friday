@@ -117,6 +117,7 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 
 | Component | Version | Delivery | License | Copyright / attribution |
 |---|---|---|---|---|
+| pdf.js (pdfjs-dist, legacy build with its character maps, standard fonts, image-decoder modules and colour profile), used by the Library's Reader | 6.4.299 | in installer zip | Apache-2.0 | Copyright Mozilla and individual contributors; its LICENSE is vendored beside it |
 | rapidocr-onnxruntime (bundled PP-OCR detection, classification and recognition models) | 1.2.3 | installed by installer (documents) | Apache-2.0 | Copyright RapidAI; models from PaddleOCR, Copyright PaddlePaddle Authors |
 | aiosignal | 1.4.0 | installed by installer (recommended/memory) | Apache-2.0 | Copyright aio-libs contributors |
 | bcrypt | 5.0.0 | installed by installer (memory) | Apache-2.0 | Copyright (c) The Python Cryptographic Authority developers (from package Author metadata) |
