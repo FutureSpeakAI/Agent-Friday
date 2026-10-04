@@ -10450,7 +10450,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 // With no face the backlash lets go, so the lean returns all the
                 // way to neutral and the view to the plain camera, instead of
                 // keeping a residual lean of up to HEAD_Z_DEAD.
-                if (!TKh.seen && !TKh.debug) headZHeld = TKh.z;
+                if (!TKh.seen && !TKh.debug) headZHeld += dz;
                 else if (Math.abs(dz) > HEAD_Z_DEAD) headZHeld += dz - Math.sign(dz) * HEAD_Z_DEAD;
                 currFaceX += (TKh.x - currFaceX) * hk;
                 currFaceY += (TKh.y - currFaceY) * hk;
