@@ -2283,6 +2283,23 @@ def _load_live_context() -> str:
     return text
 
 
+# Yearly dates counted down in the live context: (label, month, day).
+_COUNTDOWN_DATES = (("Summer Solstice", 6, 21), ("Independence Day", 7, 4), ("New Year", 1, 1))
+
+
+def _upcoming_countdowns(today, horizon_days: int = 90) -> list:
+    """Lines for each yearly date's next occurrence within `horizon_days`."""
+    out = []
+    for label, month, day in _COUNTDOWN_DATES:
+        d = date(today.year, month, day)
+        if d < today:
+            d = date(today.year + 1, month, day)
+        delta = (d - today).days
+        if delta <= horizon_days:
+            out.append((delta, f"- {label}: {delta} days away ({d.isoformat()})"))
+    return [line for _delta, line in sorted(out)]
+
+
 def _build_live_context() -> str:
     """Uncached body of _load_live_context()."""
     parts = [f"TODAY: {date.today().isoformat()}"]
@@ -2315,18 +2332,7 @@ def _build_live_context() -> str:
 
     # Upcoming countdowns (<=90 days)
     try:
-        today_d = date.today()
-        events = [
-            {"label": "Summer Solstice", "date": "2026-06-21"},
-            {"label": "Independence Day", "date": "2026-07-04"},
-            {"label": "New Year", "date": "2027-01-01"},
-        ]
-        cd = []
-        for ev in events:
-            d = date.fromisoformat(ev['date'])
-            delta = (d - today_d).days
-            if 0 <= delta <= 90:
-                cd.append(f"- {ev['label']}: {delta} days away ({ev['date']})")
+        cd = _upcoming_countdowns(date.today())
         if cd:
             parts.append("UPCOMING:\n" + "\n".join(cd))
     except Exception:
