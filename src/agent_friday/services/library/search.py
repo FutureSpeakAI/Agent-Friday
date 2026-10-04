@@ -422,6 +422,9 @@ def _stats_answer(ctx: _Ctx) -> dict | None:
 _LAST: dict[str, dict] = {}
 
 
+LAST_TTL_S = 30 * 60
+
+
 def remember(principal: str, evidence: list[dict]) -> None:
     _LAST[principal] = {"evidence": [dict(e) for e in evidence], "cursor": 0, "at": time.time()}
 
@@ -434,7 +437,12 @@ def forget_last(doc_id: int) -> None:
 
 
 def last_result(principal: str) -> dict | None:
-    return _LAST.get(principal)
+    """The remembered last search, for 'next passage'. It lives in memory for half an hour at most."""
+    rec = _LAST.get(principal)
+    if rec and time.time() - rec["at"] > LAST_TTL_S:
+        _LAST.pop(principal, None)
+        return None
+    return rec
 
 
 # ── entry points ─────────────────────────────────────────────────────────────

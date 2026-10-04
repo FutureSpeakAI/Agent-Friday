@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 
-from agent_friday.services.library import cards, principal as pr, search
+from agent_friday.services.library import cards, envelope, principal as pr, search
 from agent_friday.services.library.store import store_for
 
 VIEWS = {"list": "list", "3d": "shelves", "shelves": "shelves", "tree": "tree"}
@@ -21,13 +21,13 @@ def _resolve(principal: str, target: str, page) -> tuple[dict | None, str]:
         step = 1 if t.startswith("next") else -1
         last["cursor"] = (last["cursor"] + step) % len(last["evidence"])
         e = last["evidence"][last["cursor"]]
-        return _of(e), "passage %s of %s" % (e["label"], e["doc"])
+        return _of(e), "passage %s of %s" % (e["label"], envelope.title_text(e["doc"]))
     m = re.fullmatch(r"\[?(\d+(?:\.\d+)?)\]?", t)
     if m and last:
         for i, e in enumerate(last["evidence"]):
             if e["label"] == m.group(1):
                 last["cursor"] = i
-                return _of(e), "passage %s of %s" % (e["label"], e["doc"])
+                return _of(e), "passage %s of %s" % (e["label"], envelope.title_text(e["doc"]))
         return None, "no passage is labelled %s in the last search" % m.group(1)
     if t:
         hits = cards.find_documents(principal, t)
@@ -35,13 +35,13 @@ def _resolve(principal: str, target: str, page) -> tuple[dict | None, str]:
             out = {"doc": hits[0]["doc_id"]}
             if page:
                 out["page"] = int(page)
-            return out, hits[0]["title"]
+            return out, envelope.title_text(hits[0]["title"])
         if hits:
-            return None, "several documents match: " + "; ".join(h["title"] for h in hits[:5])
+            return None, "several documents match: " + "; ".join(envelope.title_text(h["title"]) for h in hits[:5])
         return None, "nothing in the Library matches %r" % target
     if page and last and last["evidence"]:
         e = last["evidence"][last["cursor"]]
-        return {"doc": e["doc_id"], "page": int(page)}, "page %d of %s" % (int(page), e["doc"])
+        return {"doc": e["doc_id"], "page": int(page)}, "page %d of %s" % (int(page), envelope.title_text(e["doc"]))
     return {}, "the Library"
 
 

@@ -2,8 +2,8 @@
 
 A footnote token lets forget find the chats that cited a document, but a quoted
 passage can also sit in saved chats that never cited it, in the conversation
-memory's search index, in the older chat history, in the context log, and in the
-last search held in memory. So forget fingerprints the document before it is
+memory's search index, in the older chat history, in the context log, in the
+reasoning traces and in the last search held in memory. So forget fingerprints the document before it is
 deleted (every run of eight words, hashed, never stored) and sweeps each of those
 stores for any run of eight or more of those words, replacing it with
 "[forgotten source]". An abridged quote or an unquoted copy goes with it.
@@ -29,16 +29,34 @@ def _h(words) -> int:
     return int.from_bytes(hashlib.blake2b(" ".join(words).encode("utf-8"), digest_size=8).digest(), "big")
 
 
-def fingerprint(text: str) -> set[int]:
+class Fingerprint(set):
+    """Hashes of a document's eight-word runs; `doc_id` also names its footnotes."""
+    doc_id: int | None = None
+
+
+def fingerprint(text: str, doc_id: int | None = None) -> Fingerprint:
     """Hashes of every run of eight words in `text`."""
     w = [t[0] for t in _tokens(text)]
-    return {_h(w[i:i + N]) for i in range(len(w) - N + 1)}
+    fp = Fingerprint({_h(w[i:i + N]) for i in range(len(w) - N + 1)})
+    fp.doc_id = doc_id
+    return fp
+
+
+def _footnotes_gone(text: str, fp) -> tuple[str, bool]:
+    doc_id = getattr(fp, "doc_id", None)
+    if doc_id is None or "lib:" not in text:
+        return text, False
+    new = re.sub(r"\[(?:unverified-)?lib:%d#\d+\]" % int(doc_id), FORGOTTEN, text)
+    return new, new != text
 
 
 def scrub(text: str, fp: set[int]) -> tuple[str, bool]:
-    """`text` with every run (eight words or more) found in `fp` replaced."""
-    if not fp or not isinstance(text, str) or len(text) < N * 3:
+    """`text` with the document's footnotes and every run (eight words or more) found in `fp` replaced."""
+    if not isinstance(text, str):
         return text, False
+    text, tok = _footnotes_gone(text, fp)
+    if not fp or len(text) < N * 3:
+        return text, tok
     toks = _tokens(text)
     w = [t[0] for t in toks]
     covered = [False] * len(toks)
@@ -47,7 +65,7 @@ def scrub(text: str, fp: set[int]) -> tuple[str, bool]:
             for k in range(i, i + N):
                 covered[k] = True
     if not any(covered):
-        return text, False
+        return text, tok
     out, last, i = [], 0, 0
     while i < len(toks):
         if covered[i]:
@@ -95,20 +113,24 @@ def _conversations(fp) -> int:
     return n
 
 
-def _memory_index(fp) -> int:
-    """The conversation memory's search index: replies are rewritten in place."""
+def _memory_index(fp) -> tuple[int, str | None]:
+    """The conversation memory's search index: replies are rewritten in place.
+    Returns (records changed, why it could not be swept or None)."""
+    n = 0
     try:
         from agent_friday.conversation_memory import ConversationMemory
         cm = ConversationMemory()
+        if not Path(cm.persist_dir).exists():
+            return 0, None                     # nothing was ever stored, so nothing needs opening
         if not cm.available() or not cm._ensure():
-            return 0
+            return 0, "the conversation memory could not be opened"
         coll = cm._collection
-        n, offset = 0, 0
+        offset = 0
         while True:
             got = coll.get(include=["documents"], limit=500, offset=offset)
             ids, docs = got.get("ids") or [], got.get("documents") or []
             if not ids:
-                return n
+                return n, None
             fix_ids, fix_docs = [], []
             for i, d in zip(ids, docs):
                 nd, changed = scrub(d or "", fp)
@@ -120,11 +142,11 @@ def _memory_index(fp) -> int:
                     coll.update(ids=fix_ids, documents=fix_docs)
                 n += len(fix_ids)
             offset += 500
-    except Exception:  # noqa: BLE001 - a store that is not there has nothing to sweep
-        return 0
+    except Exception as e:  # noqa: BLE001
+        return n, "the conversation memory (%s)" % type(e).__name__
 
 
-def _legacy_history(fp) -> int:
+def _legacy_history(fp) -> tuple[int, str | None]:
     n = 0
     try:
         import agent_friday.core as core
@@ -137,19 +159,19 @@ def _legacy_history(fp) -> int:
                     n += 1
         if n:
             core._save_chat_history(core.CHAT_HISTORY)
-    except Exception:  # noqa: BLE001
-        pass
-    return n
+    except Exception as e:  # noqa: BLE001
+        return n, "the older chat history (%s)" % type(e).__name__
+    return n, None
 
 
-def _context_logs(fp) -> int:
-    n = 0
+def _context_logs(fp) -> tuple[int, str | None]:
+    n, problem = 0, None
     try:
         import agent_friday.core as core
         d = Path(core.CONTEXT_LOG_DIR)
         files = sorted(d.glob("*.jsonl")) if d.exists() else []
-    except Exception:  # noqa: BLE001
-        return 0
+    except Exception as e:  # noqa: BLE001
+        return 0, "the context log (%s)" % type(e).__name__
     for f in files:
         try:
             lines, changed = [], 0
@@ -168,18 +190,37 @@ def _context_logs(fp) -> int:
                 tmp.replace(f)
                 n += changed
         except OSError:
+            problem = "the context log (a file could not be rewritten)"
             continue
-    return n
+    return n, problem
+
+
+def _traces(fp) -> tuple[int, str | None]:
+    """The reasoning traces, live and archived (the archive stays verifiable; see reasoning_trace.redact)."""
+    try:
+        from agent_friday.services import reasoning_trace
+        r = reasoning_trace.redact(lambda t: scrub(t, fp))
+    except Exception as e:  # noqa: BLE001
+        return 0, "the reasoning traces (%s)" % type(e).__name__
+    return r["archived"] + r["live"] + r["pending"], (("the reasoning traces: " + r["incomplete"]) if r["incomplete"] else None)
 
 
 def sweep_all(fp: set[int], doc_id: int | None = None) -> dict:
-    """Run every sweep; returns how many records each changed."""
-    out = {"chats": _conversations(fp), "memory": _memory_index(fp), "history": _legacy_history(fp),
-           "context_log": _context_logs(fp)}
+    """Run every sweep; returns how many records each changed and, under "incomplete", the
+    stores that could not be swept (so the owner is told, not reassured)."""
+    out = {"chats": _conversations(fp)}
+    incomplete: list[str] = []
+    for name, fn in (("memory", _memory_index), ("history", _legacy_history), ("context_log", _context_logs),
+                     ("traces", _traces)):
+        n, problem = fn(fp)
+        out[name] = n
+        if problem:
+            incomplete.append(problem)
     try:
         from agent_friday.services.library import search
         if doc_id is not None:
             search.forget_last(doc_id)
     except Exception:  # noqa: BLE001
         pass
+    out["incomplete"] = incomplete
     return out

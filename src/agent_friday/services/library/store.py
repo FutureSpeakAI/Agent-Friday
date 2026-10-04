@@ -379,7 +379,10 @@ class Store:
         """Atomically replace everything stored for a document. `blocks` carry
         `ord`; `sections` carry their local `id`/`parent`/`first`/`last`;
         `passages` carry `section` (local id), `blocks` (ordinals), `text`."""
+        was_open = False
         with self._lock:
+            prev = self.q("SELECT shelf FROM documents WHERE id=?", (doc_id,))
+            was_open = bool(prev) and prev[0]["shelf"] != "vault"
             self.x("BEGIN")
             try:
                 self._purge_rows(doc_id)
@@ -423,10 +426,13 @@ class Store:
                        "state_detail=NULL, indexed_at=?, ocr_pages=?, sha256=COALESCE(?, sha256) WHERE id=?",
                        (title, pages, shelf, INDEX_VERSION, time.time(), ocr_pages, sha256, doc_id))
                 self.x("COMMIT")
-                return {"sections": sec_ids}          # passages carry their new "id" in place
+                result = {"sections": sec_ids}        # passages carry their new "id" in place
             except Exception:
                 self.x("ROLLBACK")
                 raise
+        if was_open and shelf == "vault":
+            self.compact()        # the open copy's words must leave the full-text segments, not only its rows
+        return result
 
     def _purge_rows(self, doc_id: int) -> None:
         """Delete everything stored for a document except the document row."""

@@ -115,13 +115,26 @@ def _purge_graph(principal: str, doc_id: int) -> None:
         pass
 
 
+def left_the_open_shelf(principal: str, doc_id: int) -> None:
+    """A document moved to the vault: what the graph learned from its open copy, the page
+    renders and the remembered last search all go; the index rewrites its own rows."""
+    from agent_friday.services.library import search
+    _purge_graph(principal, doc_id)
+    search.forget_last(doc_id)
+    doc = lstore.store_for(principal).get_document(doc_id)
+    if doc:
+        _clear_cache(principal, doc_id)
+
+
 def remove_document(principal: str, doc_id: int) -> dict:
     """Stop indexing and purge. The file on disk is untouched."""
+    from agent_friday.services.library import search
     st = lstore.store_for(principal)
     doc = st.get_document(doc_id)
     if not doc:
         return {"ok": False, "error": "no such document"}
     _purge_graph(principal, doc_id)
+    search.forget_last(doc_id)
     st.purge_document(doc_id, keep_row=False)
     _clear_cache(principal, doc_id)
     st.drop_empty_folders()
@@ -140,7 +153,7 @@ def forget_document(principal: str, doc_id: int) -> dict:
     from agent_friday.services import conversations
     from agent_friday.services.library import sweep
     doc_norm = _doc_text(st, doc_id)
-    fp = sweep.fingerprint(_doc_plain(st, doc_id))
+    fp = sweep.fingerprint(_doc_plain(st, doc_id), doc_id)
     _purge_graph(principal, doc_id)
     changed = 0
     for cid in cited_conversations(st, doc_id):
@@ -154,7 +167,8 @@ def forget_document(principal: str, doc_id: int) -> dict:
     st.purge_document(doc_id, keep_row=False)
     _clear_cache(principal, doc_id)
     st.drop_empty_folders()
-    return {"ok": True, "forgotten": doc["title"], "messages_rewritten": changed + swept["chats"], "swept": swept}
+    return {"ok": True, "forgotten": doc["title"], "messages_rewritten": changed + swept["chats"], "swept": swept,
+            "incomplete": swept.get("incomplete") or []}
 
 
 def unforget(principal: str, path: str) -> int:

@@ -301,6 +301,8 @@ def lib_shelf():
     if row["shelf"] == "vault" and b["shelf"] == "open" and b.get("confirm") is not True:
         return jsonify({"status": "error", "error": "moving a document off the vault shelf needs your confirmation"}), 400
     grants.set_shelf(p, row["path"], b["shelf"])
+    if b["shelf"] == "vault" and row["shelf"] != "vault":
+        forget.left_the_open_shelf(p, row["id"])
     runtime.indexer_for(p).enqueue(row["path"], recursive=False, force=True)
     return jsonify({"status": "ok", "shelf": b["shelf"]})
 

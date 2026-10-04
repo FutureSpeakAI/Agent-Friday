@@ -28,6 +28,14 @@ _CTRL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u20
 _ATTR = re.compile(r'["<>&\r\n]')
 
 
+def title_text(value, limit: int = 60) -> str:
+    """A document's title as words in a tool result: no control or zero-width character, no
+    bracket or quote that could pass for markup or a citation label, one line, cut at `limit`."""
+    t = re.sub(r"[<>\[\]\"`]", " ", _CTRL.sub("", str(value or "")))
+    t = " ".join(t.split())
+    return (t[: limit - 1].rstrip() + "\u2026") if len(t) > limit else t
+
+
 def _attr(value, limit: int = 120) -> str:
     """A value for a marker's attribute: no quote, bracket or line break survives."""
     return _ATTR.sub(" ", _CTRL.sub("", str(value)))[:limit].strip()
@@ -71,5 +79,5 @@ FILE_PREAMBLE = (
 def wrap_file(title: str, text: str, *, nonce: str | None = None) -> str:
     """A whole document read by read_file, fenced the way search evidence is."""
     nonce = nonce or new_nonce()
-    t = _clean(title, nonce)[:120].replace(chr(34), chr(39))
+    t = _attr(_clean(title, nonce))
     return "%s\n\n<evidence-%s doc=\"%s\">\n%s\n</evidence-%s>" % (FILE_PREAMBLE, nonce, t, _clean(text, nonce), nonce)

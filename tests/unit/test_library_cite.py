@@ -85,7 +85,7 @@ def test_a_live_citation_is_recorded_for_revocation(tmp_path):
     ref = next(iter(cite.refs_from_trace(trace).values()))
     cite.finish(f"Yes [{ref}].", trace, conversation_id="conv-1")
     doc, blk = ref[4:].split("#")
-    row = st.q("SELECT * FROM cited_in")[0]
+    row = st.q("SELECT * FROM cited_in WHERE conversation_id='conv-1'")[0]
     assert (row["doc_id"], row["block_id"], row["conversation_id"]) == (int(doc), int(blk), "conv-1")
 
 

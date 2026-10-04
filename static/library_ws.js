@@ -320,7 +320,11 @@
       if (!sel) return;
       if (!window.confirm('Forget “' + sel.title + '” completely?\n\nIts index is deleted, and in your saved chats every footnote that cited it becomes “[forgotten source]” and its quotations are removed. The file itself is not touched. This cannot be undone.')) return;
       post('/api/library/forget', { doc_id: Number(sel.id.slice(2)), confirm: true }).then(d => {
-        toast(d.ok ? 'Forgotten.' : (d.error || 'Couldn’t forget it.')); setSel(null); refresh();
+        const left = d.ok && Array.isArray(d.incomplete) && d.incomplete.length ? d.incomplete.join('; ') : '';
+        toast(!d.ok ? (d.error || 'Couldn’t forget it.')
+          : left ? 'Forgotten, except in: ' + left + '. Those copies could not be reached.' : 'Forgotten.');
+        if (d.ok || !/vault/i.test(d.error || '')) setSel(null);
+        refresh();
       });
     };
     const onRemove = () => {

@@ -149,6 +149,22 @@ def _cloud_evidence(ev: list[dict], principal: str, settings: dict) -> tuple[lis
     return keep, (" ".join(notes) or None)
 
 
+def record_use(principal: str, doc_id: int, block_id: int, res: dict | None = None) -> None:
+    """Note that the conversation this tool call belongs to has read a passage. A chat reply
+    records its footnotes again on the way out; a spoken, phoned or scheduled answer carries
+    no footnote, so this is the record forget uses to find that conversation. Best effort."""
+    try:
+        from agent_friday.services import agent as _ag
+        from agent_friday.services.conversations import MAIN_ID
+        from agent_friday.services.library import versions
+        cid = _ag._CURRENT_CONVERSATION.get() or MAIN_ID
+        res = res or {}
+        store_for(principal).add_citation(int(block_id), int(doc_id), cid, None,
+                                          versions.compact(res.get("stamp")), res.get("receipt"))
+    except Exception:  # noqa: BLE001 - a missing record is covered by forget's sweep of every chat
+        pass
+
+
 def search_library(inp: dict) -> str:
     inp = inp if isinstance(inp, dict) else {}
     principal = pr.current()
@@ -174,6 +190,11 @@ def search_library(inp: dict) -> str:
         ev, cloud_note = _cloud_evidence(ev, principal, s)
         if not ev:
             return cloud_note
+    seen_blocks: set = set()
+    for e in ev:
+        if e.get("doc_id") and e.get("block_id") and (e["doc_id"], e["block_id"]) not in seen_blocks:
+            seen_blocks.add((e["doc_id"], e["block_id"]))
+            record_use(principal, e["doc_id"], e["block_id"], res)
     meta = {"stamp": res.get("stamp"), "receipt": res.get("receipt"),
             "refs": {e["label"]: e["ref"] for e in ev if e.get("ref")},
             "searched": res["searched"], "found": bool(ev) and res["searched"].get("fallback") != "brain",
@@ -212,7 +233,8 @@ def library_status(inp: dict) -> str:
     bad = [r for r in st.list_documents("failed")][:5]
     out = "%d documents read, %d being read, %d couldn't be read" % (c["indexed"], c["queued"], c["failed"])
     if bad:
-        out += ": " + "; ".join("%s (%s)" % (r["title"], (r["state"].split(":", 1) + [""])[1]) for r in bad)
+        out += ": " + "; ".join("%s (%s)" % (envelope.title_text(r["title"]),
+                                             envelope.title_text((r["state"].split(":", 1) + [""])[1])) for r in bad)
     sens = [r for r in st.list_documents("skipped:sensitive")]
     if sens:
         out += ". %d sensitive documents are waiting for the vault" % len(sens)

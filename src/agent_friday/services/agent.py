@@ -1058,7 +1058,12 @@ def _tool_read_file(inp):
         from agent_friday.services.library import envelope as _lib_env, principal as _lib_pr
         from agent_friday.services.library.store import store_for as _lib_store
         _who = _lib_pr.current()
-        if _who is not None and _lib_store(_who).find_document(str(p)):
+        _row = _lib_store(_who).find_document(str(p)) if _who is not None else None
+        if _row:
+            _first = _lib_store(_who).one("SELECT id FROM blocks WHERE doc_id=? ORDER BY ord LIMIT 1", (_row["id"],))
+            if _first:
+                from agent_friday.services.library import tools as _lib_tools
+                _lib_tools.record_use(_who, _row["id"], _first["id"])
             return _lib_env.wrap_file(p.name, out)
     except Exception:
         pass

@@ -99,8 +99,8 @@ def test_off_the_record_no_stamped_row_is_written(tmp_path, monkeypatch):
     from agent_friday.services import off_record
     from agent_friday.services.library import cite, tools
     st = _lib(tmp_path)
-    out = tools.search_library({"question": "how much notice to end the lease"})
     monkeypatch.setattr(off_record, "active", lambda settings=None: True)
+    out = tools.search_library({"question": "how much notice to end the lease"})
     cite.finish("Ninety days [1.1].", [{"name": "search_library", "input": {}, "result": out[:2000]}])
     assert st.q("SELECT count(*) n FROM cited_in")[0]["n"] == 0
 
