@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from agent_friday.services.library import extract as _ext
-from agent_friday.services.library import procrun, structure, vectors
+from agent_friday.services.library import procrun, structure, vectors, withhold
 from agent_friday.services.library.store import INDEX_VERSION, Store, store_for, OWNER
 from agent_friday.services.library.textclean import safe_title
 
@@ -122,7 +122,7 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
     fid = store.folder_id(scope_root, rel_s)
     doc_id = store.upsert_document(str(p), sha256=sha, size=st.st_size, mtime=st.st_mtime, kind=kind,
                                    ext=p.suffix.lower().lstrip("."), scope=scope_root, folder_id=fid,
-                                   title=safe_title(p.stem), shelf=shelf or "open")
+                                   title=withhold.title(safe_title(p.stem)), shelf=shelf or "open")
     if kind is None:
         store.set_state(doc_id, "skipped:unsupported", "this kind of file isn't read yet")
         return {"state": "skipped", "doc_id": doc_id, "detail": "unsupported"}
@@ -141,11 +141,24 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
         return {"state": "failed", "doc_id": doc_id, "detail": str(e)}
     blocks = res["blocks"]
     title = res["title"]
+    # The classifier reads the text as extracted (it never leaves this process): a document that
+    # holds a key is the kind that belongs on the vault shelf.
     sample = "\n".join(b["text"] for b in blocks[:40])[:4000]
     chosen = shelf or (classify(p, title, sample) if classify else "open")
     if chosen == "vault" and not store.vault_open():
         store.set_state(doc_id, "skipped:sensitive", "looks sensitive, and the vault isn't set up")
         return {"state": "skipped", "doc_id": doc_id, "detail": "sensitive"}
+    # Everything stored, embedded or quoted from here on is made from text with every key and token
+    # cut out, on either shelf (see withhold).
+    try:
+        blocks = withhold.blocks(blocks)
+        title = withhold.title(title)
+    except withhold.Withheld as e:
+        store.set_state(doc_id, "skipped:credential", str(e))
+        return {"state": "skipped", "doc_id": doc_id, "detail": "credential"}
+    except Exception:  # noqa: BLE001 - a check that cannot run is not a pass
+        store.set_state(doc_id, "failed:couldn't be checked for keys")
+        return {"state": "failed", "doc_id": doc_id, "detail": "couldn't be checked for keys"}
     try:
         sections = structure.build_sections(blocks, title)
         passages: list[dict] = []

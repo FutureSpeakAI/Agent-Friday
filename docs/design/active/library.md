@@ -50,6 +50,15 @@ plain and the workspace says so.
   XML entities refused. A document that breaks a cap is listed as "couldn't read", never skipped.
 - **Structure:** blocks, a heading tree (synthetic sections when there are no headings),
   passages of at most 900 characters, tables split only between rows with the header repeated.
+- **Credentials are never indexed.** A private key or a vendor token pasted inside a document is
+  cut out of the extracted text (`credential_paths.redact_secrets`, the call `read_file` uses)
+  before anything is made from it, across block boundaries, so no passage, vector, full-text row,
+  profile, title or evidence block holds it, only the marker where it was; both shelves, since the
+  classifier reads the text as extracted and the vault shelf stores the withheld text. A document
+  whose key cannot be cut out cleanly (armour chunked to defeat the patterns, or nothing but
+  credentials) is listed as skipped, and a check that cannot run fails the document. Password and
+  `key = value` forms are not cut (as with `read_file`: they gate egress, not reading). An index
+  built by an older version is read again.
 - **Profiles** (title, heading outline, first sentence) are deterministic. No model writes any
   text in the index.
 - **Shelves:** the sensitivity classifier tiers each document. Private ones go on the vault

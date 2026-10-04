@@ -21,7 +21,9 @@ from typing import Callable, Iterable
 from agent_friday import paths
 
 SCHEMA_VERSION = 1
-INDEX_VERSION = 1
+# A document indexed under an older version is read again at the next sweep, so this is raised
+# whenever what an index may hold changes (version 2: credentials are withheld before indexing).
+INDEX_VERSION = 2
 _PRINCIPAL = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 OWNER = "owner"
 
