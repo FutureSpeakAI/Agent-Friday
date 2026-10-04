@@ -2261,7 +2261,7 @@ DEFAULT_SETTINGS = {
     # absent from DEFAULT_SETTINGS, so a key the service layer reads but this
     # dict does not declare is a control that saves, reports success, and
     # reverts on the next read (docs/decisions/2026-09-04-five-dead-settings.md).
-    "local_voice_tts_engine": "kokoro",
+    "local_voice_tts_engine": "piper",   # the CPU tier's voice; Kokoro is chosen explicitly (services/local_voice.py)
     "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
     "local_voice_kokoro_allow_cpu": True,     # Kokoro may run on the CPU when the card is busy (slower; the session says so) rather than Piper speaking
     # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
