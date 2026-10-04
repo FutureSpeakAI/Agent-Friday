@@ -18,6 +18,7 @@ def _env(tmp_path, monkeypatch):
     from agent_friday.services import agent
     from agent_friday.services.library import shelf
     monkeypatch.setattr(shelf, "_vault_key", lambda: None)
+    monkeypatch.setattr(shelf, "tier_of", lambda title, sample: 1)      # the classifier has its own tests
     monkeypatch.setattr(agent, "_CURRENT_PROVIDER", type("V", (), {"get": staticmethod(lambda: "local")}))
     yield
     release_library(fg, lstore)

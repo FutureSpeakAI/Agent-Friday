@@ -127,7 +127,7 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
         store.set_state(doc_id, "skipped:unsupported", "this kind of file isn't read yet")
         return {"state": "skipped", "doc_id": doc_id, "detail": "unsupported"}
     try:
-        res = procrun.run_task("extract", {"path": str(p)})
+        res = procrun.run_task("extract", {"path": str(p)}, low_priority=True)
     except procrun.TaskFailed as e:
         store.set_state(doc_id, "failed:" + _failure_text(e)[:200])
         return {"state": "failed", "doc_id": doc_id, "detail": _failure_text(e)}
@@ -171,7 +171,7 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
 
 def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob: str | None = None,
                 kinds: set[str] | None = None, classify: Classify | None = None,
-                allowed: Callable[[Path], bool] | None = None, gate=None) -> dict:
+                allowed: Callable[[Path], bool] | None = None, gate=None, force: bool = False) -> dict:
     """Index new and changed files under `scope`; purge rows of files that are
     gone. `allowed` is the consent check: a path it refuses is not read."""
     out = {"indexed": 0, "unchanged": 0, "failed": 0, "skipped": 0, "purged": 0}
@@ -185,9 +185,9 @@ def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob
             continue
         if gate is not None:
             with gate():
-                r = index_file(store, p, scope, classify=classify)
+                r = index_file(store, p, scope, classify=classify, force=force)
         else:
-            r = index_file(store, p, scope, classify=classify)
+            r = index_file(store, p, scope, classify=classify, force=force)
         out[r["state"] if r["state"] in out else "failed"] += 1
     root = Path(scope)
     try:

@@ -21,6 +21,7 @@ from agent_friday.services.library.store import OWNER, store_for
 HOLDER = "library-indexer"
 LEASE_RAM_MIB = 1536
 _LEASE_TTL_S = 300
+CPU_PATIENCE_S = 20
 
 _lock = threading.Lock()
 _indexers: dict[str, Indexer] = {}
@@ -59,25 +60,30 @@ def machine_is_free() -> tuple[bool, str]:
 
 @contextlib.contextmanager
 def gate(stop=lambda: False):
-    """Hold a cpu and memory lease for the duration of one file, waiting for it."""
+    """Hold a memory lease (and a core, when one can be had) for one file.
+
+    Memory is the real constraint, so that lease is always waited for. A busy
+    PC can hold every core for a long time, so after CPU_PATIENCE_S the file is
+    read without a core lease: the child runs at below-normal priority, so the
+    foreground still wins."""
     from agent_friday.services import arbiter
     lease_ids: list[str] = []
+    t0 = time.monotonic()
     while True:
         ok, _why = machine_is_free()
         if ok:
-            got = []
-            for res, amount in (("cpu_cores", 1), ("system_ram", LEASE_RAM_MIB)):
-                d = arbiter.acquire(res, amount, HOLDER, purpose="reading a document into the Library",
-                                    ttl_s=_LEASE_TTL_S)
-                if not d.get("granted"):
-                    for lid in got:
-                        arbiter.release(lid)
-                    got = None
+            ram = arbiter.acquire("system_ram", LEASE_RAM_MIB, HOLDER, purpose="reading a document into the Library",
+                                  ttl_s=_LEASE_TTL_S)
+            if ram.get("granted"):
+                got = [ram.get("lease_id")]
+                cpu = arbiter.acquire("cpu_cores", 1, HOLDER, purpose="reading a document into the Library",
+                                      ttl_s=_LEASE_TTL_S)
+                if cpu.get("granted"):
+                    got.append(cpu.get("lease_id"))
+                if cpu.get("granted") or time.monotonic() - t0 >= CPU_PATIENCE_S:
+                    lease_ids = got
                     break
-                got.append(d.get("lease_id"))
-            if got is not None:
-                lease_ids = got
-                break
+                arbiter.release(ram.get("lease_id"))
         if stop():
             break
         time.sleep(3)

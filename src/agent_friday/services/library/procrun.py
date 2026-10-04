@@ -94,9 +94,12 @@ def _job_for(memory_mb: int):
     return assign, close
 
 
-def _posix_limits(memory_mb: int):
+def _posix_limits(memory_mb: int, nice: int = 0):
     def apply():  # pragma: no cover - runs in the child before exec
+        import os
         import resource
+        if nice:
+            os.nice(nice)
         cap = int(memory_mb) * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
     return apply
@@ -124,7 +127,7 @@ def _run_in_process(task: str, args: dict, wall_s: float):
 
 
 def run_task(task: str, args: dict, *, wall_s: float = WALL_SECONDS,
-             memory_mb: int = MEMORY_MB) -> dict:
+             memory_mb: int = MEMORY_MB, low_priority: bool = False) -> dict:
     """Run `task` in a child and return its result dict, or raise TaskFailed."""
     if not limits_enforced():
         return _run_in_process(task, args, wall_s)
@@ -138,10 +141,10 @@ def run_task(task: str, args: dict, *, wall_s: float = WALL_SECONDS,
     kw: dict = {}
     job = None
     if sys.platform == "win32":
-        kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+        kw["creationflags"] = 0x08000000 | (0x4000 if low_priority else 0)   # NO_WINDOW | BELOW_NORMAL
         job = _job_for(memory_mb)
     else:
-        kw["preexec_fn"] = _posix_limits(memory_mb)
+        kw["preexec_fn"] = _posix_limits(memory_mb, 10 if low_priority else 0)
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, env=env, **kw)
     try:

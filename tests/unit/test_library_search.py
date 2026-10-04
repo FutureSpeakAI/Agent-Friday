@@ -20,6 +20,7 @@ def _env(tmp_path, monkeypatch):
     install_fake_encoder(monkeypatch)
     from agent_friday.services.library import shelf
     monkeypatch.setattr(shelf, "_vault_key", lambda: None)
+    monkeypatch.setattr(shelf, "tier_of", lambda title, sample: 1)      # the classifier has its own tests
     yield
     release_library(fg, lstore)
 
