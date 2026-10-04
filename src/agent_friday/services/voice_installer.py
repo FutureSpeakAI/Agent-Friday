@@ -218,6 +218,8 @@ def _install_artifact(aid: str) -> None:
         _append_log(f"present and verified: {dest.name}")
         return
     stage = Path(str(dest) + ".download")
+    # The installer owns its staging folder; a downloader only writes a file.
+    stage.parent.mkdir(parents=True, exist_ok=True)
     if stage.exists():
         stage.unlink()
     _download(va.url_for(aid), stage, a["size_mb"])
