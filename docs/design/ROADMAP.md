@@ -250,7 +250,7 @@ The owner decided three questions on 2026-09-29:
 - a frontier model authors each look by default, credited to the model
   that made it; the user may switch the author to any model they have, and
   Friday never switches it on her own;
-- all 13 structures share one palette, which may drift at most ±30° from
+- all 15 structures share one palette, which may drift at most ±30° from
   cyan over Friday's lifetime.
 
 Its §11 gives the phases and where they sit in the queue:

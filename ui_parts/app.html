@@ -632,6 +632,19 @@ function fridayHttpUrl(u){
   try{const x=new URL(String(u||''),window.location.href);
     return (x.protocol==='http:'||x.protocol==='https:')?x.href:'';}catch(_){return '';}
 }
+// A structure by its spoken or typed name: its name, or an alias it keeps
+// (a renamed structure answers to its old name: "sacred sphere" is the
+// Dyson Sphere). The index, or -1.
+function fridayStructureIndex(text) {
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const t = norm(text).replace(/^(the|a|an) /, '');
+  const list = window.fridayVibe && window.fridayVibe.getStructures ? window.fridayVibe.getStructures() || [] : [];
+  if (!t) return -1;
+  const names = s => [s.name].concat(s.aliases || []).map(norm);
+  let i = list.findIndex(s => names(s).includes(t));
+  if (i < 0) i = list.findIndex(s => names(s).some(n => n.includes(t) || t.includes(n)));
+  return i;
+}
 function fridayRunActions(actions){
   if(!Array.isArray(actions)||!actions.length)return;
   try{console.info('[friday] running %s action(s):',actions.length,actions);}catch(_){}
@@ -657,6 +670,18 @@ function fridayRunActions(actions){
       }else if(a.type==='open_url'&&a.url){
         const u=fridayHttpUrl(a.url);
         if(u){try{window.open(u,'_blank','noopener');}catch(_){}}
+      }else if(a.type==='orb'){
+        // Voice or chat acting on a helper's orb (FridayOrbHands): the phrase is
+        // resolved where the orbs are, and what happened rides back in the ack.
+        a.result=typeof FridayOrbHands!=='undefined'?FridayOrbHands.run(a):{ok:false,reason:'no orb layer on this page'};
+      }else if(a.type==='scene'){
+        // Voice or chat choosing a structure by name; kept like the picker's choice.
+        const i=fridayStructureIndex(a.target||a.name||'');
+        if(i>=0&&window.fridayVibe){
+          window.fridayVibe.setStructure(i);
+          fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:i})}).catch(()=>{});
+          a.result={ok:true,index:i,name:window.fridayVibe.getStructures()[i].name};
+        }else a.result={ok:false,reason:'no structure by that name'};
       }else if(a.type==='podcast'){
         // Voice or chat steering the podcast player (podcast_tools.podcast_play).
         fridayPodcast(a.op||'play',a.episode_id,{t:a.t});
@@ -8641,9 +8666,11 @@ function TaskRecordsCard(){
     {obs&&obs.revoked&&<div style={{marginTop:6,fontSize:10,color:'#888'}}>Observer credential revoked.</div>}
   </div>);
 }
-fridayDeclareNav('system',{key:'tab',keys:['tab'],sections:[{id:'self-improvement',label:'Self-improvement'},{id:'approvals',label:'Approvals'}]});
+fridayDeclareNav('system',{key:'tab',keys:['tab','task'],sections:[{id:'self-improvement',label:'Self-improvement'},{id:'approvals',label:'Approvals'}]});
 function SystemWS(){
   const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
+  // One helper, popped out of its orb (TaskFocus): {tab:'task', task:<id>}.
+  const[focusTask,setFocusTask]=useState(null);const ftRef=useRef(null);
   // Context log state
   const[ctxStats,setCtxStats]=useState(null);
   const[ctxQuery,setCtxQuery]=useState('');
@@ -8693,6 +8720,7 @@ function SystemWS(){
   };
   // Deep-link: notifications target {workspace:'system',tab:'self-improvement'|'approvals'} → scroll the card into view.
   useNavTarget('system',t=>{
+    if(t.tab==='task'&&t.task){setFocusTask(String(t.task));setTimeout(()=>{if(ftRef.current)ftRef.current.scrollIntoView({behavior:'smooth',block:'start'})},120);}
     if(t.tab==='self-improvement'&&siRef.current)setTimeout(()=>siRef.current.scrollIntoView({behavior:'smooth',block:'start'}),120);
     if(t.tab==='approvals'){refreshApprovals();if(apRef.current)setTimeout(()=>apRef.current.scrollIntoView({behavior:'smooth',block:'start'}),120);}
   });
@@ -8731,10 +8759,12 @@ function SystemWS(){
   const fmtTs=(s)=>{try{return new Date(s).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return s}};
   const typeColor=(t)=>({chat_user:'#7b61ff',chat_agent:'#00d4ff',tool_call:'#f59e0b',wiki_edit:'#00ff80',wiki_delete:'#ff0080',file_read:'#a8a8b4',task_spawn:'#ff6dd9'}[t]||'#888');
 
-  if(loading)return <div style={{color:'#bbb',textAlign:'center',padding:40,fontFamily:'JetBrains Mono',fontSize:12}}>Scanning system...</div>;
+  const focus=focusTask&&<div ref={ftRef}><TaskFocus key={focusTask} taskId={focusTask} onClose={()=>setFocusTask(null)}/></div>;
+  if(loading)return <div>{focus}<div style={{color:'#bbb',textAlign:'center',padding:40,fontFamily:'JetBrains Mono',fontSize:12}}>Scanning system...</div></div>;
   const disks=(sys?.disk||sys?.disks||[]);
   const procs=(sys?.processes||[]);
   return(<div>
+    {focus}
     {compStats&&<div className="card" style={{marginBottom:10,padding:10}}>
       <div className="card-title">Context Compression (Headroom)</div>
       {compStats.available
@@ -14581,6 +14611,62 @@ function TaskCard({task,expanded,onToggle,onCancel,onView,onChanged}){
     {expanded&&<TaskControls task={task}/>}
   </div>);
 }
+/* ONE HELPER IN ITS OWN TAB: what a process orb pops out into
+   (avatar-visual-genome.md §16). The task's own card, live, and once it is
+   finished its receipt: what it did, the model, how long it took, what it
+   cost, its sources when the server has them, and for a failed one the fix
+   the card's own controls carry out. */
+function fridayDuration(s){if(s==null)return '';s=Math.round(s);if(s<60)return s+'s';const m=Math.floor(s/60);if(m<60)return m+'m '+(s%60)+'s';return Math.floor(m/60)+'h '+(m%60)+'m';}
+function TaskFocus({taskId,onClose}){
+  const[task,setTask]=useState(null);
+  const[digest,setDigest]=useState(null);
+  const[gone,setGone]=useState(false);
+  useEffect(()=>{
+    let alive=true,timer=null;
+    const url='/api/tasks/'+encodeURIComponent(taskId);
+    const load=async()=>{
+      try{
+        const r=await fetch(url);
+        if(!alive)return;
+        if(r.status===404){setGone(true);return;}
+        const t=await r.json();if(!alive)return;
+        setTask(t);
+        if(!/^(running|queued)$/.test(t.status||'')){
+          const d=await fetch(url+'/digest').then(x=>x.ok?x.json():null).catch(()=>null);
+          if(alive)setDigest(d);
+          return;
+        }
+      }catch(_){}
+      if(alive)timer=setTimeout(load,2000);
+    };
+    load();
+    return()=>{alive=false;clearTimeout(timer);};
+  },[taskId]);
+  const done=!!task&&!/^(running|queued)$/.test(task.status||'');
+  const rc=done&&typeof FridayOrbLife!=='undefined'?FridayOrbLife.receipt(task,digest):null;
+  const mono={fontFamily:'JetBrains Mono',fontSize:10,color:'#9fb2c9'};
+  return(<div className="card task-focus" style={{marginBottom:10,padding:10}}>
+    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+      <span style={{...mono,fontSize:11,letterSpacing:1,color:'var(--fr-cyan)'}}>HELPER</span>
+      <span style={{flex:1}}/>
+      {onClose&&<button className="btn-sm" onClick={onClose}>Close</button>}
+    </div>
+    {gone?<div style={mono}>This helper is no longer on record.</div>
+      :!task?<div style={mono}>Loading…</div>
+      :<TaskCard task={task} expanded={true} onToggle={()=>{}} onCancel={()=>fetch('/api/tasks/'+encodeURIComponent(taskId),{method:'DELETE'}).catch(()=>{})} onChanged={()=>{}} onView={()=>{}}/>}
+    {rc&&<div className="task-receipt" style={{marginTop:8,padding:8,borderRadius:8,border:'1px solid '+(rc.failed?'rgba(239,68,68,0.5)':'rgba(0,212,255,0.25)')}}>
+      {rc.did&&<div style={{fontSize:12,color:'#dfe8f5',marginBottom:4}}>{rc.did}</div>}
+      <div style={{...mono,display:'flex',gap:10,flexWrap:'wrap'}}>
+        {rc.failed&&<span style={{color:'#ef4444'}}>Failed</span>}
+        {rc.model&&<span>{rc.model}</span>}
+        {rc.duration_s!=null&&<span>{fridayDuration(rc.duration_s)}</span>}
+        {rc.cost_usd!=null&&<span>{'$'+rc.cost_usd.toFixed(rc.cost_usd<0.01?4:2)}</span>}
+      </div>
+      {rc.sources&&rc.sources.length>0&&<ul style={{...mono,margin:'6px 0 0',paddingLeft:16}}>{rc.sources.slice(0,8).map((s,i)=><li key={i}>{(s&&(s.title||s.url))||String(s)}</li>)}</ul>}
+      {rc.fix&&<div style={{...mono,marginTop:6,color:'#dfe8f5'}}>{'Fix: '+rc.fix.label}</div>}
+    </div>}
+  </div>);
+}
 // ═══ FIRST-RUN SETUP (the setup chat and the tables it shares) ═══
 const WIZARD_VOICES=[
   {id:'Aoede',label:'Aoede',desc:'Warm, confident female'},
@@ -14591,7 +14677,7 @@ const WIZARD_VOICES=[
 ];
 const WIZARD_STRUCTURES=[
   {idx:0,id:'CUBES',name:'Genesis Lattice',desc:'Crystalline birth'},
-  {idx:1,id:'ICOSAHEDRON',name:'Sacred Sphere',desc:'Pure geometric potential'},
+  {idx:1,id:'ICOSAHEDRON',name:'Dyson Sphere',desc:'A star in a shell still being built'},
   {idx:2,id:'NETWORK',name:'Shannon Network',desc:'Signal and noise'},
   {idx:3,id:'DOME',name:'Geodesic Cathedral',desc:"Buckminster Fuller's dream"},
   {idx:4,id:'ASTROLABE',name:'Lovelace Astrolabe',desc:"Ada's celestial engine"},
@@ -14603,6 +14689,8 @@ const WIZARD_STRUCTURES=[
   {idx:10,id:'CABLES',name:'Fibonacci Nerve',desc:"Nature's golden spiral"},
   {idx:11,id:'NONE',name:'Transcendence',desc:'Pure consciousness'},
   {idx:12,id:'EDEN',name:'Giga Earth (Rez)',desc:'Tribute to Rez'},
+  {idx:13,id:'WORMHOLE',name:'Einstein-Rosen Bridge',desc:'A throat through spacetime to somewhere else'},
+  {idx:14,id:'BLACKHOLE',name:'Hawking Radiation',desc:'A black hole that glows at its edge'},
 ];
 // H5 — first-run bundled-model pull. Shown on the setup chat's basics card: if Ollama is
 // running but the floor model (model_plan.FLOOR_MODEL, served as
@@ -17216,7 +17304,7 @@ function TrackingPanel({
       marginBottom: 6,
       lineHeight: 1.6
     }
-  }, "Head tracking turns the screen into a window onto the scene: lean in and the avatar comes closer, lean back and it recedes, move sideways and it stays put behind the glass. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out zooms the avatar. At 1, halving your distance doubles it, as if it sat right at the glass; 0 turns the zoom off.', 0, 2.5, 0.05), sl('zoom_in_max', 'Zoom in, at most', 'The biggest the avatar may get as you lean in.', 1, 2.5, 0.05, v => v.toFixed(2) + 'x'), sl('zoom_out_max', 'Zoom out, at most', 'The smallest it may get as you lean back.', 1, 2.5, 0.05, v => '1/' + v.toFixed(2)), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('head_response', 'Head response', 'How quickly a fast lean is followed. Left is calmer with a little lag, right is immediate.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
+  }, "Head tracking turns the screen into a window: the avatar holds its place behind the glass and your head moves the view. Move to one side and you see around it; lean in and it comes closer while the view widens. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the view moves with your head. At 1 it is true to life: the avatar holds still behind the glass and you see it from where you are. 0 turns the sideways movement off.', 0, 2.5, 0.05), sl('viewing_distance_cm', 'Viewing distance', 'How far your eyes usually are from the screen. The window uses it to match the view to how far you really move.', 30, 120, 1, v => Math.round(v) + ' cm'), sl('screen_width_cm', 'Screen width', 'The width of the picture on your screen. 0 works it out from the display; set it if the view moves too much or too little.', 0, 120, 1, v => v > 0 ? Math.round(v) + ' cm' : 'auto'), sl('depth_strength', 'Depth effect', 'How much leaning in and out moves your eye through the window. At 1 it follows your real distance: lean in and the avatar comes closer while the view through the glass widens. 0 turns it off.', 0, 2.5, 0.05), sl('zoom_in_max', 'Lean in, at most', 'How many times nearer the glass your eye may come as you lean in.', 1, 2.5, 0.05, v => v.toFixed(2) + 'x'), sl('zoom_out_max', 'Lean back, at most', 'How many times farther it may go as you lean back.', 1, 2.5, 0.05, v => '1/' + v.toFixed(2)), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('head_response', 'Head response', 'How quickly a fast lean is followed. Left is calmer with a little lag, right is immediate.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": "Click method",
     style: {
@@ -20672,6 +20760,32 @@ function ApprovalPopups() {
     seen.current = new Set(items.map(a => a.approval_id));
     if (fresh) setLater(false);
   }, [items]);
+  // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
+  // unfold to the card it is waiting on, the same card, and outline it.
+  useEffect(() => {
+    const on = e => {
+      const id = e && e.detail && e.detail.approval_id;
+      setLater(false);
+      setTimeout(() => {
+        let el = null;
+        try {
+          el = id && document.querySelector('[data-testid="approval-popup"] [data-approval-id="' + CSS.escape(String(id)) + '"]');
+        } catch (_) {}
+        if (!el) return;
+        el.scrollIntoView({
+          block: 'nearest',
+          behavior: 'smooth'
+        });
+        const was = el.style.outline;
+        el.style.outline = '1px solid rgba(245,158,11,0.85)';
+        setTimeout(() => {
+          el.style.outline = was;
+        }, 2400);
+      }, 60);
+    };
+    window.addEventListener('friday:approval-focus', on);
+    return () => window.removeEventListener('friday:approval-focus', on);
+  }, []);
   if (!items.length) return null;
   const decide = (id, decision) => {
     if (busy) return;
@@ -22233,7 +22347,9 @@ function App(){
     let sysMood='LISTENING';
     if(sig.ttsActive)sysMood='SPEAKING';
     else if(sig.chatLoad)sysMood='REASONING';
-    else if(sig.taskRunning||sig.routineRunning||((window.fridayGetOrbs?.()||[]).length>0))sysMood='EXECUTING';
+    // Her own state only: a helper task running, or an orb on the scene, is
+    // the orbs' to show, never her colour (avatar-visual-genome.md §16).
+    else if(sig.routineRunning)sysMood='EXECUTING';
     else if(micOn)sysMood='LISTENING';
     // At rest, the scene subtly takes on the ambient user-state mood (energy /
     // focus / stress / creative-flow) instead of a flat IDLE. Active signals

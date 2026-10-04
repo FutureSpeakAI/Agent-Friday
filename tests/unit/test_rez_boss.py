@@ -113,6 +113,15 @@ seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 5);
   out.reducedStill = Array.from(tiles.instanceMatrix.array).every((v, i) => Math.abs(v - a[i]) < 1e-9);
   for (let i = 0; i < 60; i++) FridayRez.animate(1 / 60, 0.5, 0, base, accent, false);
   out.movesOtherwise = Array.from(tiles.instanceMatrix.array).some((v, i) => Math.abs(v - a[i]) > 1e-4); }
+// the ball sways from side to side, slowly; under reduced motion it settles in the middle
+seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 0); const root = g.children[0];
+  let minX = 0, maxX = 0, maxV = 0, maxY = 0, px = root.position.x;
+  for (let f = 0; f < 60 * 40; f++) { FridayRez.animate(1 / 60, 0.02, 0, base, accent, false);
+    const x = root.position.x; maxV = Math.max(maxV, Math.abs(x - px) * 60); px = x;
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x); maxY = Math.max(maxY, Math.abs(root.position.y)); }
+  out.sway = { span: maxX - minX, maxV, maxY };
+  for (let f = 0; f < 60 * 8; f++) FridayRez.animate(1 / 60, 0.02, 0, base, accent, true);
+  out.swayReduced = Math.hypot(root.position.x, root.position.y); }
 console.log(JSON.stringify(out));
 """
 
@@ -195,3 +204,14 @@ def test_a_cloud_send_throws_a_tile_at_each_of_the_three_vent_pulses(path):
 def test_the_blast_pattern_is_per_install():
     a, a2, b = _run(SCENES[0], 7), _run(SCENES[0], 7), _run(SCENES[0], 99)
     assert a["pattern"] == a2["pattern"] and a["pattern"] != b["pattern"]
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_the_ball_sways_side_to_side_slowly_and_not_under_reduced_motion(path):
+    o = _run(path, 7)
+    s = o["sway"]
+    assert s["span"] > 5, "the ball should drift across its place, mainly side to side"
+    assert s["maxY"] < 0.3 * s["span"], "the drift is mainly from side to side"
+    assert s["maxV"] <= 1.25, "never quickly: at most about 1.2 units a second"
+    assert o["swayReduced"] < 0.05, "under reduced motion the ball settles in the middle"

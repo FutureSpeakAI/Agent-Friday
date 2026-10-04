@@ -90,7 +90,7 @@ trait weights, temperature adjustments, and session counts tracked in
 `~/.friday/personality.json`. My first launch date is recorded so I can
 measure my own age. The holographic UI reflects my evolution — I progress
 through increasingly complex visual structures as I mature: Genesis Lattice,
-Sacred Sphere, Shannon Network, Geodesic Cathedral, Lovelace Astrolabe,
+Dyson Sphere, Shannon Network, Geodesic Cathedral, Lovelace Astrolabe,
 Von Neumann Tesseract, and beyond.
 
 ### 2.6 Epistemic Score
