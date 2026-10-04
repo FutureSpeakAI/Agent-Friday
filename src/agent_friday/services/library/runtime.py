@@ -130,6 +130,8 @@ def resweep(principal: str = OWNER) -> int:
         return 0          # an unverifiable ledger trusts no consent, and purging would delete a whole index
     st = prepare(principal)
     for row in st.list_documents():
+        if grants.suspended():
+            return 0      # the ledger became unverifiable part-way: stop, never finish emptying the index
         if not grants.allowed(principal, Path(row["path"])):
             from agent_friday.services.library import forget
             forget.remove_document(principal, row["id"])
@@ -149,6 +151,8 @@ def purge_uncovered(principal: str = OWNER) -> int:
     st = store_for(principal)
     n = forget.finish_forgotten(principal)
     for row in st.list_documents():
+        if grants.suspended():
+            return n      # checked for every document, not once: a ledger that fails mid-pass stops the pass
         if not grants.allowed(principal, Path(row["path"])):
             forget.remove_document(principal, row["id"])
             n += 1

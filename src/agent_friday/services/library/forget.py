@@ -93,10 +93,12 @@ def cited_conversations(store: Store, doc_id: int) -> dict[str, set[str]]:
     return out
 
 
-def _clear_cache(principal: str, doc_id: int) -> None:
+def _clear_cache(principal: str, doc_id: int, doc=None) -> None:
+    """Drop what was cached for a document. `doc` is its row as it was BEFORE the purge (the row is
+    gone afterwards, and the render cache is keyed by the file's path)."""
     try:
         from agent_friday.services.library import pages
-        pages.purge_document(lstore.store_for(principal).get_document(doc_id))
+        pages.purge_document(doc or lstore.store_for(principal).get_document(doc_id))
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -124,7 +126,7 @@ def left_the_open_shelf(principal: str, doc_id: int) -> None:
     search.forget_last(doc_id)
     doc = lstore.store_for(principal).get_document(doc_id)
     if doc:
-        _clear_cache(principal, doc_id)
+        _clear_cache(principal, doc_id, doc)
 
 
 def remove_document(principal: str, doc_id: int) -> dict:
@@ -137,7 +139,7 @@ def remove_document(principal: str, doc_id: int) -> dict:
     _purge_graph(principal, doc_id)
     search.forget_last(doc_id)
     st.purge_document(doc_id, keep_row=False)
-    _clear_cache(principal, doc_id)
+    _clear_cache(principal, doc_id, doc)
     st.drop_empty_folders()
     return {"ok": True, "removed": doc["title"]}
 
@@ -174,7 +176,7 @@ def forget_document(principal: str, doc_id: int) -> dict:
     try:
         st.x("DELETE FROM cited_in WHERE doc_id=?", (doc_id,))
         st.purge_document(doc_id, keep_row=False)
-        _clear_cache(principal, doc_id)
+        _clear_cache(principal, doc_id, doc)
         st.drop_empty_folders()
     except Exception as e:  # noqa: BLE001
         problems.append("the Library's own index (%s); the document is hidden and is cleared at the next "
@@ -191,7 +193,7 @@ def finish_forgotten(principal: str) -> int:
         try:
             st.x("DELETE FROM cited_in WHERE doc_id=?", (row["id"],))
             st.purge_document(row["id"], keep_row=False)
-            _clear_cache(principal, row["id"])
+            _clear_cache(principal, row["id"], row)
             n += 1
         except Exception:  # noqa: BLE001 - tried again at the next sweep
             continue

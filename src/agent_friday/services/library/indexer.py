@@ -189,9 +189,12 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
 
 def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob: str | None = None,
                 kinds: set[str] | None = None, classify: Classify | None = None,
-                allowed: Callable[[Path], bool] | None = None, gate=None, force: bool = False) -> dict:
+                allowed: Callable[[Path], bool] | None = None, gate=None, force: bool = False,
+                on_gone: Callable[[int], None] | None = None) -> dict:
     """Index new and changed files under `scope`; purge rows of files that are
-    gone. `allowed` is the consent check: a path it refuses is not read."""
+    gone. `allowed` is the consent check: a path it refuses is not read.
+    `on_gone(doc_id)` removes a document whose file is gone the way a removal does (graph,
+    caches, remembered searches); without it only the index rows go."""
     out = {"indexed": 0, "unchanged": 0, "failed": 0, "skipped": 0, "purged": 0}
     seen: set[str] = set()
     for p in scan_scope(scope, recursive=recursive, glob=glob, kinds=kinds):
@@ -214,7 +217,7 @@ def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob
         base = str(root)
     for row in store.q("SELECT id, path FROM documents WHERE scope=?", (base,)):
         if row["path"] not in seen and not Path(row["path"]).exists():
-            store.purge_document(row["id"])
+            (on_gone or store.purge_document)(row["id"])
             out["purged"] += 1
     store.drop_empty_folders()
     try:
@@ -264,6 +267,12 @@ class Indexer:
         with self._cv:
             return len(self._q) + (1 if self.current else 0)
 
+    def _remove_gone(self, doc_id: int) -> None:
+        """A document whose file is gone is removed like any removal: graph, caches and the
+        remembered last search go with its rows."""
+        from agent_friday.services.library import forget
+        forget.remove_document(self.principal, doc_id)
+
     def _loop(self) -> None:
         while True:
             with self._cv:
@@ -281,7 +290,7 @@ class Indexer:
             self.current = scope
             try:
                 sweep_scope(store_for(self.principal), scope, classify=self.classify, allowed=self.allowed,
-                            gate=self.gate, **kw)
+                            gate=self.gate, on_gone=self._remove_gone, **kw)
             except Exception:  # noqa: BLE001 - one scope's failure must not stop the queue
                 pass
             finally:

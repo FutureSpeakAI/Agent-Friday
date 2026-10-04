@@ -87,9 +87,10 @@ def test_a_refused_path_raises_no_card(tmp_path):
 
 def test_remove_and_forget_name_the_document_and_need_the_click(tmp_path):
     from agent_friday.services import approvals
-    from agent_friday.services.library import indexer
+    from agent_friday.services.library import grants, indexer
     from agent_friday.services.library.store import store_for
     d = write_docs(tmp_path / "Lib", {"smith-file.txt": "Smith v. Jones settlement terms."})
+    grants.add_scope("owner", str(tmp_path / "Lib"))          # a card names only what the owner has added
     st = store_for("owner")
     indexer.index_file(st, d["smith-file.txt"], tmp_path / "Lib")
     out = _tool({"action": "library_forget", "document": "smith"})

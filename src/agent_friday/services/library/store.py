@@ -9,6 +9,7 @@ of full-text search, and readable only while the vault is unlocked.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from agent_friday import paths
+
+_log = logging.getLogger("friday.library")
 
 SCHEMA_VERSION = 1
 # A document indexed under an older version is read again at the next sweep, so this is raised
@@ -120,6 +123,7 @@ def _encrypt_in_place(path: Path, key: bytes, mod) -> None:
     try:
         ver = plain.execute("PRAGMA user_version").fetchone()[0]
         plain.execute("ATTACH DATABASE ? AS enc KEY " + _key_clause(key), (str(tmp),))
+        plain.execute("PRAGMA enc.auto_vacuum=INCREMENTAL")      # before the first table, or it is ignored
         plain.execute("SELECT sqlcipher_export('enc')")
         plain.execute("PRAGMA enc.user_version=%d" % int(ver))
         plain.execute("DETACH DATABASE enc")
@@ -347,7 +351,9 @@ class Store:
         return self.one("SELECT * FROM documents WHERE id=?", (doc_id,))
 
     def find_document(self, path: str):
-        return self.one("SELECT * FROM documents WHERE path=?", (path,))
+        """The document at `path`. File names are not case-sensitive on the disks this runs on, so the
+        same file named in another case is the same document."""
+        return self.one("SELECT * FROM documents WHERE path=? OR lower(path)=lower(?)", (path, path))
 
     def list_documents(self, state: str | None = None, folder_id: int | None = None) -> list[sqlite3.Row]:
         sql, args = "SELECT * FROM documents", []
@@ -469,12 +475,12 @@ class Store:
             with self._lock:
                 try:
                     self.db.execute("INSERT INTO fts(fts) VALUES('optimize')")
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001 - said, not hidden: a failed merge leaves old words in the file
+                    _log.warning("library: full-text merge failed after a purge (%s: %s)", type(e).__name__, e)
                 self.db.execute("PRAGMA incremental_vacuum")
                 self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except sqlite3.Error:
-            pass
+        except Exception as e:  # noqa: BLE001 - the cipher binding raises its own error class
+            _log.warning("library: compacting the index failed (%s: %s)", type(e).__name__, e)
 
     def drop_empty_folders(self) -> None:
         with self._lock:

@@ -13,16 +13,20 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from pathlib import Path
-from typing import Callable
 
 FORGOTTEN = "[forgotten source]"
 N = 8
-_TOK = re.compile(r"[0-9A-Za-zÀ-ɏͰ-￿]+(?:'[0-9A-Za-z]+)?")
+MIN_SHORT = 4            # a document of fewer than N words is matched whole when it has at least this many
+# A word is a run of letters or digits in any script. Quotes, dashes, ellipses and other punctuation
+# separate words (so “curly” and "straight" quotes, a hyphen and a dash all read alike), and each word is
+# compared in its NFKC, case-folded form.
+_TOK = re.compile(r"[^\W_]+")
 
 
 def _tokens(text: str):
-    return [(m.group(0).lower().replace("'", ""), m.start(), m.end()) for m in _TOK.finditer(text)]
+    return [(unicodedata.normalize("NFKC", m.group(0)).casefold(), m.start(), m.end()) for m in _TOK.finditer(text)]
 
 
 def _h(words) -> int:
@@ -30,8 +34,10 @@ def _h(words) -> int:
 
 
 class Fingerprint(set):
-    """Hashes of a document's eight-word runs; `doc_id` also names its footnotes."""
+    """Hashes of a document's eight-word runs; `doc_id` also names its footnotes. A document too short
+    for a full run (a gate code, a one-line note) is matched whole through `short` = (words, hash)."""
     doc_id: int | None = None
+    short: tuple[int, int] | None = None
 
 
 def fingerprint(text: str, doc_id: int | None = None) -> Fingerprint:
@@ -39,6 +45,8 @@ def fingerprint(text: str, doc_id: int | None = None) -> Fingerprint:
     w = [t[0] for t in _tokens(text)]
     fp = Fingerprint({_h(w[i:i + N]) for i in range(len(w) - N + 1)})
     fp.doc_id = doc_id
+    if not fp and len(w) >= MIN_SHORT:
+        fp.short = (len(w), _h(w))
     return fp
 
 
@@ -55,7 +63,8 @@ def scrub(text: str, fp: set[int]) -> tuple[str, bool]:
     if not isinstance(text, str):
         return text, False
     text, tok = _footnotes_gone(text, fp)
-    if not fp or len(text) < N * 3:
+    short = getattr(fp, "short", None)
+    if (not fp and not short) or len(text) < (short[0] if short else N) * 3:
         return text, tok
     toks = _tokens(text)
     w = [t[0] for t in toks]
@@ -64,6 +73,12 @@ def scrub(text: str, fp: set[int]) -> tuple[str, bool]:
         if _h(w[i:i + N]) in fp:
             for k in range(i, i + N):
                 covered[k] = True
+    if short:
+        n_short, h_short = short
+        for i in range(len(w) - n_short + 1):
+            if _h(w[i:i + n_short]) == h_short:
+                for k in range(i, i + n_short):
+                    covered[k] = True
     if not any(covered):
         return text, tok
     out, last, i = [], 0, 0
@@ -118,8 +133,8 @@ def _memory_index(fp) -> tuple[int, str | None]:
     Returns (records changed, why it could not be swept or None)."""
     n = 0
     try:
-        from agent_friday.conversation_memory import ConversationMemory
-        cm = ConversationMemory()
+        from agent_friday.conversation_memory import get_conversation_memory
+        cm = get_conversation_memory()
         if not Path(cm.persist_dir).exists():
             return 0, None                     # nothing was ever stored, so nothing needs opening
         if not cm.available() or not cm._ensure():

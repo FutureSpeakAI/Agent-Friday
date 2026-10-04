@@ -185,7 +185,8 @@ def lib_page(doc_id, n):
     if path is None or row["kind"] != "pdf":
         return jsonify({"status": "denied", "error": "no page image for this document"}), 404
     try:
-        got = pages.render_pdf_page(path, n, request.args.get("w", 900, type=int) or 900)
+        got = pages.render_pdf_page(path, n, request.args.get("w", 900, type=int) or 900,
+                                    cache=row["shelf"] != "vault")
     except procrun.TaskFailed as e:
         return jsonify({"status": "error", "error": "Couldn't read this page: " + e.reason}), 422
     resp = Response(got["data"], mimetype=got["mime"])
@@ -211,7 +212,7 @@ def lib_raw(doc_id):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["Content-Security-Policy"] = RAW_CSP
     resp.headers["Content-Disposition"] = "inline"
-    resp.headers["Cache-Control"] = "private, no-cache"
+    resp.headers["Cache-Control"] = "no-store" if row["shelf"] == "vault" else "private, no-cache"
     return resp
 
 

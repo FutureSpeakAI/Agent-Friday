@@ -195,11 +195,11 @@ def _library_chunks() -> Iterable[dict]:
 
 def purge_library_documents(doc_ids) -> dict:
     """Take Library documents out of the graph at once. Entities and relationships
-    known only from them go. An entity that is also known from elsewhere keeps its
-    place but loses its description (that text may carry the document's words and
-    cannot be separated out), and every community report that mentions a touched
-    entity is dropped; their search-index entries go too. The next full index pass
-    re-derives what the remaining sources support."""
+    known only from them go. An entity or relationship that is also known from elsewhere
+    keeps its place but loses its description (that text may carry the document's words
+    and cannot be separated out), and every community report that mentions a touched
+    entity, or either end of a touched relationship, is dropped; their search-index
+    entries go too. The next full index pass re-derives what the remaining sources support."""
     keys = {str(int(d)) for d in doc_ids}
     store = KnowledgeGraphStore()
     manifest = KnowledgeGraphManifest()
@@ -220,16 +220,20 @@ def purge_library_documents(doc_ids) -> dict:
             other = [k for k, v in prov.items() if k not in ("sensitivity", "docs") and v]
             if docs or other:
                 prov["docs"] = docs
+                r["description"] = ""
+                r.pop("descriptions", None)
+                out["described_again"] += 1
                 if kind == "entities":
-                    r["description"] = ""
-                    r.pop("descriptions", None)
                     touched.add(r["id"])
-                    out["described_again"] += 1
+                else:
+                    touched.update(x for x in (r.get("source"), r.get("target")) if x)
                 keep.append(r)
             else:
                 out[kind] += 1
                 if kind == "entities":
                     gone.append(r["id"])
+                else:
+                    touched.update(x for x in (r.get("source"), r.get("target")) if x)
         return keep
 
     ents = _strip(store.load("entities"), "entities")
@@ -258,9 +262,12 @@ def purge_library_documents(doc_ids) -> dict:
     ids = sorted(dead | touched)
     if ids:
         try:
-            from agent_friday.conversation_memory import ConversationMemory
-            cm = ConversationMemory()
-            if cm._ensure():
+            from pathlib import Path as _P
+            from agent_friday.conversation_memory import get_conversation_memory
+            cm = get_conversation_memory()
+            # An index that was never made has nothing to delete, and opening it just to say so would
+            # load the embedding model.
+            if _P(cm.persist_dir).exists() and cm._ensure():
                 cm._client.get_or_create_collection("knowledge-graph").delete(ids=ids)
         except Exception:
             pass

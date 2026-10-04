@@ -55,16 +55,32 @@ def write(question: str, evidence: list[dict], *, model: str | None = None, stam
     return {"ok": True, "text": text, "model": model, "stamp": stamp}
 
 
-_MD_LINK = re.compile(r"\[([^\]]{1,200})\]\((?:[a-z][a-z0-9+.\-]*:|//)[^)\s]*\)", re.I)
-_A_TAG = re.compile(r"<a\b[^>]*>(.*?)</a>", re.I | re.S)
-_BARE_URL = re.compile(r"(?<![`(])\b(?:https?|ftp)://[^\s)\]>`]+", re.I)
+_INLINE_LINK = re.compile(r"\[([^\]]{0,200})\]\(\s*(?:<[^>]*>|(?:[^()\s]|\([^()]*\))*)(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)")
+_REF_USE = re.compile(r"\[([^\]]{1,200})\]\[[^\]]*\]")
+_REF_DEF = re.compile(r"^[ \t]{0,3}\[[^\]]+\]:[ \t]*\S.*$", re.M)
+_LABEL = re.compile(r"\d+(?:\.\d+)?|lib:\d+#\d+")        # two footnote labels side by side are not a reference link
+_ANGLE_AUTOLINK = re.compile(r"<((?:[a-z][a-z0-9+.\-]{1,31}:|www\.)[^\s<>]*)>", re.I)
+_HTML_TAG = re.compile(r"</?[a-z][^>]*>", re.I)
+_BARE_URL = re.compile(r"(?<![`(])(?:\b(?:https?|ftp|file|data|javascript|vbscript):[^\s)\]>`]+|\bwww\.[^\s)\]>`]+)", re.I)
 
 
 def delink(text: str) -> str:
-    """A written answer carries no clickable link: a poisoned document could ask the model
-    to link its reader to an address with their data in the query. Links become their
-    visible words; a bare address becomes inert code text."""
-    text = _A_TAG.sub(r"\1", _MD_LINK.sub(r"\1", text))
+    """A written answer carries no clickable link: a poisoned document could ask the model to link its
+    reader to an address with their data in the query. Every link form the page's markdown renderer
+    turns into an anchor (inline, with an angle-bracket or parenthesised address, reference style,
+    autolinks, HTML anchors, bare addresses, and any of them hidden behind HTML entities) is reduced
+    to its visible words or, for a bare address, to inert code text."""
+    import html
+    for _ in range(2):                       # &#104;ttps:// and &amp;#104;ttps:// read as what they spell
+        un = html.unescape(text)
+        if un == text:
+            break
+        text = un
+    text = _INLINE_LINK.sub(r"\1", text)
+    text = _REF_USE.sub(lambda m: m.group(0) if _LABEL.fullmatch(m.group(1)) else m.group(1), text)
+    text = _REF_DEF.sub("", text)
+    text = _ANGLE_AUTOLINK.sub(lambda m: "`" + m.group(1) + "`", text)
+    text = _HTML_TAG.sub("", text)
     return _BARE_URL.sub(lambda m: "`" + m.group(0) + "`", text)
 
 

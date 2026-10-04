@@ -69,6 +69,7 @@ def test_a_plain_index_is_encrypted_in_place_and_keeps_its_contents(tmp_path):
     assert enc.q("SELECT count(*) n FROM passages")[0]["n"] == 1
     assert enc.q("SELECT count(*) n FROM fts WHERE fts MATCH 'ellison'")[0]["n"] == 1
     assert enc.q("PRAGMA user_version")[0][0] == SCHEMA_VERSION
+    assert enc.q("PRAGMA auto_vacuum")[0][0] == 2          # a migrated index also gives freed pages back
     enc.close()
     assert p.read_bytes()[:16] != b"SQLite format 3\x00"
     assert not list(p.parent.glob("*.enc"))

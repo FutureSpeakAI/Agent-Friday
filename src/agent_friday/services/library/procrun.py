@@ -7,9 +7,10 @@ object, or RLIMIT_AS elsewhere). The child imports only the worker module and
 the parsing libraries, never the Flask app. Results come back as one JSON
 document on stdout; bytes travel base64-encoded inside it.
 
-When the interpreter is a frozen build there is no `-m` entry to start, so the
-task runs in this process under a thread timeout. The caps inside the worker
-still apply; the memory cap does not. `limits_enforced()` says which applies.
+A build that cannot start the child (a frozen build has no `-m` entry) or cannot hold
+it to the limits (no job object could be made) reads nothing: `run_task` refuses with
+kind "unsupported" and the Library says so. A hostile document is never parsed inside
+the server. `limits_enforced()` says whether a child can be started at all.
 """
 from __future__ import annotations
 
@@ -105,27 +106,6 @@ def _posix_limits(memory_mb: int, nice: int = 0):
     return apply
 
 
-def _run_in_process(task: str, args: dict, wall_s: float):
-    from agent_friday.services.library import worker
-
-    box: dict = {}
-
-    def go():
-        try:
-            box["out"] = worker.run(task, args)
-        except Exception as e:  # noqa: BLE001 - reported as the task's failure
-            box["err"] = str(e) or type(e).__name__
-
-    t = threading.Thread(target=go, daemon=True)
-    t.start()
-    t.join(wall_s)
-    if t.is_alive():
-        raise TaskFailed("took too long to read", "timeout")
-    if "err" in box:
-        raise TaskFailed(box["err"])
-    return box["out"]
-
-
 def run_task(task: str, args: dict, *, wall_s: float = WALL_SECONDS,
              memory_mb: int = MEMORY_MB, low_priority: bool = False) -> dict:
     """Run `task` in a child and return its result dict, or raise TaskFailed."""
@@ -145,7 +125,13 @@ def run_task(task: str, args: dict, *, wall_s: float = WALL_SECONDS,
     job = None
     if sys.platform == "win32":
         kw["creationflags"] = 0x08000000 | (0x4000 if low_priority else 0)   # NO_WINDOW | BELOW_NORMAL
-        job = _job_for(memory_mb)
+        try:
+            job = _job_for(memory_mb)
+        except Exception:  # noqa: BLE001 - no job object, no limits
+            job = None
+        if job is None:
+            raise TaskFailed("the reader could not be held to a memory limit on this system, so no document "
+                             "is read", "unsupported")
     else:
         kw["preexec_fn"] = _posix_limits(memory_mb, 10 if low_priority else 0)
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

@@ -40,8 +40,11 @@ def find_documents(principal: str, text: str) -> list[dict]:
     t = (text or "").strip().lower()
     if not t:
         return []
+    from agent_friday.services.library.tree import TreeBuilder
     out = []
-    for r in store_for(principal).list_documents():
+    # Only what the owner can see right now: consented, indexed, and (on the vault shelf) unlocked.
+    visible = TreeBuilder(store_for(principal), principal).visible_docs()
+    for r in sorted(visible.values(), key=lambda r: (r["title"] or "").lower()):
         if t in (r["title"] or "").lower() or t in Path(r["path"]).name.lower():
             out.append({"doc_id": r["id"], "title": r["title"], "pages": r["pages"]})
     return out[:10]

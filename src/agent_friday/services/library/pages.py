@@ -23,23 +23,26 @@ def _key(path: Path, page: int, width: int, fmt: str) -> tuple:
     return (str(path), st.st_mtime_ns, st.st_size, page, width, fmt)
 
 
-def render_pdf_page(path: Path, page: int, width: int = 900, fmt: str = "webp") -> dict:
-    """{data: bytes, mime, pages, width, height, page_pt}. Raises procrun.TaskFailed."""
+def render_pdf_page(path: Path, page: int, width: int = 900, fmt: str = "webp", *, cache: bool = True) -> dict:
+    """{data: bytes, mime, pages, width, height, page_pt}. Raises procrun.TaskFailed.
+    `cache=False` for a vault-shelf document: its pixels are never kept in memory."""
     width = max(120, min(int(width), 2400))
     key = _key(path, int(page), width, fmt)
-    with _lock:
-        hit = _cache.get(key)
-        if hit is not None:
-            _cache.move_to_end(key)
-            return hit
+    if cache:
+        with _lock:
+            hit = _cache.get(key)
+            if hit is not None:
+                _cache.move_to_end(key)
+                return hit
     res = procrun.run_task("render_page", {"path": str(path), "page": int(page),
                                            "width": width, "fmt": fmt}, wall_s=45)
     out = dict(res)
     out["data"] = base64.b64decode(res["data"])
-    with _lock:
-        _cache[key] = out
-        while len(_cache) > _CACHE_MAX:
-            _cache.popitem(last=False)
+    if cache:
+        with _lock:
+            _cache[key] = out
+            while len(_cache) > _CACHE_MAX:
+                _cache.popitem(last=False)
     return out
 
 

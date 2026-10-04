@@ -1059,6 +1059,11 @@ def _tool_read_file(inp):
         from agent_friday.services.library.store import store_for as _lib_store
         _who = _lib_pr.current()
         _row = _lib_store(_who).find_document(str(p)) if _who is not None else None
+        if _row and _row["shelf"] == "vault":
+            from agent_friday.services.library import tools as _lib_tools0
+            if not _lib_tools0._loop_is_local():
+                return ("This document is on your Library's vault shelf, which is never sent to a cloud model. "
+                        "Ask again on the local model.")
         if _row:
             _first = _lib_store(_who).one("SELECT id FROM blocks WHERE doc_id=? ORDER BY ord LIMIT 1", (_row["id"],))
             if _first:
@@ -1083,7 +1088,30 @@ def _tool_search_files(inp):
         )
     except Exception as e:
         return json.dumps({"error": f"search_files failed: {e}"})
-    return json.dumps(result, default=str)
+    return json.dumps(_fence_library_snippets(result), default=str)
+
+
+def _fence_library_snippets(result):
+    """A content-search hit inside a document the owner added to the Library is document text like
+    any other: it reaches the model fenced as data, with one preamble for the whole result."""
+    try:
+        from agent_friday.services.library import envelope as _lib_env, principal as _lib_pr
+        from agent_friday.services.library.store import store_for as _lib_store
+        _who = _lib_pr.current()
+        if _who is None or not isinstance(result, dict):
+            return result
+        _st = _lib_store(_who)
+        _nonce = _lib_env.new_nonce()
+        _hit = False
+        for _r in result.get("results") or []:
+            if isinstance(_r, dict) and _r.get("snippet") is not None and _st.find_document(str(_r.get("path"))):
+                _r["snippet"] = _lib_env.fence_snippet(str(_r.get("name") or ""), str(_r["snippet"]), _nonce)
+                _hit = True
+        if _hit:
+            result["library_notice"] = _lib_env.FILE_PREAMBLE
+    except Exception:
+        pass
+    return result
 
 
 def _maybe_auto_open(path) -> None:
