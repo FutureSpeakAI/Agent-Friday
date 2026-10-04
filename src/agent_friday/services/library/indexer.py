@@ -39,7 +39,7 @@ def _refused(path: Path) -> str | None:
     """Why this path is never read, or None."""
     try:
         from agent_friday.services import credential_paths
-        why = credential_paths.check(path, sniff=path.is_file())
+        why = credential_paths.check(path, sniff=False)
         if why:
             return "private"
     except Exception:
