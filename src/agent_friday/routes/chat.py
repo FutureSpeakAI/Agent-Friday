@@ -61,6 +61,7 @@ from agent_friday.services.agent import (
 from agent_friday.services.model_router import (
     CITATION_INSTRUCTIONS,
     _build_context_prompt,
+    honest_limits_block,
     _build_emotional_tone_block,
     _build_memory_context_block,
     _build_session_continuity_block,
@@ -1593,7 +1594,7 @@ def chat():
             from agent_friday.services.prompt_cache import VOLATILE_MARKER as _VM
             _cut = (sp or '').find(_VM)
             head, tail = ((sp or '')[:_cut], (sp or '')[_cut:]) if _cut > 0 else ((sp or ''), '')
-            head = _settings_system_prefix(settings, personality) + head
+            head = _settings_system_prefix(settings, personality) + honest_limits_block() + head
             # v5 personalization: fold in the LOCAL user model + learned heuristics
             # (the same blocks _get_friday_system_prompt injects). /api/chat builds
             # its prompt via _build_context_prompt directly, so without this the
@@ -2749,7 +2750,7 @@ def chat_send():
             _send_sources[:] = sources or []
             # Prepend user-configured agent personality + response prefs + cLaws
             personality = _load_agent_personality()
-            prompt = _settings_system_prefix(settings, personality) + (prompt or '')
+            prompt = _settings_system_prefix(settings, personality) + honest_limits_block() + (prompt or '')
             # Cross-session memory: recall relevant past exchanges + carry
             # forward the last session summary + adapt tone from the
             # accumulated arc. Rebuilt per provider along with everything

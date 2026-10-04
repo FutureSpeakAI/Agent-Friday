@@ -2878,6 +2878,15 @@ except Exception:
     pass
 
 
+def honest_limits_block() -> str:
+    """The HONEST LIMITS section every chat and background prompt carries.
+
+    Constant text, so it sits in the stable prefix. Fail visibly, never
+    substitute quietly: the main chat window gets the same rules as background
+    work."""
+    return "\n\n== HONEST LIMITS ==\n" + REFUSAL_HONESTY_DIRECTIVE + "\n"
+
+
 def _strip_overrides(text, source):
     """Neutralise action-authority overrides in DERIVED prompt content.
 
@@ -2967,7 +2976,7 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     # local stack, or
     # describing capabilities she does not have — and improvisation about
     # yourself is indistinguishable from lying about yourself.
-    prefix += "\n\n== HONEST LIMITS ==\n" + REFUSAL_HONESTY_DIRECTIVE + "\n"
+    prefix += honest_limits_block()
     try:
         from agent_friday.services.self_account import describe as _self_account
         _acct = _self_account()
