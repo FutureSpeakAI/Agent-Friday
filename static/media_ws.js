@@ -1194,7 +1194,7 @@
   function MediaFiles3D() {
     if (!window.Files3DPanel) return h('div', { className: 'md-empty' }, 'The 3D file browser did not load.');
     return h('div', { className: 'md-stage-wrap' },
-      h('div', { className: 'md-count', style: { marginBottom: 6 } }, 'Your creations folder in the 3D file browser. Documents and episodes stay in Friday’s home, which this browser never lists; find them in the grid. ', h('button', { className: 'btn', onClick: () => { window.__files3dOpen = { root: 'documents', path: '', file: '' }; window.dispatchEvent(new Event('friday-files3d-open')); } }, 'Browse this PC')),
+      h('div', { className: 'md-count', style: { marginBottom: 6 } }, 'Your creations folder in the 3D file browser. Documents and episodes stay in Friday’s home, which this browser never lists; find them in the grid. ', h('button', { className: 'btn', onClick: () => { if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'library', view: 'pc' }); } }, 'Browse this PC in the Library')),
       h('div', { className: 'f3-host on', style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
         h(window.Files3DPanel, { root: 'creations', path: '', view: 'wall', fill: true })));
   }

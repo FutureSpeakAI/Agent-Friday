@@ -37,6 +37,10 @@ _CURRENT_KEY_PROFILE: ContextVar = ContextVar("friday_tool_key_profile", default
 #: provider), and the provider a handler may ask about during one call.
 #: A handler that hands out a person's record asks this, and treats
 #: "unknown" as "not local": people trust stays home (trust/people.py).
+#: Where the running tool call's request came from when it is not the owner's own screen ("phone",
+#: "channel"): the answer is delivered through a third party, so a handler that hands out the owner's
+#: documents treats it as cloud-bound.
+_CURRENT_ORIGIN: ContextVar = ContextVar("friday_tool_origin", default="")
 _LOOP_PROVIDER: ContextVar = ContextVar("friday_loop_provider", default=None)
 _CURRENT_PROVIDER: ContextVar = ContextVar("friday_tool_provider", default=None)
 import subprocess
@@ -325,6 +329,19 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     # Provider primitives. The routed provider is tried first with the
     # router-chosen model; fallbacks use each provider's OWN configured default
     # (model=None) so a cloud model id never leaks into a local/OpenAI call.
+    def _cloud_messages():
+        """What a cloud leg is sent: earlier Library answers are replaced by a stand-in unless the owner
+        allowed cloud answers. Decided here, for the leg that is about to send, so a fallback from a
+        local leg is judged at send time too."""
+        try:
+            from agent_friday.services.library import cite as _library_cite
+            _copy = [dict(m) if isinstance(m, dict) else m for m in messages]
+            if _library_cite.elide_for_cloud(_copy, settings):
+                return _copy
+        except Exception:
+            pass
+        return messages
+
     def _via_claude(use_model):
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
@@ -334,7 +351,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # configured CLOUD model, never a foreign id.
         from agent_friday.services.model_router import _claude_safe_model
         return _call_claude_agent(
-            messages, workspace=workspace, system=_system_for('cloud'),
+            _cloud_messages(), workspace=workspace, system=_system_for('cloud'),
             model=_claude_safe_model(use_model or model, settings),
             max_tokens=max_tokens, temperature=temperature,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
@@ -346,7 +363,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # model rides its RESOLVED provider (openrouter/groq/…, GAP-3 fix);
         # the fallback attempt (use_model=None) keeps the legacy single-slot.
         return _call_openai(
-            messages, system=_system_for('openai'), model=use_model,
+            _cloud_messages(), system=_system_for('openai'), model=use_model,
             max_tokens=max_tokens, temperature=temperature,
             orb_label=orb_label, tools=(tools or tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
@@ -1072,7 +1089,28 @@ def _tool_read_file(inp):
     if result.truncated:
         out += "\n...[extraction truncated to the first pages of this document]"
     # And once more on what goes out (the page note and the truncation line).
-    return _cred.redact_secrets(out)
+    out = _cred.redact_secrets(out)
+    # A document the owner added to the Library reaches the model fenced as data, as search
+    # evidence does: a poisoned PDF opened by name gets no more trust than one found by search.
+    try:
+        from agent_friday.services.library import envelope as _lib_env, principal as _lib_pr
+        from agent_friday.services.library.store import store_for as _lib_store
+        _who = _lib_pr.current()
+        _row = _lib_store(_who).find_document(str(p)) if _who is not None else None
+        if _row and _row["shelf"] == "vault":
+            from agent_friday.services.library import tools as _lib_tools0
+            if not _lib_tools0._loop_is_local():
+                return ("This document is on your Library's vault shelf, which is never sent to a cloud model. "
+                        "Ask again on the local model.")
+        if _row:
+            _first = _lib_store(_who).one("SELECT id FROM blocks WHERE doc_id=? ORDER BY ord LIMIT 1", (_row["id"],))
+            if _first:
+                from agent_friday.services.library import tools as _lib_tools
+                _lib_tools.record_use(_who, _row["id"], _first["id"])
+            return _lib_env.wrap_file(p.name, out)
+    except Exception:
+        pass
+    return out
 
 
 def _tool_search_files(inp):
@@ -1088,7 +1126,30 @@ def _tool_search_files(inp):
         )
     except Exception as e:
         return json.dumps({"error": f"search_files failed: {e}"})
-    return json.dumps(result, default=str)
+    return json.dumps(_fence_library_snippets(result), default=str)
+
+
+def _fence_library_snippets(result):
+    """A content-search hit inside a document the owner added to the Library is document text like
+    any other: it reaches the model fenced as data, with one preamble for the whole result."""
+    try:
+        from agent_friday.services.library import envelope as _lib_env, principal as _lib_pr
+        from agent_friday.services.library.store import store_for as _lib_store
+        _who = _lib_pr.current()
+        if _who is None or not isinstance(result, dict):
+            return result
+        _st = _lib_store(_who)
+        _nonce = _lib_env.new_nonce()
+        _hit = False
+        for _r in result.get("results") or []:
+            if isinstance(_r, dict) and _r.get("snippet") is not None and _st.find_document(str(_r.get("path"))):
+                _r["snippet"] = _lib_env.fence_snippet(str(_r.get("name") or ""), str(_r["snippet"]), _nonce)
+                _hit = True
+        if _hit:
+            result["library_notice"] = _lib_env.FILE_PREAMBLE
+    except Exception:
+        pass
+    return result
 
 
 def _maybe_auto_open(path) -> None:
@@ -9267,6 +9328,15 @@ try:
 except Exception as _fge:  # never let optional deps break the agent import
     print(f"  [FILE ACCESS] registration skipped: {_fge}")
 
+# The Library (search_library, library_status, library_show): the owner's own
+# documents, read on this PC and answered with footnotes. Read-only; adding,
+# removing and forgetting go through file_access cards. See services/library/.
+try:
+    from agent_friday.services.library import tools as _library_tools
+    _library_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _lbe:  # never let optional deps break the agent import
+    print(f"  [LIBRARY] registration skipped: {_lbe}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.
@@ -10262,6 +10332,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # Whose key this turn runs on, for the handlers that write receipts
         # (salon spec §4.7).
         _kp_tok = _CURRENT_KEY_PROFILE.set(str(_sc.get("key_profile") or ""))
+        _origin_tok = _CURRENT_ORIGIN.set(str(_sc.get("origin") or ""))
         # The loop that is running knows what it talks to; the session's
         # provider is the ROUTED intent, built once and stale after a
         # local-to-cloud fallback. The loop wins; the session only fills in
@@ -10274,6 +10345,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _refused = _cred_paths.REFUSED.get()
         finally:
             _CURRENT_PROVIDER.reset(_prov_tok)
+            _CURRENT_ORIGIN.reset(_origin_tok)
             _CURRENT_SURFACE.reset(_surface_tok)
             _CURRENT_KEY_PROFILE.reset(_kp_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
@@ -11748,6 +11820,13 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
     Also the single place every executed tool call — allowed or vault-denied,
     on either loop — passes, so the task journal's tool_call event is written
     here (task-visibility.md TV3), before the orb early-return."""
+    try:
+        # The records below (reasoning trace, task ledger, task journal, the orb's steps) outlive the
+        # documents: Library passages are replaced by a stand-in before any of them sees the result.
+        from agent_friday.services.library import envelope as _lib_env
+        result = _lib_env.keep_out_of_records(name, result)
+    except Exception:
+        pass
     _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
                           duration_ms=int(duration_ms or 0))
     try:
@@ -13529,6 +13608,9 @@ CLAUDE_TOOLS[:] = [t for t in CLAUDE_TOOLS if t.get("name") not in HUB_TOOL_NAME
 # wherever they are named. A name not registered in this build is skipped.
 ON_DEMAND_TOOLS = (
     "file_access",           # file grants: asks raise the owner's card
+    "search_library",        # the Library: labelled passages from the owner's documents
+    "library_status",
+    "library_show",
     "notifications",         # the tray: read, clear, mute
     "local_models_advise",   # Settings > Models: what this PC can run
     "hand_cursor",           # the hand cursor and big mode, by voice

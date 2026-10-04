@@ -196,3 +196,22 @@ raw data never reaches a cloud model in the first place.
   background past it. Nothing is refused.
 - **Handle the mic, the barge-in, or the transcript.** That is the session's
   job, not the tool's.
+
+## 7. The Library tools
+
+`search_library`, `library_show` and `library_status` are shared voice tools
+(`voice_engine._VOICE_SHARED_TOOLS`), read-only and ring 0. Adding, removing
+and forgetting a document are `file_access` cards (`library_add`,
+`library_remove`, `library_forget`) decided on screen, so a spoken yes never
+changes the Library.
+
+- **Evidence first.** A spoken search result says how many passages were found
+  and where the strongest is (the document's title and the page), then the
+  answer. It never says a label, a bracket or a token; `services/library/cite.py`
+  `speakable()` strips them from anything read aloud.
+- **Private text stays here.** A result for a cloud voice model carries no
+  Library text unless the owner turned on cloud answers for Library documents
+  and the document has its own cloud permission; otherwise the tool says the
+  answer stays on this PC.
+- A local voice front that mirrors the cloud contract lists these three names
+  in its parity set.

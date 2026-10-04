@@ -454,6 +454,10 @@ def tool_finished(name: str, args: Any = None, result: Any = None, *, ok: bool =
     tid = current()
     if not tid:
         return
+    if str(name) == "search_library" or "<evidence-" in str(result)[:4000]:
+        # The owner's documents are not copied into a record that outlives them: forgetting
+        # a document could not reach this archive, which is encrypted and hash-chained.
+        result = "[Passages from your Library are not kept in this record.]"
     with _LOCK:
         opened = _OPEN_CALLS.get((tid, str(name))) or []
         cid = opened.pop(0) if opened else None
@@ -1199,7 +1203,7 @@ def apply_retention(days: Optional[float] = None) -> Dict[str, Any]:
             lines = lines[1:]
         keep_from = 0
         for i, line in enumerate(lines):
-            if line.get("type") == "trace" and (line.get("ts") or 0) < cutoff:
+            if line.get("type") in ("trace", "redaction") and (line.get("ts") or 0) < cutoff:
                 keep_from = i + 1
             else:
                 break
@@ -1226,6 +1230,113 @@ def apply_retention(days: Optional[float] = None) -> Dict[str, Any]:
             _DECRYPTED.pop(line.get("hash"), None)
         _TIP.clear()
         return {"pruned": len(dropped), "kept": len(kept)}
+
+
+def _redact_value(v: Any, fn) -> tuple:
+    """`v` with every string passed through `fn(str) -> (str, changed)`: (new value, changed)."""
+    if isinstance(v, str):
+        return fn(v)
+    if isinstance(v, list):
+        res = [_redact_value(x, fn) for x in v]
+        return [r[0] for r in res], any(r[1] for r in res)
+    if isinstance(v, dict):
+        res = {k: _redact_value(x, fn) for k, x in v.items()}
+        return {k: r[0] for k, r in res.items()}, any(r[1] for r in res.values())
+    return v, False
+
+
+def _redact_inplace(v: Any, fn) -> int:
+    """The same, changing the live structure in place so every holder of it sees the change."""
+    n = 0
+    if isinstance(v, list):
+        for i, x in enumerate(v):
+            if isinstance(x, str):
+                nx, c = fn(x)
+                if c:
+                    v[i] = nx
+                    n += 1
+            else:
+                n += _redact_inplace(x, fn)
+    elif isinstance(v, dict):
+        for k, x in list(v.items()):
+            if isinstance(x, str):
+                nx, c = fn(x)
+                if c:
+                    v[k] = nx
+                    n += 1
+            else:
+                n += _redact_inplace(x, fn)
+    return n
+
+
+def redact(fn) -> Dict[str, Any]:
+    """Take text out of every trace Friday holds, because the owner ordered something forgotten.
+
+    `fn(text) -> (text, changed)` is applied to every string in the live traces, the live feed,
+    the traces waiting for the keystore and the archive. A changed archived record is
+    re-encrypted; every later line is re-linked and re-signed so the chain still verifies, and
+    one signed `redaction` line records how many records were rewritten (never what was removed).
+    A chain that already fails verification is left untouched and reported, as retention does,
+    so no evidence is erased by the rewrite. Returns {"archived", "live", "pending", "incomplete"};
+    `incomplete` says why the archive could not be rewritten, else None."""
+    out: Dict[str, Any] = {"archived": 0, "live": 0, "pending": 0, "incomplete": None}
+    with _LOCK:
+        for tr in _TRACES.values():
+            out["live"] += _redact_inplace(tr, fn)
+        for buf in _BUFFERS.values():
+            out["live"] += _redact_inplace(buf, fn)
+        for item in _FEED:
+            out["live"] += _redact_inplace(item[2] if isinstance(item, tuple) and len(item) > 2 else item, fn)
+    with _ARCHIVE_LOCK:
+        for rec in _PENDING:
+            out["pending"] += _redact_inplace(rec, fn)
+        path = ledger_path()
+        if not path.exists():
+            return out
+        ver = verify()
+        if not ver["valid"]:
+            out["incomplete"] = "the archive's chain does not verify (%s); it was not rewritten" % ver["reason"]
+            return out
+        lines = _read_lines(path)
+        rewritten = 0
+        for line in lines:
+            if line.get("type") != "trace" or not line.get("body"):
+                continue
+            try:
+                rec = _decrypt(line["body"])
+            except Exception as e:  # noqa: BLE001 - an unreadable record cannot be searched
+                out["incomplete"] = "an archived record could not be read (%s)" % type(e).__name__
+                continue
+            new, changed = _redact_value(rec, fn)
+            if changed:
+                try:
+                    line["body"] = _encrypt(new)
+                except Exception as e:  # noqa: BLE001 - never write the record back as plaintext
+                    out["incomplete"] = "the archive could not be re-encrypted (%s)" % type(e).__name__
+                    return out
+                rewritten += 1
+        if rewritten:
+            prev = _GENESIS
+            for i, line in enumerate(lines):
+                if i == 0 and line.get("type") == "anchor":
+                    prev = line.get("resumes_after") or _GENESIS
+                    continue
+                core = {k: v for k, v in line.items() if k not in ("hash", "sig")}
+                core["prev"] = prev
+                h = _line_hash(core)
+                line.clear()
+                line.update(core, hash=h, sig=_sign(h))
+                prev = h
+            tmp = path.with_name(path.name + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                for line in lines:
+                    f.write(json.dumps(line, separators=(",", ":")) + "\n")
+            tmp.replace(path)
+            _TIP.clear()
+            _DECRYPTED.clear()
+            _write_line_locked({"v": 1, "type": "redaction", "ts": _now(), "records": rewritten})
+            out["archived"] = rewritten
+    return out
 
 
 def _reset_for_tests() -> None:

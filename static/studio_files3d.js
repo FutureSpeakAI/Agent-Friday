@@ -69,7 +69,9 @@
   const registerCats = obj => { Object.keys(obj || {}).forEach(k => { EXTRA_CATS[k] = obj[k]; }); };
   const hex = c => '#' + c.toString(16).padStart(6, '0');
   const BRAND = {
-    cyan: 0x00d4ff, violet: 0x7b61ff, magenta: 0xff0080, amber: 0xf59e0b,
+    // The shimmer triad is cyan, violet, magenta (--fr-magenta). The refusal
+    // colour (--fr-deny) is a different hue and never decorates a card.
+    cyan: 0x00d4ff, violet: 0x7b61ff, magenta: 0xff00ff, amber: 0xf59e0b,
     danger: 0xef4444, ink: 0x000103, fog: 0x03050d, nebula: 0x9aa0b8
   };
   const DAZZLE = { off: 0, subtle: 0.55, full: 1 };
@@ -154,12 +156,15 @@
   // a second row; beyond that, a balanced grid: rows differ by at most one
   // pile and every row is centred.
   const STACK_ARC = 7, STACK_GAP = 5.4, STACK_ROW = 12;
-  function stackSlots(n) {
+  // gap and rowH default to the piles' own; the Library's shelves are wider and
+  // taller and pass theirs, under the same arc/grid rule.
+  function stackSlots(n, gap, rowH) {
+    gap = gap || STACK_GAP; rowH = rowH || STACK_ROW;
     const out = [];
     if (n <= STACK_ARC) {
-      const R = Math.max(24, (n - 1) * STACK_GAP / (Math.PI * 0.55));   // span <= ~100 degrees
+      const R = Math.max(24, (n - 1) * gap / (Math.PI * 0.55));   // span <= ~100 degrees
       for (let k = 0; k < n; k++) {
-        const a = (k - (n - 1) / 2) * STACK_GAP / R;
+        const a = (k - (n - 1) / 2) * gap / R;
         out.push({ x: R * Math.sin(a), y: 0, z: R * (1 - Math.cos(a)), yaw: -a, row: 0 });
       }
       return out;
@@ -168,9 +173,138 @@
     let k = 0;
     for (let r = 0; r < rows; r++) {
       const inRow = base + (r < extra ? 1 : 0);
-      for (let c = 0; c < inRow; c++, k++) out.push({ x: (c - (inRow - 1) / 2) * STACK_GAP, y: -r * STACK_ROW, z: 0, yaw: 0, row: r });
+      for (let c = 0; c < inRow; c++, k++) out.push({ x: (c - (inRow - 1) / 2) * gap, y: -r * rowH, z: 0, yaw: 0, row: r });
     }
     return out;
+  }
+
+  // The Library's shelves. Pure: a list of {kind, key, folder?, doc?} in card
+  // order in, a placement for every card out. Folders stand as tall glass
+  // shelves in one arc (or balanced rows, by stackSlots); a document stands on
+  // its shelf as a card; the one opened document is drawn pulled forward with
+  // its sections fanned out in reading order, and a reading plane faces the
+  // camera in front of the fan. Sections exist only for the opened document.
+  const SH = { docPx: 1.15, docPy: 1.45, docW: 1, docH: 1.2, signH: 2.2, sign: 1.7, gap: 3, rowGap: 3.4, fanZ: 2, slabW: 0.34, slabH: 1.3, slabPitch: 0.55, fanSpan: 1.9 };
+  function shelvesPlan(list) {
+    const slots = [], order = [];
+    const shelves = [], byKey = new Map();
+    let loose = null;
+    const folderIdx = new Map();
+    list.forEach((e, i) => { if (e && e.kind === 'folder') folderIdx.set(e.key, i); });
+    list.forEach((e, i) => {
+      if (!e || e.kind !== 'folder') return;
+      const s = { key: e.key, idx: i, docs: [] };
+      shelves.push(s); byKey.set(e.key, s);
+    });
+    list.forEach((e, i) => {
+      if (!e || e.kind !== 'document') return;
+      let s = byKey.get(e.folder);
+      if (!s) { if (!loose) { loose = { key: '', idx: -1, docs: [] }; shelves.push(loose); byKey.set('', loose); } s = loose; }
+      s.docs.push(i);
+    });
+    let maxW = 0, maxH = 0;
+    shelves.forEach(s => {
+      const nd = s.docs.length;
+      s.cols = Math.max(3, Math.min(40, Math.round(Math.sqrt(nd / 1.8))));
+      s.rows = Math.max(1, Math.ceil(nd / s.cols));
+      s.w = s.cols * SH.docPx + 1;
+      s.h = s.rows * SH.docPy + SH.signH;
+      if (s.w > maxW) maxW = s.w;
+      if (s.h > maxH) maxH = s.h;
+    });
+    const sl = stackSlots(shelves.length, maxW + SH.gap, maxH + SH.rowGap);
+    const frame = (s, u, v, dz) => {
+      const cy = Math.cos(s.yaw), sy = Math.sin(s.yaw);
+      return [s.cx + u * cy + dz * sy, s.cy + v, s.cz - u * sy + dz * cy];
+    };
+    const docLocal = new Map();
+    const place = (i, s, u, v, dz, w, hh) => {
+      const p = frame(s, u, v, dz);
+      slots.push({ i, x: p[0], y: p[1], z: p[2], yaw: s.yaw, w, h: hh });
+      order.push(i);
+    };
+    shelves.forEach((s, k) => {
+      const f = sl[k];
+      s.cx = f.x; s.cz = f.z; s.yaw = f.yaw; s.cy = f.y + (s.h - maxH) / 2;
+      if (s.idx >= 0) place(s.idx, s, 0, s.h / 2 - 1, 0.1, SH.sign, SH.sign);
+      s.docs.forEach((i, j) => {
+        const c = j % s.cols, r = Math.floor(j / s.cols);
+        const u = (c - (s.cols - 1) / 2) * SH.docPx, v = s.h / 2 - SH.signH - (r + 0.5) * SH.docPy;
+        docLocal.set(i, { s, u, v });
+      });
+    });
+    // sections of the opened document, in reading order
+    const secs = [];
+    list.forEach((e, i) => { if (e && e.kind === 'section') secs.push(i); });
+    secs.sort((a, b) => (list[a].seq || 0) - (list[b].seq || 0) || a - b);
+    let fan = null, reading = null;
+    const openDoc = secs.length ? list.findIndex(e => e && e.kind === 'document' && e.key === list[secs[0]].doc) : -1;
+    shelves.forEach(s => {
+      s.docs.forEach(i => {
+        const d = docLocal.get(i);
+        if (i === openDoc) { place(i, s, d.u, d.v, 0.9, SH.docW * 1.3, SH.docH * 1.3); return; }
+        place(i, s, d.u, d.v, 0, SH.docW, SH.docH);
+      });
+    });
+    if (openDoc >= 0) {
+      const d = docLocal.get(openDoc), m = secs.length;
+      const R = Math.max(3, (m - 1) * SH.slabPitch / SH.fanSpan);
+      const dA = m > 1 ? SH.slabPitch / R : 0;
+      const slabs = [];
+      secs.forEach((i, k) => {
+        const a = (k - (m - 1) / 2) * dA;
+        const p = frame(d.s, d.u + R * Math.sin(a), d.v, SH.fanZ + R * (1 - Math.cos(a)));
+        slots.push({ i, x: p[0], y: p[1], z: p[2], yaw: d.s.yaw - a, w: SH.slabW, h: SH.slabH });
+        order.push(i);
+        slabs.push({ i, x: p[0], y: p[1], z: p[2], yaw: d.s.yaw - a, u: d.u + R * Math.sin(a) });
+      });
+      const edge = R * (1 - Math.cos((m - 1) / 2 * dA));
+      const c = frame(d.s, d.u, d.v, SH.fanZ);
+      fan = { doc: openDoc, shelf: d.s.key, center: { x: c[0], y: c[1], z: c[2] }, yaw: d.s.yaw, R, slabs };
+      const rp = frame(d.s, d.u, d.v + 0.2, SH.fanZ + edge + 1.4);
+      reading = { x: rp[0], y: rp[1], z: rp[2], yaw: d.s.yaw };
+    }
+    // the box that holds every shelf, for the first camera
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    shelves.forEach(s => {
+      const half = Math.max(s.w, s.h) / 2;
+      x0 = Math.min(x0, s.cx - half); x1 = Math.max(x1, s.cx + half);
+      y0 = Math.min(y0, s.cy - s.h / 2); y1 = Math.max(y1, s.cy + s.h / 2);
+      z0 = Math.min(z0, s.cz); z1 = Math.max(z1, s.cz);
+    });
+    if (!shelves.length) { x0 = x1 = y0 = y1 = z0 = z1 = 0; }
+    return { slots, order, shelves, fan, reading, openDoc, bounds: { x0, x1, y0, y1, z0, z1 }, maxW, maxH };
+  }
+
+  // A camera flight along waypoints {t:[x,y,z], theta, phi, r}. One eased
+  // parameter runs the whole path, so a long way never takes longer than ms
+  // (never more than FLY_MAX). Under reduced motion there is no travel at all:
+  // the first sample is the last waypoint and the flight is done.
+  const FLY_MAX = 1300;
+  function makeFlight(from, path, ms, reduced) {
+    const pts = [from].concat(path);
+    for (let k = 1; k < pts.length; k++) {                    // the short way round
+      let th = pts[k].theta;
+      while (th - pts[k - 1].theta > Math.PI) th -= 2 * Math.PI;
+      while (th - pts[k - 1].theta < -Math.PI) th += 2 * Math.PI;
+      pts[k] = { t: pts[k].t, theta: th, phi: pts[k].phi, r: pts[k].r };
+    }
+    const last = pts[pts.length - 1];
+    const dur = reduced || !path.length ? 0 : Math.max(1, Math.min(FLY_MAX, ms == null ? 900 : ms));
+    const at = s => {
+      const w = pts.length - 1, q = Math.min(w - 1e-9, s * w), k = Math.max(0, Math.floor(q)), u = q - k;
+      const a = pts[k], b = pts[k + 1];
+      const mix = (x, y) => x + (y - x) * u;
+      return { t: [mix(a.t[0], b.t[0]), mix(a.t[1], b.t[1]), mix(a.t[2], b.t[2])], theta: mix(a.theta, b.theta), phi: mix(a.phi, b.phi), r: mix(a.r, b.r) };
+    };
+    const ez = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    return {
+      dur, last,
+      sample(elapsed) {
+        if (dur <= 0 || elapsed >= dur) return { cam: last, done: true };
+        return { cam: at(ez(Math.max(0, elapsed) / dur)), done: false };
+      }
+    };
   }
 
   // ── engine ──────────────────────────────────────────────────────────────
@@ -341,6 +475,11 @@
     const selGlow = new THREE.Sprite(additive(glowTex, BRAND.cyan));
     selGlow.visible = false;
     scene.add(selGlow);
+    // A workspace's own scene objects (the Library's path lights, tags and reading
+    // plane) live here; frame hooks animate them and report whether they moved.
+    const overlay = new THREE.Group();
+    scene.add(overlay);
+    const hooks = new Set();
 
     const floorMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -796,12 +935,14 @@
         riverLayout(L, act, put);
       } else if (v === 'stack') {
         stackLayout(L, act, put);
+      } else if (v === 'shelves') {
+        shelvesLayout(L, put);
       } else {
         clusterLayout(L, act, put);
       }
       if (!L.cam) L.cam = { t: [0, 0, 0], theta: 0, phi: 1.2, r: 60 };
       // A floor under everything, for the views that stand on one.
-      if (m && (v === 'wall' || v === 'tree' || v === 'city' || v === 'cluster' || v === 'week' || v === 'stack' || v === 'river')) {
+      if (m && (v === 'wall' || v === 'tree' || v === 'city' || v === 'cluster' || v === 'week' || v === 'stack' || v === 'river' || v === 'shelves')) {
         let y0 = Infinity, x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
         for (const i of act) {
           const hs = (L.S[i * 2 + 1] || 0) / 2;
@@ -809,7 +950,7 @@
           x0 = Math.min(x0, L.P[i * 3]); x1 = Math.max(x1, L.P[i * 3]); z0 = Math.min(z0, L.P[i * 3 + 2]); z1 = Math.max(z1, L.P[i * 3 + 2]);
         }
         const span = Math.max(x1 - x0, z1 - z0) * 0.75 + 14;
-        L.floor = { y: v === 'city' ? -0.03 : y0 - 1.4, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, span, cell: v === 'city' ? 1 : 2, mirror: v !== 'city' };
+        L.floor = { y: v === 'city' ? -0.03 : y0 - 1.4, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, span, cell: v === 'city' ? 1 : 2, mirror: v !== 'city' && v !== 'shelves' };
       }
       return L;
     }
@@ -1166,6 +1307,33 @@
       L.cam = fitCam(L, act, 0, Math.PI / 2 - 0.15);
     }
 
+    // The Library: each card carries item.lib = {kind, key, folder|doc, seq, label}.
+    function shelvesLayout(L, put) {
+      const plan = shelvesPlan(items.map(it => it.lib || { kind: 'other' }));
+      plan.slots.forEach(p => put(p.i, p.x, p.y, p.z, yawQ(p.yaw), p.w, p.h));
+      L.order = plan.order; L.plan = plan;
+      L.panels = [];
+      plan.shelves.slice(0, 64).forEach(s => {
+        L.panels.push({ x: s.cx, y: s.cy, z: s.cz - 0.12, yaw: s.yaw, w: s.w, h: s.h });
+        if (plan.shelves.length <= 24 && s.idx >= 0) L.labels.push({ text: items[s.idx].name, pos: frameLocal(s, 0, s.h / 2 + 0.55, 0.1), color: BRAND.cyan, size: 0.5, maxW: s.w });
+      });
+      if (plan.fan) {
+        const tier = [0.95, 1.4, 1.85, 2.3, 2.75];   // five heights: a label shares its height only with one five slabs away
+        plan.fan.slabs.forEach((sb, k) => {
+          const lb = items[sb.i].lib.label || items[sb.i].name;
+          L.labels.push({ text: lb.length > 34 ? lb.slice(0, 33) + '…' : lb, pos: [sb.x, sb.y + tier[k % 5], sb.z], color: BRAND.nebula, size: 0.34, maxW: 2.6, font: 'Inter' });
+        });
+      }
+      const b = plan.bounds;
+      L.cam = frameBox([(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2], (b.x1 - b.x0) / 2 + 1, (b.y1 - b.y0) / 2 + 1, 0, Math.PI / 2 - 0.08, 1.06);
+    }
+    const frameLocal = (s, u, v, dz) => { const cy = Math.cos(s.yaw), sy = Math.sin(s.yaw); return [s.cx + u * cy + dz * sy, s.cy + v, s.cz - u * sy + dz * cy]; };
+    // A camera that holds a rectangle (half width, half height) facing yaw.
+    function frameBox(c, halfW, halfH, theta, phi, margin) {
+      const tv = Math.tan(camera.fov * Math.PI / 360), th = tv * Math.max(0.3, camera.aspect);
+      return { t: c, theta, phi, r: Math.max(6, Math.max(halfH / tv, halfW / th) * (margin || 1.06)) };
+    }
+
     function clusterLayout(L, act, put) {
       const key = i => {
         if (groupBy === 'type') return items[i].cat;
@@ -1219,31 +1387,64 @@
     }
 
     // ── labels / decor ──
-    function textSprite(text, color, size) {
-      const c = document.createElement('canvas'), fs = 44;
+    // Orbitron is for small card labels; reading text asks for font 'Inter'.
+    // A label's texture is keyed by what it draws; a layout rebuild that repeats a
+    // label reuses it. Cached textures outlive the sprites that show them and are
+    // freed together (clearLabelCache), never by a decor's disposal.
+    const labelCache = new Map(), LABEL_CACHE_MAX = 160;
+    function clearLabelCache() { labelCache.forEach(e => e.tex.dispose()); labelCache.clear(); }
+    function labelTexture(text, color, font) {
+      const fs = 44;
+      const face = font === 'Inter' ? '500 ' + fs + 'px Inter, sans-serif' : '700 ' + fs + 'px Orbitron, Inter, sans-serif';
+      const key = face + '|' + hex(color) + '|' + text;
+      let e = labelCache.get(key);
+      if (e) { labelCache.delete(key); labelCache.set(key, e); return e; }
+      const c = document.createElement('canvas');
       const x = c.getContext('2d');
-      x.font = '700 ' + fs + 'px Orbitron, Inter, sans-serif';
+      x.font = face;
       const w = Math.min(1400, Math.ceil(x.measureText(text).width) + 30);
       c.width = w; c.height = fs + 22;
-      x.font = '700 ' + fs + 'px Orbitron, Inter, sans-serif';
+      x.font = face;
       x.textBaseline = 'middle';
       x.shadowColor = 'rgba(0,0,0,0.9)'; x.shadowBlur = 8;
       x.fillStyle = hex(color);
       x.fillText(text, 15, c.height / 2);
       const t = new THREE.CanvasTexture(c);
       t.minFilter = THREE.LinearFilter;
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, opacity: 0, depthWrite: false, fog: false }));
-      sp.scale.set(size * c.width / c.height, size, 1);
+      e = { tex: t, w: c.width, h: c.height };
+      labelCache.set(key, e);
+      if (labelCache.size > LABEL_CACHE_MAX) {
+        const oldest = labelCache.keys().next().value;
+        labelCache.get(oldest).tex.dispose(); labelCache.delete(oldest);
+      }
+      return e;
+    }
+    function textSprite(text, color, size, font) {
+      const e = labelTexture(text, color, font);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: e.tex, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+      sp.scale.set(size * e.w / e.h, size, 1);
       return sp;
     }
     function buildDecor(L) {
       const g = new THREE.Group();
       g.userData.mats = [];
       L.labels.forEach(l => {
-        const sp = textSprite(l.text, l.color, l.size);
+        const sp = textSprite(l.text, l.color, l.size, l.font);
         if (l.maxW && sp.scale.x > l.maxW) sp.scale.multiplyScalar(l.maxW / sp.scale.x);
         sp.position.set(l.pos[0], l.pos[1], l.pos[2]);
         g.add(sp); g.userData.mats.push(sp.material);
+      });
+      (L.panels || []).forEach(p => {
+        // a glass shelf: a faint pane and a thin rim, both cyan, no brighter than 0.3
+        const pg = new THREE.PlaneGeometry(p.w, p.h);
+        const pm = new THREE.MeshBasicMaterial({ color: BRAND.cyan, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, fog: false });
+        pm.userData.max = 0.06;
+        const pane = new THREE.Mesh(pg, pm);
+        pane.position.set(p.x, p.y, p.z); pane.rotation.y = p.yaw; pane.userData.own = true;
+        const rim = new THREE.LineSegments(new THREE.EdgesGeometry(pg), new THREE.LineBasicMaterial({ color: BRAND.cyan, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+        rim.material.userData.max = 0.3; rim.userData.own = true;
+        rim.position.copy(pane.position); rim.rotation.y = p.yaw;
+        g.add(pane); g.add(rim); g.userData.mats.push(pm, rim.material);
       });
       if (L.rings.length) {
         const circle = [];
@@ -1270,7 +1471,8 @@
     function disposeDecor(g) {
       scene.remove(g);
       g.traverse(o => {
-        if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+        if (o.material) o.material.dispose();   // label maps belong to labelCache
+        if (o.userData && o.userData.own && o.geometry) o.geometry.dispose();
       });
     }
 
@@ -1299,6 +1501,7 @@
       dirty = true;
     }
     function setCamGoal(c, instant) {
+      camFly = null;
       goal.t.set(c.t[0], c.t[1], c.t[2]); goal.theta = c.theta; goal.phi = c.phi; goal.r = c.r;
       // unwrap theta so the camera takes the short way round
       while (goal.theta - cam.theta > Math.PI) goal.theta -= 2 * Math.PI;
@@ -1378,7 +1581,23 @@
     }
 
     // ── camera ──
+    let camFly = null;
+    function applyCam(c) {
+      cam.t.set(c.t[0], c.t[1], c.t[2]); cam.theta = c.theta; cam.phi = c.phi; cam.r = c.r;
+      goal.t.copy(cam.t); goal.theta = c.theta; goal.phi = c.phi; goal.r = c.r;
+    }
+    function skipFly() {
+      if (!camFly) return false;
+      applyCam(camFly.f.last); camFly = null; camMoving = false; dirty = true;
+      return true;
+    }
     function stepCamera(dt) {
+      if (camFly) {
+        const s = camFly.f.sample(performance.now() - camFly.t0);
+        applyCam(s.cam);
+        if (s.done) { camFly = null; camMoving = false; }
+        return true;
+      }
       if (!camMoving) return false;
       const k = 1 - Math.exp(-dt * 4.2);
       cam.t.lerp(goal.t, k);
@@ -1603,6 +1822,7 @@
     el.addEventListener('pointerdown', e => {
       el.setPointerCapture(e.pointerId);
       lastPointerDown = performance.now();
+      skipFly();
       drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.button === 2 || e.button === 1 || e.shiftKey, item: -1, itemOn: false };
       // a panel that can act on cards lets them be picked up: a left drag
       // that starts on a card carries the card instead of orbiting
@@ -1663,6 +1883,7 @@
     });
     el.addEventListener('wheel', e => {
       e.preventDefault();
+      skipFly();
       cb.onInteract && cb.onInteract();
       if (view === 'ring' && !e.ctrlKey && layout && layout.ring) {
         cb.onStep && cb.onStep(e.deltaY > 0 ? 1 : -1);
@@ -1915,6 +2136,7 @@
       moved = stepCamera(dt) || moved;
       moved = stepFx(now) || moved;
       moved = stepMaterialize(now) || moved;
+      hooks.forEach(fn => { try { if (fn(now, dt)) moved = true; } catch (_) { /* a hook never stops the frame */ } });
       const tsec = clock();
       cardMat.uniforms.uTime.value = tsec; dustMat.uniforms.uTime.value = tsec; partMat.uniforms.uTime.value = tsec; floorMat.uniforms.uTime.value = tsec;
       flushParticles();
@@ -1931,6 +2153,8 @@
       const reflTo = fl && fl.mirror && dz >= 1 && !flight ? 1 : 0;
       const ur = cardMat.uniforms.uReflect;
       if (Math.abs(ur.value - reflTo) > 1e-3) { ur.value += (reflTo - ur.value) * ease1; moved = true; }
+      // the shelves draw their documents as the one instanced mesh: no city towers, no mirror pass
+      if (boxes) boxes.visible = view !== 'shelves';
       if (refl) {
         refl.visible = ur.value > 0.01 && !!fl;
         if (refl.visible) {
@@ -1965,7 +2189,7 @@
       if (hpNow) moved = true;
       // fade decor: current in (after the flight lands), old out
       const fadeIn = flight ? 0 : 1;
-      if (decor) decor.userData.mats.forEach(m => { const o = m.opacity + (fadeIn - m.opacity) * Math.min(1, dt * 5); if (Math.abs(o - m.opacity) > 1e-3) { m.opacity = o; moved = true; } });
+      if (decor) decor.userData.mats.forEach(m => { const tgt = fadeIn * (m.userData && m.userData.max != null ? m.userData.max : 1); const o = m.opacity + (tgt - m.opacity) * Math.min(1, dt * 5); if (Math.abs(o - m.opacity) > 1e-3) { m.opacity = o; moved = true; } });
       for (let k = oldDecor.length - 1; k >= 0; k--) {
         const g = oldDecor[k];
         let alive = false;
@@ -2089,7 +2313,39 @@
         }
         return best >= 0 ? best : i;
       },
+      // Pan (never zoom or turn) so card i is on screen; true when the camera moved.
+      reveal(i) {
+        if (!layout || !(i >= 0 && i < n)) return false;
+        tmpV.set(tP[i * 3], tP[i * 3 + 1], tP[i * 3 + 2]).project(camera);
+        if (tmpV.z <= 1 && Math.abs(tmpV.x) <= 0.82 && Math.abs(tmpV.y) <= 0.82) return false;
+        goal.t.set(tP[i * 3], tP[i * 3 + 1], tP[i * 3 + 2]);
+        camMoving = true; dirty = true;
+        return true;
+      },
       resetCamera() { if (layout) setCamGoal(layout.cam); },
+      // the home frame, worked out afresh for the window's size now; at once, or gliding when soft
+      reframe(soft) { if (!layout) return; layout.cam = computeLayout(view).cam; setCamGoal(layout.cam, !soft); },
+      // ── hooks for a workspace that draws its own layer (the Library) ──
+      overlay,
+      onFrame(fn) { hooks.add(fn); dirty = true; return () => hooks.delete(fn); },
+      invalidate() { dirty = true; },
+      getPlan: () => (layout && layout.plan) || null,
+      itemPos: i => (i >= 0 && i < n ? [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]] : null),
+      itemSize: i => (i >= 0 && i < n ? [S[i * 2], S[i * 2 + 1]] : null),
+      dazzle: () => dz,
+      isReduced: () => reduced,
+      glowSprite(color) { const sp = new THREE.Sprite(additive(glowTex, color)); sp.visible = false; return sp; },
+      frame: (c, halfW, halfH, theta, phi, margin) => frameBox(c, halfW, halfH, theta, phi, margin),
+      camState: () => ({ t: cam.t.toArray(), theta: cam.theta, phi: cam.phi, r: cam.r, fov: camera.fov, aspect: camera.aspect, w: W, h: H }),
+      // One timed flight along waypoints; under reduced motion it is a cut.
+      flyTo(path, ms) {
+        const f = makeFlight({ t: cam.t.toArray(), theta: cam.theta, phi: cam.phi, r: cam.r }, path, ms, reduced);
+        if (f.dur <= 0) { camFly = null; if (path.length) applyCam(f.last); camMoving = false; dirty = true; return f; }
+        camFly = { f, t0: performance.now() }; camMoving = true; dirty = true;
+        return f;
+      },
+      skipFly,
+      isFlying: () => !!camFly,
       pickAt: (x, y) => pickAt(x, y),   // client coordinates -> card index or -1 (tests)
       screenPos(i) {
         if (i < 0) return null;
@@ -2129,8 +2385,9 @@
           ro.disconnect(); io.disconnect();
           freeMeshes();
           if (decor) { disposeDecor(decor); decor = null; }
-          oldDecor.forEach(disposeDecor); oldDecor = [];
+          oldDecor.forEach(disposeDecor); oldDecor = []; clearLabelCache();
           fxSprites.slice().forEach(dropSprite);
+          overlay.children.slice().forEach(o => overlay.remove(o)); hooks.clear(); camFly = null;
           for (let a = 1; a < real.length; a++) if (real[a]) { real[a].dispose(); real[a] = null; }
           for (let a = 0; a < atlases.length; a++) atlases[a] = real[0];
           items = []; n = 0; layout = null; flight = null; materialize = null; pool = null;
@@ -2147,12 +2404,13 @@
         ro.disconnect(); io.disconnect();
         freeMeshes();
         if (decor) disposeDecor(decor);
-        oldDecor.forEach(disposeDecor);
+        oldDecor.forEach(disposeDecor); clearLabelCache();
         real.forEach(t => t && t.dispose());
         cardMat.dispose(); reflMat.dispose(); boxMat.dispose(); lineMat.dispose(); boxGeo.dispose(); planeGeo.dispose();
         [dustMat, partMat, floorMat, sky.material, selGlow.material].forEach(m => m.dispose());
         [dustGeo, pGeo, sky.geometry, floor.geometry].forEach(g => g.dispose());
         fxSprites.slice().forEach(dropSprite);
+        overlay.children.slice().forEach(o => overlay.remove(o)); hooks.clear();
         Object.values(TX).forEach(t => t.dispose()); glowTex.dispose();
         workers.forEach(w => w.terminate());
         renderer.dispose();
@@ -2176,6 +2434,35 @@
   const remember = (k, v) => { try { localStorage.setItem('friday_files3d_' + k, v); } catch (_) {} };
   const recall = k => { try { return localStorage.getItem('friday_files3d_' + k) || ''; } catch (_) { return ''; } };
   const PANEL_BG = 'rgba(6,10,18,0.9)';
+
+  // A PDF is shown as server-rendered page images, never in the browser's own
+  // viewer: the file's scripts, links and fonts never reach the page.
+  function PdfPagePreview(props) {
+    const { root, rel, name } = props;
+    const [page, setPage] = useState(1);
+    const [pages, setPages] = useState(0);
+    const [state, setState] = useState('loading');
+    useEffect(() => { setPage(1); setPages(0); setState('loading'); }, [root, rel]);
+    useEffect(() => {
+      let live = true;
+      fetch('/api/studio-files/pdfinfo?' + qs(root, rel)).then(r => r.ok ? r.json() : Promise.reject(r)).then(j => {
+        if (live) { setPages(j.pages || 0); }
+      }).catch(() => { if (live) setState('failed'); });
+      return () => { live = false; };
+    }, [root, rel]);
+    const src = '/api/studio-files/pdfpage?' + qs(root, rel) + '&n=' + page + '&w=900';
+    const step = d => setPage(p => Math.max(1, Math.min(pages || 1, p + d)));
+    return h('div', { style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 0 } },
+      h('div', { style: { flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', justifyContent: 'center', background: '#02050b' } },
+        state === 'failed'
+          ? h('div', { style: { padding: 16, color: '#9fb6d6' } }, 'Couldn’t read ' + name + '.')
+          : h('img', { src, alt: name + ', page ' + page, onLoad: () => setState('ok'), onError: () => setState('failed'),
+            style: { maxWidth: '100%', height: 'auto', alignSelf: 'flex-start', background: '#fff' } })),
+      pages > 0 && h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center', padding: '6px 0', fontSize: 11, color: '#9fb6d6' } },
+        h('button', { className: 'btn', style: BTN, disabled: page <= 1, onClick: () => step(-1), 'aria-label': 'Previous page' }, '‹'),
+        h('span', { style: { fontFamily: 'JetBrains Mono, Consolas, monospace' } }, 'p. ' + page + ' / ' + pages),
+        h('button', { className: 'btn', style: BTN, disabled: page >= pages, onClick: () => step(1), 'aria-label': 'Next page' }, '›')));
+  }
 
   // props.root / props.path / props.view open a given folder and view
   // (the Code workspace opens Projects as a City); otherwise the last used.
@@ -2549,7 +2836,7 @@
             selIt.cat === 'image' ? h('img', { src: rawURL, alt: selIt.name, style: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' } })
               : selIt.cat === 'video' ? h('video', { src: rawURL, controls: true, preload: 'metadata', style: { width: '100%', maxHeight: '100%' } })
                 : selIt.cat === 'audio' ? h('div', { style: { padding: 20, width: '100%' } }, h('audio', { src: rawURL, controls: true, style: { width: '100%' } }))
-                  : selIt.ext === 'pdf' ? h('iframe', { src: rawURL, title: selIt.name, style: { width: '100%', height: '100%', border: 'none', background: '#fff' } })
+                  : selIt.ext === 'pdf' ? h(PdfPagePreview, { root, rel: selIt.rel, name: selIt.name })
                     : preview.text != null ? h('pre', { style: { margin: 0, padding: 10, fontSize: 11, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#cfe0f5', fontFamily: 'JetBrains Mono, Consolas, monospace', width: '100%' } }, preview.text + (preview.truncated ? '\n\n… (preview cut at 256 KB)' : ''))
                       : selIt.dir ? h('div', { style: { padding: 16, color: '#9fb6d6', lineHeight: 1.7 } }, 'Folder with ' + selIt.kids.length + ' items shown here.', h('br'), 'Double-click it, press Enter, or use "Enter folder" to fly inside.')
                         : h('div', { style: { padding: 16, color: '#7f93ad' } }, TEXT_PREVIEW.has(selIt.ext) ? 'Loading…' : 'No preview for this type. Open it or show it in Explorer.')),
@@ -2565,7 +2852,7 @@
               h('button', { className: 'btn', style: BTN, onClick: () => change('rename', selIt) }, 'Rename…'),
               h('button', { className: 'btn', style: BTN, onClick: () => change('move', selIt) }, 'Move…'),
               !selIt.dir && h('button', { className: 'btn', style: BTN, onClick: () => change('copy', selIt) }, 'Copy to…'),
-              h('button', { className: 'btn btn-magenta', style: Object.assign({}, BTN, { color: '#ff9a9a' }), onClick: () => change('delete', selIt) }, 'Delete…')),
+              h('button', { className: 'btn', style: Object.assign({}, BTN, { color: 'var(--fr-error)', borderColor: 'var(--fr-error)' }), onClick: () => change('delete', selIt) }, 'Delete…')),
             h('div', { style: { marginTop: 6, color: '#6f86a6' } }, 'These file an approval card in System › Approvals. Nothing changes until you approve it there; delete goes to the Recycle Bin.'))),
         toast && h('div', { role: 'status', style: { position: 'absolute', left: '50%', bottom: 44, transform: 'translateX(-50%)', padding: '8px 12px', borderRadius: 8, background: PANEL_BG, border: '1px solid #2e5a8f', color: '#e6f0ff', fontSize: 12, display: 'flex', gap: 8, alignItems: 'center', maxWidth: '80%' } },
           toast.text,
@@ -2581,6 +2868,6 @@
     api('/api/settings').then(r => r.json()).then(d => markDazzle(((d && (d.settings || d)) || {}).studio_dazzle)).catch(() => {});
     window.addEventListener('friday-dazzle', e => markDazzle(e && e.detail));
   }
-  window.__files3dInternals = { buildItems, catOf, createSlotPool, stackSlots };
+  window.__files3dInternals = { buildItems, catOf, createSlotPool, stackSlots, shelvesPlan, makeFlight, SH };
   window.Friday3D = { createEngine, prewarm, registerCats, CATS, BRAND, api, postJSON, fmtSize, fmtDate, hex, recall, remember };
 })();

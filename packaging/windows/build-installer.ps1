@@ -289,7 +289,11 @@ $mustExist = @(
     'src\agent_friday\server.py',
     'src\agent_friday\setup_wizard.py',
     'src\agent_friday\__init__.py',
-    'friday_tray.py'
+    'friday_tray.py',
+    # The Reader draws a PDF with the vendored pdf.js; these are the files it imports.
+    'static\vendor\pdfjs-6.4.299\VERSION.json',
+    'static\vendor\pdfjs-6.4.299\legacy\pdf.min.mjs',
+    'static\vendor\pdfjs-6.4.299\legacy\pdf.worker.min.js'
 )
 $missing = @()
 foreach ($rel in $mustExist) {
@@ -306,6 +310,43 @@ if ($missing.Count -gt 0 -or $payloadFiles.Count -lt 200) {
     exit 1
 }
 Say-Ok "$($payloadFiles.Count) files, all required entry points present."
+
+# --- Prove each vendored library arrived whole ----------------------------
+#
+# A library under static\vendor\<name>\ that carries a VERSION.json (every file it ships,
+# with its SHA-256) is checked against that manifest here, in the payload, so a copy that
+# lost files or an exclusion that reaches into static\vendor stops the build instead of
+# shipping a Reader that cannot draw a PDF. A build that finds no manifest at all stops too:
+# a check that has nothing to check would pass for the wrong reason.
+Say-Working 'Checking the vendored libraries against their manifests.'
+$vendorRoot = Join-Path $Payload 'static\vendor'
+$vendorBad = @()
+$vendorChecked = 0
+$vendorLibs = 0
+foreach ($dir in @(Get-ChildItem -LiteralPath $vendorRoot -Directory -ErrorAction SilentlyContinue)) {
+    $manifest = Join-Path $dir.FullName 'VERSION.json'
+    if (-not [System.IO.File]::Exists($manifest)) { continue }
+    $vendorLibs++
+    try { $pins = (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).files }
+    catch { $vendorBad += "$($dir.Name)\VERSION.json cannot be read"; continue }
+    foreach ($pin in $pins.PSObject.Properties) {
+        $file = Join-Path $dir.FullName ($pin.Name -replace '/', '\')
+        if (-not [System.IO.File]::Exists($file)) { $vendorBad += "$($dir.Name)\$($pin.Name) is missing"; continue }
+        if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $pin.Value) { $vendorBad += "$($dir.Name)\$($pin.Name) differs from its pinned hash" }
+        $vendorChecked++
+    }
+}
+if ($vendorBad.Count -gt 0 -or $vendorLibs -eq 0) {
+    $shown = (@($vendorBad) | Select-Object -First 8) -join '; '
+    if ($vendorBad.Count -gt 8) { $shown += "; and $($vendorBad.Count - 8) more" }
+    Say-Problem -What ("A vendored library is not whole in the payload, so the build has stopped. " +
+                       $(if ($vendorBad.Count) { $shown } else { 'No VERSION.json manifest was found under static\vendor.' })) `
+                -WhatToDo 'Check that nothing in Get-PayloadExcludes reaches into static\vendor, and that the library is committed with its VERSION.json. Do not ship this artifact.'
+    Write-Log "BUILD ABORTED - vendored library incomplete: $shown (libraries with a manifest: $vendorLibs)" 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.vendor' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+Say-Ok "$vendorChecked vendored file(s) in $vendorLibs librar$(if ($vendorLibs -eq 1) { 'y' } else { 'ies' }) match their pinned hashes."
 
 # --- Prove it carries no keys. A grep is cheap; shipping a key is not. ----
 #

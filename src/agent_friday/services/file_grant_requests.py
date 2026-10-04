@@ -329,12 +329,15 @@ def ensure_hook() -> None:
         return
     _approvals().register_decision_hook(KIND, _on_decision)
     _approvals().register_decision_hook(RESET_KIND, _on_reset_decision)
+    from agent_friday.services.library import cards as _library_cards
+    _library_cards.ensure_hook()
     _HOOKED["done"] = True
 
 
 # ── The model's tool: list, ask, remove, re-grant ────────────────────────────
 
-ACTIONS = ("list", "ask", "remove", "regrant")
+ACTIONS = ("list", "ask", "remove", "regrant",
+           "library_add", "library_list", "library_remove", "library_forget")
 
 
 def _said_rows(rows: list) -> str:
@@ -356,6 +359,9 @@ def handle(inp: dict) -> str:
     if action not in ACTIONS:
         return "file_access error: action must be one of " + ", ".join(ACTIONS)
     fg = _fg()
+    if action.startswith("library_"):
+        from agent_friday.services.library import cards as _library_cards
+        return _library_cards.handle(action, inp)
     if action == "list":
         text = _said_rows(fg.access_rows())
         open_q = fg.notices()
@@ -413,8 +419,13 @@ TOOLS = [
          "items in one call); nothing is granted until the user approves the "
          "card on screen. action=remove takes away one permission (grant_id or "
          "path). action=regrant offers an old, set-aside permission again "
-         "(notice_id from list) through the same card. Say the result in one "
-         "plain sentence."),
+         "(notice_id from list) through the same card. The Library is separate: "
+         "action=library_add raises ONE card to add folders or files to the "
+         "Library (Friday reads them on this PC; this is not a cloud permission); "
+         "library_list says what is in it; library_remove (scope_id or "
+         "document) and library_forget (document) raise a card naming what goes. "
+         "Nothing changes until the user approves the card on screen. Say the "
+         "result in one plain sentence."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(ACTIONS)},
          "items": {"type": "array", "items": {"type": "object", "properties": {
@@ -425,7 +436,11 @@ TOOLS = [
          "type": {"type": "string", "enum": ["file", "folder"]},
          "reason": {"type": "string"},
          "grant_id": {"type": "string"},
-         "notice_id": {"type": "string"}},
+         "notice_id": {"type": "string"},
+         "document": {"type": "string"},
+         "scope_id": {"type": "string"},
+         "recursive": {"type": "boolean"},
+         "glob": {"type": "string"}},
          "required": ["action"]}},
 ]
 RINGS = {"file_access": 1}

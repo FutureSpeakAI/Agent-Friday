@@ -150,7 +150,169 @@ def gather_chunks(sources: Optional[dict] = None) -> list[dict]:
         for c in _conversation_chunks():
             chunks.append(c)
 
+    if src_cfg.get("library", True):
+        for c in _library_chunks():
+            chunks.append(c)
+
     return chunks
+
+
+def library_learning_on() -> bool:
+    """The owner's choice (settings.library_kg_learn == "on"). Unset or off: the
+    graph reads nothing from the Library."""
+    try:
+        return str((_load_settings() or {}).get("library_kg_learn") or "") == "on"
+    except Exception:
+        return False
+
+
+def _library_chunks() -> Iterable[dict]:
+    """Passages of the owner's open-shelf Library documents, when the owner chose
+    to let the graph learn from them. Always private (TIER_2), so extraction runs
+    on this PC and the records are encrypted at rest; a document that also
+    carries its own cloud permission is the only one treated as public. A vault-
+    shelf document is never offered: the graph's search index is not encrypted."""
+    if not library_learning_on():
+        return
+    try:
+        from agent_friday.services import file_grants as fg
+        from agent_friday.services.library import tree
+        from agent_friday.services.library.store import OWNER, store_for
+        st = store_for(OWNER)
+        vis = tree.TreeBuilder(st, OWNER).visible_docs()
+        for doc in vis.values():
+            if doc["shelf"] != "open":
+                continue
+            cloud_ok = bool((_load_settings() or {}).get("library_cloud_answers", False))
+            sens = 1 if (cloud_ok and fg.check_grant(Path(doc["path"])).state == "active") else 2
+            for p in st.q("SELECT id, text FROM passages WHERE doc_id=? ORDER BY id", (doc["id"],)):
+                yield {"id": f"lib:{doc['id']}#{p['id']}", "text": p["text"], "sensitivity": sens,
+                       "source_path": doc["path"],
+                       "provenance": {"docs": [str(doc["id"])], "sensitivity": sens}}
+    except Exception as e:
+        print(f"  [KG] library source failed, no Library facts this pass: {type(e).__name__}")
+
+
+def purge_library_documents(doc_ids) -> dict:
+    """Take Library documents out of the graph at once. Entities and relationships
+    known only from them go. An entity or relationship that is also known from elsewhere
+    keeps its place but loses its description (that text may carry the document's words
+    and cannot be separated out), and every community report that mentions a touched
+    entity, or either end of a touched relationship, is dropped; their search-index
+    entries go too. The next full index pass re-derives what the remaining sources support."""
+    keys = {str(int(d)) for d in doc_ids}
+    store = KnowledgeGraphStore()
+    manifest = KnowledgeGraphManifest()
+    gone: list[str] = []
+    touched: set[str] = set()
+    out = {"entities": 0, "relationships": 0, "described_again": 0, "reports": 0}
+
+    def _strip(records, kind):
+        keep = []
+        for r in records:
+            prov = r.get("provenance") or {}
+            docs = list(prov.get("docs") or [])
+            hit = [d for d in docs if d in keys]
+            if not hit:
+                keep.append(r)
+                continue
+            docs = [d for d in docs if d not in keys]
+            other = [k for k, v in prov.items() if k not in ("sensitivity", "docs") and v]
+            if docs or other:
+                prov["docs"] = docs
+                r["description"] = ""
+                r.pop("descriptions", None)
+                out["described_again"] += 1
+                if kind == "entities":
+                    touched.add(r["id"])
+                else:
+                    touched.update(x for x in (r.get("source"), r.get("target")) if x)
+                keep.append(r)
+            else:
+                out[kind] += 1
+                if kind == "entities":
+                    gone.append(r["id"])
+                else:
+                    touched.update(x for x in (r.get("source"), r.get("target")) if x)
+        return keep
+
+    ents = _strip(store.load("entities"), "entities")
+    dead = set(gone)
+    rels = [r for r in _strip(store.load("relationships"), "relationships")
+            if r.get("source") not in dead and r.get("target") not in dead]
+    comms = store.load("communities")
+    hit_comms = {c.get("community") for c in comms if (set(c.get("entity_ids") or []) & (touched | dead))}
+    reports = store.load("community_reports")
+    kept_reports = [r for r in reports if r.get("community") not in hit_comms]
+    out["reports"] = len(reports) - len(kept_reports)
+    if any(out.values()) or dead:
+        store.save("entities", ents)
+        store.save("relationships", rels)
+        store.save("community_reports", kept_reports)
+    try:
+        from agent_friday.services.library.store import OWNER, store_for
+        st = store_for(OWNER)
+        for d in keys:
+            row = st.get_document(int(d))
+            if row:
+                manifest.forget(row["path"])
+        manifest.save()
+    except Exception:
+        pass
+    ids = sorted(dead | touched)
+    if ids:
+        try:
+            from pathlib import Path as _P
+            from agent_friday.conversation_memory import get_conversation_memory
+            cm = get_conversation_memory()
+            # An index that was never made has nothing to delete, and opening it just to say so would
+            # load the embedding model.
+            if _P(cm.persist_dir).exists() and cm._ensure():
+                cm._client.get_or_create_collection("knowledge-graph").delete(ids=ids)
+        except Exception:
+            pass
+    return out
+
+
+def purge_library_document(doc_id: int) -> dict:
+    return purge_library_documents([doc_id])
+
+
+def purge_all_library() -> dict:
+    """Everything the graph learned from the Library (the owner turned learning off)."""
+    store = KnowledgeGraphStore()
+    keys: set[str] = set()
+    for name in ("entities", "relationships"):
+        for r in store.load(name):
+            keys.update((r.get("provenance") or {}).get("docs") or [])
+    return purge_library_documents(keys) if keys else {"entities": 0, "relationships": 0, "described_again": 0, "reports": 0}
+
+
+def _link_to_library(entities: dict[str, dict]) -> tuple[list[dict], list[dict]]:
+    """A node per Library document an entity was found in, and a 'mentioned in'
+    edge to it. Regenerated every pass, so a forgotten document leaves no node."""
+    try:
+        from agent_friday.services.library.store import OWNER, store_for
+        st = store_for(OWNER)
+    except Exception:
+        return [], []
+    docs: dict[str, dict] = {}
+    rels: list[dict] = []
+    for e in entities.values():
+        for d in (e.get("provenance") or {}).get("docs", []):
+            nid = f"lib_{d}"
+            if nid not in docs:
+                row = st.get_document(int(d)) if str(d).isdigit() else None
+                if not row:
+                    continue
+                docs[nid] = {"id": nid, "title": row["title"], "type": "document", "description": "A document in your Library",
+                             "degree": 0, "frequency": 1, "level": 0, "tier": "B", "community": "B_library",
+                             "provenance": {"docs": [str(d)], "sensitivity": int((e.get("provenance") or {}).get("sensitivity", 2))}}
+            if nid in docs:
+                rels.append({"id": f"rel_{e['id'][4:]}_{nid}", "source": e["id"], "target": nid,
+                             "description": "mentioned in", "weight": 0.3, "tier": "B",
+                             "provenance": dict(e.get("provenance") or {})})
+    return list(docs.values()), rels
 
 
 def _classify_free_text(text: str) -> int:
@@ -197,6 +359,11 @@ def _cognitive_chunks() -> Iterable[dict]:
     return out
 
 
+def _quotes_library(text: str) -> bool:
+    """A turn that drew on the Library (a footnote, or a forgotten-source mark)."""
+    return "[lib:" in text or "[unverified-lib:" in text or "[forgotten source]" in text
+
+
 def _conversation_chunks(limit: int = 400) -> Iterable[dict]:
     """Chat turns from `ConversationMemory.recent()`.
 
@@ -228,6 +395,8 @@ def _conversation_chunks(limit: int = 400) -> Iterable[dict]:
     for t in turns or []:
         content = str(t.get("text") or "")
         if len(content.strip()) < 40:      # skip trivia
+            continue
+        if _quotes_library(content):       # an answer drawn from the Library enters the graph only through the Library source
             continue
         sens = _classify_free_text(content)
         tid = t.get("turn_id") or hashlib.sha1(content.encode()).hexdigest()[:10]
@@ -796,9 +965,10 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                     if c.get("tier") != "B"]
 
     linked = _link_to_pages(entities, tier_a_entities)
+    lib_nodes, lib_links = _link_to_library(entities)
 
-    all_entities = tier_a_entities + list(entities.values())
-    all_rels = tier_a_rels + list(relationships.values()) + linked
+    all_entities = tier_a_entities + list(entities.values()) + lib_nodes
+    all_rels = tier_a_rels + list(relationships.values()) + linked + lib_links
     all_comms = tier_a_comms + communities
 
     from . import layout as layout_mod

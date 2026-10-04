@@ -48,6 +48,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
+from agent_friday.services import screen_click as _screen_click
 from agent_friday.core import login_required
 from agent_friday.services import goals as _goals
 from agent_friday.services import approvals as _approvals
@@ -222,7 +223,7 @@ def decide_approval_route(approval_id):
     if decision not in ("approve", "deny"):
         return jsonify({"ok": False, "error": "decision must be 'approve' or 'deny'"}), 400
     rec, won = _approvals.decide_with_outcome(
-        approval_id, decision, decided_by=data.get("decided_by", "owner"),
+        approval_id, decision, decided_by=_screen_click.decided_by(request, data.get("decided_by", "owner")),
         note=data.get("note", ""))
     if not rec:
         return jsonify({"ok": False, "error": "not found"}), 404

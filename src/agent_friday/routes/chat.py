@@ -83,6 +83,7 @@ from agent_friday.services.model_router import (
     _vault_cloud_fallback,
     _vault_local_only,
 )  # noqa: E501
+from agent_friday.services.library import cite as _library_cite
 from agent_friday.services.response_provenance import (
     mark_unverified_citations as _mark_unverified_citations,
     warn_if_ungrounded_claim as _warn_if_ungrounded_claim,
@@ -431,6 +432,9 @@ def _conv_context(cid, limit=None):
         role = 'user' if m.get('role') == 'user' else 'assistant'
         text = m.get('text') or ''
         if text:
+            if role == 'assistant' and (m.get('meta') or {}).get('library'):
+                # A reply that read the Library is recognised wherever history is replayed or summarised.
+                _library_cite.remember_library_reply(text)
             out.append({"role": role, "content": text})
     return out
 
@@ -469,6 +473,7 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
                            "text": friday_msg.get('text') or '',
                            "pinned": bool(friday_msg.get('pinned')),
                            "meta": {**_pmeta, **(meta or {}), "kind": "turn",
+                                    "library": bool(friday_msg.get('library')),
                                     "sources": friday_msg.get('sources') or [],
                                     # The reply's reasoning trace, so the
                                     # bubble keeps its Reasoning section
@@ -1742,6 +1747,7 @@ def chat():
                 if tail:
                     tail, sub = _scrub_pii(tail)
                     lookup.update(sub)
+                _library_cite.elide_for_cloud(messages, settings)
                 _scrub_messages_pii(messages, lookup)
                 if lookup:
                     tail += "\n\n" + PRIVACY_PLACEHOLDERS_NOTE
@@ -2271,6 +2277,9 @@ def chat():
         # The print below is best-effort only — under the tray's pythonw launch
         # these stdout lines were NOT reaching ~/.friday/server_stderr.log when
         # checked, so the response field is the signal to rely on, not the log.
+        # Footnotes from the owner's Library: labels become [lib:doc#block] tokens,
+        # backed only by what search_library returned this turn (services/library/cite).
+        reply = _library_cite.resolve_labels(reply, tool_trace)
         _cite_meta = None
         if cite_sources:
             from agent_friday.services import citation_enforcement as _ce
@@ -2360,6 +2369,11 @@ def chat():
                 if isinstance(entry.get('result'), str):
                     entry['result'] = _rehydrate_pii(entry['result'], pii_lookup)
 
+        # Footnotes are checked and recorded last, on the reply that will be shown and
+        # saved (a retry above may have replaced it): live only if this turn's search
+        # returned the block, and gone if its source was forgotten meanwhile.
+        reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
+
         # ── Fact-check: flag low-trust news citations. ──
         # When Friday cites a news outlet, consult its Source Trust Graph score
         # and append a verify-independently warning for anything below 0.5.
@@ -2403,6 +2417,7 @@ def chat():
                 'openai' if _provider == 'openai' else 'cloud')
             _seat_model = (_route_info.get('model')
                            or settings.get('orchestrator_model') or '')
+        _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -2413,7 +2428,10 @@ def chat():
             'sources': sources,
             'model': _seat_model,
             'seat': _seat_class,
+            'library': _lib_turn,
         }
+        if _lib_turn:
+            _library_cite.remember_library_reply(reply)
         if _seat_notice:
             friday_msg['seat_notice'] = _seat_notice
         if _fallback_chain:
@@ -2463,7 +2481,7 @@ def chat():
             try:
                 threading.Thread(
                     target=_index_chat_turn,
-                    args=(message, reply, session_id, user_msg['id'], friday_msg['id']),
+                    args=(message, reply, session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
                     daemon=True,
                 ).start()
             except Exception:
@@ -2922,6 +2940,8 @@ def chat_send():
             role = 'user' if msg.get('role') == 'user' else 'assistant'
             text = msg.get('text', '')
             if text:
+                if role == 'assistant' and msg.get('library'):
+                    _library_cite.remember_library_reply(text)
                 messages.append({"role": role, "content": text})
         # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
         # memory too -- including this assistant's own earlier answers -- so a
@@ -3049,6 +3069,8 @@ def chat_send():
             'pinned': False,
             'workspace': workspace,
         }
+        reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
+        _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -3059,7 +3081,10 @@ def chat_send():
             'sources': sources,
             'model': _seat_model,
             'seat': _seat_class,
+            'library': _lib_turn,
         }
+        if _lib_turn:
+            _library_cite.remember_library_reply(reply)
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
         if _send_seat_notice:
@@ -3078,7 +3103,7 @@ def chat_send():
             try:
                 threading.Thread(
                     target=_index_chat_turn,
-                    args=(message, reply, _session_id, user_msg['id'], friday_msg['id']),
+                    args=(message, reply, _session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
                     daemon=True,
                 ).start()
             except Exception:

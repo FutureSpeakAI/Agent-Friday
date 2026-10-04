@@ -121,6 +121,8 @@ def command_for(c: Candidate) -> dict:
         except Exception:
             ws = c.id
         return {"tool": "navigate_to", "input": {"kind": "workspace", "workspace": ws}}
+    if c.kind == "library":
+        return {"tool": "library_show", "input": {"target": c.title}}
     inp = {"kind": c.kind, "id": c.id}
     if c.kind == "email" and c.extra.get("account"):
         inp["account"] = c.extra["account"]
@@ -226,6 +228,32 @@ def _file_candidates(text: str) -> List[Candidate]:
             out.append(Candidate("file", path, name[:90], path[:120],
                                  float(dt._score(q, name.lower()))))
     return out
+
+
+def _library_candidates(text: str) -> List[Candidate]:
+    """Documents the owner added to the Library, by title."""
+    from agent_friday.services import desktop_targets as dt
+    from agent_friday.services.library import principal as lib_principal
+    from agent_friday.services.library.store import store_for
+    q = _words(text)
+    principal = lib_principal.current()
+    if not q or principal is None:
+        return []
+    try:
+        from agent_friday.services.library import tree
+        st = store_for(principal)
+        rows = list(tree.TreeBuilder(st, principal).visible_docs().values())     # consent and the vault, as everywhere
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        title = r["title"] or ""
+        sc = float(dt._score(q, title.lower()))
+        if sc > 0:
+            out.append(Candidate("library", str(r["id"]), title[:90],
+                                 ("%s pages" % r["pages"]) if r["pages"] else "in your Library", sc))
+    out.sort(key=lambda c: c.score, reverse=True)
+    return out[:LEXICAL_K]
 
 
 def _news_candidates(text: str) -> List[Candidate]:
@@ -360,7 +388,8 @@ def _calendar_candidates(text: str) -> List[Candidate]:
 CANDIDATE_SOURCES: Dict[str, Callable[[str], List[Candidate]]] = {
     "email": _email_candidates,
     "wiki_page": _wiki_candidates,
-    "file": _file_candidates,
+    "file": lambda text: _file_candidates(text) + _library_candidates(text),
+    "library": _library_candidates,
     "news": _news_candidates,
     "workspace": _workspace_candidates,
     "calendar": _calendar_candidates,

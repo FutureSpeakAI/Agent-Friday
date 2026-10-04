@@ -623,6 +623,9 @@ records the option taken.
 - **D3.** Accounts and analytics leave Media: accounts to Settings → Accounts, analytics to
   a Media → Insights pane and the card's "after it went out" panel.
 - **D4.** Files 3D becomes a layout of the Library plus "Browse this PC", not its own entry.
+  *Amended:* Media keeps its 3D layout for what Friday makes. The 3D file browser and
+  "Browse this PC" moved to the Library workspace (`library.md`), which holds the documents the
+  owner added for Friday to read; Media is what Friday makes.
 - **D5.** Cloud tools are shown as chips that say "asks first".
 - **D6.** Media's timed cards appear as an overlay in the Calendar workspace.
 - **D7.** Media is `core:true` for fresh installs, since it replaces three workspaces.

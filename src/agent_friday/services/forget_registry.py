@@ -67,6 +67,8 @@ def _ensure_defaults() -> None:
     register_store("contacts_research", _research_find, _research_purge)
     register_store("sender_signals", _signals_find, _signals_purge)
     register_store("trust_log_people", _trust_log_find, _trust_log_purge)
+    from agent_friday.services.library import forget as _library_forget
+    _library_forget.register()
 
 
 def _norm(s: str) -> str:

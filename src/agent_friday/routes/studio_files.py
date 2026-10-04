@@ -11,6 +11,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from agent_friday.core import login_required
 from agent_friday.services import studio_files as sf
+from agent_friday.services.library import pages, procrun
 from agent_friday.routes._errors import api_error
 
 studio_files_bp = Blueprint('studio_files', __name__)
@@ -86,9 +87,49 @@ def sf_raw():
                      as_attachment=not inline and mimetype == 'application/octet-stream',
                      download_name=p.name)
     resp.headers['X-Content-Type-Options'] = 'nosniff'
-    if not mimetype.startswith('application/pdf'):
+    if mimetype.startswith('application/pdf'):
+        # No viewer, script, font or network reference may come from the file.
+        resp.headers['Content-Security-Policy'] = 'sandbox; default-src \'none\''
+    else:
         resp.headers['Content-Security-Policy'] = 'sandbox; default-src \'none\'; img-src \'self\'; media-src \'self\'; style-src \'unsafe-inline\''
     resp.headers['Cache-Control'] = 'private, no-cache'
+    return resp
+
+
+def _pdf_path(a):
+    p = sf.resolve(a.get('root', ''), a.get('path', ''))
+    if not p.is_file() or p.suffix.lower() != '.pdf':
+        raise sf.Denied('not a PDF')
+    return p
+
+
+@studio_files_bp.route('/api/studio-files/pdfinfo')
+@login_required
+def sf_pdfinfo():
+    try:
+        p = _pdf_path(request.args)
+        return jsonify({'status': 'ok', 'pages': pages.pdf_page_count(p)})
+    except sf.Denied as e:
+        return _denied(e)
+    except procrun.TaskFailed as e:
+        return jsonify({'status': 'error', 'error': "Couldn't read this PDF: " + e.reason}), 422
+
+
+@studio_files_bp.route('/api/studio-files/pdfpage')
+@login_required
+def sf_pdfpage():
+    a = request.args
+    try:
+        p = _pdf_path(a)
+        got = pages.render_pdf_page(p, a.get('n', 1, type=int) or 1, a.get('w', 900, type=int) or 900)
+    except sf.Denied as e:
+        return _denied(e)
+    except procrun.TaskFailed as e:
+        return jsonify({'status': 'error', 'error': "Couldn't read this PDF: " + e.reason}), 422
+    resp = Response(got['data'], mimetype=got['mime'])
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    resp.headers['Cache-Control'] = 'private, max-age=3600'
+    resp.headers['X-Pdf-Pages'] = str(got['pages'])
     return resp
 
 

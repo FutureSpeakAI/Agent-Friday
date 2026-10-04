@@ -117,6 +117,8 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 
 | Component | Version | Delivery | License | Copyright / attribution |
 |---|---|---|---|---|
+| pdf.js (pdfjs-dist, legacy build with its character maps, standard fonts, image-decoder modules and colour profile), used by the Library's Reader | 6.4.299 | in installer zip | Apache-2.0 | Copyright Mozilla and individual contributors; its LICENSE is vendored beside it |
+| sqlcipher3-wheels (Python binding with SQLCipher community edition 4.12.0 and OpenSSL 3.6.0 built in; encrypts the Library's index when installed) | 0.5.7 (pinned `==0.5.7`; wheel `cp313-win_amd64` sha256 `3cd95c309984e01fa456417058dec87ca8baf01ec419ed5eaa734fed2d22ec53`) | installed by installer (documents) | zlib/libpng (binding; text below), BSD-style (SQLCipher; text below), Apache-2.0 (OpenSSL 3.6.0) | Copyright Charles Leifer and laggykiller (binding); Copyright Zetetic LLC (SQLCipher) |
 | rapidocr-onnxruntime (bundled PP-OCR detection, classification and recognition models) | 1.2.3 | installed by installer (documents) | Apache-2.0 | Copyright RapidAI; models from PaddleOCR, Copyright PaddlePaddle Authors |
 | aiosignal | 1.4.0 | installed by installer (recommended/memory) | Apache-2.0 | Copyright aio-libs contributors |
 | bcrypt | 5.0.0 | installed by installer (memory) | Apache-2.0 | Copyright (c) The Python Cryptographic Authority developers (from package Author metadata) |
@@ -3093,3 +3095,55 @@ Public License instead of this License.
 * Stability AI Community License: <https://stability.ai/community-license-agreement>
 * CreativeML Open RAIL++-M: <https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md>
 
+### zlib/libpng (the sqlcipher3-wheels Python binding)
+
+Copyright (c) 2004-2007 Gerhard Häring
+
+This software is provided 'as-is', without any express or implied warranty. In
+no event will the authors be held liable for any damages arising from the use
+of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it freely,
+subject to the following restrictions:
+
+    1. The origin of this software must not be misrepresented; you must not
+       claim that you wrote the original software. If you use this software in
+       a product, an acknowledgment in the product documentation would be
+       appreciated but is not required.
+
+    2. Altered source versions must be plainly marked as such, and must not be
+       misrepresented as being the original software.
+
+    3. This notice may not be removed or altered from any source distribution.
+
+### BSD-style (SQLCipher community edition 4.12.0, Zetetic LLC)
+
+Built statically into the sqlcipher3-wheels 0.5.7 wheel (it reports `4.12.0 community`). The text below is the `LICENSE.md` of the sqlcipher/sqlcipher repository at tag v4.12.0.
+
+Copyright (c) 2025, ZETETIC LLC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the ZETETIC LLC nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL ZETETIC LLC BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The same wheel links OpenSSL 3.6.0 (reported by `PRAGMA cipher_provider_version`) statically. OpenSSL 3.x is under the Apache-2.0 licence, whose text is in this file above.

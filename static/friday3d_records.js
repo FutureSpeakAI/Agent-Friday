@@ -39,7 +39,7 @@
     return isNaN(t) ? 0 : Math.floor(t / 1000);
   };
   const clip = (s, n) => { s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
-  const PALETTE = [0x00d4ff, 0xff0080, 0x00ff80, 0x7b61ff, 0xf59e0b, 0x5fa8ff, 0xff8bcb, 0x4ecdc4, 0xfeca57, 0xff6b6b, 0x7de1ff, 0xb0ffc8];
+  const PALETTE = [BRAND.cyan, BRAND.magenta, 0x00ff80, 0x7b61ff, 0xf59e0b, 0x5fa8ff, 0xff8bcb, 0x4ecdc4, 0xfeca57, 0xff6b6b, 0x7de1ff, 0xb0ffc8];
   const colorFor = key => { let x = 0; for (const c of String(key)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return PALETTE[x % PALETTE.length]; };
   const json = url => api(url).then(r => r.json());
   const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -237,7 +237,7 @@
       weight: PRIO[t.priority] || (t.kind === 'goal' ? 2 : 1), time: secs(t.deadline || t.updated || t.updated_at || t.created || t.created_at) }),
     groupings: {
       urgency: { label: 'urgency', key: urgencyOf,
-        style: k => ({ rank: URGENCY.indexOf(k), color: [0xef4444, 0xff0080, 0xf59e0b, 0x5fa8ff, 0x66758c][URGENCY.indexOf(k)] }) },
+        style: k => ({ rank: URGENCY.indexOf(k), color: [BRAND.danger, BRAND.magenta, BRAND.amber, 0x5fa8ff, 0x66758c][URGENCY.indexOf(k)] }) },
       status: { label: 'status', key: t => t.status || 'open' },
       category: { label: 'area', key: t => t.kind === 'goal' ? 'Goals' : (t.category || 'general') }
     },
@@ -895,7 +895,7 @@
         (err && !(recs && recs.length)) && h('div', { className: 'f3-glass', role: 'alert', style: { top: 12, left: 12, padding: '7px 11px', color: '#ff9a9a', fontSize: 12, borderColor: 'rgba(239,68,68,0.5)' } }, '⚠ ' + err + ' This is not an empty ' + (src.label || '').toLowerCase() + ' view: the read failed.'),
         recs === null && !err && h('div', { className: 'f3-glass', style: { top: 12, left: 12, padding: '6px 10px', color: '#9fd0ff', fontSize: 12 } }, 'Reading ' + (src.label || '').toLowerCase() + '…'),
         recs && !recs.length && !err && !busy && h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7f93ad', fontSize: 13 } }, src.empty),
-        carry && h('div', { style: { position: 'fixed', left: carry.x + 14, top: carry.y + 10, pointerEvents: 'none', zIndex: 60, padding: '6px 10px', borderRadius: 8, background: 'rgba(6,10,18,0.94)', border: '1px solid ' + (carry.hot ? '#00d4ff' : '#ff0080'), color: '#e6f0ff', fontSize: 12, boxShadow: '0 6px 24px rgba(0,0,0,0.5)', maxWidth: 280 } },
+        carry && h('div', { style: { position: 'fixed', left: carry.x + 14, top: carry.y + 10, pointerEvents: 'none', zIndex: 60, padding: '6px 10px', borderRadius: 8, background: 'rgba(6,10,18,0.94)', border: '1px solid ' + (carry.hot ? 'var(--fr-cyan)' : 'var(--fr-deny)'), color: '#e6f0ff', fontSize: 12, boxShadow: '0 6px 24px rgba(0,0,0,0.5)', maxWidth: 280 } },
           (src.carryIco || '▣') + ' ' + (carry.group.length > 1 ? carry.group.length + ' ' + noun : clip(carry.group[0].card.title, 60)) + (carry.hot ? ' → ' + zlabel(carry.hot) : '')),
         !carry && hover && hover.it && hover.it !== sel && h('div', { style: { position: 'fixed', left: hover.x + 14, top: hover.y + 12, pointerEvents: 'none', padding: '5px 8px', borderRadius: 6, background: 'rgba(6,10,18,0.92)', border: '1px solid #2e5a8f', color: '#e6f0ff', fontSize: 11, zIndex: 50, maxWidth: 300 } },
           h('div', { style: { fontWeight: 600 } }, clip(hover.it.card.title, 90)), hover.it.card.sub && h('div', { style: { color: '#8fa6c4' } }, clip(hover.it.card.sub, 120))),

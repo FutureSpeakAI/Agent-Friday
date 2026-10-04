@@ -2359,6 +2359,18 @@ DEFAULT_SETTINGS = {
     # defederation. Buying stays refused whatever this says.
     # trust_agents: the trust graph's agent kind (schema only; both off).
     "held_features": {"federation": False, "trust_agents": False},
+    # The Library (services/library): search on or off; whether a Library answer
+    # may be written by a cloud model (default off: Library text stays on this
+    # PC); whether documents are read while on battery; whether the knowledge
+    # graph learns from Library documents ("" = not chosen yet, "on", "off").
+    "library_search": True,
+    "library_floor_tier": False,           # a small PC: fewer, shorter passages per search
+    "library_cloud_answers": False,
+    "library_index_on_battery": False,
+    # The most characters of the owner's documents one answer may send to a cloud model
+    # (only when cloud answers are on); the Library trims to it and says so.
+    "library_cloud_char_cap": 6000,
+    "library_kg_learn": "",
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
     # `decision_backend` (which scorer answers Friday's typed judgments) is
     # declared once, with the approval-gate block further down.
@@ -3460,6 +3472,12 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
     try:
         from agent_friday.services import decisions as _dec
         _dec.on_settings_change({**DEFAULT_SETTINGS, **existing}, merged)
+    except Exception:
+        pass
+    # Turning the knowledge graph's learning from the Library off takes back what it learned.
+    try:
+        from agent_friday.services.library import runtime as _lib_rt
+        _lib_rt.on_settings_change({**DEFAULT_SETTINGS, **existing}, merged)
     except Exception:
         pass
     return merged

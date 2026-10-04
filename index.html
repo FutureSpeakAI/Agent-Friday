@@ -3720,6 +3720,11 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/studio_files3d.js"></script>
     <!-- Media: one card per piece of work (defines window.MediaWS). -->
     <script src="/static/media_ws.js"></script>
+    <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
+    <script src="/static/library_reader.js"></script>
+    <script src="/static/library_ws.js"></script>
+    <!-- Library shelves: the 3D view of the Library (defines window.LibraryShelves3D). -->
+    <script src="/static/library_shelves.js"></script>
     <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
     <script src="/static/friday3d_records.js"></script>
     <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
@@ -12905,6 +12910,11 @@ function fridayCitationize(src) {
     } catch (e) {}
     return '<a href="' + esc(url) + '" target="_blank" rel="noopener" class="friday-cite" title="' + esc(url) + '" style="' + base + 'background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.4);color:#00d4ff;text-decoration:none;">🔗 ' + esc(host) + '</a>';
   });
+  // The owner's Library: [lib:doc#block] opens the Reader at that paragraph (Shift-click:
+  // the 3D shelves). One that this turn's search did not return is inert, and a dead one
+  // never reaches here (the server turns it into words).
+  out = out.replace(/\[unverified-lib:\d+#\d+\]/g, () => '<span class="friday-cite friday-cite-unverified" title="' + esc('Not from this turn\u2019s search of your Library') + '" style="' + base + 'background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);color:#f87171;cursor:help;text-decoration:line-through;">\u26a0 source</span>');
+  out = out.replace(/\[lib:(\d+)#(\d+)\]/g, (_, d, b) => chip('rgba(0,212,255,0.12)', 'rgba(0,212,255,0.4)', '#00d4ff', 'Library source', 'Open this source in your Library \u00b7 Shift-click to see it in 3D', ' role="link" tabindex="0" data-lib-doc="' + d + '" data-lib-block="' + b + '"'));
   out = out.replace(/\[wiki:([^\]]+)\]/g, (_, p) => chip('rgba(123,97,255,0.14)', 'rgba(123,97,255,0.45)', '#b794f6', '📄 ' + p.trim(), 'Open in Knowledge · ' + p.trim(), ' role="link" tabindex="0" data-kw-page="' + esc(p.trim()) + '"'));
   out = out.replace(/\[news:([^\]]+)\]/g, (_, p) => {
     const outlet = p.split('/')[0].trim();
@@ -12933,6 +12943,28 @@ if (typeof window !== 'undefined') {
 // Open Knowledge from anywhere: the desktop opens its window; a standalone
 // tab or the chat-only window opens a Knowledge tab; Knowledge's own tab
 // navigates in place.
+function fridayOpenLibrary(t) {
+  const nav = {
+    workspace: 'library',
+    lib: {
+      doc: Number(t.doc),
+      block: Number(t.block)
+    }
+  };
+  if (t.shift) nav.view3d = true;
+  if (STANDALONE_WS === 'library') {
+    fridayNavigate(nav);
+    return;
+  }
+  if (STANDALONE_WS || window.__FRIDAY_CHROME__ === 'chat' || !window.fridayOpenWorkspace) {
+    fridayOpenWorkspaceTab('library', {
+      libdoc: String(t.doc),
+      libblock: String(t.block)
+    });
+    return;
+  }
+  window.fridayOpenWorkspace(nav);
+}
 function fridayOpenKnowledge(target) {
   const t = Object.assign({
     workspace: 'knowledge'
@@ -12953,10 +12985,18 @@ function fridayOpenKnowledge(target) {
 }
 if (typeof document !== 'undefined') {
   const kwChip = e => {
-    const el = e.target && e.target.closest ? e.target.closest('.friday-cite[data-kw-page], .friday-cite[data-kw-query]') : null;
+    const el = e.target && e.target.closest ? e.target.closest('.friday-cite[data-kw-page], .friday-cite[data-kw-query], .friday-cite[data-lib-block]') : null;
     if (!el) return;
     if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
+    if (el.getAttribute('data-lib-block')) {
+      fridayOpenLibrary({
+        doc: el.getAttribute('data-lib-doc'),
+        block: el.getAttribute('data-lib-block'),
+        shift: !!e.shiftKey
+      });
+      return;
+    }
     const page = el.getAttribute('data-kw-page');
     if (page) fridayOpenKnowledge({
       page
@@ -12973,7 +13013,7 @@ if (typeof document !== 'undefined') {
    model reply, a fetched page or an imported note can never run script in
    Friday's own origin. Anything that is not a whole, allowed tag is escaped. */
 const FRIDAY_MD_TAGS = new Set('p br hr h1 h2 h3 h4 h5 h6 strong b em i u s del ins code pre blockquote ul ol li a img span div table thead tbody tfoot tr th td sup sub details summary kbd mark small'.split(' '));
-const FRIDAY_MD_ATTRS = new Set(['class', 'title', 'href', 'target', 'rel', 'src', 'alt', 'role', 'tabindex', 'style', 'colspan', 'rowspan', 'align', 'start', 'width', 'height', 'open', 'data-kw-page', 'data-kw-query']);
+const FRIDAY_MD_ATTRS = new Set(['class', 'title', 'href', 'target', 'rel', 'src', 'alt', 'role', 'tabindex', 'style', 'colspan', 'rowspan', 'align', 'start', 'width', 'height', 'open', 'data-kw-page', 'data-kw-query', 'data-lib-doc', 'data-lib-block']);
 /* An image loads the moment it paints, so it is the one element whose address
    is never taken from a reply: only inline raster data and Friday's own origin
    qualify. A remote address (https:, http:, //host, a backslash form, a
@@ -13170,7 +13210,7 @@ function sanitizeVoiceTranscript(raw) {
   // transcript (rendered as plain text, no fridayCitationize pass) they'd
   // show as raw [memory:…]/[conversation:…] brackets or stray 💬 markers.
   // Strip the token, keep the words.
-  t = t.replace(/\[(?:memory|conversation|wiki|news|web|unverified-web):[^\]\n]{0,160}\]/gi, ' ');
+  t = t.replace(/\[(?:memory|conversation|wiki|news|web|unverified-web|lib|unverified-lib):[^\]\n]{0,160}\]/gi, ' ');
   t = t.replace(/💬\s*(?=\d{4}-\d{2}-\d{2})/g, '');
   // 7. Collapse whitespace the removals left behind.
   t = t.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
@@ -54206,6 +54246,49 @@ function SettingsTabPrivacy({
     title: "File access",
     desc: "Which files and folders cloud models may read when " + fridayName() + " opens them."
   }, /*#__PURE__*/React.createElement(FileAccessPanel, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Library",
+    desc: "Documents you add to the Library are read and indexed on this PC, and nothing is sent anywhere. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key."
+  }, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Library search",
+    value: s.library_search !== false,
+    onChange: () => save({
+      library_search: s.library_search === false
+    }),
+    desc: "On, " + fridayName() + " can search the documents you added and answer with footnotes. Off, she cannot see them, and nothing is deleted."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Let a cloud model write Library answers",
+    value: !!s.library_cloud_answers,
+    onChange: () => save({
+      library_cloud_answers: !s.library_cloud_answers
+    }),
+    desc: "Off, nothing from your documents goes to a cloud model: in a chat that uses one, she says so and you can switch that chat to the local model. On, only passages from documents that also have a cloud permission in File access can go, one document at a time, never from the vault shelf, and never more than the limit below."
+  }), /*#__PURE__*/React.createElement(StRow, {
+    label: "Most of your documents' text one cloud answer may send",
+    desc: "Only matters when cloud answers are on. A cloud model gets at most this many characters of your documents for one answer; if more matched, " + fridayName() + " leaves the rest out and says so. The default is about three pages."
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    value: String(s.library_cloud_char_cap || 6000),
+    onChange: e => save({
+      library_cloud_char_cap: Number(e.target.value)
+    })
+  }, [2000, 4000, 6000, 12000, 24000, 48000].map(n => /*#__PURE__*/React.createElement("option", {
+    key: n,
+    value: String(n)
+  }, n.toLocaleString() + (n === 6000 ? " characters (default)" : " characters"))))), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Read documents while on battery",
+    value: !!s.library_index_on_battery,
+    onChange: () => save({
+      library_index_on_battery: !s.library_index_on_battery
+    }),
+    desc: "Off, new and changed documents wait until the PC is plugged in."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Let the knowledge graph learn from Library documents",
+    value: s.library_kg_learn === 'on',
+    onChange: () => save({
+      library_kg_learn: s.library_kg_learn === 'on' ? 'off' : 'on'
+    }),
+    desc: "On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted. Forgetting a document removes what the graph learned only from it and clears the descriptions it contributed to; turning this off takes back everything learned from your documents."
+  })), /*#__PURE__*/React.createElement(StSection, {
     title: "Fonts"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Load fonts from Google Fonts",
@@ -64469,6 +64552,13 @@ function App() {
         padding: 20
       }
     }, "Media did not load."),
+    library: window.LibraryWS ? /*#__PURE__*/React.createElement(window.LibraryWS, null) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#888',
+        fontSize: 12,
+        padding: 20
+      }
+    }, "The Library did not load."),
     trust: with3D('trust', 'people', /*#__PURE__*/React.createElement(TrustWS, null)),
     system: /*#__PURE__*/React.createElement(SystemWS, null),
     code: with3D('code', 'code', /*#__PURE__*/React.createElement(CodeWS, null)),

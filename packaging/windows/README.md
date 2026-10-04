@@ -30,8 +30,10 @@ thing you send. The user unzips it anywhere and double-clicks
 
 The build needs no Python of its own — it uses the embeddable interpreter it
 just downloaded to build the wheels. It **aborts** rather than producing a
-degraded artifact if the payload is incomplete, if the wheelhouse comes out
-empty, or if anything credential-shaped survives into the payload.
+degraded artifact if the payload is incomplete, if a vendored library under
+`static\vendor` does not match the file hashes pinned in its `VERSION.json` (the
+Library's pdf.js, 204 files, rides this way), if the wheelhouse comes out empty,
+or if anything credential-shaped survives into the payload.
 
 Useful flags: `-NoBundlePython` (installer downloads Python on the target
 instead), `-NoWheelhouse` (accept the source-build fallback deliberately).

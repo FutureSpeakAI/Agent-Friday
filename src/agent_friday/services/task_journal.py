@@ -585,6 +585,66 @@ def announce_interrupted(interrupted: Iterable[dict]) -> None:
         pass
 
 
+def _redact_value(v: Any, fn) -> tuple:
+    """`v` with every string passed through `fn(str) -> (str, changed)`: (new value, changed)."""
+    if isinstance(v, str):
+        return fn(v)
+    if isinstance(v, list):
+        res = [_redact_value(x, fn) for x in v]
+        return [r[0] for r in res], any(r[1] for r in res)
+    if isinstance(v, dict):
+        res = {k: _redact_value(x, fn) for k, x in v.items()}
+        return {k: r[0] for k, r in res.items()}, any(r[1] for r in res.values())
+    return v, False
+
+
+def redact(fn) -> Dict[str, Any]:
+    """Take text out of every task record because the owner ordered something forgotten.
+
+    `fn(text) -> (text, changed)` is applied to every string in every task's journal events and in
+    its JSON files (state, ledger, resume checkpoint). A changed record is written back the way it
+    was written (protected, atomically); sequence numbers and times are untouched. A record that
+    cannot be read (a passphrase that no longer opens it) cannot be read by anything else either and
+    is left as it is. Returns {"records": how many changed}."""
+    out: Dict[str, Any] = {"records": 0}
+    with _LOCK:
+        root = tasks_dir()
+        if not root.exists():
+            return out
+        for d in sorted(p for p in root.iterdir() if p.is_dir()):
+            jp = d / "journal.jsonl"
+            if jp.exists():
+                try:
+                    lines = jp.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    continue
+                changed, new_lines = 0, []
+                for raw in lines:
+                    ev = _decode_line(raw)
+                    if ev is None:
+                        new_lines.append(raw)
+                        continue
+                    nev, c = _redact_value(ev, fn)
+                    if c:
+                        new_lines.append(_encode_line(nev))
+                        changed += 1
+                    else:
+                        new_lines.append(raw)
+                if changed:
+                    _write_atomic(jp, ("\n".join(new_lines) + "\n").encode("utf-8"))
+                    out["records"] += changed
+            for f in sorted(d.glob("*.json")):
+                try:
+                    obj = json.loads(_unprotect(f.read_bytes()).decode("utf-8"))
+                except Exception:
+                    continue
+                nobj, c = _redact_value(obj, fn)
+                if c:
+                    _write_atomic(f, _protect(json.dumps(nobj, default=str, ensure_ascii=False).encode("utf-8")))
+                    out["records"] += 1
+    return out
+
+
 def reset_for_tests() -> None:
     with _LOCK:
         _SEQ.clear()

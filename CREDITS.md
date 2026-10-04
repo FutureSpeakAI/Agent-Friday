@@ -47,6 +47,29 @@ one at a time carrying the conversation so far, and a cleaning pass. Only the
 idea is borrowed; no code or prompt text is, so no notice is required. The
 credit is courtesy.
 
+### jevbox (github.com/extend-hq/jevbox)
+No licence published | Extend (CrowdView Inc)
+
+Ideas from jevbox shaped Friday's Library (`services/library/`): searching a
+document tree as a chain of small multiple-choice questions with a "none of
+these" choice at each step, keeping a few routes alive and parking the weak
+ones, keeping page and paragraph positions so answers can cite the exact spot,
+building no model-written summaries at index time, and re-checking access
+after the model answers. jevbox publishes no licence, so no code, prompt,
+wording, icon or asset was used; Friday's implementation was written from a
+description of the ideas. jevbox credits TypeSafe's hierarchical
+classification, GPT Researcher and PageIndex (MIT) for parts of the design.
+
+### pg-jev (github.com/realZachi/pg-jev)
+License: PostgreSQL License | Zachi
+
+Ideas from pg-jev shaped two small parts of the Library: stamping every search
+record and every cited answer with the model and question-wording versions that
+made it, and a cap on how much document text may leave the machine for one
+answer. No pg-jev code, text or asset was used; the Library's own code was
+written from a description of the ideas, so no notice is required. The credit
+is courtesy.
+
 ### Anthropic Research
 - **Asimov's cLaws** — Governance framework inspired by Asimov's Laws of
   Robotics, adapted into a formal specification for AI agent constraints.
