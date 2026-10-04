@@ -4094,9 +4094,15 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
 
 def _evidence_verdict(tool_trace):
     """The evidence gate: a task is verified only when it used a tool other
-    than spawning another task. Returns (verified, summary, final_status),
+    than spawning another task AND that tool actually ran. A call that raised
+    an approval card and stopped, was held, declined, denied or errored did
+    nothing: it counts only once the owner has decided and approved it and the
+    tool's own result says it ran. Returns (verified, summary, final_status),
     and shows the check on the lattice as one verification pass (§13)."""
-    evidence = [t for t in (tool_trace or []) if t.get('name') not in ('spawn_task',)]
+    from agent_friday.services.completion_receipts import receipt_ok as _ran
+    evidence = [t for t in (tool_trace or [])
+                if t.get('name') not in ('spawn_task',)
+                and _tool_call_status(t.get('result')) == 'ok' and _ran(t)]
     verified = len(evidence) > 0
     summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
                if evidence else 'no tools used')
