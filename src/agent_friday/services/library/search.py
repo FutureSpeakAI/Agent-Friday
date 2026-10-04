@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 from typing import Iterator
 
-from agent_friday.services.library import embed, route, tree
+from agent_friday.services.library import embed, route, tree, versions
 from agent_friday.services.library.store import OWNER, Store, VaultLocked, store_for
 
 _STOP = frozenset("""a an and are as at be but by can did do does for from had has have how i if in into is it its me
@@ -94,6 +94,7 @@ class _Ctx:
             self.qvec = v[0] if v is not None else None
         self.menus = 0
         self.laya_calls = 0
+        self.laya_answered = False          # Laya actually answered something (it may be asked and not loaded)
         self.decisions: list[dict] = []
         self.cands: dict[int, dict] = {}        # passage id -> candidate
         self.seen_sections: set = set()
@@ -152,6 +153,7 @@ class _Ctx:
             if p is None:
                 return
             c["noul"] = p
+            self.laya_answered = True
             if p >= self.cfg["noul_stop"]:
                 c["score"] = max(c["score"], 0.9)
             elif p >= self.cfg["noul_hold"]:
@@ -181,6 +183,7 @@ def _decide(ctx: _Ctx, options: list[route.Node], level: int) -> route.Answer:
         ctx.laya_calls += 1
         if la is not None:
             a = la
+            ctx.laya_answered = True
     return a
 
 
@@ -491,12 +494,15 @@ def search(question: str, *, principal: str | None = None, scope: str | None = N
                 "fallback": fallback}
     remember(principal, ev)
     yield {"event": "evidence", "evidence": ev, "searched": searched, "notes": notes}
-    receipt = {"menus": ctx.decisions, "fallback": fallback, "laya_calls": ctx.laya_calls,
+    stamp = versions.stamp(laya_used=ctx.laya_answered,
+                           cfg=ctx.cfg)
+    receipt = {"stamp": stamp, "menus": ctx.decisions, "fallback": fallback, "laya_calls": ctx.laya_calls,
                "passages": [{"id": e["passage_id"], "score": e["score"], "rank": i + 1} for i, e in enumerate(ev)],
                "ms": round((time.monotonic() - t0) * 1000)}
     sid = uuid.uuid4().hex[:12]
     store.add_receipt(sid, receipt)
-    yield {"event": "done", "result": _result(ev, len(ctx.decisions), len(vis), fallback, notes, receipt, ev, sid=sid)}
+    yield {"event": "done", "result": _result(ev, len(ctx.decisions), len(vis), fallback, notes, receipt, ev, sid=sid,
+                                              stamp=stamp)}
 
 
 def _hints(ctx: _Ctx) -> list[int]:
@@ -517,9 +523,9 @@ def _hints(ctx: _Ctx) -> list[int]:
     return sorted(fused, key=lambda d: -fused[d])[:8]
 
 
-def _result(evidence, menus, docs, fallback, notes, receipt, ev_full, *, sid=None, stats=None) -> dict:
+def _result(evidence, menus, docs, fallback, notes, receipt, ev_full, *, sid=None, stats=None, stamp=None) -> dict:
     out = {"evidence": evidence, "searched": {"documents": docs, "menus": menus, "fallback": fallback},
-           "notes": notes, "receipt": sid}
+           "notes": notes, "receipt": sid, "stamp": stamp or versions.stamp()}
     if stats:
         out["stats"] = stats
     return out

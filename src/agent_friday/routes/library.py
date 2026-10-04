@@ -110,12 +110,13 @@ def lib_search():
                     continue
                 yield "data: " + json.dumps(ev) + "\n\n"
             if done is not None and want_answer and done.get("evidence"):
-                out = answer.write(q, done["evidence"])
+                out = answer.write(q, done["evidence"], stamp=done.get("stamp"), receipt=done.get("receipt"))
                 yield "data: " + json.dumps({"event": "answer" if out["ok"] else "answer_unavailable",
                                               "text": out.get("text"), "reason": out.get("reason")}) + "\n\n"
         except Exception as e:  # noqa: BLE001 - a plain cause, never a traceback
             yield "data: " + json.dumps({"event": "failed", "error": "The search could not finish (%s)." % type(e).__name__}) + "\n\n"
-        yield "data: " + json.dumps({"event": "done", "receipt": (done or {}).get("receipt")}) + "\n\n"
+        yield "data: " + json.dumps({"event": "done", "receipt": (done or {}).get("receipt"),
+                                      "stamp": (done or {}).get("stamp")}) + "\n\n"
 
     return Response(stream_with_context(stream()), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

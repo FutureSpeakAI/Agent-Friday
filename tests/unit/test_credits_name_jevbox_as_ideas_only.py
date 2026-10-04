@@ -41,3 +41,18 @@ def test_no_jevbox_source_or_text_is_in_the_shipped_tree():
                 t = p.read_text(encoding="utf-8", errors="ignore")
                 hits += [(str(p.relative_to(ROOT)), b) for b in banned if b in t]
     assert not hits, hits
+
+
+def test_pg_jev_is_credited_for_ideas_only():
+    text = (ROOT / "CREDITS.md").read_text(encoding="utf-8")
+    m = re.search(r"^### pg-jev[^\n]*\n(.*?)(?=^### |^## )", text, re.S | re.M)
+    assert m, "CREDITS.md has no pg-jev entry"
+    e = re.sub(r"\s+", " ", m.group(0))
+    assert "github.com/realZachi/pg-jev" in e and "PostgreSQL License" in e
+    assert "Ideas from pg-jev" in e and "No pg-jev code" in e
+    banned = ("pg-jev--", "jev_prob", "plpython3u")
+    for base in ("src", "static"):
+        for p in (ROOT / base).rglob("*"):
+            if p.is_file() and p.suffix in {".py", ".js", ".html"} and "vendor" not in p.parts:
+                t = p.read_text(encoding="utf-8", errors="ignore")
+                assert not any(b in t for b in banned), p

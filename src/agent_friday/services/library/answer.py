@@ -30,7 +30,8 @@ def seat_model() -> str | None:
         return None
 
 
-def write(question: str, evidence: list[dict], *, model: str | None = None) -> dict:
+def write(question: str, evidence: list[dict], *, model: str | None = None, stamp: dict | None = None,
+          receipt: str | None = None) -> dict:
     """{"ok": True, "text"} with footnote tokens, or {"ok": False, "reason"}."""
     model = model or seat_model()
     if not model:
@@ -43,9 +44,12 @@ def write(question: str, evidence: list[dict], *, model: str | None = None) -> d
     if not text:
         return {"ok": False, "reason": "the local model did not answer"}
     refs = {e["label"]: e["ref"] for e in evidence if e.get("ref")}
-    trace = [{"name": "search_library", "input": {}, "result": '{"refs": %s}\n' % _json(refs)}]
+    from agent_friday.services.library import versions
+    stamp = stamp or versions.stamp()
+    trace = [{"name": "search_library", "input": {},
+              "result": '{"refs": %s, "stamp": %s, "receipt": %s}\n' % (_json(refs), _json(stamp), _json(receipt))}]
     text, _flagged = cite.finish(text, trace)
-    return {"ok": True, "text": text, "model": model}
+    return {"ok": True, "text": text, "model": model, "stamp": stamp}
 
 
 def _json(obj) -> str:

@@ -27,6 +27,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 from agent_friday import paths  # noqa: E402
 
 DIRNAME = "laya2-encoder"
+MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
 MODEL_SHA256 = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
 MODEL_NAME = "model.onnx"
 TOKENIZER_NAME = "tokenizer.json"
@@ -49,6 +50,11 @@ def artifacts_dir() -> Path:
 def files_present() -> bool:
     d = artifacts_dir()
     return (d / MODEL_NAME).is_file() and (d / TOKENIZER_NAME).is_file()
+
+
+def stamp_id() -> str:
+    """The encoder as a citation stamp: model id and the start of its pinned hash."""
+    return "%s@%s" % (MODEL_ID, MODEL_SHA256[:12])
 
 
 def status() -> dict:

@@ -68,7 +68,8 @@ CREATE INDEX IF NOT EXISTS vectors_doc ON vectors(doc_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, headings, body, tokenize='porter unicode61');
 CREATE TABLE IF NOT EXISTS receipts(id INTEGER PRIMARY KEY, search_id TEXT, ts REAL, data TEXT);
 CREATE TABLE IF NOT EXISTS cited_in(
-  block_id INTEGER NOT NULL, doc_id INTEGER NOT NULL, conversation_id TEXT, message_id TEXT, ts REAL);
+  block_id INTEGER NOT NULL, doc_id INTEGER NOT NULL, conversation_id TEXT, message_id TEXT, ts REAL,
+  stamp TEXT, receipt_id TEXT);
 CREATE INDEX IF NOT EXISTS cited_doc ON cited_in(doc_id);
 CREATE TABLE IF NOT EXISTS tombstones(sha256 TEXT, path TEXT, ts REAL, PRIMARY KEY(sha256, path));
 """
@@ -207,6 +208,10 @@ class Store:
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA auto_vacuum=INCREMENTAL") if self._fresh() else None
             self.db.executescript(_SCHEMA)
+            have = {r[1] for r in self.db.execute("PRAGMA table_info(cited_in)").fetchall()}
+            for col in ("stamp", "receipt_id"):
+                if col not in have:
+                    self.db.execute("ALTER TABLE cited_in ADD COLUMN %s TEXT" % col)
             self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def _fresh(self) -> bool:
@@ -443,12 +448,13 @@ class Store:
                (search_id, time.time(), json.dumps(data, separators=(",", ":"))))
 
     def add_citation(self, block_id: int, doc_id: int, conversation_id: str | None,
-                     message_id: str | None) -> None:
+                     message_id: str | None, stamp: str | None = None, receipt_id: str | None = None) -> None:
+        """Record that an answer cited a block, with the versions of the search that found it."""
         from agent_friday.services import off_record
         if off_record.skip("library"):
             return
-        self.x("INSERT INTO cited_in(block_id, doc_id, conversation_id, message_id, ts) VALUES(?,?,?,?,?)",
-               (block_id, doc_id, conversation_id, message_id, time.time()))
+        self.x("INSERT INTO cited_in(block_id, doc_id, conversation_id, message_id, ts, stamp, receipt_id) "
+               "VALUES(?,?,?,?,?,?,?)", (block_id, doc_id, conversation_id, message_id, time.time(), stamp, receipt_id))
 
     # -- reading --------------------------------------------------------------
 

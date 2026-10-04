@@ -9,6 +9,8 @@ back fenced as data (envelope), each with a label the answer cites.
 from __future__ import annotations
 
 import json
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 from agent_friday.services.library import envelope, grants, principal as pr, search
@@ -49,6 +51,69 @@ def _loop_is_local() -> bool:
         return False
 
 
+CLOUD_CAP_DEFAULT = 6000
+CLOUD_CAP_MIN = 1000
+CLOUD_CAP_MAX = 48000
+_TURN_SENT: "OrderedDict[str, int]" = OrderedDict()      # characters already sent to the cloud, by turn
+_SENT_LOCK = threading.Lock()
+
+
+def cloud_char_cap(settings: dict) -> int:
+    """The owner's per-answer cap on Library characters sent to a cloud model."""
+    try:
+        v = int(settings.get("library_cloud_char_cap", CLOUD_CAP_DEFAULT))
+    except (TypeError, ValueError):
+        v = CLOUD_CAP_DEFAULT
+    return max(CLOUD_CAP_MIN, min(CLOUD_CAP_MAX, v))
+
+
+def _turn_key() -> str:
+    try:
+        import agent_friday.core as core
+        return str(getattr(core._TURN_LOCAL, "turn_id", None) or "")
+    except Exception:
+        return ""
+
+
+def _apply_cap(ev: list[dict], cap: int) -> tuple[list[dict], str | None]:
+    """The passages that fit under `cap` characters for this whole answer (every
+    search of the turn counts), best first. A passage that does not fit whole is
+    cut at the room left when it is the only one that would otherwise be lost, and
+    the note says exactly what was left out. Nothing is trimmed silently."""
+    key = _turn_key()
+    with _SENT_LOCK:
+        sent = _TURN_SENT.get(key, 0) if key else 0
+    room = cap - sent
+    kept: list[dict] = []
+    left_out = cut = 0
+    for e in ev:
+        n = len(e["text"])
+        if n <= room:
+            kept.append(e)
+            room -= n
+        elif not kept and room >= 300:
+            kept.append(dict(e, text=e["text"][:room].rstrip() + "\u2026"))
+            room, cut = 0, cut + 1
+        else:
+            left_out += 1
+    used = cap - sent - room
+    if key:
+        with _SENT_LOCK:
+            _TURN_SENT[key] = sent + used
+            while len(_TURN_SENT) > 64:
+                _TURN_SENT.popitem(last=False)
+    if not left_out and not cut:
+        return kept, None
+    parts = []
+    if left_out:
+        parts.append("%d passage%s left out" % (left_out, "" if left_out == 1 else "s"))
+    if cut:
+        parts.append("%d cut short" % cut)
+    return kept, ("%s so this answer sends at most %s characters of your documents to a cloud model "
+                  "(your limit, in Settings, Privacy and Data, Library). Say so, and offer to answer locally "
+                  "for the full text." % (" and ".join(parts), format(cap, ",")))
+
+
 def _cloud_evidence(ev: list[dict], principal: str, settings: dict) -> tuple[list[dict], str | None]:
     """What of this evidence may go to a cloud model. By default none: Library
     answers stay on this PC. With the owner's setting on, only passages of
@@ -61,15 +126,25 @@ def _cloud_evidence(ev: list[dict], principal: str, settings: dict) -> tuple[lis
                     "Switch this chat to the local model, or allow cloud answers for Library documents "
                     "in Settings, Privacy and Data, Library.")
     st = store_for(principal)
-    keep = []
+    granted = []
     for e in ev:
         doc = st.get_document(e["doc_id"])
         if doc and fg.check_grant(Path(doc["path"])).state == "active":
-            fg.on_file_read(Path(doc["path"]), e["text"])
-            keep.append(e)
-    held = len(ev) - len(keep)
-    return keep, ("%d passage%s withheld: the document has no cloud permission." % (held, "" if held == 1 else "s")
-                  if held else None)
+            granted.append((e, doc))
+    held = len(ev) - len(granted)
+    fits, cap_note = _apply_cap([e for e, _d in granted], cloud_char_cap(settings))
+    by_id = {id(e): d for e, d in granted}
+    keep = []
+    for e in fits:
+        doc = by_id.get(id(e)) or next((d for ee, d in granted if ee["label"] == e["label"]), None)
+        fg.on_file_read(Path(doc["path"]), e["text"])        # only what is sent is registered as sendable
+        keep.append(e)
+    notes = []
+    if held:
+        notes.append("%d passage%s withheld: the document has no cloud permission." % (held, "" if held == 1 else "s"))
+    if cap_note:
+        notes.append(cap_note)
+    return keep, (" ".join(notes) or None)
 
 
 def search_library(inp: dict) -> str:
@@ -97,7 +172,8 @@ def search_library(inp: dict) -> str:
         ev, cloud_note = _cloud_evidence(ev, principal, s)
         if not ev:
             return cloud_note
-    meta = {"refs": {e["label"]: e["ref"] for e in ev if e.get("ref")},
+    meta = {"stamp": res.get("stamp"), "receipt": res.get("receipt"),
+            "refs": {e["label"]: e["ref"] for e in ev if e.get("ref")},
             "searched": res["searched"], "found": bool(ev) and res["searched"].get("fallback") != "brain",
             "notes": (res.get("notes") or []) + ([cloud_note] if cloud_note else [])}
     if res.get("stats"):

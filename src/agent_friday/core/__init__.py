@@ -2345,6 +2345,9 @@ DEFAULT_SETTINGS = {
     "library_search": True,
     "library_cloud_answers": False,
     "library_index_on_battery": False,
+    # The most characters of the owner's documents one answer may send to a cloud model
+    # (only when cloud answers are on); the Library trims to it and says so.
+    "library_cloud_char_cap": 6000,
     "library_kg_learn": "",
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
     # `decision_backend` (which scorer answers Friday's typed judgments) is

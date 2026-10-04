@@ -60,6 +60,16 @@ wording, icon or asset was used; Friday's implementation was written from a
 description of the ideas. jevbox credits TypeSafe's hierarchical
 classification, GPT Researcher and PageIndex (MIT) for parts of the design.
 
+### pg-jev (github.com/realZachi/pg-jev)
+License: PostgreSQL License | Zachi
+
+Ideas from pg-jev shaped two small parts of the Library: stamping every search
+record and every cited answer with the model and question-wording versions that
+made it, and a cap on how much document text may leave the machine for one
+answer. No pg-jev code, text or asset was used; the Library's own code was
+written from a description of the ideas, so no notice is required. The credit
+is courtesy.
+
 ### Anthropic Research
 - **Asimov's cLaws** — Governance framework inspired by Asimov's Laws of
   Robotics, adapted into a formal specification for AI agent constraints.

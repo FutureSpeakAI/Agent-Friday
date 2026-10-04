@@ -244,7 +244,7 @@
           if (e.event === 'answer') return Object.assign({}, r, { answer: e.text });
           if (e.event === 'answer_unavailable') return Object.assign({}, r, { answerNote: e.reason });
           if (e.event === 'failed') return Object.assign({}, r, { error: e.error, busy: false });
-          if (e.event === 'done') { es.close(); return Object.assign({}, r, { busy: false, receipt: e.receipt }); }
+          if (e.event === 'done') { es.close(); return Object.assign({}, r, { busy: false, receipt: e.receipt, stamp: e.stamp }); }
           return r;
         });
       };
@@ -433,7 +433,7 @@
               h('button', { className: 'btn', onClick: onRemove }, 'Remove from Library'),
               h('button', { className: 'btn lb-danger', onClick: onForget }, 'Forget everywhere')))
             : h('div', { className: 'lb-count' }, 'Select a document to see its details.'),
-          run && run.receipt && h('div', { className: 'lb-count' }, 'Last search: ' + run.steps.length + ' choices, ' + ((run.searched && run.searched.fallback) || 'none') + ' fallback.'))));
+          run && run.receipt && h('div', { className: 'lb-count', title: run.stamp ? 'Made with ' + [run.stamp.encoder, run.stamp.laya, 'wording ' + run.stamp.wording, 'settings ' + run.stamp.calibration].filter(Boolean).join(' \u00b7 ') : undefined }, 'Last search: ' + run.steps.length + ' choices, ' + ((run.searched && run.searched.fallback) || 'none') + ' fallback.'))));
   }
 
   window.LibraryWS = LibraryWS;

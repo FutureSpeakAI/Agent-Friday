@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from agent_friday.services.library import grants, principal as pr
+from agent_friday.services.library import grants, principal as pr, versions
 from agent_friday.services.library.store import store_for
 
 TOKEN_RE = re.compile(r"\[(unverified-)?lib:(\d+)#(\d+)\]")
@@ -40,6 +40,26 @@ def refs_from_trace(tool_trace) -> dict[str, str]:
         refs = meta.get("refs") if isinstance(meta, dict) else None
         if isinstance(refs, dict):
             out.update({str(k): str(v) for k, v in refs.items() if str(v).startswith("lib:")})
+    return out
+
+
+def search_info_from_trace(tool_trace) -> dict:
+    """{ref: (stamp, receipt)} for every passage returned this turn: the versions
+    and the search record that produced each footnote."""
+    out: dict = {}
+    for entry in tool_trace or []:
+        if not isinstance(entry, dict) or entry.get("name") != "search_library":
+            continue
+        res = entry.get("result")
+        if not isinstance(res, str):
+            continue
+        try:
+            meta = json.loads(res.split("\n", 1)[0])
+        except ValueError:
+            continue
+        if isinstance(meta, dict):
+            for ref in (meta.get("refs") or {}).values():
+                out[str(ref)] = (meta.get("stamp"), meta.get("receipt"))
     return out
 
 
@@ -87,6 +107,7 @@ def verify(reply: str, tool_trace, *, conversation_id: str | None = None) -> tup
     if principal is None:
         return TOKEN_RE.sub(GONE, reply), []
     live = set(refs_from_trace(tool_trace).values())
+    info = search_info_from_trace(tool_trace)
     flagged: list[str] = []
     st = store_for(principal)
 
@@ -98,7 +119,8 @@ def verify(reply: str, tool_trace, *, conversation_id: str | None = None) -> tup
         doc_id, block_id = int(m.group(2)), int(m.group(3))
         if not _still_valid(principal, doc_id, block_id):
             return GONE
-        st.add_citation(block_id, doc_id, conversation_id, None)
+        stamp, receipt = info.get(ref, (None, None))
+        st.add_citation(block_id, doc_id, conversation_id, None, versions.compact(stamp), receipt)
         return "[%s]" % ref
 
     return TOKEN_RE.sub(one, reply), flagged

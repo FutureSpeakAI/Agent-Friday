@@ -51288,7 +51288,19 @@ function SettingsTabPrivacy({
       library_cloud_answers: !s.library_cloud_answers
     }),
     desc: "Off, Library answers are written on this PC even when a chat uses a cloud model. On, only passages from documents that also have a cloud permission in File access can go, one document at a time."
-  }), /*#__PURE__*/React.createElement(StToggle, {
+  }), /*#__PURE__*/React.createElement(StRow, {
+    label: "Most of your documents' text one cloud answer may send",
+    desc: "Only matters when cloud answers are on. A cloud model gets at most this many characters of your documents for one answer; if more matched, " + fridayName() + " leaves the rest out and says so. The default is about three pages."
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    value: String(s.library_cloud_char_cap || 6000),
+    onChange: e => save({
+      library_cloud_char_cap: Number(e.target.value)
+    })
+  }, [2000, 4000, 6000, 12000, 24000, 48000].map(n => /*#__PURE__*/React.createElement("option", {
+    key: n,
+    value: String(n)
+  }, n.toLocaleString() + (n === 6000 ? " characters (default)" : " characters"))))), /*#__PURE__*/React.createElement(StToggle, {
     label: "Read documents while on battery",
     value: !!s.library_index_on_battery,
     onChange: () => save({
