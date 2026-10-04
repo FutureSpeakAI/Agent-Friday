@@ -594,3 +594,47 @@ def test_the_words_about_the_index_and_the_cloud_say_what_the_code_does():
         assert "the Library page says which" in text, page
         assert "written on this PC even when a chat uses a cloud model" not in text, page
         assert "Off, nothing from your documents goes to a cloud model" in text, page
+
+
+def test_library_cards_cannot_bury_the_owner(tmp_path):
+    from agent_friday.services.library import cards
+    made = []
+    for i in range(cards.MAX_WAITING):
+        d = tmp_path / ("Folder%d" % i)
+        d.mkdir()
+        out = cards.request_add([{"path": str(d)}])
+        assert out["ok"], out
+        made.append(out["approval_id"])
+    extra = tmp_path / "OneTooMany"
+    extra.mkdir()
+    held = cards.request_add([{"path": str(extra)}])
+    assert not held["ok"] and "waiting" in held["error"]
+    assert not cards.request_forget("owner", "anything")["ok"]
+    assert not cards.request_remove("owner", document="anything")["ok"]
+    # deciding one frees a place
+    from agent_friday.services import approvals
+    approvals.decide(made[0], "deny", decided_by="owner")
+    again = cards.request_add([{"path": str(extra)}])
+    assert again["ok"], again
+
+
+def test_the_root_of_a_consent_is_resolved_once_not_for_every_document_and_scope(tmp_path, monkeypatch):
+    from pathlib import Path
+    from agent_friday.services.library import grants
+    root = tmp_path / "Lib"
+    root.mkdir()
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    add = {"path": str(root), "type": "folder", "recursive": True}
+    grants._ROOTS.clear()
+    calls = []
+    real = Path.resolve
+
+    def spy(self, *a, **k):
+        calls.append(str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "resolve", spy)
+    rp = real(root / "a.txt")
+    for _ in range(50):
+        assert grants._covers(add, rp)
+    assert calls.count(str(root)) <= 1, calls[:5]

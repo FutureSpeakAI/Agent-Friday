@@ -33,16 +33,35 @@ def _norm(path) -> str:
     return os.path.normcase(str(path))
 
 
-def _covers(add: dict, path: Path) -> bool:
-    root = Path(add["path"])
+_ROOTS: dict[str, tuple[float, Path]] = {}
+_ROOT_TTL_S = 5.0
+
+
+def _resolved_root(root_text: str) -> Path:
+    """A consent's root, resolved. Kept for a few seconds: a search asks about every document
+    against every consent, and resolving the same root each time is a syscall per pair."""
+    now = time.monotonic()
+    hit = _ROOTS.get(root_text)
+    if hit and now - hit[0] < _ROOT_TTL_S:
+        return hit[1]
     try:
-        rp = path.resolve()
+        r = Path(root_text).resolve()
     except OSError:
-        return False
+        r = Path(root_text)
+    if len(_ROOTS) > 256:
+        _ROOTS.clear()
+    _ROOTS[root_text] = (now, r)
+    return r
+
+
+def _covers(add: dict, rp: Path) -> bool:
+    """Does this consent cover `rp`, a path already resolved (symlinks followed)?"""
+    root = Path(add["path"])
     if add.get("type") == "file":
-        return _norm(rp) == _norm(root.resolve()) if root.exists() else _norm(rp) == _norm(root)
+        rr = _resolved_root(str(root))
+        return _norm(rp) == _norm(rr) if root.exists() else _norm(rp) == _norm(root)
     try:
-        rel = rp.relative_to(root.resolve())
+        rel = rp.relative_to(_resolved_root(str(root)))
     except (ValueError, OSError):
         return False
     if not add.get("recursive", True) and len(rel.parts) > 1:
@@ -136,4 +155,8 @@ def allowed(principal: str, path: Path) -> bool:
     fg = _fg()
     if fg.check_grant(path).state == "denied":
         return False
-    return any(_covers(a, path) for a in active_scopes(principal))
+    try:
+        rp = path.resolve()
+    except OSError:
+        return False
+    return any(_covers(a, rp) for a in active_scopes(principal))

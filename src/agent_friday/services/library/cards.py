@@ -17,12 +17,22 @@ from agent_friday.services.library.store import OWNER, store_for
 
 SUBJECT_TYPE = "library"
 MAX_ITEMS = 25
+MAX_WAITING = 5
 _HOOKED = {"done": False}
 
 
 def _ap():
     from agent_friday.services import approvals
     return approvals
+
+
+def _waiting_refusal() -> dict | None:
+    """A model (or text it read) cannot bury the owner in Library cards: at most MAX_WAITING wait at once."""
+    n = sum(len(_ap().list_approvals(status="pending", kind=k)) for k in (KIND, REMOVE_KIND, FORGET_KIND))
+    if n >= MAX_WAITING:
+        return {"ok": False, "error": ("There are already %d Library requests waiting on the owner's screen. "
+                                       "Those need a decision before another is raised." % n)}
+    return None
 
 
 def find_documents(principal: str, text: str) -> list[dict]:
@@ -40,6 +50,9 @@ def find_documents(principal: str, text: str) -> list[dict]:
 def request_add(items, *, reason: str = "", requested_by: str = "friday") -> dict:
     """ONE card listing every folder or file to add. Adds nothing."""
     ensure_hook()
+    held = _waiting_refusal()
+    if held:
+        return held
     rows = items if isinstance(items, list) else [items]
     good, bad, seen = [], [], set()
     for raw in rows[:MAX_ITEMS]:
@@ -73,6 +86,9 @@ def request_add(items, *, reason: str = "", requested_by: str = "friday") -> dic
 def request_remove(principal: str, *, scope_id: str | None = None, document: str | None = None,
                    requested_by: str = "friday") -> dict:
     ensure_hook()
+    held = _waiting_refusal()
+    if held:
+        return held
     item = None
     if scope_id:
         sc = next((a for a in grants.active_scopes(principal) if a["id"] == scope_id), None)
@@ -99,6 +115,9 @@ def request_remove(principal: str, *, scope_id: str | None = None, document: str
 
 def request_forget(principal: str, document: str, *, requested_by: str = "friday") -> dict:
     ensure_hook()
+    held = _waiting_refusal()
+    if held:
+        return held
     hits = find_documents(principal, document)
     if len(hits) != 1:
         return {"ok": False, "error": ("several documents match: " + "; ".join(h["title"] for h in hits))
