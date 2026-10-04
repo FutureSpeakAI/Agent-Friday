@@ -264,6 +264,13 @@ INTERNAL_TOOLS = frozenset({
     # format is the owner's own podcast setting on this computer.
     "make_podcast", "podcast_list", "podcast_play", "podcast_source", "podcast_format",
     "media_show", "media_cards", "media_turn",
+    # media_play finds one audio or video card in the owner's own Media index
+    # and tells the owner's own screen to open it in the quick look and play
+    # it, from where a searched word was said when the local transcript knows
+    # it. It reads this PC's files and index and steers this PC's screen (ring
+    # 1, like podcast_play and navigate_to, so a phone-origin turn cannot drive
+    # the screen at home); it writes nothing and sends nothing out.
+    "media_play",
     # A media diet note only proposes: an approval card in the owner's own
     # approvals; the rule is applied by the approved card, with a receipt.
     "media_diet_note",
