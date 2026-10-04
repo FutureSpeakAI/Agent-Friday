@@ -224,7 +224,7 @@ INTERNAL_TOOLS = frozenset({
     # Friday's own folder; playing it steers the owner's own screen; the
     # format is the owner's own podcast setting on this computer.
     "make_podcast", "podcast_list", "podcast_play", "podcast_source", "podcast_format",
-    "media_show", "media_cards", "media_turn",
+    "media_show", "media_cards", "media_play", "media_turn",
     # A media diet note only proposes: an approval card in the owner's own
     # approvals; the rule is applied by the approved card, with a receipt.
     "media_diet_note",

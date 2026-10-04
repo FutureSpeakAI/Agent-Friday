@@ -41,8 +41,12 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import agent_friday.core as core
 
-STATUSES = ("idea", "draft", "review", "scheduled", "published")
-STATUS_WORD = {"idea": "Idea", "draft": "Draft", "review": "In review", "scheduled": "Scheduled", "published": "Published"}
+STATUSES = ("idea", "draft", "review", "scheduled", "published", "kept")
+STATUS_WORD = {"idea": "Idea", "draft": "Draft", "review": "In review", "scheduled": "Scheduled", "published": "Published", "kept": "Kept"}
+#: The five pipeline stages are the board's lanes. "kept" is the sixth word for a
+#: thing that was made and stays on this PC: finished, not in a pipeline, and
+#: never shown as published unless it actually went somewhere.
+STAGES = STATUSES[:5]
 
 #: The legacy Ideas kanban's stages, onto the five.
 LEGACY_STAGE = {"idea": "idea", "drafting": "draft", "review": "review", "scheduled": "scheduled", "published": "published"}
@@ -54,24 +58,33 @@ V2_STATUS: Dict[str, Tuple[str, Optional[str]]] = {
 }
 #: A podcast episode's status, onto the five plus a badge.
 EPISODE_STATUS: Dict[str, Tuple[str, Optional[str]]] = {
-    "ready": ("published", None), "failed": ("draft", "failed"), "cancelled": ("draft", "cancelled"),
+    "ready": ("kept", None), "failed": ("draft", "failed"), "cancelled": ("draft", "cancelled"),
 }
 
 KIND_BY_SUFFIX = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image", ".svg": "image",
     ".mp4": "video", ".webm": "video", ".mov": "video",
     ".mp3": "audio", ".wav": "audio", ".m4a": "audio", ".ogg": "audio",
-    ".md": "doc", ".txt": "doc", ".pdf": "doc", ".html": "page", ".htm": "page",
+    ".md": "doc", ".txt": "doc", ".pdf": "doc", ".srt": "doc", ".vtt": "doc", ".html": "page", ".htm": "page",
     ".pptx": "deck", ".docx": "doc", ".xlsx": "sheet", ".csv": "chart",
     ".glb": "model3d", ".gltf": "model3d", ".obj": "model3d",
 }
 KIND_WORD = {
     "draft": "Draft", "article": "Article", "episode": "Episode", "image": "Image", "imageset": "Image set",
     "video": "Video", "page": "Page", "chart": "Chart", "doc": "Document", "deck": "Deck", "sheet": "Sheet",
-    "post": "Post", "code": "Codebase", "music": "Music", "audio": "Audio", "model3d": "3D", "file": "File",
+    "post": "Post", "code": "Codebase", "music": "Music", "audio": "Audio", "model3d": "3D", "file": "File", "timeline": "Cut",
 }
 TEXT_KINDS = ("draft", "article", "doc")
 _LOCK = threading.RLock()
+
+#: What the page reads while the library builds: never a silent empty grid.
+_STATE: Dict[str, Any] = {"state": "never", "started": None, "finished": None, "indexed": 0,
+                          "counts": {}, "signature": None, "checked": 0.0, "reason": ""}
+_FRESH_LOCK = threading.Lock()
+#: How often a request may recompute the cheap change signature.
+CHECK_EVERY_S = 5.0
+#: The background pass, when the server runs: a cheap signature check, a scan only on change.
+PERIODIC_S = 120.0
 
 
 # ── paths ───────────────────────────────────────────────────────────────────
@@ -108,11 +121,133 @@ def _connect() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS relations (
             from_id TEXT, to_id TEXT, how TEXT, PRIMARY KEY (from_id, to_id, how)
         );
+        CREATE TABLE IF NOT EXISTS enrich (
+            id TEXT PRIMARY KEY, text TEXT, transcript TEXT, updated REAL
+        );
         CREATE INDEX IF NOT EXISTS cards_status ON cards(status);
         CREATE INDEX IF NOT EXISTS cards_when ON cards(when_ts);
         """
     )
+    for col, typ in (("favorite", "INTEGER"), ("tags", "TEXT")):
+        try:
+            con.execute(f"ALTER TABLE overrides ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass  # already there
+    _ensure_fts(con)
     return con
+
+
+_FTS: Optional[bool] = None
+
+
+def _ensure_fts(con: sqlite3.Connection) -> bool:
+    """The full-text index over everything a card says: title, its own text,
+    what the preview pass read out of it (slides, pages, documents), its
+    transcript, prompt, sources, maker and project. Local to this PC."""
+    global _FTS
+    if _FTS is False:
+        return False
+    try:
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(id UNINDEXED, title, text, extracted, transcript, prompt, sources, maker, project, tokenize='unicode61')")
+        _FTS = True
+    except sqlite3.OperationalError:
+        _FTS = False
+    return _FTS
+
+
+# ── collections: a saved set of filters with a name ─────────────────────────
+#: The filter keys a collection may hold; anything else is dropped on save.
+COLLECTION_KEYS = ("view", "kind", "project", "q", "privacy", "status", "tag", "favorite", "unsigned", "when", "sort")
+
+
+def collections_path() -> Path:
+    return media_dir() / "collections.json"
+
+
+def collections() -> List[Dict[str, Any]]:
+    try:
+        d = json.loads(collections_path().read_text(encoding="utf-8"))
+        return [c for c in d if isinstance(c, dict) and c.get("id")] if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def _write_collections(items: List[Dict[str, Any]]) -> None:
+    p = collections_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def save_collection(name: str, filters: Dict[str, Any], collection_id: Optional[str] = None) -> Dict[str, Any]:
+    """A smart collection is a saved filter ("this week's podcasts", "decks for
+    Harbour"): it is evaluated when opened, so it is always current."""
+    name = (name or "").strip()[:80]
+    if not name:
+        return {"status": "error", "message": "A collection needs a name."}
+    f = {k: v for k, v in (filters or {}).items() if k in COLLECTION_KEYS and v not in (None, "", False)}
+    items = collections()
+    rec = next((c for c in items if c["id"] == collection_id), None) if collection_id else None
+    if rec is None:
+        rec = {"id": "col_" + uuid.uuid4().hex[:8], "created": time.time()}
+        items.append(rec)
+    rec.update({"name": name, "filters": f, "updated": time.time()})
+    _write_collections(items)
+    return {"status": "ok", "collection": rec}
+
+
+def delete_collection(collection_id: str) -> Dict[str, Any]:
+    items = collections()
+    keep = [c for c in items if c["id"] != collection_id]
+    if len(keep) == len(items):
+        return {"status": "not_found"}
+    _write_collections(keep)
+    return {"status": "ok"}
+
+
+def collection_query(collection_id: str, limit: int = 200) -> Dict[str, Any]:
+    rec = next((c for c in collections() if c["id"] == collection_id), None)
+    if rec is None:
+        return {"status": "not_found"}
+    f = dict(rec.get("filters") or {})
+    since = until = None
+    if f.get("when"):
+        from agent_friday.services.media_card_tools import period
+        since, until = period(str(f["when"]))
+    res = query(view=f.get("view") or "all", q=f.get("q") or "", kind=f.get("kind"), project=f.get("project"),
+                privacy=f.get("privacy"), unsigned=bool(f.get("unsigned")), status=f.get("status"),
+                sort=f.get("sort") or "next", limit=limit, since=since, until=until,
+                favorite=bool(f.get("favorite")), tag=f.get("tag"))
+    res["status"] = "ok"
+    res["collection"] = rec
+    return res
+
+
+def bulk(ids: List[str], project: Any = None, add_tags: Optional[List[str]] = None, remove_tags: Optional[List[str]] = None,
+         favorite: Optional[bool] = None) -> Dict[str, Any]:
+    """One change on many cards: move to a project, tag, favourite. Each card
+    goes through patch(), so the same rules hold."""
+    done, missing = 0, []
+    for cid in ids or []:
+        c = get(cid)
+        if c is None:
+            missing.append(cid)
+            continue
+        tags = None
+        if add_tags or remove_tags:
+            cur = list(c.get("tags") or [])
+            for t in add_tags or []:
+                if str(t).strip() and str(t).strip().lower() not in [x.lower() for x in cur]:
+                    cur.append(str(t).strip())
+            if remove_tags:
+                low = [str(t).strip().lower() for t in remove_tags]
+                cur = [x for x in cur if x.lower() not in low]
+            tags = cur
+        r = patch(cid, project=project if project is not None else None, favorite=favorite, tags=tags)
+        if r.get("status") == "ok":
+            done += 1
+    return {"status": "ok", "done": done, "missing": missing}
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -185,6 +320,7 @@ def _card(**f: Any) -> Dict[str, Any]:
 
 
 def _upsert(con: sqlite3.Connection, c: Dict[str, Any]) -> None:
+    _STATE["indexed"] = int(_STATE.get("indexed") or 0) + 1
     con.execute(
         """INSERT INTO cards (id, kind, title, path, source_kind, source_ref, origin, created, modified, when_ts,
              status, badges, held, maker, on_this_pc, sources, signed, hash, privacy, published_at, targets, project,
@@ -202,6 +338,75 @@ def _upsert(con: sqlite3.Connection, c: Dict[str, Any]) -> None:
          1 if c["on_this_pc"] else 0, _j(c["sources"]), 1 if c["signed"] else 0, c["hash"], c["privacy"],
          c["published_at"], _j(c["targets"]), c["project"], c["text"] or "", _j(c["extra"]), time.time()),
     )
+    _fts_row(con, c["id"])
+
+
+def _fts_row(con: sqlite3.Connection, card_id: str) -> None:
+    """Rebuild one card's full-text row from the card and its enrichment."""
+    if not _FTS:
+        return
+    r = con.execute("SELECT c.title, c.text, c.sources, c.maker, c.project, c.extra, e.text AS ex, e.transcript AS tr FROM cards c LEFT JOIN enrich e ON e.id=c.id WHERE c.id=?", (card_id,)).fetchone()
+    if r is None:
+        con.execute("DELETE FROM cards_fts WHERE id=?", (card_id,))
+        return
+    sources = _dj(r["sources"], [])
+    prompt = " ".join(str(x)[8:] for x in sources if str(x).startswith("prompt: "))
+    con.execute("DELETE FROM cards_fts WHERE id=?", (card_id,))
+    con.execute("INSERT INTO cards_fts (id, title, text, extracted, transcript, prompt, sources, maker, project) VALUES (?,?,?,?,?,?,?,?,?)",
+                (card_id, r["title"] or "", (r["text"] or "")[:200000], (r["ex"] or "")[:200000], (r["tr"] or "")[:400000], prompt,
+                 " ".join(str(x) for x in sources), r["maker"] or "", r["project"] or ""))
+
+
+def enrich_text(card_id: str, *, text: Optional[str] = None, transcript: Optional[str] = None) -> None:
+    """What the preview pass read out of a file, or its transcript, joins the
+    card's searchable text. Either part may be given alone; the other is kept."""
+    with _LOCK:
+        con = _connect()
+        try:
+            cur = con.execute("SELECT text, transcript FROM enrich WHERE id=?", (card_id,)).fetchone()
+            t = text if text is not None else (cur["text"] if cur else "")
+            tr = transcript if transcript is not None else (cur["transcript"] if cur else "")
+            con.execute("INSERT INTO enrich (id, text, transcript, updated) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET text=excluded.text, transcript=excluded.transcript, updated=excluded.updated",
+                        (card_id, t or "", tr or "", time.time()))
+            _fts_row(con, card_id)
+            con.commit()
+        finally:
+            con.close()
+
+
+def _fts_match(q: str) -> str:
+    """A search box line as an FTS5 expression: every word a prefix term, a
+    quoted phrase kept whole; operators the user did not mean are neutralised."""
+    terms: List[str] = []
+    for m in re.finditer(r'"([^"]+)"|(\S+)', q):
+        if m.group(1):
+            terms.append('"' + m.group(1).replace('"', '') + '"')
+        else:
+            w = re.sub(r'[^\w\-\u00c0-\uffff]+', ' ', m.group(2)).strip()
+            if w:
+                terms.extend('"' + part + '"*' for part in w.split())
+    return " ".join(terms)
+
+
+def search_ids(q: str, limit: int = 2000) -> Dict[str, Dict[str, Any]]:
+    """{card id: {"rank", "hit"}} for a query over the full-text index; {} when
+    the index is not there or the expression does not parse (the caller falls
+    back to a plain substring match)."""
+    expr = _fts_match(q)
+    if not expr or not _FTS:
+        return {}
+    with _LOCK:
+        con = _connect()
+        try:
+            rows = con.execute(
+                "SELECT id, bm25(cards_fts, 10.0, 1.0, 1.0, 1.0, 2.0, 1.0, 0.5, 0.5) AS rank, "
+                "snippet(cards_fts, -1, '[', ']', '\u2026', 14) AS hit FROM cards_fts WHERE cards_fts MATCH ? ORDER BY rank LIMIT ?",
+                (expr, limit)).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        finally:
+            con.close()
+    return {r["id"]: {"rank": float(r["rank"]), "hit": r["hit"] or ""} for r in rows}
 
 
 def _relate(con: sqlite3.Connection, a: str, b: str, how: str) -> None:
@@ -270,9 +475,9 @@ def _scan_creations(con: sqlite3.Connection) -> int:
             id=_id_for("creation", rel), kind=kind, title=_title_from_name(name), path=str(p),
             source_kind="creation", source_ref=rel, origin="daily" if "daily" in name.lower() else "create",
             created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime,
-            status="published", badges=[], maker=(maker + " · this PC") if maker else "Friday · this PC",
+            status="published" if where else "kept", badges=[], maker=(maker + " · this PC") if maker else "Friday · this PC",
             sources=sources, signed=signed, hash=h,
-            privacy="published" if where else "private", published_at=where or "Kept on this PC",
+            privacy="published" if where else "private", published_at=where,
             text=(p.read_text(encoding="utf-8", errors="ignore")[:20000] if suffix in (".md", ".txt") else ""),
             extra={"suffix": suffix, "bytes": st.st_size, "meta": {k: v for k, v in meta.items() if k in ("kind", "model", "aspect_ratio", "duration_seconds")}},
         )
@@ -306,10 +511,10 @@ def _scan_documents(con: sqlite3.Connection) -> int:
         c = _card(
             id=_id_for("document", p.name), kind=KIND_BY_SUFFIX.get(p.suffix.lower(), "doc"), title=_title_from_name(p.name),
             path=str(p), source_kind="document", source_ref=p.name, origin="office",
-            created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status="published",
+            created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status="published" if where else "kept",
             maker="Office engine · this PC", sources=[str(made_by.get("from") or made_by.get("prompt") or "")[:120]] if made_by else [],
             signed=signed or bool(made_by), hash=h, privacy="published" if where else "private",
-            published_at=where or "Kept on this PC",
+            published_at=where,
             extra={"renders": renders, "pages": len(renders) or None},
         )
         _upsert(con, c)
@@ -325,10 +530,14 @@ def _scan_podcasts(con: sqlite3.Connection) -> int:
         return 0
     n = 0
     for ep in eps:
-        if (ep.get("origin") or "user") != "user":
-            continue  # the routine shows belong to News, on their runs
+        routine = (ep.get("origin") or "user") != "user"
         status, badge = EPISODE_STATUS.get(ep.get("status") or "", ("draft", "working"))
         srcs = [str(s.get("title") or s.get("kind") or "") for s in (ep.get("sources") or [])] or []
+        att = ep.get("attached") or {}
+        if routine:
+            # A News show's episode: it is listed here so nothing is missing, it
+            # opens on its News run, and its source is the run that made it.
+            srcs = ["News · " + str(ep.get("show") or att.get("routine") or "show") + (" · " + str(att.get("run_id")) if att.get("run_id") else "")] + srcs
         if not srcs and ep.get("source_count"):
             srcs = [f"{ep['source_count']} source(s)"]
         created = float(ep.get("created_at") or 0) or None
@@ -342,13 +551,14 @@ def _scan_podcasts(con: sqlite3.Connection) -> int:
         text = " ".join(str(l.get("text") or "") for l in (full.get("lines") or [])[:80])[:20000]
         c = _card(
             id=_id_for("episode", ep["id"]), kind="episode", title=ep.get("title") or ep.get("show") or "Episode",
-            path=str(pe.root() / ep["id"]), source_kind="episode", source_ref=ep["id"], origin="create",
+            path=str(pe.root() / ep["id"]), source_kind="episode", source_ref=ep["id"], origin="routine" if routine else "create",
             created=created, modified=float(ep.get("updated_at") or created or 0) or None, when_ts=created,
             status=status, badges=[badge] if badge else [], maker=("Local model · " + str(ep.get("voice_engine") or "local") + " · this PC"),
             sources=[s for s in srcs if s], signed=bool(prov.get("signed")), hash=str(prov.get("content_hash") or ""),
-            privacy="published" if ep.get("privacy") == "public" else "private",
-            published_at="Kept on this PC" if status == "published" else None, text=text,
-            extra={"duration_s": ep.get("duration_s"), "show": ep.get("show"), "stage": ep.get("stage_detail"), "chapters": ep.get("chapters") or []},
+            privacy="shared" if ep.get("privacy") == "public" else "private",
+            published_at=None, text=text,
+            extra={"duration_s": ep.get("duration_s"), "show": ep.get("show"), "stage": ep.get("stage_detail"), "chapters": ep.get("chapters") or [],
+                   "routine": att.get("routine") if routine else None, "run_id": att.get("run_id") if routine else None},
         )
         _upsert(con, c)
         n += 1
@@ -477,6 +687,147 @@ def _scan_posts(con: sqlite3.Connection) -> int:
     return n
 
 
+def _scan_folder(con: sqlite3.Connection, root: Path, source_kind: str, origin: str, maker: str,
+                 skip_suffixes=(".json", ".jsonl", ".tmp", ".part", ".pt", ".ckpt", ".safetensors")) -> int:
+    """Every file under a folder Friday writes into becomes a card; an unknown
+    type is a generic file card, never skipped. The first folder below the
+    root names the project."""
+    if not root.exists():
+        return 0
+    n = 0
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.name.startswith(".") or p.suffix.lower() in skip_suffixes:
+            continue
+        rel = p.relative_to(root).as_posix()
+        kind = KIND_BY_SUFFIX.get(p.suffix.lower(), "file")
+        st = p.stat()
+        signed, h, where = _provenance(p)
+        project = rel.split("/")[0] if "/" in rel else None
+        c = _card(
+            id=_id_for(source_kind, rel), kind=kind, title=_title_from_name(p.name), path=str(p),
+            source_kind=source_kind, source_ref=rel, origin=origin, created=st.st_ctime, modified=st.st_mtime,
+            when_ts=st.st_mtime, status="published" if where else "kept", maker=maker, sources=[],
+            signed=signed, hash=h, privacy="published" if where else "private", published_at=where,
+            project=project, text=(p.read_text(encoding="utf-8", errors="ignore")[:20000] if p.suffix.lower() in (".md", ".txt") else ""),
+            extra={"suffix": p.suffix.lower(), "bytes": st.st_size},
+        )
+        _upsert(con, c)
+        n += 1
+    return n
+
+
+def _scan_daily(con: sqlite3.Connection) -> int:
+    """~/.friday/creations: the daily-creation records are materialised into the
+    creations folder already; what is indexed here is every media or text file
+    a tool wrote beside them (read-aloud audio, saved outputs, project folders)."""
+    return _scan_folder(con, Path(core.DAILY_CREATIONS_DIR), "daily_file", "chat", "Friday · this PC")
+
+
+def _scan_comfy(con: sqlite3.Connection) -> int:
+    try:
+        from agent_friday.services.local_image import comfy_root
+        out = comfy_root() / "output"
+    except Exception:
+        return 0
+    return _scan_folder(con, out, "comfy", "create", "ComfyUI · this PC")
+
+
+def _json(p: Path) -> Dict[str, Any]:
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _scan_timelines(con: sqlite3.Connection) -> int:
+    """~/.friday/timelines: each cut is a card; its output video, when it is in
+    the creations folder, is related as turned_into."""
+    root = Path(core.FRIDAY_DIR) / "timelines"
+    if not root.exists():
+        return 0
+    n = 0
+    for p in sorted(root.glob("*.json")):
+        d = _json(p)
+        st = p.stat()
+        title = str(d.get("title") or d.get("name") or _title_from_name(p.name))
+        clips = d.get("clips") or d.get("items") or d.get("tracks") or []
+        names = []
+        for cl in clips if isinstance(clips, list) else []:
+            if isinstance(cl, dict):
+                nm = cl.get("file") or cl.get("path") or cl.get("name") or cl.get("src")
+                if nm:
+                    names.append(Path(str(nm)).name)
+        c = _card(
+            id=_id_for("timeline", p.name), kind="timeline", title=title, path=str(p), source_kind="timeline", source_ref=p.name,
+            origin="create", created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status="kept",
+            maker="Timeline (FFmpeg) · this PC", sources=names[:12], signed=False, privacy="private",
+            text=" ".join(names)[:20000], extra={"clips": len(names), "output": d.get("output") or d.get("output_file")},
+        )
+        _upsert(con, c)
+        out = d.get("output") or d.get("output_file")
+        if out:
+            _relate(con, c["id"], _id_for("creation", Path(str(out)).name), "turned_into")
+        for nm in names:
+            _relate(con, c["id"], _id_for("creation", nm), "made_from")
+        n += 1
+    return n
+
+
+def _scan_pipeline_runs(con: sqlite3.Connection) -> int:
+    """~/.friday/pipelines/runs: a production run is a card whose text is what
+    its stages wrote (script, storyboard, shot list)."""
+    root = Path(core.FRIDAY_DIR) / "pipelines" / "runs"
+    if not root.exists():
+        return 0
+    n = 0
+    for p in sorted(root.glob("*.json")):
+        d = _json(p)
+        st = p.stat()
+        name = str(d.get("template") or d.get("pipeline") or d.get("name") or "production run")
+        title = str(d.get("title") or d.get("brief") or name)[:120]
+        parts = []
+        for stage in (d.get("stages") or d.get("steps") or []):
+            if isinstance(stage, dict):
+                out = stage.get("output") or stage.get("result") or stage.get("text")
+                if isinstance(out, str):
+                    parts.append(out)
+        status = {"done": "kept", "complete": "kept", "completed": "kept", "failed": "draft", "running": "draft"}.get(str(d.get("status") or "").lower(), "kept")
+        c = _card(
+            id=_id_for("pipeline_run", p.name), kind="doc", title=title, path=str(p), source_kind="pipeline_run", source_ref=p.name,
+            origin="pipeline", created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status=status,
+            badges=["failed"] if str(d.get("status") or "").lower() == "failed" else [],
+            maker="Production pipeline · this PC", sources=[name], signed=False, privacy="private",
+            text="\n\n".join(parts)[:20000], extra={"template": name, "run_status": d.get("status")},
+        )
+        _upsert(con, c)
+        n += 1
+    return n
+
+
+def _scan_projects(con: sqlite3.Connection) -> int:
+    """~/.friday/projects: a creative project (a series bible) is a card and
+    names the project its cards belong to."""
+    root = Path(core.FRIDAY_DIR) / "projects"
+    if not root.exists():
+        return 0
+    n = 0
+    for p in sorted(root.glob("*/*.json")):
+        d = _json(p)
+        st = p.stat()
+        name = str(d.get("name") or d.get("title") or p.parent.name)
+        text = str(d.get("summary") or d.get("logline") or d.get("premise") or d.get("description") or "")
+        c = _card(
+            id=_id_for("project", p.parent.name + "/" + p.name), kind="doc", title=name, path=str(p), source_kind="project",
+            source_ref=p.parent.name + "/" + p.name, origin="create", created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime,
+            status="kept", maker="You", sources=[], signed=False, privacy="private", project=name,
+            text=(text + "\n" + json.dumps(d, ensure_ascii=False)[:6000])[:20000], extra={"bible": p.name == "bible.json"},
+        )
+        _upsert(con, c)
+        n += 1
+    return n
+
+
 def _scan_media_cards(con: sqlite3.Connection) -> int:
     root = cards_dir()
     if not root.exists():
@@ -502,7 +853,7 @@ def _scan_media_cards(con: sqlite3.Connection) -> int:
             status=status, badges=list((rec.get("extra") or {}).get("badges") or []),
             maker=rec.get("maker") or "You", sources=rec.get("sources") or [],
             signed=signed, hash=h, privacy="private",
-            published_at="Kept on this PC" if (file_p and status == "published") else None,
+            published_at=None,
             project=rec.get("project"), text=text[:20000], extra=rec.get("extra") or {},
         )
         _upsert(con, c)
@@ -512,21 +863,144 @@ def _scan_media_cards(con: sqlite3.Connection) -> int:
     return n
 
 
-def reindex() -> Dict[str, int]:
+def reindex(reason: str = "") -> Dict[str, int]:
     """Walk every root and refresh the cards. Overrides are reapplied; nothing is lost."""
     with _LOCK:
+        _STATE.update({"state": "indexing", "started": time.time(), "indexed": 0, "reason": reason})
         con = _connect()
         try:
             con.execute("UPDATE cards SET present=0")
             counts = {
                 "creations": _scan_creations(con), "documents": _scan_documents(con), "podcasts": _scan_podcasts(con),
                 "drafts": _scan_drafts(con), "legacy": _scan_legacy(con), "posts": _scan_posts(con), "media": _scan_media_cards(con),
+                "daily": _scan_daily(con), "timelines": _scan_timelines(con), "pipeline_runs": _scan_pipeline_runs(con),
+                "projects": _scan_projects(con), "comfy": _scan_comfy(con),
             }
             con.execute("DELETE FROM cards WHERE present=0")
+            if _FTS:
+                con.execute("DELETE FROM cards_fts WHERE id NOT IN (SELECT id FROM cards)")
+            con.execute("DELETE FROM enrich WHERE id NOT IN (SELECT id FROM cards)")
             con.commit()
         finally:
             con.close()
-        return counts
+        # The signature is taken after the pass: the pass itself creates the
+        # podcast root and the media folder, which must not read as a change.
+        _STATE.update({"state": "ready", "finished": time.time(), "counts": counts, "signature": _signature(), "checked": time.time()})
+    if not os.environ.get("FRIDAY_TESTING"):
+        try:
+            from agent_friday.services import media_previews as mp
+            mp.enqueue(query(view="all", sort="newest", limit=100000)["cards"])
+        except Exception:
+            pass
+    return counts
+
+
+# ── freshness: the index builds itself and notices change ─────────────────────
+
+def _roots() -> List[Path]:
+    out = [Path(core.CREATIONS_DIR), Path(core.DAILY_CREATIONS_DIR), Path(core.FRIDAY_DIR) / "podcasts",
+           Path(core.FRIDAY_DIR) / "wiki" / "content", Path(core.FRIDAY_DIR) / "content", Path(core.FRIDAY_DIR) / "timelines",
+           Path(core.FRIDAY_DIR) / "pipelines" / "runs", Path(core.FRIDAY_DIR) / "projects", cards_dir()]
+    try:
+        from agent_friday.services import office_engine
+        out.append(Path(office_engine.DOCUMENTS_DIR))
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import content_pipeline as cp
+        out.append(Path(cp.DB_PATH))
+    except Exception:
+        pass
+    return out
+
+
+def _signature() -> Tuple:
+    """A cheap fingerprint of every source: each root's own mtime, the mtime of
+    each folder one level down (a new file changes its folder's mtime), and the
+    size and mtime of the content store. No file is read."""
+    sig: List[Tuple] = []
+    for r in _roots():
+        try:
+            if not r.exists():
+                sig.append((str(r), None)); continue
+            st = r.stat()
+            if r.is_file():
+                sig.append((str(r), st.st_mtime_ns, st.st_size)); continue
+            sig.append((str(r), st.st_mtime_ns))
+            with os.scandir(r) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            sig.append((e.path, e.stat(follow_symlinks=False).st_mtime_ns))
+                    except OSError:
+                        continue
+        except OSError:
+            sig.append((str(r), "err"))
+    return tuple(sig)
+
+
+def status() -> Dict[str, Any]:
+    d = {k: v for k, v in _STATE.items() if k != "signature"}
+    return d
+
+
+def needs_refresh() -> bool:
+    if _STATE["state"] in ("never", "indexing"):
+        return _STATE["state"] == "never"
+    return _signature() != _STATE["signature"]
+
+
+def ensure_fresh(reason: str = "", sync: Optional[bool] = None) -> Dict[str, Any]:
+    """Build the index if it never was, or refresh it when a source changed.
+    Non-blocking by default (a background thread); synchronous under tests or
+    when asked. Throttled: the signature is recomputed at most every few seconds."""
+    if sync is None:
+        sync = bool(os.environ.get("FRIDAY_TESTING"))
+    now = time.time()
+    if _STATE["state"] == "indexing":
+        return status()
+    throttle = 0.0 if sync else CHECK_EVERY_S
+    if _STATE["state"] == "ready" and now - float(_STATE.get("checked") or 0) < throttle:
+        return status()
+    _STATE["checked"] = now
+    if not needs_refresh():
+        return status()
+    if not _FRESH_LOCK.acquire(blocking=False):
+        return status()
+
+    def run() -> None:
+        try:
+            reindex(reason)
+        except Exception as e:
+            _STATE.update({"state": "ready", "finished": time.time(), "error": str(e)[:200]})
+        finally:
+            _FRESH_LOCK.release()
+
+    if sync:
+        run()
+    else:
+        _STATE["state"] = "indexing"
+        threading.Thread(target=run, name="media-index", daemon=True).start()
+    return status()
+
+
+def start_background() -> None:
+    """At server start: build the index without blocking boot, then keep it
+    fresh with a cheap periodic check (a scan only when something changed).
+    Skipped under tests, like every other daemon."""
+    if os.environ.get("FRIDAY_TESTING"):
+        return
+
+    def loop() -> None:
+        time.sleep(3.0)
+        while True:
+            try:
+                ensure_fresh("periodic", sync=True)
+            except Exception:
+                pass
+            time.sleep(PERIODIC_S)
+
+    threading.Thread(target=loop, name="media-index-loop", daemon=True).start()
 
 
 # ── reading ──────────────────────────────────────────────────────────────────
@@ -540,6 +1014,8 @@ def _row_to_card(r: sqlite3.Row, ov: Optional[sqlite3.Row]) -> Dict[str, Any]:
         "signed": bool(r["signed"]), "hash": r["hash"], "privacy": r["privacy"], "published_at": r["published_at"],
         "targets": _dj(r["targets"], []), "project": r["project"], "extra": _dj(r["extra"], {}),
     }
+    c["favorite"] = False
+    c["tags"] = []
     if ov is not None:
         for k in ("status", "project", "title", "privacy", "published_at"):
             if ov[k] not in (None, ""):
@@ -548,6 +1024,11 @@ def _row_to_card(r: sqlite3.Row, ov: Optional[sqlite3.Row]) -> Dict[str, Any]:
             c["when"] = _iso(ov["when_ts"]); c["when_ts"] = ov["when_ts"]
         if ov["body_path"]:
             c["body_path"] = ov["body_path"]
+        try:
+            c["favorite"] = bool(ov["favorite"])
+            c["tags"] = _dj(ov["tags"], []) or []
+        except (IndexError, KeyError):
+            pass
     ex = c["extra"] or {}
     if ex.get("duration_s"):
         s = int(ex["duration_s"]); c["duration"] = f"{s // 60}:{s % 60:02d}"
@@ -557,12 +1038,54 @@ def _row_to_card(r: sqlite3.Row, ov: Optional[sqlite3.Row]) -> Dict[str, Any]:
         c["words"] = len(r["text"].split())
     if ex.get("renders"):
         c["renders"] = ["/api/media/" + c["id"] + "/render/" + str(i) for i in range(len(ex["renders"]))]
-    if c["path"] and c["source_kind"] in ("creation", "document", "media"):
+    if c["path"] and c["source_kind"] in ("creation", "document", "media", "daily_file", "comfy"):
         c["file_url"] = "/api/media/" + c["id"] + "/file"
         if c["kind"] in ("image", "imageset", "chart") and c["source_kind"] == "creation":
-            c["thumb"] = c["file_url"]
+            c["thumb"] = c["file_url"]          # the original, until the preview pass has been
+    if c["path"]:
+        c["filename"] = Path(c["path"]).name
+    _merge_preview(c, ov)
     c["editable_text"] = c["kind"] in TEXT_KINDS or (c["source_kind"] in ("draft_html", "legacy_item"))
     return c
+
+
+#: What the preview pass learned that the card shows: the keys copied onto ``details``.
+DETAIL_KEYS = ("bytes", "width", "height", "duration_s", "pages", "model", "prompt", "sources", "snippet",
+               "words", "count", "filename", "strip", "browser", "error", "format")
+#: A title that came from the filename gives way to the one the file itself carries.
+FILENAME_TITLED = ("creation", "document", "daily_file", "comfy", "timeline")
+
+
+def _merge_preview(c: Dict[str, Any], ov: Any) -> None:
+    """Thumbnail, strip, dimensions, duration, pages, provenance and a real
+    title from the preview cache (services/media_previews.py); nothing when
+    the pass has not been yet."""
+    try:
+        from agent_friday.services import media_previews as mp
+        d = mp.details(c)
+    except Exception:
+        return
+    if not d:
+        return
+    det = {k: d.get(k) for k in DETAIL_KEYS if d.get(k) not in (None, "", [])}
+    c["details"] = det
+    try:
+        if mp.image_path(c):
+            c["thumb"] = "/api/media/" + c["id"] + "/preview"
+        if d.get("strip") and mp.strip_path(c):
+            c["strip"] = "/api/media/" + c["id"] + "/strip"
+    except Exception:
+        pass
+    if d.get("duration_s") and not c.get("duration"):
+        s_ = int(float(d["duration_s"])); c["duration"] = f"{s_ // 60}:{s_ % 60:02d}"
+        c.setdefault("extra", {})["duration_s"] = d["duration_s"]
+    if d.get("pages") and not c.get("pages"):
+        c["pages"] = d["pages"]
+    if d.get("words") and not c.get("words"):
+        c["words"] = d["words"]
+    overridden = ov is not None and ov["title"] not in (None, "")
+    if d.get("title_guess") and not overridden and c["source_kind"] in FILENAME_TITLED:
+        c["title"] = str(d["title_guess"])
 
 
 def _today_bounds() -> Tuple[float, float]:
@@ -581,21 +1104,25 @@ def _view_sql(view: str) -> Tuple[str, List[Any]]:
         return "(c.status='review' OR c.held=1)", []
     if view == "published":
         return "(c.status='published')", []
+    if view == "kept":
+        return "(c.status='kept')", []
     return "1=1", []
 
 
 def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: Optional[str] = None,
           privacy: Optional[str] = None, unsigned: bool = False, status: Optional[str] = None,
-          sort: str = "next", limit: int = 200, offset: int = 0) -> Dict[str, Any]:
+          sort: str = "next", limit: int = 200, offset: int = 0,
+          since: Optional[float] = None, until: Optional[float] = None,
+          favorite: bool = False, tag: Optional[str] = None) -> Dict[str, Any]:
     with _LOCK:
         con = _connect()
         try:
-            rows = con.execute("SELECT c.*, o.status AS o_status, o.project AS o_project, o.title AS o_title, o.when_ts AS o_when, o.body_path AS o_body, o.privacy AS o_privacy, o.published_at AS o_pub FROM cards c LEFT JOIN overrides o ON o.id=c.id").fetchall()
+            rows = con.execute("SELECT c.*, o.status AS o_status, o.project AS o_project, o.title AS o_title, o.when_ts AS o_when, o.body_path AS o_body, o.privacy AS o_privacy, o.published_at AS o_pub, o.favorite AS o_fav, o.tags AS o_tags FROM cards c LEFT JOIN overrides o ON o.id=c.id").fetchall()
         finally:
             con.close()
     cards = []
     for r in rows:
-        ov = {"status": r["o_status"], "project": r["o_project"], "title": r["o_title"], "when_ts": r["o_when"], "body_path": r["o_body"], "privacy": r["o_privacy"], "published_at": r["o_pub"]}
+        ov = {"status": r["o_status"], "project": r["o_project"], "title": r["o_title"], "when_ts": r["o_when"], "body_path": r["o_body"], "privacy": r["o_privacy"], "published_at": r["o_pub"], "favorite": r["o_fav"], "tags": r["o_tags"]}
         c = _row_to_card(r, _Ov(ov))
         c["_text"] = (r["text"] or "")
         cards.append(c)
@@ -610,6 +1137,8 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
             return c["status"] == "review" or c["held"]
         if view == "published":
             return c["status"] == "published"
+        if view == "kept":
+            return c["status"] == "kept"
         return True
 
     def r_mod(c: Dict[str, Any]) -> Optional[float]:
@@ -617,18 +1146,17 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         return _parse_when(m) if m else None
 
     # counts over everything, for the rail
-    counts: Dict[str, Any] = {"all": len(cards), "kinds": {}, "private": 0, "shared": 0, "unsigned": 0, "no_project": 0}
-    for v in ("today", "progress", "review", "published"):
+    counts: Dict[str, Any] = {"all": len(cards), "kinds": {}, "private": 0, "shared": 0, "unsigned": 0, "no_project": 0, "favorites": 0, "tags": {}}
+    for v in ("today", "progress", "review", "published", "kept"):
         counts[v] = 0
     projects: Dict[str, int] = {}
     for c in cards:
-        for v in ("today", "progress", "review", "published"):
-            saved = view
-            view_local = v
-            if (view_local == "today" and (c["status"] == "review" or c["held"] or (c["when_ts"] and s <= c["when_ts"] < e) or (r_mod(c) and s <= r_mod(c) < e))) \
-               or (view_local == "progress" and c["status"] in ("draft", "review")) \
-               or (view_local == "review" and (c["status"] == "review" or c["held"])) \
-               or (view_local == "published" and c["status"] == "published"):
+        for v in ("today", "progress", "review", "published", "kept"):
+            if (v == "today" and (c["status"] == "review" or c["held"] or (c["when_ts"] and s <= c["when_ts"] < e) or (r_mod(c) and s <= r_mod(c) < e))) \
+               or (v == "progress" and c["status"] in ("draft", "review")) \
+               or (v == "review" and (c["status"] == "review" or c["held"])) \
+               or (v == "published" and c["status"] == "published") \
+               or (v == "kept" and c["status"] == "kept"):
                 counts[v] += 1
         kg = _kind_group(c["kind"])
         counts["kinds"][kg] = counts["kinds"].get(kg, 0) + 1
@@ -638,6 +1166,10 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
             counts["shared"] += 1
         if not c["signed"]:
             counts["unsigned"] += 1
+        if c.get("favorite"):
+            counts["favorites"] += 1
+        for t in c.get("tags") or []:
+            counts["tags"][t] = counts["tags"].get(t, 0) + 1
         if c["project"]:
             projects[c["project"]] = projects.get(c["project"], 0) + 1
         else:
@@ -656,16 +1188,35 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         out = [c for c in out if not c["signed"]]
     if status:
         out = [c for c in out if c["status"] == status]
+    if favorite:
+        out = [c for c in out if c.get("favorite")]
+    if tag:
+        tl = tag.strip().lower()
+        out = [c for c in out if tl in [t.lower() for t in (c.get("tags") or [])]]
+    if since is not None or until is not None:
+        # "September's videos", "this week's podcasts": the date that matters, else when the file changed
+        def _t(c):
+            return c["when_ts"] or r_mod(c) or 0
+        out = [c for c in out if (since is None or _t(c) >= since) and (until is None or _t(c) < until)]
+    hits: Dict[str, Dict[str, Any]] = {}
     if q:
         ql = q.lower().strip()
-        out = [c for c in out if ql in (c["title"] + " " + c["maker"] + " " + " ".join(c["sources"]) + " " + (c["project"] or "") + " " + c["_text"]).lower()]
-    order = {"review": 0, "draft": 1, "idea": 2, "scheduled": 3, "published": 4}
+        hits = search_ids(q)
+        if hits:
+            out = [c for c in out if c["id"] in hits]
+            for c in out:
+                c["hit"] = hits[c["id"]]["hit"]
+        else:
+            out = [c for c in out if ql in (c["title"] + " " + c["maker"] + " " + " ".join(c["sources"]) + " " + (c["project"] or "") + " " + c["_text"]).lower()]
+    order = {"review": 0, "draft": 1, "idea": 2, "scheduled": 3, "published": 4, "kept": 5}
     if sort == "newest":
         out.sort(key=lambda c: -(c["when_ts"] or 0))
     elif sort == "title":
         out.sort(key=lambda c: c["title"].lower())
     elif sort == "status":
         out.sort(key=lambda c: (order.get(c["status"], 9), -(c["when_ts"] or 0)))
+    elif hits:  # a search: the best match first
+        out.sort(key=lambda c: hits[c["id"]]["rank"])
     else:  # next: what needs the owner first, then what is soonest
         out.sort(key=lambda c: (0 if c["held"] else order.get(c["status"], 9), -(c["when_ts"] or 0)))
     total = len(out)
@@ -712,6 +1263,18 @@ def get(card_id: str) -> Optional[Dict[str, Any]]:
                 rels.append({"id": other, "how": how, "title": t["title"] if t else other})
             c["relations"] = rels
             c["body"] = _read_body(c, r["text"] or "")
+            try:
+                from agent_friday.services import media_previews as mp
+                c["peaks"] = (mp.details(c) or {}).get("peaks") or []
+            except Exception:
+                c["peaks"] = []
+            try:
+                from agent_friday.services import media_transcripts as mt
+                tr = mt.get(c)
+                if tr:
+                    c["transcript"] = {"text": tr.get("text") or "", "segments": tr.get("segments") or [], "engine": tr.get("engine")}
+            except Exception:
+                pass
             return c
         finally:
             con.close()
@@ -739,16 +1302,14 @@ def calendar(frm: str, to: str) -> List[Dict[str, Any]]:
     with _LOCK:
         con = _connect()
         try:
-            rows = con.execute("SELECT c.*, o.status AS o_status, o.project AS o_project, o.title AS o_title, o.when_ts AS o_when, o.body_path AS o_body, o.privacy AS o_privacy, o.published_at AS o_pub FROM cards c LEFT JOIN overrides o ON o.id=c.id").fetchall()
+            rows = con.execute("SELECT c.*, o.status AS o_status, o.project AS o_project, o.title AS o_title, o.when_ts AS o_when, o.body_path AS o_body, o.privacy AS o_privacy, o.published_at AS o_pub, o.favorite AS o_fav, o.tags AS o_tags FROM cards c LEFT JOIN overrides o ON o.id=c.id").fetchall()
         finally:
             con.close()
     out = []
     for r in rows:
         c = _row_to_card(r, _Ov({"status": r["o_status"], "project": r["o_project"], "title": r["o_title"], "when_ts": r["o_when"], "body_path": r["o_body"], "privacy": r["o_privacy"], "published_at": r["o_pub"]}))
         if c["status"] not in ("published", "scheduled", "review"):
-            continue
-        if c["status"] == "published" and c["source_kind"] in ("creation", "document", "episode") and not (c["published_at"] and c["published_at"] != "Kept on this PC"):
-            continue  # finished-and-kept things are the Library's, not the calendar's
+            continue  # what was made and kept is the Library's, not the calendar's
         if c["when_ts"] and a <= c["when_ts"] < b:
             out.append(c)
     out.sort(key=lambda c: c["when_ts"])
@@ -762,11 +1323,11 @@ def _set_override(card_id: str, **fields: Any) -> None:
         con = _connect()
         try:
             cur = con.execute("SELECT * FROM overrides WHERE id=?", (card_id,)).fetchone()
-            rec = dict(cur) if cur else {"id": card_id, "status": None, "project": None, "title": None, "when_ts": None, "body_path": None, "privacy": None, "published_at": None}
+            rec = dict(cur) if cur else {"id": card_id, "status": None, "project": None, "title": None, "when_ts": None, "body_path": None, "privacy": None, "published_at": None, "favorite": None, "tags": None}
             rec.update(fields)
             rec["updated"] = time.time()
-            con.execute("INSERT OR REPLACE INTO overrides (id, status, project, title, when_ts, body_path, privacy, published_at, updated) VALUES (?,?,?,?,?,?,?,?,?)",
-                        (card_id, rec["status"], rec["project"], rec["title"], rec["when_ts"], rec["body_path"], rec["privacy"], rec["published_at"], rec["updated"]))
+            con.execute("INSERT OR REPLACE INTO overrides (id, status, project, title, when_ts, body_path, privacy, published_at, updated, favorite, tags) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (card_id, rec["status"], rec["project"], rec["title"], rec["when_ts"], rec["body_path"], rec["privacy"], rec["published_at"], rec["updated"], rec.get("favorite"), rec.get("tags")))
             con.commit()
         finally:
             con.close()
@@ -845,7 +1406,7 @@ def reindex_posts_only() -> None:
 
 
 def patch(card_id: str, status: Optional[str] = None, project: Optional[str] = None, title: Optional[str] = None,
-          when: Any = None) -> Dict[str, Any]:
+          when: Any = None, favorite: Optional[bool] = None, tags: Optional[List[str]] = None) -> Dict[str, Any]:
     """Change what the owner may change by hand. Published is refused here: it
     goes through publish() and the approval card."""
     c = get(card_id)
@@ -890,6 +1451,15 @@ def patch(card_id: str, status: Optional[str] = None, project: Optional[str] = N
             fields["when_ts"] = ts
     if project is not None:
         fields["project"] = project.strip() or None
+    if favorite is not None:
+        fields["favorite"] = 1 if favorite else 0
+    if tags is not None:
+        clean = []
+        for t in tags:
+            t = str(t).strip().lstrip("#")[:40]
+            if t and t.lower() not in [x.lower() for x in clean]:
+                clean.append(t)
+        fields["tags"] = _j(clean[:30])
     if title is not None and title.strip():
         fields["title"] = title.strip()[:200]
         if c["source_kind"] == "media":
@@ -914,24 +1484,25 @@ def _rewrite_media_record(c: Dict[str, Any], **changes: Any) -> None:
 
 
 def delete(card_id: str) -> Dict[str, Any]:
+    """Delete a card. A file on this PC and Media's own records move to Friday's
+    recoverable trash (services/media_tidy.py), never a hard delete; a post is
+    deleted in the content store; a legacy item's card goes, its item stays."""
     c = get(card_id)
     if c is None:
         return {"status": "not_found"}
-    if c["source_kind"] == "media":
-        for suf in (".json", ".md"):
-            p = cards_dir() / (c["source_ref"] + suf)
-            if p.exists():
-                p.unlink()
-    elif c["source_kind"] == "post":
+    if c["source_kind"] == "post":
         from agent_friday.services import content_pipeline as cp
         r = cp.delete_post(c["source_ref"])
         if not r.get("ok"):
             return {"status": "error", "message": r.get("error") or "Could not delete the post."}
-    elif c["source_kind"] in ("draft_html", "legacy_item"):
-        # The original is the owner's; the card goes, the file or item stays until they clear it.
+    elif c["source_kind"] == "legacy_item":
+        # The original is the owner's; the card goes, the item stays until they clear it.
         _set_override(card_id, status="idea")
     else:
-        return {"status": "denied", "message": "A file is deleted from Files 3D, where a card asks first."}
+        from agent_friday.services import media_tidy
+        r = media_tidy.trash_card(card_id, reason="deleted from Media")
+        if r.get("status") != "ok":
+            return r
     with _LOCK:
         con = _connect()
         try:
@@ -956,7 +1527,7 @@ def publish(card_id: str, requested_by: str = "user") -> Dict[str, Any]:
     c = get(card_id)
     if c is None:
         return {"status": "not_found"}
-    if c["status"] == "published" and c["source_kind"] not in ("creation", "document", "episode"):
+    if c["status"] == "published":
         return {"status": "ok", "message": "Already published."}
     if c["source_kind"] == "post":
         return _publish_post(c)
@@ -1060,9 +1631,10 @@ def unpublish(card_id: str) -> Dict[str, Any]:
         return {"status": "not_found"}
     if c["source_kind"] == "post":
         return {"status": "denied", "message": "A post that went out is taken down on the platform, not here; the receipt stays on the card."}
-    _set_override(card_id, status="draft", privacy="private", published_at=None)
+    back = "kept" if c["source_kind"] in ("creation", "document", "episode", "daily_file", "comfy", "timeline") or (c["source_kind"] == "media" and c["kind"] not in TEXT_KINDS) else "draft"
+    _set_override(card_id, status=back, privacy="private", published_at=None)
     if c["source_kind"] == "media":
-        _rewrite_media_record(c, status="draft")
+        _rewrite_media_record(c, status=back)
     return {"status": "ok", "card": get(card_id)}
 
 
@@ -1109,9 +1681,18 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
     c = get(card_id)
     if c is None:
         return {"status": "not_found"}
+    # a conversion of the matrix (transcript, captions, a waveform video, the sound
+    # track, a still, narration, a narrated video, the words in a picture)?
+    from agent_friday.services import media_convert as mc
+    target = mc.resolve(c["kind"], kind)
+    if target is not None:
+        return mc.convert(c, target)
     if kind not in TURNS:
         return {"status": "error", "message": "Not a kind Media can make."}
     body = c.get("body") or ""
+    if not body.strip() and c["kind"] in ("deck", "doc", "sheet", "page"):
+        body = mc.text_of(c)          # a document's or a deck's own words feed the text-made kinds
+        c = dict(c, body=body)
     title = c["title"]
     if kind == "episode":
         try:
@@ -1188,7 +1769,140 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
         return read_aloud(c, sync=bool(os.environ.get("FRIDAY_TESTING")))
     if kind == "deck":
         return make_deck(c)
+    if kind == "video":
+        return make_video(c, sync=bool(os.environ.get("FRIDAY_TESTING")))
     return {"status": "unavailable", "message": f"Making {TURNS[kind]} is not wired yet; ask Friday in chat and the result lands here."}
+
+
+# ── what a card can be turned into, honestly ────────────────────────────────
+#: The turn-into kinds whose backend may be absent on a given PC. The page
+#: hides what is not available and says why; the server refuses the same way.
+#: A kind not listed here is always available (it is made from text or a
+#: record this computer already has).
+#: The menu groups a card's kind falls into (the page's turnGroup), and the
+#: targets each group can ask for. A target not in the gated set is always
+#: available: it is made from text or a record this computer already has.
+TURN_GROUPS = {
+    "text": ("draft", "article", "doc"), "document": ("doc_file",), "image": ("image", "imageset", "chart"),
+    "audio": ("audio",), "music": ("music",), "video": ("video",), "deck": ("deck", "sheet"), "episode": ("episode",),
+    "post": ("post",), "page": ("page",), "code": ("code",),
+}
+
+
+def turn_capabilities() -> Dict[str, Any]:
+    """What this PC can turn a card into, per menu group, and why not when it
+    cannot: {"by_group": {group: {target: {available, backend, reason}}}, "backends": {...}}."""
+    from agent_friday.services import media_convert as mc
+    be = mc.backends()
+    gated: Dict[str, Dict[str, Any]] = {}
+    try:
+        from agent_friday.services import local_video as lv
+        cap = lv.i2v_available()
+        gated["video"] = {"available": bool(cap.get("available")), "backend": cap.get("backend"), "reason": cap.get("reason") or ""}
+    except Exception as e:
+        gated["video"] = {"available": False, "backend": None, "reason": "The local video backend could not be loaded (%s)." % str(e)[:120]}
+    v = be.get("voice") or {}
+    gated["audio"] = {"available": bool(v.get("available")), "backend": v.get("name"), "reason": v.get("reason") or ""}
+    o = be.get("office") or {}
+    gated["deck"] = {"available": bool(o.get("available")), "backend": o.get("name"), "reason": o.get("reason") or ""}
+    by_group: Dict[str, Dict[str, Any]] = {}
+    for group, kinds in TURN_GROUPS.items():
+        cells: Dict[str, Any] = {}
+        for target, spec in mc.CONVERSIONS.items():
+            if any(k in spec["from"] for k in kinds):
+                cells[target] = mc.capability(target, be)
+        if group == "image":
+            cells["video"] = gated["video"]
+        if group in ("text", "document", "deck", "episode", "post", "page", "code"):
+            cells["audio"] = gated["audio"] if group != "deck" else cells.get("narration", gated["audio"])
+            cells["deck"] = gated["deck"]
+        by_group[group] = cells
+    return {"by_group": by_group, "backends": be, "gated": gated}
+
+
+#: The function that makes the clip; tests swap it. Signature: (prompt, image_path) -> local_video.generate()'s envelope.
+_VIDEO_GENERATE = None
+
+
+def _video_generate(prompt: str, image_path: str) -> Dict[str, Any]:
+    if _VIDEO_GENERATE is not None:
+        return _VIDEO_GENERATE(prompt, image_path)
+    from agent_friday.services import local_video as lv
+    return lv.generate(prompt, image_path=image_path)
+
+
+def make_video(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
+    """Image → video, locally, through the arbiter's heavy-job swap inside
+    local_video.generate. Returns at once with a card in Draft and "working";
+    the clip, its credential and the kept status land when the GPU is done.
+    Never silent: no backend is a refusal with the reason; a failure is a
+    "failed" badge with the message on the card and a notice to the owner."""
+    cap = (turn_capabilities().get("gated") or {}).get("video") or {}
+    if not cap.get("available"):
+        return {"status": "unavailable", "message": cap.get("reason") or "Image-to-video is not available on this computer."}
+    src = Path(c["path"]) if c.get("path") else None
+    if c.get("kind") not in ("image", "imageset", "chart") or src is None or not src.is_file():
+        return {"status": "error", "message": "Only a picture on this PC can be turned into a video."}
+    prompt = ""
+    try:
+        from agent_friday.services.creative_engine import creation_metadata
+        prompt = str((creation_metadata(src.name) or {}).get("prompt") or "")
+    except Exception:
+        prompt = ""
+    prompt = (prompt or c["title"]) + ". A slow, steady push in; natural motion; nothing added to the scene."
+    cid = "media:" + uuid.uuid4().hex[:12]
+    rec = {"id": cid, "kind": "video", "title": "Video: " + c["title"], "project": c.get("project"), "sources": [c["title"]],
+           "maker": "%s · this PC" % (cap.get("backend") or "local video"), "status": "draft", "created": time.time(), "origin": "turn",
+           "relations": [{"to": c["id"], "how": "made_from"}], "file": "", "extra": {"badges": ["working"], "prompt": prompt, "from": str(src)}}
+    _write_media_record(cid, rec)
+    with _LOCK:
+        con = _connect()
+        try:
+            _scan_media_cards(con); con.commit()
+        finally:
+            con.close()
+
+    def work() -> None:
+        try:
+            res = _video_generate(prompt, str(src)) or {}
+            files = res.get("files") or []
+            if res.get("status") != "ok" or not files or not files[0].get("path"):
+                raise RuntimeError(res.get("reason") or res.get("error") or ("the video backend answered %s" % (res.get("status") or "nothing")))
+            out = Path(files[0]["path"])
+            if not out.is_file():
+                raise RuntimeError("the backend named a file that is not there: %s" % out)
+            _sign(out, "video", [{"kind": "card", "ref": c["id"], "title": c["title"]}], "media.image_to_video")
+            rec["file"] = str(out)
+            rec["status"] = "kept"
+            rec["extra"] = {"prompt": prompt, "from": str(src), "model": res.get("model"), "elapsed_s": res.get("elapsed_s")}
+            _notify("Your video of \u201c%s\u201d is ready in Media." % c["title"], cid)
+        except Exception as e:
+            msg = str(getattr(e, "user_message", None) or e)[:240]
+            rec["status"] = "draft"
+            rec["extra"] = {"badges": ["failed"], "error": msg, "prompt": prompt, "from": str(src)}
+            _notify("The video of \u201c%s\u201d could not be made: %s" % (c["title"], msg), cid)
+        _write_media_record(cid, rec)
+        with _LOCK:
+            con = _connect()
+            try:
+                _scan_media_cards(con); con.commit()
+            finally:
+                con.close()
+
+    if sync:
+        work()
+    else:
+        threading.Thread(target=work, name="media-image-to-video", daemon=True).start()
+    return {"status": "ok", "card": get(cid), "message": "Making the video on this PC; the card says when it is done."}
+
+
+def _notify(text: str, card_id: str) -> None:
+    """A line to the owner's screen; never raises, never silent when it can speak."""
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.send({"type": "notice", "workspace": "media", "card": card_id, "text": text})
+    except Exception:
+        pass
 
 
 # ── slides: a deck from a card's text, through the office tool ───────────────
@@ -1328,6 +2042,16 @@ def _write_media_record(cid: str, rec: Dict[str, Any]) -> Path:
     return p
 
 
+def _rescan_media_records() -> None:
+    """Media's own records back into the index (after a record was written)."""
+    with _LOCK:
+        con = _connect()
+        try:
+            _scan_media_cards(con); con.commit()
+        finally:
+            con.close()
+
+
 def read_aloud(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
     """A new audio card, spoken by the local voice on this computer, from a
     card's text. Returns at once with the card in Draft and "working"; the
@@ -1376,7 +2100,7 @@ def read_aloud(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
             except Exception:
                 pass
             _sign(Path(rec["file"]), "audio", [{"kind": "card", "ref": c["id"], "title": c["title"]}], "media.read_aloud")
-            rec["status"] = "published"; rec["extra"] = {"duration_s": seconds, "voice": voice}
+            rec["status"] = "kept"; rec["extra"] = {"duration_s": seconds, "voice": voice}
         except Exception as e:
             rec["status"] = "draft"; rec["extra"] = {"badges": ["failed"], "error": str(e)[:200], "voice": voice}
         _write_media_record(cid, rec)
