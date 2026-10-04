@@ -65,6 +65,17 @@ def fts_passages(store: Store, question: str, limit: int = 40) -> list[tuple[int
     return [(r["rowid"], float(r["r"])) for r in rows]
 
 
+def coverage(question_keys: list[str], text: str) -> float:
+    """The share of the question's distinctive words that a passage contains (by
+    five-letter stem). A passage close in meaning that names none of them is a
+    weak answer, and a question about something no document mentions finds none."""
+    if not question_keys:
+        return 1.0
+    low = text.lower()
+    hit = sum(1 for k in question_keys if k[:5] in low)
+    return hit / len(question_keys)
+
+
 def _rrf(*rankings: list, k: int = 60) -> dict:
     score: dict = {}
     for rk in rankings:
@@ -92,6 +103,7 @@ class _Ctx:
             self.tb._visible = {i: r for i, r in vis.items()
                                 if s in (r["title"] or "").lower() or s in str(r["path"]).lower()}
         self.floor_tier = False
+        self.keys = keywords(question)
 
     # -- the passage step -----------------------------------------------------
 
@@ -112,10 +124,18 @@ class _Ctx:
                 sim = float(np.dot(self.qvec, vecs[1][vecs[0][r["id"]]]))
             else:
                 sim = 0.0
-            out.append({"id": r["id"], "doc_id": doc["id"], "section_id": section_id, "score": sim,
-                        "route": route_score, "block_ids": r["block_ids"], "raw": r["text"], "shelf": doc["shelf"]})
+            cov = self.cover(r["text"], doc["shelf"])
+            out.append({"id": r["id"], "doc_id": doc["id"], "section_id": section_id, "score": sim * (0.6 + 0.4 * cov),
+                        "cover": cov, "route": route_score, "block_ids": r["block_ids"], "raw": r["text"],
+                        "shelf": doc["shelf"]})
         out.sort(key=lambda c: -c["score"])
         return out[:3]
+
+    def cover(self, raw: str, shelf: str) -> float:
+        try:
+            return coverage(self.keys, self.store.dec(raw, shelf))
+        except VaultLocked:
+            return 0.0
 
     def judge_with_laya(self, cands: list[dict]) -> None:
         """Ask Laya whether each of the top passages answers the question, when
@@ -293,7 +313,9 @@ def _full_search(ctx: _Ctx, limit: int = 12) -> None:
         elif score is None:
             v = ctx.store.one("SELECT vec FROM vectors WHERE node_kind='passage' AND node_id=?", (pid,))
             score = float(embed.from_blobs([v["vec"]])[0] @ ctx.qvec) if v else 0.0
-        ctx.take([{"id": pid, "doc_id": doc["id"], "section_id": r["section_id"], "score": score or 0.0,
+        cov = ctx.cover(r["text"], doc["shelf"])
+        ctx.take([{"id": pid, "doc_id": doc["id"], "section_id": r["section_id"],
+                   "score": (score or 0.0) * (0.6 + 0.4 * cov), "cover": cov,
                    "route": 0.3, "block_ids": r["block_ids"], "raw": r["text"], "shelf": doc["shelf"]}])
 
 

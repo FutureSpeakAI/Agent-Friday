@@ -33,8 +33,8 @@ DEFAULTS = {
     "beam": 4, "beam_floor": 3, "max_menus": 24, "max_laya": 4,
     "e_conf": 0.55, "e_margin": 0.10,          # E answers alone above both
     "act_conf": 0.55, "act_lead": 0.20,        # a menu acts (takes one child) above both
-    "temp": {"folder": 0.06, "document": 0.06, "section": 0.06, "group": 0.06},
-    "floor": 0.20,                              # similarity a child must beat to beat "none of these"
+    "temp": {"folder": 0.04, "document": 0.04, "section": 0.04, "group": 0.04},
+    "floor": 0.30,                              # similarity a child must beat to beat "none of these"
     "p_strong": 0.62, "p_weak": 0.28,
     "noul_hold": 0.5, "noul_stop": 0.8,
     "max_passages": 12, "max_chars": 6000,

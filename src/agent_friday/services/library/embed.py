@@ -40,7 +40,10 @@ _status = {"state": "unloaded", "detail": ""}
 
 
 def artifacts_dir() -> Path:
-    return paths.friday_home() / "models" / DIRNAME
+    """Where the encoder files live; a rig may point FRIDAY_LIBRARY_ENCODER_DIR at
+    an existing copy while it runs with a scratch Friday home."""
+    over = os.environ.get("FRIDAY_LIBRARY_ENCODER_DIR")
+    return Path(over) if over else paths.friday_home() / "models" / DIRNAME
 
 
 def files_present() -> bool:
