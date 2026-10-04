@@ -216,6 +216,22 @@ def test_an_index_built_before_credentials_were_withheld_is_read_again(tmp_path)
     assert _leaks(_everything_stored(st)) == []
 
 
+def test_the_envelope_withholds_once_more_what_an_older_index_still_holds(tmp_path, monkeypatch):
+    """A passage stored before credentials were withheld stays in the index until the next sweep reads
+    its document again. On the way to a model it is withheld again."""
+    from agent_friday.services.library import envelope, tools
+    st = _build(tmp_path, {"notes.md": f"# Notes\n\n{BEFORE}\n\n{AFTER}\n"})
+    doc = st.q("SELECT id FROM documents")[0]["id"]
+    st.x("UPDATE passages SET text = text || ? WHERE doc_id=?", (f"\n\n{INLINE}\n\n{PEM}", doc))   # as an older build stored it
+    assert TOKEN in _everything_stored(st)
+    _local_turn(monkeypatch)
+    out = tools.search_library({"question": "how often do we rotate the signing credentials"})
+    assert "ninety days" in out and "<evidence-" in out
+    assert _leaks(out) == []
+    wrapped = envelope.wrap([{"label": "1.1", "doc": f"deploy {TOKEN}", "page": 2, "text": f"Look: {PEM} and {AFTER}"}])
+    assert _leaks(wrapped) == [] and "dashboard turns green" in wrapped and MARK in wrapped
+
+
 def test_a_failing_check_is_a_failure_of_the_document_not_a_pass(tmp_path, monkeypatch):
     from agent_friday.services import credential_paths
     from agent_friday.services.library import indexer
