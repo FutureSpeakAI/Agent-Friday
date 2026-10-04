@@ -4,12 +4,14 @@ privacy safeguards -- no feature or data is held back from the cloud.
 
 This is a separate flag from `model_routing.mode: "cloud_only"`, which means
 provider ROUTING PREFERENCE only and does not touch the gate.
-`unrestricted_cloud` defaults False, and when True bypasses every gate this
-codebase has for cloud sends: tier classification, redaction, the PII scrub,
-and the never-send list -- "no data is held back" taken literally.
+`unrestricted_cloud` defaults False. When True it WIDENS the gate's policy (no tier
+classification or withholding, no identifier scrub) but never bypasses the gate: under the
+owner's A14 ruling (docs/design/north-star/AMENDMENTS.md) the gate still runs, still records
+every call, and still applies the never-send floor. The never-send and "the gate runs" cases
+live in test_egress_gate_runs_under_unrestricted_cloud.py.
 
-The false-by-default tests prove OFF means full gating, and the ON tests
-prove it is a real, working bypass rather than a no-op flag nobody wired up.
+The false-by-default tests prove OFF means full gating, and the ON tests prove the widening
+is real rather than a no-op flag nobody wired up.
 """
 from __future__ import annotations
 
@@ -56,18 +58,18 @@ class TestDefaultIsSafe:
             eg._gate_text_span("contains the marker", "anthropic", "prompt")
 
 
-class TestUnrestrictedModeBypassesEverything:
-    """ON: exactly what was specified -- nothing held back, including the
-    never-send list, which is the one floor every other mechanism in this
-    codebase treats as absolute."""
+class TestUnrestrictedModeWidensThePolicyButTheFloorStands:
+    """ON (A14): tier withholding and the identifier scrub are widened, and the never-send
+    list, the floor every other mechanism in this codebase treats as absolute, still applies."""
 
-    def test_never_send_content_passes_through_unchanged(self, monkeypatch):
+    def test_never_send_content_is_still_stopped(self, monkeypatch):
         _set_unrestricted(monkeypatch, True)
+        monkeypatch.setattr(
+            eg, "_never_send_covered_by_override", lambda text: False)
         from agent_friday.services import judgment_gate as jg
         monkeypatch.setattr(jg, "never_send_hits", lambda text: ["marker"])
-        secret = "the never-send marker is right here"
-        out = eg._gate_text_span(secret, "anthropic", "prompt")
-        assert out == secret, "unrestricted mode must not withhold never-send content"
+        with pytest.raises(eg.NeverSendBlocked):
+            eg._gate_text_span("the never-send marker is right here", "anthropic", "prompt")
 
     def test_tier3_content_passes_through_unchanged(self, monkeypatch):
         _set_unrestricted(monkeypatch, True)
@@ -87,13 +89,12 @@ class TestUnrestrictedModeBypassesEverything:
         assert out["messages"][0]["content"] == payload["messages"][0]["content"]
         assert "[PII:" not in out["system"], "the PII scrub must also be skipped"
 
-    def test_tool_prose_never_send_is_bypassed(self, monkeypatch):
+    def test_tool_prose_never_send_is_still_stopped(self, monkeypatch):
         _set_unrestricted(monkeypatch, True)
         from agent_friday.services import judgment_gate as jg
         monkeypatch.setattr(jg, "never_send_hits", lambda text: ["marker"])
-        text = "a tool description containing the marker"
-        out = eg._gate_tool_prose(text, "anthropic", "tool.description")
-        assert out == text
+        with pytest.raises(eg.NeverSendBlocked):
+            eg._gate_tool_prose("a tool description containing the marker", "anthropic", "tool.description")
 
 
 class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
@@ -221,7 +222,7 @@ class TestKnowledgeGraphRoutingIsIndependentOfTheFlag:
     TIER_2/3 chunks are not pinned to a local model 'in any mode'.
     `indexing_mode` ("local"/"cloud") decides routing on its own, uniformly across sensitivity; `unrestricted_cloud`
     has no special case here at all -- its only effect is inside
-    egress_gate itself (TestUnrestrictedModeBypassesEverything above),
+    egress_gate itself (TestUnrestrictedModeWidensThePolicyButTheFloorStands above),
     which every cloud call in the app, including a "cloud"-mode KG chunk,
     already passes through. These confirm the flag is simply irrelevant to
     this function, in both directions, rather than silently reintroducing a

@@ -812,21 +812,6 @@ def _gate_text_span(text: str, provider: str, field: str,
     if not text or not isinstance(text, str):
         return text
 
-    if is_unrestricted_cloud():
-        # The maintainer's explicit ruling: "cloud only mode means no privacy
-        # safeguards ... when active, no feature or data is held back from
-        # the cloud." Off by default (see is_unrestricted_cloud).
-        # Deliberately ahead of the never-send floor below — "no data is
-        # held back" was stated in exactly those terms, not "except the
-        # watchlist". This is the ONLY bypass of that floor anywhere in the
-        # codebase; every other caller of the never-send check is untouched.
-        # Still logged, same as every other verdict — a permissive posture
-        # is not a silent one (B3: nothing goes quiet).
-        _log(provider, field, Tier.SENSITIVE, "allow",
-             "unrestricted cloud mode — gating bypassed (never-send list "
-             "included), tier classification skipped", log_path)
-        return text
-
     # ── §5.3 the never-list: the floor, and it moves for nothing ──
     # The never-send check must not live inside the judgment appeal: with
     # judgment disabled — the DEFAULT — a planted never-send token would sail
@@ -859,6 +844,15 @@ def _gate_text_span(text: str, provider: str, field: str,
              f"never-send material present ({len(_never)} token(s)) but every "
              f"matching paragraph is covered by a file-grant override",
              log_path)
+
+    if is_unrestricted_cloud():
+        # A14 (the owner's ruling, 2026-09-30): under recorded unrestricted-cloud consent the
+        # gate still runs, still records every call and still applies the never-send floor
+        # above. What the consent widens is the tier policy: classification and span
+        # withholding are not applied. It changes what the gate permits, never whether it runs.
+        _log(provider, field, Tier.SENSITIVE, "allow",
+             "unrestricted cloud consent - never-send floor applied, tier policy widened", log_path)
+        return text
 
     with _TRUSTED_LOCK:
         _t_stripped = text.strip()
@@ -1168,15 +1162,16 @@ def _gate_tool_prose(text: str, provider: str, field: str,
     """
     if not text or not isinstance(text, str):
         return text
-    if is_unrestricted_cloud():
-        _log(provider, field, Tier.SENSITIVE, "allow",
-             "unrestricted cloud mode — tool-prose gating bypassed", log_path)
-        return text
     try:
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
     except Exception:
         _never = []
+    if not _never and is_unrestricted_cloud():
+        # A14: the floor above ran and found nothing; the consent widens everything else.
+        _log(provider, field, Tier.SENSITIVE, "allow",
+             "unrestricted cloud consent - never-send floor applied, tier policy widened", log_path)
+        return text
     if _never:
         _log(provider, field, Tier.SENSITIVE, "block",
              f"never-send material present ({len(_never)} token(s)) — payload blocked",
@@ -1549,17 +1544,14 @@ def seal_outbound(
     if not _is_cloud(provider):
         return payload  # stays on-device, no gating needed
 
-    if is_unrestricted_cloud():
-        # Fast path for the same instruction as _gate_text_span's — skips the
-        # PII scrub too (a masking step, not a block, but still "holding
-        # something back" by the letter of "no data is held back"). Callers
-        # that reach fields via _gate_text/_gate_tool_prose directly, rather
-        # than through here, get the same bypass at those functions — this
-        # is strictly a shortcut, not the only enforcement point.
+    _unrestricted = is_unrestricted_cloud()
+    if _unrestricted:
+        # A14: the gate runs and records under unrestricted-cloud consent. The consent widens
+        # the policy (no identifier scrub, no tier withholding); the never-send floor and the
+        # egress log apply to every field below, exactly as when the consent is not given.
         _log(provider, "*", Tier.SENSITIVE, "allow",
-             "unrestricted cloud mode — seal_outbound bypassed entirely "
-             "(no scrub, no gating)", None)
-        return payload
+             "unrestricted cloud consent - gate ran: never-send floor applied, identifier scrub "
+             "and tier policy widened", log_path)
 
     sealed = dict(payload)
 
@@ -1567,7 +1559,7 @@ def seal_outbound(
     _lk = pii_lookup if isinstance(pii_lookup, dict) else {}
     try:
         for key in ("system", "messages", "prompt", "context"):
-            if key in sealed:
+            if key in sealed and not _unrestricted:
                 sealed[key] = _scrub_all(sealed[key], _lk)
     except Exception as e:
         # A scrub that cannot run must not become a send that skips it.
@@ -1644,18 +1636,36 @@ def startup_self_test() -> dict:
     """
     global _SELF_TEST_RESULT
     if is_unrestricted_cloud():
-        # The recorded consent says every safeguard is off, and seal_outbound
-        # honours that by returning payloads untouched. A probe that survives
-        # under that ruling is the ruling working, not the gate failing. Without
-        # this branch the probe "leaks", the self-test reports the gate
-        # broken, and model_router then refuses EVERY cloud send — an
-        # unrestricted-cloud install loses cloud entirely on its next restart,
-        # with every task and chat turn failing "startup self-test failed". The
-        # deterministic gate is not exercised here because nothing routes
-        # through it in this mode; the posture is logged at boot, loudly, by
-        # the caller. The judgment battery is skipped for the same reason.
-        _SELF_TEST_RESULT = {"ok": True, "unrestricted_cloud": True,
-                             "note": "gate bypassed by recorded cloud consent; probe not run"}
+        # A14: the gate runs under recorded consent, so it is tested under it. The probe is not
+        # expected to be withheld (the consent widens the tier policy); what is checked is that
+        # the gate RAN (it wrote its record) and that the never-send floor can be applied.
+        import tempfile
+        try:
+            from agent_friday.services import judgment_gate as _jg
+            _jg.never_send_hits("startup probe")
+            floor = True
+        except Exception as e:
+            _SELF_TEST_RESULT = {"ok": False, "unrestricted_cloud": True,
+                                 "error": f"the never-send floor cannot be applied ({type(e).__name__}); "
+                                          f"cloud sends are held until it can"}
+            return _SELF_TEST_RESULT
+        with tempfile.TemporaryDirectory() as _d:
+            _probe_log = Path(_d) / "selftest-egress.jsonl"
+            try:
+                seal_outbound({"messages": [{"role": "user", "content": "startup probe"}]},
+                              "selftest-cloud", log_path=_probe_log)
+            except NeverSendBlocked:
+                pass            # the floor stopped the probe: the gate ran
+            except Exception as e:
+                _SELF_TEST_RESULT = {"ok": False, "unrestricted_cloud": True,
+                                     "error": f"the gate failed under unrestricted cloud ({type(e).__name__})"}
+                return _SELF_TEST_RESULT
+            ran = _probe_log.exists() and _probe_log.stat().st_size > 0
+        _SELF_TEST_RESULT = ({"ok": True, "unrestricted_cloud": True, "gate_ran": True, "floor_ran": floor,
+                              "note": "gate ran under recorded cloud consent: floor applied, policy widened"}
+                             if ran else
+                             {"ok": False, "unrestricted_cloud": True,
+                              "error": "the gate recorded nothing under unrestricted cloud; sends are held"})
         return _SELF_TEST_RESULT
     probe = "My SSN is 123-45-6789 and my bank account number is 987654321."  # pragma: allowlist secret
     try:
