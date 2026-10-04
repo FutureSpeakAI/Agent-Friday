@@ -155,6 +155,12 @@ class TestVoiceInstaller:
     def test_targets_are_fixed_allowlist(self):
         from agent_friday.services import voice_installer as vi
         # Still a FIXED allowlist: the fourth entry is the clean-sheet §2.5
-        # kokoro-onnx candidate (wheel --no-deps + the 27 MB voices file).
-        assert set(vi.TARGETS) == {"voice-local-lite", "voice-local-gpu",
-                                   "tier1-models", "kokoro-onnx"}
+        # kokoro-onnx candidate (wheel --no-deps + the 27 MB voices file); the
+        # rest are exactly the pinned local-voice artifacts the owner approved
+        # (services/voice_artifacts, local voice spec D1), each installable
+        # only with its pins set.
+        from agent_friday.services.voice_artifacts import ARTIFACTS
+        assert set(vi.TARGETS) == ({"voice-local-lite", "voice-local-gpu",
+                                    "tier1-models", "kokoro-onnx"} | set(ARTIFACTS))
+        for aid in ARTIFACTS:
+            assert vi.TARGETS[aid]["artifact"] == aid and not vi.TARGETS[aid]["stages"]
