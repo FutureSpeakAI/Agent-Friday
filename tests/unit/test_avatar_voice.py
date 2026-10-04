@@ -128,3 +128,48 @@ def test_evolve_now_while_waiting_offers_both_fixes(home, monkeypatch):
     out = _tool().handle({"action": "evolve_now"})
     assert "Accounts & Keys" in out and "gemma-local" in out
     assert g.active_step() is None
+
+
+@pytest.fixture
+def scene(tmp_path, monkeypatch):
+    """The structure choice kept in a scratch evolution.json; a fake page."""
+    from agent_friday.routes import insights
+    monkeypatch.setattr(insights, "EVOLUTION_FILE", tmp_path / "evolution.json")
+    state = {"pushed": [], "page": True}
+
+    def push(action):
+        state["pushed"].append(action)
+        return {"delivered": state["page"]}
+    monkeypatch.setattr(_tool(), "push", push)
+    state["file"] = tmp_path / "evolution.json"
+    return state
+
+
+@pytest.mark.parametrize("said, index, words", [
+    ("the wormhole", 13, "Einstein-Rosen Bridge"),
+    ("Hawking Radiation", 14, "Hawking Radiation"),
+    ("a black hole", 14, "Hawking Radiation"),
+    ("the sacred sphere", 1, "Dyson Sphere"),
+    ("Giga Earth", 12, "Giga Earth"),
+    ("the ocean of light", 9, "Ocean of Light"),
+])
+def test_show_picks_the_structure_by_any_of_its_names(scene, said, index, words):
+    out = _tool().handle({"action": "show", "structure": said})
+    assert json.loads(scene["file"].read_text("utf-8"))["preferred_scene_index"] == index
+    from agent_friday.routes.insights import SCENE_NAMES
+    assert scene["pushed"] == [{"type": "scene", "target": SCENE_NAMES[index]}]
+    assert out == "Now showing %s." % words
+
+
+def test_show_with_no_page_open_still_keeps_the_choice(scene):
+    scene["page"] = False
+    out = _tool().handle({"action": "show", "structure": "wormhole"})
+    assert json.loads(scene["file"].read_text("utf-8"))["preferred_scene_index"] == 13
+    assert "when the Friday window is open" in out
+
+
+def test_show_an_unknown_name_keeps_nothing_and_lists_the_choices(scene):
+    out = _tool().handle({"action": "show", "structure": "a teapot"})
+    assert not scene["file"].exists() and scene["pushed"] == []
+    assert "don't have a structure called a teapot" in out
+    assert "Einstein-Rosen Bridge" in out and "Hawking Radiation" in out

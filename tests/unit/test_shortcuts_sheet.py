@@ -202,10 +202,12 @@ CENSUS = [
 
 def _listeners(text):
     pat = (r"(?:window|document|document\.documentElement)\.addEventListener\('keydown',\s*"
-           r"(function\s*\(e\)\s*\{|[\w$]+)")
+           r"(function\s*\(e\)\s*\{|\(?e\)?\s*=>\s*\{|[\w$]+)")
     for m in re.finditer(pat, text):
         h = m.group(1)
-        if h.startswith("function"):
+        # An inline handler (a function or an arrow) carries its own body; a name
+        # is looked up where it is defined.
+        if h.startswith("function") or "=>" in h:
             body = text[m.end():m.end() + 600]
         else:
             at = max(text.rfind("const %s = " % h, 0, m.start()), text.rfind("function %s(" % h, 0, m.start()))

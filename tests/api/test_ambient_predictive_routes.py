@@ -59,7 +59,13 @@ class TestPredictiveWorkspaces:
 
 # ── Task-chaining workflows ───────────────────────────────────────────────────
 class TestWorkflowChains:
-    def test_create_list_get_run_delete(self, client, server_module):
+    def test_create_list_get_run_delete(self, client, server_module, monkeypatch):
+        # Run registers the first task; its worker is a no-op here, so no model
+        # turn keeps running past this test and reaches a later test's streams
+        # (a leaked task's presence frames on the approval feed).
+        import agent_friday.services.agent as agent_mod
+        monkeypatch.setattr(agent_mod, "_task_worker", lambda *a, **k: None)
+        monkeypatch.setattr(agent_mod, "_runner_task_worker", lambda *a, **k: None)
         defn = {
             "name": "Research → Draft",
             "description": "Two-step chain",
@@ -79,7 +85,7 @@ class TestWorkflowChains:
         got = client.get(f"/api/workflows/chains/{slug}").get_json()
         assert got["chain"]["name"] == "Research → Draft"
 
-        # Run spawns the first task (background thread); we just confirm wiring.
+        # Run spawns the first task; we confirm the wiring.
         run = client.post(f"/api/workflows/chains/{slug}/run").get_json()
         assert run["status"] == "ok"
         assert run["task_id"]

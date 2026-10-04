@@ -1,15 +1,21 @@
 # Avatar visual genome: Friday's look evolves weekly, on every structure, reversibly
 
-> **Status:** proposed (spec only; nothing in this document is built). The
-> owner decided all three open questions on 2026-09-29 (§12): on by default;
-> a frontier model authors by default, and the user may choose any model; one
-> shared palette within ±30° of cyan. This is
-> the converged design. §13 adds the processing-state vocabulary (owner
+> **Status:** partly built: the genome, the processing-state gestures (§13),
+> Giga Earth's track (§15), the process orbs' rules, forms and hands
+> (§16), the world's dots and a clear picture (§17), the head-coupled
+> window (§18) and five avatars rebuilt or new (§19); the rest is spec. The owner decided all three open questions on
+> 2026-09-29 (§12): on by default; a frontier model authors by default, and
+> the user may choose any model; one shared palette within ±30° of cyan. This
+> is the converged design. §13 adds the processing-state vocabulary (owner
 > approved 2026-09-29), and §14 maps the spec onto the north star. §15 puts
 > Giga Earth on a set track of Rez forms that no model changes (owner request
-> 2026-09-30). It replaces the 2026-09-22 version of this file and the
-> uncommitted `docs/design/evolve-genome.md` (2026-09-28). That draft is
-> preserved verbatim in Appendix B so it is in git.
+> 2026-09-30). §16 makes the process orbs interactive, §17 adds the world
+> layer, §18 makes head tracking a true window, and §19 rebuilds the Dyson
+> Sphere, Dirac and Transcendence and adds the Einstein-Rosen Bridge and
+> Hawking Radiation (owner, 2026-10-02). It
+> replaces the 2026-09-22 version of this file and the uncommitted
+> `docs/design/evolve-genome.md` (2026-09-28). That draft is preserved
+> verbatim in Appendix B so it is in git.
 > **Last verified:** 2026-09-29 against main `41ef21fd`
 > **Implementation:** none yet. Builds on:
 > - `index.html`: `MOODS`, `EVOLUTION_PATH`, `buildAllStructures`,
@@ -177,24 +183,26 @@ Every frame, `updateGroupColors` (`:4966-4995`) repaints it from
 table (`:4054-4069`). Nothing else feeds the scene's palette: no theme tokens,
 no CSS variables. So a genome palette has **one** injection point. **VERIFIED**
 
-**The 13 structures** (`EVOLUTION_PATH`, `:4071-4077`; built in
+**The 13 structures, as checked** (two more since, and three rebuilt: §19) (`EVOLUTION_PATH`, `:4071-4077`; built in
 `buildAllStructures`, `:4733-4955`; animated in `animate`, `:5018-5556`):
 
 | # | id / name | v1 form (the literals a genome would parameterise) | Colour path |
 |---|---|---|---|
 | 0 | CUBES / Genesis Lattice | 3×3×3 grid, 1.4 boxes, spacing 1.6, ~15% dropped with unseeded `Math.random()`, scale 1.5, `LATTICE_SPREAD` 0.65 (`:4734-4752`, `:5281-5305`) | faces base×0.15, edges accent |
-| 1 | ICOSAHEDRON / Sacred Sphere | 3 nested wire icosahedra, r 5/3.5/2, detail 3/2/1, opacity .15/.3/.6 (`:4754-4760`) | base, accent, white |
+| 1 | ICOSAHEDRON / Dyson Sphere (was Sacred Sphere; answers to both) | 3 nested wire icosahedra, r 5/3.5/2, detail 3/2/1, opacity .15/.3/.6 (`:4754-4760`); the Dyson build replaces them, §19 | base, accent, white |
 | 2 | NETWORK / Shannon Network | 120 nodes in 20³, link distance 6(+audio), ≤4 links (`:4854-4865`) | base/accent |
 | 3 | DOME / Geodesic Cathedral | r35 hemisphere, 8 pillars, 6 octahedra, 2,000-point funnel (`:4762-4783`) | base, accent crystals |
 | 4 | ASTROLABE / Lovelace Astrolabe | 8 rings r=2i, random tilt (`:4826-4838`) | base, accent dashes |
 | 5 | TESSERACT / Von Neumann Tesseract | 16-vertex hypercube, scale 3 (`:4840-4852`) | base/accent |
-| 6 | QUANTUM / Dirac Probability | 64×64 point sphere, 30 loops of 300 points (`:4876-4888`) | **its own rainbow** via `setHSL`; `updateGroupColors` skips it (`:4987`, `:5430-5446`) |
+| 6 | QUANTUM / Dirac Probability | 64×64 point sphere, 30 loops of 300 points (`:4876-4888`); replaced by an orbital probability cloud, §19.2 | **its own rainbow** via `setHSL`; `updateGroupColors` skips it (`:4987`, `:5430-5446`); both gone, §19.2 |
 | 7 | MANDELBROT / Mandelbrot Set | escape-time point cloud, step .012, maxIter 40, **rewritten on the CPU every frame** (`:4805-4824`, `:5328-5340`) | base→accent by iteration |
 | 8 | MOBIUS / Turing Möbius | point strip R3 r1.5, scale 4 (`:4867-4874`) | base/accent |
 | 9 | GRID / Ocean of Light | 81×81 point ocean, 100×100 plane (`:4797-4803`) | base/accent |
 | 10 | CABLES / Fibonacci Nerve | 80 tubes from a r30 Fibonacci sphere (`:4785-4795`) | base/accent |
-| 11 | NONE / Transcendence | 100 rising 10-unit lines (`:4890-4899`) | base/accent |
+| 11 | NONE / Transcendence | 100 rising 10-unit lines (`:4890-4899`); replaced by the Hopf fibration, §19.3 | base/accent |
 | 12 | EDEN / Giga Earth (Rez) | tunnel, boss sphere, 15 spines, a white player figure, 60 debris lines (`:4901-4954`) | special flags; the player is always white (`:4979-4986`) |
+| 13 | WORMHOLE / Einstein-Rosen Bridge | added 2026-10-02, §19.4 | its own, from her colours |
+| 14 | BLACKHOLE / Hawking Radiation | added 2026-10-02, §19.5 | its own, from her colours and its weeks |
 
 **Present on every structure** (`buildBackgroundEnvironment`, `:4688-4720`):
 
@@ -490,18 +498,20 @@ exist today. A structure with no section draws exactly as v1.
 | Structure | Local genes (v1 value → bounds) |
 |---|---|
 | CUBES | `spacing` 1.6 → 1.4…1.9; `sparsity` 0.15 → 0.05…0.30 (seeded dropout). The grid stays 3×3×3: a 4×4×4 lattice is 64 cubes against today's 27, which no sparsity brings inside the +10% budget |
-| ICOSAHEDRON | `shells` 3 → 2…4; `detail` 3/2/1 → ±1 each, total ≤ v1 |
+| ICOSAHEDRON | `shells` 3 → 2…4 (the Dyson sphere's shells, panels shared by area); `detail_delta` 0 → −1 (fewer, bigger panels) (§19.1) |
 | NETWORK | `nodes` 120 → 100…132; `link_distance` 6 → 5…7 |
 | DOME | `pillars` 8 → `symmetry`-linked 6…10; `crystals` 6 → 4…7 |
 | ASTROLABE | `rings` 8 → 6…9; `tilt_spread` random → seeded, scaled by coherence |
 | TESSERACT | `w_ratio` 0.5/0.3 → 0.3…0.7 (speaking only) |
-| QUANTUM | `wave` 10 → 8…12 (colour comes from the shared palette, never its own band) |
+| QUANTUM | `wave` 10 → 8…12, the interference ripples' wavenumber (colour comes from the shared palette, never its own band) (§19.2) |
 | MANDELBROT | `max_iter` 40 → 32…40 (down only); `step` 0.012 → 0.012…0.015 |
 | MOBIUS | `twists` 1 → 1…3 (odd); `width` 1.5 → 1.35…1.65 (wider breaks the budget) |
 | GRID | `wave_scale` → 0.8…1.2 |
 | CABLES | `tubes` 80 → 64…88 |
-| NONE | `lines` 100 → 80…110 |
+| NONE | `lines` 100 → 80…110, two Hopf fibres a line (§19.3) |
 | EDEN | none by model: `stage` 0…6 moves only along its set track (§15); the player stays white (reserved as "you") |
+| WORMHOLE | `rings` 20 → 16…24 (count) (§19.4) |
+| BLACKHOLE | `dust` 320 → 240…360 (count) (§19.5) |
 
 ### 3.4 Expression
 
@@ -856,10 +866,17 @@ simply never grows, and everything else works.
     both the newly drawn image and the frame shown before on a 32 × 20 grid
     of cells, and averages every 10-degree field (11 × 7 cells).
     - A field that would change its average lightness faster than 2.5 L* per
-      100 ms keeps just enough of the frame shown before to change at that
-      rate, so it fades toward the new image instead of jumping.
-    - Each pixel keeps as much as the most demanding field around it, so
+      100 ms is held to that rate, so it changes gradually instead of
+      jumping.
+    - Each cell is held as much as the most demanding field around it, so
       every field is held, wherever it lies.
+    - It holds a field by scaling the new frame's own light in each cell:
+      dimming it, or lifting what is there, up to 16 times. The cell's
+      average lands exactly where a mix with the frame shown before would
+      have put it. It never draws an earlier frame. (It used to mix the
+      frame shown before back in; under head tracking every moving edge
+      left a trail, which read as motion blur. The check: 1,658 pixels of
+      an earlier frame over 250 frames of a head sweep before, none after.)
     - A small bright thing moving within a field barely changes the field's
       average, so it is left alone and stays crisp.
     - Below the rate, it changes nothing.
@@ -1987,6 +2004,523 @@ brightness only (§13.7), and no tile is thrown.
   section. Errors are built (§13.3): its tiles knock like any structure's.
 
 ---
+
+## 16. Process orbs: Friday's helpers, hands-on (owner, 2026-10-02)
+
+The owner's direction: "I like the process orbs, bring them back. How can we
+make them more interactive? How can we make them more interesting and
+useful?" He approved all eight ideas below.
+
+The orbs are the helper layer (Layer 2). Each orb is one of Friday's
+helpers, models or background jobs, never Friday herself.
+
+> **Status (2026-10-02):** built and tested:
+> - the rules (`FridayOrbLife`) and the forms (`FridayOrbForms`);
+> - hands-on control and voice actions (`FridayOrbHands`);
+> - what each orb shows, drawn over the orb layer (`FridayOrbScene`);
+> - the day's stars (`FridayOrbSky`);
+> - one helper in its own tab (`TaskFocus`).
+>
+> Not built:
+> - the data-left mark, because a helper's `egress` frames are routed to
+>   Friday's core only;
+> - local versus cloud from a helper's `route` frames, likewise. Until then
+>   the tint comes from the task record (`seat_is_local`, a cloud pin).
+
+**Fixed rules.**
+- An orb never drives Friday's core form, and neither does a helper's
+  work: her mood no longer turns to EXECUTING because a helper task is
+  running or an orb is on the scene.
+- The routing that feeds the layer is fixed: helper-labelled presence frames
+  (P-TURN-ORIGIN) plus the rows of `/api/processes`. Above eight orbs, the
+  rest fold into one swarm orb with a count.
+- No faces or mouths: every form is mathematics or science.
+- The photosensitivity limits of §6.3 hold.
+- Orbs keep out of the centre UI: the top bar, the greeting and prompt row
+  above the dock, and the dock itself.
+- Brand: decoration never borrows a status hue, and status is never carried
+  by colour alone (BRAND.md).
+
+The code:
+- `FridayOrbLife` (`<orb-life>`): the rules as plain arithmetic.
+- `FridayOrbForms` (`<orb-forms>`): the shapes.
+- `FridayOrbHands` (`<orb-hands>`): the pointer and voice.
+- `FridayOrbSky` (`<orb-sky>`): the day's stars.
+- `TaskFocus`: one helper in its own tab.
+
+### 16.1 Hands-on control
+
+The scene's canvas takes no pointer events, because the UI sits over it, so
+an orb has never received a click. The pointer is now read at the window,
+and only over the bare scene. "Bare scene" means a clear element covering at
+least half the screen that is not a control, a window or a panel.
+
+| Gesture | What happens |
+|---|---|
+| Tap | If the helper needs your OK, its approval card opens: the same card, unfolded from "Later" and outlined. Otherwise its thread opens. |
+| Hold still for 0.6 s | Pause, or continue a paused one. Only a row the server marks `pausable` can pause; any other says at once that pausing is not possible yet. |
+| Throw it away from Friday (release faster than 1,200 px/s, moving away from her) | Cancel, with a five-second Undo. Nothing is sent until the window passes. Then a running task stops at its next step (`stop-after-step`), a task not running yet is cancelled, and a process with no task (an image or a video render) is cancelled as a process. |
+| Drop it on Friday | Its status in one line, written under the top bar ("Friday: The teal research helper is working on step 2 of 5: …"). When the task answers, the line gains its latest checkpoint. |
+| Drop it at the screen's edge | Its own tab: `/w/system?tab=task&task=<id>`, one named tab per helper. |
+| Let go anywhere else | It drifts back to its orbit. |
+
+A throw toward Friday is never a cancel.
+
+**Voice parity.**
+- Every orb has a speakable name: its colour and its kind ("the teal
+  research helper").
+- The colour is one of the brand's five decoration hues (teal, pink, blue,
+  sand, violet), the least-used first. Common words map to them: "green" is
+  teal, "purple" is violet.
+- Order words ("the newest") and "it" (the orb last touched or named) work
+  too.
+- Voice and chat act through the desktop action `{type: "orb", op, target}`,
+  for op `list`, `status`, `open`, `cancel`, `undo`, `pause`, `resume` or
+  `popout`. The page resolves the phrase where the orbs are and runs the same
+  code as the hand, with the same undo. What happened rides back in the
+  action's acknowledgement for Friday to say.
+- An ambiguous phrase never acts. It names the candidates.
+- A pop-out asked for by voice opens as a window on the desktop, because a
+  browser blocks a new tab outside a click.
+
+**Status out loud.** Dropping an orb on Friday writes the line. Asking by
+voice returns the same line, and her voice model says it. The page does not
+synthesise speech for it, because that would send a helper's checkpoint text
+to a speech service: a new path for data to leave the machine.
+
+### 16.2 Forms, colours and what they mean
+
+| Kind (from fields the server sets in code) | Form |
+|---|---|
+| Research (a research commission) | A golden-angle (phyllotaxis) point sphere |
+| Code (the coding worker, self-improvement) | A small cube lattice |
+| Media (image, video, podcast, pipeline, a creation) | A Lissajous figure |
+| Mail (category communication) | A (p, q) torus knot |
+| Scheduled (a schedule, `sched-` processes) | An epicycloid |
+| System (pulling a model, the seat gate, vault access) | A Platonic solid |
+| Any other helper | An icosahedron |
+
+- **Kind.** A kind comes from ids, categories, process names and links set in
+  code, never from a task's own words. The server's own `kind` wins when it
+  sends one.
+- **Variation.** Each form's numbers (point count, frequency ratio, knot
+  winding, lattice twist) are drawn from the genome step's content hash. The
+  same step draws the same form; a new weekly step draws a new variation of
+  it.
+- **Drawing.** Forms are lines and points, drawn dim and additive, fitted
+  inside the orb's sphere.
+
+**Colour and marks.**
+
+| Meaning | How it shows |
+|---|---|
+| Which orb (its name) | Its decoration hue |
+| Local work | The full hue, a solid form |
+| Cloud work | A paler tint of the same hue, and an outer ring (a shape as well as a tint) |
+| Data left the machine (the helper's `egress` frame) | A thin thread rises once, and a small chevron marks the orb for its life |
+| Needs your OK | Amber, the one place amber appears. A gentle glow, and the orb drifts slightly forward. |
+| Failed | Error red with the word "Failed". It dims and stays until looked at. |
+
+### 16.3 The life of an orb
+
+- **Progress.** An orb's orbit closes in on Friday only with real progress:
+  a fraction the server computed, or steps done of steps planned. Unknown
+  progress never moves it.
+- **Sparks.** A tool call is one small spark. Sparks are rate-limited to one
+  per orb per 0.4 s and three a second in all, well inside the flash limit.
+- **Moons.** A helper's own helpers (`parent_trace_id`) are its moons.
+- **Finishing.** A finished orb spirals into Friday over 1.6 s. Her own beat
+  comes from her `subagent` end frame, never from the orb. It leaves a
+  receipt chip: what it did, the model, how long, the cost, and the sources
+  when the server has them. A failed one names the fix (resume from where it
+  stopped, or run it again).
+- **The sky.** The day's finished helpers are faint stars in the band above
+  the scene's centre, one fixed place per task, taken from the server's own
+  task list. Tapping a star opens its receipt.
+
+### 16.4 What the server gives today, and what it needs
+
+**Layout.**
+- New orbs take the next golden-angle slot on one of three tiers, all at
+  one speed, so they and their labels do not pile up.
+- Labels that would overlap move up a line.
+- An orb drifting over the prompt row or the dock, or below the screen
+  where its label would sit on the dock, is lifted clear.
+
+**Built on what exists:**
+- the process rows (`/api/processes`);
+- the task record and digest (result, model, cost, duration, the latest
+  checkpoint);
+- `stop-after-step`, cancel, resume and rerun;
+- the trace ids on helper frames (`turn` equals the row's `trace_id`);
+- the cloud-spill card's task link.
+
+**Needed from the server, and not built here:**
+- Pause and continue a live helper (`POST /api/tasks/<id>/pause`,
+  `/continue`), and `pausable` on the row.
+- A cancel that stops the worker:
+  - `DELETE /api/tasks/<id>` marks a running task cancelled but does not
+    signal the worker, which can later overwrite the status;
+  - runner tasks ignore `stop-after-step`;
+  - `/api/processes/<pid>/cancel` releases any GPU lease and has no login
+    check.
+- A task id on approval cards. Today only the cloud-spill card carries one,
+  so other cards cannot find their orb.
+- A `kind` field on task and process rows.
+- Sources per task (documents, not reasoning labels).
+- A cost estimate per task before paid work starts. `costs.db` has no task
+  id.
+- The orb layer's routes (presence.py `STATE_ROUTES`):
+  - `egress` routes to Friday only, so the data-left mark has nothing to
+    show. Routing it to the helper layer too would let it.
+  - `route` likewise, for the local or cloud tint.
+- A task id on egress log rows. The helper's frame is enough for the mark;
+  the log is not.
+- The orb layer's poller passes `name`, `task_id`, the process id
+  (`pid`), `trace_id`, `step_n`, `step_total`, `research_commission_id` and
+  `pausable` with each orb. Kind, receipts, approvals, moons and the
+  failure's dismissal read them.
+- The voice and chat tools that send `{type: "orb"}` actions, and their
+  action-gate classification. That is governance, so it is the lead's.
+
+### 16.5 Tests
+
+- `tests/unit/test_orb_life.py` (node, both scene files): kinds, names and
+  the phrase resolver, the gesture state machine, the undo window, progress
+  and the spiral, receipts, stars, the keep-out, sparks, colours, approval
+  links, frame-to-orb mapping, and form seeding.
+- `tests/unit/test_orb_forms.py` (node with the vendored three.js): every form
+  is real, finite, fitted and distinct, and follows the step.
+- `tests/unit/test_orb_hands.py` (node, a stand-in page): voice and pointer
+  through one path, the undo window, the stop-after-step-then-delete order,
+  honest pausing, pop-out by voice, the approval card, the pointer only over
+  the bare scene, and the day's stars (today's finished tasks only, fixed
+  places, a ring for a failure; a tap opens one, a drag does not).
+- Every rule in these files was broken on purpose once, and each break failed
+  a test.
+
+## 17. The world: an ocean of dots, a clear picture (owner, 2026-10-02)
+
+The owner's direction:
+- "Motion blur when I turn on head tracking mode ... should be eliminated
+  entirely."
+- "A lot of aliasing on the hard lines of the genesis lattice ... a 3D
+  improvement pass."
+- "That 2D plane of dots [should] be an actual 3D ocean of dots, kinda like
+  we're flying/floating through space," whose behaviour telegraphs the
+  system's state. A cloud call "spool[s] out a cool web-like or
+  network-like effect" across the dots.
+
+All four were approved.
+
+### 17.1 No blur under head tracking
+
+- **The backstop.** The trail came from the photosensitivity backstop
+  (§6.3), which mixed the frame shown before back into the new one. It now
+  scales the new frame's own light instead and never draws an earlier
+  frame.
+- **The view.** The face is seen 15 to 30 times a second and the scene is
+  drawn 60 or more. The view now glides toward the newest head position at
+  the render rate (a 45 ms time constant) instead of stepping at each
+  detection.
+- **The lean.** Lean depth ignores the detector's jitter in face width (a
+  0.035-octave backlash), so the view does not wobble while the head is
+  still.
+- **Tests (rendered frames):**
+  - A bright square that jumps across the view leaves nothing in the very
+    next frame: 0.68 of its light stayed before, none after.
+  - A head sweep shows no light from an earlier frame: 1,658 pixels over
+    250 frames before, 0 after.
+
+### 17.2 Anti-aliasing and a clear picture
+
+- **Multisampling.** The scene was drawn into the composer's own render
+  targets, so the canvas's anti-aliasing never reached it. The composer now
+  draws into a 4× multisampled target on WebGL2, and a plain target where
+  the GPU has no WebGL2. Every pass after it reads the resolved image.
+- **Pixel ratio.** It is read again on each resize, capped at 2 (1 in the
+  low-cost widget), and handed to the composer.
+- **Bloom.** Its radius is 0.4 and threshold 0.3 (was 0.55 and 0.25), so
+  edges stay edges. The holographic colour split is about a pixel (was 4
+  to 17).
+- **Screen-space strokes.** Fat lines in place of 1-pixel lines: only where
+  multisampling still leaves a hard line ragged (§17.5).
+
+### 17.3 The ocean of dots (`FridayField`)
+
+- **What it replaces.** A volume of 2,000 to 7,000 dots (by hardware; 1,200
+  in the low-cost widget) around the view, drifting toward the viewer so
+  you float through it. It replaces a shell of 800 dots that a structure
+  change flattened into a disc that never came back (the "2D plane").
+- **Cost.** Drift, sway, the current and the glow run in the vertex shader;
+  no dot is touched on the CPU.
+- **Depth.** A dot's size follows its depth (1 to 6 pixels). Dots fade at
+  the box's ends, so wrapping never pops. Head-tracking parallax comes from
+  the window (§18), because the dots really are at depth.
+- **Layer.** It is the world layer: it never drives Friday's form, and it
+  is not the helpers' orb layer.
+
+### 17.4 What the dots say (`FridayFieldState`)
+
+Only Friday's own frames (agent "friday") move it.
+
+| State | Signal | The dots |
+|---|---|---|
+| Idle | no signal | a slow drift |
+| Thinking | her `round` frames | a faint current toward her, fading when the rounds stop |
+| Local work | her `handoff` start to end; a `route` local answer briefly | the dots nearest her glow |
+| A cloud call | her `egress` `sent` with route `cloud`, and nothing else | a pulse leaves her and spools a web of links across the dots (each dot in a cone toward "the cloud" linked to its nearest three, revealed outward) |
+| The answer | her next `route`, `tool` start, `round`, `verify` or `error` frame; or 15 s with none | the web pulls back in |
+| Offline | the network check (`body.net-offline`) | the field goes still, gently |
+
+The web is a privacy signal: it fires only on a real, sealed cloud send of
+hers, never for decoration. It fades in. Tested in
+`tests/unit/test_world_field.py`; every rule was broken once and caught.
+
+### 17.5 Not built, and asks
+
+- An explicit "answer received" frame for a cloud call (an `egress` end).
+  The web pulls back on her next frame of the kinds above.
+- Helpers' cloud calls do not reach the field: `egress` routes to Friday
+  only (§16.4). If the web should show every send off the machine, the
+  field needs helpers' `egress` too.
+- The page's own "server unreachable" state (`connHealth`) is React state
+  only. The field goes still on the network check alone.
+- Fat-line strokes: decided after looking at the multisampled frames of
+  every structure.
+
+## 18. The window: head-coupled perspective (owner, 2026-10-02)
+
+The owner's direction: "We need all of our avatars to move in head tracking
+mode like they're in a fixed position in 3D space and the user's movement
+dictates the perspective," and Giga Earth's ball "needs to move around a bit
+more, mainly from side to side."
+
+### 18.1 What the user sees
+
+- **The avatar holds its place.** With head tracking on, the cinematic drift
+  stops at its resting pose (its pose at t = 0, glided to). Nothing in an
+  avatar reads the head; only the eye moves.
+- **The screen is the glass.** The glass is a fixed rectangle in front of the
+  avatar, 0.62 of the way from the resting eye to what it looks at
+  (`GLASS_AT`), the size the plain camera sees there. The frustum runs from
+  the eye through its four edges (`FridayTracking.placeWindow`), so a point on
+  the glass stays put on screen whatever the head does.
+- **Sideways.** The avatar, behind the glass, is seen from where the head is
+  and slides with it past the frame; what is past the far edge comes into
+  view; what is in front of the glass (the near dots) moves the other way.
+- **Leaning in.** The eye comes nearer the same glass: the avatar comes
+  closer (a centre at the look target about 1.38× nearer for one octave) and
+  the view through the glass widens. On a flat capture the avatar draws a
+  little smaller while more of the world shows around it; to the viewer,
+  whose screen now fills more of the view, it is nearer.
+- **Lost face.** A face counts as lost 250 ms after the last sighting (or
+  three of the detector's gaps, on a slow machine). The view eases back to
+  centre in about 300 ms, and a face found again is followed from there.
+- **Reduced motion.** No sideways movement and only a gentle lean (1.12×).
+- **Giga Earth.** The ball drifts slowly side to side across its place (3.2
+  units either way over 17 s, at most 1.2 units a second), a little up and
+  down out of step, and settles in the middle under reduced motion.
+
+### 18.2 True to the head
+
+- The head's offset in centimetres is its place in the camera frame times
+  the webcam's half-angle (about 62° across a 4:3 frame) times the real
+  distance (`viewing_distance_cm` at rest, divided by the lean).
+- The eye's offset is that many centimetres at the glass's own scale: the
+  glass's world width over the page's width in centimetres
+  (`screen_width_cm`; 0 reads the page's CSS width at 96 per inch, which the
+  system's display scaling keeps close to true). Ten centimetres to the
+  right puts the eye ten screen-centimetres to the right of the glass's
+  middle. `parallax_strength` scales it (1 is true) and it never goes past
+  1.5 glass widths.
+- The depth axis keeps the composed view at rest: the eye rests at the
+  glass's distance, and a lean divides that distance.
+
+### 18.3 Settings
+
+`viewing_distance_cm` (60, 30–120) and `screen_width_cm` (0 = from the
+display, up to 120) are new, in the engine, `DEFAULT_SETTINGS["tracking"]`,
+both panels and the `hologram_window` voice tool; a reset keeps them, like
+the calibration. `zoom_in_max` and `zoom_out_max` keep their names and now
+bound how many times nearer or farther the eye may go ("Lean in, at most").
+
+### 18.4 Tests
+
+`tests/unit/test_hologram_window.py`:
+- **Node, with the vendored three.js, through `placeWindow`.** Left, centre,
+  right, near and far: the avatar's world position is the same and the
+  projection changes; the glass is anchored; the sides and the lean behave
+  as above; the centimetre calibration is exact; the clamps hold; reduced
+  motion; the 300 ms ease; a found face.
+- **Static.** Only the camera, the HUD, the dock and the debug overlay read
+  the head.
+- **Browser.** Every structure, before and after a genome step, comes about
+  1.4× nearer leaned in and does not move.
+
+Twelve mutants of these rules (the old magnifier, no shear, an orbit, a
+player or lattice that follows the head, a slow ease, a stale filter, no
+lean in the centimetres, no screen width, no clamp, a moved glass, a flipped
+side) were each caught. `tests/unit/test_rez_boss.py` holds the sway.
+
+### 18.5 Not built
+
+- The window assumes the page sits under the webcam. A window off to one
+  side of a wide screen would need the page's place on the screen.
+- `ui_parts/styles_and_scene.html` still carries the older head code (the
+  mouse fallback and the orbit). Only its avatar-side head terms are gone.
+
+## 19. Five avatars rebuilt or new: Dyson, Dirac, Transcendence, the bridge, the hole (owner, 2026-10-02)
+
+The owner's direction, approved: Dirac Probability was "way too shiny";
+Transcendence "feels very empty"; the Sacred Sphere becomes a Dyson Sphere
+that looks like one, with solar prominences ("just a thought", approved);
+and two new structures, an Einstein-Rosen bridge and Hawking Radiation, the
+latter inspired by the physics behind a well-known film's black hole.
+
+Every one of them:
+- Reacts to her state only: her voice (`holoAmplitude`), her thinking
+  (`REASONING`) and listening (`LISTENING`) moods.
+- Keeps the photosensitivity limits on its own: voices are low-passed before
+  they touch light, waves run under once a second at any point, sparks fade in
+  over a quarter second. The backstop (§6.3) holds the rest.
+- Cannot glare. Point clouds use normal blending or capped colours, and light
+  has a soft shoulder.
+- Holds its place under the window (§18).
+- Hands its own units to the gesture engine (kind `module`, §13), and stills
+  under reduced motion.
+
+### 19.1 The Dyson Sphere (ICOSAHEDRON, `FridayDyson`)
+
+- **Form.**
+  - A star: her light, limb-darkened, capped below glare.
+  - Inside two to four shells of hexagonal collector panels (the `shells`
+    gene). The panels are shared by area, so the gene changes the layout and
+    never the cost; a detail step down gives fewer, bigger ones.
+  - Each shell has its own inclination and rate.
+- **Built by her looks.** Each shell is built ring by ring from its own
+  equator, inner shells first: about two fifths at first, whole after about
+  ten steps. Panels a step adds ease in.
+- **Starlight** leaks through the gaps.
+- **Prominences.** Eight loops of plasma along the star's field lines (one
+  point cloud, plasma running along each) rise between the panels. Now and
+  then one lifts toward the inner shell and stops short of it.
+- **States.**
+  - Speaking brightens the star through the gaps and arches the loops higher.
+  - Thinking turns the shells faster (capped under a panel a second past any
+    point) and twists the loops.
+  - Listening turns the panels toward the viewer.
+
+### 19.2 Dirac Probability (QUANTUM, `FridayDirac`)
+
+- **Form.** Six thousand translucent points (2,500 in the low-cost widget)
+  where an electron's |ψ|² is, for 1s, 2p_z, 3d_z² and 3d_xy, the nodal gaps
+  empty. Indigo at the core, her accent, then sand at the edges.
+- **Morph.** A point keeps one direction from the nucleus and its rank in
+  every orbital, so one orbital becomes another by short glides.
+- **No glare.** Normal blending and capped colours: it cannot pile up into
+  the old additive sphere's glare, however near the viewer leans. It now
+  crossfades like the rest.
+- **The colour guard is gone.** A global guard used to stop every group being
+  recoloured while Dirac was shown.
+- **States.**
+  - Thinking walks the orbitals, one into the next.
+  - Speaking runs interference ripples outward; the `wave` gene is their
+    wavenumber.
+  - Listening collapses the cloud and sharpens it.
+
+### 19.3 Transcendence (NONE, `FridayHopf`)
+
+- **Form.** Two hundred fibres of the Hopf fibration (two per `lines`) on
+  five nested tori. They are turned through the fourth dimension and projected
+  stereographically on the GPU, in one draw.
+- **Exact.** Every fibre is a circle, and any two link once (the Gauss
+  linking number is checked).
+- **Bounded.** The turn is bounded so no fibre reaches the projection's pole
+  (|w| ≤ 0.73).
+- **No glare.** Normal blending.
+- **States.**
+  - Speaking runs light along the fibres.
+  - Thinking turns it faster and wider.
+  - Listening pulls it taut: true circles on true tori.
+
+### 19.4 The Einstein-Rosen Bridge (WORMHOLE, index 13, `FridayWormhole`)
+
+- **Form.** A luminous grid on Flamm's paraboloid, z = 2√(r_s(r − r_s)), both
+  funnels, seen down into the mouth at a slight angle. The `rings` gene sets
+  its rings. A photon ring sits at the throat.
+- **A lens.** The mouth bends the world's dots round it (`FridayField.setLens`).
+- **The far side.** A disc at the throat whose shader looks out along each eye
+  ray at a different sky, so under the window leaning peeks inside.
+- **Where her mind is working**, and only that, read from the world field's
+  own state (the dots' honesty rule, §17.4):
+  - her warm lattice while she works locally;
+  - the network's web of linked stars only on a real cloud send of hers.
+- **States.**
+  - Speaking ripples the throat.
+  - Thinking tightens it and runs a stream of light through.
+  - Listening widens the mouth.
+- **Weeks.** The throat starts soft and wavering, and its ring sharpens,
+  steadies and brightens step by step.
+
+### 19.5 Hawking Radiation (BLACKHOLE, index 14, `FridayBlackHole`)
+
+- **Form.** A back-faced sphere is the canvas. For each pixel the fragment
+  shader follows the light back from the eye along a Schwarzschild null
+  geodesic (x″ = −3/2 h² x / r⁵, horizon at r = 1) to:
+  - the shadow;
+  - the photon ring at the critical impact parameter 3√3/2;
+  - a thin disk from the innermost stable orbit (r = 3) to r = 10, whose far
+    side bends over and under the shadow.
+- **The disk's light.** It is Doppler-beamed (brighter and bluer where it
+  comes toward the viewer) and gravitationally redshifted near the horizon,
+  with a soft shoulder.
+- **Rays start where the eye really is**, so under the window leaning shows a
+  new light path.
+- **A lens.** The world's dots and its own dust bend round the shadow and
+  never show inside it.
+- **Hawking pairs.** Pairs pop in softly at the shadow's edge. One falls in;
+  its partner leaves as a mote that becomes a dot of the world.
+- **States.**
+  - Idle: slow, sparse pairs.
+  - Listening spirals its dust (the `dust` gene) in toward the horizon.
+  - Thinking quickens the pairs, shimmers the ring and turns the disk faster.
+  - Speaking streams motes out with her voice.
+- **Weeks.** Its emission moves from dark ember through the brand's pink and
+  white to blue-white, and its shadow shrinks (a smaller hole is a hotter
+  one). Never amber, and its only red is dark.
+- **Inspiration only.** No film is named anywhere and no frame is copied.
+
+### 19.6 Names, voice and the server
+
+- **Names.** Both new structures are in every list: the page's
+  `EVOLUTION_PATH` and the picker, the setup wizard, the server's
+  `SCENE_NAMES` and the genome's ids, each with one count gene and a drawing
+  budget.
+- **Aliases.** "Wormhole", "black hole" and "sacred sphere" are aliases kept
+  identical on the page and the server.
+- **Voice.** `avatar_evolution` action `show` picks a structure by any of its
+  names ("switch to the wormhole", "Hawking Radiation"). It keeps the choice as
+  the picker does (`pin_scene`, which the picker's route now uses too) and
+  pushes it to the open page.
+- **The calendar.** It now cycles fifteen structures. An install without a
+  chosen structure may show a different one the day this ships; it changes
+  every four days anyway.
+
+### 19.7 Tests
+
+All run under node with the vendored three.js, lifted verbatim from both scene
+files:
+
+| Test file | What it holds |
+|---|---|
+| `test_dyson_sphere.py` | cost, building, easing, turn cap, the three states, eruptions, the gesture view |
+| `test_dirac_and_hopf.py` | nodal gaps and lobes, the walk, ripple rate, collapse, circles, linking numbers, the pole bound, the states |
+| `test_wormhole_and_black_hole.py` | the Flamm embedding, the far side's honesty, the states, the weeks, the lens, the shader's physics terms, the palette's colour rule, the pairs' soft pop-in, the dust |
+| `test_scene_names.py` | the four lists, the aliases, page and server resolving alike |
+| `test_avatar_voice.py` | `show` |
+
+Frames of every state were looked at on the scratch server.
 
 ## Appendix A. The market side and ratings (carried from 2026-09-22 §7; not built; federation is deferred)
 

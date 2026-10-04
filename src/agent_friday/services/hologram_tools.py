@@ -1,12 +1,12 @@
 """The hologram window, by voice and chat: the hologram_window tool.
 
-With face tracking on, the screen is a window onto the avatar: lean in and it
-comes closer, lean back and it recedes, move sideways and it stays put behind
-the glass. The dials that shape that live in Settings (tracking) and are the
+With face tracking on, the screen is a window onto the avatar: it holds its
+place behind the glass and the head moves the view, so moving aside shows it
+from the side and leaning in brings it closer while the view widens. The dials that shape that live in Settings (tracking) and are the
 owner's to tune by ear, so one tool, declared once in the text registry and
 shared into voice (voice_engine._VOICE_SHARED_TOOLS), sets them: "make the
-zoom stronger", "let it get twice as big", "calibrate where I'm sitting",
-"reset the window".
+depth stronger", "let me lean in further", "I sit eighty centimetres away",
+"calibrate where I'm sitting", "reset the window".
 
 A change is persisted first, through the same settings path the panel uses,
 and then pushed to the open desktop page so it takes effect on the next frame
@@ -32,23 +32,29 @@ DIALS = {
     "head_smoothing": (0.0, 1.0),
     "head_response": (0.0, 1.0),
     "holo_cues": (0.0, 1.0),
+    "viewing_distance_cm": (30.0, 120.0),
+    "screen_width_cm": (0.0, 120.0),
 }
 
 #: How each dial is spoken.
 SPOKEN = {
     "depth_strength": "the depth effect",
-    "zoom_in_max": "the most it can zoom in",
-    "zoom_out_max": "the most it can zoom out",
+    "zoom_in_max": "how far you can lean in",
+    "zoom_out_max": "how far you can lean back",
     "parallax_strength": "the parallax",
     "head_smoothing": "head smoothing",
     "head_response": "head response",
     "holo_cues": "the holographic cues",
+    "viewing_distance_cm": "the viewing distance",
+    "screen_width_cm": "the screen width",
 }
 
 #: Dials the panel keeps across a reset, and so does a spoken one: the dock's
 #: depth and the debug overlay belong to other tabs, and the calibrated
-#: distance is about the seat and the camera rather than the feel.
-KEPT_ON_RESET = ("dock_depth", "debug_overlay", "neutral_face_width")
+#: distance, the viewing distance and the screen width are about the seat,
+#: the camera and the screen rather than the feel.
+KEPT_ON_RESET = ("dock_depth", "debug_overlay", "neutral_face_width",
+                 "viewing_distance_cm", "screen_width_cm")
 
 _ONES = ("zero one two three four five six seven eight nine ten eleven twelve "
          "thirteen fourteen fifteen sixteen seventeen eighteen nineteen").split()
@@ -60,6 +66,8 @@ def _say_int(n: int) -> str:
         return _ONES[n]
     if n < 100:
         return _TENS[n // 10] + ("" if n % 10 == 0 else " " + _ONES[n % 10])
+    if n < 1000:
+        return _ONES[n // 100] + " hundred" + ("" if n % 100 == 0 else " and " + _say_int(n % 100))
     return str(n)
 
 
@@ -126,12 +134,16 @@ def _clamp(key: str, value) -> float | None:
 def _status_text(t: dict) -> str:
     depth = float(t.get("depth_strength", 1.0))
     if depth <= 0:
-        lead = "The window's zoom is off; the avatar stays the same size as you lean. "
+        lead = "Leaning in and out is off; the view follows you only from side to side. "
     else:
-        lead = ("Leaning in can make the avatar up to %s times bigger and leaning back "
-                "up to %s times smaller, with the depth effect at %s. "
+        lead = ("Leaning in can bring you up to %s times nearer the glass and leaning back "
+                "up to %s times farther, with the depth effect at %s. "
                 % (say_number(t.get("zoom_in_max", 1.8)), say_number(t.get("zoom_out_max", 1.5)),
                    say_number(depth)))
+    width = float(t.get("screen_width_cm") or 0)
+    lead += ("It is scaled for %s centimetres from a screen %s. "
+             % (say_number(t.get("viewing_distance_cm", 60)),
+                "%s centimetres wide" % say_number(width) if width > 0 else "it measures itself"))
     cal = float(t.get("neutral_face_width") or 0)
     tail = ("It is calibrated to where you sit." if cal > 0.02
             else "It is not calibrated yet; say calibrate while you sit normally.")
@@ -211,16 +223,19 @@ TOOLS = [
     {"name": "hologram_window",
      "description": (
          "The hologram window on the user's Friday desktop: with face tracking on, "
-         "leaning in brings the 3D avatar closer and bigger, leaning back makes it "
-         "recede, and moving sideways gives parallax. action=status says how it is "
-         "set; set changes any of the dials given (depth_strength 0-2.5, 1 means "
-         "halving your distance doubles the avatar; zoom_in_max and zoom_out_max "
-         "1-2.5, the most it may grow or shrink; parallax_strength 0-2.5; "
-         "head_smoothing and head_response 0-1; holo_cues 0-1), relative=true adds "
-         "to the current value ('a bit stronger' is about +0.25); calibrate takes "
-         "where they sit right now as the normal distance, which needs the hologram "
-         "on and their face in the camera; reset returns the feel to defaults and "
-         "keeps the calibration. Say the result in one plain sentence."),
+         "the 3D avatar holds its place behind the screen and the user's head moves "
+         "the view: moving aside shows it from the side, leaning in brings it closer "
+         "while the view widens. action=status says how it is set; set changes any "
+         "of the dials given (depth_strength 0-2.5, 1 means the view follows their "
+         "real distance; zoom_in_max and zoom_out_max 1-2.5, how many times nearer "
+         "or farther the eye may go; parallax_strength 0-2.5, 1 is true to life; "
+         "viewing_distance_cm 30-120 and screen_width_cm 0-120, 0 meaning measured "
+         "from the display; head_smoothing and head_response 0-1; holo_cues 0-1), "
+         "relative=true adds to the current value ('a bit stronger' is about +0.25); "
+         "calibrate takes where they sit right now as the normal distance, which "
+         "needs the hologram on and their face in the camera; reset returns the feel "
+         "to defaults and keeps the calibration, viewing distance and screen width. "
+         "Say the result in one plain sentence."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(ACTIONS)},
          "depth_strength": {"type": "number"},
@@ -230,6 +245,8 @@ TOOLS = [
          "head_smoothing": {"type": "number"},
          "head_response": {"type": "number"},
          "holo_cues": {"type": "number"},
+         "viewing_distance_cm": {"type": "number"},
+         "screen_width_cm": {"type": "number"},
          "relative": {"type": "boolean"}},
          "required": ["action"]}},
 ]

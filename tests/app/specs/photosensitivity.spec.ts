@@ -64,7 +64,8 @@ function explain(bad: Segment[]): string {
 
 /** Open the app with the given genome, the meter installed and the clock
  *  faked (or, with realClock, on the real clock, to time real frames). */
-async function openScene(page: Page, view: any, structureIndex = 0, opts: { realClock?: boolean } = {}) {
+async function openScene(page: Page, view: any, structureIndex = 0,
+                         opts: { realClock?: boolean, transform?: (html: string) => string } = {}) {
   await page.addInitScript(() => {
     // The approvals stream is a stand-in the test feeds: real approvals on
     // the server must not move the scene during a measurement.
@@ -88,18 +89,24 @@ async function openScene(page: Page, view: any, structureIndex = 0, opts: { real
   });
   await page.addInitScript({ path: METER });
   if (!opts.realClock) await page.clock.install();
-  if (process.env.FRIDAY_PAGE) {
-    const html = fs.readFileSync(process.env.FRIDAY_PAGE, 'utf8');
+  // The page under test (FRIDAY_PAGE), or the served one; `transform` serves
+  // a variant of it (a comparison against the page without one of its parts).
+  if (process.env.FRIDAY_PAGE || opts.transform) {
+    const file = process.env.FRIDAY_PAGE ? fs.readFileSync(process.env.FRIDAY_PAGE, 'utf8') : null;
     await page.route(BASE.replace(/\/$/, '') + '/', async r => {
       const served = await (await r.fetch()).text();
       const token = (served.match(/<script>window\.__FRIDAY_API_TOKEN=[^<]*<\/script>/) || [''])[0];
-      await r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html.replace('<head>', '<head>\n' + token) });
+      let html = file !== null ? file.replace('<head>', '<head>\n' + token) : served;
+      if (opts.transform) html = opts.transform(html);
+      await r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     });
   }
   // Nothing the measurement does may change the user's state.
   await page.route('**/api/**', r => r.request().method() === 'GET' ? r.fallback()
     : r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await page.route('**/api/avatar/genome', r => r.fulfill({ json: view }));
+  // Run against a scratch server (never the live one): the app is set up.
+  await page.route('**/api/setup/status', r => r.fulfill({ json: { initialized: true } }));
   await page.route('**/api/approvals?**', r => r.fulfill({ json: { approvals: [] } }));
   await page.route('**/api/evolution', r => r.request().method() === 'GET'
     ? r.fulfill({ json: { day: 1, structure: 'DAY 1', structure_index: structureIndex, calendar_index: structureIndex,
@@ -259,7 +266,7 @@ test('the meter itself: a fast full-screen flash fails, slow and small changes p
 
 for (const [label, key] of [['v1', 'v1'], ['an evolved genome', 'evolved']] as const) {
   test(`no structure flashes, at ${label}`, async ({ page }) => {
-    test.setTimeout(45 * 60_000);
+    test.setTimeout(55 * 60_000);                    // fifteen structures, about three and a half minutes each
     const watcher = await openScene(page, GENOMES[key]);
     const n = await page.evaluate(() => EVOLUTION_PATH.length);
     const floods: Flood[] = [];
@@ -374,4 +381,222 @@ test('a window resize keeps the picture', async ({ page }) => {
   // Dropping to black and fading back would take two seconds and halve the
   // frame's light from one frame to the next as it fell.
   expect(s.wholeFrameRatio, `the whole frame kept its light through the resize: ${JSON.stringify(s)}`).toBeLessThan(1.25);
+});
+
+/** The server's process rows for the orbs, as a scenario changes them: a row
+ *  gone is a helper finished, a failed row a helper failed. Tasks are pinned
+ *  too, so nothing live wanders into a measurement (avatar-visual-genome.md §16). */
+type Rows = { list: any[] };
+const KIND_ROWS = [
+  { id: 'agent-r', name: 'Agent', label: 'Research', category: 'default', status: 'running', task_id: 'tres', research_commission_id: 'rc1' },
+  { id: 'image-m', name: 'Image', label: 'Poster', category: 'creative', status: 'running' },
+  { id: 'sched-s', name: 'Scheduler', label: 'Digest', category: 'monitoring', status: 'running' },
+  { id: 'agent-mail', name: 'Agent', label: 'Inbox', category: 'communication', status: 'running', task_id: 'tmail' },
+  { id: 'code-x', name: 'Self-Improvement', label: 'Tests', category: 'default', status: 'running', task_id: 'tcode' },
+  { id: 'pull-y', name: 'Pulling Model', label: 'Model', category: 'default', status: 'running' },
+  { id: 'agent-p', name: 'Agent', label: 'Parent', category: 'default', status: 'running', task_id: 'tpar' },
+  { id: 'agent-k', name: 'Agent', label: 'Moon', category: 'default', status: 'running', task_id: 'tkid' },
+];
+async function orbRoutes(page: Page, rows: Rows) {
+  await page.route('**/api/processes**', r => r.fulfill({ json: { processes: rows.list } }));
+  await page.route(/\/api\/tasks(\?.*)?$/, r => r.fulfill({ json: { tasks: [
+    { task_id: 'tmail', status: 'running', seat_is_local: false, trace_id: 'tr-m' },
+    { task_id: 'tpar', status: 'running', trace_id: 'tr-p' },
+    { task_id: 'tkid', status: 'running', trace_id: 'tr-k', parent_trace_id: 'tr-p' } ] } }));
+  await page.route(/\/api\/tasks\/[^/]+(\/digest)?$/, r => r.fulfill({ json: { status: 'completed', model: 'model-x', cost_usd: 0.01 } }));
+}
+/** One orb of every kind: the rows the poller adds, then the richer fields
+ *  the orb layer passes for each (name, task, links). */
+async function addAllKinds(page: Page, rows: Rows) {
+  rows.list = KIND_ROWS.map(r => ({ ...r }));
+  await page.evaluate(rs => { for (const r of rs) (window as any).fridayAddOrb(r); }, rows.list);
+}
+
+test('the process orbs never flash: every kind, every state, the hand on them', async ({ page }) => {
+  test.setTimeout(25 * 60_000);
+  const rows: Rows = { list: [] };
+  await orbRoutes(page, rows);
+  const watcher = await openScene(page, GENOMES.v1, 0);
+  for (const idx of [0, EDEN_INDEX, 6]) {                 // the lattice, Giga Earth, the Dirac cloud
+    await page.evaluate(i => setEvolution(i), idx);
+    await run(page, 5000);
+    await mark(page, `orbs arrive (structure ${idx})`);
+    await addAllKinds(page, rows);
+    await run(page, 3000);
+    await mark(page, `orbs at work (structure ${idx})`);
+    rows.list = rows.list.map(r => r.id === 'agent-r' ? { ...r, progress: 0.7 } : r.id === 'image-m' ? { ...r, progress: 0.3 } : r);
+    await page.evaluate(() => {
+      (window as any).__sparks = setInterval(() => ['agent-r', 'agent-mail', 'code-x', 'agent-p'].forEach(id =>
+        FridayOrbScene.frame({ type: 'presence', state: 'tool', phase: 'start', agent: id })), 120);
+    });
+    await run(page, 4000);
+    await page.evaluate(() => clearInterval((window as any).__sparks));
+    await mark(page, `the hand on the orbs (structure ${idx})`);
+    // a drag across the screen, a throw and its undo, a status, a pause asked of a row that cannot
+    for (let i = 0; i <= 60; i++) {
+      await page.evaluate(k => { const s = FridayOrbScene._state('agent-r'); if (s) s.drag = { x: 200 + k * 14, y: 220 + 3 * k }; }, i);
+      await run(page, FRAME);
+    }
+    await page.evaluate(() => { const s = FridayOrbScene._state('agent-r'); if (s) s.drag = null; });
+    await page.evaluate(() => { FridayOrbHands.run({ op: 'cancel', target: 'the media one' }); });
+    await run(page, 1500);
+    await page.evaluate(() => { FridayOrbHands.run({ op: 'undo', target: 'it' }); FridayOrbHands.run({ op: 'status', target: 'the research one' });
+                                FridayOrbHands.run({ op: 'pause', target: 'the scheduled one' }); });
+    await run(page, 2500);
+    await mark(page, `an orb needs the owner's OK (structure ${idx})`);
+    await emit(page, { type: 'pending', approval: { approval_id: 'ap-orb', status: 'pending', kind: 'cloud_spill', title: 'Move to the cloud',
+      subject_type: 'task', subject_id: 'tcode', created_at: Date.now() / 1000 } });
+    await run(page, 4000);
+    await emit(page, { type: 'resolved', approval_id: 'ap-orb', status: 'approved' });
+    await run(page, 1500);
+    await mark(page, `orbs finish, fail and leave (structure ${idx})`);
+    // four finish (their rows go), one fails (its row says so)
+    rows.list = rows.list.filter(r => !['agent-r', 'image-m', 'agent-p', 'agent-k'].includes(r.id))
+                         .map(r => r.id === 'pull-y' ? { ...r, status: 'error', orb_failed: true } : r);
+    await run(page, 7000);
+    // the failure, looked at (its row dismissed); the rest finish
+    await page.evaluate(() => FridayOrbHands.run({ op: 'open', target: 'the system one' }));
+    rows.list = [];
+    await run(page, 7000);
+  }
+  const segs = await finish(page);
+  expect(segs.length).toBe(15);
+  expect(segs.every(s => s.frames > 60), 'every segment rendered frames').toBe(true);
+  const bad = segs.filter(s => !s.ok);
+  expect(bad, `The orbs flashed:\n${explain(bad)}`).toEqual([]);
+  expect(watcher.errors.filter(e => /is not defined|is not a function|Cannot read/.test(e))).toEqual([]);
+  // nothing is left once every helper has gone (a failure goes when it is looked at)
+  expect(await page.evaluate(() => (window as any).fridayGetOrbs().length)).toBe(0);
+});
+
+test('the drawn orbs cost no more than the plain orbs did', async ({ browser }) => {
+  // Real frames on the real clock, eight busy orbs, on the same page with and
+  // without what each orb shows (FridayOrbScene), alternated so the machine's
+  // own load falls on both: the orb layer's work per frame stays within
+  // 0.5 ms of the plain orbs', and the frame p95 within 10% and 1 ms.
+  test.setTimeout(20 * 60_000);
+  const plain = (html: string) => {
+    const out = html.replace('FridayOrbScene.install(processOrbManager, camera);', '/* the plain orbs */');
+    expect(out, 'the drawing layer is installed where the test expects').not.toBe(html);
+    return out;
+  };
+  const measure = async (transform?: (h: string) => string) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    const rows: Rows = { list: [] };
+    await orbRoutes(page, rows);
+    await openScene(page, GENOMES.v1, 0, { realClock: true, transform });
+    await page.waitForTimeout(3000);
+    await addAllKinds(page, rows);
+    await page.evaluate(() => { (window as any).__sparks = setInterval(() => ['agent-r', 'agent-mail', 'code-x', 'agent-p'].forEach(id =>
+      (window as any).FridayOrbScene && FridayOrbScene.frame({ type: 'presence', state: 'tool', phase: 'start', agent: id })), 120); });
+    await page.waitForTimeout(2000);
+    const got = await page.evaluate(() => new Promise<{ js: number, frame: number, orbs: number }>(res => {
+      const m = processOrbManager, js: number[] = [], fr: number[] = [];
+      const upd = m.update;
+      m.update = (dt: number, el: number) => { const t0 = performance.now(); upd.call(m, dt, el); js.push(performance.now() - t0); };
+      let last = performance.now(); const end = last + 3000;
+      const f = () => { const x = performance.now(); fr.push(x - last); last = x;
+        if (x < end) requestAnimationFrame(f);
+        else { const q = (a: number[]) => a.slice().sort((p, r) => p - r)[Math.floor(a.length * 0.95)];
+               res({ js: q(js), frame: q(fr), orbs: (window as any).fridayGetOrbs().length }); } };
+      requestAnimationFrame(f); }));
+    await ctx.close();
+    return got;
+  };
+  const runs: { plain: any, drawn: any }[] = [];
+  for (let k = 0; k < 3; k++) runs.push({ plain: await measure(plain), drawn: await measure() });
+  const med = (a: number[]) => a.slice().sort((p, r) => p - r)[Math.floor(a.length / 2)];
+  const plainJs = med(runs.map(r => r.plain.js)), drawnJs = med(runs.map(r => r.drawn.js));
+  const plainFr = med(runs.map(r => r.plain.frame)), drawnFr = med(runs.map(r => r.drawn.frame));
+  const said = `orb layer p95 ${drawnJs.toFixed(2)} ms drawn vs ${plainJs.toFixed(2)} plain; frame p95 ${drawnFr.toFixed(1)} vs ${plainFr.toFixed(1)} ms; ` +
+               JSON.stringify(runs);
+  expect(runs.every(r => r.plain.orbs === 8 && r.drawn.orbs === 8), said).toBe(true);
+  expect(drawnJs, said).toBeLessThanOrEqual(plainJs + 0.5);
+  expect(drawnFr, said).toBeLessThanOrEqual(plainFr * 1.10 + 1);
+  console.log(said);
+});
+
+test('nothing that moves leaves a trail: the backstop never draws an earlier frame', async ({ page }) => {
+  // A bright square jumps across the view. In the very next frame nothing of
+  // it may remain where it was: the photosensitivity backstop may dim a
+  // sudden change, but it never mixes an earlier frame back in. That
+  // afterimage is what read as motion blur under head tracking.
+  test.setTimeout(5 * 60_000);
+  await openScene(page, GENOMES.v1, 0);
+  const sq = await page.evaluate(() => {
+    const w = window as any, T = w.THREE, cam = w.fridayDebugScene ? w.fridayDebugScene().camera : null;
+    const scn = (0, eval)('scene'), camera = cam || (0, eval)('camera');
+    scn.children.forEach((c: any) => { c.visible = false; });
+    const sq = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ color: 0xffffff }));
+    scn.add(sq); w.__sq = sq; w.__cam = camera;
+    // Where a point a few units in front of the camera lands on screen.
+    w.__place = (sx: number) => {
+      const fwd = new T.Vector3(); camera.getWorldDirection(fwd);
+      const right = new T.Vector3().crossVectors(fwd, camera.up).normalize();
+      sq.position.copy(camera.position).addScaledVector(fwd, 8).addScaledVector(right, sx);
+      sq.quaternion.copy(camera.quaternion); sq.scale.setScalar(3);
+    };
+    w.__place(-3.2);
+    // Read each frame inside the scene's own render (flash_meter.js does the same).
+    const c = document.getElementById('friday-scene-canvas') as HTMLCanvasElement;
+    const cv = document.createElement('canvas'); cv.width = 160; cv.height = 100;
+    const g = cv.getContext('2d', { willReadFrequently: true })!;
+    const comp = (0, eval)('composer'), r0 = comp.render;
+    comp.render = function (...a: unknown[]) { const r = r0.apply(this, a); g.drawImage(c, 0, 0, 160, 100); w.__img = g.getImageData(0, 0, 160, 100).data; return r; };
+    w.__region = (x0: number, x1: number) => { const d = w.__img; let s = 0, n = 0;
+      for (let y = 30; y < 70; y++) for (let x = x0; x < x1; x++) { const i = (y * 160 + x) * 4; s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; n++; }
+      return s / n / 255; };
+    return true;
+  });
+  expect(sq).toBe(true);
+  await run(page, 2500);                                   // steady, so the backstop has settled
+  const before = await page.evaluate(() => ({ left: (window as any).__region(20, 60), right: (window as any).__region(100, 140) }));
+  await page.evaluate(() => (window as any).__place(3.2));
+  await run(page, FRAME);                                  // the very next frame
+  const after = await page.evaluate(() => ({ left: (window as any).__region(20, 60), right: (window as any).__region(100, 140) }));
+  const said = JSON.stringify({ before, after });
+  expect(before.left, `the square was there and bright: ${said}`).toBeGreaterThan(0.3);
+  expect(after.left, `nothing of it stays where it was: ${said}`).toBeLessThan(before.left * 0.1);
+  await run(page, 3000);
+  const settled = await page.evaluate(() => (window as any).__region(100, 140));
+  expect(settled, `it arrives in full where it went: ${said}`).toBeGreaterThan(before.left * 0.8);
+});
+
+test('head tracking leaves no trail: the backstop shows light only where the new frame has it', async ({ page }) => {
+  // A synthetic head sweeps side to side (the hook the hologram test uses).
+  // On every frame, the backstop's output is read beside the frame it was
+  // given: a pixel lit far beyond what the new frame has there (more than the
+  // backstop's largest lift could make of it) can only be light from an
+  // earlier frame, which is the trail that read as motion blur.
+  test.setTimeout(5 * 60_000);
+  await openScene(page, GENOMES.v1, 0);
+  await page.evaluate(() => {
+    const w = window as any, T = w.THREE, comp = (0, eval)('composer'), r = (0, eval)('renderer');
+    const gov = comp.passes[comp.passes.length - 1];
+    const W = 256, H = 160, a = new Uint8Array(W * H * 4), b = new Uint8Array(W * H * 4);
+    w.__ghost = { frames: 0, ghost: 0, lit: 0 };
+    const render0 = gov.render;
+    gov.render = function (renderer: any, writeBuffer: any, readBuffer: any, ...rest: unknown[]) {
+      const res = render0.call(this, renderer, writeBuffer, readBuffer, ...rest);
+      const out = this.shown[1 - this.shownAt];
+      const x = Math.floor((readBuffer.width - W) / 2), y = Math.floor((readBuffer.height - H) / 2);
+      r.readRenderTargetPixels(readBuffer, x, y, W, H, a);
+      r.readRenderTargetPixels(out, x, y, W, H, b);
+      const lum = (d: Uint8Array, i: number) => (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+      let ghost = 0, lit = 0;
+      for (let i = 0; i < a.length; i += 4) { const lin = lum(a, i), lout = lum(b, i); if (lin > 0.1) lit++; if (lout > 0.1 && lout > 4 * lin + 0.03) ghost++; }
+      w.__ghost.frames++; w.__ghost.ghost += ghost; w.__ghost.lit += lit;
+      return res;
+    };
+    const t0 = performance.now();
+    w.__sweep = setInterval(() => { const t = (performance.now() - t0) / 1000;
+      w.FridayTracking.debugHead(0.7 * Math.sin(2 * Math.PI * 0.6 * t), 0.15 * Math.sin(2 * Math.PI * 0.9 * t), 0.18 * Math.pow(2, 0.4 * Math.sin(2 * Math.PI * 0.4 * t))); }, 16);
+  });
+  await run(page, 4000);
+  const g = await page.evaluate(() => { const w = window as any; clearInterval(w.__sweep); w.FridayTracking.debugHead(0, 0, 0); return w.__ghost; });
+  const said = JSON.stringify(g);
+  expect(g.frames, `frames measured: ${said}`).toBeGreaterThan(200);
+  expect(g.lit, `the view had something in it: ${said}`).toBeGreaterThan(1000);
+  expect(g.ghost, `light only where the new frame has it: ${said}`).toBe(0);
 });

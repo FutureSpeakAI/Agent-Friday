@@ -4,7 +4,9 @@ docs/design/active/avatar-visual-genome.md §8.4. One tool, declared once in
 the text registry and shared into voice (voice_engine._VOICE_SHARED_TOOLS),
 so a spoken "evolve now", "undo that look", "go back to last month's look",
 "turn evolution off" or "what changed?" runs the same code the screen does,
-and what Friday says comes from the same step record the history shows.
+and what Friday says comes from the same step record the history shows. It
+also picks the structure shown ("switch to the wormhole"): kept like the
+picker's choice and pushed to the open page.
 
 Replies are written for the ear: sentences, numbers as words, no gene names.
 """
@@ -18,17 +20,18 @@ from agent_friday.services import avatar_genome as g
 from agent_friday.services import avatar_growth as gr
 
 ACTIONS = ("status", "describe", "evolve_now", "undo", "rollback", "set_enabled",
-           "set_author", "use_local")
+           "set_author", "use_local", "show")
 
 _NUM = ("zero one two three four five six seven eight nine ten eleven twelve thirteen "
         "fourteen fifteen sixteen seventeen eighteen nineteen twenty").split()
 _WORDNUM = {w: i for i, w in enumerate(_NUM)} | {"a": 1, "an": 1}
 
 STRUCTURE_NAMES = {
-    "CUBES": "lattice", "ICOSAHEDRON": "sphere", "NETWORK": "network", "DOME": "cathedral",
+    "CUBES": "lattice", "ICOSAHEDRON": "Dyson sphere", "NETWORK": "network", "DOME": "cathedral",
     "ASTROLABE": "astrolabe", "TESSERACT": "tesseract", "QUANTUM": "probability cloud",
     "MANDELBROT": "Mandelbrot set", "MOBIUS": "Mobius strip", "GRID": "ocean",
-    "CABLES": "nerve", "NONE": "lines", "EDEN": "Giga Earth",
+    "CABLES": "nerve", "NONE": "fibration", "EDEN": "Giga Earth",
+    "WORMHOLE": "wormhole", "BLACKHOLE": "black hole",
 }
 
 
@@ -177,11 +180,46 @@ def _resolve(when):
     return hits[0], None, []
 
 
+def push(action: dict) -> dict:
+    """Send one action to the open desktop page."""
+    try:
+        from agent_friday.services import desktop_bus
+        return desktop_bus.send([action], timeout=4.0)
+    except Exception as e:  # the page is a nicety; the choice is already kept
+        return {"delivered": False, "reason": str(e)}
+
+
+def _said(scene_name: str) -> str:
+    """A structure's name as said: "Ocean of Light", "Giga Earth"."""
+    return scene_name.title().replace(" Of ", " of ").replace(" (Rez)", "")
+
+
+def show(name) -> str:
+    """Show the structure `name` means, kept like the picker's choice."""
+    from agent_friday.routes.insights import SCENE_NAMES, pin_scene, scene_index_for
+    i = scene_index_for(name)
+    if i < 0:
+        return "I don't have a structure called %s. I can show %s." % (
+            str(name or "that").strip() or "that",
+            ", ".join(_said(n) for n in SCENE_NAMES[:-1]) + " or " + _said(SCENE_NAMES[-1]))
+    try:
+        pin_scene(i)
+    except OSError:
+        return "I couldn't keep that choice just now."
+    sent = push({"type": "scene", "target": SCENE_NAMES[i]})
+    if not sent.get("delivered"):
+        return "I'll show %s when the Friday window is open." % _said(SCENE_NAMES[i])
+    return "Now showing %s." % _said(SCENE_NAMES[i])
+
+
 def handle(inp: dict) -> str:
     inp = inp or {}
     action = inp.get("action")
     if action not in ACTIONS:
-        return "I can describe my look, evolve now, undo, go back to an earlier look, or turn evolution on or off."
+        return ("I can describe my look, evolve now, undo, go back to an earlier look, turn "
+                "evolution on or off, or show another structure.")
+    if action == "show":
+        return show(inp.get("structure"))
     if action == "status":
         st = gr.status()
         if not st.get("enabled"):
@@ -264,14 +302,17 @@ TOOLS = [
          "weekly evolution on or off; set_author picks who makes the changes ('frontier', "
          "'seeded', 'local:<model>', or 'cloud:<provider>:<model>'); use_local switches to the "
          "local model when a cloud model is missing; status says whether it is on and when "
-         "the next change is. Say the result in one or two plain sentences; if it asks "
+         "the next change is; show switches the structure on screen to the one named by "
+         "'structure' (any of its names: 'the wormhole', 'Hawking Radiation', 'the Dyson "
+         "sphere', 'Giga Earth'). Say the result in one or two plain sentences; if it asks "
          "'Which one', ask the owner that question."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(ACTIONS)},
          "when": {"type": "string"},
          "enabled": {"type": "boolean"},
          "author": {"type": "string"},
-         "model": {"type": "string"}},
+         "model": {"type": "string"},
+         "structure": {"type": "string"}},
          "required": ["action"]}},
 ]
 RINGS = {"avatar_evolution": 1}
