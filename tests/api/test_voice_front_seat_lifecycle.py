@@ -36,8 +36,10 @@ class _Arbiter:
         self.events.append(("grant", kind))
         return {"ok": True}
 
-    def release(self):
+    def release(self, kind=None):
+        # The real Arbiter.release: `kind` names the lease the caller holds.
         self.events.append(("release",))
+        self.released_kind = kind
         return {"ok": True}
 
     def renew(self, kind, ttl_s):
@@ -81,6 +83,7 @@ def test_the_4b_front_parks_the_brain_and_serves_on_its_own_port(env):
     rv._release_voice_front(f)
     assert env["loader"].evicted == ["voice-front:qwen3-4b-instruct-2507"]
     assert env["arb"].events[-1] == ("release",)
+    assert env["arb"].released_kind == "voice_call", "only its own lease is released"
 
 
 def test_the_17b_front_sits_beside_the_brain(env):
@@ -103,6 +106,7 @@ def test_a_failed_arm_gives_the_brain_back_and_refuses(env):
     with pytest.raises(RuntimeError, match="out of memory"):
         rv._arm_voice_front({"voice_front_model": "qwen3-4b-instruct-2507"})
     assert env["arb"].events == [("grant", "voice_call"), ("release",)]
+    assert env["arb"].released_kind == "voice_call", "only its own lease is released"
 
 
 def test_the_front_serves_with_one_cached_slot():
