@@ -5793,18 +5793,18 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "generate_music",
     "description": (
-        "Write a DEMO PREVIEW of a track — a text description of the music, "
-        "not audio. Use when the user asks you to 'make/write/compose a "
-        "song/track/beat/score/jingle'. Say plainly that this produces a "
-        "written preview rather than a playable file, and offer it on those "
-        "terms; do not describe the result as a song the user can listen to. "
-        "The installed google-genai exposes no batch music surface (only "
-        "Lyria RealTime streaming), so no audio is rendered by this path. "
-        "Higgsfield's account catalogue does list an audio model "
-        "('sonilo_music'), but nothing has generated audio on this machine "
-        "yet, so it is not offered here until it has. Accepts lyrics with "
-        "[verse]/[chorus] tags and a mood-reference image, which shape the "
-        "written preview."),
+        "Compose a music track and save it to the creations folder. Use when "
+        "the user asks you to 'make/write/compose a song/track/beat/score/"
+        "jingle'. When a music service is available (Google Lyria, or the "
+        "Higgsfield audio model set in the creative seat) the result is real, "
+        "playable audio. When none is (no key, or an installed SDK without "
+        "batch Lyria), the result is a written preview describing the track, "
+        "not audio. The result's `output` field says which one was made "
+        "('audio' or 'written_preview'); tell the user exactly that, and never "
+        "describe a written preview as a song they can listen to. Lyrics with "
+        "[verse]/[chorus] tags enable vocals; a seed image sets the mood (an "
+        "image from outside the creations folder needs the owner's approval "
+        "to upload)."),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -6147,16 +6147,24 @@ def _creative_result_summary(res, kind):
         extra = ""
         if kind in ("video", "music") and res.get("mode"):
             extra = f" ({res['mode']})"
+        # The result says which kind of thing was made, so the model can tell
+        # the user: a real file, or a written preview standing in for one.
+        output = "written_preview" if status == "demo" else (
+            "audio" if kind == "music" else kind)
         if status == "demo":
             msg = (res.get("message") or
                    f"Cloud {kind} is unavailable — wrote a demo preview.") + \
-                  f" Saved to the gallery: {names}."
+                  f" Saved to the gallery: {names}. This is a written preview, not a " \
+                  f"playable or viewable {kind} file; tell the user that plainly."
         else:
             msg = (f"Generated {len(files)} {kind}{'s' if len(files) != 1 else ''}{extra} "
                    f"with {res.get('model')}. Saved to the creations folder: {names}. "
                    f"It's now in the Studio gallery. Tell the user it's ready.")
+            if kind == "music":
+                msg += " This is real, playable audio."
         return json.dumps({
             "status": status,
+            "output": output,
             "message": msg,
             "files": files,
             "model": res.get("model"),
