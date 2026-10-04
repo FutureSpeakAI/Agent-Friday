@@ -1378,13 +1378,14 @@ _VOICE_LEASE_HOLDERS: set = set()
 _VOICE_LEASE_LOCK = threading.Lock()
 
 
-def _voice_lease_take(settings, holder, progress=None) -> bool:
-    """Park the brain for this call (mode V-B). True when the session holds
-    the voice-call lease; raises when the card cannot be cleared."""
+def _voice_lease_take(settings, holder, progress=None):
+    """Park the brain for this call (mode V-B). The lease kind ("voice_call")
+    when the session holds the voice-call lease, None when there is no
+    arbiter; raises when the card cannot be cleared."""
     from agent_friday.services import residency_arbiter as ra
     arb = ra.get_arbiter()
     if arb is None:
-        return False
+        return None
     with _VOICE_LEASE_LOCK:
         if not _VOICE_LEASE_HOLDERS:
             if progress:
@@ -1394,7 +1395,7 @@ def _voice_lease_take(settings, holder, progress=None) -> bool:
                 raise RuntimeError("the card could not be cleared for the voice: "
                                    + str(got.get("error") or "refused"))
         _VOICE_LEASE_HOLDERS.add(str(holder))
-    return True
+    return "voice_call"
 
 
 def _voice_lease_ttl(settings) -> float:
@@ -1444,7 +1445,7 @@ def _arm_voice_front(settings, progress=None, holder="session"):
     if not _vf.installed(model):
         return None
     label = _vf.FRONT_MODELS[model]["label"]
-    taken = {"seat": None, "lease": False, "holder": holder}
+    taken = {"seat": None, "lease": None, "holder": holder}
     try:
         if _brain_parked_for_call(settings, model):
             taken["lease"] = _voice_lease_take(settings, holder, progress)
