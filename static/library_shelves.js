@@ -108,7 +108,9 @@
 
   // Decisions and evidence in, paced visual events out. The first sight of a
   // node is the only light it ever gets in a search; a repeat is not a light.
-  // The first decision after evidence begins a new search and clears the last.
+  // The first decision after evidence begins a new search and clears the last;
+  // that clearing is itself a visible change, so it is a pacer job like a light
+  // and every luminance event (settle, reset, light) keeps the one minimum gap.
   function createPathLights(env) {
     const pacer = createPacer(env);
     const lit = new Map();
@@ -122,7 +124,11 @@
     return {
       onDecision(d) {
         d = d || {};
-        if (evidenceSeen) { evidenceSeen = false; run++; lit.clear(); pacer.clear(); env.emit({ type: 'reset' }); }
+        if (evidenceSeen) {
+          evidenceSeen = false; run++; lit.clear(); pacer.clear();
+          const fresh = run;
+          pacer.push(() => { if (fresh === run) env.emit({ type: 'reset' }); });
+        }
         const key = keyOf(d);
         if (!key || lit.has(key)) return;
         const mine = run;
@@ -328,7 +334,8 @@
   function createCore(F, THREE, mount, ui) {
     const st = {
       nodes: [], byId: new Map(), sections: {}, passages: {}, openDoc: null, openSec: null, sel: null,
-      items: [], idx: new Map(), plan: null, evi: [], eviIdx: 0, focusSeq: 0, page: 0, pages: null, cite: null, dazzle: 'full', disposed: false
+      items: [], idx: new Map(), plan: null, evi: [], eviIdx: 0, focusSeq: 0, page: 0, pages: null, cite: null, dazzle: 'full', disposed: false,
+      secLoad: {}, secAll: {}, builtSecs: null, stepAt: -Infinity, stepTimer: null
     };
     let eng;
     try {
@@ -367,8 +374,9 @@
       st.nodes.filter(n => n.kind === 'document').forEach(n => add(n, {
         cat: 'lib:document', card: { title: n.title, sub: n.pages ? n.pages + ' pages' : '', badge: n.ext || '' }, lib: { kind: 'document', key: n.id, folder: n.parent || '' }
       }));
-      if (st.openDoc && st.sections[st.openDoc]) {
-        st.sections[st.openDoc].forEach((s, k) => add(s, {
+      st.builtSecs = st.openDoc && st.sections[st.openDoc] ? st.sections[st.openDoc] : null;
+      if (st.builtSecs) {
+        st.builtSecs.forEach((s, k) => add(s, {
           cat: 'lib:section', name: s.title || '(untitled)', strip: ' ', card: { title: '', sub: '', badge: '' },
           lib: { kind: 'section', key: s.id, doc: st.openDoc, seq: k, label: s.title || '' }
         }));
@@ -376,14 +384,20 @@
       return out;
     }
     function rebuild() {
+      if (st.disposed) return;
       st.items = buildList();
       st.idx = new Map(st.items.map((it, i) => [it.rel, i]));
       eng.setData(st.items, 'library', '');
+      // setData clears the engine's selection; the selected node stays selected
+      // (glow and keyboard focus indicator), and the home frame follows the library's size.
+      if (st.sel != null && st.idx.has(st.sel)) eng.select(st.idx.get(st.sel), false);
+      if (st.home) eng.reframe(true);
       st.plan = eng.getPlan();
       lightsRefresh();
       caption();
     }
     function setNodes(nodes) {
+      if (st.disposed) return;
       st.nodes = nodes;
       st.byId = new Map(nodes.map(n => [n.id, n]));
       if (st.openDoc && !st.byId.has(st.openDoc)) { st.openDoc = null; st.openSec = null; hideReading(); }
@@ -402,17 +416,30 @@
       const levels = Array.from(new Set(list.map(s => s.level || 1))).sort((a, b) => a - b);
       let keep = list;
       for (const lv of levels) { keep = list.filter(s => (s.level || 1) <= lv || s.id === need); if (keep.length <= CAP_SECTIONS) break; }
-      return keep.length > CAP_SECTIONS ? keep.slice(0, CAP_SECTIONS) : keep;
+      if (keep.length <= CAP_SECTIONS) return keep;
+      // over the cap at every level: the first sections in reading order, and the one asked for
+      const room = CAP_SECTIONS - (keep.some(s => s.id === need) ? 1 : 0);
+      let taken = 0;
+      return keep.filter(s => s.id === need || (taken++ < room));
     }
+    // One fetch per document; every call gets the section list that holds `need`
+    // (a section past the cap replaces the last of the capped list, never silently vanishes).
     function loadSections(docKey, need) {
-      if (st.sections[docKey]) return Promise.resolve(st.sections[docKey]);
-      return getJSON('/api/library/tree?node=' + encodeURIComponent(docKey) + '&depth=3').then(d => {
-        const all = ((d && d.nodes) || []).filter(n => n.kind === 'section');
-        const hasPages = all.every(s => typeof s.page_from === 'number');
-        const ordered = all.map((s, k) => [s, k]).sort((a, b) => (hasPages ? a[0].page_from - b[0].page_from : 0) || a[1] - b[1]).map(x => x[0]);
-        st.sections[docKey] = capSections(ordered, need);
+      let p = st.secLoad[docKey];
+      if (!p) {
+        p = st.secLoad[docKey] = getJSON('/api/library/tree?node=' + encodeURIComponent(docKey) + '&depth=3').then(d => {
+          const all = ((d && d.nodes) || []).filter(n => n.kind === 'section');
+          const hasPages = all.every(s => typeof s.page_from === 'number');
+          st.secAll[docKey] = all.map((s, k) => [s, k]).sort((a, b) => (hasPages ? a[0].page_from - b[0].page_from : 0) || a[1] - b[1]).map(x => x[0]);
+        }).catch(() => { delete st.secLoad[docKey]; return null; });
+      }
+      return p.then(() => {
+        const all = st.secAll[docKey];
+        if (!all) return [];
+        const cur = st.sections[docKey];
+        if (!cur || (need && !cur.some(s => s.id === need))) st.sections[docKey] = capSections(all, need);
         return st.sections[docKey];
-      }).catch(() => { st.sections[docKey] = []; return []; });
+      });
     }
     function loadPassages(secKey) {
       if (st.passages[secKey]) return Promise.resolve(st.passages[secKey]);
@@ -426,7 +453,7 @@
     // ── camera ──
     const frame = (c, hw, hh, th, ph, m) => eng.frame(c, hw, hh, th, ph, m);
     const docFolder = key => { const n = st.byId.get(key); return n ? n.parent || '' : ''; };
-    function fly(path, ms) { if (path.length) { st.home = false; eng.flyTo(path, ms); } }
+    function fly(path, ms) { if (!st.disposed && path.length) { st.home = false; eng.flyTo(path, ms); } }
     function readingCam() {
       const cs = eng.camState();
       return { r: readingScale({ fovDeg: cs.fov, planeW: reading.Wp || 7, canvasW: reading.Wc || 700, fontPx: READ.font, viewH: cs.h, target: READ.target }).r };
@@ -434,9 +461,10 @@
 
     // ── opening and backing out ──
     function openDocument(key, need) {
-      if (st.openDoc === key) return Promise.resolve();
-      st.openDoc = key; st.openSec = null; hideReading();
-      return loadSections(key, need).then(() => { if (st.openDoc !== key || st.disposed) return; rebuild(); });
+      if (st.openDoc !== key) { st.openDoc = key; st.openSec = null; hideReading(); }
+      const have = st.sections[key];
+      if (have && st.builtSecs === have && (!need || have.some(s => s.id === need))) return Promise.resolve();
+      return loadSections(key, need).then(list => { if (st.openDoc !== key || st.disposed) return; if (st.builtSecs !== (st.sections[key] || null)) rebuild(); });
     }
     function closeDocument() { st.openDoc = null; st.openSec = null; hideReading(); rebuild(); }
     function openSection(secKey, cite) {
@@ -463,12 +491,13 @@
         if (s) fly([frame([s.cx, s.cy, s.cz], s.w / 2 + 1, s.h / 2 + 1, s.yaw, Math.PI / 2 - 0.06, 1.06)], 800);
       } else if (n.kind === 'document') {
         if (st.openDoc === n.id && openReader) { propsOpen(n); return; }
-        openDocument(n.id).then(() => { flyToLevel(n.id, 1); announceOpen(n); });
+        openDocument(n.id).then(() => { if (st.disposed) return; flyToLevel(n.id, 1); announceOpen(n); });
       } else if (n.kind === 'section') {
-        openSection(n.id).then(d => { if (d) flyToLevel(st.openDoc, 3, st.idx.get(n.id)); });
+        openSection(n.id).then(d => { if (d && !st.disposed) flyToLevel(st.openDoc, 3, st.idx.get(n.id)); });
       }
     }
     function flyToLevel(docKey, levels, slab) {
+      if (st.disposed) return;
       st.plan = eng.getPlan();
       if (!st.plan) return;
       const rc = st.plan.reading && levels >= 3 ? readingCam() : null;
@@ -498,6 +527,7 @@
         let sec = need ? secs.find(s => s.id === need) : null;
         if (!sec && t.page) sec = secs.find(s => typeof s.page_from === 'number' && s.page_from <= t.page && t.page <= (s.page_to == null ? s.page_from : s.page_to));
         if (!sec) sec = secs[0] || null;
+        const fallback = !!need && !(sec && sec.id === need);   // the asked-for section is not in the list: say so
         const go = sec ? openSection(sec.id, t.block) : Promise.resolve(null);
         return go.then(d => {
           if (seq !== st.focusSeq || st.disposed) return false;
@@ -506,7 +536,7 @@
           const levels = sec && d ? 3 : 1;
           const rc = levels >= 3 && st.plan && st.plan.reading ? readingCam() : null;
           fly(focusPath(st.plan, { folder: docFolder(docKey), levels, slab: sec ? st.idx.get(sec.id) : null, reading: rc }, frame), 1300);
-          return { doc: st.byId.get(docKey), sec, heading: d && d.heading || (sec && sec.title) || '' };
+          return { doc: st.byId.get(docKey), sec, fallback, heading: d && d.heading || (sec && sec.title) || '' };
         });
       });
     }
@@ -598,19 +628,26 @@
       L.to = { s: sprite, l: line }; L.t0 = now;
       if (eng.isReduced()) { if (L.sprite) L.sprite.material.opacity = sprite; if (L.line) L.line.material.opacity = line; L.to = null; eng.invalidate(); }
     }
+    const glowLevel = L => (L.dim ? 0.14 : 0.5) * eng.dazzle();
+    const lineLevel = L => (L.dim ? 0.3 : 0.9);
+    function addGlow(L) {
+      L.sprite = eng.glowSprite(cyan()); L.sprite.visible = true; L.sprite.material.opacity = 0; L.sprite.renderOrder = 4; eng.overlay.add(L.sprite);
+    }
+    function dropGlow(L) {
+      if (!L.sprite) return;
+      eng.overlay.remove(L.sprite); if (L.sprite.material) L.sprite.material.dispose();
+      L.sprite = null;
+    }
     function lightOn(key, radius, p) {
       if (!st.idx.has(key) || lights.has(key)) return;
-      const dz = eng.dazzle();
       const L = { key, radius, p, parent: parentOf(key), dim: false, sprite: null, line: null };
-      if (dz > 0) {
-        L.sprite = eng.glowSprite(cyan()); L.sprite.visible = true; L.sprite.material.opacity = 0; L.sprite.renderOrder = 4; eng.overlay.add(L.sprite);
-      }
+      if (eng.dazzle() > 0) addGlow(L);
       if (L.parent) {
         L.line = new THREE.Mesh(unitCyl, new THREE.MeshBasicMaterial({ color: cyan(), transparent: true, opacity: 0, depthWrite: false, fog: false }));
         L.line.renderOrder = 4; eng.overlay.add(L.line);
       }
       lights.set(key, L);
-      setTarget(L, 0.5 * dz, 0.9);
+      setTarget(L, glowLevel(L), lineLevel(L));
       eng.invalidate();
     }
     function lightsRefresh() { eng.invalidate(); }
@@ -644,7 +681,7 @@
       const list = ev.evidence || [];
       if (!list.length) { ui.setLive(announceText({ count: 0 })); return; }
       const keep = new Set(ev.keep);
-      lights.forEach(L => { if (!keep.has(L.key)) { L.dim = true; setTarget(L, 0.14 * eng.dazzle(), 0.3); } });
+      lights.forEach(L => { if (!keep.has(L.key)) { L.dim = true; setTarget(L, glowLevel(L), lineLevel(L)); } });
       const best = list.reduce((a, b) => ((b.score || 0) > (a.score || 0) ? b : a), list[0]);
       st.evi = [best].concat(list.filter(e => e !== best));
       st.eviIdx = 0;
@@ -653,17 +690,23 @@
     }
     function goEvidence(k, announce) {
       const e = st.evi[k];
-      if (!e) return;
+      if (!e || st.disposed) return;
+      st.stepAt = performance.now();
       focusPassage({ doc: e.doc_id, block: e.block_id, page: e.page, section: e.section_id }).then(r => {
-        if (!announce || !r) return;
+        if (!announce || !r || st.disposed) return;
         const n = st.evi.length;
         ui.setLive(announceText({ count: n, doc: r.doc && r.doc.title, heading: r.heading }));
       });
     }
+    // Held ArrowDown/Up: the index moves at once, but the document it lands on is
+    // opened (its sections born) no more than once per pacer gap, so a held key can
+    // never flash more than three materialisations a second.
     function stepEvidence(d) {
       if (!st.evi.length) return false;
       st.eviIdx = (st.eviIdx + d + st.evi.length) % st.evi.length;
-      goEvidence(st.eviIdx, false);
+      const wait = st.stepAt + MIN_GAP - performance.now();
+      if (wait <= 0) goEvidence(st.eviIdx, false);
+      else if (st.stepTimer == null) st.stepTimer = setTimeout(() => { st.stepTimer = null; goEvidence(st.eviIdx, false); }, wait);
       return true;
     }
     function makeTags(others) {
@@ -735,10 +778,20 @@
     window.addEventListener('friday-library-focus', onFocus);
 
     // ── dazzle ──
-    const setDazzle = v => { st.dazzle = v; eng.setDazzle(v); if (v === 'off') lights.forEach(L => { if (L.sprite) { eng.overlay.remove(L.sprite); L.sprite = null; } }); };
+    // Glow follows the level: off frees it, any other level brings it back at its
+    // strength; the lines never depend on the level.
+    const setDazzle = v => {
+      if (st.disposed) return;
+      st.dazzle = v; eng.setDazzle(v);
+      lights.forEach(L => {
+        if (eng.dazzle() <= 0) dropGlow(L);
+        else { if (!L.sprite) addGlow(L); setTarget(L, glowLevel(L), lineLevel(L)); }
+      });
+      eng.invalidate();
+    };
     const onDz = e => e && e.detail && setDazzle(e.detail);
     window.addEventListener('friday-dazzle', onDz);
-    api('/api/settings').then(r => r.json()).then(d => { const v = ((d && (d.settings || d)) || {}).studio_dazzle; if (v) setDazzle(v); }).catch(() => {});
+    api('/api/settings').then(r => r.json()).then(d => { if (st.disposed) return; const v = ((d && (d.settings || d)) || {}).studio_dazzle; if (v) setDazzle(v); }).catch(() => {});
 
     // ── caption ──
     function caption() {
@@ -804,12 +857,13 @@
     function moveSel(i) {
       if (i == null || i < 0) return true;
       const n = nodeAt(i);
-      if (n) select(n.id);
+      if (n) { select(n.id); if (eng.reveal(i)) st.home = false; }
       return true;
     }
 
     function dispose() {
       st.disposed = true;
+      if (st.stepTimer != null) { clearTimeout(st.stepTimer); st.stepTimer = null; }
       path.reset();
       window.removeEventListener('friday-library-decision', onDecision);
       window.removeEventListener('friday-library-evidence', onEvidence);
@@ -824,7 +878,7 @@
       if (window.__libraryShelves3D === eng) window.__libraryShelves3D = null;
       eng.dispose();
     }
-    return { setNodes, key, skip, dispose, focusPassage, litCount: () => lights.size, _state: st };
+    return { setNodes, key, skip, dispose, focusPassage, select, activate: id => { const n = st.byId.get(id); if (n) activateNode(n, false); }, litCount: () => lights.size, _state: st };
   }
 
   window.LibraryShelves3D = LibraryShelves3D;

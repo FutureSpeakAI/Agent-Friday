@@ -159,3 +159,29 @@ out.reduced = await lit({ reduced: true }, false);
     assert sorted(k for k, _ in out["full"]["later"]) == ["glow", "line"]
     assert out["full"]["first"][0][1] == 0 and out["full"]["later"][0][1] > 0   # ramped in, not switched on
     assert [o for o in out["reduced"]["first"] if o[0] == "glow"] == [["glow", 0.5]]   # reduced motion: at once, no ramp
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+def test_settle_reset_and_lights_together_never_change_luminance_more_than_three_times_a_second():
+    out = _run(r"""
+const pg = mk(); pg.load('static/studio_files3d.js'); pg.load('static/library_shelves.js');
+const I = pg.window.LibraryShelves3D.__internals;
+const events = [];     // every emitted event is one visible luminance change: settle, reset, light
+const pl = I.createPathLights({ now: () => pg.clock.t, schedule: (f, ms) => pg.ctx.setTimeout(f, ms), cancel: id => pg.ctx.clearTimeout(id),
+  emit: ev => events.push([ev.type, Math.round(pg.clock.t - 1000)]) });
+pl.onDecision({ node_id: 'd:1', p: 0.9 });
+pg.advance(400, 1);
+const t0 = pg.clock.t - 1000;
+pl.onEvidence({ evidence: [{ doc_id: 1 }] }, ['d:1']);           // the settle
+pg.advance(333, 1);
+for (let k = 0; k < 12; k++) { pl.onDecision({ node_id: 'd:' + (k + 2), p: 0.9 }); pg.advance(4, 1); }   // a new search: first decision at +333, eleven more in 50 ms
+pg.advance(5000, 5);
+out.events = events.filter(e => e[1] >= t0);
+out.types = out.events.map(e => e[0]);
+""")
+    ev = out["events"]
+    times = [t for _, t in ev]
+    assert out["types"][:2] == ["settle", "reset"], out["types"]
+    assert out["types"].count("light") == 12 and out["types"].count("reset") == 1
+    assert _max_in_window(times) <= 3, ev
+    assert all(b - a >= 333 for a, b in zip(times, times[1:])), ev

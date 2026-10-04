@@ -1388,10 +1388,19 @@
 
     // ── labels / decor ──
     // Orbitron is for small card labels; reading text asks for font 'Inter'.
-    function textSprite(text, color, size, font) {
-      const c = document.createElement('canvas'), fs = 44;
-      const x = c.getContext('2d');
+    // A label's texture is keyed by what it draws; a layout rebuild that repeats a
+    // label reuses it. Cached textures outlive the sprites that show them and are
+    // freed together (clearLabelCache), never by a decor's disposal.
+    const labelCache = new Map(), LABEL_CACHE_MAX = 160;
+    function clearLabelCache() { labelCache.forEach(e => e.tex.dispose()); labelCache.clear(); }
+    function labelTexture(text, color, font) {
+      const fs = 44;
       const face = font === 'Inter' ? '500 ' + fs + 'px Inter, sans-serif' : '700 ' + fs + 'px Orbitron, Inter, sans-serif';
+      const key = face + '|' + hex(color) + '|' + text;
+      let e = labelCache.get(key);
+      if (e) { labelCache.delete(key); labelCache.set(key, e); return e; }
+      const c = document.createElement('canvas');
+      const x = c.getContext('2d');
       x.font = face;
       const w = Math.min(1400, Math.ceil(x.measureText(text).width) + 30);
       c.width = w; c.height = fs + 22;
@@ -1402,8 +1411,18 @@
       x.fillText(text, 15, c.height / 2);
       const t = new THREE.CanvasTexture(c);
       t.minFilter = THREE.LinearFilter;
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, opacity: 0, depthWrite: false, fog: false }));
-      sp.scale.set(size * c.width / c.height, size, 1);
+      e = { tex: t, w: c.width, h: c.height };
+      labelCache.set(key, e);
+      if (labelCache.size > LABEL_CACHE_MAX) {
+        const oldest = labelCache.keys().next().value;
+        labelCache.get(oldest).tex.dispose(); labelCache.delete(oldest);
+      }
+      return e;
+    }
+    function textSprite(text, color, size, font) {
+      const e = labelTexture(text, color, font);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: e.tex, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+      sp.scale.set(size * e.w / e.h, size, 1);
       return sp;
     }
     function buildDecor(L) {
@@ -1452,7 +1471,7 @@
     function disposeDecor(g) {
       scene.remove(g);
       g.traverse(o => {
-        if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+        if (o.material) o.material.dispose();   // label maps belong to labelCache
         if (o.userData && o.userData.own && o.geometry) o.geometry.dispose();
       });
     }
@@ -2294,6 +2313,15 @@
         }
         return best >= 0 ? best : i;
       },
+      // Pan (never zoom or turn) so card i is on screen; true when the camera moved.
+      reveal(i) {
+        if (!layout || !(i >= 0 && i < n)) return false;
+        tmpV.set(tP[i * 3], tP[i * 3 + 1], tP[i * 3 + 2]).project(camera);
+        if (tmpV.z <= 1 && Math.abs(tmpV.x) <= 0.82 && Math.abs(tmpV.y) <= 0.82) return false;
+        goal.t.set(tP[i * 3], tP[i * 3 + 1], tP[i * 3 + 2]);
+        camMoving = true; dirty = true;
+        return true;
+      },
       resetCamera() { if (layout) setCamGoal(layout.cam); },
       // the home frame, worked out afresh for the window's size now; at once, or gliding when soft
       reframe(soft) { if (!layout) return; layout.cam = computeLayout(view).cam; setCamGoal(layout.cam, !soft); },
@@ -2357,7 +2385,7 @@
           ro.disconnect(); io.disconnect();
           freeMeshes();
           if (decor) { disposeDecor(decor); decor = null; }
-          oldDecor.forEach(disposeDecor); oldDecor = [];
+          oldDecor.forEach(disposeDecor); oldDecor = []; clearLabelCache();
           fxSprites.slice().forEach(dropSprite);
           overlay.children.slice().forEach(o => overlay.remove(o)); hooks.clear(); camFly = null;
           for (let a = 1; a < real.length; a++) if (real[a]) { real[a].dispose(); real[a] = null; }
@@ -2376,7 +2404,7 @@
         ro.disconnect(); io.disconnect();
         freeMeshes();
         if (decor) disposeDecor(decor);
-        oldDecor.forEach(disposeDecor);
+        oldDecor.forEach(disposeDecor); clearLabelCache();
         real.forEach(t => t && t.dispose());
         cardMat.dispose(); reflMat.dispose(); boxMat.dispose(); lineMat.dispose(); boxGeo.dispose(); planeGeo.dispose();
         [dustMat, partMat, floorMat, sky.material, selGlow.material].forEach(m => m.dispose());
