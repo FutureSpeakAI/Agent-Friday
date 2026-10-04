@@ -2950,10 +2950,10 @@ if sock is not None:
                                          "provider": _prov,
                                          "is_voice": True,
                                          "surface": "voice-local",
+                                         "owner_text": str(user_text or "")[:4000],
                                          # The local mind or an honest failure,
                                          # never a cloud leg answering for it.
                                          "pin_to_seat": True,
-                                         "owner_text": str(user_text or "")[:4000],
                                          "turn_shape": _turn_shape},
                             workspace=settings.get("active_workspace") or "",
                             on_text_delta=on_delta,
