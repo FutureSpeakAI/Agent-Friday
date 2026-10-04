@@ -22,6 +22,7 @@ from agent_friday.services.library import store as lstore
 from agent_friday.services.library.store import Store
 
 FORGOTTEN = "[forgotten source]"
+HIDDEN = "skipped:forgotten"
 _MIN_QUOTE = 20
 
 
@@ -154,21 +155,49 @@ def forget_document(principal: str, doc_id: int) -> dict:
     from agent_friday.services.library import sweep
     doc_norm = _doc_text(st, doc_id)
     fp = sweep.fingerprint(_doc_plain(st, doc_id), doc_id)
+    # From here the document is gone as far as any search is concerned: tombstoned (a folder
+    # scope never re-reads it) and hidden, before a single copy is chased. A failure part-way
+    # leaves it forgotten and unsearchable, never half-deleted and still answering.
+    st.x("INSERT OR REPLACE INTO tombstones(sha256, path, ts) VALUES(?,?,?)",
+         (doc["sha256"], doc["path"], time.time()))
+    st.x("UPDATE documents SET state=? WHERE id=?", (HIDDEN, doc_id))
+    problems: list[str] = []
     _purge_graph(principal, doc_id)
     changed = 0
     for cid in cited_conversations(st, doc_id):
-        changed += conversations.rewrite(cid, lambda m, d=doc_id, n=doc_norm: _scrub_message(m, d, n))
+        try:
+            changed += conversations.rewrite(cid, lambda m, d=doc_id, n=doc_norm: _scrub_message(m, d, n))
+        except Exception as e:  # noqa: BLE001
+            problems.append("a saved chat (%s)" % type(e).__name__)
     swept = sweep.sweep_all(fp, doc_id)
-    # The tombstone goes in before the purge so a failure part-way leaves the document
-    # forgotten (never re-read) rather than half-deleted and still searchable.
-    st.x("INSERT OR REPLACE INTO tombstones(sha256, path, ts) VALUES(?,?,?)",
-         (doc["sha256"], doc["path"], time.time()))
-    st.x("DELETE FROM cited_in WHERE doc_id=?", (doc_id,))
-    st.purge_document(doc_id, keep_row=False)
-    _clear_cache(principal, doc_id)
-    st.drop_empty_folders()
+    problems += swept.get("incomplete") or []
+    try:
+        st.x("DELETE FROM cited_in WHERE doc_id=?", (doc_id,))
+        st.purge_document(doc_id, keep_row=False)
+        _clear_cache(principal, doc_id)
+        st.drop_empty_folders()
+    except Exception as e:  # noqa: BLE001
+        problems.append("the Library's own index (%s); the document is hidden and is cleared at the next "
+                        "sweep" % type(e).__name__)
     return {"ok": True, "forgotten": doc["title"], "messages_rewritten": changed + swept["chats"], "swept": swept,
-            "incomplete": swept.get("incomplete") or []}
+            "incomplete": problems}
+
+
+def finish_forgotten(principal: str) -> int:
+    """Clear documents a forget hid but could not finish deleting. Returns how many were cleared."""
+    st = lstore.store_for(principal)
+    n = 0
+    for row in st.list_documents(HIDDEN):
+        try:
+            st.x("DELETE FROM cited_in WHERE doc_id=?", (row["id"],))
+            st.purge_document(row["id"], keep_row=False)
+            _clear_cache(principal, row["id"])
+            n += 1
+        except Exception:  # noqa: BLE001 - tried again at the next sweep
+            continue
+    if n:
+        st.drop_empty_folders()
+    return n
 
 
 def unforget(principal: str, path: str) -> int:

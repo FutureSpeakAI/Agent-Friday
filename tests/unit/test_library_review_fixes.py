@@ -558,3 +558,39 @@ def test_a_footnote_in_a_chat_that_never_cited_the_document_becomes_forgotten_so
     assert out["ok"] and out["incomplete"] == []
     got = {x["id"]: x["text"] for x in conversations.messages("conv-y")}
     assert got[m["id"]] == "Ninety days [forgotten source]." and got[keep["id"]] == "Something else [lib:%d#7]." % (did + 50)
+
+
+def test_a_purge_that_fails_after_forgetting_leaves_the_document_hidden_and_is_finished_at_the_next_sweep(tmp_path, monkeypatch):
+    from agent_friday.services.library import forget, runtime, tools
+    st, _ = _lib(tmp_path)
+    did = st.list_documents()[0]["id"]
+    row = st.get_document(did)
+    real = type(st).purge_document
+    state = {"fail": True}
+
+    def boom(self, doc_id, **kw):
+        if state["fail"]:
+            raise OSError("disk full")
+        return real(self, doc_id, **kw)
+
+    monkeypatch.setattr(type(st), "purge_document", boom)
+    out = forget.forget_document("owner", did)
+    assert out["ok"] and any("hidden" in p for p in out["incomplete"]), out
+    assert st.get_document(did)["state"] == forget.HIDDEN and st.tombstoned(row["sha256"], row["path"])
+    assert "Margaret Ellison" not in tools.search_library({"question": "who is the tenant paying rent to"})
+    state["fail"] = False
+    assert runtime.purge_uncovered("owner") >= 1
+    assert st.get_document(did) is None
+
+
+def test_the_words_about_the_index_and_the_cloud_say_what_the_code_does():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    ws = (root / "static" / "library_ws.js").read_text(encoding="utf-8")
+    assert "function indexLine" in ws and "index_key_protection" in ws and "protected by your Windows account" not in ws
+    for page in ("index.html", "ui_parts/app.html"):
+        text = (root / page).read_text(encoding="utf-8")
+        assert "protected by your Windows account, like the other indexes" not in text, page
+        assert "the Library page says which" in text, page
+        assert "written on this PC even when a chat uses a cloud model" not in text, page
+        assert "Off, nothing from your documents goes to a cloud model" in text, page

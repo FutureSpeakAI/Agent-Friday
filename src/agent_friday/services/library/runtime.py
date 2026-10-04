@@ -147,7 +147,7 @@ def purge_uncovered(principal: str = OWNER) -> int:
         return 0          # the same rule: a suspended ledger never empties the index
     from agent_friday.services.library import forget
     st = store_for(principal)
-    n = 0
+    n = forget.finish_forgotten(principal)
     for row in st.list_documents():
         if not grants.allowed(principal, Path(row["path"])):
             forget.remove_document(principal, row["id"])

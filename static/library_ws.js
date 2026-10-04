@@ -51,6 +51,15 @@
   const toast = msg => (window.fridayToast ? window.fridayToast(msg) : console.log('[library]', msg));
   const clock = t => (window.__libraryReaderClock ? window.__libraryReaderClock(t) : String(Math.floor(t || 0)));
 
+  // What protects the index file, said as it is: encrypted (and how its key is held) or a plain file.
+  function indexLine(status) {
+    if (!status || !status.index_encrypted) return 'The index is a plain file on this PC; the optional encryption component is not installed.';
+    const kp = status.index_key_protection;
+    if (kp === 'dpapi') return 'The index is encrypted, with a key held under your Windows account.';
+    if (kp === 'vault') return 'The index is encrypted, with a key held under your vault key.';
+    return 'The index is encrypted, but its key is kept on this PC without extra protection.';
+  }
+
   const KIND_WORD = { pdf: 'PDF', docx: 'Word', markdown: 'Notes', text: 'Text', code: 'Code', html: 'Web page', csv: 'Table', xlsx: 'Spreadsheet', transcript: 'Transcript', media: 'Recording' };
   const CONF = { sure: 'sure', 'fairly sure': 'fairly sure', 'a guess': 'a guess' };
 
@@ -446,7 +455,7 @@
           nav('failures', 'Couldn’t read', counts.failed + ((status && status.skipped.length) || 0)),
           nav('vault', 'Vault shelf', status ? (status.vault.unlocked ? status.vault.documents : 'locked') : null),
           nav('pc', 'Browse this PC'),
-          h('div', { className: 'lb-foot' }, 'Indexed on this PC · nothing sent. ' + (status && status.index_encrypted ? 'The index is encrypted, with a key held under your Windows account.' : 'The index sits on this PC, protected by your Windows account.') + ' Private documents are also encrypted with your vault key.')),
+          h('div', { className: 'lb-foot' }, 'Indexed on this PC · nothing sent. ' + indexLine(status) + ' Private documents are also encrypted with your vault key.')),
         main,
         inspector && h('aside', { className: 'lb-insp', 'aria-label': 'Details' },
           sel && detail ? h(React.Fragment, null,

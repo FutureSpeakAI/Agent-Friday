@@ -208,8 +208,12 @@ def _traces(fp) -> tuple[int, str | None]:
 def sweep_all(fp: set[int], doc_id: int | None = None) -> dict:
     """Run every sweep; returns how many records each changed and, under "incomplete", the
     stores that could not be swept (so the owner is told, not reassured)."""
-    out = {"chats": _conversations(fp)}
     incomplete: list[str] = []
+    try:
+        out = {"chats": _conversations(fp)}
+    except Exception as e:  # noqa: BLE001
+        out = {"chats": 0}
+        incomplete.append("the saved chats (%s)" % type(e).__name__)
     for name, fn in (("memory", _memory_index), ("history", _legacy_history), ("context_log", _context_logs),
                      ("traces", _traces)):
         n, problem = fn(fp)

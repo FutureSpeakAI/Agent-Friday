@@ -2,9 +2,9 @@
 
 > **Status:** built on branch `feat/library-shelves`, not on main. The implementation is the
 > authority; where this page and the code disagree, the code wins.
-> **Credit:** ideas from jevbox (see `CREDITS.md`). jevbox publishes no licence, so no code,
-> prompt, wording, icon or asset was used; everything here was written from a description of
-> the ideas.
+> **Credit:** ideas from jevbox and pg-jev (see `CREDITS.md`). jevbox publishes no licence, so no
+> code, prompt, wording, icon or asset was used; everything here was written from a description
+> of the ideas. The same holds for pg-jev (version stamps and the cloud-text cap).
 
 ## What it is
 
@@ -24,8 +24,9 @@ no telemetry and the package opens no socket (`test_library_package_opens_no_soc
   vault shelf, Browse this PC, a 2D list and the 3D **Shelves** view, with an inspector.
 - Media keeps its own 3D layout for what Friday makes; the 3D file browser and "Browse this PC"
   moved here (this amends Media decision D4).
-- Settings, Privacy and Data, Library: search on or off, cloud-written answers (off by default),
-  reading on battery, and whether the knowledge graph learns from Library documents.
+- Settings, Privacy and Data, Library: search on or off, cloud-written answers (off by default) and
+  the most document text one answer may send to a cloud model (default 6,000 characters), reading
+  on battery, and whether the knowledge graph learns from Library documents.
 
 ## Consent
 
@@ -35,6 +36,14 @@ verifier as cloud grants: a tampered line suspends the Library, and a deny mark 
 An add is never a cloud grant. Two doors create one, both by the owner's own act: the
 workspace's folder picker, and an approved card Friday raised through `file_access`
 (`library_add`, `library_remove`, `library_forget`, screen-only like every file card).
+
+Every request to `/api/library/*` must carry the page's rotating session token and is refused
+when a browser says another site caused it. A change (add, remove, forget, move to or from the
+vault, re-read) is accepted only as a verified click on the Library page (same origin plus the
+token) and then passes `action_gate.authorize`, where that click is classed internal and
+receipted; the same action from anywhere else is held. The screen-only approval cards take their
+identity from the verified request, never from a field in the body. A ledger that cannot be
+verified pauses the Library: the index is frozen, never emptied.
 
 ## The index
 
@@ -48,6 +57,8 @@ plain and the workspace says so.
   code, HTML as text, CSV, XLSX, caption files and recordings through a transcript.
   Caps: 200 MB file, 2,000 pages, 50,000 blocks, 5,000 sections, 10 MB text, zip bombs and
   XML entities refused. A document that breaks a cap is listed as "couldn't read", never skipped.
+  A build that cannot limit the child (a frozen build today) refuses to read documents rather than
+  read them inside the server.
 - **Structure:** blocks, a heading tree (synthetic sections when there are no headings),
   passages of at most 900 characters, tables split only between rows with the header repeated.
 - **Credentials are never indexed.** A private key or a vendor token pasted inside a document is
@@ -74,6 +85,17 @@ best routes; weak routes widen, then every passage is searched, then the brain g
 snippets with an instruction to say what it could not find. A passage that names none of the
 question's distinctive words is scored down. Evidence is bounded (12 passages, 6,000 characters
 on the floor tier) and arrives before any answer is written.
+
+**Versions.** Every search record and every cited answer carries a stamp: the encoder's id and
+file hash, a hash of the menu wording, a hash of the calibration, the index version, and Laya's
+id only when Laya actually answered a menu. An old citation can be traced to the versions that
+made it.
+
+**Cloud cap.** When the owner has chosen a cloud model and allowed cloud-written answers, only
+passages of documents with their own cloud permission go, never the vault shelf, and at most
+`library_cloud_char_cap` characters per turn in all (default 6,000). When that trims, the tool
+result says so and the answer says so. Unless cloud answers are allowed, earlier Library answers are replaced
+by a one-line stand-in before conversation history goes to a cloud model.
 
 ## Footnotes
 
@@ -112,10 +134,18 @@ on).
 
 ## Privacy
 
-Forget everywhere deletes the index, writes a tombstone so a folder never brings the document
-back, rewrites saved chats (footnotes become "[forgotten source]", quotations are removed), and
-takes what the knowledge graph learned from it. Remove stops indexing and purges; the file on
-disk is never touched. Off the record writes no receipts and no citation rows. The knowledge
+Forget everywhere tombstones the document first (a folder never brings it back, and nothing can
+find it from then on), deletes the index, and fingerprints its text (every run of eight words,
+hashed, never stored) to remove it from every place Friday kept a copy: saved chats whether or
+not they cited it (footnotes become "[forgotten source]", quotations and abridged or unquoted
+copies are removed), the conversation memory's search index, the older chat history, the context
+log, and the reasoning traces, live and archived (the archive stays verifiable: changed records
+are re-encrypted, later lines re-signed, and a signed redaction line records how many changed,
+never what). It takes what the knowledge graph learned from it (entities known only from it go;
+descriptions it touched are cleared and the reports that used them dropped) and says plainly
+which store it could not reach. A document on the vault shelf can be forgotten only while the
+vault is unlocked, because its words must be read to be found. Remove stops indexing and
+purges; the file on disk is never touched. Off the record writes no receipts and no citation rows. The knowledge
 graph reads Library documents only when the owner chooses, open shelf only, always as private
 text.
 
