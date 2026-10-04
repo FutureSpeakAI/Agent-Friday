@@ -211,11 +211,10 @@ def test_ordinary_commands_still_run(cmd):
 def test_command_output_that_carries_a_key_is_redacted(monkeypatch):
     import agent_friday.services.agent as agent
 
-    class P:
-        stdout = "listing\n" + PEM + "done"
-        stderr = ""
-        returncode = 0
-    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: P())
+    from agent_friday.services import code_sandbox as sbx
+    monkeypatch.setattr(sbx, "run_shell", lambda *a, **k: {
+        "ok": True, "stdout": "listing\n" + PEM + "done", "stderr": "", "exit_code": 0,
+        "timed_out": False, "output_capped": False, "files": []})
     out = agent._tool_run_command({"command": "Get-ChildItem C:\\Temp\\odd"})
     assert "SENTINELKEYMATERIAL" not in out
     assert "listing" in out and "done" in out
