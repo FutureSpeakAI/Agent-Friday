@@ -2285,27 +2285,43 @@ def _tool_run_command(inp):
     if classify_command(cmd)[0] == "forbidden":
         return ("Blocked: this command addresses Friday's own local API, which "
                 "trusts this machine as the owner. It was not run.")
+    # The command runs held in (services/code_sandbox.run_shell), never as the owner's bare process.
+    # A command the gate classed as read-only runs without a card, so it gets the full box: Low
+    # integrity, a job object, a scrubbed environment, a scratch folder. A command the owner
+    # approved on a card keeps the approval, and runs with the job limits (memory, process cap,
+    # the whole tree ended at the timeout), a scrubbed environment and a scratch folder; it is not
+    # fenced at Low integrity because it may change what the owner approved it to change.
+    # If the sandbox cannot be set up the command is NOT run: there is no unsandboxed fallback.
+    from agent_friday.governance.action_gate import INTERNAL as _INTERNAL
+    from agent_friday.services import code_sandbox as _sbx
     try:
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", cmd],
-            capture_output=True, text=True, timeout=300,
-            creationflags=_POPEN_FLAGS,
-        )
-        out = (proc.stdout or '') + (("\n[stderr]\n" + proc.stderr) if proc.stderr else '')
-        # Whatever the command printed, key blocks and vendor tokens are
-        # withheld: the path scan above is best-effort, this is the backstop.
-        out = _cred.redact_secrets(out)
-        # The executor keeps the END of a command's output (where the error
-        # is), names what was cut and saves the whole text; this is only a
-        # sanity ceiling against a runaway printer.
-        if len(out) > 1_000_000:
-            out = (f"[first {len(out) - 1_000_000:,} chars of {len(out):,} dropped]\n"
-                   + out[-1_000_000:])
-        return out if out else f"(exit {proc.returncode}, no output)"
-    except subprocess.TimeoutExpired:
-        return "Command timed out after 300s."
+        res = _sbx.run_shell(cmd, read_only=(classify_command(cmd)[0] == _INTERNAL),
+                             timeout_s=300)
     except Exception as e:
         return f"Command error: {e}"
+    if not res.get("ok"):
+        return f"Not run: {res.get('error')}"
+    if res.get("timed_out"):
+        return "Command timed out after 300s."
+    stdout, stderr = res.get("stdout") or '', res.get("stderr") or ''
+    out = stdout + (("\n[stderr]\n" + stderr) if stderr else '')
+    # Whatever the command printed, key blocks and vendor tokens are
+    # withheld: the path scan above is best-effort, this is the backstop.
+    out = _cred.redact_secrets(out)
+    # The executor keeps the END of a command's output (where the error
+    # is), names what was cut and saves the whole text; this is only a
+    # sanity ceiling against a runaway printer.
+    if len(out) > 1_000_000:
+        out = (f"[first {len(out) - 1_000_000:,} chars of {len(out):,} dropped]\n"
+               + out[-1_000_000:])
+    if res.get("output_capped"):
+        out += "\n[the command printed more than 8 MB and was stopped]"
+    files = res.get("files") or []
+    if files:
+        names = ", ".join(str(f.get("name")) for f in files[:8])
+        out += (f"\n[note] The command wrote {len(files)} file(s) in its temporary working folder ({names}). "
+                f"That folder is deleted when the command ends; give a full path to keep a file.")
+    return out if out else f"(exit {res.get('exit_code')}, no output)"
 
 
 def _tool_run_sandboxed(inp):
@@ -4155,9 +4171,15 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
 
 def _evidence_verdict(tool_trace):
     """The evidence gate: a task is verified only when it used a tool other
-    than spawning another task. Returns (verified, summary, final_status),
+    than spawning another task AND that tool actually ran. A call that raised
+    an approval card and stopped, was held, declined, denied or errored did
+    nothing: it counts only once the owner has decided and approved it and the
+    tool's own result says it ran. Returns (verified, summary, final_status),
     and shows the check on the lattice as one verification pass (§13)."""
-    evidence = [t for t in (tool_trace or []) if t.get('name') not in ('spawn_task',)]
+    from agent_friday.services.completion_receipts import receipt_ok as _ran
+    evidence = [t for t in (tool_trace or [])
+                if t.get('name') not in ('spawn_task',)
+                and _tool_call_status(t.get('result')) == 'ok' and _ran(t)]
     verified = len(evidence) > 0
     summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
                if evidence else 'no tools used')

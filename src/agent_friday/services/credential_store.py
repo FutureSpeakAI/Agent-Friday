@@ -13,18 +13,16 @@ the strongest mechanism available on the host, picked automatically:
   2. **Windows DPAPI** — CryptProtectData (per-user) via ctypes when no password
      is set. No extra dependency; the blob is bound to the OS login account and is
      unreadable by other users or if copied to another machine.
-  3. **Plaintext** — last resort only (e.g. non-Windows host with no password),
-     and only with a loud one-time warning + hardened file permissions. Never
-     silent.
+  3. **Nothing.** There is no plaintext tier. When none of the above can encrypt
+     a secret, `protect()` raises `CredentialProtectionUnavailable`, an error
+     written for the person that says what happened and how to fix it, and
+     nothing is written to disk (a warning on stderr that nobody reads is not a
+     safeguard). Under FRIDAY_OS_MODE (the sealed kiosk image) the same refusal
+     carries the kiosk's own wording.
 
-Under FRIDAY_OS_MODE (the sealed Friday Linux kiosk image — see
-`agent_friday.core.os_mode`), plaintext is not an acceptable last resort: a
-sealed image has no interactive operator to notice the warning, and DPAPI
-(Windows-only) never applies there anyway. `protect()` raises instead of
-falling through, so a credential either gets encrypted or nothing is written
-at all — never plaintext on disk with nobody looking. Windows-default
-behavior (OS mode off) is completely unchanged: same warning, same plaintext
-fallthrough as always.
+Reading is unchanged: `unprotect()` still accepts a blob with no envelope (a
+credential an earlier version wrote in plain text) so the keystore migration can
+read it and rewrite it encrypted.
 
 Every blob is self-describing, so `unprotect()` always knows how it was written:
     FRIDAYVAULT\\x01 ...   -> vault AES-256-GCM   (vault_crypto magic)
@@ -45,6 +43,7 @@ from pathlib import Path
 
 import agent_friday.core as core
 from agent_friday.core.os_mode import is_os_mode
+from agent_friday.user_errors import UserFacingRuntimeError
 
 try:
     import agent_friday.privacy.vault_crypto as _vc
@@ -64,7 +63,23 @@ _DPAPI_MAGIC = b"FRIDAYDPAPI\x01"
 # Derive the vault key lazily, exactly once.
 _VAULT_KEY: bytes | None = None
 _VAULT_KEY_READY = False
-_WARNED_PLAINTEXT = False
+_WARNED_PLAINTEXT = False   # kept for callers and tests that reset it; nothing is written in plain text now
+
+_PLAIN_REFUSAL = (
+    "Friday could not lock this secret away, so it did not save it. Nothing was written to disk. "
+    "Why: nothing on this computer is available to encrypt it right now (Friday's own key store "
+    "could not be opened, no vault passphrase is set, and the system has no built-in protection "
+    "to use). To fix it, set a vault passphrase (run `friday vault-setup`, or set FRIDAY_PASSWORD) "
+    "and make sure Friday's data folder can be written to, then try again."
+)
+
+
+class CredentialProtectionUnavailable(UserFacingRuntimeError):
+    """No encryption is available, so the secret was refused rather than stored in plain text.
+
+    `user_message` is worded for the person and names the fix; `str(exc)` is the account for the
+    log (under FRIDAY_OS_MODE, the kiosk's own wording). A RuntimeError, so every caller that
+    already handles the OS-mode refusal handles this."""
 
 
 def _now_iso() -> str:
@@ -188,25 +203,19 @@ def protect(data: bytes) -> tuple[bytes, str]:
     if dp is not None:
         return _DPAPI_MAGIC + dp, "dpapi"
     if is_os_mode():
-        # Fail closed. The sealed kiosk image has no interactive operator to
-        # see a stderr warning, and DPAPI is Windows-only, so the plaintext
-        # fallthrough below would silently ship a real secret unencrypted on
-        # every Linux OS-mode host with no FRIDAY_PASSWORD set. Refusing is
-        # the only option that cannot be missed.
-        raise RuntimeError(
-            "refusing to write a credential as PLAINTEXT under FRIDAY_OS_MODE=1: "
-            "no FRIDAY_PASSWORD (vault key) is set and DPAPI is unavailable on "
-            "this host (DPAPI is Windows-only; there is no equivalent on the "
-            "Friday Linux kiosk image). Set FRIDAY_PASSWORD or "
-            "FRIDAY_VAULT_PASSPHRASE so this credential can be encrypted before "
-            "it touches disk. Nothing was written."
-        )
-    if not _WARNED_PLAINTEXT:
-        print("[credstore] WARNING: no FRIDAY_PASSWORD and no DPAPI — credentials "
-              "stored as PLAINTEXT at rest (file permissions hardened). Set "
-              "FRIDAY_PASSWORD to encrypt.", file=sys.stderr)
-        _WARNED_PLAINTEXT = True
-    return data, "plaintext"
+        # The sealed kiosk image has no interactive operator and no DPAPI: say so in its own words.
+        raise CredentialProtectionUnavailable(
+            _PLAIN_REFUSAL, detail=(
+                "refusing to write a credential as PLAINTEXT under FRIDAY_OS_MODE=1: "
+                "no FRIDAY_PASSWORD (vault key) is set and DPAPI is unavailable on "
+                "this host (DPAPI is Windows-only; there is no equivalent on the "
+                "Friday Linux kiosk image). Set FRIDAY_PASSWORD or "
+                "FRIDAY_VAULT_PASSPHRASE so this credential can be encrypted before "
+                "it touches disk. Nothing was written."))
+    # No plaintext tier on any host: refuse, visibly, and offer the fix.
+    print("[credstore] REFUSED: no way to encrypt a credential on this host; nothing was written. "
+          "Set a vault passphrase (`friday vault-setup`).", file=sys.stderr)
+    raise CredentialProtectionUnavailable(_PLAIN_REFUSAL)
 
 
 def looks_protected(blob: bytes) -> str | None:
@@ -265,9 +274,9 @@ def write_secret(path: Path, data: bytes) -> str:
     unencrypted (the temp file holds the already-protected blob).
 
     `protect()` is called before anything touches `path` (including creating
-    its parent directory) so that a fail-closed raise under FRIDAY_OS_MODE
-    (no FRIDAY_PASSWORD, no DPAPI) leaves the filesystem completely
-    untouched — not even an empty directory left behind.
+    its parent directory) so that a fail-closed raise (nothing can encrypt)
+    leaves the filesystem completely untouched — not even an empty directory
+    left behind.
     """
     path = Path(path)
     blob, method = protect(data)

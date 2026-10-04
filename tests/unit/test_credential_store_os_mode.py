@@ -178,43 +178,25 @@ class TestVaultPathStillWorksUnderOsMode:
 
 # ── Acceptance criterion 3 (Windows-default regression guard) ──────────────
 
-class TestWindowsDefaultBehaviorUnchanged:
-    """OS mode OFF: this PR must not change anything. Same warning, same
-    plaintext fallthrough as before -- verified, not assumed."""
+class TestWindowsDefaultNoLongerFallsBackToPlaintext:
+    """OS mode OFF: the plaintext fallthrough is gone on every host. When nothing can encrypt, the
+    secret is refused with a plain-language error and nothing is written (see
+    test_credential_store_never_plaintext.py for the full contract)."""
 
-    def test_plaintext_fallthrough_with_warning_when_os_mode_off(self, monkeypatch, capsys):
+    def test_protect_refuses_when_os_mode_off(self, monkeypatch):
         monkeypatch.delenv("FRIDAY_OS_MODE", raising=False)
         _no_dpapi(monkeypatch)
+        with pytest.raises(cs.CredentialProtectionUnavailable):
+            cs.protect(b"a-fake-test-secret-not-real")
 
-        blob, method = cs.protect(b"a-fake-test-secret-not-real")
-
-        assert method == "plaintext"
-        assert blob == b"a-fake-test-secret-not-real"
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
-        assert "no FRIDAY_PASSWORD and no DPAPI" in captured.err
-
-    def test_write_secret_writes_plaintext_to_disk_when_os_mode_off(self, monkeypatch, tmp_path):
+    def test_write_secret_writes_nothing_when_os_mode_off(self, monkeypatch, tmp_path):
         monkeypatch.delenv("FRIDAY_OS_MODE", raising=False)
         _no_dpapi(monkeypatch)
 
         target = tmp_path / "creds" / "google_token.json"
-        method = cs.write_secret(target, b'{"fake": "not-a-real-token"}')
-
-        assert method == "plaintext"
-        assert target.read_bytes() == b'{"fake": "not-a-real-token"}'
-
-    def test_warning_is_only_printed_once(self, monkeypatch, capsys):
-        """Regression guard: _WARNED_PLAINTEXT must still dedupe exactly as
-        before -- this PR only adds a branch ABOVE the warning, it must not
-        change the warning's own behavior."""
-        monkeypatch.delenv("FRIDAY_OS_MODE", raising=False)
-        _no_dpapi(monkeypatch)
-
-        cs.protect(b"secret-one")
-        cs.protect(b"secret-two")
-        captured = capsys.readouterr()
-        assert captured.err.count("WARNING") == 1
+        with pytest.raises(cs.CredentialProtectionUnavailable):
+            cs.write_secret(target, b'{"fake": "not-a-real-token"}')
+        assert not target.exists() and not target.parent.exists()
 
 
 # ── The keystore tier ───────────────────────────────────────────────────────

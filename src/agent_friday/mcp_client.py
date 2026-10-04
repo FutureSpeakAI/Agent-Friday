@@ -73,6 +73,67 @@ _DEFAULT_CALL_TIMEOUT = 120.0   # seconds to wait for a single tools/call reply
 # generously larger than any real JSON-RPC message this protocol sends.
 _MAX_LINE_CHARS = 16 * 1024 * 1024
 
+# A remote (HTTP) server is bounded the same way, in size and in total time. The size cap
+# is generous for any real reply (the flattened result is cut to 100,000 characters anyway)
+# and small enough that a hostile or broken server cannot make Friday hold gigabytes. The
+# time limit is the call's own timeout, for the WHOLE reply: urllib's timeout is per socket
+# operation, so a server that trickles a byte at a time would otherwise never be cut off.
+_MAX_HTTP_BODY_BYTES = 8 * 1024 * 1024
+_MAX_SSE_LINE_BYTES = 1024 * 1024
+_READ_CHUNK = 64 * 1024
+
+
+class MCPResponseTooLarge(RuntimeError):
+    """A remote server's reply passed the size cap. The message is shown to the person."""
+
+
+def _too_large(server: str, what: str, cap: int) -> MCPResponseTooLarge:
+    return MCPResponseTooLarge(
+        f"the reply from {server or 'the remote server'} was too large ({what}; the limit is "
+        f"{cap // (1024 * 1024)} MiB), so Friday stopped reading it and discarded it")
+
+
+def _too_slow(server: str, seconds: float) -> TimeoutError:
+    return TimeoutError(
+        f"the reply from {server or 'the remote server'} took longer than {seconds:g}s to arrive, "
+        f"so Friday stopped waiting for it")
+
+
+def _tighten_socket(resp, remaining: float) -> None:
+    """Best effort: make the next socket read give up when the whole-reply time does."""
+    try:
+        sock = resp.fp.raw._sock
+        sock.settimeout(max(0.05, remaining))
+    except Exception:
+        pass
+
+
+def _read_capped(resp, *, cap: int, deadline: float, server: str, seconds: float) -> bytes:
+    """Read a whole HTTP body, refusing one that is declared or turns out larger than `cap`,
+    and one that is still arriving when `deadline` (epoch seconds) passes."""
+    declared = resp.headers.get("Content-Length")
+    if declared and declared.strip().isdigit() and int(declared) > cap:
+        raise _too_large(server, f"it declared {int(declared) // (1024 * 1024)} MiB", cap)
+    out = bytearray()
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise _too_slow(server, seconds)
+        _tighten_socket(resp, remaining)
+        try:
+            # read1 returns as soon as ANY bytes are there; read(n) would wait for n bytes or EOF,
+            # which a server trickling one byte at a time never allows.
+            chunk = (resp.read1 if hasattr(resp, "read1") else resp.read)(_READ_CHUNK)
+        except (TimeoutError, OSError) as e:
+            if time.time() >= deadline - 0.01 or "timed out" in str(e):
+                raise _too_slow(server, seconds) from None
+            raise
+        if not chunk:
+            return bytes(out)
+        out += chunk
+        if len(out) > cap:
+            raise _too_large(server, "it kept going past the limit", cap)
+
 
 class _Pending:
     """A single outstanding JSON-RPC request awaiting its response."""
@@ -480,18 +541,62 @@ class _SessionExpired(Exception):
     """Remote server answered 404 for our Mcp-Session-Id — re-initialize."""
 
 
-def iter_sse_data(fp, deadline: float):
+def _sse_lines(fp, deadline: float, max_line: int, server: str):
+    """Yield the lines (bytes, newline included) of a stream, in bounded pieces.
+
+    Bytes are taken as they arrive (`read1`), never "until a newline": a server that trickles a
+    line without ever ending it cannot hold the read past `deadline` (epoch seconds), and a line
+    that grows past `max_line` raises MCPResponseTooLarge. Streams without `read1` fall back to
+    a bounded `readline`."""
+    pull = getattr(fp, "read1", None)
+    if pull is None:
+        while time.time() < deadline:
+            raw = fp.readline(max_line + 1)
+            if not raw:
+                return
+            if len(raw) > max_line and not raw.endswith(b"\n"):
+                raise _too_large(server, "one line of the stream had no end", max_line)
+            yield raw
+        return
+    pending = b""
+    while True:
+        while b"\n" in pending:
+            line, pending = pending.split(b"\n", 1)
+            yield line + b"\n"
+        if len(pending) > max_line:
+            raise _too_large(server, "one line of the stream had no end", max_line)
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return
+        _tighten_socket(fp, remaining)
+        try:
+            chunk = pull(_READ_CHUNK)
+        except (TimeoutError, OSError) as e:
+            if time.time() >= deadline - 0.01 or "timed out" in str(e):
+                return
+            raise
+        if not chunk:
+            if pending:
+                yield pending
+            return
+        pending += chunk
+
+
+def iter_sse_data(fp, deadline: float, *, max_bytes: int = _MAX_HTTP_BODY_BYTES,
+                  max_line: int = _MAX_SSE_LINE_BYTES, server: str = ""):
     """Yield the `data:` payload of each SSE event read from a stream.
 
     Multi-line data fields are joined with \n per the SSE spec; comment lines
     (`:` prefix) and other fields (event/id/retry) are skipped. Stops at EOF
-    or when `deadline` (epoch seconds) passes.
+    or when `deadline` (epoch seconds) passes. A line longer than `max_line`, or a stream
+    that delivers more than `max_bytes` in all, raises MCPResponseTooLarge.
     """
     buf: list[str] = []
-    while time.time() < deadline:
-        raw = fp.readline()
-        if not raw:                      # EOF — server closed the stream
-            break
+    total = 0
+    for raw in _sse_lines(fp, deadline, max_line, server):
+        total += len(raw)
+        if total > max_bytes:
+            raise _too_large(server, "the stream kept going past the limit", max_bytes)
         line = raw.decode("utf-8", "replace").rstrip("\r\n")
         if line == "":                   # blank line — event boundary
             if buf:
@@ -592,6 +697,7 @@ class MCPServerHTTP:
 
         req = urllib.request.Request(self.url, data=body, headers=headers,
                                      method="POST")
+        deadline = time.time() + timeout           # the whole reply, not one socket operation
         try:
             resp = urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as e:
@@ -602,7 +708,7 @@ class MCPServerHTTP:
                 raise _SessionExpired() from None
             detail = ""
             try:
-                detail = e.read().decode("utf-8", "replace")[:300]
+                detail = e.read(4096).decode("utf-8", "replace")[:300]
             except Exception:
                 pass
             raise RuntimeError(f"HTTP {e.code} from {self.name}: "
@@ -616,8 +722,7 @@ class MCPServerHTTP:
                 return None
             ctype = (resp.headers.get("Content-Type") or "").lower()
             if "text/event-stream" in ctype:
-                deadline = time.time() + timeout
-                for data in iter_sse_data(resp, deadline):
+                for data in iter_sse_data(resp, deadline, server=self.name):
                     try:
                         msg = json.loads(data)
                     except Exception:
@@ -628,9 +733,12 @@ class MCPServerHTTP:
                             return m
                     # Server-initiated requests/notifications are skipped —
                     # Friday exposes no sampling/roots/elicitation.
+                if time.time() >= deadline:
+                    raise _too_slow(self.name, timeout)
                 raise TimeoutError(
                     f"SSE stream ended without a response to id {want_id}")
-            raw = resp.read()
+            raw = _read_capped(resp, cap=_MAX_HTTP_BODY_BYTES, deadline=deadline,
+                               server=self.name, seconds=timeout)
         if not raw:
             return None
         msg = json.loads(raw.decode("utf-8"))

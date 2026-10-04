@@ -1,8 +1,9 @@
 """Run Python away from the host shell: Friday's code sandbox.
 
-`run_command` runs PowerShell as the owner, with the owner's rights. This
-runs Python code Friday wrote or was handed in a separate process that is
-held in, and says exactly how far.
+This runs Python code Friday wrote or was handed in a separate process that is
+held in, and says exactly how far. `run_command`'s PowerShell runs through the
+same machinery (`run_shell`, below): the full box for a command that needs no
+card, the job limits and a scrubbed environment for one the owner approved.
 
 Host backend (always available on Windows, no admin, nothing installed):
 
@@ -383,7 +384,9 @@ def _label_low(api, path: Path) -> None:
         api.k.LocalFree(psd)
 
 
-def _low_token(api):
+def _low_token(api, lower: bool = True):
+    """A copy of Friday's token with every privilege dropped; at Low integrity unless `lower` is
+    False (the approved-command tier keeps the owner's integrity level)."""
     c, W = api.ctypes, api.W
     own = W.HANDLE()
     # DUPLICATE | ASSIGN_PRIMARY | QUERY | ADJUST_DEFAULT
@@ -396,6 +399,8 @@ def _low_token(api):
             raise _err(api, "dropping privileges")                   # DISABLE_MAX_PRIVILEGE
     finally:
         api.k.CloseHandle(own)
+    if not lower:
+        return tok
     sid = W.LPVOID()
     if not api.a.ConvertStringSidToSidW("S-1-16-4096", c.byref(sid)):
         api.k.CloseHandle(tok)
@@ -429,24 +434,34 @@ def _integrity_rid(api, hprocess) -> int:
         api.k.CloseHandle(tok)
 
 
-def _job(api, timeout_s: int, memory_mb: int):
+def _job(api, timeout_s: int, memory_mb: int, max_processes: int = 1, contain: bool = True):
+    """The job object. `contain` (the default) is the full box: a CPU-time ceiling, everything
+    dies with the job, no clipboard or desktop switching. `contain=False` is for a command the
+    owner approved (it may start a program that is meant to outlive it): a memory ceiling and a
+    process cap, and a timeout that ends the whole tree, but nothing dies when the job is
+    closed, no CPU ceiling and no UI limits."""
     c = api.ctypes
     job = api.k.CreateJobObjectW(None, None)
     if not job:
         raise _err(api, "creating the job object")
     lim = api.EXTENDED_LIMIT()
     b = lim.BasicLimitInformation
-    # PROCESS_TIME | ACTIVE_PROCESS | PROCESS_MEMORY | DIE_ON_UNHANDLED_EXCEPTION
-    # | KILL_ON_JOB_CLOSE
-    b.LimitFlags = 0x2 | 0x8 | 0x100 | 0x400 | 0x2000
-    # A little over the wall-clock limit, so a busy loop is reported as the
-    # timeout it is rather than as a quota kill.
-    b.PerProcessUserTimeLimit = (int(timeout_s) + 2) * 10_000_000  # 100 ns units
-    b.ActiveProcessLimit = 1
+    if contain:
+        # PROCESS_TIME | ACTIVE_PROCESS | PROCESS_MEMORY | DIE_ON_UNHANDLED_EXCEPTION
+        # | KILL_ON_JOB_CLOSE
+        b.LimitFlags = 0x2 | 0x8 | 0x100 | 0x400 | 0x2000
+        # A little over the wall-clock limit, so a busy loop is reported as the
+        # timeout it is rather than as a quota kill.
+        b.PerProcessUserTimeLimit = (int(timeout_s) + 2) * 10_000_000  # 100 ns units
+    else:
+        b.LimitFlags = 0x8 | 0x100                  # ACTIVE_PROCESS | PROCESS_MEMORY
+    b.ActiveProcessLimit = int(max_processes)
     lim.ProcessMemoryLimit = int(memory_mb) * 1024 * 1024
     if not api.k.SetInformationJobObject(job, 9, c.byref(lim), c.sizeof(lim)):
         api.k.CloseHandle(job)
         raise _err(api, "setting the job limits")
+    if not contain:
+        return job
     # No clipboard, no desktop switching, no global atoms, no system settings,
     # no USER handles from outside the job, no logoff.
     ui = api.W.DWORD(0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x20 | 0x40 | 0x80)
@@ -468,17 +483,22 @@ def _pipe(api, child_reads: bool):
     return parent, child
 
 
-def _run_windows_host(code, workdir: Path, timeout_s, memory_mb, cap) -> dict:
+def _run_windows_host(code, workdir: Path, timeout_s, memory_mb, cap, *, argv=None, exe=None, env=None,
+                      low: bool = True, max_processes: int = 1, prepare: bool = True) -> dict:
+    """Run `code` (or, with `argv`/`exe`/`env`, a command line: see run_shell) in a job object under
+    a privilege-stripped token, at Low integrity when `low`. The defaults are the code sandbox."""
     import msvcrt
     api = _win_api()
     c, W = api.ctypes, api.W
-    _label_low(api, workdir)
-    _prepare(code, workdir)
+    if low:
+        _label_low(api, workdir)
+    if prepare:
+        _prepare(code, workdir)
     closers = []
     try:
-        tok = _low_token(api)
+        tok = _low_token(api, lower=low)
         closers.append(tok)
-        job = _job(api, timeout_s, memory_mb)
+        job = _job(api, timeout_s, memory_mb, max_processes, contain=low or argv is None)
         closers.append(job)
         in_parent, in_child = _pipe(api, child_reads=True)
         out_parent, out_child = _pipe(api, child_reads=False)
@@ -505,15 +525,15 @@ def _run_windows_host(code, workdir: Path, timeout_s, memory_mb, cap) -> dict:
                 raise _err(api, "restricting inherited handles")
             si.lpAttributeList = c.cast(attr, W.LPVOID)
 
-            env = _clean_env(workdir)
+            env = env if env is not None else _clean_env(workdir)
             block = "".join(f"{k}={v}\0" for k, v in
                             sorted(env.items(), key=lambda kv: kv[0].upper())) + "\0"
             env_buf = (c.c_wchar * len(block))(*block)
-            cmd = c.create_unicode_buffer(subprocess.list2cmdline(_argv("_friday_boot.py")))
+            cmd = c.create_unicode_buffer(subprocess.list2cmdline(argv or _argv("_friday_boot.py")))
             pi = api.PROCESS_INFORMATION()
             # SUSPENDED | UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO | NO_WINDOW
             flags = 0x4 | 0x400 | 0x80000 | 0x08000000
-            if not api.a.CreateProcessAsUserW(tok, _python_exe(), cmd, None, None, True, flags,
+            if not api.a.CreateProcessAsUserW(tok, exe or _python_exe(), cmd, None, None, True, flags,
                                               env_buf, str(workdir), c.byref(si), c.byref(pi)):
                 raise _err(api, "starting the sandboxed process")
         finally:
@@ -528,7 +548,7 @@ def _run_windows_host(code, workdir: Path, timeout_s, memory_mb, cap) -> dict:
             api.k.TerminateProcess(pi.hProcess, 1)
             raise _err(api, "placing the process in its job")
         rid = _integrity_rid(api, pi.hProcess)
-        if rid != _LOW_RID:
+        if low and rid != _LOW_RID:
             api.k.TerminateProcess(pi.hProcess, 1)
             raise SandboxError(f"the process did not start at Low integrity (0x{rid:x}); "
                                f"it was killed before running")
@@ -561,18 +581,29 @@ def _run_windows_host(code, workdir: Path, timeout_s, memory_mb, cap) -> dict:
         api.k.QueryInformationJobObject(job, 9, c.byref(lim), c.sizeof(lim), None)
         for t in caps:
             t.join(5)
+        if argv is None:
+            boundary = {"backend": "host", "os_boundary": True, "integrity": "low",
+                        "job": {"one_process": True, "memory_mb": memory_mb,
+                                "cpu_seconds": timeout_s, "ui_restricted": True},
+                        "network": "blocked inside Python only (not by Windows)",
+                        "reads": "can read what your account can read",
+                        "note": HOST_BOUNDARY_NOTE}
+        else:
+            boundary = {"backend": "host", "os_boundary": True,
+                        "integrity": "low" if low else "owner (approved command)",
+                        "job": {"max_processes": max_processes, "memory_mb": memory_mb,
+                                "timeout_seconds": timeout_s, "tree_killed_at_timeout": True,
+                                "dies_with_job": bool(low)},
+                        "environment": "allowlisted (no keys or tokens)",
+                        "network": "dead proxy only" if low else "not restricted",
+                        "reads": "can read what your account can read"}
         return {
             "exit_code": int(code_out.value),
             "stdout": caps[0].text(), "stderr": caps[1].text(),
             "timed_out": timed_out, "output_capped": overflow.is_set(),
             "peak_memory_mb": round(lim.PeakProcessMemoryUsed / 1048576, 1),
             "files": _produced(workdir),
-            "boundary": {"backend": "host", "os_boundary": True, "integrity": "low",
-                         "job": {"one_process": True, "memory_mb": memory_mb,
-                                 "cpu_seconds": timeout_s, "ui_restricted": True},
-                         "network": "blocked inside Python only (not by Windows)",
-                         "reads": "can read what your account can read",
-                         "note": HOST_BOUNDARY_NOTE},
+            "boundary": boundary,
         }
     finally:
         for h in reversed(closers):
@@ -754,6 +785,158 @@ def _clamp(v, lo, hi, default):
         return max(lo, min(hi, int(v)))
     except (TypeError, ValueError):
         return default
+
+
+# ── A shell command, held in ────────────────────────────────────────────────
+#
+# `run_command` used to start PowerShell as the owner with the owner's whole environment, no
+# process or memory limit, and a timeout that ended PowerShell but not what it had started.
+# `run_shell` is the same sandbox machinery pointed at a command line, in two tiers:
+#
+#   read_only=True  (a command the action gate classed as read-only, which runs without a
+#     card): the full host sandbox. Low integrity (it cannot write the owner's files, Friday's
+#     data or the registry), a job object (memory ceiling, CPU ceiling, at most a few
+#     processes, no clipboard or desktop switching, everything dies with the job), a working
+#     folder that is a fresh Low-labelled scratch folder, a scrubbed environment and a dead
+#     proxy, no inherited handles but its three pipes, capped output.
+#   read_only=False (a command the owner approved on a card): the same job object (memory and
+#     CPU ceilings, a process cap, the WHOLE process tree killed at the timeout), scrubbed
+#     environment (an allowlist: no API keys or tokens), scratch working folder, capped output.
+#     NOT Low integrity: an approved command is allowed to change what the owner approved it
+#     to change, so the filesystem is not fenced for it.
+#
+# What this does not do (see HANDOFF-v1-defects): a filesystem allowlist and a network
+# allowlist for approved commands, and running them in Windows Sandbox where it is installed.
+
+SHELL_DEFAULT_TIMEOUT_S = 300
+SHELL_OUTPUT_CAP = 8_000_000
+SHELL_READ_ONLY_MEMORY_MB = 1024
+SHELL_APPROVED_MEMORY_MB = 4096
+SHELL_READ_ONLY_PROCESSES = 8
+SHELL_APPROVED_PROCESSES = 64
+
+#: Variables an approved command may inherit. An allowlist, not a deny-list: a key or token
+#: with a name nobody thought of is left out by default.
+_SHELL_ENV_ALLOW = (
+    "SystemRoot", "windir", "SystemDrive", "ComSpec", "PATHEXT", "OS", "COMPUTERNAME", "USERNAME",
+    "USERDOMAIN", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "APPDATA", "LOCALAPPDATA",
+    "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles",
+    "CommonProgramFiles(x86)", "CommonProgramW6432", "ALLUSERSPROFILE", "PUBLIC", "PSModulePath",
+    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL",
+    "PROCESSOR_REVISION", "LANG", "LC_ALL", "TERM", "TZ",
+)
+
+
+def _shell_exe() -> Optional[str]:
+    if sys.platform == "win32":
+        root = os.environ.get("SystemRoot", r"C:\Windows")
+        p = Path(root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        return str(p) if p.exists() else shutil.which("powershell")
+    return shutil.which("pwsh") or shutil.which("powershell")
+
+
+def _shell_env(workdir: Path, *, read_only: bool) -> dict:
+    """The environment a shell command gets: allowlisted names only, temp folders in the
+    scratch folder, and (read-only tier) a dead proxy and the scratch folder as the place
+    PowerShell keeps its own state. PATH is kept so tools on it still resolve."""
+    w = str(workdir)
+    env = {k: os.environ[k] for k in _SHELL_ENV_ALLOW if os.environ.get(k)}
+    env["PATH"] = os.environ.get("PATH", "")
+    env.update({"TEMP": w, "TMP": w, "TMPDIR": w, "FRIDAY_SANDBOX": "1", "PYTHONIOENCODING": "utf-8"})
+    if read_only:
+        # PowerShell writes caches under these; a Low process can write only the scratch folder.
+        env.update({"APPDATA": w, "LOCALAPPDATA": w})
+        names = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY") + (() if sys.platform == "win32" else
+                                                              ("http_proxy", "https_proxy", "all_proxy"))
+        env.update({n: DEAD_PROXY for n in names})
+        env["NO_PROXY"] = ""
+        # Only the system's own folders, and Git's launcher where there is one: the owner's PATH can
+        # name tools (msys programs among them) that cannot run at Low integrity.
+        if sys.platform == "win32":
+            root = os.environ.get("SystemRoot", r"C:\Windows")
+            dirs = [os.path.join(root, "System32"), root, os.path.join(root, "System32", "WindowsPowerShell", "v1.0")]
+            git = shutil.which("git")
+            if git:
+                dirs.append(str(Path(git).parent))
+            env["PATH"] = os.pathsep.join(dirs)
+    return env
+
+
+def _shell_argv(exe: str, command: str) -> list:
+    return [exe, "-NoProfile", "-NonInteractive", "-Command", command]
+
+
+def _run_posix_shell(argv, workdir: Path, env: dict, timeout_s, memory_mb, cap, max_processes) -> dict:
+    import resource
+    import signal
+
+    def limits():
+        mem = int(memory_mb) * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
+        resource.setrlimit(resource.RLIMIT_CPU, (int(timeout_s) + 2, int(timeout_s) + 3))
+        resource.setrlimit(resource.RLIMIT_NPROC, (int(max_processes) * 4, int(max_processes) * 4))
+
+    proc = subprocess.Popen(argv, cwd=str(workdir), env=env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            preexec_fn=limits, start_new_session=True, close_fds=True)
+    overflow = threading.Event()
+    caps = [_Capture(proc.stdout, cap, overflow), _Capture(proc.stderr, cap, overflow)]
+    for t in caps:
+        t.start()
+    deadline = time.monotonic() + timeout_s
+    timed_out = False
+    while proc.poll() is None:
+        if overflow.is_set() or time.monotonic() > deadline:
+            timed_out = not overflow.is_set()
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)         # the whole group, not only the shell
+            except Exception:
+                proc.kill()
+            break
+        time.sleep(0.05)
+    proc.wait(5)
+    for t in caps:
+        t.join(5)
+    return {"exit_code": proc.returncode, "stdout": caps[0].text(), "stderr": caps[1].text(),
+            "timed_out": timed_out, "output_capped": overflow.is_set(),
+            "boundary": {"backend": "host", "os_boundary": False, "process_tree_killed": True,
+                         "environment": "allowlisted",
+                         "note": "Resource limits, a scrubbed environment and a scratch folder; "
+                                 "no OS isolation on this platform."}}
+
+
+def run_shell(command: str, *, read_only: bool, timeout_s=SHELL_DEFAULT_TIMEOUT_S, output_cap=SHELL_OUTPUT_CAP) -> dict:
+    """Run one PowerShell command line held in as described above. Returns a dict (never raises
+    for the command's own failures). `ok` is False when the sandbox itself could not be set up;
+    nothing ran then."""
+    if not isinstance(command, str) or not command.strip():
+        return {"ok": False, "error": "no command given"}
+    exe = _shell_exe()
+    if not exe:
+        return {"ok": False, "error": "PowerShell is not available on this machine"}
+    timeout_s = _clamp(timeout_s, 1, 3600, SHELL_DEFAULT_TIMEOUT_S)
+    memory_mb = SHELL_READ_ONLY_MEMORY_MB if read_only else SHELL_APPROVED_MEMORY_MB
+    processes = SHELL_READ_ONLY_PROCESSES if read_only else SHELL_APPROVED_PROCESSES
+    workdir = Path(tempfile.mkdtemp(prefix="friday-shell-"))
+    t0 = time.monotonic()
+    try:
+        argv = _shell_argv(exe, command)
+        env = _shell_env(workdir, read_only=read_only)
+        if sys.platform == "win32":
+            res = _run_windows_host("", workdir, timeout_s, memory_mb, int(output_cap), argv=argv, exe=exe,
+                                    env=env, low=read_only, max_processes=processes, prepare=False)
+        else:
+            res = _run_posix_shell(argv, workdir, env, timeout_s, memory_mb, int(output_cap), processes)
+            res["files"] = _produced(workdir)
+        res["ok"] = True
+        res["tier"] = "read_only" if read_only else "approved"
+        res["seconds"] = round(time.monotonic() - t0, 2)
+        res["workdir_name"] = workdir.name
+        return res
+    except SandboxError as e:
+        return {"ok": False, "error": f"the sandbox could not be set up, so nothing ran: {e}"}
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def run(code: str, *, timeout_s=DEFAULT_TIMEOUT_S, memory_mb=DEFAULT_MEMORY_MB,
