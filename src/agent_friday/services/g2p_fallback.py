@@ -40,6 +40,10 @@ HELPER_PATH = Path(__file__).resolve().parent.parent / "voice" / "espeak_helper.
 
 #: One word's lookup may take this long before the word is spelled out.
 LOOKUP_TIMEOUT_S = 5.0
+#: A cold start (Python plus espeak) has its own allowance: on a loaded machine it
+#: takes longer than one lookup, and charging it to the first lookup spelled the
+#: first name out instead of pronouncing it.
+START_TIMEOUT_S = 30.0
 
 #: misaki's US phonemes for the names of the letters and digits, used to spell
 #: a word out when no pronunciation is available.
@@ -90,7 +94,7 @@ class _Helper:
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
             text=True, encoding="utf-8", bufsize=1,
             creationflags=0x08000000 if sys.platform == "win32" else 0)
-        hello = self._read(p)
+        hello = self._read(p, START_TIMEOUT_S)
         if not (hello or {}).get("ready"):
             try:
                 p.kill()
@@ -100,14 +104,14 @@ class _Helper:
         return p
 
     @staticmethod
-    def _read(p):
+    def _read(p, timeout=None):
         box = {}
 
         def _r():
             box["line"] = p.stdout.readline()
         th = threading.Thread(target=_r, daemon=True)
         th.start()
-        th.join(LOOKUP_TIMEOUT_S)
+        th.join(LOOKUP_TIMEOUT_S if timeout is None else timeout)
         if th.is_alive() or not box.get("line"):
             return None
         try:
