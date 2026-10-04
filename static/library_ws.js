@@ -26,6 +26,26 @@
     if (tok) headers['X-Friday-Token'] = tok;
     return fetch(url, Object.assign({}, opts, { headers }));
   }
+  // begin readEventStream
+  // Reads a text/event-stream response with fetch (only fetch can carry the page's session token;
+  // EventSource cannot). Calls onData({data}) once per frame with the text after "data:".
+  function readEventStream(res, onData) {
+    const rd = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    const pump = () => rd.read().then(({ done, value }) => {
+      if (done) return undefined;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+        const line = frame.split('\n').find(l => l.indexOf('data:') === 0);
+        if (line) onData({ data: line.slice(5).trim() });
+      }
+      return pump();
+    });
+    return pump();
+  }
+  // end readEventStream
   const json = (url, opts) => api(url, opts).then(r => r.json().then(d => { d.__http = r.status; return d; }));
   const post = (url, body) => json(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   const toast = msg => (window.fridayToast ? window.fridayToast(msg) : console.log('[library]', msg));
@@ -227,9 +247,11 @@
       setView('ask'); setCursor(0);
       setRun({ busy: true, steps: [], evidence: null, searched: null, notes: [], answer: null, receipt: null, error: null, q: text });
       const url = '/api/library/search?q=' + encodeURIComponent(text) + (wantAnswer ? '&answer=1' : '');
-      const es = new EventSource(url);
+      // The stream is read with fetch, not EventSource: only fetch can carry the page's session token.
+      const ctl = new AbortController();
+      const es = { close: () => ctl.abort() };
       esRef.current = es;
-      es.onmessage = m => {
+      const onmessage = m => {
         let e; try { e = JSON.parse(m.data); } catch (_) { return; }
         setRun(r => {
           if (!r) return r;
@@ -248,7 +270,11 @@
           return r;
         });
       };
-      es.onerror = () => { es.close(); setRun(r => (r && r.busy ? Object.assign({}, r, { busy: false, error: 'The search stopped before it finished.' }) : r)); };
+      const onerror = () => { es.close(); setRun(r => (r && r.busy ? Object.assign({}, r, { busy: false, error: 'The search stopped before it finished.' }) : r)); };
+      api(url, { signal: ctl.signal }).then(res => {
+        if (!res.ok || !res.body) throw new Error('refused');
+        return readEventStream(res, onmessage).then(() => { if (esRef.current === es) onerror(); });
+      }).catch(err => { if (!(err && err.name === 'AbortError') && esRef.current === es) onerror(); });
     }, []);
 
     const openEvidence = ev => { setReader({ doc: ev.doc_id, block: ev.block_id, page: ev.page }); setView('reader'); };

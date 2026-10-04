@@ -193,6 +193,9 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
 #: files the confirmation gate already asks about, memory writes the taint
 #: gate already judges, and delegation (a spawned task's own actions come
 #: back through this checkpoint one by one).
+LIBRARY_SCREEN_ACTIONS = frozenset({"library_add", "library_remove", "library_forget", "library_shelf",
+                                    "library_reindex"})
+
 INTERNAL_TOOLS = frozenset({
     # Reads the machine and the model catalogue; downloads nothing and
     # reaches no one (services/local_models_tools).
@@ -709,6 +712,12 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"
         return INTERNAL, "it only saves a draft"
+    if tool_name in LIBRARY_SCREEN_ACTIONS:
+        # The owner's own change to their Library, from its workspace page. Only a verified
+        # click there counts; the same action named anywhere else is held for a decision.
+        if (ctx or {}).get("screen_click") is True:
+            return INTERNAL, "the owner's own change, made on the Library page"
+        return OUTWARD, "a change to the Library that did not come from the Library page"
     if tool_name in OUTWARD_TOOLS:
         return OUTWARD, "it acts outside this conversation"
     if tool_name in INTERNAL_TOOLS:

@@ -342,16 +342,19 @@ def test_a_child_that_answers_too_much_is_stopped_and_not_buffered(monkeypatch):
 
 # -- M1 and M3: the owner's own act, from the page, never from another site ----------
 
-def test_a_screen_identity_needs_a_browser_click_of_this_server():
+def test_a_screen_identity_needs_a_browser_click_of_this_server_and_its_session_token(monkeypatch):
+    import agent_friday.core as core
     from agent_friday.services import screen_click
     R = lambda **h: types.SimpleNamespace(headers=h, host="localhost:3000")
-    page = R(**{"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:3000"})
-    assert screen_click.is_browser_click(page) and screen_click.decided_by(page, "owner:ui") == "owner:ui"
-    bare = R()
-    assert not screen_click.is_browser_click(bare) and screen_click.decided_by(bare, "owner:ui") == "owner"
-    foreign = R(**{"Sec-Fetch-Site": "same-origin", "Origin": "http://evil.example"})
+    page = R(**{"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:3000", "X-Friday-Token": core._API_SESSION_TOKEN})
+    assert screen_click.screen_session(page) and screen_click.decided_by(page, "owner:ui") == "owner:ui"
+    no_token = R(**{"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:3000"})
+    assert not screen_click.screen_session(no_token) and screen_click.decided_by(no_token, "owner:ui") == "owner"
+    bare = R(**{"X-Friday-Token": core._API_SESSION_TOKEN})
+    assert screen_click.decided_by(bare, "owner:ui") == "owner"
+    foreign = R(**{"Sec-Fetch-Site": "same-origin", "Origin": "http://evil.example", "X-Friday-Token": core._API_SESSION_TOKEN})
     assert screen_click.decided_by(foreign, "owner:ui") == "owner"
-    assert screen_click.decided_by(bare, "owner:chat") == "owner:chat"          # only the screen's identity is guarded
+    assert screen_click.decided_by(bare, "owner:voice") == "owner:voice"          # an audit label, accepted by no screen-only card
     assert screen_click.is_cross_site(R(**{"Sec-Fetch-Site": "cross-site"})) and not screen_click.is_cross_site(bare)
 
 
@@ -419,3 +422,45 @@ def test_the_resolver_offers_only_documents_the_owner_can_see_now(tmp_path):
     for a in grants.active_scopes("owner"):
         grants.remove_scope("owner", a["id"])
     assert laya_resolver._library_candidates("open the lease") == []
+
+
+# -- the gate, the session token, the recording, the set-aside file, the pin --------
+
+def test_library_changes_are_classed_by_the_gate_and_held_without_the_page():
+    from agent_friday.governance import action_gate
+    for op in ("library_add", "library_remove", "library_forget", "library_shelf", "library_reindex"):
+        v = action_gate.authorize(op, {}, {"screen_click": True})
+        assert v.action == "allow" and v.klass == action_gate.INTERNAL, op
+        held = action_gate.authorize(op, {}, {})
+        assert held.action != "allow", op
+
+
+def test_every_library_change_route_goes_through_the_gate():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "routes" / "library.py").read_text(encoding="utf-8")
+    assert src.count('_same_origin_json("library_') == 5 and "action_gate.authorize(op" in src
+    assert "_api_token_valid" in src.split("def _not_another_site")[1].split("def _gated")[0]
+
+
+def test_the_reader_loads_a_recording_with_the_session_token_not_a_bare_src():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "static" / "library_reader.js").read_text(encoding="utf-8")
+    assert "/api/library/raw/' + b.doc_id" not in src and "useRecording" in src
+
+
+def test_a_plain_index_that_cannot_be_opened_is_deleted_not_set_aside(tmp_path):
+    from agent_friday.services.library import store as lstore
+    p = tmp_path / "library.sqlite"
+    p.write_bytes(b"SQLite format 3\x00" + b"readable words" * 20)
+    s = object.__new__(lstore.Store)
+    s.path, s.db = p, None
+    s._set_aside(None)
+    assert not p.exists() and not list(tmp_path.glob("*.unreadable"))
+
+
+def test_the_sqlcipher_wheel_is_pinned_and_its_licence_recorded():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    assert "sqlcipher3-wheels==0.5.7" in (root / "pyproject.toml").read_text(encoding="utf-8")
+    lic = (root / "THIRD_PARTY_LICENSES.md").read_text(encoding="utf-8")
+    assert "3cd95c309984e01fa456417058dec87ca8baf01ec419ed5eaa734fed2d22ec53" in lic and "zlib/libpng (the sqlcipher3-wheels" in lic

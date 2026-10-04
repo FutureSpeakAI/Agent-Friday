@@ -29,9 +29,22 @@ def is_cross_site(request) -> bool:
     return bool(site) and site not in ("same-origin", "none")
 
 
-def decided_by(request, claimed: str) -> str:
-    """The identity a decision may carry: the screen's only for a browser click."""
+def screen_session(request) -> bool:
+    """A browser click of this server's own page that also carries the page's rotating
+    session token: the only request the server treats as the owner's click on the screen."""
+    try:
+        import agent_friday.core as core
+        return is_browser_click(request) and core._api_token_valid(request.headers.get("X-Friday-Token"))
+    except Exception:  # noqa: BLE001 - a check that cannot run is not a click
+        return False
+
+
+def decided_by(request, claimed: str = "owner") -> str:
+    """The identity a decision carries. The screen's identity is never taken from the body:
+    it is given only to a verified click (same-origin page, the page's session token) and a
+    body that claims it without one is the plain owner. Other channel labels (voice, text
+    message, caption) are audit labels; no screen-only card accepts them."""
     claimed = str(claimed or "owner")
-    if claimed == SCREEN and not is_browser_click(request):
-        return "owner"
+    if claimed == SCREEN:
+        return SCREEN if screen_session(request) else "owner"
     return claimed

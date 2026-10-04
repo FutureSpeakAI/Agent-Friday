@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, Response, jsonify, request, send_file, stream_with_context
 
+import agent_friday.core as core
 from agent_friday.core import login_required
 from agent_friday.routes._errors import api_error
 from agent_friday.services import screen_click, studio_files as sf
@@ -42,17 +43,30 @@ def _not_another_site():
     audio or fetch aimed here would otherwise leak which documents exist."""
     if screen_click.is_cross_site(request):
         return jsonify({"status": "denied", "error": "cross-site request refused"}), 403
+    if not core._api_token_valid(request.headers.get("X-Friday-Token")):
+        return jsonify({"status": "denied", "error": "the Library answers only Friday's own page"}), 403
     return None
 
 
-def _same_origin_json():
+def _gated(op: str):
+    """A change to the Library goes through the action gate like every other state change:
+    the owner's verified click on the screen is the decision, so it is classed internal and
+    receipted; anything else is held."""
+    from agent_friday.governance import action_gate
+    v = action_gate.authorize(op, {}, {"screen_click": True, "surface": "library-workspace"})
+    if v.action != "allow":
+        return jsonify({"status": "denied", "error": f"held: {v.reason}"}), 403
+    return None
+
+
+def _same_origin_json(op: str = ""):
     """A change to the Library is the owner's own act in the workspace: a JSON POST from a
     browser page of this server, never a bare call."""
     if not request.is_json:
         return jsonify({"status": "error", "error": "JSON body required"}), 415
-    if not screen_click.is_browser_click(request):
+    if not screen_click.screen_session(request):
         return jsonify({"status": "denied", "error": "this change must come from the Library page"}), 403
-    return None
+    return _gated(op) if op else None
 
 
 @library_bp.route("/api/library/status")
@@ -215,7 +229,7 @@ def lib_receipt(search_id):
 @library_bp.route("/api/library/add", methods=["POST"])
 @login_required
 def lib_add():
-    bad = _same_origin_json()
+    bad = _same_origin_json("library_add")
     if bad:
         return bad
     p, bad = _principal()
@@ -239,7 +253,7 @@ def lib_add():
 @library_bp.route("/api/library/remove", methods=["POST"])
 @login_required
 def lib_remove():
-    bad = _same_origin_json()
+    bad = _same_origin_json("library_remove")
     if bad:
         return bad
     p, bad = _principal()
@@ -258,7 +272,7 @@ def lib_remove():
 @library_bp.route("/api/library/forget", methods=["POST"])
 @login_required
 def lib_forget():
-    bad = _same_origin_json()
+    bad = _same_origin_json("library_forget")
     if bad:
         return bad
     p, bad = _principal()
@@ -273,7 +287,7 @@ def lib_forget():
 @library_bp.route("/api/library/shelf", methods=["POST"])
 @login_required
 def lib_shelf():
-    bad = _same_origin_json()
+    bad = _same_origin_json("library_shelf")
     if bad:
         return bad
     p, bad = _principal()
@@ -294,7 +308,7 @@ def lib_shelf():
 @library_bp.route("/api/library/reindex", methods=["POST"])
 @login_required
 def lib_reindex():
-    bad = _same_origin_json()
+    bad = _same_origin_json("library_reindex")
     if bad:
         return bad
     p, bad = _principal()

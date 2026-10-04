@@ -118,7 +118,7 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | Component | Version | Delivery | License | Copyright / attribution |
 |---|---|---|---|---|
 | pdf.js (pdfjs-dist, legacy build with its character maps, standard fonts, image-decoder modules and colour profile), used by the Library's Reader | 6.4.299 | in installer zip | Apache-2.0 | Copyright Mozilla and individual contributors; its LICENSE is vendored beside it |
-| sqlcipher3-wheels (Python binding with SQLCipher community edition; encrypts the Library's index when installed) | 0.5.7 | installed by installer (documents) | zlib/libpng (binding), BSD-style (SQLCipher) | Copyright Charles Leifer and laggykiller (binding); Copyright Zetetic LLC (SQLCipher) |
+| sqlcipher3-wheels (Python binding with SQLCipher community edition; encrypts the Library's index when installed) | 0.5.7 (pinned `==0.5.7`; wheel `cp313-win_amd64` sha256 `3cd95c309984e01fa456417058dec87ca8baf01ec419ed5eaa734fed2d22ec53`) | installed by installer (documents) | zlib/libpng (binding; text below), BSD-style (SQLCipher; see the note below) | Copyright Charles Leifer and laggykiller (binding); Copyright Zetetic LLC (SQLCipher) |
 | rapidocr-onnxruntime (bundled PP-OCR detection, classification and recognition models) | 1.2.3 | installed by installer (documents) | Apache-2.0 | Copyright RapidAI; models from PaddleOCR, Copyright PaddlePaddle Authors |
 | aiosignal | 1.4.0 | installed by installer (recommended/memory) | Apache-2.0 | Copyright aio-libs contributors |
 | bcrypt | 5.0.0 | installed by installer (memory) | Apache-2.0 | Copyright (c) The Python Cryptographic Authority developers (from package Author metadata) |
@@ -3094,3 +3094,26 @@ Public License instead of this License.
 * Stability AI Community License: <https://stability.ai/community-license-agreement>
 * CreativeML Open RAIL++-M: <https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md>
 
+### zlib/libpng (the sqlcipher3-wheels Python binding)
+
+Copyright (c) 2004-2007 Gerhard Häring
+
+This software is provided 'as-is', without any express or implied warranty. In
+no event will the authors be held liable for any damages arising from the use
+of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it freely,
+subject to the following restrictions:
+
+    1. The origin of this software must not be misrepresented; you must not
+       claim that you wrote the original software. If you use this software in
+       a product, an acknowledgment in the product documentation would be
+       appreciated but is not required.
+
+    2. Altered source versions must be plainly marked as such, and must not be
+       misrepresented as being the original software.
+
+    3. This notice may not be removed or altered from any source distribution.
+
+SQLCipher itself (Zetetic LLC, community edition, statically built into the wheel) is under a BSD-style licence, and the wheel also carries OpenSSL. The wheel ships only the binding's licence above; it contains neither the SQLCipher licence text nor OpenSSL's. Both texts must be copied from the upstream releases that match the pinned wheel before the installer ships; they are not reproduced here from memory.

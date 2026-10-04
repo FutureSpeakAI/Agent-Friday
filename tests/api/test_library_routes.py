@@ -160,3 +160,9 @@ def test_a_removed_consent_stops_serving_at_once(client, tmp_path):
 def test_the_studio_pdf_routes_and_library_routes_are_both_pixels_only(client):
     rules = {str(r.rule) for r in client.application.url_map.iter_rules()}
     assert "/api/studio-files/pdfpage" in rules and "/api/library/page/<int:doc_id>/<int:n>.webp" in rules
+
+
+def test_a_request_without_the_session_token_gets_nothing_from_the_library(client):
+    client.environ_base.pop("HTTP_X_FRIDAY_TOKEN", None)
+    for url in ("/api/library/status", "/api/library/tree", "/api/library/raw/1", "/api/library/page/1/1.webp"):
+        assert client.get(url).status_code == 403, url

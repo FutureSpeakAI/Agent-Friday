@@ -48,6 +48,20 @@
     return state;
   }
 
+  // A recording as a blob: URL, fetched with the page's session token (an <audio src> cannot carry it).
+  function useRecording(doc, enabled) {
+    const [url, setUrl] = useState(null);
+    useEffect(() => {
+      if (!enabled || !doc) { setUrl(null); return undefined; }
+      let live = true, made = null;
+      api('/api/library/raw/' + doc).then(r => (r.ok ? r.blob() : null)).then(b => {
+        if (b && live) { made = URL.createObjectURL(b); setUrl(made); }
+      }).catch(() => {});
+      return () => { live = false; if (made) URL.revokeObjectURL(made); };
+    }, [doc, enabled]);
+    return url;
+  }
+
   function PageWithBox({ img, box }) {
     const imgRef = useRef(null), cvRef = useRef(null);
     const draw = () => {
@@ -188,10 +202,11 @@
     const img = usePage(docId, page, !!isPdf && !!docId && !useV2);
     useEffect(() => { setV2Failed(false); }, [docId]);
     const timed = b && b.t_start != null;
+    const recording = useRecording(docId, !!(timed && b.doc_kind === 'media'));
     useEffect(() => {
       const a = audioRef.current;
       if (a && timed) { try { a.currentTime = Math.max(0, b.t_start - 2); } catch (_) {} }
-    }, [b, timed]);
+    }, [b, timed, recording]);
     useEffect(() => {
       const k = e => {
         if (e.key === 'Escape') { e.preventDefault(); onClose && onClose(); }
@@ -222,7 +237,7 @@
                 : h('div', { className: 'lr-empty' }, 'Reading the page…')),
         h('div', { className: 'lr-right' },
           b && b.section && h('div', { className: 'lr-section' }, b.section),
-          timed && b.doc_kind === 'media' && h('audio', { ref: audioRef, controls: true, preload: 'metadata', src: '/api/library/raw/' + b.doc_id, style: { width: '100%' } }),
+          timed && b.doc_kind === 'media' && h('audio', { ref: audioRef, controls: true, preload: 'metadata', src: recording || undefined, style: { width: '100%' } }),
           b && h('div', { className: 'lr-text', tabIndex: 0 },
             (b.neighbours || []).map(n => h('p', { key: n.id, className: n.current ? 'lr-cur' : 'lr-near' }, n.text))),
           !b && h('div', { className: 'lr-empty' }, isPdf ? 'No paragraph is selected; use the arrows to turn the page.' : 'Nothing selected.'))));

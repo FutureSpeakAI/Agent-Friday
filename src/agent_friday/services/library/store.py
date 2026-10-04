@@ -170,6 +170,14 @@ class IndexUnreadable(Exception):
     """The encrypted index could not be opened with its key."""
 
 
+def _is_plain_sqlite(path) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return f.read(16) == b"SQLite format 3\x00"
+    except OSError:
+        return False
+
+
 class Store:
     def __init__(self, path: Path, *, seal: Callable[[str], str] | None = None,
                  unseal: Callable[[str], str] | None = None, key: bytes | None = None):
@@ -242,7 +250,10 @@ class Store:
         self.db = None
         aside = self.path.with_name(self.path.name + ".unreadable")
         if self.path.exists():
-            os.replace(self.path, aside)
+            if _is_plain_sqlite(self.path):
+                self.path.unlink()          # readable text is never set aside: it would outlive forget
+            else:
+                os.replace(self.path, aside)
         for suffix in ("-wal", "-shm"):
             side = self.path.with_name(self.path.name + suffix)
             if side.exists():
