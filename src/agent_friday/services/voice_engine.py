@@ -338,21 +338,21 @@ _VOICE_LIVE_TOOLS = [
       "title": ("string", "A short title for the task list, e.g. 'Draft reply to the school'.")},
      ["request"]),
     ("ask_local_for_context",
-     "Ask the user's LOCAL model a question that needs his private data, and use "
+     "Ask the user's LOCAL model a question that needs their private data, and use "
      "this INSTEAD of answering from anything you were told, whenever a request "
-     "reaches his mail, his vault, his wiki, his files, his contacts, his "
-     "finances or his health — as well as his notes, calendar, memory, the people "
-     "in his life and his preferences. Example: 'What do they enjoy doing on "
+     "reaches their mail, vault, wiki, files, contacts, "
+     "finances or health — as well as their notes, calendar, memory, the people "
+     "in their life and their preferences. Example: 'What do they enjoy doing on "
      "weekends, and what is on their calendar next weekend?'. The local model "
-     "reads the raw data here on his machine; you receive only a summary with the "
+     "reads the raw data here on their machine; you receive only a summary with the "
      "identifiers replaced — names become placeholders like [their partner] — and "
-     "he approves that exact text on a card (or by voice) before any of it "
-     "reaches you. Reach for this rather than guessing or asking him to read "
+     "they approve that exact text on a card (or by voice) before any of it "
+     "reaches you. Reach for this rather than guessing or asking them to read "
      "something out: it is how private work gets done without the private part "
-     "leaving his PC. Say one short sentence that you're asking his OK to share "
-     "some context, then carry on. The approved context is handed to you when he "
-     "decides; if he declines, carry on without it.",
-     {"question": ("string", "The question for his local model, in full.")}, ["question"]),
+     "leaving their PC. Say one short sentence that you're asking their OK to share "
+     "some context, then carry on. The approved context is handed to you when they "
+     "decide; if they decline, carry on without it.",
+     {"question": ("string", "The question for their local model, in full.")}, ["question"]),
     ("navigate_to",
      "Open ONE specific thing on the user's Friday desktop, on screen: an email "
      "thread, the mail a Gmail search finds, a file, a wiki page or graph node, a "
@@ -384,7 +384,7 @@ _VOICE_LIVE_TOOLS = [
      "RAM, GPU memory and disk, which models are loaded or serving, running turns, "
      "tasks and scheduled jobs, and today's spend. Use it for any question about "
      "current activity or load ('what are you working on', 'is the GPU busy', 'what "
-     "did today cost'). Keep `detail` at brief for speech and read back only what he "
+     "did today cost'). Keep `detail` at brief for speech and read back only what they "
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
@@ -494,53 +494,53 @@ _VOICE_LIVE_TOOLS = [
       "decision": ("string", "approve or decline.")},
      ["card_id", "decision"]),
     ("run_workflow",
-     "Start one of the user's stored workflows (his routines) by name, spoken. "
-     "A workflow's own steps run wherever it says to run them, including on his "
+     "Start one of the user's stored workflows (their routines) by name, spoken. "
+     "A workflow's own steps run wherever it says to run them, including on their "
      "LOCAL model, so this is how a spoken request reaches private work without "
      "any of it passing through you. It returns as soon as the first step is "
      "queued: say one short sentence that it has started, keep the conversation "
      "going, and do NOT guess what it produced — the outcome comes back to you. "
      "If you are not sure of the exact name, call workflow_status with no name "
-     "first and read him the list. Any outward step inside it still raises an "
+     "first and read them the list. Any outward step inside it still raises an "
      "approval card, exactly as in chat.",
      {"name": ("string", "The workflow's name or slug, as it is stored.")}, ["name"]),
     ("workflow_status",
      "How one of the user's stored workflows is doing — per-step state for its "
-     "most recent run. Called with no name it LISTS his stored workflows, which "
-     "is what to use when he asks what routines he has, or when you need the "
+     "most recent run. Called with no name it LISTS their stored workflows, which "
+     "is what to use when they ask what routines they have, or when you need the "
      "exact name before starting one. Read it back as a sentence, not a table.",
      {"name": ("string", "The workflow to report on. Omit to list them all.")}, []),
     ("note_conversation_state",
      "Update your running picture of this conversation when you notice it shift: "
-     "what the user cares about right now, how much detail he wants, and what is "
+     "what the user cares about right now, how much detail they want, and what is "
      "still open. It shapes the 'conversation so far' note you are shown.",
-     {"priorities": ("string", "The topics he cares about now, most important first, comma-separated."),
+     {"priorities": ("string", "The topics they care about now, most important first, comma-separated."),
       "depth": ("string", "brief, normal or deep."),
       "open_threads": ("string", "Questions or tasks still open, separated by | (optional).")}, []),
     ("search_past_conversations",
      "Search earlier conversations with the user, voice and chat, with dates: "
-     "what he said, what you told him, what was decided. Use it whenever he "
+     "what they said, what you told them, what was decided. Use it whenever they "
      "refers to something from before ('what did we say about...', 'remember "
      "when...'). Matches from earlier calls with you come back directly; matches "
-     "from conversations that stayed on his PC are summarised by his local model "
-     "and shown to him on a card before any of it reaches you.",
+     "from conversations that stayed on their PC are summarised by their local model "
+     "and shown to them on a card before any of it reaches you.",
      {"query": ("string", "What to look for, in a few words."),
       "since": ("string", "Only on or after this date, YYYY-MM-DD (optional)."),
       "until": ("string", "Only on or before this date, YYYY-MM-DD (optional).")}, ["query"]),
     ("answer_share_request",
      "Record the user's spoken decision on a pending share request (the card from "
-     "ask_local_for_context). Call it only right after he says it: 'send it' / "
-     "'yes' approves; 'don't send it' / 'no' declines. It counts only if his own "
+     "ask_local_for_context). Call it only right after they say it: 'send it' / "
+     "'yes' approves; 'don't send it' / 'no' declines. It counts only if their own "
      "words said so.",
      {"request_id": ("string", "The id from ask_local_for_context."),
       "decision": ("string", "approve or decline")}, ["request_id", "decision"]),
     ("revise_share_request",
-     "Change a pending share request's text as the user asks, before he approves "
-     "it: pass his instruction, e.g. 'change Saturday to Sunday' or 'leave out the "
-     "part about the dentist'. The change is made on his machine and shown on the "
+     "Change a pending share request's text as the user asks, before they approve "
+     "it: pass their instruction, e.g. 'change Saturday to Sunday' or 'leave out the "
+     "part about the dentist'. The change is made on their machine and shown on the "
      "card; you do not see the text. Then ask whether to send it.",
      {"request_id": ("string", "The id from ask_local_for_context."),
-      "instruction": ("string", "His instruction, in his words.")}, ["request_id", "instruction"]),
+      "instruction": ("string", "Their instruction, in their words.")}, ["request_id", "instruction"]),
     ("spawn_task",
      "Start a long-running background task (a 'workflow') that keeps working "
      "while the conversation continues — deep research, multi-step analysis, "
@@ -1078,11 +1078,11 @@ def _voice_room_mode() -> bool:
 
 
 def _tool_ask_local_for_context(inp, session=None):
-    """Ask the local model for private context; share it only as he approves.
+    """Ask the local model for private context; share it only as they approve.
 
     Returns at once: the local answer can take longer than a voice tool may
     hold the line. The work runs on a thread that raises the payload card (or
-    shares under his conversation grant) and hands the outcome to the call
+    shares under their conversation grant) and hands the outcome to the call
     (services/local_context, services/voice_live_channel).
     """
     question = str((inp or {}).get("question") or "").strip()
@@ -1095,9 +1095,9 @@ def _tool_ask_local_for_context(inp, session=None):
     rid = _start_local_share(question, cid)
     tail = (f" The request id is {rid}." if rid else
             " You will be told the request id when the card is up.")
-    return ("ASKING: his local model is answering, and he will see exactly what would be "
+    return ("ASKING: their local model is answering, and they will see exactly what would be "
             "shared on a card before you receive any of it. Say one short sentence that "
-            "you're asking his OK to share some context, then carry on." + tail)
+            "you're asking their OK to share some context, then carry on." + tail)
 
 
 def _start_local_share(question, cid, answer_fn=None):
@@ -1120,12 +1120,12 @@ def _start_local_share(question, cid, answer_fn=None):
         rid[0] = out.get("approval_id")
         done.set()
         if out.get("status") == "pending":
-            _vlc.deliver(cid, (f"The share request {out['approval_id']} is on his screen. Tell him "
-                               f"in one short sentence that you're asking his OK to share some "
-                               f"context from his local model. He can say 'send it', 'don't send "
+            _vlc.deliver(cid, (f"The share request {out['approval_id']} is on their screen. Tell them "
+                               f"in one short sentence that you're asking their OK to share some "
+                               f"context from their local model. They can say 'send it', 'don't send "
                                f"it', or ask you to change it."), kind="notice")
         elif out.get("status") in ("unavailable", "withheld"):
-            _vlc.deliver(cid, "No context came back from his local model: " + str(out.get("reason")),
+            _vlc.deliver(cid, "No context came back from their local model: " + str(out.get("reason")),
                          kind="notice")
     threading.Thread(target=_work, name="ask-local-context", daemon=True).start()
     done.wait(3.0)          # a card raised quickly gets its id into the reply
@@ -1172,8 +1172,8 @@ def _tool_search_past_conversations(inp, session=None):
                 return _lc.local_answer(question + "\n\nWhat the earlier conversations say:\n"
                                         + snippets)
             rid = _start_local_share(f"From earlier conversations: {query}", cid, _answer)
-            parts.append(f"{len(rest)} more match(es) are in conversations that stayed on his "
-                         f"PC. His local model is summarising them, and he will see exactly what "
+            parts.append(f"{len(rest)} more match(es) are in conversations that stayed on their "
+                         f"PC. Their local model is summarising them, and they will see exactly what "
                          f"would be shared on a card first"
                          + (f" (request id {rid})." if rid else "."))
     if not parts:
@@ -1182,7 +1182,7 @@ def _tool_search_past_conversations(inp, session=None):
 
 
 def _tool_answer_share_request(inp, session=None):
-    """His spoken decision on a share card; it counts only if his own words say so."""
+    """Their spoken decision on a share card; it counts only if their own words say so."""
     inp = inp or {}
     rid = str(inp.get("request_id") or "").strip()
     claimed = {"approve": "approve", "send": "approve", "yes": "approve",
@@ -1199,24 +1199,24 @@ def _tool_answer_share_request(inp, session=None):
         # asked again about the text he has now actually seen.
         rev = _lc.revise_by_voice(rid, res.get("instruction") or "")
         if not rev.get("ok"):
-            return ("NOT SENT, and nothing was decided: his yes had a "
+            return ("NOT SENT, and nothing was decided: their yes had a "
                     "condition attached, so it is not consent to the text on "
                     "the card, and the change could not be made ("
                     + str(rev.get("error")) + "). Say that in one sentence, "
-                    "ask him how he wants it changed, and send nothing.")
+                    "ask them how they want it changed, and send nothing.")
         # What changed, in counts. The draft is still unapproved, so none of
         # its words may come back out here.
-        return ("NOT SENT: his yes had a condition, so the card was changed "
-                "on his screen instead of being sent - "
-                + _lc.change_summary(rid) + ". Read back what he asked you to "
-                "change, in his own words, then ask him to say 'send it' or "
+        return ("NOT SENT: their yes had a condition, so the card was changed "
+                "on their screen instead of being sent - "
+                + _lc.change_summary(rid) + ". Read back what they asked you to "
+                "change, in their own words, then ask them to say 'send it' or "
                 "'don't send it'. Do not read the card's own text aloud.")
     if not res.get("ok"):
         return ("NOT RECORDED: " + str(res.get("error"))
-                + ". Ask him directly whether to send it or not.")
+                + ". Ask them directly whether to send it or not.")
     if res.get("status") == "approved":
-        return "Recorded: he approved it. The context is on its way to you; wait for it."
-    return "Recorded: he declined. Nothing was shared; carry on without it."
+        return "Recorded: they approved it. The context is on its way to you; wait for it."
+    return "Recorded: they declined. Nothing was shared; carry on without it."
 
 
 def _tool_revise_share_request(inp):
@@ -1225,9 +1225,9 @@ def _tool_revise_share_request(inp):
     res = _lc.revise_by_voice(str(inp.get("request_id") or "").strip(),
                               str(inp.get("instruction") or ""))
     if res.get("ok"):
-        return ("Updated on his screen. Ask him to check the card and say 'send it' or "
+        return ("Updated on their screen. Ask them to check the card and say 'send it' or "
                 "'don't send it'.")
-    return "NOT CHANGED: " + str(res.get("error")) + ". Tell him, and ask how to change it."
+    return "NOT CHANGED: " + str(res.get("error")) + ". Tell them, and ask how to change it."
 
 
 def _voice_tool_run(name, args, send_client, session=None):

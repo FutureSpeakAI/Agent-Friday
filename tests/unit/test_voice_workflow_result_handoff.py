@@ -47,7 +47,7 @@ def test_a_withheld_task_result_becomes_a_card_instead_of_a_dead_end(offered):
     handed = vr._injection_or_card(RESULT, "task_result", "conv-wf")
     assert offered, "a private result must be offered, not dropped"
     assert PHONE not in handed, "the raw result must never reach the model"
-    assert "waiting on his screen" in handed, (
+    assert "waiting on their screen" in handed, (
         "the model has to be told there is something to mention")
 
 

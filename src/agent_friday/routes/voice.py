@@ -467,8 +467,8 @@ VOICE_TOOL_HARD_LIMIT_S = 20.0
 _INJECT_LEADS = {
     "task_result": ("[Not from the user: the work you handed to Friday has finished. "
                     "Tell the user the real outcome now, briefly and plainly:]\n"),
-    "context": ("[Not from the user: he approved sharing this context from his "
-                "local model. Use it to continue what he asked for:]\n"),
+    "context": ("[Not from the user: the user approved sharing this context from their "
+                "local model. Use it to continue what they asked for:]\n"),
     "result": "[Not from the user: a result that finished in the background:]\n",
     "declined": "[Not from the user: ",
     "notice": "[Not from the user: ",
@@ -540,7 +540,7 @@ def _injection_or_card(text: str, kind: str, conversation_id) -> str:
             text, conversation_id=conversation_id,
             cloud_model=_voice_live_model_name(),
             local_model="a background task on this machine",
-            question="the result of the background task he asked for",
+            question="the result of the background task the user asked for",
             title="Share this background result with the voice model?")
     except Exception as e:  # noqa: BLE001
         _log.warning("could not offer a withheld task result on a card: %s", e)
@@ -550,14 +550,14 @@ def _injection_or_card(text: str, kind: str, conversation_id) -> str:
         return (_INJECT_LEADS["notice"]
                 + "that background result is private, so Friday scrubbed the "
                   "identifiers out of it and put the exact text on a card for "
-                  "him to read. Tell him in one short sentence that it is "
-                  "waiting on his screen, and carry on.]")
+                  "the user to read. Tell them in one short sentence that it is "
+                  "waiting on their screen, and carry on.]")
     if status == "sent":
         # A conversation grant was in force: offer() has already queued the
         # scrubbed text as approved context, so say only that it is coming.
         return (_INJECT_LEADS["notice"]
                 + "that background result was private; the scrubbed version is "
-                  "on its way to you under the sharing he already allowed for "
+                  "on its way to you under the sharing they already allowed for "
                   "this conversation.]")
     # withheld / unavailable: the floor refused it, or it could not be
     # recorded. The gate's own sentence is the honest thing to hand over.
