@@ -852,7 +852,7 @@ class VoiceSession:
             turn["pending"] += 1
         self._speak_q.put((turn, clause, receipt))
 
-    def _synth(self, engine, clause: str, turn: dict):
+    def _synth(self, engine, clause: str, cancel, turn_id=None):
         # A clause is one engine call (Kokoro and Piper synthesize it whole),
         # so a barge cannot cut one mid-synthesis: the queue drops the turn's
         # waiting jobs, the running one is flagged, and its audio is never
@@ -861,13 +861,13 @@ class VoiceSession:
         clause = brand.spoken(clause)
         if self.gpu_queue is not None and getattr(engine, "device", "") == "cuda":
             out = []
-            d = self.gpu_queue.submit(turn["id"],
+            d = self.gpu_queue.submit(turn_id,
                                       lambda c: out.extend(engine.synthesize_stream(clause, c)) or True)
             d.wait()
             if d.error:
                 raise d.error
             return out
-        return list(engine.synthesize_stream(clause, turn["cancel"]))
+        return list(engine.synthesize_stream(clause, cancel))
 
     def _speak_loop(self) -> None:
         while not self.done.is_set():
@@ -881,7 +881,7 @@ class VoiceSession:
                 self.stage("mouth", "busy", clause[:40])
                 chunks = None
                 try:
-                    chunks = self._synth(self.mouth, clause, turn)
+                    chunks = self._synth(self.mouth, clause, turn["cancel"], turn["id"])
                 except Exception as e:
                     log.error("mouth failed on a clause (%s): %s", type(e).__name__, e)
                     if receipt is not None:
@@ -894,7 +894,8 @@ class VoiceSession:
                             f"a phrase; Piper is speaking the phrases it cannot. "
                             f"({type(e).__name__})")
                         try:
-                            chunks = self._synth(self.fallback_mouth, clause, turn)
+                            chunks = self._synth(self.fallback_mouth, clause,
+                                                 turn["cancel"], turn["id"])
                         except Exception as e2:
                             log.error("fallback mouth failed too: %s", e2)
                             chunks = None
