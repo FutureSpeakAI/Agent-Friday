@@ -2799,8 +2799,8 @@ def _generate_weekly_editorial():
     """Write + persist Friday's weekly editorial. Returns the editorial dict.
 
     Draws from the full 7-day archive (banned sources included), scores the draft
-    for independence and reports the score; an empty draft is retried once with
-    the stronger prompt. Persists markdown at ~/.friday/editorials/YYYY-WNN.md."""
+    for independence and reports the score; an empty draft is retried once, and the
+    retry says only that the first attempt returned nothing. Persists markdown at ~/.friday/editorials/YYYY-WNN.md."""
     cnow = _front_page_central_now()
     week_id = cnow.strftime('%G-W%V')
     pool = _gather_editorial_pool(7)
@@ -2826,15 +2826,13 @@ def _generate_weekly_editorial():
                                               st["snippet"][:160]))
     article_block = "\n".join(lines) or "(the archive is thin this week)"
 
-    def _compose(strong):
+    def _compose(retry):
         directive = EDITORIAL_SYSTEM_PROMPT
-        if strong:
-            directive += (
-                "\n\nYOUR PREVIOUS DRAFT WAS TOO SAFE — it read like a mirror, "
-                "not an editor. Rewrite with real intellectual courage: take a "
-                "sharper thesis, push back harder, name plainly what the reader "
-                "is most likely getting wrong and why, and do NOT soften the "
-                "uncomfortable parts. Courage over comfort.")
+        if retry:
+            # The retry runs only when the first attempt came back empty, so
+            # it says exactly that and never critiques a draft that does not
+            # exist.
+            directive += "\n\nThe previous attempt returned nothing. Write the editorial now."
         user = (
             "Here is everything that crossed the wire in the past 7 days, across "
             "ALL sources — including ones the user has banned (flagged "
@@ -2858,7 +2856,7 @@ def _generate_weekly_editorial():
                              orb_label="🗞 Weekly Editorial", workspace='briefing')
         return (raw or "").strip()
 
-    body = _compose(strong=False)
+    body = _compose(retry=False)
     score = _editorial_independence_score(body)
     regenerated = False
     # The independence score is reported, never used to rewrite: an essay
@@ -2867,7 +2865,7 @@ def _generate_weekly_editorial():
     # pushback" every week. A rubric that can tell an essay from a how-to
     # comes before any floor; until then only an EMPTY draft is retried.
     if not body:
-        strong_body = _compose(strong=True)
+        strong_body = _compose(retry=True)
         if strong_body:
             body, score, regenerated = strong_body, _editorial_independence_score(strong_body), True
 

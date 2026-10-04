@@ -121,6 +121,19 @@ def test_the_editorial_cites_by_id_and_is_linked_by_code(engine, monkeypatch):
     assert [s["id"] for s in side["news"]] == ["E1"] and side["link_check"] == []
 
 
+def test_the_editorial_retry_never_critiques_a_draft_that_was_never_written(engine, monkeypatch):
+    systems = []
+
+    def model(messages, **k):
+        systems.append(k.get("system") or "")
+        return "" if len(systems) == 1 else "The vote matters. [E1]"
+    monkeypatch.setattr(engine, "_generate_text", model)
+    engine._generate_weekly_editorial()
+    assert len(systems) == 2
+    assert "returned nothing" in systems[1]
+    assert "PREVIOUS DRAFT" not in systems[1].upper()
+
+
 def test_episode_source_chips_resolve_from_the_same_story_ids(engine, tmp_path, monkeypatch):
     from agent_friday.services import podcast_news
     monkeypatch.setattr(engine, "_generate_text", lambda messages, **k: "The vote matters. [E1]")
