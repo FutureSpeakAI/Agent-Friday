@@ -50,3 +50,29 @@ def test_the_session_and_the_proof_use_the_curated_contract():
     assert "build_voice_tool_contract()" in arm and "full=True" not in arm
     proof = inspect.getsource(vm._run_front_mind)
     assert "build_voice_tool_contract()" in proof
+
+
+def _strip_descriptions(tools):
+    import copy
+    out = copy.deepcopy(tools)
+    for t in out:
+        t["function"].pop("description", None)
+        for p in (t["function"]["parameters"].get("properties") or {}).values():
+            if isinstance(p, dict):
+                p.pop("description", None)
+    return out
+
+
+def test_the_compact_rendering_changes_only_descriptions_and_never_the_registry():
+    from agent_friday.services.agent import CLAUDE_TOOLS
+    import copy
+    before = copy.deepcopy(CLAUDE_TOOLS)
+    full = ve.build_voice_tool_contract(compact=False)
+    lean = ve.build_voice_tool_contract()
+    assert lean["names"] == full["names"]
+    assert _strip_descriptions(lean["tools"]) == _strip_descriptions(full["tools"]), (
+        "the compact contract changed a name, schema, type or required field")
+    assert lean["tokens"] < full["tokens"]
+    for t in lean["tools"]:
+        assert t["function"]["description"], t["function"]["name"]
+    assert CLAUDE_TOOLS == before, "rendering the contract edited the shared registry"

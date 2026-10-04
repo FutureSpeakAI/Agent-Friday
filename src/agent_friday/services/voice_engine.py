@@ -17,6 +17,7 @@ import time as _time
 import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
+import copy
 import difflib as _difflib
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -878,7 +879,27 @@ def _native_tool_schema(props, required):
     return schema
 
 
-def build_voice_tool_contract(full: bool = False) -> dict:
+_LEAD_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _lead_sentence(text) -> str:
+    """The first sentence of a declaration's description."""
+    return _LEAD_SENTENCE.split(str(text or "").strip(), maxsplit=1)[0]
+
+
+def _compact_declaration(tool: dict) -> dict:
+    """The same declaration with each description cut to its lead sentence:
+    name, schema, types and required fields unchanged."""
+    t = copy.deepcopy(tool)
+    f = t["function"]
+    f["description"] = _lead_sentence(f.get("description"))
+    for prop in ((f.get("parameters") or {}).get("properties") or {}).values():
+        if isinstance(prop, dict) and "description" in prop:
+            prop["description"] = _lead_sentence(prop["description"])
+    return t
+
+
+def build_voice_tool_contract(full: bool = False, compact: bool = True) -> dict:
     """The voice tool contract as OpenAI-style declarations, for ANY engine.
 
     ``full=False`` is the curated contract every voice engine shares: the
@@ -887,6 +908,13 @@ def build_voice_tool_contract(full: bool = False) -> dict:
     (``_voice_tool_names()`` is the name list). ``full=True`` adds the rest of
     the text registry (local voice spec §12.3). ``run_command`` is absent
     from both.
+
+    ``compact`` (the default; the local voice front's rendering) keeps every
+    name and schema and cuts each description to its lead sentence. The
+    curated surface has grown past 60 tools, and in full it is ~12.5K tokens,
+    over the ceiling that keeps the front's cold prefill fast; its lead
+    sentences are ~8.2K. Gemini Live renders its own declarations, in full,
+    from the same tables (``_build_voice_live_tools``).
 
     Returns ``{"tools": [...], "names": [...], "tokens": int, "fits": bool}``;
     ``fits`` holds the curated contract to ``VOICE_CONTRACT_MAX_TOKENS``.
@@ -914,6 +942,8 @@ def build_voice_tool_contract(full: bool = False) -> dict:
         except Exception as e:  # pragma: no cover - import-time failure
             _log.error("full voice toolkit unavailable (registry import failed): %s", e)
     tools = [t for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED]
+    if compact:
+        tools = [_compact_declaration(t) for t in tools]
     tokens = len(json.dumps(tools, ensure_ascii=False)) // 4
     return {"tools": tools, "names": [t["function"]["name"] for t in tools],
             "tokens": tokens,
