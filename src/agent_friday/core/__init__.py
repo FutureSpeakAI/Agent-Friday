@@ -2338,6 +2338,14 @@ DEFAULT_SETTINGS = {
     # defederation. Buying stays refused whatever this says.
     # trust_agents: the trust graph's agent kind (schema only; both off).
     "held_features": {"federation": False, "trust_agents": False},
+    # The Library (services/library): search on or off; whether a Library answer
+    # may be written by a cloud model (default off: Library text stays on this
+    # PC); whether documents are read while on battery; whether the knowledge
+    # graph learns from Library documents ("" = not chosen yet, "on", "off").
+    "library_search": True,
+    "library_cloud_answers": False,
+    "library_index_on_battery": False,
+    "library_kg_learn": "",
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
     # `decision_backend` (which scorer answers Friday's typed judgments) is
     # declared once, with the approval-gate block further down.

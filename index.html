@@ -51272,6 +51272,37 @@ function SettingsTabPrivacy({
     title: "File access",
     desc: "Which files and folders cloud models may read when " + fridayName() + " opens them."
   }, /*#__PURE__*/React.createElement(FileAccessPanel, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Library",
+    desc: "Documents you add to the Library are read and indexed on this PC, and nothing is sent anywhere. The index is stored here, protected by your Windows account, like the other indexes; documents judged private are encrypted with your vault key."
+  }, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Library search",
+    value: s.library_search !== false,
+    onChange: () => save({
+      library_search: s.library_search === false
+    }),
+    desc: "On, " + fridayName() + " can search the documents you added and answer with footnotes. Off, she cannot see them, and nothing is deleted."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Let a cloud model write Library answers",
+    value: !!s.library_cloud_answers,
+    onChange: () => save({
+      library_cloud_answers: !s.library_cloud_answers
+    }),
+    desc: "Off, Library answers are written on this PC even when a chat uses a cloud model. On, only passages from documents that also have a cloud permission in File access can go, one document at a time."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Read documents while on battery",
+    value: !!s.library_index_on_battery,
+    onChange: () => save({
+      library_index_on_battery: !s.library_index_on_battery
+    }),
+    desc: "Off, new and changed documents wait until the PC is plugged in."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Let the knowledge graph learn from Library documents",
+    value: s.library_kg_learn === 'on',
+    onChange: () => save({
+      library_kg_learn: s.library_kg_learn === 'on' ? 'off' : 'on'
+    }),
+    desc: "On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted; forgetting a document removes it from the graph too."
+  })), /*#__PURE__*/React.createElement(StSection, {
     title: "Fonts"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Load fonts from Google Fonts",

@@ -311,7 +311,17 @@
       h('div', { className: 'lb-count' }, 'Add a folder and Friday will read it here, on this PC.'),
       h('button', { className: 'btn primary', onClick: () => setAdding(true) }, 'Add a folder'));
 
+    const chooseKg = v => post('/api/settings', { settings: { library_kg_learn: v } }).then(() => { toast(v === 'on' ? 'The graph will learn from your documents.' : 'The graph will not read your documents.'); refresh(); });
+    // The one question asked after the first folder: neither answer is chosen for the owner.
+    const kgCard = status && !status.empty && !status.kg_learn && h('div', { className: 'lb-card', role: 'group', 'aria-label': 'Knowledge graph' },
+      h('div', { className: 'quote' }, 'Should Friday’s knowledge graph learn the people and places in these documents?'),
+      h('div', { className: 'meta' }, 'They would appear in the Galaxy with a link back to where they are mentioned. Reading happens on this PC. You can change this in Settings.'),
+      h('div', { className: 'acts' },
+        h('button', { className: 'btn', onClick: () => chooseKg('on') }, 'Yes, let it learn (Recommended)'),
+        h('button', { className: 'btn', onClick: () => chooseKg('off') }, 'No, keep them separate')));
+
     const askView = h('div', { className: 'lb-main' },
+      kgCard,
       h('form', { className: 'lb-ask', onSubmit: e => { e.preventDefault(); ask(q, false); } },
         h('input', { ref: inputRef, value: q, onChange: e => setQ(e.target.value), placeholder: 'Ask your documents a question', 'aria-label': 'Ask your Library' }),
         h('button', { className: 'btn primary', type: 'submit', disabled: !q.trim() || (run && run.busy) }, 'Ask')),

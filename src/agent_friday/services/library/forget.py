@@ -90,12 +90,24 @@ def _clear_cache(principal: str, doc_id: int) -> None:
         pass
 
 
+def _purge_graph(principal: str, doc_id: int) -> None:
+    """Facts the knowledge graph learned from this document go with it."""
+    if principal != lstore.OWNER:
+        return
+    try:
+        from agent_friday.services.knowledge_graph import indexer as kg
+        kg.purge_library_document(doc_id)
+    except Exception:  # noqa: BLE001 - a graph that is not built has nothing to purge
+        pass
+
+
 def remove_document(principal: str, doc_id: int) -> dict:
     """Stop indexing and purge. The file on disk is untouched."""
     st = lstore.store_for(principal)
     doc = st.get_document(doc_id)
     if not doc:
         return {"ok": False, "error": "no such document"}
+    _purge_graph(principal, doc_id)
     st.purge_document(doc_id, keep_row=False)
     _clear_cache(principal, doc_id)
     st.drop_empty_folders()
@@ -108,6 +120,7 @@ def forget_document(principal: str, doc_id: int) -> dict:
     if not doc:
         return {"ok": False, "error": "no such document"}
     doc_norm = _doc_text(st, doc_id)
+    _purge_graph(principal, doc_id)
     st.x("INSERT OR REPLACE INTO tombstones(sha256, path, ts) VALUES(?,?,?)",
          (doc["sha256"], doc["path"], time.time()))
     from agent_friday.services import conversations

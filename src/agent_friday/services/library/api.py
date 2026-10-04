@@ -26,6 +26,16 @@ def _scope_row(store: Store, a: dict) -> dict:
             "created_ts": a.get("created_ts")}
 
 
+def _kg_choice() -> str:
+    """"" until the owner chooses, then "on" or "off" (settings.library_kg_learn)."""
+    try:
+        from agent_friday.core import _load_settings
+        v = str((_load_settings() or {}).get("library_kg_learn") or "")
+        return v if v in ("on", "off") else ""
+    except Exception:
+        return ""
+
+
 def status(store: Store, principal: str, indexer_pending: int = 0) -> dict:
     from agent_friday.services.library import runtime
     c = store.counts()
@@ -45,6 +55,7 @@ def status(store: Store, principal: str, indexer_pending: int = 0) -> dict:
         "laya": {"loaded": route.laya_available()},
         "index_bytes": store.size_bytes(),
         "empty": not scopes,
+        "kg_learn": _kg_choice(),
     }
 
 
