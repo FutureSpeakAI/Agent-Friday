@@ -240,7 +240,9 @@ def _library_candidates(text: str) -> List[Candidate]:
     if not q or principal is None:
         return []
     try:
-        rows = store_for(principal).list_documents("indexed")
+        from agent_friday.services.library import tree
+        st = store_for(principal)
+        rows = list(tree.TreeBuilder(st, principal).visible_docs().values())     # consent and the vault, as everywhere
     except Exception:
         return []
     out = []

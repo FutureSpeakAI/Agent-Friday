@@ -2343,6 +2343,7 @@ DEFAULT_SETTINGS = {
     # PC); whether documents are read while on battery; whether the knowledge
     # graph learns from Library documents ("" = not chosen yet, "on", "off").
     "library_search": True,
+    "library_floor_tier": False,           # a small PC: fewer, shorter passages per search
     "library_cloud_answers": False,
     "library_index_on_battery": False,
     # The most characters of the owner's documents one answer may send to a cloud model
@@ -3421,6 +3422,12 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
     try:
         from agent_friday.services import decisions as _dec
         _dec.on_settings_change({**DEFAULT_SETTINGS, **existing}, merged)
+    except Exception:
+        pass
+    # Turning the knowledge graph's learning from the Library off takes back what it learned.
+    try:
+        from agent_friday.services.library import runtime as _lib_rt
+        _lib_rt.on_settings_change({**DEFAULT_SETTINGS, **existing}, merged)
     except Exception:
         pass
     return merged

@@ -33,9 +33,9 @@ def _lib(tmp_path):
     return st, root
 
 
-def _choice(monkeypatch, value):
+def _choice(monkeypatch, value, **extra):
     from agent_friday.services.knowledge_graph import indexer as kg
-    monkeypatch.setattr(kg, "_load_settings", lambda: {"library_kg_learn": value})
+    monkeypatch.setattr(kg, "_load_settings", lambda: {"library_kg_learn": value, **extra})
     return kg
 
 
@@ -62,7 +62,7 @@ def test_a_document_with_its_own_cloud_permission_is_the_only_public_one(tmp_pat
     from agent_friday.services import file_grants as fg
     st, root = _lib(tmp_path)
     fg.create_file_grant(str(root / "notes.txt"))
-    kg = _choice(monkeypatch, "on")
+    kg = _choice(monkeypatch, "on", library_cloud_answers=True)
     by_doc = {c["provenance"]["docs"][0]: c["sensitivity"] for c in kg._library_chunks()}
     notes = st.q("SELECT id FROM documents WHERE path LIKE '%notes.txt'")[0]["id"]
     assert by_doc[str(notes)] == 1 and 2 in by_doc.values()

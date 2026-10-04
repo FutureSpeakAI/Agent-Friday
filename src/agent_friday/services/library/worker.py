@@ -86,7 +86,11 @@ if os.environ.get("FRIDAY_LIBRARY_SELFTEST") == "1":
         blob = bytearray(int(args.get("mb", 2048)) * 1024 * 1024)
         return {"n": len(blob)}
 
+    def _selftest_big(args: dict) -> dict:
+        return {"text": "x" * (int(args.get("mb", 8)) * 1024 * 1024)}
+
     _TASKS["_selftest_sleep"] = _selftest_sleep
+    _TASKS["_selftest_big"] = _selftest_big
     _TASKS["_selftest_alloc"] = _selftest_alloc
 
 

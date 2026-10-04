@@ -424,6 +424,10 @@ def tool_finished(name: str, args: Any = None, result: Any = None, *, ok: bool =
     tid = current()
     if not tid:
         return
+    if str(name) == "search_library" or "<evidence-" in str(result)[:4000]:
+        # The owner's documents are not copied into a record that outlives them: forgetting
+        # a document could not reach this archive, which is encrypted and hash-chained.
+        result = "[Passages from your Library are not kept in this record.]"
     with _LOCK:
         opened = _OPEN_CALLS.get((tid, str(name))) or []
         cid = opened.pop(0) if opened else None

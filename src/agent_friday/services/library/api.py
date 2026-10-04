@@ -26,6 +26,13 @@ def _scope_row(store: Store, a: dict) -> dict:
             "created_ts": a.get("created_ts")}
 
 
+def _key_protection(store: Store) -> str:
+    if not getattr(store, "encrypted", False):
+        return "none"
+    from agent_friday.services.library.store import key_protection
+    return key_protection(store.path.parent)
+
+
 def _kg_choice() -> str:
     """"" until the owner chooses, then "on" or "off" (settings.library_kg_learn)."""
     try:
@@ -55,6 +62,7 @@ def status(store: Store, principal: str, indexer_pending: int = 0) -> dict:
         "laya": {"loaded": route.laya_available()},
         "index_bytes": store.size_bytes(),
         "index_encrypted": bool(getattr(store, "encrypted", False)),
+        "index_key_protection": _key_protection(store),
         "index_note": getattr(store, "note", ""),
         "empty": not scopes,
         "kg_learn": _kg_choice(),

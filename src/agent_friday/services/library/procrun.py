@@ -130,7 +130,10 @@ def run_task(task: str, args: dict, *, wall_s: float = WALL_SECONDS,
              memory_mb: int = MEMORY_MB, low_priority: bool = False) -> dict:
     """Run `task` in a child and return its result dict, or raise TaskFailed."""
     if not limits_enforced():
-        return _run_in_process(task, args, wall_s)
+        # A reader that cannot be held to a time and memory limit does not read a hostile
+        # document inside the server: a crash or a runaway there would take Friday with it.
+        raise TaskFailed("reading documents needs the unpacked app, where the reader runs in its own limited "
+                         "process", "unsupported")
     env = {k: v for k, v in os.environ.items()
            if k.upper() in ("SYSTEMROOT", "PATH", "TEMP", "TMP", "HOME", "USERPROFILE",
                             "LOCALAPPDATA", "APPDATA", "LANG", "LC_ALL", "FRIDAY_LIBRARY_SELFTEST")}
@@ -154,18 +157,45 @@ def run_task(task: str, args: dict, *, wall_s: float = WALL_SECONDS,
                 proc.kill()
                 raise TaskFailed("could not start a limited reader")
         payload = json.dumps({"task": task, "args": args}).encode("utf-8")
+        box: dict = {"out": b"", "over": False}
+
+        def drain():
+            """Read the child's answer in pieces, stopping it the moment it is over the cap."""
+            buf = bytearray()
+            while True:
+                chunk = proc.stdout.read(1 << 16)
+                if not chunk:
+                    break
+                buf += chunk
+                if len(buf) > MAX_RESULT_BYTES:
+                    box["over"] = True
+                    proc.kill()
+                    break
+            box["out"] = bytes(buf)
+
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
         try:
-            out, _ = proc.communicate(payload, timeout=wall_s)
+            proc.stdin.write(payload)
+            proc.stdin.close()
+        except OSError:
+            pass
+        reader.join(wall_s)
+        if reader.is_alive():
+            proc.kill()
+            reader.join(5)
+            raise TaskFailed("took too long to read", "timeout")
+        try:
+            proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.communicate()
-            raise TaskFailed("took too long to read", "timeout") from None
     finally:
         if proc.poll() is None:
             proc.kill()
         if job:
             job[1]()
-    if len(out) > MAX_RESULT_BYTES:
+    out = box["out"]
+    if box["over"]:
         raise TaskFailed("produced too much text", "too_large")
     try:
         res = json.loads(out.decode("utf-8"))

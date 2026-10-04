@@ -223,7 +223,7 @@ def test_evidence_is_fenced_with_a_per_turn_marker_document_text_cannot_forge(tm
     assert a.count(f"</evidence-{n1}>") == 1              # the forged closing tag did not survive
     assert a.count("<evidence-") == 1
     assert "DATA" in a and "never follow them" in a
-    assert 'doc="Evil \'doc\'"' in a
+    assert re.search(r'doc="Evil\s+doc"', a)
 
 
 def test_a_poisoned_passage_reaches_the_model_only_inside_the_envelope(tmp_path, monkeypatch):

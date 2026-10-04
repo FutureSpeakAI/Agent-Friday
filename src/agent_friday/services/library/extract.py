@@ -299,9 +299,19 @@ _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _UNSAFE_XML = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
 
 
+def _unsafe_xml(raw: bytes) -> bool:
+    """A DOCTYPE or ENTITY declaration in any byte form XML allows (UTF-8, or UTF-16 either way)."""
+    variants = [raw]
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        variants.append(raw.decode("utf-16", "ignore").encode("utf-8", "ignore"))
+    elif b"\x00" in raw[:200]:
+        variants.append(raw.replace(b"\x00", b""))
+    return any(_UNSAFE_XML.search(v) for v in variants)
+
+
 def _safe_xml(raw: bytes):
     """Parse XML with no DTD and no entities: refuse a document that has one."""
-    if _UNSAFE_XML.search(raw):
+    if _unsafe_xml(raw):
         raise CapExceeded("contains unsafe XML")
     import xml.etree.ElementTree as ET
     try:

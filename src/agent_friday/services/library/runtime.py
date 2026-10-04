@@ -126,6 +126,8 @@ def index_scope(principal: str, add_event: dict) -> None:
 def resweep(principal: str = OWNER) -> int:
     """Re-read every active consent for new, changed and deleted files, and
     purge documents no consent covers any more. Returns the scopes queued."""
+    if grants.suspended():
+        return 0          # an unverifiable ledger trusts no consent, and purging would delete a whole index
     st = prepare(principal)
     for row in st.list_documents():
         if not grants.allowed(principal, Path(row["path"])):
@@ -141,6 +143,8 @@ def resweep(principal: str = OWNER) -> int:
 def purge_uncovered(principal: str = OWNER) -> int:
     """Delete documents no active consent covers (a removed add, a denied path).
     Reads the ledger, not the disk, so it is cheap enough to run every minute."""
+    if grants.suspended():
+        return 0          # the same rule: a suspended ledger never empties the index
     from agent_friday.services.library import forget
     st = store_for(principal)
     n = 0
@@ -179,3 +183,16 @@ def start_background() -> None:
         if _sweeper is None or not _sweeper.is_alive():
             _sweeper = threading.Thread(target=_sweep_loop, name="library-sweeper", daemon=True)
             _sweeper.start()
+
+
+def on_settings_change(before: dict, after: dict) -> None:
+    """Learning switched from on to anything else: purge what the graph learned from the
+    Library, off the settings write's thread."""
+    if str(before.get("library_kg_learn") or "") == "on" and str(after.get("library_kg_learn") or "") != "on":
+        def purge():
+            try:
+                from agent_friday.services.knowledge_graph import indexer as kg
+                kg.purge_all_library()
+            except Exception:  # noqa: BLE001 - a graph that is not built has nothing to purge
+                pass
+        threading.Thread(target=purge, name="library-kg-purge", daemon=True).start()

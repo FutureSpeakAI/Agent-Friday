@@ -424,6 +424,7 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
                            "text": friday_msg.get('text') or '',
                            "pinned": bool(friday_msg.get('pinned')),
                            "meta": {**_pmeta, **(meta or {}), "kind": "turn",
+                                    "library": bool(friday_msg.get('library')),
                                     "sources": friday_msg.get('sources') or [],
                                     # The reply's reasoning trace, so the
                                     # bubble keeps its Reasoning section
@@ -1677,6 +1678,7 @@ def chat():
                 if tail:
                     tail, sub = _scrub_pii(tail)
                     lookup.update(sub)
+                _library_cite.elide_for_cloud(messages, settings)
                 _scrub_messages_pii(messages, lookup)
                 if lookup:
                     tail += "\n\n" + PRIVACY_PLACEHOLDERS_NOTE
@@ -2191,7 +2193,7 @@ def chat():
         # checked, so the response field is the signal to rely on, not the log.
         # Footnotes from the owner's Library: labels become [lib:doc#block] tokens,
         # backed only by what search_library returned this turn (services/library/cite).
-        reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
+        reply = _library_cite.resolve_labels(reply, tool_trace)
         _cite_meta = None
         if cite_sources:
             from agent_friday.services import citation_enforcement as _ce
@@ -2281,6 +2283,11 @@ def chat():
                 if isinstance(entry.get('result'), str):
                     entry['result'] = _rehydrate_pii(entry['result'], pii_lookup)
 
+        # Footnotes are checked and recorded last, on the reply that will be shown and
+        # saved (a retry above may have replaced it): live only if this turn's search
+        # returned the block, and gone if its source was forgotten meanwhile.
+        reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
+
         # ── Fact-check: flag low-trust news citations. ──
         # When Friday cites a news outlet, consult its Source Trust Graph score
         # and append a verify-independently warning for anything below 0.5.
@@ -2334,6 +2341,7 @@ def chat():
             'sources': sources,
             'model': _seat_model,
             'seat': _seat_class,
+            'library': _library_cite.used_library(tool_trace),
         }
         if _seat_notice:
             friday_msg['seat_notice'] = _seat_notice
@@ -2970,6 +2978,7 @@ def chat_send():
             'pinned': False,
             'workspace': workspace,
         }
+        reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -2980,6 +2989,7 @@ def chat_send():
             'sources': sources,
             'model': _seat_model,
             'seat': _seat_class,
+            'library': _library_cite.used_library(tool_trace),
         }
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain

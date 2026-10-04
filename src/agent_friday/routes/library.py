@@ -17,7 +17,7 @@ from flask import Blueprint, Response, jsonify, request, send_file, stream_with_
 
 from agent_friday.core import login_required
 from agent_friday.routes._errors import api_error
-from agent_friday.services import studio_files as sf
+from agent_friday.services import screen_click, studio_files as sf
 from agent_friday.services.library import (answer, api, forget, grants, pages, principal as pr, procrun,
                                            runtime, search)
 from agent_friday.services.library.store import store_for
@@ -36,12 +36,22 @@ def _principal():
     return p, None
 
 
+@library_bp.before_request
+def _not_another_site():
+    """Nothing in the Library answers a request another site's page caused: an image,
+    audio or fetch aimed here would otherwise leak which documents exist."""
+    if screen_click.is_cross_site(request):
+        return jsonify({"status": "denied", "error": "cross-site request refused"}), 403
+    return None
+
+
 def _same_origin_json():
+    """A change to the Library is the owner's own act in the workspace: a JSON POST from a
+    browser page of this server, never a bare call."""
     if not request.is_json:
         return jsonify({"status": "error", "error": "JSON body required"}), 415
-    origin = request.headers.get("Origin")
-    if origin and urlparse(origin).netloc != request.host:
-        return jsonify({"status": "denied", "error": "cross-origin request refused"}), 403
+    if not screen_click.is_browser_click(request):
+        return jsonify({"status": "denied", "error": "this change must come from the Library page"}), 403
     return None
 
 
@@ -166,7 +176,8 @@ def lib_page(doc_id, n):
         return jsonify({"status": "error", "error": "Couldn't read this page: " + e.reason}), 422
     resp = Response(got["data"], mimetype=got["mime"])
     resp.headers["X-Content-Type-Options"] = "nosniff"
-    resp.headers["Cache-Control"] = "private, max-age=3600"
+    resp.headers["Cache-Control"] = "no-store" if row["shelf"] == "vault" else "private, max-age=3600"
+    resp.headers["Content-Security-Policy"] = RAW_CSP
     resp.headers["X-Page-Points"] = "%s,%s" % tuple(got["page_pt"])
     resp.headers["X-Pdf-Pages"] = str(got["pages"])
     return resp
@@ -273,6 +284,8 @@ def lib_shelf():
     row = st.get_document(int(b.get("doc_id") or 0))
     if not row or b.get("shelf") not in ("open", "vault"):
         return jsonify({"status": "error", "error": "unknown document or shelf"}), 400
+    if row["shelf"] == "vault" and b["shelf"] == "open" and b.get("confirm") is not True:
+        return jsonify({"status": "error", "error": "moving a document off the vault shelf needs your confirmation"}), 400
     grants.set_shelf(p, row["path"], b["shelf"])
     runtime.indexer_for(p).enqueue(row["path"], recursive=False, force=True)
     return jsonify({"status": "ok", "shelf": b["shelf"]})

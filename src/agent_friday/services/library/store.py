@@ -34,27 +34,27 @@ class VaultLocked(Exception):
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS folders(
-  id INTEGER PRIMARY KEY, scope TEXT NOT NULL, rel TEXT NOT NULL, name TEXT NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, rel TEXT NOT NULL, name TEXT NOT NULL,
   parent_id INTEGER, UNIQUE(scope, rel));
 CREATE TABLE IF NOT EXISTS documents(
-  id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, sha256 TEXT, size INTEGER, mtime REAL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE, sha256 TEXT, size INTEGER, mtime REAL,
   kind TEXT, ext TEXT, title TEXT, pages INTEGER, shelf TEXT NOT NULL DEFAULT 'open',
   folder_id INTEGER, scope TEXT, index_version INTEGER, state TEXT NOT NULL DEFAULT 'queued',
   state_detail TEXT, indexed_at REAL, ocr_pages INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS documents_folder ON documents(folder_id);
 CREATE INDEX IF NOT EXISTS documents_state ON documents(state);
 CREATE TABLE IF NOT EXISTS sections(
-  id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL, parent_id INTEGER, ord INTEGER NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id INTEGER NOT NULL, parent_id INTEGER, ord INTEGER NOT NULL,
   heading TEXT NOT NULL, level INTEGER, first_block INTEGER, last_block INTEGER,
   page_from INTEGER, page_to INTEGER);
 CREATE INDEX IF NOT EXISTS sections_doc ON sections(doc_id, ord);
 CREATE TABLE IF NOT EXISTS blocks(
-  id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL, ord INTEGER NOT NULL, section_id INTEGER,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id INTEGER NOT NULL, ord INTEGER NOT NULL, section_id INTEGER,
   page INTEGER, t_start REAL, t_end REAL, x0 REAL, y0 REAL, x1 REAL, y1 REAL,
   kind TEXT NOT NULL, level INTEGER, text TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS blocks_doc ON blocks(doc_id, ord);
 CREATE TABLE IF NOT EXISTS passages(
-  id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL, section_id INTEGER NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id INTEGER NOT NULL, section_id INTEGER NOT NULL,
   block_ids TEXT NOT NULL, char_len INTEGER, text TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS passages_section ON passages(section_id);
 CREATE INDEX IF NOT EXISTS passages_doc ON passages(doc_id);
@@ -132,6 +132,15 @@ def _encrypt_in_place(path: Path, key: bytes, mod) -> None:
     os.replace(tmp, path)
 
 
+def key_protection(directory: Path) -> str:
+    """How the index key is held: 'vault', 'dpapi' (the Windows account), 'plain', or 'none'."""
+    try:
+        head = (directory / "index.key").read_bytes()[:12]
+    except OSError:
+        return "none"
+    return "vault" if head.startswith(b"FRIDAYVAULT") else "dpapi" if head.startswith(b"FRIDAYDPAPI") else "plain"
+
+
 def index_key(directory: Path) -> bytes | None:
     """The 32-byte key of a principal's index, held beside it under the Windows
     account's protection (the credential store), or None when the optional
@@ -171,48 +180,73 @@ class Store:
         self.note = ""
         mod = cipher_module() if key else None
         self.encrypted = False
+        self.db = None
+        if mod is not None and self.path.exists() and _is_plain(self.path):
+            try:
+                _encrypt_in_place(self.path, key, mod)
+            except Exception:
+                # A migration that fails leaves the plain index exactly as it was and says so:
+                # nothing is renamed, deleted or half-written, and no plaintext copy is set aside.
+                tmp = self.path.with_name(self.path.name + ".enc")
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+                mod = None
+                self.note = "The index could not be encrypted yet and is still a plain file; it will be tried again."
         if mod is not None:
             try:
-                if self.path.exists() and _is_plain(self.path):
-                    _encrypt_in_place(self.path, key, mod)
                 self.db = mod.connect(str(self.path), check_same_thread=False, isolation_level=None)
                 self.db.execute("PRAGMA key = " + _key_clause(key))
                 self.db.execute("SELECT count(*) FROM sqlite_master").fetchone()
                 self.db.row_factory = mod.Row
                 self.encrypted = True
             except Exception:
-                # The index is derived data (the files are the truth): set the unreadable
-                # copy aside and start a fresh one; the next sweep reads the documents again.
-                try:
-                    self.db.close()
-                except Exception:
-                    pass
-                aside = self.path.with_name(self.path.name + ".unreadable")
-                if self.path.exists():
-                    os.replace(self.path, aside)
-                for suffix in ("-wal", "-shm"):
-                    side = self.path.with_name(self.path.name + suffix)
-                    if side.exists():
-                        side.unlink()
+                # The key does not open this file. The index is derived data (the files are the
+                # truth): the encrypted copy is set aside as it is and a fresh one is started.
+                self._set_aside(mod)
                 self.note = "The Library's index could not be opened and was set aside; documents are being read again."
                 self.db = mod.connect(str(self.path), check_same_thread=False, isolation_level=None)
                 self.db.execute("PRAGMA key = " + _key_clause(key))
                 self.db.row_factory = mod.Row
                 self.encrypted = True
-        else:
+        if self.db is None:
+            if self.path.exists() and self.path.stat().st_size and not _is_plain(self.path):
+                # An encrypted index with no key (the optional binding is gone, or the key cannot be read).
+                self._set_aside(None)
+                self.note = ("The Library's index is encrypted and its key is not available, so it was set aside; "
+                             "documents are being read again.")
             self.db = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None)
             self.db.row_factory = sqlite3.Row
         with self._lock:
+            if self._fresh():
+                self.db.execute("PRAGMA auto_vacuum=INCREMENTAL")      # only takes effect before the first table
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA secure_delete=ON")
             self.db.execute("PRAGMA foreign_keys=ON")
-            self.db.execute("PRAGMA auto_vacuum=INCREMENTAL") if self._fresh() else None
             self.db.executescript(_SCHEMA)
             have = {r[1] for r in self.db.execute("PRAGMA table_info(cited_in)").fetchall()}
             for col in ("stamp", "receipt_id"):
                 if col not in have:
                     self.db.execute("ALTER TABLE cited_in ADD COLUMN %s TEXT" % col)
             self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+    def _set_aside(self, mod) -> None:
+        """Move an index this process cannot open out of the way (already ciphertext)."""
+        try:
+            if self.db is not None:
+                self.db.close()
+        except Exception:
+            pass
+        self.db = None
+        aside = self.path.with_name(self.path.name + ".unreadable")
+        if self.path.exists():
+            os.replace(self.path, aside)
+        for suffix in ("-wal", "-shm"):
+            side = self.path.with_name(self.path.name + suffix)
+            if side.exists():
+                side.unlink()
 
     def _fresh(self) -> bool:
         return self.db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0
@@ -411,8 +445,15 @@ class Store:
             self.compact()
 
     def compact(self) -> None:
+        """Make deleted text actually leave the file: merge the full-text index's
+        segments (its old ones hold the tokens of deleted passages), then give the
+        freed pages back; secure_delete zeroes them as they are freed."""
         try:
             with self._lock:
+                try:
+                    self.db.execute("INSERT INTO fts(fts) VALUES('optimize')")
+                except Exception:
+                    pass
                 self.db.execute("PRAGMA incremental_vacuum")
                 self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except sqlite3.Error:

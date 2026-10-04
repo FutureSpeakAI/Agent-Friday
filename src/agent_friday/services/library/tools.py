@@ -129,6 +129,8 @@ def _cloud_evidence(ev: list[dict], principal: str, settings: dict) -> tuple[lis
     granted = []
     for e in ev:
         doc = st.get_document(e["doc_id"])
+        if doc and doc["shelf"] == "vault":
+            continue                  # a folder-level cloud grant never reaches the vault shelf
         if doc and fg.check_grant(Path(doc["path"])).state == "active":
             granted.append((e, doc))
     held = len(ev) - len(granted)

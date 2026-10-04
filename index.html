@@ -51313,7 +51313,7 @@ function SettingsTabPrivacy({
     onChange: () => save({
       library_kg_learn: s.library_kg_learn === 'on' ? 'off' : 'on'
     }),
-    desc: "On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted; forgetting a document removes it from the graph too."
+    desc: "On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted. Forgetting a document removes what the graph learned only from it and clears the descriptions it contributed to; turning this off takes back everything learned from your documents."
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "Fonts"
   }, /*#__PURE__*/React.createElement(StToggle, {

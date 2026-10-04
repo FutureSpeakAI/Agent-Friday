@@ -302,7 +302,8 @@
       post('/api/library/remove', { doc_id: Number(sel.id.slice(2)) }).then(() => { toast('Taken out of the Library. The file is untouched.'); setSel(null); refresh(); });
     };
     const onShelf = shelf => {
-      post('/api/library/shelf', { doc_id: Number(sel.id.slice(2)), shelf }).then(d => { toast(d.status === 'ok' ? 'Moved. Friday is re-reading it.' : (d.error || 'Couldn’t move it.')); refresh(); });
+      if (shelf === 'open' && !window.confirm('Move \u201c' + (sel && sel.title) + '\u201d off the vault shelf? Its text will be stored without the vault key and become searchable by keyword.')) return;
+      post('/api/library/shelf', { doc_id: Number(sel.id.slice(2)), shelf, confirm: shelf === 'open' }).then(d => { toast(d.status === 'ok' ? 'Moved. Friday is re-reading it.' : (d.error || 'Couldn’t move it.')); refresh(); });
     };
     const onRetry = () => post('/api/library/reindex', {}).then(() => { toast('Trying again.'); refresh(); });
 

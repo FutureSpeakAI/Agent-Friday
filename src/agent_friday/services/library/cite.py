@@ -134,6 +134,29 @@ def finish(reply: str, tool_trace, *, conversation_id: str | None = None) -> tup
     return verify(resolve_labels(reply, tool_trace), tool_trace, conversation_id=conversation_id)
 
 
+def used_library(tool_trace) -> bool:
+    return any(isinstance(e, dict) and e.get("name") == "search_library" for e in (tool_trace or []))
+
+
+ELIDED = "[An earlier answer drawn from your Library; it stays on this PC.]"
+
+
+def elide_for_cloud(messages: list, settings: dict | None) -> int:
+    """Before history goes to a cloud model, an earlier assistant turn that quoted the
+    Library is replaced by a one-line stand-in, unless the owner allows cloud answers
+    from the Library. Returns how many turns were replaced. In place, like the PII
+    scrub that follows it."""
+    if (settings or {}).get("library_cloud_answers"):
+        return 0
+    n = 0
+    for m in messages:
+        c = m.get("content")
+        if m.get("role") == "assistant" and isinstance(c, str) and ("[lib:" in c or "[unverified-lib:" in c):
+            m["content"] = ELIDED
+            n += 1
+    return n
+
+
 def speakable(text: str) -> str:
     """Spoken answers say 'page fourteen of the deposition', never a token."""
     return TOKEN_RE.sub("", text or "")

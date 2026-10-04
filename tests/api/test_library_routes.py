@@ -24,6 +24,14 @@ def _env(tmp_path, monkeypatch):
     release_library(fg, lstore)
 
 
+@pytest.fixture(autouse=True)
+def _as_the_page(client):
+    """Requests arrive the way the Library page sends them: same-origin, with its own Origin."""
+    import agent_friday.core as core
+    client.environ_base.update({"HTTP_SEC_FETCH_SITE": "same-origin", "HTTP_ORIGIN": "http://localhost",
+                                "HTTP_X_FRIDAY_TOKEN": core._API_SESSION_TOKEN})
+
+
 def _lib(tmp_path):
     root = tmp_path / "Lib"
     write_docs(root, {"lease.pdf": make_pdf([["# Lease", "The tenant shall pay rent monthly."],

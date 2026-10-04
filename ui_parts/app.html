@@ -16710,7 +16710,7 @@ function SettingsTabPrivacy({s,save}){
         <select className="input" value={String(s.library_cloud_char_cap||6000)} onChange={e=>save({library_cloud_char_cap:Number(e.target.value)})}>{[2000,4000,6000,12000,24000,48000].map(n=><option key={n} value={String(n)}>{n.toLocaleString()+(n===6000?" characters (default)":" characters")}</option>)}</select>
       </StRow>
       <StToggle label="Read documents while on battery" value={!!s.library_index_on_battery} onChange={()=>save({library_index_on_battery:!s.library_index_on_battery})} desc="Off, new and changed documents wait until the PC is plugged in."/>
-      <StToggle label="Let the knowledge graph learn from Library documents" value={s.library_kg_learn==='on'} onChange={()=>save({library_kg_learn:s.library_kg_learn==='on'?'off':'on'})} desc="On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted; forgetting a document removes it from the graph too."/>
+      <StToggle label="Let the knowledge graph learn from Library documents" value={s.library_kg_learn==='on'} onChange={()=>save({library_kg_learn:s.library_kg_learn==='on'?'off':'on'})} desc="On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted. Forgetting a document removes what the graph learned only from it and clears the descriptions it contributed to; turning this off takes back everything learned from your documents."/>
     </StSection>
     <StSection title="File access" desc={"Which files and folders cloud models may read when " + fridayName() + " opens them."}>
       <FileAccessPanel/>

@@ -9,6 +9,8 @@ their routing and the egress gate decide.
 """
 from __future__ import annotations
 
+import re
+
 from agent_friday.services.library import cite, envelope
 
 SYSTEM = (
@@ -48,8 +50,22 @@ def write(question: str, evidence: list[dict], *, model: str | None = None, stam
     stamp = stamp or versions.stamp()
     trace = [{"name": "search_library", "input": {},
               "result": '{"refs": %s, "stamp": %s, "receipt": %s}\n' % (_json(refs), _json(stamp), _json(receipt))}]
+    text = delink(text)
     text, _flagged = cite.finish(text, trace)
     return {"ok": True, "text": text, "model": model, "stamp": stamp}
+
+
+_MD_LINK = re.compile(r"\[([^\]]{1,200})\]\((?:[a-z][a-z0-9+.\-]*:|//)[^)\s]*\)", re.I)
+_A_TAG = re.compile(r"<a\b[^>]*>(.*?)</a>", re.I | re.S)
+_BARE_URL = re.compile(r"(?<![`(])\b(?:https?|ftp)://[^\s)\]>`]+", re.I)
+
+
+def delink(text: str) -> str:
+    """A written answer carries no clickable link: a poisoned document could ask the model
+    to link its reader to an address with their data in the query. Links become their
+    visible words; a bare address becomes inert code text."""
+    text = _A_TAG.sub(r"\1", _MD_LINK.sub(r"\1", text))
+    return _BARE_URL.sub(lambda m: "`" + m.group(0) + "`", text)
 
 
 def _json(obj) -> str:

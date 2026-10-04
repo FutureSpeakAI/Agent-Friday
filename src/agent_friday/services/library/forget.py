@@ -42,6 +42,15 @@ def _doc_text(store: Store, doc_id: int) -> str:
     return _norm("\n".join(parts))
 
 
+def _doc_plain(st: Store, doc_id: int) -> str:
+    """The document's text as read (not lowercased or stripped), for fingerprinting."""
+    doc = st.get_document(doc_id)
+    parts = []
+    for r in st.q("SELECT text FROM blocks WHERE doc_id=? ORDER BY ord", (doc_id,)):
+        parts.append(st.dec(r["text"], doc["shelf"]))
+    return "\n".join(parts)
+
+
 def scrub_text(text: str, doc_id: int, doc_norm: str) -> str:
     """`text` with this document's footnotes and quotations removed."""
     text = re.sub(r"\[(?:unverified-)?lib:%d#\d+\]" % doc_id, FORGOTTEN, text)
@@ -85,6 +94,11 @@ def cited_conversations(store: Store, doc_id: int) -> dict[str, set[str]]:
 
 def _clear_cache(principal: str, doc_id: int) -> None:
     try:
+        from agent_friday.services.library import pages
+        pages.purge_document(lstore.store_for(principal).get_document(doc_id))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         shutil.rmtree(lstore.principal_dir(principal) / "cache" / str(doc_id), ignore_errors=True)
     except ValueError:
         pass
@@ -119,19 +133,28 @@ def forget_document(principal: str, doc_id: int) -> dict:
     doc = st.get_document(doc_id)
     if not doc:
         return {"ok": False, "error": "no such document"}
-    doc_norm = _doc_text(st, doc_id)
-    _purge_graph(principal, doc_id)
-    st.x("INSERT OR REPLACE INTO tombstones(sha256, path, ts) VALUES(?,?,?)",
-         (doc["sha256"], doc["path"], time.time()))
+    if doc["shelf"] == "vault" and not st.vault_open():
+        # Its words cannot be read to find every copy of them, so nothing is half-forgotten.
+        return {"ok": False, "error": "Unlock the vault first: this document's text has to be read once to "
+                                      "find every copy of it before it is forgotten."}
     from agent_friday.services import conversations
+    from agent_friday.services.library import sweep
+    doc_norm = _doc_text(st, doc_id)
+    fp = sweep.fingerprint(_doc_plain(st, doc_id))
+    _purge_graph(principal, doc_id)
     changed = 0
     for cid in cited_conversations(st, doc_id):
         changed += conversations.rewrite(cid, lambda m, d=doc_id, n=doc_norm: _scrub_message(m, d, n))
+    swept = sweep.sweep_all(fp, doc_id)
+    # The tombstone goes in before the purge so a failure part-way leaves the document
+    # forgotten (never re-read) rather than half-deleted and still searchable.
+    st.x("INSERT OR REPLACE INTO tombstones(sha256, path, ts) VALUES(?,?,?)",
+         (doc["sha256"], doc["path"], time.time()))
     st.x("DELETE FROM cited_in WHERE doc_id=?", (doc_id,))
     st.purge_document(doc_id, keep_row=False)
     _clear_cache(principal, doc_id)
     st.drop_empty_folders()
-    return {"ok": True, "forgotten": doc["title"], "messages_rewritten": changed}
+    return {"ok": True, "forgotten": doc["title"], "messages_rewritten": changed + swept["chats"], "swept": swept}
 
 
 def unforget(principal: str, path: str) -> int:

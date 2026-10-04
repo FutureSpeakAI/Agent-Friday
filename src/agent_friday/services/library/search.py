@@ -426,6 +426,13 @@ def remember(principal: str, evidence: list[dict]) -> None:
     _LAST[principal] = {"evidence": [dict(e) for e in evidence], "cursor": 0, "at": time.time()}
 
 
+def forget_last(doc_id: int) -> None:
+    """Drop a forgotten document's passages from the remembered last searches."""
+    for p, rec in list(_LAST.items()):
+        rec["evidence"] = [e for e in rec["evidence"] if e.get("doc_id") != doc_id]
+        rec["cursor"] = 0
+
+
 def last_result(principal: str) -> dict | None:
     return _LAST.get(principal)
 

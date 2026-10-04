@@ -43,5 +43,20 @@ def render_pdf_page(path: Path, page: int, width: int = 900, fmt: str = "webp") 
     return out
 
 
+def purge_document(doc) -> None:
+    """Drop a document's cached page renders (forget, remove)."""
+    if not doc:
+        return
+    p = str(Path(doc["path"]))
+    with _lock:
+        for k in [k for k in _cache if k[0] == p]:
+            _cache.pop(k, None)
+
+
+def clear() -> None:
+    with _lock:
+        _cache.clear()
+
+
 def pdf_page_count(path: Path) -> int:
     return int(procrun.run_task("pdf_info", {"path": str(path)}, wall_s=30)["pages"])

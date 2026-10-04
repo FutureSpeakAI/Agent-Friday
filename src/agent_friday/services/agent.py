@@ -1051,7 +1051,18 @@ def _tool_read_file(inp):
     if result.truncated:
         out += "\n...[extraction truncated to the first pages of this document]"
     # And once more on what goes out (the page note and the truncation line).
-    return _cred.redact_secrets(out)
+    out = _cred.redact_secrets(out)
+    # A document the owner added to the Library reaches the model fenced as data, as search
+    # evidence does: a poisoned PDF opened by name gets no more trust than one found by search.
+    try:
+        from agent_friday.services.library import envelope as _lib_env, principal as _lib_pr
+        from agent_friday.services.library.store import store_for as _lib_store
+        _who = _lib_pr.current()
+        if _who is not None and _lib_store(_who).find_document(str(p)):
+            return _lib_env.wrap_file(p.name, out)
+    except Exception:
+        pass
+    return out
 
 
 def _tool_search_files(inp):
