@@ -129,8 +129,13 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
     try:
         res = procrun.run_task("extract", {"path": str(p)}, low_priority=True)
     except procrun.TaskFailed as e:
-        store.set_state(doc_id, "failed:" + _failure_text(e)[:200])
-        return {"state": "failed", "doc_id": doc_id, "detail": _failure_text(e)}
+        res = _ext.media_cache_result(p) if (kind == "media" and e.kind == "unsupported") else None
+        if res is None:
+            if e.kind == "unsupported":
+                store.set_state(doc_id, "skipped:" + e.reason[:120], e.reason)
+                return {"state": "skipped", "doc_id": doc_id, "detail": e.reason}
+            store.set_state(doc_id, "failed:" + _failure_text(e)[:200])
+            return {"state": "failed", "doc_id": doc_id, "detail": _failure_text(e)}
     except Exception as e:  # noqa: BLE001 - recorded as the document's failure
         store.set_state(doc_id, "failed:" + (str(e) or type(e).__name__)[:200])
         return {"state": "failed", "doc_id": doc_id, "detail": str(e)}

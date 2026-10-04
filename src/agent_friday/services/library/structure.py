@@ -101,8 +101,17 @@ def _finish(sections: list[dict]) -> None:
             par["page_to"] = max(filter(None, [par["page_to"], s["page_to"]]))
 
 
+def _clock(t: float) -> str:
+    t = int(t)
+    return "%d:%02d:%02d" % (t // 3600, t % 3600 // 60, t % 60) if t >= 3600 else "%d:%02d" % (t // 60, t % 60)
+
+
 def _label_parts(sections: list[dict]) -> None:
     for s in sections:
+        ts = [b for b in s["blocks"] if b.get("t0") is not None]
+        if ts and s["heading"].startswith("Part "):
+            s["heading"] = "%s–%s" % (_clock(ts[0]["t0"]), _clock(ts[-1]["t1"]))
+            continue
         if s["page_from"] and s["page_to"] and s["heading"].startswith("Part "):
             s["heading"] = (f"Pages {s['page_from']}–{s['page_to']}"
                             if s["page_to"] != s["page_from"] else f"Page {s['page_from']}")

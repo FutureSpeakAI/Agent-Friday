@@ -326,6 +326,13 @@ def _para_number(store: Store, row) -> int:
     return int(r["n"]) if r else 1
 
 
+def _block_time(store: Store, blk):
+    if not blk:
+        return None
+    r = store.one("SELECT t_start FROM blocks WHERE id=?", (blk["id"],))
+    return r["t_start"] if r else None
+
+
 def confidence_word(score: float, cfg: dict) -> str:
     return "sure" if score >= cfg["p_strong"] else "fairly sure" if score >= cfg["p_weak"] + 0.1 else "a guess"
 
@@ -353,6 +360,7 @@ def build_evidence(ctx: _Ctx, limit: int, max_chars: int) -> list[dict]:
         out.append({
             "label": f"{d}.{per_doc[doc['id']]}", "doc": doc["title"], "doc_id": doc["id"],
             "page": blk["page"] if blk else None, "para": _para_number(ctx.store, blk) if blk else None,
+            "t_start": _block_time(ctx.store, blk), 
             "text": text, "ref": f"lib:{doc['id']}#{blk['id']}" if blk else None,
             "block_id": blk["id"] if blk else None, "passage_id": c["id"], "section_id": c["section_id"],
             "score": round(c["score"], 3), "sure": confidence_word(c["score"], ctx.cfg),

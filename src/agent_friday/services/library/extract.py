@@ -29,11 +29,14 @@ class Unsupported(CapExceeded):
 
 CODE_EXTS = {"py", "js", "ts", "tsx", "jsx", "c", "h", "cpp", "hpp", "cs", "java", "go", "rs", "rb",
              "php", "sh", "ps1", "sql", "css", "json", "yaml", "yml", "toml", "ini", "xml"}
-TEXT_EXTS = {"txt", "log", "rst", "tex", "srt", "vtt"}
+TEXT_EXTS = {"txt", "log", "rst", "tex"}
+TRANSCRIPT_EXTS = {"vtt", "srt"}
+MEDIA_EXTS = {"mp3", "wav", "m4a", "ogg", "flac", "aac", "opus", "mp4", "webm", "mov", "m4v", "mkv"}
 MD_EXTS = {"md", "markdown"}
 HTML_EXTS = {"html", "htm", "xhtml"}
 KINDS = {"pdf": {"pdf"}, "docx": {"docx"}, "markdown": MD_EXTS, "text": TEXT_EXTS, "code": CODE_EXTS,
-         "html": HTML_EXTS, "csv": {"csv", "tsv"}, "xlsx": {"xlsx"}}
+         "html": HTML_EXTS, "csv": {"csv", "tsv"}, "xlsx": {"xlsx"},
+         "transcript": TRANSCRIPT_EXTS, "media": MEDIA_EXTS}
 EXT_TO_KIND = {e: k for k, es in KINDS.items() for e in es}
 
 
@@ -602,6 +605,112 @@ def _extract_xlsx(path: Path) -> dict:
     return {"title": None, "pages": None, "blocks": _row_blocks(rows, bud)}
 
 
+# ── transcripts: timed segments ─────────────────────────────────────────────
+
+_CUE_TIME = re.compile(r"(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})\s*-->\s*(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})")
+_TAGS = re.compile(r"<[^>]{0,80}>")
+SEGMENT_SECONDS = 75.0
+
+
+def _secs(h, m, s, ms) -> float:
+    return int(h or 0) * 3600 + int(m) * 60 + int(s) + int(ms.ljust(3, "0")[:3]) / 1000.0
+
+
+def parse_cues(text: str) -> list[tuple[float, float, str]]:
+    """(start, end, text) for each cue of a WebVTT or SRT file. Markup inside a
+    cue is dropped; nothing in it is ever followed or rendered."""
+    cues = []
+    for block in re.split(r"\n\s*\n", text.replace("\r\n", "\n")):
+        lines = [ln for ln in block.split("\n") if ln.strip()]
+        for i, ln in enumerate(lines):
+            m = _CUE_TIME.search(ln)
+            if m:
+                g = m.groups()
+                body = clean_text(_TAGS.sub("", " ".join(lines[i + 1:])))
+                if body:
+                    cues.append((_secs(*g[:4]), _secs(*g[4:]), body))
+                break
+    return cues
+
+
+def _extract_transcript(path: Path) -> dict:
+    bud = _Budget()
+    cues = parse_cues(_read_text_file(path))
+    if not cues:
+        raise CapExceeded("has no timed text")
+    blocks, cur = [], None
+    for a, b, t in cues:
+        if cur and (a - cur["t0"] >= SEGMENT_SECONDS or len(cur["text"]) + len(t) > 700):
+            blocks.append(cur)
+            cur = None
+        if cur is None:
+            cur = _block("segment", t, None, None, t0=a, t1=b)
+        else:
+            cur["text"] += " " + t
+            cur["t1"] = b
+    if cur:
+        blocks.append(cur)
+    for b in blocks:
+        bud.add(b["text"])
+    return {"title": None, "pages": None, "blocks": blocks}
+
+
+def _extract_media(path: Path) -> dict:
+    """Audio and video are read through a transcript: a caption file beside the
+    file here (in the limited child), or the Media transcriber's cache, which
+    the caller asks in its own process (`media_cache_result`). Friday has one
+    transcriber; the Library does not run a second."""
+    for ext in (".vtt", ".srt"):
+        side = path.with_suffix(ext)
+        if side.is_file():
+            return _extract_transcript(side)
+    raise Unsupported("needs a transcript first")
+
+
+def media_cache_result(path: Path) -> dict | None:
+    """The extraction result for a recording from the Media transcriber's cache,
+    in the shape `extract_document` returns, or None."""
+    res = _media_cache_transcript(path)
+    if not res:
+        return None
+    for i, b in enumerate(res["blocks"]):
+        b["ord"] = i
+    res.update(kind="media", ext=path.suffix.lower().lstrip("."), title=safe_title(path.stem))
+    return res
+
+
+def _media_cache_transcript(path: Path) -> dict | None:
+    """Segments from the Media transcriber's cache, when that module is present
+    and has already transcribed this file. Absent module or no cache: None."""
+    try:
+        from agent_friday.services import media_transcripts as mt
+    except Exception:
+        return None
+    seg_fn = getattr(mt, "segments_for_path", None)
+    segs = seg_fn(path) if seg_fn else None
+    if not segs:
+        return None
+    bud = _Budget()
+    blocks, cur = [], None
+    for s in segs:
+        a, b, t = float(s["start"]), float(s["end"]), clean_text(str(s.get("text") or ""))
+        if not t:
+            continue
+        if cur and (a - cur["t0"] >= SEGMENT_SECONDS or len(cur["text"]) + len(t) > 700):
+            blocks.append(cur)
+            cur = None
+        if cur is None:
+            cur = _block("segment", t, None, None, t0=a, t1=b)
+        else:
+            cur["text"] += " " + t
+            cur["t1"] = b
+    if cur:
+        blocks.append(cur)
+    for b in blocks:
+        bud.add(b["text"])
+    return {"title": None, "pages": None, "blocks": blocks} if blocks else None
+
+
 # ── entry ────────────────────────────────────────────────────────────────────
 
 def extract_document(path: str | Path) -> dict:
@@ -630,6 +739,10 @@ def extract_document(path: str | Path) -> dict:
         res = _extract_csv(p)
     elif kind == "xlsx":
         res = _extract_xlsx(p)
+    elif kind == "transcript":
+        res = _extract_transcript(p)
+    elif kind == "media":
+        res = _extract_media(p)
     else:  # pragma: no cover
         raise Unsupported("this kind of file isn't read yet")
     for i, b in enumerate(res["blocks"]):

@@ -107,7 +107,8 @@ def main() -> int:
         result = run(req["task"], req.get("args", {}))
         out = {"ok": True, "result": result}
     except caps.CapExceeded as e:
-        out = {"ok": False, "error": str(e), "kind": "cap"}
+        kind = "unsupported" if type(e).__name__ == "Unsupported" else "cap"
+        out = {"ok": False, "error": str(e), "kind": kind}
     except MemoryError:
         out = {"ok": False, "error": "needs more memory than is allowed", "kind": "memory"}
     except Exception as e:  # noqa: BLE001 - the child reports, the parent decides
