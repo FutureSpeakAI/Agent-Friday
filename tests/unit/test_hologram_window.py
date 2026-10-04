@@ -518,7 +518,12 @@ def test_with_no_face_the_scene_is_the_plain_camera(page):
     page.evaluate("__holo.release()")
     _until(page, "() => Math.abs(__holo.z()) < 0.01 && Math.abs(__holo.x()) < 0.01",
            "the head never relaxed to neutral")
-    page.wait_for_timeout(150)
+    # The filtered head eases to neutral, so the projection reaches the plain
+    # camera a few frames after the head reads near zero, and later still on a
+    # loaded machine. Wait for the projection itself, at the same tolerance.
+    _until(page, "() => { const p = __holo.projection(), q = __holo.plain();"
+                 " return p.every((a, i) => Math.abs(a - q[i]) < 1e-6); }",
+           "the projection never returned to the plain camera at rest")
     proj, plain = page.evaluate("__holo.projection()"), page.evaluate("__holo.plain()")
     assert all(abs(a - b) < 1e-6 for a, b in zip(proj, plain)), "the projection is not the plain camera at rest"
 
