@@ -43,6 +43,7 @@ from agent_friday.services.agent import (
     load_workflow_chain,
     run_workflow_chain,
     save_workflow_chain,
+    stop_workflow_chain,
 )  # noqa: E501
 from agent_friday.services.misc_engine import (
     CONTENT_DRAFTS_DIR,
@@ -825,6 +826,43 @@ def workflow_chain_status(name):
     if st is None:
         return jsonify({"status": "not_found"}), 404
     return jsonify({"status": "ok", "run": st})
+
+
+@workflows_bp.route('/api/workflows/chains/<name>/stop', methods=['POST'])
+@login_required
+def workflow_chain_stop(name):
+    """Stop a running chain: the step that is running finishes, the next never starts, and the run's record says
+    `stopped`. The owner's own click (the step panel's Stop button, the workflow card's Stop)."""
+    chain = load_workflow_chain(name)
+    if not chain:
+        return jsonify({"status": "error", "message": "Unknown chain"}), 404
+    res = stop_workflow_chain(name, by="you")
+    try:
+        from agent_friday.services import step_lists
+        step_lists.sync_workflow(chain.get('slug') or name)
+    except Exception:
+        pass
+    if not res.get("ok"):
+        return jsonify({"status": "not_running", "message": "That workflow is not running."}), 409
+    return jsonify({"status": "ok", "stopped": True, "slug": res["slug"],
+                    "message": "Stopped. The step that is running finishes; the next will not start."})
+
+
+@workflows_bp.route('/api/steps/active', methods=['GET'])
+@login_required
+def steps_active():
+    """The step list the owner's screen shows now (the newest run that is still going), or none."""
+    from agent_friday.services import step_lists
+    return jsonify({"status": "ok", "list": step_lists.active()})
+
+
+@workflows_bp.route('/api/steps/<list_id>/stop', methods=['POST'])
+@login_required
+def steps_stop(list_id):
+    """The step panel's Stop button, and Esc while it is on screen: stop the run that list shows."""
+    from agent_friday.services import step_lists
+    res = step_lists.stop(list_id, by="you")
+    return jsonify({"status": "ok" if res.get("ok") else "nothing", **res}), (200 if res.get("ok") else 409)
 
 
 @workflows_bp.route('/api/workflows/chains/<name>/run', methods=['POST'])

@@ -3720,6 +3720,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/studio_files3d.js"></script>
     <!-- See & Touch: the shared selection and stage layer (defines window.fridayStage); the list workspaces need it. -->
     <script src="/static/friday_stage.js"></script>
+    <!-- The step panel: a workflow's steps, one state each, and a Stop button (defines window.FridayStepPanel). -->
+    <script src="/static/step_panel.js"></script>
     <!-- Media: one card per piece of work (defines window.MediaWS). -->
     <script src="/static/media_ws.js"></script>
     <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
@@ -11900,6 +11902,14 @@ function fridayRunActions(actions) {
             a.result = { tracking: TK.get() };
           }
         }
+      } else if (a.type === 'steps' || a.type === 'step_update') {
+        // The step panel (static/step_panel.js): a workflow's steps and which one is running.
+        try {
+          window.dispatchEvent(new CustomEvent('friday:' + a.type, {
+            detail: a
+          }));
+        } catch (_) {}
+        a.result = { ok: true };
       } else if (a.type === 'hand_cursor') {
         // Voice: "next card", "select", "back", "big mode", "big mode off" (hand_cursor_tools).
         const HC = window.FridayHandCursor;
@@ -29936,6 +29946,7 @@ function WfEditor({
 function WfCard({
   w,
   onRun,
+  onStop,
   onToggle,
   onEdit,
   onDelete,
@@ -30043,7 +30054,13 @@ function WfCard({
     className: "btn wfx-go",
     disabled: busy || w.running,
     onClick: () => onRun(w)
-  }, busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'), /*#__PURE__*/React.createElement("button", {
+  }, busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'), w.running && !w.schedule_id && onStop ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    "data-testid": "wf-stop",
+    title: "Stop after the step it is on",
+    onClick: () => onStop(w)
+  }, "\u25A0 Stop") : null, /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
     onClick: () => onEdit(w)
@@ -30135,6 +30152,14 @@ function WorkflowsWS() {
       fridayToast('Started “' + w.name + '”.');
     }).catch(e => fridayToast(/already running/i.test(e.message) ? '“' + w.name + '” is already running.' : 'Could not start it: ' + e.message)).then(() => {
       setBusy('');
+      setTimeout(load, 1200);
+    });
+  };
+  // B5: a running workflow can be stopped: the step that is running finishes, the next never starts.
+  const stop = w => {
+    wfPost('/api/workflows/chains/' + encodeURIComponent(w.slug) + '/stop').then(() => {
+      fridayToast('Stopping \u201c' + w.name + '\u201d after the step it is on.');
+    }).catch(e => fridayToast(e.message)).then(() => {
       setTimeout(load, 1200);
     });
   };
@@ -30310,6 +30335,7 @@ function WorkflowsWS() {
     w: w,
     busy: busy === w.id,
     onRun: run,
+    onStop: stop,
     onToggle: toggle,
     onDelete: remove,
     onEdit: x => {
@@ -65324,7 +65350,7 @@ function App() {
   const shellConv = shellChat ? convList.find(c => c.id === convId) || null : null;
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const [tabHistOpen, setTabHistOpen] = useState(false);
-  const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);
+  const shellMeeting = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(MeetingRecIndicator, null), window.FridayStepPanel ? /*#__PURE__*/React.createElement(window.FridayStepPanel, null) : null);
   const shellTopBar = /*#__PURE__*/React.createElement("div", {
     className: `top-bar ${topBarHidden ? 'hidden' : ''}`,
     "data-testid": "friday-top-bar",

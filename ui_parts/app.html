@@ -8471,7 +8471,7 @@ function WfEditor({ initial, onCancel, onSaved }) {
   </div>);
 }
 
-function WfCard({ w, onRun, onToggle, onEdit, onDelete, busy }) {
+function WfCard({ w, onRun, onStop, onToggle, onEdit, onDelete, busy }) {
   const [open, setOpen] = useState(false);
   const last = w.last_run;
   const st = w.running ? WF_STATUS.running : last ? (WF_STATUS[last.status] || WF_STATUS.finished) : null;
@@ -8501,6 +8501,7 @@ function WfCard({ w, onRun, onToggle, onEdit, onDelete, busy }) {
     </div>}
     <div className="wfx-row" style={{ marginTop: 10 }}>
       <button type="button" className="btn wfx-go" disabled={busy || w.running} onClick={() => onRun(w)}>{busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'}</button>
+      {w.running && !w.schedule_id && onStop ? <button type="button" className="btn" data-testid="wf-stop" title="Stop after the step it is on" onClick={() => onStop(w)}>{'\u25A0 Stop'}</button> : null}
       <button type="button" className="btn" onClick={() => onEdit(w)}>Edit</button>
       <button type="button" className="wfx-link" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? 'Hide details' : 'Details'}</button>
       <span className="wfx-grow" />
@@ -8552,6 +8553,11 @@ function WorkflowsWS() {
       .catch(e => { setDrafting(false); setDraftErr(e.message); });
   };
   const saved = (d, name) => { setEditing(null); setAsk(''); setComposing(false); load(); fridayToast('Saved “' + name + '”.'); };
+  // B5: a running workflow can be stopped: the step that is running finishes, the next never starts.
+  const stop = w => {
+    wfPost('/api/workflows/chains/' + encodeURIComponent(w.slug) + '/stop').then(() => { fridayToast('Stopping \u201c' + w.name + '\u201d after the step it is on.'); })
+      .catch(e => fridayToast(e.message)).then(() => { setTimeout(load, 1200); });
+  };
   const run = w => {
     setBusy(w.id);
     const url = w.schedule_id ? '/api/schedules/' + w.schedule_id + '/run-now' : '/api/workflows/chains/' + encodeURIComponent(w.slug) + '/run';
@@ -8604,7 +8610,7 @@ function WorkflowsWS() {
 
     <div className="wfx-h">Your workflows{wfs.length ? ' (' + wfs.length + ')' : ''}</div>
     {!wfs.length && <div className="wfx-quiet" style={{ padding: '14px 2px' }}>Nothing yet. Describe one above — for example, a daily check of a website you watch, or a weekly roundup of your notes.</div>}
-    {wfs.map(w => <WfCard key={w.id} w={w} busy={busy === w.id} onRun={run} onToggle={toggle} onDelete={remove}
+    {wfs.map(w => <WfCard key={w.id} w={w} busy={busy === w.id} onRun={run} onStop={stop} onToggle={toggle} onDelete={remove}
       onEdit={x => {
         setEditing(Object.assign({}, x, { when_note: '' }));
         setTimeout(() => { const el = document.querySelector('[data-testid="wf-editor"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
@@ -23758,7 +23764,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   const shellConv=shellChat?(convList.find(c=>c.id===convId)||null):null;
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const[tabHistOpen,setTabHistOpen]=useState(false);
-  const shellMeeting = <MeetingRecIndicator/>;
+  const shellMeeting = <><MeetingRecIndicator/>{window.FridayStepPanel?<window.FridayStepPanel/>:null}</>;
   const shellTopBar = <div className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar" data-shell-kind={shellChat?'chat':shellTab?'tab':'desktop'}>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
         {shellChat?<FridayLockup size={15} href={'/?conversation='+encodeURIComponent(convId||'')} title="Back to the desktop, with this chat open"/>

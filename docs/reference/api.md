@@ -1052,3 +1052,9 @@ Static file serving.
 
 ### `GET /favicon.ico`
 Favicon.
+
+### Stopping a workflow run
+
+- `POST /api/workflows/chains/<name>/stop` — ends the run after the step it is on and starts no other. 200 `{ "stopped": true }`; 409 `{ "status": "not_running" }`; 404 for an unknown chain. Needs no approval: it only ends work.
+- `GET /api/steps/active` — `{ "list": { "id", "title", "steps": [ { "n", "text", "state" } ] } | null }`: the step list of the run in progress. States: waiting, doing, done, held, skipped, stopped, failed. Held in memory only.
+- `POST /api/steps/<id>/stop` — the same stop, by list id. `{ "ok", "text" }`.

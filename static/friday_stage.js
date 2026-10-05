@@ -318,6 +318,30 @@
     return { ref: cursorRec.ref, state: cursorRec.state, age_s: 0 };
   }
 
+  // ── step lists: what Friday is doing, step by step, and whether it can be stopped ─────
+
+  var STEP_STATES = ['waiting', 'doing', 'done', 'held', 'skipped', 'stopped', 'failed'];
+  var STEP_LIVE = ['waiting', 'doing', 'held'];
+
+  // reduceSteps(list, evt) -> the new list (or null). evt: {type:'steps', id, title, steps:[{n, text, state}]} replaces the
+  // list; {type:'step_update', id, n, state} changes one step and is ignored for any other list.
+  function reduceSteps(list, evt) {
+    if (!evt) return list || null;
+    if (evt.type === 'steps') {
+      var steps = (evt.steps || []).slice(0, 40).map(function (s, i) {
+        return { n: s.n || i + 1, text: String(s.text || '').slice(0, 80), state: STEP_STATES.indexOf(s.state) >= 0 ? s.state : 'waiting' };
+      });
+      return { id: String(evt.id || ''), title: String(evt.title || '').slice(0, 80), steps: steps };
+    }
+    if (evt.type === 'step_update' && list && String(evt.id) === list.id && STEP_STATES.indexOf(evt.state) >= 0) {
+      return { id: list.id, title: list.title, steps: list.steps.map(function (s) { return s.n === evt.n ? { n: s.n, text: s.text, state: evt.state } : s; }) };
+    }
+    return list || null;
+  }
+  function stepsRunning(list) {
+    return !!list && list.steps.some(function (s) { return STEP_LIVE.indexOf(s.state) >= 0; });
+  }
+
   // ── fields Friday may write into, and never submit ───────────────────────────
   //
   // A workspace registers the fields a person types into (a reply, a quick-add line, a workflow's
@@ -565,6 +589,7 @@
     MIN_GAP_MS: MIN_GAP_MS,
     emptySelection: emptySelection, reduceSelection: reduceSelection, chipText: chipText,
     sweepDelays: sweepDelays, limiter: limiter, POINT_CAP: POINT_CAP, POINT_FADE_MS: POINT_FADE_MS,
+    STEP_STATES: STEP_STATES, reduceSteps: reduceSteps, stepsRunning: stepsRunning,
     FILL_MAX: FILL_MAX, fieldList: fieldList, registerField: registerField, fillField: fillField, undoFill: undoFill, fillChip: fillChip, fillChips: fillChips,
     cursor: cursor, cursorNow: cursorNow, CURSOR_MEMORY_MS: CURSOR_MEMORY_MS,
     pointPlan: pointPlan, point: point, clearPoints: clearPoints, chipsRow: chipsRow, makeAdapter: makeAdapter, ensureStyle: ensureStyle,

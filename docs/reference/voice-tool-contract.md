@@ -264,3 +264,10 @@ voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and re
 - **The ceiling.** `VOICE_CONTRACT_MAX_TOKENS` is 10000, up from 9000 (which had 359 tokens spare): the
   See & Touch tools and the Media parity take about 700 of the 1,000 added. That is about 11% more cold
   prefill on the local front; bench it with `scripts/bench_voice_turn.py` before the next speed pass.
+
+- **Stopping work.** `task_control` (voice-native, ring 1, no card) stops a running workflow or task after the
+  step it is on (`op: stop`, target by workflow name, task words or id, or none when only one thing runs) or
+  tells a running task something (`op: steer`). Stopping only ends work and undoes nothing; a steer's words are
+  checked for where they came from like any instruction. Two things running and no target comes back as a
+  question to ask aloud. A cloud voice hears "it will stop after the step it is on", never the task's name. A
+  workflow run also narrates itself to a live call in counts ("Step 2 of 5 has started."), never a step's name.

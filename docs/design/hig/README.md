@@ -206,6 +206,10 @@ confirmation that names the thing.
   lands in the field and a chip beside it says "Friday wrote this · Subject" with an Undo, and what in it came
   from something she read ("Check: ..."); the chip goes the moment the owner edits the text. A fill never
   presses the field's button: Send, Add, Save and Run stay the owner's.
+- **Step lists.** A workflow Friday runs shows a short panel: each step with a glyph and a word for its state
+  (waiting, doing, done, needs you, skipped, stopped, failed), never colour alone, one change at a time. `--fr-warn`
+  marks only "needs you". Stop (also Esc, except while typing or over a dialog) ends the step that is running after
+  its step and starts no other; a finished list goes away after nine seconds.
 - **Filters Friday sets are chips.** A spoken filter ("only unread, only this week") is applied through the
   workspace's own filter and also shown as a removable chip marked "by Friday"; nothing is filtered
   invisibly. A filter the owner changes afterwards stops being marked.

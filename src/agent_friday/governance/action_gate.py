@@ -222,6 +222,9 @@ INTERNAL_TOOLS = frozenset({
     # See & Touch (services/screen_stage): ticks rows on the owner's own screen. It shows
     # and changes nothing; every change to the mail still goes through organize_email.
     "screen_select",
+    # Stopping a workflow or task after its step, or steering one (the steer's words are checked for where they
+    # came from, like any instruction): it only ends or redirects Friday's own background work.
+    "task_control",
     # The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show the
     # preview beside it, enter or leave build mode. The owner's own screen and
     # Friday's own records; nothing reaches anyone else.

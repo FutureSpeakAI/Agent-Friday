@@ -776,6 +776,12 @@ CLAUDE_TOOLS = [
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
+    {"name": "task_control", "description": "Stop or steer work Friday is doing in the background. op=stop ends a running workflow or task after the step it is on: the step that is running finishes, the next never starts, nothing already done is undone. With no target it stops the steps shown on the user's screen. op=steer sends a running task a message without stopping it. target: a workflow name, a task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what actually happened.",
+     "input_schema": {"type": "object", "properties": {
+         "op": {"type": "string", "enum": ["stop", "steer"]},
+         "target": {"type": "string", "description": "A workflow name, a task id or words from a task's name; empty for what is on their screen."},
+         "message": {"type": "string", "description": "For op=steer: what to tell the task."}},
+         "required": ["op"]}},
     {"name": "screen_select", "description": "Show the user's open list what you mean. op select/add/remove/clear ticks rows in the Message Center so they see the checks appear; op point outlines and numbers up to 12 rows in the Message Center, News, Media or the Library (the second one = the second thing you just pointed at); op=filter sets a filter chip through the workspace's own filter (key and value; an empty value removes it); op=fill writes text into a field the screen offers (a reply, a quick-add line, a workflow's steps) so the user reads it and sends or saves it themselves. Shows only: changes no mail and needs no approval. scope=screen picks among the rows shown; scope=all searches the whole inbox. match: category (newsletters, promotions, unread, a news category, a status or project...), lane, unread, from, older_than (days), ordinals, status, kind, project, folder, query (a Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / POINT_OK / FILTER_OK report what the page confirmed. To act on the ticks, call organize_email with selection=screen.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "messages, news, media or library; default the one in front."},
@@ -4679,6 +4685,15 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
     # resolves its task from this thread-local; the heartbeat proves the
     # thread is alive while it runs. Both are undone in the finally.
     _tj = _journal()
+    if _tj.stop_requested(task_id):
+        # stopped while it waited for a seat: it never starts
+        _tj.consume_stop(task_id)
+        _task_set(task_id, status='cancelled', ended=_time.time(),
+                  result='[Stopped at your request before it started.]')
+        _task_log(task_id, 'Stopped at your request before it started.')
+        _report_task_completion(task_id, name, 'cancelled', '[Stopped at your request before it started.]')
+        _chain_sync(task_id)
+        return
     _tj.push_task(task_id)
     _heartbeat = _tj.Heartbeat(task_id).start()
     _task_set(task_id, status='running', started=_time.time())
@@ -4856,6 +4871,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
             _task_set(task_id, status='cancelled', ended=_time.time(),
                       result=(reply or '[Stopped at your request.]'))
             _report_task_completion(task_id, name, 'cancelled', reply or '[Stopped at your request.]')
+            _chain_sync(task_id)
             return
         # Tool lines are written by _task_log_tool AS EACH CALL HAPPENS now,
         # so replaying the trace here would print every tool twice. What the
@@ -5552,6 +5568,60 @@ def delete_workflow_chain(name):
     return False
 
 
+#: Chains the owner asked to stop: slug -> {"at", "by"}. The run that is going finishes the step that is running and
+#: starts no other (B5: there was no way to stop a workflow).
+_CHAIN_STOP: dict = {}
+#: What the last stop did, for the run's record: slug -> {"after_step", "at"}. Cleared when the chain is run again.
+_CHAIN_STOPPED: dict = {}
+
+
+def stop_workflow_chain(name, by="you"):
+    """Stop a running workflow: the step that is running finishes (it is asked to stop at its next checkpoint),
+    the next never starts, and the run's record says `stopped`. {"ok", "slug", "stopping", "after_step"} or
+    {"ok": False, "reason"}. Stopping only ever ends work, so it needs no approval."""
+    chain = load_workflow_chain(name)
+    if not chain:
+        return {"ok": False, "reason": "there is no workflow called %r" % str(name)[:60]}
+    slug = chain.get('slug') or _chain_slug(name)
+    st = chain_run_status(slug) or {}
+    running = [s for s in st.get('steps') or [] if s.get('status') in ('queued', 'running')]
+    if not running:
+        return {"ok": False, "reason": "it is not running"}
+    from agent_friday.services import task_journal as _tjm
+    _CHAIN_STOP[slug] = {"at": _time.time(), "by": by}
+    stopping = []
+    for s in running:
+        tid = s.get('task_id')
+        if not tid:
+            continue
+        try:
+            _tjm.request_stop(tid)
+            _tjm.steer("stop after this step", source="user", task_id=tid)
+        except Exception:
+            pass
+        with TASKS_LOCK:
+            queued = (TASKS.get(tid) or {}).get('status') == 'queued'
+        if queued:
+            # still waiting for a seat: it never starts
+            _task_set(tid, status='cancelled', ended=_time.time(),
+                      result='[Stopped at your request before it started.]')
+        stopping.append(tid)
+    _CHAIN_STOPPED[slug] = {"after_step": running[-1].get('index', 0), "at": _time.time()}
+    return {"ok": True, "slug": slug, "stopping": stopping, "after_step": running[-1].get('index', 0)}
+
+
+def _chain_sync(task_id):
+    """Tell the step list (services/step_lists) that a chain task changed. Never raises."""
+    try:
+        with TASKS_LOCK:
+            t = dict(TASKS.get(task_id) or {})
+        if t.get('chain'):
+            from agent_friday.services import step_lists
+            step_lists.sync_workflow(t['chain'], conversation_id=t.get('conversation_id') or '')
+    except Exception:
+        pass
+
+
 def run_workflow_chain(name, conversation_id=None):
     """Kick off a stored chain at step 0. Returns the first task_id (or None).
 
@@ -5568,7 +5638,10 @@ def run_workflow_chain(name, conversation_id=None):
         return None
     slug = chain.get('slug') or _chain_slug(name)
     first = steps[0]
-    return _spawn_task(
+    # a new run is not the one that was stopped
+    _CHAIN_STOP.pop(slug, None)
+    _CHAIN_STOPPED.pop(slug, None)
+    tid = _spawn_task(
         name=first.get('name') or f"{chain.get('name')} · Step 1",
         prompt=first['prompt'],
         description=f"Chain '{chain.get('name')}' · step 1/{len(steps)}",
@@ -5576,6 +5649,12 @@ def run_workflow_chain(name, conversation_id=None):
         model=first.get('seat') or chain.get('seat'),
         conversation_id=conversation_id,
     )
+    try:
+        from agent_friday.services import step_lists
+        step_lists.begin_workflow(slug, title=chain.get('name') or slug, conversation_id=conversation_id or '')
+    except Exception:
+        pass
+    return tid
 
 
 def chain_run_status(name):
@@ -5608,6 +5687,8 @@ def chain_run_status(name):
             return 'completed'
         if st in ('queued', 'running', 'failed'):
             return st
+        if st in ('cancelled', 'stopped'):
+            return 'stopped'
         return st
     out_steps = []
     for i, s in enumerate(steps):
@@ -5638,8 +5719,21 @@ def chain_run_status(name):
     running = any(s['status'] in ('queued', 'running') for s in out_steps)
     failed = any(s['status'] == 'failed' for s in out_steps)
     done = all(s['status'] == 'completed' for s in out_steps) if out_steps else False
+    # Stopped by the owner: a step that was stopped, or a stop that landed between steps. What never started
+    # is skipped, and the reason says who stopped it.
+    _rec = _CHAIN_STOPPED.get(slug)
+    stopped = any(s['status'] == 'stopped' for s in out_steps) or bool(
+        _rec and latest and not running and not done and (latest[0].get('created') or 0) <= _rec['at'])
+    if stopped:
+        for s in out_steps:
+            if s['status'] == 'pending':
+                s['status'] = 'skipped'
+                s['reason'] = 'stopped by you'
+            elif s['status'] == 'stopped':
+                s['reason'] = s.get('reason') or 'stopped by you'
     return {'name': chain.get('name'), 'slug': slug,
             'state': 'running' if running else
+                     'stopped' if stopped else
                      'failed' if failed else
                      'completed' if done else 'idle',
             'steps': out_steps}
@@ -5680,6 +5774,84 @@ def _tool_run_workflow(inp):
         return "run_workflow error: no chain named %r (or it has no steps)." % name
     return ("workflow '%s' started (first task %s). Steps auto-advance; check "
             "progress with workflow_status." % (name, tid))
+
+
+def _running_tasks(target: str = "") -> list:
+    """The queued or running tasks a request names: by id, by words from the name, or (with no words) all of them."""
+    want = " ".join(str(target or "").lower().split())
+    with TASKS_LOCK:
+        rows = [dict(t) for t in TASKS.values() if t.get('status') in ('queued', 'running')]
+    if not want:
+        return rows
+    exact = [t for t in rows if str(t.get('task_id')) == str(target).strip()]
+    if exact:
+        return exact
+    return [t for t in rows if want in str(t.get('name') or '').lower() or want in str(t.get('description') or '').lower()]
+
+
+def _tool_task_control(inp):
+    """Tool handler: stop a running workflow or task after the step it is on, or send a running task a message.
+    Stopping only ever ends work: nothing is undone and nothing needs approval. A steer is checked for where its
+    words came from like any instruction (taint), so one copied from an email or page waits for a card."""
+    from agent_friday.services import step_lists, task_journal as _tjm
+    inp = inp or {}
+    op = str(inp.get("op") or "").strip().lower()
+    target = str(inp.get("target") or "").strip()
+    quiet = _cloud_voice() or _voice_room()
+    if op not in ("stop", "steer"):
+        return "NOT DONE: op is stop or steer."
+    if op == "steer":
+        message = str(inp.get("message") or "").strip()
+        if not message:
+            return "NOT DONE: say what to tell it."
+        rows = _running_tasks(target)
+        if not rows:
+            return "TASK_NONE: no task is running" + ((" that matches %r" % target[:40]) if target and not quiet else "") + "."
+        if len(rows) > 1:
+            return "NOT DONE: %d tasks are running; say which one." % len(rows)
+        tid = rows[0]['task_id']
+        with _FOLLOW_UP_LOCK:
+            _FOLLOW_UP_QUEUES.setdefault(tid, []).append(message[:2000])
+        try:
+            _tjm.steer(message[:2000], source="agent:friday", task_id=tid)
+        except Exception:
+            pass
+        return "TASK_STEERED: it will hear that after the step it is on."
+    # stop
+    if not target:
+        res = step_lists.stop()
+        if res.get("ok"):
+            return "TASK_STOPPED: " + res["text"]
+        rows = _running_tasks()
+        if len(rows) == 1:
+            target = rows[0]['task_id']
+        elif len(rows) > 1:
+            return "NOT DONE: %d tasks are running; say which one to stop." % len(rows)
+        else:
+            return "TASK_NONE: " + res["text"]
+    if load_workflow_chain(target):
+        res = stop_workflow_chain(target, by="you")
+        try:
+            step_lists.sync_workflow((load_workflow_chain(target) or {}).get('slug') or target)
+        except Exception:
+            pass
+        if not res.get("ok"):
+            return "TASK_NONE: %s." % res.get("reason")
+        return "TASK_STOPPED: stopped by you. The step that is running finishes; the next never starts."
+    rows = _running_tasks(target)
+    if not rows:
+        return "TASK_NONE: no task is running" + ((" that matches %r" % target[:40]) if not quiet else "") + "."
+    if len(rows) > 1:
+        return "NOT DONE: %d tasks match; say which one to stop." % len(rows)
+    tid = rows[0]['task_id']
+    _tjm.request_stop(tid)
+    try:
+        _tjm.steer("stop after this step", source="user", task_id=tid)
+    except Exception:
+        pass
+    return ("TASK_STOPPED: it will stop after the step it is on; nothing it already did is undone."
+            if quiet else "TASK_STOPPED: %s will stop after the step it is on; nothing it already did is undone."
+            % (rows[0].get('name') or tid))
 
 
 def _tool_workflow_status(inp):
@@ -5860,6 +6032,15 @@ def _advance_task_chain(task_id, result_text):
         chain = load_workflow_chain(chain_slug)
         steps = (chain or {}).get('steps') or []
         nxt = int(t.get('chain_step', 0)) + 1
+        stop = _CHAIN_STOP.pop(chain_slug, None)
+        if stop and chain and nxt < len(steps):
+            # the owner said stop while this step was finishing: the next never starts
+            _task_log(task_id, f"Chain stopped at your request: step {nxt + 1}/{len(steps)} did not start.")
+            _journal().decision("chain_stop", f"stopped before step {nxt + 1}/{len(steps)}", task_id=task_id,
+                                reason="the owner asked to stop", alternatives=["advance"])
+            _CHAIN_STOPPED[chain_slug] = {"after_step": int(t.get('chain_step', 0)), "at": _time.time()}
+            _chain_sync(task_id)
+            return None
         if chain and nxt < len(steps):
             step = steps[nxt]
             prompt = step['prompt']
@@ -5874,13 +6055,17 @@ def _advance_task_chain(task_id, result_text):
                                         if step.get('with_context', True) and result_text else
                                         "previous step complete; no context threaded"),
                                 alternatives=["stop chain"])
-            return _spawn_task(
+            new_id = _spawn_task(
                 name=step['name'],
                 prompt=prompt,
                 description=f"Chain '{chain.get('name')}' · step {nxt + 1}/{len(steps)}",
                 chain=chain_slug, chain_step=nxt,
                 model=step.get('seat') or chain.get('seat'),
+                conversation_id=t.get('conversation_id'),
             )
+            _chain_sync(new_id)
+            return new_id
+        _chain_sync(task_id)
         return None
 
     # 2) One-off on_complete spec.
@@ -6856,6 +7041,7 @@ CLAUDE_TOOL_HANDLERS = {
     "set_chat_tray": _tool_set_chat_tray,
     "organize_email": _tool_organize_email,
     "screen_select": _tool_screen_select,
+    "task_control": _tool_task_control,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
     "organize_media": _tool_organize_media,
@@ -7276,6 +7462,8 @@ TOOL_RINGS: dict[str, int] = {
     "organize_email":       2,
     # Ticks rows on the owner's own screen and changes nothing else (services/screen_stage).
     "screen_select":        1,
+    # Ends work Friday started, or sends a running task a message; a steer's words are checked like any instruction.
+    "task_control":         1,
     "undo_action":          2,
     "answer_card":          2,
     # Ring 1 — WRITE (local state mutation, always allowed)
