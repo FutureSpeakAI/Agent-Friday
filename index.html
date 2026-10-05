@@ -3725,6 +3725,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/library_ws.js"></script>
     <!-- Library shelves: the 3D view of the Library (defines window.LibraryShelves3D). -->
     <script src="/static/library_shelves.js"></script>
+    <!-- The one 3D file browser: every workspace's 3D view (defines window.FridayFiles3D). -->
+    <script src="/static/friday_files3d.js"></script>
     <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
     <script src="/static/friday3d_records.js"></script>
     <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
@@ -11829,6 +11831,12 @@ function fridayRunActions(actions) {
             window.open(u, '_blank', 'noopener');
           } catch (_) {}
         }
+      } else if (a.type === 'files3d') {
+        // Voice choosing a lens of the one 3D browser and the search to light in it.
+        const d = { lens: a.lens, query: a.query || '' };
+        window.__fridayFiles3dPending = d;
+        try { window.dispatchEvent(new CustomEvent('friday-files3d', { detail: d })); } catch (_) {}
+        a.result = { ok: true };
       } else if (a.type === 'orb') {
         // Voice or chat acting on a helper's orb (FridayOrbHands): the phrase is
         // resolved where the orbs are, and what happened rides back in the ack.
@@ -27054,7 +27062,7 @@ function StudioWS() {
     },
     title: "Podcasts from any sources, written and spoken on this computer",
     onClick: () => setView('podcasts')
-  }, "\uD83C\uDFA7 Podcasts")), view === 'projects' && /*#__PURE__*/React.createElement(ProjectsPanel, null), view === 'podcasts' && /*#__PURE__*/React.createElement(PodcastsView, null), view === 'files' && (window.Files3DPanel ? /*#__PURE__*/React.createElement(window.Files3DPanel, null) : /*#__PURE__*/React.createElement("div", {
+  }, "\uD83C\uDFA7 Podcasts")), view === 'projects' && /*#__PURE__*/React.createElement(ProjectsPanel, null), view === 'podcasts' && /*#__PURE__*/React.createElement(PodcastsView, null), view === 'files' && (window.FridayFiles3D ? /*#__PURE__*/React.createElement(window.FridayFiles3D, { lens: 'files' }) : window.Files3DPanel ? /*#__PURE__*/React.createElement(window.Files3DPanel, null) : /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#888',
       fontSize: 12,
@@ -54299,7 +54307,7 @@ function SettingsTabPrivacy({
   }, /*#__PURE__*/React.createElement(FileAccessPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Library",
     desc: "Documents you add to the Library are read and indexed on this PC, and nothing is sent anywhere. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key."
-  }, /*#__PURE__*/React.createElement(StToggle, {
+  }, /*#__PURE__*/React.createElement(LibraryTrackedToggle, null), /*#__PURE__*/React.createElement(StToggle, {
     label: "Library search",
     value: s.library_search !== false,
     onChange: () => save({
@@ -54528,6 +54536,41 @@ function SettingsTabPrivacy({
 // /api/privacy/file-grants. A line that grants nothing (quarantined or
 // unverified) is listed but has no Remove. An old permission that was set
 // aside shows its one question here; Re-grant raises the normal approval card.
+// Settings > Library: the one consent that puts everything Friday already
+// tracks in the Library. Off until the owner turns it on; on, it says whose
+// words or press turned it on and how far reading has got.
+function LibraryTrackedToggle() {
+  const [t, setT] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => apiFetch('/api/library/tracked').then(r => r.json()).then(d => {
+    if (d.status === 'ok') setT(d.tracked);
+  }).catch(() => {});
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, []);
+  const flip = () => {
+    if (busy || !t) return;
+    setBusy(true);
+    apiFetch('/api/library/tracked', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: !t.on })
+    }).then(r => r.json()).then(d => {
+      if (d.status === 'ok') setT(d.tracked);
+    }).catch(() => {}).finally(() => setBusy(false));
+  };
+  const on = !!(t && t.on);
+  const desc = on ? ('On' + (t.said ? ', from your words: “' + t.said + '”' : '') + '. ' + (t.places || 0) + ' places covered, ' + (t.indexed || 0) + ' documents read' + (t.reading ? ', ' + t.reading + ' waiting to be read' : '') + '. Turning it off takes out of the Library what only this covered.') : ('Every file and folder you have given ' + fridayName() + ' access to, and the folders Media is built from, read on this PC. Private files go only to the sealed vault shelf, and places she never reads stay excluded.');
+  return /*#__PURE__*/React.createElement(StToggle, {
+    label: 'Include everything ' + fridayName() + ' already tracks (Recommended)',
+    value: on,
+    onChange: flip,
+    disabled: busy || !t,
+    desc: desc
+  });
+}
 function FileAccessPanel() {
   const E = React.createElement;
   const [data, setData] = useState(null);

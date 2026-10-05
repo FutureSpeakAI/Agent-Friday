@@ -256,6 +256,12 @@ def library_show(inp: dict) -> str:
     return ui.show(inp if isinstance(inp, dict) else {})
 
 
+def show_files_3d(inp: dict) -> str:
+    """Move the owner's screen: the one 3D file browser, on a lens, with a search lit."""
+    from agent_friday.services.library import ui
+    return ui.show_files_3d(inp if isinstance(inp, dict) else {})
+
+
 TOOLS = [
     {"name": "search_library",
      "description": ("Search the user's Library (documents they added: PDFs, Word files, notes, spreadsheets) "
@@ -277,9 +283,18 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "target": {"type": "string"}, "page": {"type": "integer"},
          "view": {"type": "string", "enum": ["list", "3d", "shelves", "tree"]}}}},
+    {"name": "show_files_3d",
+     "description": ("Show the user's files in the one 3D file browser on their own screen: lens = library "
+                     "(documents in their Library, on shelves), media (what Friday made) or files (their "
+                     "folders); query = a name or question whose path lights up in it. No approval is "
+                     "needed: it only moves their own screen."),
+     "input_schema": {"type": "object", "properties": {
+         "lens": {"type": "string", "enum": ["library", "media", "files"]},
+         "query": {"type": "string"}}}},
 ]
-RINGS = {"search_library": 0, "library_status": 0, "library_show": 0}
-HANDLERS = {"search_library": search_library, "library_status": library_status, "library_show": library_show}
+RINGS = {"search_library": 0, "library_status": 0, "library_show": 0, "show_files_3d": 0}
+HANDLERS = {"search_library": search_library, "library_status": library_status, "library_show": library_show,
+            "show_files_3d": show_files_3d}
 NAMES = tuple(RINGS)
 
 

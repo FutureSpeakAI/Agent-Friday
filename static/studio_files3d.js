@@ -2477,7 +2477,9 @@
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState('');
     const [view, setView] = useState(() => props.view || (VIEWS.some(v => v.id === recall('view')) ? recall('view') : 'wall'));
-    const [query, setQuery] = useState('');
+    const [query, setQuery] = useState(props.query || '');
+    // A search handed in by the one browser's lens bar or by voice.
+    useEffect(() => { if (props.query != null) setQuery(String(props.query)); }, [props.query]);
     const [cats, setCats] = useState({});
     const [groupBy, setGroupBy] = useState('type');
     const [sel, setSel] = useState(-1);
@@ -2597,6 +2599,40 @@
     }, []);
     useEffect(() => { if (root) scan(root, path); }, [root, path, scan]);
 
+    // The path of a search, lit the way the Shelves light theirs: the one pacer
+    // (Friday3D.createPathLights, lent by library_shelves.js), each match's folders
+    // from the top down and then the match, at most three lights a second, and
+    // nothing lit while nothing matches.
+    const lightsRef = useRef(null);
+    const lightPath = mask => {
+      const eng = engRef.current, F = window.Friday3D;
+      if (!eng || !F || !F.createPathLights) return;
+      if (!lightsRef.current) {
+        const lit = new Set();
+        lightsRef.current = { lit, path: F.createPathLights({
+          now: () => performance.now(), schedule: (f, ms) => setTimeout(f, ms), cancel: id => clearTimeout(id),
+          has: () => true,
+          emit: ev => {
+            if (ev.type === 'reset') lit.clear();
+            else if (ev.type === 'light') lit.add(Number(ev.key));
+            const e2 = engRef.current;
+            if (e2) e2.setGlow(Array.from(lit));
+          } }) };
+      }
+      const L = lightsRef.current;
+      L.path.reset(); L.lit.clear(); eng.setGlow([]);
+      if (!mask) return;
+      let shown = 0;
+      for (let i = 0; i < mask.length && shown < 12; i++) {
+        if (!mask[i] || !items[i] || items[i].dir) continue;
+        const chain = [];
+        for (let j = i; j >= 0 && items[j]; j = items[j].parent) chain.unshift(j);
+        chain.forEach(j => L.path.onDecision({ node_id: String(j), p: 1 }));
+        shown++;
+      }
+    };
+    useEffect(() => () => { if (lightsRef.current) lightsRef.current.path.reset(); }, []);
+
     // filter
     useEffect(() => {
       const eng = engRef.current;
@@ -2604,7 +2640,7 @@
       const t = setTimeout(() => {
         const q = query.trim().toLowerCase();
         const on = Object.keys(cats).filter(k => cats[k]);
-        if (!q && !on.length) { eng.setFilter(null); return; }
+        if (!q && !on.length) { eng.setFilter(null); lightPath(null); return; }
         const mask = new Uint8Array(items.length);
         const terms = q.split(/\s+/).filter(Boolean);
         items.forEach((it, i) => {
@@ -2613,6 +2649,7 @@
           if (terms.every(tm => tm.startsWith('.') ? it.ext === tm.slice(1) : hay.indexOf(tm) >= 0)) mask[i] = 1;
         });
         eng.setFilter(mask);
+        lightPath(q ? mask : null);
       }, 160);
       return () => clearTimeout(t);
     }, [query, cats, items]);

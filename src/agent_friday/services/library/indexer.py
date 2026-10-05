@@ -9,6 +9,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -35,8 +36,33 @@ def file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+#: Friday's home is never read, except these folders of what she MADE: her
+#: podcasts, creations, wiki pages, content, timelines and Media's cards. Named
+#: one by one (an allowlist), so config, keys, the vault, logs, runtime state,
+#: models and every credential store stay out, and a new folder in her home
+#: stays out until it is named here.
+HOME_CONTENT_ALLOW = ("podcasts", "creations", "friday-creations", "wiki/content", "content",
+                      "timelines", "media/cards")
+
+
+def _home_content(real: str, home: str) -> bool:
+    from agent_friday.services import studio_files as sf
+    return any(sf._under(real, os.path.normcase(os.path.join(home, *sub.split("/"))))
+               for sub in HOME_CONTENT_ALLOW)
+
+
+#: A file named like a secret is never read, wherever it is: the Library reads
+#: whole folders, and a key dropped in one is still a key.
+SECRET_NAME = re.compile(
+    r"^(\.env(\..*)?|\.npmrc|\.pypirc|\.netrc|\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)(\..*)?"
+    r"|credentials?(\..*)?|secrets?(\..*)?|.*\.(pem|key|pfx|p12|kdbx|keystore|jks|ppk|asc|gpg))$", re.I)
+
+
 def _refused(path: Path) -> str | None:
-    """Why this path is never read, or None."""
+    """Why this path is never read, or None. A credential file is refused
+    everywhere, the allowlisted content folders of Friday's home included."""
+    if SECRET_NAME.match(Path(path).name or ""):
+        return "private"
     try:
         from agent_friday.services import credential_paths
         why = credential_paths.check(path, sniff=False)
@@ -45,13 +71,17 @@ def _refused(path: Path) -> str | None:
     except Exception:
         pass
     try:
+        from agent_friday.core import FRIDAY_DIR
         from agent_friday.services import studio_files as sf
         real = os.path.normcase(str(path.resolve()))
+        home = os.path.normcase(str(Path(FRIDAY_DIR).resolve()))
         for ex in sf._excluded():
             if sf._under(real, ex):
+                if ex == home and _home_content(real, home):
+                    continue                          # her own content, not her config
                 return "private"
     except Exception:
-        pass
+        return "private"                              # unsure is never read
     return None
 
 

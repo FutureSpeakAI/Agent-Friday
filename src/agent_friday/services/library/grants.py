@@ -136,9 +136,100 @@ def shelf_override(principal: str, path: Path) -> str | None:
     return st.library_shelves.get(key)
 
 
-def active_scopes(principal: str) -> list[dict]:
+#: The one consent that covers everything Friday already tracks (below). It is
+#: an ordinary library_add in the ledger, so removing it, revoking it, a deny
+#: and a tampered ledger all treat it exactly as they treat any other add.
+TRACKED = "tracked"
+
+
+def add_tracked(principal: str, *, source: str = "you", said: str = "") -> dict:
+    """Record the one bulk consent: the Library covers every file Friday
+    already tracks. `said` keeps the owner's own words when the consent was
+    given in conversation rather than with the switch."""
+    for a in active_scopes(principal, expand=False):
+        if a.get("type") == TRACKED:
+            return a                                  # already on: one consent, never a second
+    event = {"event": "library_add", "id": str(uuid.uuid4()), "principal": principal,
+             "type": TRACKED, "path": "", "recursive": True, "glob": None, "kinds": None,
+             "source": source if source in ("you", "card") else "you",
+             "said": str(said or "")[:500] or None, "created_ts": time.time()}
+    return _fg()._append_event(event)
+
+
+def tracked_consent(principal: str) -> dict | None:
+    for a in active_scopes(principal, expand=False):
+        if a.get("type") == TRACKED:
+            return a
+    return None
+
+
+_TRACKED_CACHE: dict = {}
+
+
+def tracked_roots() -> list[dict]:
+    """Kept for _ROOT_TTL_S: a purge asks about every document, and working the
+    roots out is a ledger read plus a check of each root."""
+    now = time.monotonic()
+    hit = _TRACKED_CACHE.get("roots")
+    if hit and now - hit[0] < _ROOT_TTL_S:
+        return [dict(r) for r in hit[1]]
+    roots = _tracked_roots()
+    _TRACKED_CACHE["roots"] = (now, roots)
+    return [dict(r) for r in roots]
+
+
+def _tracked_roots() -> list[dict]:
+    """What "everything Friday tracks" is, worked out on every read (never a
+    copy that goes stale): the files and folders the owner granted, and the
+    folders Media is built from. A place the Library never reads (Friday's own
+    home, the vault, credential files) is left out here and refused again by
+    the indexer; a deny beats it in allowed()."""
+    from agent_friday.services.library import indexer
+    out, seen = [], set()
+
+    def keep(key, path, kind):
+        try:
+            p = Path(path).expanduser().resolve()
+        except (OSError, ValueError):
+            return
+        if not p.exists() or _norm(p) in seen or indexer._refused(p):
+            return
+        seen.add(_norm(p))
+        out.append({"key": key, "path": str(p), "type": "folder" if p.is_dir() else "file"})
+    now = time.time()
+    for g in _fg().list_grants():
+        if g.get("type") not in ("file", "folder"):
+            continue                                  # a glob has no folder to walk
+        if g.get("expires_ts") and float(g["expires_ts"]) <= now:
+            continue
+        keep("grant:" + str(g.get("id")), g.get("path") or "", g["type"])
+    try:
+        from agent_friday.services import media_index
+        for r in media_index._roots():
+            keep("media:" + Path(r).name, r, "folder")
+    except Exception:
+        pass
+    return out
+
+
+def active_scopes(principal: str, *, expand: bool = True) -> list[dict]:
+    """The principal's live consents. The tracked consent is expanded into one
+    scope per tracked root (ids "<consent id>:<root key>") unless `expand` is
+    False; it covers nothing by itself."""
     st = _fg()._load_state()
-    return [dict(a) for a in st.library.values() if (a.get("principal") or "owner") == principal]
+    own = [dict(a) for a in st.library.values() if (a.get("principal") or "owner") == principal]
+    if not expand:
+        return own
+    out = []
+    for a in own:
+        if a.get("type") != TRACKED:
+            out.append(a)
+            continue
+        for r in tracked_roots():
+            out.append({"event": "library_add", "id": "%s:%s" % (a["id"], r["key"]), "parent": a["id"],
+                        "principal": principal, "type": r["type"], "path": r["path"], "recursive": True,
+                        "glob": None, "kinds": None, "source": TRACKED, "created_ts": a.get("created_ts")})
+    return out
 
 
 def suspended() -> bool:
@@ -159,4 +250,7 @@ def allowed(principal: str, path: Path) -> bool:
         rp = path.resolve()
     except OSError:
         return False
+    from agent_friday.services.library import indexer
+    if indexer._refused(rp):
+        return False                                  # a credential or private place, whatever covers it
     return any(_covers(a, rp) for a in active_scopes(principal))

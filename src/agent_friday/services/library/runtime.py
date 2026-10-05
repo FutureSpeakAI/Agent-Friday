@@ -116,7 +116,12 @@ def prepare(principal: str = OWNER):
 
 
 def index_scope(principal: str, add_event: dict) -> None:
-    """Queue a consent for reading."""
+    """Queue a consent for reading. The tracked consent queues each place it covers."""
+    if add_event.get("type") == grants.TRACKED:
+        for s in grants.active_scopes(principal):
+            if s.get("parent") == add_event.get("id"):
+                index_scope(principal, s)
+        return
     prepare(principal)
     indexer_for(principal).enqueue(add_event["path"], recursive=bool(add_event.get("recursive", True)),
                                    glob=add_event.get("glob"),

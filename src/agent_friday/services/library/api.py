@@ -66,7 +66,21 @@ def status(store: Store, principal: str, indexer_pending: int = 0) -> dict:
         "index_note": getattr(store, "note", ""),
         "empty": not scopes,
         "kg_learn": _kg_choice(),
+        "tracked": tracked_state(store, principal, indexer_pending),
     }
+
+
+def tracked_state(store: Store, principal: str, indexer_pending: int = 0) -> dict:
+    """The "everything Friday tracks" switch: on or off, the words that turned
+    it on, how many places it covers, and how far reading them has got."""
+    a = grants.tracked_consent(principal)
+    if a is None:
+        return {"on": False}
+    rows = [s for s in grants.active_scopes(principal) if s.get("parent") == a["id"]]
+    indexed = sum(_scope_row(store, s)["documents"] for s in rows)
+    return {"on": True, "id": a["id"], "said": a.get("said"), "source": a.get("source"),
+            "since": a.get("created_ts"), "places": len(rows), "indexed": indexed,
+            "reading": indexer_pending}
 
 
 def _doc_row(tb: tree.TreeBuilder, r) -> dict:

@@ -67,7 +67,7 @@ window.FRIDAY_WORKSPACE_REGISTRY = /*BEGIN JSON*/{
     {"id": "library", "label": "Library", "group": "work", "core": true, "icon": "library", "glyph": "📚", "accent": "cyan",
      "blurb": "The documents you gave Friday to read, answered with footnotes you can click.",
      "aliases": ["my documents", "document library", "my files", "shelves", "documents", "reading list", "file library"],
-     "boundary": {"kind": "native", "components": ["LibraryWS"], "scripts": ["static/library_ws.js", "static/library_reader.js", "static/library_shelves.js"]}},
+     "boundary": {"kind": "native", "components": ["LibraryWS"], "scripts": ["static/library_ws.js", "static/library_reader.js", "static/library_shelves.js", "static/friday_files3d.js"]}},
     {"id": "knowledge", "boundary": {"kind": "native", "components": ["KnowledgeWS"]}, "label": "Knowledge", "group": "system", "core": true, "icon": "knowledge", "glyph": "🌌", "accent": "violet",
      "blurb": "Your wiki's pages and the knowledge graph that links them.",
      "aliases": ["wiki", "pages", "notes", "knowledge base", "knowledgebase", "second brain", "knowledge graph", "galaxy", "wiki pages"]},

@@ -882,6 +882,8 @@
   }
 
   window.LibraryShelves3D = LibraryShelves3D;
+  // The one pacer for every lens of the one 3D browser (friday_files3d.js).
+  if (window.Friday3D) { window.Friday3D.createPathLights = createPathLights; window.Friday3D.createPacer = createPacer; }
   LibraryShelves3D.__internals = {
     confidence, segmentSpec, createPacer, createPathLights, announceText, wrapToWidth, layoutPassages, pageOfPassage,
     readingScale, readingGeometry, paintReadingPage, linesFor, focusPath, parseColor, createCore, READ, MIN_GAP

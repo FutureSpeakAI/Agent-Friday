@@ -965,7 +965,7 @@
       h('div', { style: { display: 'flex', flex: 'none', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: on ? 6 : 4 } },
         on && h('span', { style: { fontFamily: 'Orbitron, Inter, sans-serif', fontSize: 10, letterSpacing: '.12em', color: '#00d4ff', marginRight: 'auto' } }, '🧊 ' + String(src.label).toUpperCase() + ' IN 3D'),
         h('button', { className: 'btn', style: { fontSize: 11, padding: '4px 9px' }, onPointerEnter: on ? undefined : warm, onFocus: on ? undefined : warm, onClick: () => set(!on), title: on ? 'Back to the normal view' : 'See this workspace in 3D' }, on ? '✕ Close 3D' : '🧊 View in 3D')),
-      on && (source === 'code' ? h(window.Files3DPanel, { root: 'projects', path: '', view: 'city', fill: true }) : h(Records3DPanel, { source, onClose: () => set(false) })),
+      on && (source === 'code' ? h(window.FridayFiles3D || window.Files3DPanel, { lens: 'files', root: 'projects', path: '', view: 'city', fill: true }) : h(Records3DPanel, { source, onClose: () => set(false) })),
       h('div', { className: 'f3-content', style: on ? { display: 'none' } : null }, children));
   }
 

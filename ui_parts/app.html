@@ -670,6 +670,12 @@ function fridayRunActions(actions){
       }else if(a.type==='open_url'&&a.url){
         const u=fridayHttpUrl(a.url);
         if(u){try{window.open(u,'_blank','noopener');}catch(_){}}
+      }else if(a.type==='files3d'){
+        // Voice choosing a lens of the one 3D browser and the search to light in it.
+        const d={lens:a.lens,query:a.query||''};
+        window.__fridayFiles3dPending=d;
+        try{window.dispatchEvent(new CustomEvent('friday-files3d',{detail:d}));}catch(_){}
+        a.result={ok:true};
       }else if(a.type==='orb'){
         // Voice or chat acting on a helper's orb (FridayOrbHands): the phrase is
         // resolved where the orbs are, and what happened rides back in the ack.
@@ -7619,7 +7625,7 @@ function StudioWS(){
     </div>
     {view==='projects'&&<ProjectsPanel/>}
     {view==='podcasts'&&<PodcastsView/>}
-    {view==='files'&&(window.Files3DPanel?<window.Files3DPanel/>:<div style={{color:'#888',fontSize:12,padding:20}}>The 3D file browser did not load.</div>)}
+    {view==='files'&&(window.FridayFiles3D?<window.FridayFiles3D lens="files"/>:window.Files3DPanel?<window.Files3DPanel/>:<div style={{color:'#888',fontSize:12,padding:20}}>The 3D file browser did not load.</div>)}
     {view==='generate'&&<GeneratePanel onCreated={loadCreations}/>}
     {view==='music'&&<MusicPanel onCreated={loadCreations}/>}
     {view==='timeline'&&<TimelinePanel onCreated={loadCreations}/>}
@@ -16843,6 +16849,7 @@ function SettingsTabPrivacy({s,save}){
       <PrivacyCheckLayers/>
     </StSection>
     <StSection title="Library" desc="Documents you add to the Library are read and indexed on this PC, and nothing is sent anywhere. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key.">
+      <LibraryTrackedToggle/>
       <StToggle label="Library search" value={s.library_search!==false} onChange={()=>save({library_search:s.library_search===false})} desc={"On, "+fridayName()+" can search the documents you added and answer with footnotes. Off, she cannot see them, and nothing is deleted."}/>
       <StToggle label="Let a cloud model write Library answers" value={!!s.library_cloud_answers} onChange={()=>save({library_cloud_answers:!s.library_cloud_answers})} desc="Off, nothing from your documents goes to a cloud model: in a chat that uses one, she says so and you can switch that chat to the local model. On, only passages from documents that also have a cloud permission in File access can go, one document at a time, never from the vault shelf, and never more than the limit below."/>
       <StRow label="Most of your documents' text one cloud answer may send" desc={"Only matters when cloud answers are on. A cloud model gets at most this many characters of your documents for one answer; if more matched, "+fridayName()+" leaves the rest out and says so. The default is about three pages."}>
@@ -16923,6 +16930,35 @@ function SettingsTabPrivacy({s,save}){
 // /api/privacy/file-grants. A line that grants nothing (quarantined or
 // unverified) is listed but has no Remove. An old permission that was set
 // aside shows its one question here; Re-grant raises the normal approval card.
+// Settings > Library: the one consent that puts everything Friday already
+// tracks in the Library. Off until the owner turns it on; on, it says whose
+// words or press turned it on and how far reading has got.
+function LibraryTrackedToggle() {
+  const [t, setT] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => apiFetch('/api/library/tracked').then(r => r.json()).then(d => {
+    if (d.status === 'ok') setT(d.tracked);
+  }).catch(() => {});
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, []);
+  const flip = () => {
+    if (busy || !t) return;
+    setBusy(true);
+    apiFetch('/api/library/tracked', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: !t.on })
+    }).then(r => r.json()).then(d => {
+      if (d.status === 'ok') setT(d.tracked);
+    }).catch(() => {}).finally(() => setBusy(false));
+  };
+  const on = !!(t && t.on);
+  const desc = on ? ('On' + (t.said ? ', from your words: “' + t.said + '”' : '') + '. ' + (t.places || 0) + ' places covered, ' + (t.indexed || 0) + ' documents read' + (t.reading ? ', ' + t.reading + ' waiting to be read' : '') + '. Turning it off takes out of the Library what only this covered.') : ('Every file and folder you have given ' + fridayName() + ' access to, and the folders Media is built from, read on this PC. Private files go only to the sealed vault shelf, and places she never reads stay excluded.');
+  return <StToggle label={'Include everything ' + fridayName() + ' already tracks (Recommended)'} value={on} onChange={flip} disabled={busy || !t} desc={desc}/>;
+}
 function FileAccessPanel() {
   const E = React.createElement;
   const [data, setData] = useState(null);

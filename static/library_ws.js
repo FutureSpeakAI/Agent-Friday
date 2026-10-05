@@ -375,7 +375,11 @@
     const emptyState = h('div', { className: 'lb-empty' },
       h('h3', null, 'Your Library is empty.'),
       h('div', { className: 'lb-count' }, 'Add a folder and Friday will read it here, on this PC.'),
-      h('button', { className: 'btn primary', onClick: () => setAdding(true) }, 'Add a folder'));
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' } },
+        h('button', { className: 'btn primary', onClick: () => setAdding(true) }, 'Add a folder'),
+        // The same choice as Settings > Library, offered and never preselected.
+        h('button', { className: 'btn', onClick: () => post('/api/library/tracked', { on: true }).then(d => { toast(d.status === 'ok' ? window.fridayName() + ' is reading everything she already tracks.' : (d.error || 'Couldn’t turn that on.')); refresh(); }) },
+          'Include everything ' + window.fridayName() + ' already tracks (Recommended)')));
 
     const chooseKg = v => post('/api/settings', { settings: { library_kg_learn: v } }).then(() => { toast(v === 'on' ? 'The graph will learn from your documents.' : 'The graph will not read your documents.'); refresh(); });
     // The one question asked after the first folder: neither answer is chosen for the owner.
@@ -437,12 +441,13 @@
     const pcView = h('div', { className: 'lb-stage' },
       h('div', { className: 'lb-count', style: { marginBottom: 6 } }, 'Browse this PC. These files are not in your Library until you add them.'),
       window.Files3DPanel ? h('div', { className: 'f3-host on', style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
-        h(window.Files3DPanel, { root: 'documents', path: '', view: 'wall', fill: true }))
+        (window.FridayFiles3D ? h(window.FridayFiles3D, { lens: 'files', root: 'documents', path: '', view: 'wall' })
+          : h(window.Files3DPanel, { root: 'documents', path: '', view: 'wall', fill: true })))
         : h('div', { className: 'lb-note' }, 'The 3D file browser did not load.'));
 
     const shelvesView = h('div', { className: 'lb-stage' },
       empty ? emptyState : (window.LibraryShelves3D
-        ? h(window.LibraryShelves3D, { nodes, onOpen: n => { setReader({ doc: Number(String(n.doc || n.id).replace(/\D/g, '')) }); setView('reader'); }, status })
+        ? h(window.FridayFiles3D || window.LibraryShelves3D, { lens: 'library', nodes, onOpen: n => { setReader({ doc: Number(String(n.doc || n.id).replace(/\D/g, '')) }); setView('reader'); }, status })
         : h('div', { className: 'lb-note' }, 'The 3D view did not load. Your documents are listed on the left.')),
       h(Twin, { nodes, shown: false, label: 'Your Library as a list', onOpen: n => { if (n.kind === 'document') setSel(n); } }));
 

@@ -13633,6 +13633,7 @@ ON_DEMAND_TOOLS = (
     "search_library",        # the Library: labelled passages from the owner's documents
     "library_status",
     "library_show",
+    "show_files_3d",         # the one 3D file browser: a lens and a lit search, on screen
     "notifications",         # the tray: read, clear, mute
     "local_models_advise",   # Settings > Models: what this PC can run
     "hand_cursor",           # the hand cursor and big mode, by voice

@@ -259,6 +259,34 @@ def lib_add():
     return jsonify({"status": "ok", "scope": api._scope_row(store_for(p), ev)})
 
 
+@library_bp.route("/api/library/tracked", methods=["GET", "POST"])
+@login_required
+def lib_tracked():
+    """The "everything Friday already tracks" switch. POST {on: true} records the
+    one bulk consent (the owner's own press) and starts reading; {on: false}
+    removes that consent, and what only it covered leaves the Library."""
+    p, bad = _principal()
+    if bad:
+        return bad
+    if request.method == "POST":
+        bad = _same_origin_json("library_tracked")
+        if bad:
+            return bad
+        b = request.get_json(silent=True) or {}
+        if b.get("on") is True:
+            ev = grants.add_tracked(p, source="you")
+            runtime.index_scope(p, ev)
+        elif b.get("on") is False:
+            a = grants.tracked_consent(p)
+            if a is not None:
+                grants.remove_scope(p, a["id"])
+                runtime.purge_uncovered(p)
+        else:
+            return jsonify({"status": "error", "error": "say on: true or on: false"}), 400
+    return jsonify({"status": "ok", "tracked": api.tracked_state(store_for(p), p,
+                                                                 runtime.indexer_for(p).pending())})
+
+
 @library_bp.route("/api/library/remove", methods=["POST"])
 @login_required
 def lib_remove():

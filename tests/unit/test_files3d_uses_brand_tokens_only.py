@@ -14,7 +14,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 ENGINE = ROOT / "static" / "studio_files3d.js"
 RECORDS = ROOT / "static" / "friday3d_records.js"
 SHELVES = ROOT / "static" / "library_shelves.js"
-FILES = (ENGINE, RECORDS, SHELVES)
+#: The one browser over the engine (every workspace's 3D view) keeps the same rule.
+ONE = ROOT / "static" / "friday_files3d.js"
+FILES = (ENGINE, RECORDS, SHELVES, ONE)
 
 HEX = re.compile(r"(?<![\w$])(?:0x([0-9a-fA-F]{6})|#([0-9a-fA-F]{6})|#([0-9a-fA-F]{3}))(?![\w])")
 

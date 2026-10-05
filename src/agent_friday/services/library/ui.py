@@ -9,6 +9,8 @@ from agent_friday.services.library import cards, envelope, principal as pr, sear
 from agent_friday.services.library.store import store_for
 
 VIEWS = {"list": "list", "3d": "shelves", "shelves": "shelves", "tree": "tree"}
+#: The one 3D file browser's lenses, and the workspace each opens in.
+LENSES = {"library": "library", "media": "media", "files": "studio"}
 
 
 def _resolve(principal: str, target: str, page) -> tuple[dict | None, str]:
@@ -47,6 +49,27 @@ def _resolve(principal: str, target: str, page) -> tuple[dict | None, str]:
 
 def _of(e: dict) -> dict:
     return {"doc": e["doc_id"], "block": e.get("block_id"), "page": e.get("page"), "section": e.get("section_id")}
+
+
+def show_files_3d(inp: dict) -> str:
+    """Open the one 3D file browser on a lens (Library, Media or Files), and
+    light the path of a search in it. Moves the owner's own screen only."""
+    from agent_friday.services import desktop_bus
+    lens = str(inp.get("lens") or "files").strip().lower()
+    if lens not in LENSES:
+        return "FILES3D_FAIL: there is no %r lens; say library, media or files." % lens
+    query = str(inp.get("query") or "").strip()[:200]
+    sent = desktop_bus.send([
+        {"type": "navigate", "workspace": LENSES[lens], "view": "3d", "files3d": {"lens": lens}},
+        {"type": "files3d", "lens": lens, "query": query}])
+    words = "the %s in 3D" % ("Library" if lens == "library" else "Media" if lens == "media" else "files")
+    if query:
+        words += ", lighting the path to %r" % query
+    if not sent.get("delivered"):
+        return "FILES3D_FAIL: %s, so %s was not shown." % (sent.get("reason"), words)
+    if not sent.get("acked"):
+        return "FILES3D_SENT: sent %s to the desktop, but the page did not confirm it." % words
+    return "FILES3D_OK: showing %s." % words
 
 
 def show(inp: dict) -> str:
