@@ -7,7 +7,6 @@ it per prompt churned hundreds of megabytes per turn on a large wiki.
 from __future__ import annotations
 
 import os
-import tracemalloc
 
 import pytest
 
@@ -261,13 +260,11 @@ def test_building_and_serving_the_cache_writes_nothing(wiki, monkeypatch):
         structural_query.query("tell me about graphrag")
 
 
-def test_repeated_queries_allocate_almost_nothing(tmp_path, monkeypatch):
-    # Flat memory: after the first parse, ten more queries over an unchanged
-    # wiki parse nothing (counted directly) and allocate well under a parse's
-    # worth. tracemalloc sees every thread in the process, so in a full suite
-    # other tests' background threads add to the peak; the parse count is the
-    # exact check and the memory bound (half a parse) is the backstop a
-    # re-parse, which peaks near a whole parse, still fails.
+def _repeat_queries(tmp_path, monkeypatch, *, drop_cache_between=False):
+    """Ten queries after the first over a 150-page wiki: (parses before the
+    ten, parses in all, wiki pages read during the ten). Pages are counted
+    where every page is read (wiki_graph._read), so another thread's work
+    can never count; a re-parse reads all 150 again."""
     w = tmp_path / "wiki"
     (w / "notes").mkdir(parents=True)
     for i in range(150):
@@ -285,18 +282,39 @@ def test_repeated_queries_allocate_almost_nothing(tmp_path, monkeypatch):
         parses.append(1)
         return real_build(*a, **k)
     monkeypatch.setattr(wiki_graph, "build_wiki_index", counted)
-    tracemalloc.start()
+    real_read = wiki_graph._read
+    reads = {"n": 0, "on": False}
+    root = str(w.resolve())
+
+    def counted_read(path):
+        if reads["on"] and str(path.resolve()).startswith(root):
+            reads["n"] += 1
+        return real_read(path)
+    monkeypatch.setattr(wiki_graph, "_read", counted_read)
     try:
         structural_query.query("tell me about topic 042")
-        _, first_peak = tracemalloc.get_traced_memory()
-        tracemalloc.reset_peak()
-        base, _ = tracemalloc.get_traced_memory()
         parsed_before = len(parses)
+        reads["on"] = True
         for _ in range(10):
+            if drop_cache_between:
+                wiki_graph.clear_wiki_index_cache()
             structural_query.query("tell me about topic 042")
-        _, later_peak = tracemalloc.get_traced_memory()
     finally:
-        tracemalloc.stop()
         wiki_graph.clear_wiki_index_cache()
-    assert parsed_before == 1 and len(parses) == 1, f"repeated queries parsed the wiki {len(parses) - 1} more time(s)"
-    assert later_peak - base < first_peak / 2, (first_peak, later_peak - base)
+    return parsed_before, len(parses), reads["n"]
+
+
+def test_repeated_queries_allocate_almost_nothing(tmp_path, monkeypatch):
+    # Flat memory: after the first parse, ten more queries over an unchanged
+    # wiki parse nothing and read none of its pages (a parse reads and
+    # decrypts every page; reading none is what keeps memory flat).
+    parsed_before, parses, pages_read = _repeat_queries(tmp_path, monkeypatch)
+    assert parsed_before == 1 and parses == 1, f"repeated queries parsed the wiki {parses - 1} more time(s)"
+    assert pages_read == 0, f"repeated queries read {pages_read} wiki pages"
+
+
+def test_the_page_count_catches_a_real_re_parse(tmp_path, monkeypatch):
+    # Teeth for the test above: a cache dropped before each query re-parses
+    # the wiki, and the page count sees every page of every re-parse.
+    parsed_before, parses, pages_read = _repeat_queries(tmp_path, monkeypatch, drop_cache_between=True)
+    assert parses == 11 and pages_read >= 10 * 150, (parses, pages_read)
