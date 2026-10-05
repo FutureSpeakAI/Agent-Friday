@@ -200,3 +200,12 @@ def test_outlets_on_a_shared_host_are_named_by_their_own_name():
     assert "go" not in q.outlet_aliases(s)
     assert q.said_outlet("ABC News reports that the storm passed.", q.outlet_aliases(s))
     assert not q.said_outlet("You should go early.", q.outlet_aliases(s))
+
+
+def test_a_place_is_a_whole_word_never_the_front_of_a_longer_one():
+    # "An AI couldn't beat humans at StarCraft" rejected an episode for a lede
+    # without "where (Star)".
+    from agent_friday.services import podcast_quality as q
+    assert q._places("An AI couldn't beat humans at StarCraft, so it cheated") == set()
+    assert q._places("A rally in Ohio, then a stop at McAllen's airport") == {"ohio"}
+    assert q._places("Flooding in Texas and near Austin") == {"texas", "austin"}

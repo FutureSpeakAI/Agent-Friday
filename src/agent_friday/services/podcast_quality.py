@@ -301,9 +301,11 @@ def _entities(title: str, text: str) -> set[str]:
 
 
 def _places(text: str) -> set[str]:
-    """Places named after "in", "at" ...; "in July" and "on Monday" are times."""
+    """Places named after "in", "at" ...; "in July" and "on Monday" are times.
+    A place is a whole word: "at StarCraft" names no place called "Star"."""
     return {m.group(1).lower() for m in re.finditer(
-        r"\b(?:in|at|near|outside|across)\s+([A-Z][a-z]{2,})", text or "")} - set(_MONTHS) - set(_DAYS)
+        r"\b(?:in|at|near|outside|across)\s+([A-Z][a-z]{2,})(?![\w'’-]*[A-Za-z0-9])", text or "")} \
+        - set(_MONTHS) - set(_DAYS)
 
 
 # ── the story list ──────────────────────────────────────────────────────────
