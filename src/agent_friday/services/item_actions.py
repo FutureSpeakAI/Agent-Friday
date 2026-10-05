@@ -5,10 +5,14 @@ The three kinds of item share one module so they keep the same rules:
 * Every change writes a receipt (services/action_journal) that names each
   item, what happened to it, and what undo needs to put it back.
 * Mail lives in Gmail, which reaches every device, so a change there is
-  outward. It always waits for the owner's approval, on ONE card for the whole
-  batch that lists what it will touch. The list is the change: approving it
-  changes exactly the conversations found when the card was raised. A search
-  is never run again later.
+  outward. Archive, trash, spam, restore and move wait for the owner's
+  approval, on ONE card for the whole batch that lists what it will touch.
+  The list is the change: approving it changes exactly the conversations found
+  when the card was raised. A search is never run again later. Mark read or
+  unread, star and label are the exception (EMAIL_NO_CARD): the owner ruled
+  that changes which take nothing out of the inbox and undo at once run
+  without a card, with a receipt. A batch made from the owner's ticked rows
+  keeps those rows' refs, so the page can show them held, done or declined.
 * Files and wiki pages are local and can be undone. One item changes at once.
   Two or more are a batch, and a batch waits for one card, like mail. A file
   change that reaches further than this PC waits for a card even when it is
@@ -245,6 +249,10 @@ EMAIL_ACTIONS = {
     "not_spam": ("notspam", "mark as not spam", "marked not spam"),
 }
 _LABEL_ACTIONS = ("label", "unlabel", "move")
+#: The owner's rule (2026-10): a change that is instantly undoable and takes nothing out of
+#: the inbox runs at once, with a receipt and an Undo. Everything else about the mailbox
+#: (archive, trash, spam, restore, move, back to the inbox) is one card per batch.
+EMAIL_NO_CARD = ("read", "unread", "star", "unstar", "label", "unlabel")
 
 
 def _mail_accounts(account: str = "") -> list[dict]:
@@ -448,11 +456,35 @@ def email_readback(sel: dict, action: str, label: str = "", room_mode: bool = Fa
     return "I found %s%s%s. Shall I %s?" % (_plural(n, "conversation"), lead, like, doing)
 
 
+def _tell_held(detail: dict, state: str, receipt_id: str = "", card_id: str = "") -> None:
+    """Tell the page which rows a screen-bound batch holds, and how it ended: `held` (a card
+    waits for the owner), `done` (it ran; the receipt feeds the Undo) or `declined` (the
+    ticks stay). Only batches made from the owner's on-screen selection carry refs. Never
+    raises, never waits: the change has already happened or been refused."""
+    refs = list(detail.get("refs") or [])
+    if not refs:
+        return
+    try:
+        from agent_friday.services import desktop_bus, screen_stage
+        desktop_bus.push([{"type": "held", "workspace": "messages", "card_id": card_id,
+                           "refs": refs, "state": state, "action": detail.get("action") or "",
+                           "receipt_id": receipt_id, "selection_id": detail.get("selection_id") or ""}])
+        screen_stage.log_counts("held_" + state, "messages", len(refs))
+    except Exception:
+        pass
+
+
 def propose_email(action: str, *, query: str = "", thread_ids=None, account: str = "",
                   label: str = "", why: str = "", conversation_id: str | None = None,
                   owner_words: str = "", requested_by: str = "friday", room_mode: bool = False,
-                  replaces: str = "") -> dict:
-    """Find the mail a request names and raise ONE card to change all of it."""
+                  replaces: str = "", refs=None, selection_id: str = "",
+                  stage_rev: int = 0) -> dict:
+    """Find the mail a request names and raise ONE card to change all of it.
+
+    `refs` (with `selection_id` and `stage_rev`) bind the batch to what the owner saw ticked:
+    `thread_ids` are exactly those conversations, nothing is searched, and the card keeps the
+    refs so the page can hold those rows until the owner answers. A mark-read, star or label
+    change (EMAIL_NO_CARD) runs at once and returns its receipt."""
     action = str(action or "").strip().lower().replace(" ", "_").replace("-", "_")
     if action not in EMAIL_ACTIONS:
         raise Refused("organize_email can: " + ", ".join(EMAIL_ACTIONS))
@@ -484,7 +516,17 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
               "query": sel["query"], "accounts": sel["accounts"], "count": n,
               "preview": sel["preview"], "lines": lines, "conversation_id": conversation_id or "",
               "asked_with": words_hash(owner_words), "why": str(why or "").strip()[:300]}
+    if refs:
+        detail.update(refs=[str(r) for r in refs][:MAX_ITEMS], selection_id=str(selection_id or "")[:40],
+                      stage_rev=int(stage_rev or 0))
     _verb, doing = _email_words(action, label, n)
+    if action in EMAIL_NO_CARD:
+        rec = run_email(detail)
+        _tell_held(detail, "done", receipt_id=rec.get("receipt_id") or "")
+        _tell_pages("email", rec.get("receipt_id") or "")
+        return {"status": rec.get("status") or "complete", "count": n, "receipt_id": rec.get("receipt_id"),
+                "text": rec.get("said") or rec.get("summary") or "", "notes": notes,
+                "readback": rec.get("said") or "", "truncated": sel["truncated"]}
     title = "Friday wants to " + doing
     said = [("Found with the Gmail search: " + sel["query"][:300]) if sel["query"]
             else "The conversations Friday named."]
@@ -494,6 +536,8 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
         said.append("Why (Friday's words): " + detail["why"])
     card = _raise_card("email", action, detail, title=title, body=" ".join(said),
                        requested_by=requested_by, replaces=replaces)
+    if card.get("status") == "pending_approval":
+        _tell_held(detail, "held", card_id=card.get("approval_id") or "")
     out = {**card, "count": n, "readback": email_readback(sel, action, label, room_mode),
            "preview": [{"subject": p["subject"], "sender": p["sender"]} for p in sel["preview"][:5]],
            "notes": notes + (card.get("notes") or []), "truncated": sel["truncated"]}
@@ -1591,6 +1635,8 @@ def _start(detail: dict, approval_id: str | None) -> threading.Event:
         _notify("Done" if ok else "Not done", text, "info" if ok else "warning")
         if rec:
             _tell_pages(detail.get("domain", "").replace("_undo", ""), rec["receipt_id"])
+        _tell_held(detail, "done" if ok else "declined", receipt_id=(rec or {}).get("receipt_id") or "",
+                   card_id=approval_id or "")
         with _RUNS_LOCK:
             run = _RUNS.get(approval_id or "")
             if run is not None:
@@ -1628,6 +1674,8 @@ def _on_decision(record: dict) -> None:
     if detail.get("handler") != HANDLER:
         return
     if (record.get("status") or "").lower() != "approved":
+        if (record.get("status") or "").lower() in ("denied", "blocked", "expired"):
+            _tell_held(detail, "declined", card_id=record.get("approval_id") or "")
         return
     from agent_friday.governance import action_gate
     from agent_friday.services import approvals as ap

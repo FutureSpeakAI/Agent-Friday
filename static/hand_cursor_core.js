@@ -216,5 +216,11 @@
     };
   }
 
-  return { oneEuro, pointFilter, edgeDistance, center, snapController, pinchMachine, dwellMachine, zoomTracker, changeLimiter, classifyGuard };
+  // A row that opts in with data-fr-pinch="tick" is ticked by a quick pinch and opened by a pinch held
+  // for the same 700 ms a guarded action needs, so "pinch these three, then say archive them" works.
+  function pinchIntent(durationMs, holdMs) {
+    return durationMs >= (holdMs || 700) ? 'open' : 'tick';
+  }
+
+  return { oneEuro, pointFilter, edgeDistance, center, snapController, pinchMachine, dwellMachine, zoomTracker, changeLimiter, classifyGuard, pinchIntent };
 });

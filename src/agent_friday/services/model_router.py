@@ -3762,8 +3762,7 @@ def _payload_dump_dir():
         return None
 
 
-def _build_context_prompt(message, workspace='', workspace_context=None,
-                          vision_description=None, provider='cloud',
+def _build_context_prompt(message, workspace='', vision_description=None, provider='cloud',
                           vault_control=None, vault_fallback='redact', pilot=None,
                           tools_block=True):
     """Build an enriched system prompt with all relevant context layers.
@@ -3834,18 +3833,8 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
 
     # Today's context is the same for every turn of the day; the workspace
     # is the same for every turn of the conversation. Both stay in the head.
-    # Layer 1: Active workspace context (from frontend) — may show finance/health
-    # data, so classify by what's actually in the payload.
-    if workspace_context:
-        _ws_text = (
-            f"\n== ACTIVE WORKSPACE: {workspace_context.get('name', workspace)} ==\n"
-            f"What the user is looking at right now:\n"
-            f"{json.dumps(workspace_context.get('data', {}), indent=2, default=str)[:2000]}"
-        )
-        add(_ws_text, classify(_ws_text, _T2))
-        if workspace_context.get('focus'):
-            add(f"Current focus: {workspace_context['focus']}", _T2)
-        sources_consulted.append('workspace')
+    # What the owner's screen shows right now is not here: it changes between turns, so
+    # the chat routes append it to the volatile tail (services/screen_stage.chat_tail).
     _phase[0] = "volatile"
 
     # Layer 2: Vault data (personality always included). Friday's own state is

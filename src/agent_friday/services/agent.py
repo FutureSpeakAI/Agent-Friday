@@ -774,7 +774,19 @@ CLAUDE_TOOLS = [
     {"name": "check_situation", "description": "Check what is happening right now, instantly, from Friday's live state: open and focused workspaces, CPU, RAM, GPU memory and disk, which models are loaded or serving, running chat turns, tasks, background and scheduled jobs, queue depth, stand-down, and today's spend. Use it for any question about current activity or load. pin=true keeps a live summary in view on every later turn of this conversation; pin=false stops that.",
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
+         "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
+    {"name": "screen_select", "description": "Tick, untick or clear conversations in the user's open Message Center so they see the checks appear. Shows only; changes no mail and needs no approval. scope=screen picks among the rows shown; scope=all searches the whole inbox. match: category (newsletters, promotions, unread...), lane, unread, from, older_than (days), ordinals, query (a Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / SELECT_FAIL report what the page confirmed. To act on the ticks, call organize_email with selection=screen.",
+     "input_schema": {"type": "object", "properties": {
+         "op": {"type": "string", "enum": ["select", "add", "remove", "clear"]},
+         "scope": {"type": "string", "enum": ["screen", "all"]},
+         "match": {"type": "object", "properties": {
+             "category": {"type": "string"}, "lane": {"type": "string"}, "unread": {"type": "boolean"},
+             "from": {"type": "string"}, "older_than": {"type": "number"},
+             "ordinals": {"type": "array", "items": {"type": "integer"}},
+             "query": {"type": "string"}, "deictic": {"type": "string", "enum": ["this", "these"]}}},
+         "label": {"type": "string", "description": "Short name for the selection chip, e.g. Newsletters."}},
+         "required": ["op"]}},
     {"name": "set_chat_tray", "description": "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or the right in a third, a half or two thirds of the screen ('put chat on the right third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on its edge and the workspace takes the full width. It is the owner's own screen, so no approval is needed. CHAT_OK: say what changed in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
      "input_schema": {"type": "object", "properties": {
          "visible": {"type": "boolean", "description": "true to show the chat, false to hide it."},
@@ -796,11 +808,12 @@ CLAUDE_TOOLS = [
                                                   "right_third", "left_two_thirds", "right_two_thirds"],
                       "description": "With fullscreen_chat false: the part of the screen the window takes."}},
       "required": ["fullscreen_chat"]}},
-    {"name": "organize_email", "description": "Archive, label, move, star, mark read or unread, Trash, restore or report spam on the user's Gmail. Pick the mail with a Gmail search in query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or thread_ids from search_email. Nothing changes yet: it raises ONE approval card for the whole batch and returns a readback; say it to the user in one sentence and ask: yes, no, or change it (call again with replaces=the card_id). They approve on the card, or by saying yes (then call answer_card). Every change can be undone (undo_action).",
+    {"name": "organize_email", "description": "Archive, label, move, star, mark read or unread, Trash, restore or report spam on the user's Gmail. Pick the mail with selection=screen (the conversations ticked on their screen, exactly), a Gmail search in query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or thread_ids (the ref of each search_email hit). Mark read/unread, star/unstar and label/unlabel happen at once (receipt_id; undo_action puts it back). Anything else changes nothing yet: it raises ONE approval card for the whole batch and returns a readback; say it to the user in one sentence and ask: yes, no, or change it (call again with replaces=the card_id). They approve on the card, or by saying yes (then call answer_card). Every change can be undone (undo_action).",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["archive", "inbox", "read", "unread", "star", "unstar", "label", "unlabel", "move", "trash", "restore", "spam", "not_spam"]},
          "query": {"type": "string", "description": "A Gmail search, e.g. from:linkedin.com older_than:1m"},
          "thread_ids": {"type": "array", "items": {"type": "string"}, "description": "Conversation ids (account:thread) instead of a query."},
+         "selection": {"type": "string", "enum": ["screen"], "description": "screen: exactly the conversations ticked on the user's screen now, instead of query or thread_ids."},
          "label": {"type": "string", "description": "For label, unlabel and move."},
          "account": {"type": "string", "description": "Only this account (label or address)."},
          "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
@@ -1807,7 +1820,9 @@ def _tool_search_email(inp):
                                "note": _google_note(summary, "Gmail")})
         accounts_status = _summarize_multi_account_errors(result)
         cards = result.get("messages") or []
+        from agent_friday.services.screen_stage import card_ref as _card_ref
         hits = [{
+            "ref": _card_ref(c),
             "from": c.get("sender") or "",
             "subject": c.get("subject") or "",
             "snippet": (c.get("snippet") or "")[:160],
@@ -3123,6 +3138,8 @@ def _tool_check_situation(inp):
     """Tool handler: the live situation, from state the server already holds
     (services/situation), optionally pinned into this conversation's turns."""
     inp = inp or {}
+    if inp.get('look') == 'screen':
+        return _screen_look()
     from agent_friday.services import situation
     note = ''
     if inp.get('pin') is not None:
@@ -3357,13 +3374,189 @@ def _voice_room() -> bool:
 
 
 def _tool_organize_email(inp):
-    """Tool handler: one approval card for a batch of Gmail changes."""
+    """Tool handler: one approval card for a batch of Gmail changes (mark read, star and label
+    run at once). `selection="screen"` takes the conversations ticked on the owner's screen,
+    exactly as the page last reported them."""
     from agent_friday.services import item_actions as _ia
+    from agent_friday.services import screen_stage as _ss
     inp = inp or {}
-    return _organize_call(_ia.propose_email, inp.get("action") or "", query=inp.get("query") or "",
-                          thread_ids=inp.get("thread_ids") or None, account=inp.get("account") or "",
+    extra = {}
+    thread_ids, query = inp.get("thread_ids") or None, inp.get("query") or ""
+    if str(inp.get("selection") or "").strip().lower() == "screen":
+        st = _fresh_screen_stage("messages")
+        if st is None:
+            return ("NOT DONE: I can't see your list right now, so I won't guess what is ticked. "
+                    "Ask them to tick the mail, or name it with a search.")
+        sel = st.get("selection") or {}
+        refs = [r for r in (sel.get("refs") or []) if _ss.split_mail_ref(r)]
+        if not refs:
+            return "NOT DONE: nothing is ticked on their screen."
+        thread_ids = ["%s:%s" % _ss.split_mail_ref(r) for r in refs]
+        query = ""
+        extra = {"refs": refs, "selection_id": sel.get("id") or "", "stage_rev": st.get("rev") or 0}
+    return _organize_call(_ia.propose_email, inp.get("action") or "", query=query,
+                          thread_ids=thread_ids, account=inp.get("account") or "",
                           label=inp.get("label") or "", why=inp.get("why") or "",
-                          replaces=inp.get("replaces") or "", room_mode=_voice_room())
+                          replaces=inp.get("replaces") or "", room_mode=_voice_room(), **extra)
+
+
+# -- See & Touch: what is on the owner's screen (services/screen_stage) --------
+
+#: How long a page gets to answer a `stage?` request.
+STAGE_ASK_S = 3.0
+#: How long a tick command may take to be confirmed by the page.
+SELECT_ACK_S = 6.0
+
+
+def _fresh_screen_stage(workspace=None):
+    """The stage a page reported within screen_stage.FRESH_S, else one it is asked for now
+    (the ack carries it). None when no page answers: nothing then acts on a guess."""
+    from agent_friday.services import desktop_bus, screen_stage
+    st = desktop_bus.stage(workspace, max_age=screen_stage.FRESH_S)
+    if st is not None:
+        return st
+    got = desktop_bus.send([{"type": "stage_request", "workspace": workspace or ""}], timeout=STAGE_ASK_S)
+    if not (got.get("delivered") and got.get("acked")):
+        return None
+    return desktop_bus.stage(workspace, max_age=screen_stage.FRESH_S)
+
+
+def _screen_look() -> str:
+    """check_situation(look="screen"): the stage in words. Cloud voice and a room hear counts
+    and categories only; chat and local voice also get the rows, wrapped as data."""
+    from agent_friday.services import desktop_bus, screen_stage
+    st = _fresh_screen_stage(None)
+    if st is None:
+        st = desktop_bus.stage(None)
+    if st is None:
+        return "I can't see your screen right now: no Friday page has shown me a list."
+    quiet = _cloud_voice() or _voice_room()
+    text = screen_stage.summary(st, quiet=quiet)
+    if not quiet:
+        text += screen_stage.on_screen_block(st)
+    screen_stage.log_counts("look", st.get("workspace") or "", len(st.get("items") or []))
+    return text
+
+
+def _mail_select_all(match: dict):
+    """(refs, reveal, capped, error) for a whole-inbox selection: a Gmail search the owner's
+    words made, or a kind of mail the facet table knows, judged on the cards the list itself
+    is built from. Never a model reading titles."""
+    from agent_friday.services import item_actions as _ia
+    from agent_friday.services import message_triage, screen_stage as _ss
+    q = str(match.get("query") or "").strip()
+    if q:
+        try:
+            sel = _ia.select_email(query=q)
+        except _ia.Refused as e:
+            return [], None, False, str(e.user_message)
+        refs = [_ss.mail_ref(a, t) for a, tids in sel["accounts"].items() for t in tids]
+        return refs[:_ss.MAX_REFS], {"query": q}, bool(sel.get("truncated")) or len(refs) > _ss.MAX_REFS, ""
+    cat = match.get("category")
+    if cat and not _ss.category_known("messages", cat):
+        return [], None, False, ("I don't have %r as a kind of mail. Give a Gmail search in match.query "
+                                 "(from:, subject:, older_than:...) instead." % str(cat)[:40])
+    result = message_triage.collect(limit_per_account=100)
+    cards = [c for c in (result.get("messages") or [])
+             if not (c.get("archived") or c.get("trashed") or c.get("spam") or c.get("muted"))]
+    items = [{"ref": _ss.card_ref(c), "n": i + 1, "facets": _ss.card_facets(c)} for i, c in enumerate(cards)]
+    res = _ss.resolve({"workspace": "messages", "items": items}, match)
+    reveal = {"lane": str(match["lane"]).lower()} if match.get("lane") else None
+    capped = len(res["refs"]) >= _ss.MAX_REFS
+    return res["refs"], reveal, capped, ""
+
+
+def _tool_screen_select(inp):
+    """Tool handler: tick, untick or clear conversations on the owner's screen. Shows only:
+    no mail changes and no card. The result reports what the page confirmed, never the intent."""
+    import uuid as _uuid
+    from agent_friday.services import desktop_bus, screen_stage as _ss
+    inp = inp or {}
+    ws = str(inp.get("workspace") or "messages").strip().lower()
+    op = str(inp.get("op") or "select").strip().lower()
+    scope = str(inp.get("scope") or "screen").strip().lower()
+    match = dict(inp.get("match")) if isinstance(inp.get("match"), dict) else {}
+    for k in ("category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic"):
+        # the voice declaration is flat: the same keys at the top level
+        if inp.get(k) not in (None, "", []) and k not in match:
+            match[k] = inp[k]
+    if ws != "messages":
+        return "SELECT_FAIL: only the Message Center can show ticks so far."
+    if op not in ("select", "add", "remove", "clear") or scope not in ("screen", "all"):
+        return "SELECT_FAIL: op is select, add, remove or clear; scope is screen or all."
+    quiet = _cloud_voice() or _voice_room()
+    word = str(match.get("category") or "").strip()
+    name = (word if word and _ss.category_known(ws, word) else "conversations") if quiet else (
+        str(inp.get("label") or word or "Selected").strip()[:40])
+
+    if op == "clear":
+        sent = desktop_bus.send([{"type": "clear_selection", "workspace": ws}], timeout=SELECT_ACK_S)
+        res = (sent.get("ack") or {}).get("result") or {}
+        _ss.log_counts("clear", ws, 0)
+        if sent.get("delivered") and sent.get("acked") and res.get("ok"):
+            return "SELECT_OK: the ticks are cleared."
+        return "SELECT_FAIL: %s" % (sent.get("reason") or "the page did not confirm it")
+
+    st = _fresh_screen_stage(ws)
+    if st is None:
+        try:
+            from agent_friday.services.desktop_targets import open_on_desktop
+            open_on_desktop("workspace", workspace=ws, name_items=False)
+        except Exception:
+            pass
+        st = _fresh_screen_stage(ws)
+    if st is None and scope == "screen":
+        return "SELECT_FAIL: I can't see your list right now."
+
+    reveal = None
+    rule = "facets"
+    capped = False
+    if scope == "all":
+        refs, reveal, capped, err = _mail_select_all(match)
+        if err:
+            return "SELECT_FAIL: " + err
+    elif match.get("deictic"):
+        d = _ss.resolve_deictic(st, str(match["deictic"]), None)
+        if d["ask"]:
+            return "SELECT_ASK: " + d["ask"]
+        refs, rule = d["refs"], d["rule"]
+    else:
+        r = _ss.resolve(st, match)
+        if r["unknown"]:
+            return ("SELECT_FAIL: I don't have %r as a kind of mail. Use scope=all with a Gmail "
+                    "search in match.query." % r["unknown"][0])
+        refs, rule = r["refs"], r["rule"]
+    if not refs:
+        return "SELECT_FAIL: nothing on that list matches."
+    requested = len(refs)
+    sel_id = "sel_" + _uuid.uuid4().hex[:6]
+    sent = desktop_bus.send([{"type": "select", "workspace": ws, "reveal": reveal,
+                              "selection": {"id": sel_id, "refs": refs, "label": name[:40],
+                                            "mode": "replace" if op == "select" else op}}],
+                            timeout=SELECT_ACK_S)
+    if not sent.get("delivered"):
+        return "SELECT_FAIL: %s." % sent.get("reason")
+    res = (sent.get("ack") or {}).get("result") or {}
+    if not sent.get("acked") or not res.get("ok"):
+        return "SELECT_FAIL: the page did not confirm the ticks, so I can't say anything is selected."
+    applied, missing = int(res.get("applied") or 0), int(res.get("missing") or 0)
+    accepted = int(res.get("accepted", applied + missing))
+    total = int(res.get("count", applied + missing))
+    _ss.log_counts(op, ws, total, rule)
+    shown = "%d shown%s" % (applied, (", %d more below the list" % missing) if missing else "")
+    partial = accepted < requested or capped
+    verb = {"select": "selected", "add": "added", "remove": "unticked"}[op]
+    if quiet:
+        text = "I've %s %d %s; %d on screen." % ("ticked" if op != "remove" else "unticked", accepted, name, applied)
+        if capped:
+            text += " That is the most I can hold at once (%d)." % _ss.MAX_REFS
+        return ("SELECT_PARTIAL " if partial else "SELECT_OK ") + text
+    text = "%d %s (%s) - %s" % (total if op != "remove" else accepted, verb, shown, name)
+    if capped:
+        text += ". The most I can hold at once is %d; narrow it to cover the rest." % _ss.MAX_REFS
+    elif accepted < requested:
+        text += ". %d could not be shown by the page." % (requested - accepted)
+    return ("SELECT_PARTIAL " if partial else "SELECT_OK ") + text
 
 
 def _tool_organize_files(inp):
@@ -6425,6 +6618,7 @@ CLAUDE_TOOL_HANDLERS = {
     "show_my_day": _tool_show_my_day,
     "set_chat_tray": _tool_set_chat_tray,
     "organize_email": _tool_organize_email,
+    "screen_select": _tool_screen_select,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
     "undo_action": _tool_undo_action,
@@ -6841,6 +7035,8 @@ TOOL_RINGS: dict[str, int] = {
     "organize_files":       1,
     "organize_wiki":        1,
     "organize_email":       2,
+    # Ticks rows on the owner's own screen and changes nothing else (services/screen_stage).
+    "screen_select":        1,
     "undo_action":          2,
     "answer_card":          2,
     # Ring 1 — WRITE (local state mutation, always allowed)

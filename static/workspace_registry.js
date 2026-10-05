@@ -33,7 +33,7 @@ window.FRIDAY_WORKSPACE_REGISTRY = /*BEGIN JSON*/{
     {"id": "news", "boundary": {"kind": "native", "components": ["NewsWS"]}, "label": "News", "group": "life", "core": true, "icon": "news", "glyph": "📰", "accent": "cyan",
      "blurb": "Your front page, feed and briefings, every source trust-scored.",
      "aliases": ["headlines", "feed", "newsfeed", "front page", "frontpage", "top stories", "breaking news", "newspaper", "the news"]},
-    {"id": "messages", "boundary": {"kind": "native", "components": ["MessagesWS"], "scripts": ["static/friday_mail.js"]}, "label": "Messages", "group": "life", "core": true, "icon": "messages", "glyph": "💬", "accent": "cyan",
+    {"id": "messages", "boundary": {"kind": "native", "components": ["MessagesWS"], "scripts": ["static/friday_stage.js", "static/friday_mail.js"]}, "label": "Messages", "group": "life", "core": true, "icon": "messages", "glyph": "💬", "accent": "cyan",
      "blurb": "All your mail in one inbox, sorted by what needs you.",
      "aliases": ["mail", "email", "emails", "gmail", "inbox", "dms", "chats", "texts", "messaging"]},
     {"id": "calendar", "boundary": {"kind": "native", "components": ["CalendarWS"]}, "label": "Calendar", "group": "life", "core": true, "icon": "calendar", "glyph": "📅", "accent": "cyan",

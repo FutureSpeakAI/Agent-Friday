@@ -3729,6 +3729,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_files3d.js"></script>
     <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
     <script src="/static/friday3d_records.js"></script>
+    <!-- See & Touch: the shared selection and stage layer (defines window.fridayStage); Messages needs it. -->
+    <script src="/static/friday_stage.js"></script>
     <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
     <script src="/static/friday_mail.js"></script>
     <!-- The chart renderer the panel and published chart pages share (defines window.FridayChart). -->
@@ -64037,7 +64039,12 @@ function App() {
         },
         focused_window: focused,
         chat: { open: kind === 'chat' || !!d.chatOpen, conversation: d.convId || null, windows: (d.convWins || []).length },
-        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined
+        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined,
+        // What the workspace in front shows (rows, ticks, filters), for the server's memory only: null
+        // when it has no stage, which clears the last one (static/friday_stage.js).
+        stage: (() => {
+          try { return f && window.fridayStage ? window.fridayStage.snapshot(fridayWorkspaceId(f)) : null; } catch (e) { return null; }
+        })()
       };
     };
     const post = (url, body, extra) => apiFetch(url, Object.assign({
@@ -64093,6 +64100,13 @@ function App() {
         }).catch(() => {});
         soon(400);
       };
+      // See & Touch: tick, clear, hold and "what do you show" are the workspace's own to answer, and
+      // some wait for a list to load, so they answer when the page has actually done them.
+      const stageAct = acts.find(a => a && window.fridayStage && window.fridayStage.handles(a.type));
+      if (stageAct) {
+        window.fridayStage.run(stageAct).then(r => answer(Object.assign({ opened: true, matched: null, result: r.result }, r.stage ? { stage: r.stage } : {})));
+        return;
+      }
       try {
         fridayRunActions(acts);
       } catch (e) {

@@ -154,6 +154,7 @@
   const pinch = Core.pinchMachine({ onset: 0.5, release: 0.5, dragSlopPx: 36, holdMs: 700 }); // a pinch moves the tracked midpoint up to ~30 px; past 36 px it is a drag // the engine's hysteresis is authoritative; strength is 0 or 1
   const dwell = Core.dwellMachine({ dwellMs: 700 });
   const zoom = Core.zoomTracker();
+  let pinchT0 = 0, pinchRow = false;
   let locked = null, lastPoint = { x: -100, y: -100 }, trackingOn = false, secondHand = null, lastZoomEmit = 0;
   const cfg = () => (window.FridayTracking && window.FridayTracking.cfg) || {};
 
@@ -192,16 +193,30 @@
       return;
     }
     const ev = pinch.update(h.pinching ? 1 : 0, raw, now, !!(locked && locked.guarded));
-    if (!ev) { setState(pinch.pinched ? 'pinched' : (locked ? 'locked' : 'free'), now); if (!pinch.pinched) setArc(0); return; }
+    if (!ev) {
+      setState(pinch.pinched ? 'pinched' : (locked ? 'locked' : 'free'), now);
+      if (!pinch.pinched) setArc(0);
+      // a tick row: once the pinch has outlasted a quick tap, the arc fills toward "open"
+      else if (pinchRow && now - pinchT0 > 250) setArc(Math.min(1, (now - pinchT0) / 700));
+      return;
+    }
     switch (ev.type) {
-      case 'pinchStart': setState('pinched', now); break;
+      case 'pinchStart': setState('pinched', now); pinchT0 = now; pinchRow = !!(locked && locked.el && locked.el.closest && locked.el.closest('[data-fr-pinch="tick"]')); break;
       case 'holdProgress': setArc(ev.progress); break;
       case 'hold': setArc(1); setState('held', now); break;
       case 'drag': dragFrom(locked, ev.point, ev.delta); break;
-      case 'click': setArc(0); clickTarget(locked || targetAt(ev.point), ev.point, now); setState('free', now); break;
+      case 'click': setArc(0); pinchClick(locked || targetAt(ev.point), ev, now); setState('free', now); break;
       case 'cancel': setArc(0); setState('free', now); if (typeof window.fridayToast === 'function') window.fridayToast('Hold the pinch to ' + actionWord(locked) + '.'); break;
       case 'pinchEnd': endDrag(); setArc(0); setState('free', now); break;
     }
+  }
+  // A list row that opts in (data-fr-pinch="tick") is ticked by a quick pinch and opened by a held one.
+  function pinchClick(t, ev, now) {
+    const row = t && t.el && t.el.closest ? t.el.closest('[data-fr-pinch="tick"]') : null;
+    if (!row || (t.el.matches && t.el.matches('input,button,a,select,textarea'))) { clickTarget(t, ev.point, now); return; }
+    if (Core.pinchIntent(ev.durationMs, 700) === 'open') { clickTarget({ el: row, rect: row.getBoundingClientRect() }, ev.point, now); return; }
+    const box = row.querySelector('[data-fr-tick]');
+    if (box) clickTarget({ el: box, rect: box.getBoundingClientRect() }, Core.center(box.getBoundingClientRect()), now);
   }
   function actionWord(t) { const s = t && t.el ? (t.el.getAttribute('aria-label') || t.el.textContent || '').trim().toLowerCase().slice(0, 24) : ''; return s || 'do that'; }
   function targetAt(p) { const el = document.elementFromPoint(p.x, p.y); const t = el && targets(performance.now()).find(t => t.el === el || (t.el && t.el.contains(el))); return t || (el ? { el, rect: el.getBoundingClientRect(), guarded: isGuarded(el) } : null); }

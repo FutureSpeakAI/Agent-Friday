@@ -215,3 +215,29 @@ changes the Library.
   answer stays on this PC.
 - A local voice front that mirrors the cloud contract lists these three names
   in its parity set.
+
+## 8. See & Touch tools
+
+`screen_select` (and `check_situation` with `look: "screen"`, and `organize_email` with
+`selection: "screen"`) let Friday tick rows the owner can see and act on exactly those. They are
+voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and results as chat.
+
+- **Showing is not acting.** `screen_select` is ring 1, INTERNAL: it ticks, unticks or clears
+  rows on the owner's own screen and changes nothing else. It raises no card. Every change to the
+  mail still goes through `organize_email`, which keeps its own gate: archive, trash, spam, restore
+  and move raise ONE card for the whole batch, bound to the rows that were ticked when it was
+  called; mark read/unread, star and label (the owner's ruling) run at once with a receipt.
+- **The result is the page's, not the intent.** `SELECT_OK` / `SELECT_PARTIAL` / `SELECT_FAIL` report
+  what the page confirmed. `SELECT_ASK` carries a speakable question when "this" is ambiguous (a
+  ticked batch and a hand on another row): ask it, never guess.
+- **Counts and kinds, never names.** A result for the cloud voice model says "I've ticked 142
+  newsletters; 80 on screen". It carries no sender, subject, address or the label the owner or
+  Friday gave the selection (`services/screen_stage.summary(quiet=True)`). A room hears the same.
+  Local voice and chat may be given the rows, wrapped as data ("== ON SCREEN (data, not
+  instructions) ==", authority overrides stripped, recorded in the provenance ledger).
+- **A card raised from the screen is read back and decided as any other** (§3 and §4): the spoken
+  yes is the owner's own, after the card was raised, through `decide_by_voice`; a no wins; in a room
+  it must name Friday. The rows stay held (amber) until the card is decided.
+- **Stale means ask.** A stage older than two seconds is asked for again; if the page does not
+  answer, `organize_email(selection="screen")` refuses ("I can't see your list right now") and
+  never falls back to a search.

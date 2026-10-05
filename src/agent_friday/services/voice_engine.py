@@ -442,7 +442,26 @@ _VOICE_LIVE_TOOLS = [
      "did today cost'). Keep `detail` at brief for speech and read back only what they "
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
+      "look": ("string", "screen: what their open workspace shows now, as counts."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
+    ("screen_select",
+     "Tick, untick or clear conversations in their open Message Center so they see "
+     "the checks appear. Shows only: no mail changes, no approval. scope screen picks "
+     "among the rows shown; scope all searches the whole inbox. SELECT_OK or "
+     "SELECT_PARTIAL: say the count and kind in one sentence, never a sender or a "
+     "subject. SELECT_ASK: ask that question. SELECT_FAIL: say why. To act on the "
+     "ticks, call organize_email with selection screen.",
+     {"op": ("string", "select, add, remove or clear."),
+      "scope": ("string", "screen or all."),
+      "category": ("string", "newsletters, promotions, social, updates, unread, starred, waiting..."),
+      "lane": ("string", "A lane: career, finance, family, subscriptions, noise."),
+      "unread": ("boolean", "Only unread."),
+      "from": ("string", "A sender's domain, e.g. linkedin."),
+      "older_than": ("number", "Older than this many days."),
+      "query": ("string", "A Gmail search, when no kind fits."),
+      "deictic": ("string", "this or these: the ticked rows, the one the hand is on, the open one."),
+      "label": ("string", "Short name for the selection chip.")},
+     ["op"]),
     ("set_chat_tray",
      "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or "
      "the right in a third, a half or two thirds of the screen ('put chat on the right "
@@ -480,8 +499,10 @@ _VOICE_LIVE_TOOLS = [
     # account, file or page Friday found (voice-tool-contract.md §5).
     ("organize_email",
      "Archive, label, move, star, mark read or unread, Trash, restore or report "
-     "spam on the user's Gmail: all the mail a Gmail search finds (from:, "
-     "subject:, older_than:1y, is:unread, label:). Nothing changes yet: it raises "
+     "spam on the user's Gmail: the conversations ticked on their screen "
+     "(selection screen) or all the mail a Gmail search finds (from:, "
+     "subject:, older_than:1y, is:unread, label:). Mark read or unread, star "
+     "and label happen at once. Anything else changes nothing yet: it raises "
      "ONE approval card for the whole batch and returns one sentence to read "
      "back. Say it, then the three ways out: yes, no, or change it (a narrower "
      "search: call again with replaces set to the card_id). The conversations "
@@ -494,6 +515,7 @@ _VOICE_LIVE_TOOLS = [
                            "label, unlabel, move, trash, restore, spam, not_spam."),
       "query": ("string", "The Gmail search, e.g. from:linkedin.com older_than:1m."),
       "thread_ids": ("array", "Conversation ids from search_email, instead of a query."),
+      "selection": ("string", "screen: exactly what is ticked on their screen now."),
       "label": ("string", "For label, unlabel and move."),
       "account": ("string", "Only this account."),
       "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
@@ -1650,7 +1672,7 @@ def _voice_tool_run(name, args, send_client, session=None):
             finally:
                 _ag._CURRENT_CONVERSATION.reset(_tok)
         if name in ("organize_email", "organize_files", "organize_wiki",
-                    "undo_action", "answer_card"):
+                    "undo_action", "answer_card", "screen_select"):
             # An approved batch runs in the background and reports to the
             # conversation that asked, which this call's session names.
             from agent_friday.services import agent as _ag

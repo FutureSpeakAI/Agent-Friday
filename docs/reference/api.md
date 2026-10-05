@@ -33,7 +33,6 @@ Main chat endpoint. Sends a message through the full intelligence pipeline (cont
 {
   "message": "What's on my calendar today?",
   "workspace": "garden:project-name",
-  "workspaceContext": null,
   "includeVision": false,
   "voice_mode": false,
   "cite_sources": false,

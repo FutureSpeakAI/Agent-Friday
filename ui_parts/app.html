@@ -23000,7 +23000,12 @@ function App(){
         },
         focused_window: focused,
         chat: { open: kind === 'chat' || !!d.chatOpen },
-        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined
+        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined,
+        // What the workspace in front shows (rows, ticks, filters), for the server's memory only: null
+        // when it has no stage, which clears the last one (static/friday_stage.js).
+        stage: (() => {
+          try { return f && window.fridayStage ? window.fridayStage.snapshot(fridayWorkspaceId(f)) : null; } catch (e) { return null; }
+        })()
       };
     };
     const post = (url, body, extra) => apiFetch(url, Object.assign({
@@ -23056,6 +23061,13 @@ function App(){
         }).catch(() => {});
         soon(400);
       };
+      // See & Touch: tick, clear, hold and "what do you show" are the workspace's own to answer, and
+      // some wait for a list to load, so they answer when the page has actually done them.
+      const stageAct = acts.find(a => a && window.fridayStage && window.fridayStage.handles(a.type));
+      if (stageAct) {
+        window.fridayStage.run(stageAct).then(r => answer(Object.assign({ opened: true, matched: null, result: r.result }, r.stage ? { stage: r.stage } : {})));
+        return;
+      }
       try {
         fridayRunActions(acts);
       } catch (e) {

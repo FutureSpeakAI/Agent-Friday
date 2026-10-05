@@ -188,6 +188,17 @@ confirmation that names the thing.
   ground. Focus is the ring.
 - Keys: ↑ ↓ or j k move, Enter opens, Esc backs out, Space previews where a preview exists,
   x selects, Shift-click ranges. The same keys in every list.
+- **Friday's selection.** When Friday ticks rows (See & Touch), they are the same ticks: the same
+  checkbox, the same ground and left edge. There is no second visual language. The chip in the
+  list head says who selected, in words (`✓ Newsletters · 142 · Friday selected`, with "(edited)"
+  once you change it) and carries a × to clear it; it is announced politely to screen readers.
+  Rows held for a card that waits for your OK take a 2px `--fr-warn` left edge, the colour's own
+  meaning ("needs you"), with a "Waiting for your OK" tag on the chip and no pulsing. Declined, the
+  edge returns to cyan and the ticks stay; approved, the rows leave with `--fr-reveal` and an Undo.
+  Friday's sweep fades the ticks in top to bottom, opacity and scale only, ending inside 350 ms
+  however long the list; reduced motion is a 120 ms fade, never nothing.
+- **A pinch on a row** (hand cursor) ticks it; a pinch held for 700 ms opens it. A row opts in with
+  `data-fr-pinch="tick"` and names its checkbox `data-fr-tick`.
 - A row's actions appear on hover and focus at the right, and in the row's context menu.
 - Counts are right-aligned in `--fr-font-mono` so columns of numbers line up.
 
