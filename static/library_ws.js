@@ -112,7 +112,7 @@
 .lb-insp dt{color:var(--fr-dim)}
 .lb-insp dd{margin:0;color:var(--fr-text)}
 .lb-danger{color:var(--fr-error);border-color:rgba(239,68,68,.5)}
-.lb-pop{position:absolute;z-index:20;background:var(--fr-surface);border:1px solid var(--fr-glass-edge);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:300px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.lb-pop{position:absolute;z-index:20;background:var(--fr-surface);border:1px solid var(--fr-glass-edge);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:min(300px,calc(100vw - 16px));max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;box-sizing:border-box;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 .lb-pop input{font:inherit;color:var(--fr-text);background:rgba(0,0,0,.35);border:1px solid var(--fr-glass-edge);border-radius:8px;padding:7px 10px}
 .lb-stage{position:relative;flex:1 1 auto;min-height:340px;display:flex;flex-direction:column}
 .lb-twin{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -141,6 +141,23 @@
     return h('div', { className: 'lb-twin' + (shown ? ' shown' : ''), role: 'tree', 'aria-label': label || 'Your Library as a list' }, h('ul', null, render('')));
   }
 
+  // A popup opens under its button and stays inside the window at any size: it
+  // is never wider or taller than the viewport, and it moves left or up (never
+  // past the left or top edge) when its natural place would run off an edge.
+  const POP_MARGIN = 8;
+  function fitInView(el) {
+    if (!el) return;
+    el.style.transform = '';
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = document.documentElement.clientHeight || window.innerHeight;
+    const r = el.getBoundingClientRect();
+    let dx = 0, dy = 0;
+    if (r.right > vw - POP_MARGIN) dx = vw - POP_MARGIN - r.right;
+    if (r.left + dx < POP_MARGIN) dx = POP_MARGIN - r.left;
+    if (r.bottom > vh - POP_MARGIN) dy = vh - POP_MARGIN - r.bottom;
+    if (r.top + dy < POP_MARGIN) dy = POP_MARGIN - r.top;
+    if (dx || dy) el.style.transform = 'translate(' + Math.round(dx) + 'px,' + Math.round(dy) + 'px)';
+  }
   function Pop({ children, onClose, label }) {
     const ref = useRef(null);
     useEffect(() => {
@@ -148,6 +165,14 @@
       document.addEventListener('keydown', k, true);
       return () => document.removeEventListener('keydown', k, true);
     }, [onClose]);
+    React.useLayoutEffect(() => {
+      const fit = () => fitInView(ref.current);
+      fit();
+      window.addEventListener('resize', fit);
+      const ro = window.ResizeObserver ? new ResizeObserver(fit) : null;
+      if (ro && ref.current) ro.observe(ref.current);
+      return () => { window.removeEventListener('resize', fit); if (ro) ro.disconnect(); };
+    }, []);
     return h('div', { className: 'lb-pop', role: 'dialog', 'aria-label': label, ref }, children);
   }
 
