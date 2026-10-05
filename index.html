@@ -16650,7 +16650,7 @@ function PodcastPlayer() {
     const a = audio.current;
     if (!playing || !a) return;
     const hostsNow = (epRef.current && epRef.current.hosts) || {};
-    const herName = typeof fridayName === 'function' ? fridayName() : 'Friday';
+    const herName = fridayName();
     const isHer = (s) => s === 'a' || ((hostsNow[s] || {}).name || '') === herName;
     let tap = speakTap.current;
     if (!tap || tap.el !== a) {
