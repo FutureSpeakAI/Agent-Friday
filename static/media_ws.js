@@ -364,7 +364,7 @@
     const d = c.details || {};
     const made = d.model ? d.model : (c.maker || '').replace(' · this PC', '');
     return h('button', {
-      className: 'md-card' + (multi ? ' multi' : ''), role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id,
+      className: 'md-card' + (multi ? ' multi' : ''), role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id, 'data-fr-ref': 'media:' + c.id,
       onClick: e => { if ((e.ctrlKey || e.metaKey || e.shiftKey) && onMulti) { e.preventDefault(); onMulti(c, e.shiftKey); return; } onSelect && onSelect(c); }, onDoubleClick: () => onOpen && onOpen(c),
       onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); onOpen && onOpen(c); } if (e.key === 'x' && onMulti) { e.preventDefault(); onMulti(c, false); } }
     },
@@ -605,6 +605,41 @@
       return () => window.removeEventListener('keydown', onKey);
     }, [cards, sel, selCard, onOpen, onAction, setSel, ql]);
     const counts = state.counts || {};
+    // ── See & Touch: what this list shows Friday, and what she may point at or filter ──
+    const FS = window.fridayStage;
+    const fridayFilters = useRef({});            // key -> the value Friday set; a different value is the owner's
+    const rootRef = useRef(null);
+    const byOf = (key, val) => (fridayFilters.current[key] !== undefined && String(fridayFilters.current[key]) === String(val || '')) ? 'friday' : 'owner';
+    const currentFilters = () => {
+      const f = [];
+      if (filters.status) f.push({ key: 'status', value: filters.status, label: 'Status: ' + filters.status, by: byOf('status', filters.status) });
+      if (filters.kind) f.push({ key: 'kind', value: filters.kind, label: 'Type: ' + filters.kind, by: byOf('kind', filters.kind) });
+      if (filters.project) f.push({ key: 'project', value: filters.project, label: 'Project: ' + filters.project, by: byOf('project', filters.project) });
+      if (filters.q) f.push({ key: 'q', value: filters.q, label: 'Search: ' + filters.q, by: byOf('q', filters.q) });
+      return f;
+    };
+    const setFilter = (key, value) => {
+      if (['status', 'kind', 'project', 'q'].indexOf(key) < 0) return false;
+      fridayFilters.current[key] = value;
+      setFilters(f => Object.assign({}, f, { view: 'all' }, { [key]: value }));
+      return true;
+    };
+    const removeFilter = key => {
+      if (['status', 'kind', 'project', 'q'].indexOf(key) < 0) return false;
+      delete fridayFilters.current[key];
+      setFilters(f => Object.assign({}, f, { [key]: key === 'q' ? '' : null }));
+      return true;
+    };
+    const adapterCfg = useRef(null);
+    adapterCfg.current = {
+      root: () => rootRef.current, filters: currentFilters, setFilter, removeFilter, loaded: () => cards.length,
+      items: () => cards.slice(0, 120).map((c, i) => ({ ref: 'media:' + c.id, n: i + 1,
+        facets: { kind: c.kind || '', status: c.status || '', project: c.project || '', privacy: c.privacy || '', origin: c.origin || '' },
+        title: c.title || '', who: c.maker || '' })),
+      open: () => (sel ? 'media:' + sel : null)
+    };
+    useEffect(() => FS ? FS.register('media', FS.makeAdapter('media', () => adapterCfg.current)) : undefined, []);
+    useEffect(() => { if (FS) FS.touch(); }, [cards, filters, sel]);
     const railBtn = (key, label, n, patch) => h('button', { key, 'aria-current': current === key ? 'true' : undefined, onClick: () => pick(patch) }, label, n != null ? h('span', { className: 'n' }, n) : null);
     return h('div', { className: 'md-lib' },
       h('aside', { className: 'md-rail', 'aria-label': 'Library' },
@@ -634,7 +669,8 @@
           h('button', { 'aria-current': panel === 'tidy' ? 'true' : undefined, onClick: () => setPanel(panel === 'tidy' ? null : 'tidy'), title: 'Near-duplicate renders and stale drafts, offered as one card' }, 'Tidy up\u2026'),
           h('button', { 'aria-current': panel === 'trash' ? 'true' : undefined, onClick: () => setPanel(panel === 'trash' ? null : 'trash'), title: 'What was removed; everything here can be restored' }, 'Trash')),
         h('div', { className: 'md-rail-note' }, 'Not here: the News editions and their shows (in News); your wiki (in Knowledge). Search finds them and links across.')),
-      h('section', { className: 'md-main', 'aria-label': 'Cards' },
+      h('section', { className: 'md-main', 'aria-label': 'Cards', ref: rootRef },
+        FS ? FS.chipsRow(h, currentFilters(), key => { removeFilter(key); FS.touch(); }, (window.fridayName ? window.fridayName() : 'Friday')) : null,
         h('div', { className: 'md-toolbar' },
           h('input', { ref: searchRef, type: 'search', placeholder: 'Search titles, text, sources, transcripts…  /', 'aria-label': 'Search', value: filters.q || '', onChange: e => setFilters(Object.assign({}, filters, { q: e.target.value })) }),
           h('span', { className: 'md-spacer' }),

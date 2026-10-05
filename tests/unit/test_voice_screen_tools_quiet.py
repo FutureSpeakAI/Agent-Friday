@@ -44,7 +44,7 @@ def test_the_contract_declares_the_new_tool_and_parameters_once():
     assert ve._voice_tool_names().count("screen_select") == 1 and "screen_select" not in ve._VOICE_SHARED_TOOLS
     assert _spec("screen_select")[3] == ["op"]
     assert "selection" in _spec("organize_email")[2] and "look" in _spec("check_situation")[2]
-    assert "SELECT_OK" in _spec("screen_select")[1] and "never a sender" in _spec("screen_select")[1]
+    assert "SELECT_OK" in _spec("screen_select")[1] and "never a name" in _spec("screen_select")[1]
 
 
 def test_the_curated_contract_still_fits_its_token_ceiling():

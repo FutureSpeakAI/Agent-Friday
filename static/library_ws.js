@@ -342,6 +342,34 @@
     const docs = useMemo(() => (nodes || []).filter(n => n.kind === 'document'), [nodes]);
     const folders = useMemo(() => (nodes || []).filter(n => n.kind === 'folder'), [nodes]);
     const shown = useMemo(() => (folder ? docs.filter(d => d.parent === folder) : docs), [docs, folder]);
+
+    // ── See & Touch: the documents on screen. A vault document is never reported: its title is private. ──
+    const FS = window.fridayStage;
+    const fridayFolder = useRef(null);
+    const docsRoot = useRef(null);
+    const folderTitle = id => { const f = folders.find(x => x.id === id); return f ? f.title : ''; };
+    const currentFilters = () => {
+      if (!folder) return [];
+      const t = folderTitle(folder);
+      return [{ key: 'folder', value: t, label: 'Folder: ' + t, by: fridayFolder.current === folder ? 'friday' : 'owner' }];
+    };
+    const adapterCfg = useRef(null);
+    adapterCfg.current = {
+      root: () => docsRoot.current, filters: currentFilters, loaded: () => shown.length,
+      items: () => shown.filter(d => d.shelf !== 'vault').slice(0, 120).map((d, i) => ({ ref: 'lib:' + d.id, n: i + 1,
+        facets: { folder: folderTitle(d.parent), kind: KIND_WORD[d.ext] || d.ext || '', tracked: !!d.tracked },
+        title: d.title || '', who: '' })),
+      setFilter: (key, value) => {
+        if (key !== 'folder') return false;
+        const f = folders.find(x => String(x.title).toLowerCase() === String(value).toLowerCase());
+        if (!f) return false;
+        fridayFolder.current = f.id; setFolder(f.id); setView('docs'); setStage('list');
+        return true;
+      },
+      removeFilter: key => { if (key !== 'folder') return false; fridayFolder.current = null; setFolder(null); return true; }
+    };
+    useEffect(() => FS ? FS.register('library', FS.makeAdapter('library', () => adapterCfg.current)) : undefined, []);
+    useEffect(() => { if (FS) FS.touch(); }, [shown, folder, view]);
     const counts = (status && status.counts) || { indexed: 0, queued: 0, failed: 0, total: 0 };
     const empty = status && status.empty;
     const line = !status ? 'Loading…'
@@ -414,10 +442,11 @@
       run && run.evidence && run.evidence.length > 0 && h('div', { role: 'list', 'aria-label': 'Passages found', style: { display: 'flex', flexDirection: 'column', gap: 8 } },
         run.evidence.map((ev, i) => h(Evidence, { key: ev.label, ev, current: i === cursor, onOpen: openEvidence, on3D: show3D }))));
 
-    const docsView = h('div', { className: 'lb-main' },
+    const docsView = h('div', { className: 'lb-main', ref: docsRoot },
+      FS ? FS.chipsRow(h, currentFilters(), () => { fridayFolder.current = null; setFolder(null); FS.touch(); }, (window.fridayName ? window.fridayName() : 'Friday')) : null,
       empty ? emptyState : h('table', { className: 'lb-table' },
         h('thead', null, h('tr', null, ['Document', 'Kind', 'Pages', 'Shelf'].map(c => h('th', { key: c, scope: 'col' }, c)))),
-        h('tbody', null, shown.map(d => h('tr', { key: d.id, 'aria-selected': sel && sel.id === d.id ? 'true' : 'false', tabIndex: 0,
+        h('tbody', null, shown.map(d => h('tr', { key: d.id, 'data-fr-ref': d.shelf === 'vault' ? undefined : 'lib:' + d.id, 'aria-selected': sel && sel.id === d.id ? 'true' : 'false', tabIndex: 0,
           onClick: () => setSel(d), onDoubleClick: () => { setReader({ doc: Number(d.id.slice(2)) }); setView('reader'); },
           onKeyDown: e => { if (e.key === 'Enter') { setReader({ doc: Number(d.id.slice(2)) }); setView('reader'); } else if (e.key === ' ') { e.preventDefault(); setSel(d); } } },
           h('td', null, d.title), h('td', null, KIND_WORD[d.ext] || d.ext), h('td', { className: 'lb-num' }, d.pages || '–'),

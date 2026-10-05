@@ -44,7 +44,26 @@ BLOCK_ITEMS = 30
 STAGE_FACETS: dict[str, frozenset[str]] = {
     "messages": frozenset({"lane", "category", "unread", "bulk", "from_domain", "age_h",
                            "awaiting", "starred"}),
+    "news": frozenset({"category", "source", "age_h", "saved"}),
+    "media": frozenset({"kind", "status", "project", "privacy", "origin"}),
+    "library": frozenset({"folder", "kind", "tracked"}),
 }
+
+#: The most rows Friday outlines with a numbered badge at once; the rest are counted ("and N more").
+POINT_CAP = 12
+
+#: The filters Friday may set as removable chips, per workspace, and the values the page accepts
+#: where they are a closed set (None: free text the workspace's own filter takes).
+FILTER_KEYS: dict[str, dict[str, frozenset | None]] = {
+    "messages": {"lane": frozenset({"all", "career", "finance", "futurespeak", "family", "subscriptions", "noise"}),
+                 "unread": frozenset({"1", "0"}), "q": None, "folder": None, "account": None},
+    "news": {"category": None, "sort": frozenset({"relevance", "time", "source"})},
+    "media": {"status": frozenset({"idea", "draft", "review", "scheduled", "published"}),
+              "kind": None, "project": None, "q": None},
+    "library": {"folder": None},
+}
+#: What each workspace calls one of its rows, for what a cloud voice may hear.
+NOUNS = {"messages": "conversations", "news": "stories", "media": "cards", "library": "documents"}
 
 _REF = re.compile(r"^[a-z]{2,12}:[^\s]{1,160}$")
 
@@ -204,15 +223,31 @@ CATEGORY_WORDS: dict[str, dict[str, _Pred]] = {
 }
 
 
+#: Facet words a request may name directly on any workspace that publishes that facet.
+_PLAIN_FACETS = ("status", "kind", "project", "folder", "source", "privacy", "origin")
+
+
 def category_known(ws: str, word: str) -> bool:
-    return _norm(word) in CATEGORY_WORDS.get(ws, {})
+    return category_predicate(ws, word) is not None
 
 
 def category_predicate(ws: str, word: str) -> _Pred | None:
-    return CATEGORY_WORDS.get(ws, {}).get(_norm(word))
+    """The facet test a kind of item names. Mail has its own table of words (newsletters, promotions);
+    a workspace whose rows carry a `category` facet (News) matches that facet by its own value."""
+    table = CATEGORY_WORDS.get(ws)
+    if table is not None:
+        return table.get(_norm(word))
+    want = " ".join(str(word or "").lower().split())
+    keys = [k for k in ("category",) + _PLAIN_FACETS if k in STAGE_FACETS.get(ws, ())]
+    if want and keys:
+        # a word that names any one of the workspace's own facet values: a news category, a card's
+        # status or project, a Library folder
+        return lambda f: any(" ".join(str(f.get(k) or "").lower().split()) == want for k in keys)
+    return None
 
 
-def resolve(stage: dict | None, match: dict | None) -> dict:
+def resolve(stage: dict | None, match: dict | None, pointed: dict | None = None,
+            now: float | None = None) -> dict:
     """The on-screen items a request names. Criteria combine with AND.
 
     Returns {"refs": [...], "unknown": [words], "rule": "..."}. A category the table does
@@ -224,7 +259,27 @@ def resolve(stage: dict | None, match: dict | None) -> dict:
         return out
     ws = stage.get("workspace") or ""
     items = list(stage.get("items") or [])
+    # "the second one" means the second thing Friday just pointed at, while that is fresh
+    if match.get("ordinals") and pointed and pointed.get("refs") \
+            and (now or time.time()) - float(pointed.get("at") or 0) <= POINTED_S:
+        known = {it["ref"] for it in items}
+        picked = []
+        for n in _as_list(match["ordinals"]):
+            try:
+                i = int(n)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= i <= len(pointed["refs"]) and pointed["refs"][i - 1] in known:
+                picked.append(pointed["refs"][i - 1])
+        out.update(refs=picked, rule="pointed")
+        return out
     preds: list[_Pred] = []
+    allowed = STAGE_FACETS.get(ws, frozenset())
+    for key in _PLAIN_FACETS:
+        if match.get(key) not in (None, "") and key in allowed:
+            want = " ".join(str(match[key]).lower().split())
+            preds.append(lambda it, key=key, want=want:
+                         " ".join(str((it.get("facets") or {}).get(key) or "").lower().split()) == want)
     for word in _as_list(match.get("category")):
         p = category_predicate(ws, word)
         if p is None:
@@ -266,6 +321,28 @@ def resolve(stage: dict | None, match: dict | None) -> dict:
         return out
     out["refs"] = [it["ref"] for it in items if all(p(it) for p in preds)][:MAX_REFS]
     return out
+
+
+def point_plan(refs: list) -> dict:
+    """Which refs get a numbered badge (the first POINT_CAP) and how many more are only counted."""
+    refs = [r for r in refs if r]
+    return {"badged": refs[:POINT_CAP], "more": max(0, len(refs) - POINT_CAP)}
+
+
+def filter_request(ws: str, key: Any, value: Any) -> dict:
+    """Check one spoken filter against the workspace's own list of filters. {"ok", "key", "value"}
+    or {"ok": False, "error"}; an empty value asks to remove that chip."""
+    keys = FILTER_KEYS.get(ws)
+    if keys is None:
+        return {"ok": False, "error": "that workspace has no filters I can set yet"}
+    k = str(key or "").strip().lower()
+    if k not in keys:
+        return {"ok": False, "error": "I can filter %s by %s" % (NOUNS.get(ws, "that list"), ", ".join(sorted(keys)))}
+    v = " ".join(str(value if value is not None else "").split())[:80]
+    closed = keys[k]
+    if v and closed is not None and v.lower() not in closed:
+        return {"ok": False, "error": "%s can be %s" % (k, ", ".join(sorted(closed)))}
+    return {"ok": True, "key": k, "value": v.lower() if closed is not None else v}
 
 
 def _as_list(v: Any) -> list:

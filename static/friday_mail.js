@@ -667,6 +667,7 @@
     const knownRef = useRef([]);
     const revealing = useRef(false);
     const revealRef = useRef(null);
+    const fridayFilters = useRef({});          // filter key -> the value Friday set; a different value is the owner's
     const [sweepAt, setSweepAt] = useState(0);
     const [announce, setAnnounce] = useState('');
     const sel = useMemo(() => new Set(ss.refs), [ss]);
@@ -1191,18 +1192,42 @@
     const sweepDelay = {};
     if (sweepOn) { const ticked = shown.filter(m => sel.has(refOf(m))); const d = FS.sweepDelays(ticked.length); ticked.forEach((m, k) => { sweepDelay[refOf(m)] = d[k]; }); }
     useEffect(() => { if (!sweepAt) return; const t = setTimeout(() => setSweepAt(0), 520); return () => clearTimeout(t); }, [sweepAt]);
+    const byOf = (key, val) => (fridayFilters.current[key] !== undefined && String(fridayFilters.current[key]) === String(val)) ? 'friday' : 'owner';
+    const currentFilters = () => {
+      const f = [];
+      if (lane !== 'all') f.push({ key: 'lane', value: lane, label: laneLabel(lane), by: byOf('lane', lane) });
+      if (folder) f.push({ key: 'folder', value: folder, label: folderName(folder), by: byOf('folder', folder) });
+      if (query) f.push({ key: 'q', value: query, label: 'Search: ' + query, by: byOf('q', query) });
+      if (unreadOnly) f.push({ key: 'unread', value: '1', label: 'Unread only', by: byOf('unread', '1') });
+      if (acct !== 'all') f.push({ key: 'account', value: acct, label: 'One account', by: byOf('account', acct) });
+      return f;
+    };
+    // a spoken filter goes through the same state the chips above the list use; false = not a filter here
+    const setFilter = (key, value) => {
+      fridayFilters.current[key] = value;
+      if (key === 'lane') { if (!LANES[value]) return false; setLane(value); return true; }
+      if (key === 'unread') { setUnreadOnly(value === '1'); return true; }
+      if (key === 'q') { revealing.current = false; setOpen(null); setQInput(value); setQuery(value); return true; }
+      if (key === 'folder') { if (value && !FOLDERS.some(x => x[0] === value) && !/^(label|category):/.test(value)) return false; pickFolder(value); return true; }
+      if (key === 'account') { if (value !== 'all' && !accounts.some(x => x.id === value)) return false; setAcct(value || 'all'); return true; }
+      return false;
+    };
+    const removeFilter = key => {
+      delete fridayFilters.current[key];
+      if (key === 'lane') setLane('all');
+      else if (key === 'unread') setUnreadOnly(false);
+      else if (key === 'q') { setQInput(''); setQuery(''); }
+      else if (key === 'folder') pickFolder('');
+      else if (key === 'account') setAcct('all');
+      else return false;
+      return true;
+    };
     const stageRev = useRef({ json: '', rev: 0 });
     const buildStage = () => {
       // read the latest selection, not the last render's: a command's own answer is built before React repaints
       const cur = ssRef.current;
       const beyond = Math.max(0, cur.refs.length - cur.refs.filter(r => knownRef.current.indexOf(r) >= 0).length);
-      const filters = [];
-      const by = revealRef.current ? 'friday' : 'owner';
-      if (lane !== 'all') filters.push({ key: 'lane', value: lane, label: laneLabel(lane), by });
-      if (folder) filters.push({ key: 'folder', value: folder, label: folderName(folder), by: 'owner' });
-      if (query) filters.push({ key: 'q', value: query, label: 'Search: ' + query, by });
-      if (unreadOnly) filters.push({ key: 'unread', value: '1', label: 'Unread only', by: 'owner' });
-      if (acct !== 'all') filters.push({ key: 'account', value: acct, label: 'One account', by: 'owner' });
+      const filters = currentFilters();
       const st = {
         workspace: 'messages',
         items: shown.slice(0, FS.MAX_ROWS).map((m, i) => ({ ref: refOf(m), n: i + 1,
@@ -1239,6 +1264,15 @@
     };
     const runStage = a => new Promise(resolve => {
       if (a.type === 'stage_request') { resolve({ ok: true, rev: stageRev.current.rev }); return; }
+      if (a.type === 'point') { const r = FS.point(a.refs || [], { root: listRef.current, badges: a.badges, id: a.id }); FS.touch(200); resolve(r); return; }
+      if (a.type === 'chips') {
+        const bad = [];
+        (a.set || []).forEach(f => { if (!setFilter(f.key, f.value)) bad.push({ key: f.key, reason: 'not a filter here' }); });
+        (a.remove || []).forEach(k => { if (!removeFilter(k)) bad.push({ key: k, reason: 'not a filter here' }); });
+        // let the list repaint, then say what is on
+        setTimeout(() => resolve({ ok: bad.length === 0, rejected: bad, filters: stageApi.current.stage().filters, reason: bad.length ? 'that filter is not available here' : undefined }), 80);
+        return;
+      }
       if (a.type === 'clear_selection') { clearSel(); resolve({ ok: true, applied: 0, missing: 0, accepted: 0, count: 0, rev: stageRev.current.rev }); return; }
       if (a.type === 'held') {
         if (a.state === 'done') heldDone(a); else commitSel({ type: 'held', state: a.state, refs: a.refs || [], card_id: a.card_id });
@@ -1252,6 +1286,8 @@
       if (rv.query || rv.lane) {
         // show the rows first, then tick them: Friday's own reveal does not clear its own ticks
         revealing.current = true; revealRef.current = rv;
+        if (rv.query) fridayFilters.current.q = rv.query;
+        if (rv.lane) fridayFilters.current.lane = rv.lane;
         const timer = setTimeout(() => { if (pendingSelect.current) { pendingSelect.current = null; revealing.current = false; resolve({ ok: false, reason: 'the list did not load' }); } }, 5000);
         pendingSelect.current = { rv, cmd: a, done: r => { clearTimeout(timer); resolve(r); } };
         setOpen(null);
@@ -1344,6 +1380,7 @@
       // search chips
       h('div', { className: 'fm-bar', role: 'group', 'aria-label': 'Search chips' },
         SEARCH_CHIPS.map(([tok, lbl]) => h('span', { key: tok, className: 'fm-chip sm' + (searchToks.includes(tok) ? ' on' : ''), role: 'switch', 'aria-checked': searchToks.includes(tok), onClick: () => toggleChip(tok), title: tok }, lbl))),
+      FS.chipsRow(h, currentFilters(), key => { removeFilter(key); FS.touch(); }, fridayName()),
       // row 2: lanes (Friday's triage) or Gmail's categories (Inbox)
       !query && !folder && h('div', { className: 'fm-bar' },
         Object.keys(LANES).map(id => h('span', { key: id, className: 'fm-chip' + (lane === id ? ' on' : ''), onClick: () => setLane(id) },

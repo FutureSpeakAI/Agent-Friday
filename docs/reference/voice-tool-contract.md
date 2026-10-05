@@ -227,6 +227,10 @@ voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and re
   mail still goes through `organize_email`, which keeps its own gate: archive, trash, spam, restore
   and move raise ONE card for the whole batch, bound to the rows that were ticked when it was
   called; mark read/unread, star and label (the owner's ruling) run at once with a receipt.
+- **One tool, six verbs.** To keep the curated contract under its token ceiling `screen_select` carries
+  every See & Touch verb: `select`, `add`, `remove`, `clear` (ticks), `point` (an outline and a number on up
+  to 12 rows, in the Message Center, News, Media or the Library) and `filter` (a removable chip through the
+  workspace's own filter). "The second one" means the second thing just pointed at, for two minutes.
 - **The result is the page's, not the intent.** `SELECT_OK` / `SELECT_PARTIAL` / `SELECT_FAIL` report
   what the page confirmed. `SELECT_ASK` carries a speakable question when "this" is ambiguous (a
   ticked batch and a hand on another row): ask it, never guess.

@@ -776,15 +776,20 @@ CLAUDE_TOOLS = [
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
-    {"name": "screen_select", "description": "Tick, untick or clear conversations in the user's open Message Center so they see the checks appear. Shows only; changes no mail and needs no approval. scope=screen picks among the rows shown; scope=all searches the whole inbox. match: category (newsletters, promotions, unread...), lane, unread, from, older_than (days), ordinals, query (a Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / SELECT_FAIL report what the page confirmed. To act on the ticks, call organize_email with selection=screen.",
+    {"name": "screen_select", "description": "Show the user's open list what you mean. op select/add/remove/clear ticks rows in the Message Center so they see the checks appear; op point outlines and numbers up to 12 rows in the Message Center, News, Media or the Library (the second one = the second thing you just pointed at); op filter sets a filter chip through the workspace's own filter (key and value; an empty value removes it). Shows only: changes no mail and needs no approval. scope=screen picks among the rows shown; scope=all searches the whole inbox. match: category (newsletters, promotions, unread, a news category, a status or project...), lane, unread, from, older_than (days), ordinals, status, kind, project, folder, query (a Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / POINT_OK / FILTER_OK report what the page confirmed. To act on the ticks, call organize_email with selection=screen.",
      "input_schema": {"type": "object", "properties": {
-         "op": {"type": "string", "enum": ["select", "add", "remove", "clear"]},
+         "workspace": {"type": "string", "description": "messages, news, media or library; default the one in front."},
+         "op": {"type": "string", "enum": ["select", "add", "remove", "clear", "point", "filter"]},
+         "key": {"type": "string", "description": "For op=filter: lane, unread, q, folder, account (mail); category, sort (news); status, kind, project, q (media); folder (library)."},
+         "value": {"type": "string", "description": "For op=filter: the value; empty removes the chip."},
          "scope": {"type": "string", "enum": ["screen", "all"]},
          "match": {"type": "object", "properties": {
              "category": {"type": "string"}, "lane": {"type": "string"}, "unread": {"type": "boolean"},
              "from": {"type": "string"}, "older_than": {"type": "number"},
              "ordinals": {"type": "array", "items": {"type": "integer"}},
-             "query": {"type": "string"}, "deictic": {"type": "string", "enum": ["this", "these"]}}},
+             "status": {"type": "string"}, "kind": {"type": "string"}, "project": {"type": "string"},
+             "folder": {"type": "string"}, "query": {"type": "string"},
+             "deictic": {"type": "string", "enum": ["this", "these"]}}},
          "label": {"type": "string", "description": "Short name for the selection chip, e.g. Newsletters."}},
          "required": ["op"]}},
     {"name": "set_chat_tray", "description": "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or the right in a third, a half or two thirds of the screen ('put chat on the right third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on its edge and the workspace takes the full width. It is the owner's own screen, so no approval is needed. CHAT_OK: say what changed in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
@@ -3466,24 +3471,130 @@ def _mail_select_all(match: dict):
     return res["refs"], reveal, capped, ""
 
 
+#: The keys of a request that name what to match, flat (voice) or nested in `match` (chat).
+_MATCH_KEYS = ("category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic",
+               "status", "kind", "project", "folder", "source", "privacy")
+
+
+def _flat_match(inp) -> dict:
+    match = dict(inp.get("match")) if isinstance(inp.get("match"), dict) else {}
+    for k in _MATCH_KEYS:
+        # the voice declaration is flat: the same keys at the top level
+        if inp.get(k) not in (None, "", []) and k not in match:
+            match[k] = inp[k]
+    return match
+
+
+def _screen_workspace(inp, default="messages") -> str:
+    """The workspace a See & Touch call is about: the one it names, else the one whose list the
+    owner has in front, else the Message Center."""
+    from agent_friday.services import desktop_bus
+    ws = str(inp.get("workspace") or "").strip().lower()
+    if ws:
+        return ws
+    st = desktop_bus.stage(None)
+    return (st or {}).get("workspace") or default
+
+
+def _screen_filter(ws: str, inp, match: dict) -> str:
+    """screen_select op=filter: set or remove one filter chip through the workspace's own filter."""
+    from agent_friday.services import desktop_bus, screen_stage as _ss
+    key = inp.get("key") if inp.get("key") not in (None, "") else match.get("key")
+    value = inp.get("value") if inp.get("value") is not None else match.get("value")
+    req = _ss.filter_request(ws, key, value)
+    if not req["ok"]:
+        return "FILTER_FAIL: " + req["error"] + "."
+    if req["value"]:
+        action = {"type": "chips", "workspace": ws, "set": [{"key": req["key"], "value": req["value"]}], "remove": []}
+    else:
+        action = {"type": "chips", "workspace": ws, "set": [], "remove": [req["key"]]}
+    sent = desktop_bus.send([action], timeout=SELECT_ACK_S)
+    if not sent.get("delivered"):
+        return "FILTER_FAIL: %s." % sent.get("reason")
+    res = (sent.get("ack") or {}).get("result") or {}
+    if not sent.get("acked") or not res.get("ok"):
+        return "FILTER_FAIL: %s" % (res.get("reason") or "the page did not confirm it, so I can't say the list is filtered.")
+    _ss.log_counts("filter", ws, len(res.get("filters") or []), "remove" if not req["value"] else "set")
+    quiet = _cloud_voice() or _voice_room()
+    n = len(res.get("filters") or [])
+    if quiet:
+        return "FILTER_OK I've %s the %s filter; %d on." % ("cleared" if not req["value"] else "set", req["key"], n)
+    names = "; ".join("%s%s" % (f.get("label") or f.get("key"), " (by Friday)" if f.get("by") == "friday" else "")
+                      for f in (res.get("filters") or []))
+    return "FILTER_OK %s%s" % ("removed %s" % req["key"] if not req["value"] else "filter set",
+                               (" - now: " + names) if names else " - no filters on")
+
+
+def _screen_point(ws: str, inp, match: dict) -> str:
+    """screen_select op=point: outline and number rows on the owner's screen. Shows only: nothing
+    changes and no card is raised. What was pointed at is remembered for two minutes ("the second
+    one")."""
+    import uuid as _uuid
+    from agent_friday.services import desktop_bus, screen_stage as _ss
+    badges = "none" if str(inp.get("badges") or "").lower() == "none" else "numbers"
+    if ws not in _ss.NOUNS:
+        return "POINT_FAIL: I can point in the Message Center, News, Media and the Library so far."
+    st = _fresh_screen_stage(ws)
+    if st is None:
+        return "POINT_FAIL: I can't see your list right now."
+    pointed = desktop_bus.pointed(ws)
+    rule = "facets"
+    if inp.get("refs"):
+        known = {it["ref"] for it in st.get("items") or []}
+        refs = [r for r in inp["refs"] if r in known]
+    elif match.get("deictic"):
+        d = _ss.resolve_deictic(st, str(match["deictic"]), pointed)
+        if d["ask"]:
+            return "POINT_ASK: " + d["ask"]
+        refs, rule = d["refs"], d["rule"]
+    else:
+        r = _ss.resolve(st, match, pointed)
+        if r["unknown"]:
+            return "POINT_FAIL: I don't have %r as a kind of item here." % r["unknown"][0]
+        refs, rule = r["refs"], r["rule"]
+    if not refs:
+        return "POINT_FAIL: nothing on that list matches."
+    plan = _ss.point_plan(refs)
+    pid = "pt_" + _uuid.uuid4().hex[:6]
+    sent = desktop_bus.send([{"type": "point", "workspace": ws, "id": pid, "refs": plan["badged"],
+                              "badges": badges}], timeout=SELECT_ACK_S)
+    if not sent.get("delivered"):
+        return "POINT_FAIL: %s." % sent.get("reason")
+    res = (sent.get("ack") or {}).get("result") or {}
+    if not sent.get("acked") or not res.get("ok"):
+        return "POINT_FAIL: the page did not confirm it, so I can't say anything is marked."
+    shown = int(res.get("count") or 0)
+    desktop_bus.set_pointed(ws, plan["badged"][:shown] if shown else [], pid)
+    _ss.log_counts("point", ws, shown, rule)
+    noun = _ss.NOUNS.get(ws, "items")
+    more = plan["more"]
+    if _cloud_voice() or _voice_room():
+        return "POINT_OK I've marked %d %s%s." % (shown, noun, (" and %d more are not marked" % more) if more else "")
+    return "POINT_OK %d marked%s%s" % (shown, " (numbered 1-%d)" % shown if badges == "numbers" and shown else "",
+                                       (" and %d more not marked" % more) if more else "")
+
+
 def _tool_screen_select(inp):
     """Tool handler: tick, untick or clear conversations on the owner's screen. Shows only:
     no mail changes and no card. The result reports what the page confirmed, never the intent."""
     import uuid as _uuid
     from agent_friday.services import desktop_bus, screen_stage as _ss
     inp = inp or {}
-    ws = str(inp.get("workspace") or "messages").strip().lower()
     op = str(inp.get("op") or "select").strip().lower()
+    # ticks are the Message Center's until another list can show them; pointing and filters go to
+    # the list the owner has in front
+    ws = str(inp.get("workspace") or "").strip().lower() or (
+        "messages" if op in ("select", "add", "remove", "clear") else _screen_workspace(inp))
     scope = str(inp.get("scope") or "screen").strip().lower()
-    match = dict(inp.get("match")) if isinstance(inp.get("match"), dict) else {}
-    for k in ("category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic"):
-        # the voice declaration is flat: the same keys at the top level
-        if inp.get(k) not in (None, "", []) and k not in match:
-            match[k] = inp[k]
+    match = _flat_match(inp)
+    if op == "filter":
+        return _screen_filter(ws, inp, match)
+    if op == "point":
+        return _screen_point(ws, inp, match)
     if ws != "messages":
         return "SELECT_FAIL: only the Message Center can show ticks so far."
     if op not in ("select", "add", "remove", "clear") or scope not in ("screen", "all"):
-        return "SELECT_FAIL: op is select, add, remove or clear; scope is screen or all."
+        return "SELECT_FAIL: op is select, add, remove, clear or filter; scope is screen or all."
     quiet = _cloud_voice() or _voice_room()
     word = str(match.get("category") or "").strip()
     name = (word if word and _ss.category_known(ws, word) else "conversations") if quiet else (
@@ -3521,7 +3632,7 @@ def _tool_screen_select(inp):
             return "SELECT_ASK: " + d["ask"]
         refs, rule = d["refs"], d["rule"]
     else:
-        r = _ss.resolve(st, match)
+        r = _ss.resolve(st, match, desktop_bus.pointed(ws))
         if r["unknown"]:
             return ("SELECT_FAIL: I don't have %r as a kind of mail. Use scope=all with a Gmail "
                     "search in match.query." % r["unknown"][0])

@@ -22,6 +22,8 @@
   var SWEEP_STAGGER_MS = 210;       // the last row starts at most this late
   var SWEEP_ROW_MS = 140;           // and takes this long: 210 + 140 = 350
   var MIN_GAP_MS = 334;             // one state change per element per 334 ms (the reticle's limit)
+  var POINT_CAP = 12;               // rows outlined and numbered at once; the rest are counted
+  var POINT_FADE_MS = 12000;        // the outlines fade after this, or on the owner's next input
 
   // ── the selection reducer ──────────────────────────────────────────────────
 
@@ -176,13 +178,177 @@
     };
   }
 
+  // ── pointing: the reticle's locked outline and a numbered badge ─────────────
+
+  // Which refs get a badge (the first POINT_CAP) and how many more are only counted.
+  function pointPlan(refs, cap) {
+    var list = (refs || []).filter(function (r) { return r; });
+    var n = cap || POINT_CAP;
+    return { badged: list.slice(0, n), more: Math.max(0, list.length - n) };
+  }
+
+  // Brand tokens only (--fr-*). The ring is an outline whose colour fades in once (no opacity or scale
+  // on the row itself, so its text never flickers); the badge is an 18 px ring holding a numeral.
+  var STYLE = [
+    '[data-fr-ref]{outline:2px solid transparent;outline-offset:-2px;transition:outline-color var(--fr-reveal-time,0.35s)}',
+    '[data-fr-point]{outline-color:var(--fr-cyan)}',
+    '[data-fr-point][data-fr-n]::after{content:attr(data-fr-n);position:absolute;top:6px;right:8px;z-index:2;width:18px;height:18px;',
+    'box-sizing:border-box;border:1.5px solid var(--fr-cyan);border-radius:50%;background:var(--fr-surface);color:var(--fr-cyan);',
+    'font:600 10px/15px var(--fr-font-mono,monospace);text-align:center;pointer-events:none}',
+    '.fr-chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}',
+    '.fr-chip{display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 10px;border-radius:999px;border:1px solid var(--fr-cyan);',
+    'background:var(--fr-cyan-soft);font-size:11px;color:var(--fr-text);white-space:nowrap}',
+    '.fr-chip .by{color:var(--fr-dim)}',
+    '.fr-chip button{background:none;border:0;color:inherit;cursor:pointer;padding:0 6px;font-size:12px;line-height:1;border-radius:999px}',
+    '.fr-chip button:hover{background:var(--fr-cyan-soft)}'
+  ].join('');
+  var styled = false;
+  function ensureStyle() {
+    if (styled || typeof document === 'undefined') return;
+    styled = true;
+    var el = document.createElement('style');
+    el.id = 'fr-stage-style';
+    el.textContent = STYLE;
+    (document.head || document.documentElement).appendChild(el);
+  }
+
+  var pointing = { els: [], refs: [], id: '', timer: null, stop: null };
+
+  function clearPoints() {
+    pointing.els.forEach(function (el) {
+      el.removeAttribute('data-fr-point');
+      el.removeAttribute('data-fr-n');
+      if (el.__frPos != null) { el.style.position = el.__frPos; delete el.__frPos; }
+    });
+    if (pointing.timer) clearTimeout(pointing.timer);
+    if (pointing.stop) pointing.stop();
+    pointing = { els: [], refs: [], id: '', timer: null, stop: null };
+  }
+
+  function esc(ref) {
+    return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(ref) : String(ref).replace(/["\\]/g, '\\$&');
+  }
+
+  // point(refs, {root, badges, id}) -> {ok, count}: count is the rows actually on screen, which is what
+  // the server reports. The outlines go on the next owner input or after 12 s.
+  function point(refs, opts) {
+    opts = opts || {};
+    ensureStyle();
+    clearPoints();
+    var root = opts.root || document;
+    var plan = pointPlan(refs);
+    var els = [];
+    plan.badged.forEach(function (r, i) {
+      var el = root.querySelector('[data-fr-ref="' + esc(r) + '"]');
+      if (!el) return;
+      els.push(el);
+      el.setAttribute('data-fr-point', 'on');
+      if (opts.badges !== 'none') el.setAttribute('data-fr-n', String(i + 1));
+      if (getComputedStyle(el).position === 'static') { el.__frPos = el.style.position; el.style.position = 'relative'; }
+    });
+    pointing.els = els; pointing.refs = plan.badged.slice(); pointing.id = opts.id || '';
+    if (els[0] && els[0].scrollIntoView) {
+      var calm = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      els[0].scrollIntoView({ block: 'nearest', behavior: calm ? 'auto' : 'smooth' });
+    }
+    pointing.timer = setTimeout(clearPoints, POINT_FADE_MS);
+    var gone = function () { clearPoints(); };
+    // the owner's next input ends it, but not the command's own repaint
+    var gone = function () { clearPoints(); };
+    var arm = setTimeout(function () {
+      document.addEventListener('pointerdown', gone, true);
+      document.addEventListener('keydown', gone, true);
+    }, 300);
+    pointing.stop = function () {
+      clearTimeout(arm);
+      document.removeEventListener('pointerdown', gone, true);
+      document.removeEventListener('keydown', gone, true);
+    };
+    return { ok: true, count: els.length };
+  }
+
+  function pointedNow() { return pointing.refs.length ? { id: pointing.id, refs: pointing.refs.slice() } : null; }
+
+  // The removable chips for filters Friday set: "Unread only · by Friday  x". `h` is React.createElement.
+  function chipsRow(h, filters, onRemove, brand) {
+    var mine = (filters || []).filter(function (f) { return f.by === 'friday'; });
+    if (!mine.length) return null;
+    return h('div', { className: 'fr-chips', role: 'group', 'aria-label': 'Filters ' + (brand || 'Friday') + ' set', 'data-testid': 'fr-chips' },
+      mine.map(function (f) {
+        return h('span', { key: f.key, className: 'fr-chip', 'data-filter': f.key }, f.label || f.key,
+          h('span', { className: 'by' }, '\u00b7 by ' + (brand || 'Friday')),
+          h('button', { onClick: function () { onRemove(f.key); }, title: 'Remove this filter', 'aria-label': 'Remove filter ' + (f.label || f.key) }, '\u00d7'));
+      }));
+  }
+
   // ── the page side: adapters, stage reports, commands ─────────────────────
 
   var adapters = {};
-  var commandTypes = { select: 1, clear_selection: 1, stage_request: 1, held: 1 };
+  var commandTypes = { select: 1, clear_selection: 1, stage_request: 1, held: 1, point: 1, chips: 1 };
+
+  /* makeAdapter(ws, get): the whole adapter for a list workspace from a small config the workspace
+   * hands over fresh each time (so it always reads the latest state). cfg:
+   *   items()    -> [{ref, n, facets, title, who}] the rows on screen, in order
+   *   filters()  -> [{key, value, label, by}]
+   *   setFilter(key, value) -> true/false/Promise: the workspace's own filter; removeFilter(key)
+   *   loaded(), total() (optional), root() (the DOM node holding the rows, optional)
+   * It answers stage_request, point and chips; a workspace that also ticks adds its own `run`. */
+  function makeAdapter(ws, get) {
+    var rev = { json: '', n: 0 };
+    function stage() {
+      var c = get();
+      var items = (c.items ? c.items() : []).slice(0, MAX_ROWS);
+      var st = {
+        workspace: ws, items: items, loaded: c.loaded ? c.loaded() : items.length,
+        total_hint: c.total ? c.total() : 0,
+        selection: c.selection ? c.selection() : { id: '', refs: [], count: 0, label: '', source: '', beyond_loaded: 0 },
+        filters: c.filters ? c.filters() : [], focus: null, open: c.open ? c.open() : null, cursor: null, fields: [], held: [],
+        pointed: pointedNow()
+      };
+      var json = JSON.stringify(st);
+      if (json !== rev.json) rev = { json: json, n: rev.n + 1 };
+      st.rev = rev.n;
+      return st;
+    }
+    function run(a) {
+      var c = get();
+      if (a.type === 'stage_request') return { ok: true, rev: rev.n };
+      if (a.type === 'point') {
+        var r = point(a.refs || [], { root: c.root ? c.root() : null, badges: a.badges, id: a.id });
+        touch(200);
+        return r;
+      }
+      if (a.type === 'chips') {
+        var applied = [], rejected = [];
+        var jobs = [];
+        (a.set || []).forEach(function (f) {
+          jobs.push(Promise.resolve(c.setFilter ? c.setFilter(f.key, f.value) : false).then(function (ok) {
+            (ok === false ? rejected : applied).push(ok === false ? { key: f.key, reason: 'not a filter here' } : f.key);
+          }));
+        });
+        (a.remove || []).forEach(function (k) {
+          jobs.push(Promise.resolve(c.removeFilter ? c.removeFilter(k) : false).then(function (ok) {
+            (ok === false ? rejected : applied).push(ok === false ? { key: k, reason: 'not a filter here' } : k);
+          }));
+        });
+        return Promise.all(jobs).then(function () {
+          touch(200);
+          // give the workspace one frame to show the result before it is read back
+          return new Promise(function (res) { setTimeout(res, 60); });
+        }).then(function () {
+          var fs = (get().filters ? get().filters() : []);
+          return { ok: rejected.length === 0, applied: applied, rejected: rejected, filters: fs,
+                   reason: rejected.length ? 'that filter is not available here' : undefined };
+        });
+      }
+      return { ok: false, reason: 'not supported here yet' };
+    }
+    return { stage: stage, run: run };
+  }
 
   // register(ws, { stage(), run(action) -> Promise<result> }): returns the unregister function.
   function register(ws, adapter) {
+    ensureStyle();
     adapters[ws] = adapter;
     return function () { if (adapters[ws] === adapter) delete adapters[ws]; };
   }
@@ -221,7 +387,8 @@
     MAX_REFS: MAX_REFS, MAX_ROWS: MAX_ROWS, SWEEP_STAGGER_MS: SWEEP_STAGGER_MS, SWEEP_ROW_MS: SWEEP_ROW_MS,
     MIN_GAP_MS: MIN_GAP_MS,
     emptySelection: emptySelection, reduceSelection: reduceSelection, chipText: chipText,
-    sweepDelays: sweepDelays, limiter: limiter,
+    sweepDelays: sweepDelays, limiter: limiter, POINT_CAP: POINT_CAP, POINT_FADE_MS: POINT_FADE_MS,
+    pointPlan: pointPlan, point: point, clearPoints: clearPoints, chipsRow: chipsRow, makeAdapter: makeAdapter, ensureStyle: ensureStyle,
     register: register, registered: registered, snapshot: snapshot, handles: handles, run: run, touch: touch
   };
 }));

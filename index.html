@@ -3718,6 +3718,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/vendor/three-r128-UnrealBloomPass.js"></script>
     <!-- Studio › Files: the 3D file browser (defines window.Files3DPanel). -->
     <script src="/static/studio_files3d.js"></script>
+    <!-- See & Touch: the shared selection and stage layer (defines window.fridayStage); the list workspaces need it. -->
+    <script src="/static/friday_stage.js"></script>
     <!-- Media: one card per piece of work (defines window.MediaWS). -->
     <script src="/static/media_ws.js"></script>
     <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
@@ -3729,8 +3731,6 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_files3d.js"></script>
     <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
     <script src="/static/friday3d_records.js"></script>
-    <!-- See & Touch: the shared selection and stage layer (defines window.fridayStage); Messages needs it. -->
-    <script src="/static/friday_stage.js"></script>
     <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
     <script src="/static/friday_mail.js"></script>
     <!-- The chart renderer the panel and published chart pages share (defines window.FridayChart). -->
@@ -33627,6 +33627,49 @@ function NewsWS() {
     }
   };
   loadFeedRef.current = loadFeed;
+  // See & Touch: the stories on screen and the two filters Friday may set (category, sort). A filter
+  // she sets shows as a chip marked "by" her; a different value is the owner's.
+  const stageFS = window.fridayStage;
+  const fridayNewsFilters = useRef({});
+  const newsStageCfg = useRef(null);
+  const newsBy = (key, val) => String(fridayNewsFilters.current[key]) === String(val) ? 'friday' : 'owner';
+  const newsFilters = () => {
+    const f = [];
+    if (streamCat !== 'All') f.push({ key: 'category', value: streamCat, label: 'Category: ' + streamCat, by: newsBy('category', streamCat) });
+    if (sortBy !== 'relevance') f.push({ key: 'sort', value: sortBy, label: 'Sort: ' + sortBy, by: newsBy('sort', sortBy) });
+    return f;
+  };
+  newsStageCfg.current = {
+    filters: newsFilters,
+    loaded: () => feed.length,
+    total: () => feedTotal,
+    items: () => tab !== 'feed' ? [] : feed.slice(0, 120).map((it, i) => ({
+      ref: 'news:' + (it.id || i), n: i + 1,
+      facets: { category: it.category || '', source: it.source || '', age_h: it.ts ? Math.round((Date.now() / 1000 - it.ts) / 360) / 10 : null, saved: !!(it.url && savedUrls[it.url]) },
+      title: it.title || '', who: it.source || '' })),
+    setFilter: (key, value) => {
+      if (key === 'category') {
+        const want = String(value).toLowerCase();
+        const hit = NEWS_STREAM_CATS.find(c => c.toLowerCase() === want) || NEWS_STREAM_CATS.find(c => c.toLowerCase().indexOf(want) >= 0);
+        if (!hit) return false;
+        fridayNewsFilters.current.category = hit; setStreamCat(hit); setTab('feed');
+        return true;
+      }
+      if (key === 'sort') {
+        if (['relevance', 'time', 'source'].indexOf(value) < 0) return false;
+        fridayNewsFilters.current.sort = value; setSortBy(value); setTab('feed');
+        return true;
+      }
+      return false;
+    },
+    removeFilter: key => {
+      if (key === 'category') { delete fridayNewsFilters.current.category; setStreamCat('All'); return true; }
+      if (key === 'sort') { delete fridayNewsFilters.current.sort; setSortBy('relevance'); return true; }
+      return false;
+    }
+  };
+  useEffect(() => stageFS ? stageFS.register('news', stageFS.makeAdapter('news', () => newsStageCfg.current)) : undefined, []);
+  useEffect(() => { if (stageFS) stageFS.touch(); }, [feed, streamCat, sortBy, tab]);
   const loadArchStats = () => fetch('/api/news/archive/stats').then(r => r.json()).then(d => setArchStats(d)).catch(() => {});
   const loadSources = () => fetch('/api/sources/preferences').then(r => r.json()).then(d => setSources({
     banned: d.banned || [],
@@ -34952,7 +34995,10 @@ function NewsWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     ref: feedTopRef
-  }), /*#__PURE__*/React.createElement("div", {
+  }), stageFS ? stageFS.chipsRow(React.createElement, newsFilters(), key => {
+    newsStageCfg.current.removeFilter(key);
+    stageFS.touch();
+  }, fridayName()) : null, /*#__PURE__*/React.createElement("div", {
     className: "stream-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "stream-tabs"
@@ -35074,6 +35120,7 @@ function NewsWS() {
     className: "news-masonry"
   }, streamItems.map((it, i) => /*#__PURE__*/React.createElement("div", {
     key: it.id || i,
+    'data-fr-ref': 'news:' + (it.id || i),
     className: 'news-card cat-' + (it.color || 'tech') + (i === 0 ? ' feature' : '')
   }, /*#__PURE__*/React.createElement("div", {
     className: "news-cardtop"

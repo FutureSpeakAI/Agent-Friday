@@ -53,6 +53,8 @@ CASES = [
     ("Archive all the newsletters in my inbox.", "organize_email", ("action",)),
     ("Select all the newsletters so I can see them ticked.", "screen_select", ("op",)),
     ("Untick the Substack ones.", "screen_select", ("op",)),
+    ("Which of these are from my editor? Point at them.", "screen_select", ("op",)),
+    ("Only show the unread ones.", "screen_select", ("op",)),
     ("Archive the ones that are ticked.", "organize_email", ("action",)),
     ("Label the invoices from this week as finance.", "organize_email", ("action",)),
     ("Move the scanned receipts into the taxes folder.", "organize_files", ("action",)),

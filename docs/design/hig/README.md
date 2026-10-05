@@ -197,6 +197,14 @@ confirmation that names the thing.
   edge returns to cyan and the ticks stay; approved, the rows leave with `--fr-reveal` and an Undo.
   Friday's sweep fades the ticks in top to bottom, opacity and scale only, ending inside 350 ms
   however long the list; reduced motion is a 120 ms fade, never nothing.
+- **Pointing.** When Friday points ("which of these are from my editor?") the rows take the reticle's
+  Locked outline (a 2px `--fr-cyan` ring that fades in once) and a numbered badge, an 18px ring holding a
+  numeral in `--fr-font-mono`, so "open number two" works. At most 12 are badged; the rest are counted.
+  Nothing strobes: the colour changes once, the outlines go on the owner's next input or after 12 s, and
+  reduced motion shortens the fade, never removes it.
+- **Filters Friday sets are chips.** A spoken filter ("only unread, only this week") is applied through the
+  workspace's own filter and also shown as a removable chip marked "by Friday"; nothing is filtered
+  invisibly. A filter the owner changes afterwards stops being marked.
 - **A pinch on a row** (hand cursor) ticks it; a pinch held for 700 ms opens it. A row opts in with
   `data-fr-pinch="tick"` and names its checkbox `data-fr-tick`.
 - A row's actions appear on hover and focus at the right, and in the row's context menu.

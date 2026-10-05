@@ -32,6 +32,9 @@ _LOCK = threading.Lock()
 _CLIENTS: dict[str, dict] = {}          # client id -> record
 _PENDING: dict[str, dict] = {}          # command id -> {"event", "ack"}
 _SEQ = itertools.count(1)
+_POINTED: dict[str, dict] = {}           # workspace -> {"id", "refs", "at"}: what Friday last pointed at
+#: How long "those" and "the second one" mean what Friday pointed at.
+POINTED_TTL_S = 120.0
 log = logging.getLogger(__name__)
 
 
@@ -297,6 +300,22 @@ def stage(workspace: str | None = None, max_age: float | None = None,
     return out
 
 
+def set_pointed(workspace: str, refs: list, pointed_id: str = "") -> None:
+    """Remember what Friday just pointed at, in memory only, so "the second one" can resolve."""
+    with _LOCK:
+        _POINTED[str(workspace)] = {"id": pointed_id, "refs": list(refs)[:500], "at": time.time()}
+
+
+def pointed(workspace: str, now: float | None = None) -> dict | None:
+    """What Friday pointed at in `workspace` within POINTED_TTL_S, else None."""
+    now = now or time.time()
+    with _LOCK:
+        rec = _POINTED.get(str(workspace))
+    if not rec or now - rec["at"] > POINTED_TTL_S:
+        return None
+    return dict(rec)
+
+
 def focused_workspace(now: float | None = None) -> str | None:
     """The workspace the owner is looking at: the one in front on the page that
     has the focus (a workspace tab or the desktop), else the front window of the
@@ -334,3 +353,4 @@ def reset() -> None:
     with _LOCK:
         _CLIENTS.clear()
         _PENDING.clear()
+        _POINTED.clear()

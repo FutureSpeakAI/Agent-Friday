@@ -36,5 +36,5 @@ def test_a_screen_tool_cannot_press_a_button_or_answer_a_card():
     """The See & Touch tools offer no way to submit, send or decide."""
     tool = next(t for t in agent.CLAUDE_TOOLS if t["name"] == "screen_select")
     props = set(tool["input_schema"]["properties"])
-    assert props == {"op", "scope", "match", "label"}
+    assert props == {"workspace", "op", "key", "value", "scope", "match", "label"}
     assert not ({"approve", "decision", "card_id", "send", "confirm"} & props)
