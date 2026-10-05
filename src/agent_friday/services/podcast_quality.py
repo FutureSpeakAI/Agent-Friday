@@ -595,7 +595,10 @@ def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool =
             missing.append("the outlet, named aloud (%s)" % (spoken_outlet(s) or s["outlet"]))
         if not (set().union(*[m["entities"] for m in members]) & wws):
             missing.append("who or where")
-        places = set().union(*[m["places"] for m in members])
+        # The event's place is the one every report of it names: two stories
+        # that only look alike (both about one politician) never make one
+        # lede owe the other's place.
+        places = set.intersection(*[set(m["places"]) for m in members]) if members else set()
         if places and not (places & wws):
             missing.append("where (%s)" % ", ".join(sorted(p.title() for p in places)))
         if not _WHEN_RE.search(window):
@@ -1242,6 +1245,9 @@ def misattribution_problems(lines: list[dict], story_list: list[dict], docs: lis
     for d in docs:
         if is_own_doc(d):
             own_words |= {w for w in _words(d.get("text") or "") if len(w) >= 6 and w not in _STOP}
+    # Her analysis is what only her notes say: a word the news itself uses
+    # ("people", "killed") is the news's vocabulary, not her read.
+    own_words -= {w for s in story_list for w in _words("%s %s" % (s["title"], s["text"]))}
     out = []
     for i, ln in _spoken(lines):
         for sent in _SENT_RE.split(ln["text"]):

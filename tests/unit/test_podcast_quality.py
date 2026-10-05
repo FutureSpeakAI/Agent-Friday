@@ -209,3 +209,78 @@ def test_a_place_is_a_whole_word_never_the_front_of_a_longer_one():
     assert q._places("An AI couldn't beat humans at StarCraft, so it cheated") == set()
     assert q._places("A rally in Ohio, then a stop at McAllen's airport") == {"ohio"}
     assert q._places("Flooding in Texas and near Austin") == {"texas", "austin"}
+
+
+# -- two stories that look alike are not one event's lede ------------------------
+
+def _two_politics_docs():
+    return [
+        {"sid": "S1", "kind": "news", "title": "Governor Vale takes midterm tour to Nebraska as party frets over Senate race",
+         "text": "Governor Vale travels to Nebraska on Sunday ahead of a close Senate race.\nOutlet: examplehill.com",
+         "outlet": "examplehill.com", "url": "https://examplehill.com/vale-nebraska"},
+        {"sid": "S2", "kind": "news", "title": "Politics chat: Midterm polls, Senate races, Vale in Texas",
+         "text": "Panelists discuss midterm polls and Vale's rally in Texas.\nOutlet: examplenpr.org",
+         "outlet": "examplenpr.org", "url": "https://examplenpr.org/politics-chat"},
+    ]
+
+
+def test_a_lede_never_owes_the_place_of_a_story_that_only_looks_alike():
+    from agent_friday.services import podcast_quality as q
+    docs = _two_politics_docs()
+    sl = q.stories(docs)
+    assert sl[0]["cluster"] == sl[1]["cluster"], "precondition: the check groups them as one event"
+    lines = [{"speaker": "a", "cites": ["S1"], "text": "Example Hill reports that on Sunday, Governor Vale "
+              "travels to Nebraska as his party frets over a close Senate race in the midterm."}]
+    msgs = [p["message"] for p in q.lede_problems(lines, sl)]
+    assert not any("Texas" in m for m in msgs), msgs
+
+
+def test_one_event_s_shared_place_is_still_owed():
+    from agent_friday.services import podcast_quality as q
+    docs = [
+        {"sid": "S1", "kind": "news", "title": "Flooding closes schools across Ohio river towns",
+         "text": "Flooding closed schools in Ohio on Monday.\nOutlet: examplewire.com",
+         "outlet": "examplewire.com", "url": "https://examplewire.com/flood"},
+        {"sid": "S2", "kind": "news", "title": "Ohio river flooding closes schools in river towns",
+         "text": "Schools closed in Ohio on Monday after flooding.\nOutlet: examplepost.com",
+         "outlet": "examplepost.com", "url": "https://examplepost.com/flood"},
+    ]
+    sl = q.stories(docs)
+    lines = [{"speaker": "a", "cites": ["S1"], "text": "Example Wire reports that on Monday, flooding "
+              "closed schools across the river towns."}]
+    assert any("where (Ohio)" in p["message"] for p in q.lede_problems(lines, sl))
+
+
+# -- the news's own vocabulary is never "her analysis" -----------------------------
+
+def test_an_ordinary_word_the_news_uses_is_not_friday_s_analysis():
+    from agent_friday.services import podcast_quality as q
+    docs = [
+        {"sid": "S1", "kind": "digest", "role": "overview", "title": "Today's front page",
+         "text": "Boss, people across the state are watching these stories closely."},
+        {"sid": "S2", "kind": "news", "title": "2 killed, dozens hurt as gunfire erupts at a block party in south Georgia",
+         "text": "2 killed, dozens hurt as gunfire erupts at a block party in south Georgia\nOutlet: apnews.com",
+         "outlet": "apnews.com", "url": "https://apnews.com/block-party"},
+        {"sid": "S3", "kind": "news", "title": "Nearly 200 People Under Observation After a Lab Worker Dies",
+         "text": "Nearly 200 people are under observation.\nOutlet: examplenews.com",
+         "outlet": "examplenews.com", "url": "https://examplenews.com/lab"},
+    ]
+    sl = q.stories(docs)
+    lines = [{"speaker": "a", "cites": ["S2"], "text": "AP reports that on Sunday, two people were killed and "
+              "dozens were hurt as gunfire erupted at a block party in south Georgia."}]
+    assert not [p for p in q.misattribution_problems(lines, sl, docs) if p["code"] == "misattributed"]
+
+
+def test_her_own_analysis_put_in_a_publisher_s_mouth_is_still_caught():
+    from agent_friday.services import podcast_quality as q
+    docs = [
+        {"sid": "S1", "kind": "digest", "role": "overview", "title": "Today's front page",
+         "text": "Boss, this is a watershed for sovereign assistants."},
+        {"sid": "S2", "kind": "news", "title": "A lab releases an open model",
+         "text": "A lab released an open model on Monday.\nOutlet: apnews.com",
+         "outlet": "apnews.com", "url": "https://apnews.com/model"},
+    ]
+    sl = q.stories(docs)
+    lines = [{"speaker": "a", "cites": ["S2"], "text": "AP reports that the open model is a watershed for "
+              "sovereign assistants."}]
+    assert [p for p in q.misattribution_problems(lines, sl, docs) if p["code"] == "misattributed"]
