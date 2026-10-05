@@ -3722,6 +3722,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_stage.js"></script>
     <!-- The step panel: a workflow's steps, one state each, and a Stop button (defines window.FridayStepPanel). -->
     <script src="/static/step_panel.js"></script>
+    <!-- Settings rows by sentence: provenance line, Undo, and the outline a row gets when Friday takes you to it. -->
+    <script src="/static/settings_rows.js"></script>
     <!-- Media: one card per piece of work (defines window.MediaWS). -->
     <script src="/static/media_ws.js"></script>
     <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
@@ -48893,6 +48895,10 @@ function useSettings() {
     }).catch(() => {});
   };
   useEffect(load, []);
+  useEffect(() => {
+    window.addEventListener('friday:settings-changed', load);
+    return () => window.removeEventListener('friday:settings-changed', load);
+  }, []);
   const save = async patch => {
     try {
       // POST expects {settings:{...}, personality?:string} — personality has its
@@ -48955,9 +48961,11 @@ function useSettings() {
 function StRow({
   label,
   children,
-  desc
+  desc,
+  settingKey
 }) {
   return /*#__PURE__*/React.createElement("div", {
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 16
     }
@@ -48977,7 +48985,9 @@ function StRow({
       lineHeight: 1.5,
       fontFamily: 'var(--st-font)'
     }
-  }, desc), children);
+  }, desc), children, settingKey && window.FridaySettingRows ? /*#__PURE__*/React.createElement(window.FridaySettingRows.Provenance, {
+    path: settingKey
+  }) : null);
 }
 // A real button with role="switch", so it is reachable and operable from the
 // keyboard and announced as on/off.
@@ -49050,10 +49060,12 @@ function StToggle({
 function StSection({
   title,
   desc,
-  children
+  children,
+  settingKey
 }) {
   return /*#__PURE__*/React.createElement("section", {
     "data-st-section": typeof title === 'string' ? title : undefined,
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 30
     }
@@ -49091,11 +49103,13 @@ function StSlider({
   step,
   fmt,
   onLive,
-  onCommit
+  onCommit,
+  settingKey
 }) {
   const v = typeof value === 'number' && !isNaN(value) ? value : min;
   const done = e => onCommit && onCommit(parseFloat(e.target.value));
   return /*#__PURE__*/React.createElement("div", {
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 14
     }
@@ -55115,6 +55129,7 @@ function CallModePanel({
     d: (fridayName() + ' keeps going through calls. "I\'m on a call" still works by voice or from the chip.')
   }];
   return /*#__PURE__*/React.createElement(StSection, {
+    settingKey: "settings.calls.stand_back",
     title: "Calls",
     desc: ("A video call needs the camera, the mic and most of this computer's memory: the same things " + fridayName() + "'s local brain and 3D scene use.")
   }, /*#__PURE__*/React.createElement("div", {
@@ -55175,6 +55190,7 @@ function TrackingPanel({
     });
   };
   const sl = (key, label, desc, min, max, step, fmt) => /*#__PURE__*/React.createElement(TrackingSlider, {
+    settingKey: 'settings.hologram.window.' + key,
     label: label,
     desc: desc,
     value: cfg[key],
@@ -55271,6 +55287,7 @@ function TrackingPanel({
     }
   }, "Large targets, fewer things per screen, and the primary actions as big cards, for driving the app by hand. Automatic turns it on with hand tracking and off with it. Anything that sends, deletes or spends needs a held pinch or a spoken yes while it is on; approval cards are unchanged."), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
+    "data-st-key": "settings.accessibility.big_mode",
     "aria-label": "Big mode",
     style: {
       display: 'flex',
@@ -59239,14 +59256,23 @@ function SettingsWS() {
   // A notification's target ({workspace:'settings', tab}) lands on that tab;
   // 'phone' opens Accounts & Keys scrolled to the Phone section.
   const [shownSection, setShownSection] = useState('');
+  const [shownRow, setShownRow] = useState('');
   useTabState('settings', () => ({
     tab,
-    section: shownSection
+    section: shownSection,
+    row: shownRow
   }));
   useNavTarget('settings', t => {
     if (!t || !t.tab && !t.section) return;
     if (t.tab) setTab(settingsTabId(t.tab));
     setShownSection('');
+    setShownRow('');
+    // A row with a stable path: outlined once the tab has drawn it, and again while its panels load.
+    if (t.row) {
+      [250, 700, 1500, 2600].forEach(ms => setTimeout(() => {
+        if (window.FridaySettingRows && window.FridaySettingRows.highlight(t.row)) setShownRow(t.row);
+      }, ms));
+    }
     // A section: once the tab has drawn it, and again while its panels load
     // and grow above it, until the person scrolls, clicks or types.
     if (t.section) {
@@ -59432,6 +59458,7 @@ function SettingsTabAppearance({
     title: "Start screen",
     desc: "When your day shows over the scene: the countdowns, the chat field, the mic and Start my day."
   }, /*#__PURE__*/React.createElement(StRow, {
+    settingKey: "settings.display.start_screen",
     label: "Show my day",
     desc: "Smart shows it when it is useful (back at your desk, the start of the day, something coming up within the hour, the pointer resting on it) and fades it while you work or talk. Never shows it only when you ask. Either way Ctrl+/ reaches the chat field and Ctrl+Shift+Space the mic."
   }, /*#__PURE__*/React.createElement("div", {
@@ -64276,7 +64303,9 @@ function App() {
         let m = null;
         try { m = JSON.parse(e.data); } catch (_) { return; }
         if (!m) return;
-        if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
+        if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);else if (m.type === 'settings_changed') {
+          try { window.dispatchEvent(new CustomEvent('friday:settings-changed', { detail: m })); } catch (_) {}
+        }
       };
     };
     connect();

@@ -582,12 +582,12 @@ NO_RE = re.compile(r"(?i)\b(don'?t send|do not send|no|nope|decline|don'?t share
 #: draft and asks again.
 COND_RE = re.compile(r"(?i)\b(but|except|apart from|other than|only|without|"
                      r"take out|leave out|leave off|leave in|drop|remove|cut|"
-                     r"omit|skip|change|instead|as long as|provided)\b")
+                     r"omit|skip|change|instead|as long as|provided|if|unless)\b")
 
 #: The hinge between his agreement and his instruction, removed when the
 #: instruction is lifted out of the sentence.
 _HINGE_RE = re.compile(r"(?i)^[\s,;.—-]*(?:but|except|apart from|"
-                       r"other than|only|as long as|provided(?: that)?)\b")
+                       r"other than|only|as long as|provided(?: that)?|if|unless)\b")
 _LEAD_YES_RE = re.compile(r"(?i)^\s*(?:friday[\s,]*)?(?:" + _YES_WORDS + r")\b")
 
 

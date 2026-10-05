@@ -41,7 +41,12 @@ def handle(inp: dict) -> str:
         mode = str(inp.get("mode") or "").strip().lower()
         if mode not in MODES:
             return "call_mode error: mode must be one of " + ", ".join(MODES)
-        from agent_friday.core import _save_settings
+        from agent_friday.core import _load_settings, _save_settings
+        from agent_friday.services import setting_proposals as _sp
+        held = _sp.hold("call_mode", inp, old=(_load_settings() or {}).get("call_mode") or "automatic", new=mode,
+                        consequence="From then on I would %s." % MODE_SAID[mode])
+        if held:
+            return held
         _save_settings({"call_mode": mode})
         return "Done. From now on I'll %s." % MODE_SAID[mode]
     if action == "start":

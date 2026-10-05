@@ -178,11 +178,16 @@ def handle(inp: dict) -> str:
         return "Calibrated to where you're sitting now; that is your normal distance."
 
     tracking = current()
+    from agent_friday.services import setting_proposals as _sp
     if action == "reset":
         fresh = _defaults()
         for k in KEPT_ON_RESET:
             if k in tracking:
                 fresh[k] = tracking[k]
+        held = _sp.hold("hologram_window", inp, old="your tuned feel", new="the defaults",
+                        consequence="The depth, parallax and smoothing return to the defaults; your calibration, viewing distance and screen width are kept.")
+        if held:
+            return held
         persist(fresh)
         sent = push({"type": "tracking", "tracking": fresh})
         text = "The window is back to its defaults. " + _status_text(fresh)
@@ -208,6 +213,11 @@ def handle(inp: dict) -> str:
     if not changed:
         return ("hologram_window error: set needs at least one of "
                 + ", ".join(DIALS) + " (numbers; relative=true adds to the current value)")
+    held = _sp.hold("hologram_window", inp, old=", ".join("%s %s" % (SPOKEN[k], say_number(current().get(k, 0))) for k in changed),
+                    new=", ".join("%s %s" % (SPOKEN[k], say_number(tracking[k])) for k in changed),
+                    consequence="The view responds to your head differently straight away.")
+    if held:
+        return held
     persist(tracking)
     sent = push({"type": "tracking", "tracking": tracking})
     said = ", ".join("%s is now %s" % (SPOKEN[k], say_number(tracking[k])) for k in changed)

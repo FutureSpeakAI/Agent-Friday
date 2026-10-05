@@ -276,6 +276,13 @@ def resolve_settings(query: str = "", section: str = "", id: str = "") -> dict:
     if not phrase:
         return _ok({"workspace": "settings"}, "Settings")
     ws_words = {"settings", "setting", "preferences"}
+    from agent_friday.services import setting_proposals as _sp
+    row = _sp.match_row(phrase)
+    if row:
+        # A row with a stable path: its tab, and the row itself, outlined on arrival.
+        path, home, name = row
+        return _ok({"workspace": "settings", "tab": home, "row": path},
+                   "Settings › %s" % name, verify=("row", path))
     tab = _match_section(spec, phrase, ws_words)
     if tab:
         return _ok({"workspace": "settings", "tab": tab["id"]},

@@ -801,6 +801,8 @@ _VOICE_SHARED_TOOLS = (
     "media_turn",
     # "Stop": a running workflow or task ends after the step it is on; "tell it to..." steers one.
     "task_control",
+    # A setting by its path, as a diff the owner says yes to (settings by sentence).
+    "set_setting",
     # Favourite, tag or move Media cards (one at once, two or more on one card): the same tool
     # the screen uses, so what she does is what the cards' history shows.
     "organize_media",

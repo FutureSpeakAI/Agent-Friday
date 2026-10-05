@@ -776,6 +776,8 @@ CLAUDE_TOOLS = [
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
+    {"name": "set_setting", "description": "Change one Settings row by its path, or undo the last change to it. It shows the old and new value and waits for the user's own yes (SETTING_NEEDS_YES); nothing changes before that, and a conditional yes does not count. Paths: settings.models.chat_model, settings.display.workspace_layout.<workspace>, settings.display.start_screen (smart/always/never), settings.accessibility.big_mode (on/off/auto), settings.hologram.window.<dial> or reset, settings.calls.stand_back (automatic/ask/off), settings.podcasts.format.<show> (solo/duo). op=undo puts the row back (30 days).",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string", "enum": ["set", "undo"]}}, "required": ["path"]}},
     {"name": "task_control", "description": "Stop or steer work Friday is doing in the background. op=stop ends a running workflow or task after the step it is on: the step that is running finishes, the next never starts, nothing already done is undone. With no target it stops the steps shown on the user's screen. op=steer sends a running task a message without stopping it. target: a workflow name, a task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what actually happened.",
      "input_schema": {"type": "object", "properties": {
          "op": {"type": "string", "enum": ["stop", "steer"]},
@@ -3223,6 +3225,17 @@ def _tool_set_workspace_layout(inp):
     if ws == "settings":
         return "LAYOUT_FAIL: Settings opens as a panel; it has no fullscreen layout."
     layouts = dict((_load_settings() or {}).get("workspace_layouts") or {})
+    from agent_friday.services import setting_proposals as _sp
+
+    def _words(v):
+        return ("fullscreen with the chat beside it" if v == "fullscreen_chat" else
+                "docked %s" % LAYOUT_POSITIONS.get((v or {}).get("window"), "") if isinstance(v, dict) else "its normal layout")
+    _new = "fullscreen_chat" if on else ({"window": position} if position else None)
+    _held = _sp.hold("set_workspace_layout", inp, old=_words(layouts.get(ws)), new=_words(_new),
+                     label="the layout of %s" % workspace_registry.label(ws),
+                     consequence="It applies whenever that workspace is open.")
+    if _held:
+        return _held
     if on:
         layouts[ws] = "fullscreen_chat"
     elif position:
@@ -3327,6 +3340,12 @@ def _tool_show_my_day(inp):
     if mode and mode not in LANDING_MODES:
         return "DAY_FAIL: the start screen's mode is smart, always or never."
     if mode:
+        from agent_friday.core import _load_settings
+        from agent_friday.services import setting_proposals as _sp
+        _held = _sp.hold("show_my_day", inp, old=(_load_settings() or {}).get("landing_mode") or "smart", new=mode,
+                         consequence="The start screen %s." % _LANDING_MODE_WORDS[mode])
+        if _held:
+            return _held
         _save_settings({"landing_mode": mode})
     action = {"type": "landing", "summon": not mode, "via": "friday"}
     if mode:
@@ -3912,6 +3931,15 @@ def _tool_switch_model(inp):
                 "Local models installed: %s" % (want, ", ".join(locals_) or "none"))
 
     mid, label, prov = hit
+    # A seat change is a setting: shown as a diff and held for the owner's Yes (B6, settings by sentence).
+    from agent_friday.services import setting_proposals as _sp
+    _cur_seat = (((_load_settings() or {}).get('capability_routing') or {}).get('reasoning') or {}).get('model') or ''
+    _is_local = any(i[0] == mid and i[2] for i in ids)
+    _held = _sp.hold("switch_model", inp, old=_cur_seat or "not set", new=label, consequence=(
+        "It runs on this PC and costs nothing per message." if _is_local else
+        "Your messages go to %s's cloud, which can cost money." % (prov or "a cloud provider")))
+    if _held:
+        return _held
     try:
         cur = _load_settings() or {}
         routing = dict(cur.get('capability_routing') or {})
@@ -5789,6 +5817,11 @@ def _running_tasks(target: str = "") -> list:
     return [t for t in rows if want in str(t.get('name') or '').lower() or want in str(t.get('description') or '').lower()]
 
 
+def _tool_set_setting(inp):
+    from agent_friday.services import setting_proposals
+    return setting_proposals.tool(inp)
+
+
 def _tool_task_control(inp):
     """Tool handler: stop a running workflow or task after the step it is on, or send a running task a message.
     Stopping only ever ends work: nothing is undone and nothing needs approval. A steer is checked for where its
@@ -7042,6 +7075,7 @@ CLAUDE_TOOL_HANDLERS = {
     "organize_email": _tool_organize_email,
     "screen_select": _tool_screen_select,
     "task_control": _tool_task_control,
+    "set_setting": _tool_set_setting,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
     "organize_media": _tool_organize_media,
@@ -7464,6 +7498,7 @@ TOOL_RINGS: dict[str, int] = {
     "screen_select":        1,
     # Ends work Friday started, or sends a running task a message; a steer's words are checked like any instruction.
     "task_control":         1,
+    "set_setting":          1,
     "undo_action":          2,
     "answer_card":          2,
     # Ring 1 — WRITE (local state mutation, always allowed)
@@ -10788,6 +10823,7 @@ from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import tool_output as _tool_output
+from agent_friday.services import setting_proposals as _setting_proposals  # registers the card hook  # noqa: F401
 
 #: Verb prefixes a model habitually invents in front of a tool's real name.
 #: Example: a seat calls `mcp_higgsfield_get_balance` when the registered

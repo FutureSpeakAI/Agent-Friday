@@ -96,6 +96,8 @@ def test_ok_only_when_the_page_that_shows_it_says_it_applied_it(monkeypatch):
     out = {}
 
     def call():
+        from agent_friday.services import setting_proposals as sp
+        sp._APPROVED.set(True)                  # a new thread starts without the fixture's approval
         out["text"] = agent._tool_set_workspace_layout({"workspace": "news", "fullscreen_chat": True})
 
     t = threading.Thread(target=call)
@@ -112,3 +114,14 @@ def test_a_page_that_does_not_answer_leaves_it_saved_not_ok(monkeypatch):
     desktop_bus.subscribe("page-2", "chat")
     out = agent._tool_set_workspace_layout({"workspace": "news", "fullscreen_chat": True})
     assert out.startswith("LAYOUT_SAVED:news") and "no Friday page" not in out, out
+
+
+@pytest.fixture(autouse=True)
+def _the_owner_said_yes(tmp_path, monkeypatch):
+    """What this file pins is what the tool does once the owner has approved the change. That it asks first
+    (a diff, one card, nothing written before the Yes) is tests/unit/test_direct_setting_writers_routed.py."""
+    from agent_friday.services import setting_proposals as sp
+    monkeypatch.setattr(sp, "_store", lambda: tmp_path / "setting_changes.json")
+    tok = sp._APPROVED.set(True)
+    yield
+    sp._APPROVED.reset(tok)

@@ -476,6 +476,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "screen_select": {"text": "message_body"},
     "organize_media": {"cards": "local_item", "value": "detail"},
     "task_control": {"message": "instruction"},
+    "set_setting": {"value": "instruction"},
     "set_workspace_layout": {},
     "show_my_day": {},
     "set_chat_tray": {},

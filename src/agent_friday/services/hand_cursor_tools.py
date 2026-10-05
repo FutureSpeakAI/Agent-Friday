@@ -89,6 +89,13 @@ def handle_big_mode(inp: dict) -> str:
                 "auto": "Big mode comes on with hand tracking."}[cur]
     if mode not in BIG_MODES:
         return "big_mode error: mode must be one of " + ", ".join(BIG_MODES)
+    from agent_friday.services import setting_proposals as _sp
+    held = _sp.hold("big_mode", inp, old=current_big_mode(), new=mode, consequence={
+        "on": "Buttons and cards stay large, with fewer items on a screen.",
+        "off": "Buttons and cards stay at their normal size, even with hand tracking.",
+        "auto": "Buttons and cards grow when hand tracking is on and shrink when it is off."}[mode])
+    if held:
+        return held
     persist_big_mode(mode)
     sent = push({"type": "hand_cursor", "op": "big_mode", "mode": mode})
     said = {"on": "Big mode is on.", "off": "Big mode is off.", "auto": "Big mode will follow hand tracking."}[mode]

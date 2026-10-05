@@ -259,3 +259,14 @@ def test_the_setup_screen_exists_and_the_recommended_answer_is_labelled_not_pres
     assert "recommended" in rec[0]["label"].lower()
     from agent_friday import setup_wizard as sw
     assert "calls" in sw._unanswered({"acks": {}}) if callable(getattr(sw, "_unanswered", None)) else True
+
+
+@pytest.fixture(autouse=True)
+def _the_owner_said_yes(tmp_path, monkeypatch):
+    """What this file pins is what the tool does once the owner has approved the change. That it asks first
+    (a diff, one card, nothing written before the Yes) is tests/unit/test_direct_setting_writers_routed.py."""
+    from agent_friday.services import setting_proposals as sp
+    monkeypatch.setattr(sp, "_store", lambda: tmp_path / "setting_changes.json")
+    tok = sp._APPROVED.set(True)
+    yield
+    sp._APPROVED.reset(tok)

@@ -271,3 +271,14 @@ voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and re
   checked for where they came from like any instruction. Two things running and no target comes back as a
   question to ask aloud. A cloud voice hears "it will stop after the step it is on", never the task's name. A
   workflow run also narrates itself to a live call in counts ("Step 2 of 5 has started."), never a step's name.
+- **Settings by sentence.** `set_setting(path, value)` (voice-native, ring 1) sets one Settings row by its
+  path (`settings.models.chat_model`, `settings.display.start_screen`, `settings.accessibility.big_mode`,
+  `settings.hologram.window.<dial>`, `settings.calls.stand_back`, `settings.podcasts.format.<show>`,
+  `settings.display.workspace_layout.<workspace>`), or undoes the last change to a row (`op: undo`, 30
+  days). It never writes on the call: it says SETTING_NEEDS_YES with the old and new value and what it
+  means, raises ONE card, and applies only on the owner's own yes (a conditional yes revises the card).
+  The seven tools that used to write a setting on the model's word (`switch_model`,
+  `set_workspace_layout`, `show_my_day` with a mode, `big_mode`, `hologram_window` set and reset,
+  `call_mode` set_mode, `podcast_format`) hold their write the same way. Showing something (the start
+  screen's cluster), reading a status, calibrating and standing back for a call now are not settings and
+  run at once. Values are settings, never the owner's content, so the cloud voice hears them.

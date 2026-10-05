@@ -304,6 +304,15 @@ ring, says SETTING_SET or SETTING_NEEDS_YES with the diff) sets exactly one row,
 page shows the same diff the search box shows. A conditional spoken yes never applies a
 change; it becomes a revised diff.
 
+*Status.* `set_setting` and the diff-and-Yes are built (`services/setting_proposals.py`) for the rows
+that have a tool today: the chat model, a workspace's layout, the start screen's mode, big mode, the
+hologram window's dials, the call mode and who hosts a show. Every tool that changes one of them holds
+the change for the owner's Yes; the owner's own control on the page is unchanged. A row that has a
+path carries `data-st-key`; "take me to big mode" lands on it outlined (the reticle's Locked look, 2 px
+`--fr-cyan`, cleared on the next input or after 12 s), and a row Friday changed shows "Friday, by a
+proposal you accepted · time · Undo" for thirty days. "If" and "unless" count as conditions in a
+spoken yes ("yes if it is cheaper" revises the card; it does not approve it).
+
 ### 6.5 Approvals and cards
 
 - One card component (`ApprovalCardBody`) everywhere a card appears; no surface draws its
