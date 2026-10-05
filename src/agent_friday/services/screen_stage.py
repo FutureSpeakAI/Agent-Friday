@@ -475,6 +475,44 @@ def on_screen_block(stage: dict | None, now: float | None = None) -> str:
     return "\n\n" + text + "\n"
 
 
+#: The most one fill may write; a longer text is written in parts.
+FILL_MAX = 8000
+_FILLS: list[dict] = []          # what Friday wrote into a field lately: {"norm", "flags", "at"}; memory only
+FILL_TTL_S = 3600.0
+
+
+def remember_fill(field: str, text: str, flags: list | None = None) -> None:
+    """Keep (in memory, an hour) that Friday wrote this text into a field, and what in it came from something
+    she read, so the send card that follows can say so."""
+    now = time.time()
+    _FILLS[:] = [f for f in _FILLS if now - f["at"] < FILL_TTL_S][-20:]
+    _FILLS.append({"norm": _norm_text(text), "flags": [str(x)[:200] for x in (flags or [])][:4], "at": now})
+
+
+def _norm_text(text: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(text or "").lower())
+
+
+def fill_note(body: Any) -> list[str]:
+    """Lines for a send card: this message was written by Friday on the owner's screen (when the text she wrote is
+    in it), and what in it came from something she read. [] when none of it is hers."""
+    norm = _norm_text(body)
+    if len(norm) < 12:
+        return []
+    now = time.time()
+    out: list[str] = []
+    for f in _FILLS:
+        if now - f["at"] < FILL_TTL_S and f["norm"] and f["norm"] in norm:
+            out.append("Friday wrote this message on your screen; you read it and pressed Send.")
+            out += ["Check: " + t for t in f["flags"]]
+            break
+    return out
+
+
+def reset_fills() -> None:
+    _FILLS.clear()
+
+
 def log_counts(op: str, ws: str, count: int, rule: str = "") -> None:
     """The only line See & Touch writes: ws, op, count, rule. Never a title, ref or query (I10)."""
     log.info("screen %s ws=%s count=%d%s", op, str(ws)[:24], int(count), (" rule=" + rule) if rule else "")

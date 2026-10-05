@@ -336,6 +336,11 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
         notes.append("Formatted text (the plain version is shown below).")
     for a in extras.get("attachments") or []:
         notes.append("Attachment: %s (%s, %d KB)" % (a["filename"], a["mime"], max(1, a["size"] // 1024)))
+    try:
+        from agent_friday.services import screen_stage as _ss
+        notes += _ss.fill_note(body)
+    except Exception:
+        pass
     note_text = ("\n" + "\n".join(notes)) if notes else ""
     appr = _ap.create_approval(
         kind=APPROVAL_KIND,

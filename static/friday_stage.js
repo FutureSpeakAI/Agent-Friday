@@ -202,6 +202,7 @@
     '.fr-chip{display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 10px;border-radius:999px;border:1px solid var(--fr-cyan);',
     'background:var(--fr-cyan-soft);font-size:11px;color:var(--fr-text);white-space:nowrap}',
     '.fr-chip .by{color:var(--fr-dim)}',
+    '.fr-chip .needs-you{color:var(--fr-warn)}',
     '.fr-chip button{background:none;border:0;color:inherit;cursor:pointer;padding:0 6px;font-size:12px;line-height:1;border-radius:999px}',
     '.fr-chip button:hover{background:var(--fr-cyan-soft)}'
   ].join('');
@@ -317,8 +318,121 @@
     return { ref: cursorRec.ref, state: cursorRec.state, age_s: 0 };
   }
 
+  // ── fields Friday may write into, and never submit ───────────────────────────
+  //
+  // A workspace registers the fields a person types into (a reply, a quick-add line, a workflow's
+  // steps) with read() and write(). Friday writes text into one with a `fill` command; the page marks
+  // it "Friday wrote this" with an Undo, and nothing is ever sent, saved or created by a fill: only
+  // the owner's own button does that.
+
+  var FILL_MAX = 8000;
+  var fieldMap = {};            // ws -> { key -> {key, label, read(), write(text)} }
+  var fillState = {};           // 'ws:key' -> { prev, text, flags, at }
+  var autoAdapters = {};
+
+  function fieldList(ws) {
+    var m = fieldMap[ws] || {};
+    return Object.keys(m).slice(0, 12).map(function (k) {
+      return { key: k, label: m[k].label || k, filled_by: fillState[ws + ':' + k] && currentText(ws, k) === fillState[ws + ':' + k].text ? 'friday' : null };
+    });
+  }
+  function currentText(ws, key) {
+    var f = (fieldMap[ws] || {})[key];
+    try { return f ? String(f.read() == null ? '' : f.read()) : ''; } catch (e) { return ''; }
+  }
+
+  // A workspace with fields and no list still reports its stage, so the server sees the fields.
+  function ensureFieldsAdapter(ws) {
+    if (adapters[ws]) return;
+    var rev = { json: '', n: 0 };
+    var ad = {
+      auto: true,
+      stage: function () {
+        var st = { workspace: ws, items: [], loaded: 0, total_hint: 0, selection: { id: '', refs: [], count: 0, label: '', source: '', beyond_loaded: 0 },
+                   filters: [], focus: null, open: null, cursor: null, fields: fieldList(ws), held: [], pointed: null };
+        var json = JSON.stringify(st);
+        if (json !== rev.json) rev = { json: json, n: rev.n + 1 };
+        st.rev = rev.n;
+        return st;
+      },
+      run: function (a) { return a.type === 'stage_request' ? { ok: true } : { ok: false, reason: 'not supported here yet' }; }
+    };
+    autoAdapters[ws] = ad;
+    adapters[ws] = ad;
+  }
+  function dropFieldsAdapter(ws) {
+    if (autoAdapters[ws] && adapters[ws] === autoAdapters[ws]) delete adapters[ws];
+    delete autoAdapters[ws];
+  }
+
+  // registerField(ws, {key, label, read(), write(text)}) -> the function that unregisters it.
+  function registerField(ws, f) {
+    ensureStyle();
+    (fieldMap[ws] = fieldMap[ws] || {})[f.key] = f;
+    ensureFieldsAdapter(ws);
+    touch(250);
+    return function () {
+      if (fieldMap[ws] && fieldMap[ws][f.key] === f) delete fieldMap[ws][f.key];
+      delete fillState[ws + ':' + f.key];
+      if (fieldMap[ws] && !Object.keys(fieldMap[ws]).length) { delete fieldMap[ws]; dropFieldsAdapter(ws); }
+      touch(250);
+    };
+  }
+
+  // fillField(ws, key, text, mode, flags) -> {ok, field, undo, reason?}. `insert` appends after what is there.
+  function fillField(ws, key, text, mode, flags) {
+    var f = (fieldMap[ws] || {})[key];
+    if (!f) return { ok: false, reason: 'not a field here' };
+    var add = String(text == null ? '' : text).slice(0, FILL_MAX);
+    var prev = currentText(ws, key);
+    var next = mode === 'insert' && prev ? prev + (/\s$/.test(prev) ? '' : ' ') + add : add;
+    try { f.write(next); } catch (e) { return { ok: false, reason: 'the field would not take it' }; }
+    fillState[ws + ':' + key] = { prev: prev, text: currentText(ws, key) || next, flags: (flags || []).slice(0, 4).map(String), at: Date.now() };
+    touch(200);
+    return { ok: true, field: key, undo: true, prev_len: prev.length };
+  }
+
+  // undoFill(ws, key): put the field back as it was before Friday wrote; false when nothing to undo.
+  function undoFill(ws, key) {
+    var st = fillState[ws + ':' + key], f = (fieldMap[ws] || {})[key];
+    if (!st || !f) return false;
+    try { f.write(st.prev); } catch (e) { return false; }
+    delete fillState[ws + ':' + key];
+    touch(200);
+    return true;
+  }
+
+  // The note beside a field Friday wrote: "Friday wrote this · Undo", and what in it came from something she read.
+  // null once the owner has changed the text (it is theirs now). `h` is React.createElement; onChange re-renders.
+  function fillChip(h, ws, key, brand, onChange) {
+    var st = fillState[ws + ':' + key];
+    if (!st || currentText(ws, key) !== st.text) return null;
+    return h('div', { className: 'fr-chips', role: 'status', 'data-testid': 'fr-fill-' + key },
+      h('span', { className: 'fr-chip' }, (brand || 'Friday') + ' wrote this · ' + ((fieldMap[ws] || {})[key] || {}).label,
+        h('button', { onClick: function () { undoFill(ws, key); if (onChange) onChange(); }, 'aria-label': 'Undo what ' + (brand || 'Friday') + ' wrote' }, 'Undo')),
+      (st.flags || []).map(function (t, i) { return h('span', { key: i, className: 'fr-chip', style: { borderColor: 'var(--fr-warn)' } }, '\u26a0 Check: ' + t); }));
+  }
+
+  // The notes for several fields at once ("Friday wrote this" for each one she filled): keys, or all of the
+  // workspace's fields when keys is falsy. null when none is filled.
+  function fillChips(h, ws, keys, brand, onChange) {
+    var list = keys || Object.keys(fieldMap[ws] || {});
+    var out = list.map(function (k) {
+      var st = fillState[ws + ':' + k];
+      if (!st || currentText(ws, k) !== st.text) return null;
+      var f = (fieldMap[ws] || {})[k] || {};
+      return h('span', { key: k, className: 'fr-chip', 'data-testid': 'fr-fill-' + k }, (brand || 'Friday') + ' wrote ' + (f.label || k),
+        h('button', { onClick: function () { undoFill(ws, k); if (onChange) onChange(); }, 'aria-label': 'Undo what ' + (brand || 'Friday') + ' wrote in ' + (f.label || k) }, 'Undo'));
+    }).filter(Boolean);
+    var flags = [];
+    list.forEach(function (k) { var st = fillState[ws + ':' + k]; if (st && currentText(ws, k) === st.text) (st.flags || []).forEach(function (t) { flags.push(t); }); });
+    if (!out.length) return null;
+    return h('div', { className: 'fr-chips', role: 'status' }, out,
+      flags.map(function (t, i) { return h('span', { key: 'f' + i, className: 'fr-chip', style: { borderColor: 'var(--fr-warn)' } }, '\u26a0 Check: ' + t); }));
+  }
+
   var adapters = {};
-  var commandTypes = { select: 1, clear_selection: 1, stage_request: 1, held: 1, point: 1, chips: 1 };
+  var commandTypes = { select: 1, clear_selection: 1, stage_request: 1, held: 1, point: 1, chips: 1, fill: 1 };
 
   /* makeAdapter(ws, get): the whole adapter for a list workspace from a small config the workspace
    * hands over fresh each time (so it always reads the latest state). cfg:
@@ -347,7 +461,7 @@
         total_hint: c.total ? c.total() : 0,
         selection: selectionOf(c),
         filters: c.filters ? c.filters() : [], focus: c.focus ? c.focus() : null, open: c.open ? c.open() : null,
-        cursor: cursorNow(items.map(function (i) { return i.ref; })), fields: [],
+        cursor: cursorNow(items.map(function (i) { return i.ref; })), fields: fieldList(ws),
         held: heldN ? [{ card_id: 'pending', refs_count: heldN }] : [],
         pointed: pointedNow()
       };
@@ -425,6 +539,12 @@
   function run(action) {
     var ws = (action && action.workspace) || 'messages';
     var a = adapters[ws];
+    if (action && action.type === 'fill') {
+      var res = fillField(ws, action.field, action.text, action.mode, action.flags);
+      var st0 = null;
+      if (a) { try { st0 = a.stage(); } catch (e) { /* the result still stands */ } }
+      return Promise.resolve({ result: res, stage: st0 });
+    }
     if (!a) return Promise.resolve({ result: { ok: false, reason: 'not open' }, stage: null });
     return Promise.resolve(a.run(action)).then(function (result) {
       var st = null;
@@ -445,6 +565,7 @@
     MIN_GAP_MS: MIN_GAP_MS,
     emptySelection: emptySelection, reduceSelection: reduceSelection, chipText: chipText,
     sweepDelays: sweepDelays, limiter: limiter, POINT_CAP: POINT_CAP, POINT_FADE_MS: POINT_FADE_MS,
+    FILL_MAX: FILL_MAX, fieldList: fieldList, registerField: registerField, fillField: fillField, undoFill: undoFill, fillChip: fillChip, fillChips: fillChips,
     cursor: cursor, cursorNow: cursorNow, CURSOR_MEMORY_MS: CURSOR_MEMORY_MS,
     pointPlan: pointPlan, point: point, clearPoints: clearPoints, chipsRow: chipsRow, makeAdapter: makeAdapter, ensureStyle: ensureStyle,
     register: register, registered: registered, snapshot: snapshot, handles: handles, run: run, touch: touch

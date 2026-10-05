@@ -29637,6 +29637,24 @@ function WfEditor({
   const [ui, setUi] = useState(wfWhenToUi(initial.when));
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  // See & Touch: the editor's name, description and each step's text are fields Friday may write into.
+  // Nothing is saved by a fill: only Save does that.
+  const wfRef = useRef(null); wfRef.current = { name, desc, steps };
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => {
+    const FS = window.fridayStage;
+    if (!FS) return undefined;
+    const bump = () => setFillTick(n => n + 1);
+    const un = [
+      FS.registerField('workflows', { key: 'name', label: 'Name', read: () => wfRef.current.name, write: t => { setName(String(t).replace(/\s+/g, ' ').trim()); bump(); } }),
+      FS.registerField('workflows', { key: 'description', label: 'What it is for', read: () => wfRef.current.desc, write: t => { setDesc(String(t).replace(/\s+/g, ' ').trim()); bump(); } })
+    ];
+    for (let i = 0; i < steps.length; i++) {
+      un.push(FS.registerField('workflows', { key: 'step.' + (i + 1) + '.prompt', label: 'Step ' + (i + 1), read: () => (wfRef.current.steps[i] || {}).prompt || '',
+        write: t => { setSteps(cur => cur.map((s, j) => j === i ? Object.assign({}, s, { prompt: String(t) }) : s)); bump(); } }));
+    }
+    return () => un.forEach(f => f());
+  }, [steps.length]);
   const setU = (k, v) => setUi(Object.assign({}, ui, {
     [k]: v
   }));
@@ -29703,7 +29721,7 @@ function WfEditor({
     style: {
       marginBottom: 10
     }
-  }, isNew ? 'Check the draft, then save' : 'Edit workflow'), initial.source === 'simple' && isNew && /*#__PURE__*/React.createElement("div", {
+  }, isNew ? 'Check the draft, then save' : 'Edit workflow'), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['name', 'description'].concat(steps.map((_, i) => 'step.' + (i + 1) + '.prompt')), fridayName(), () => setFillTick(n => n + 1)) : null, initial.source === 'simple' && isNew && /*#__PURE__*/React.createElement("div", {
     className: "wfx-quiet",
     style: {
       marginBottom: 10
@@ -30049,6 +30067,10 @@ function WorkflowsWS() {
   const [error, setError] = useState('');
   const [ask, setAsk] = useState('');
   const [composing, setComposing] = useState(false);
+  // See & Touch: the box that describes a workflow is a field Friday may write into; Draft it is the owner's.
+  const askRef = useRef(ask); askRef.current = ask;
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => window.fridayStage ? window.fridayStage.registerField('workflows', { key: 'compose', label: 'Describe it', read: () => askRef.current, write: t => { setAsk(String(t)); setFillTick(n => n + 1); } }) : undefined, []);
   const [drafting, setDrafting] = useState(false);
   const [draftErr, setDraftErr] = useState('');
   const [editing, setEditing] = useState(null);
@@ -30168,7 +30190,7 @@ function WorkflowsWS() {
       display: 'block',
       marginBottom: 6
     }
-  }, "New workflow \u2014 say what, and when"), /*#__PURE__*/React.createElement("div", {
+  }, "New workflow \u2014 say what, and when"), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['compose'], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("div", {
     className: "wfx-row",
     style: {
       alignItems: 'flex-end'
@@ -36949,6 +36971,10 @@ function CalendarWS() {
   const [tomorrow, setTomorrow] = useState(null);
   const [now, setNow] = useState(new Date());
   const [quick, setQuick] = useState('');
+  // See & Touch: the quick-add line is a field Friday may write into (never submit).
+  const quickRef = useRef(quick); quickRef.current = quick;
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => window.fridayStage ? window.fridayStage.registerField('calendar', { key: 'quickadd', label: 'Quick add', read: () => quickRef.current, write: t => { setQuick(String(t).replace(/\s+/g, ' ').trim()); setFillTick(n => n + 1); } }) : undefined, []);
   const [adding, setAdding] = useState(false);
   const [prepFor, setPrepFor] = useState(null);
   const [prepText, setPrepText] = useState('');
@@ -37082,7 +37108,7 @@ function CalendarWS() {
     }
   }, /*#__PURE__*/React.createElement(FridaySays, {
     text: active?.annotation || 'Your timeline is ready.'
-  }), /*#__PURE__*/React.createElement("div", {
+  }), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'calendar', ['quickadd'], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("div", {
     className: "cal-quickadd"
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
@@ -37423,6 +37449,16 @@ function MeetingsPanel() {
   const [sel, setSel] = useState(null);
   const [picked, setPicked] = useState({});
   const [fu, setFu] = useState(null);
+  // See & Touch: the follow-up draft's three fields, while it is open.
+  const fuRef = useRef(fu); fuRef.current = fu;
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => {
+    const FS = window.fridayStage;
+    if (!FS || !fu) return undefined;
+    const part = (k, label) => FS.registerField('calendar', { key: 'followup.' + k, label, read: () => (fuRef.current || {})[k] || '', write: t => { setFu(f => f && Object.assign({}, f, { [k]: String(t) })); setFillTick(n => n + 1); } });
+    const un = [part('to', 'To'), part('subject', 'Subject'), part('body', 'Message')];
+    return () => un.forEach(f => f());
+  }, [!!fu]);
   const [showTx, setShowTx] = useState(false);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
@@ -37837,7 +37873,7 @@ function MeetingsPanel() {
       ...box,
       marginTop: 8
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'calendar', ['followup.to', 'followup.subject', 'followup.body'], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       width: '100%',
@@ -46454,6 +46490,11 @@ function TaskControls({
 }) {
   const [steer, setSteer] = useState('');
   const [busy, setBusy] = useState('');
+  // See & Touch: the steer box of a running task is a field Friday may write into; Steer is the owner's.
+  const steerRef = useRef(steer); steerRef.current = steer;
+  const [fillTick, setFillTick] = useState(0);
+  const steerRunning = (task.status || 'running') === 'running' || (task.status || 'running') === 'queued';
+  useEffect(() => (window.fridayStage && steerRunning) ? window.fridayStage.registerField('system', { key: 'steer.' + task.task_id, label: 'Steer', read: () => steerRef.current, write: t => { setSteer(String(t)); setFillTick(n => n + 1); } }) : undefined, [steerRunning, task.task_id]);
   const status = task.status || 'running';
   const running = status === 'running' || status === 'queued';
   const post = async (path, body) => {
@@ -46478,7 +46519,7 @@ function TaskControls({
       marginTop: 6,
       alignItems: 'center'
     }
-  }, running && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+  }, running && /*#__PURE__*/React.createElement(React.Fragment, null, window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'system', ['steer.' + task.task_id], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("input", {
     value: steer,
     onChange: e => setSteer(e.target.value),
     placeholder: "Steer: tell it something without stopping it",

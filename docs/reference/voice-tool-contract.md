@@ -227,10 +227,10 @@ voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and re
   mail still goes through `organize_email`, which keeps its own gate: archive, trash, spam, restore
   and move raise ONE card for the whole batch, bound to the rows that were ticked when it was
   called; mark read/unread, star and label (the owner's ruling) run at once with a receipt.
-- **One tool, six verbs.** To keep the curated contract under its token ceiling `screen_select` carries
+- **One tool, seven verbs.** To keep the curated contract under its token ceiling `screen_select` carries
   every See & Touch verb: `select`, `add`, `remove`, `clear` (ticks), `point` (an outline and a number on up
-  to 12 rows, in the Message Center, News, Media or the Library) and `filter` (a removable chip through the
-  workspace's own filter). "The second one" means the second thing just pointed at, for two minutes.
+  to 12 rows, in the Message Center, News, Media or the Library), `filter` (a removable chip through the
+  workspace's own filter) and `fill` (text written into a field the screen offers, below). "The second one" means the second thing just pointed at, for two minutes.
 - **The result is the page's, not the intent.** `SELECT_OK` / `SELECT_PARTIAL` / `SELECT_FAIL` report
   what the page confirmed. `SELECT_ASK` carries a speakable question when "this" is ambiguous (a
   ticked batch and a hand on another row): ask it, never guess.
@@ -254,6 +254,13 @@ voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and re
 - **Media by voice.** `navigate_to` takes `kind: "card"`; `media_cards`, `media_show` and `organize_media`
   are on the contract, and a cloud voice hears counts and states of cards ("6 cards: 3 draft, 3
   published"), never a title.
+- **Filling a field.** `screen_select op: fill` writes `text` into a `field` the owner's open workspace
+  registered (a reply's to, subject and body; the calendar's quick-add line and follow-up draft; a workflow's
+  name, description, steps and its compose box; a running task's steer box). It writes into the page's own state
+  and nothing else: it never sends, saves, adds or runs; the owner reads it, edits it or undoes it and presses the
+  button. A field the page did not register is refused. A cloud voice is told it was written, not what it says.
+  A link or address in the text that Friday read in an email or page is flagged beside the field and, when that
+  text is sent, on the send card ("Friday wrote this message on your screen" and what to check).
 - **The ceiling.** `VOICE_CONTRACT_MAX_TOKENS` is 10000, up from 9000 (which had 359 tokens spare): the
   See & Touch tools and the Media parity take about 700 of the 1,000 added. That is about 11% more cold
   prefill on the local front; bench it with `scripts/bench_voice_turn.py` before the next speed pass.

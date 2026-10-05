@@ -446,12 +446,13 @@ _VOICE_LIVE_TOOLS = [
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
     ("screen_select",
      "Show the user's open list what you mean: tick, untick or clear rows (op select, "
-     "add, remove, clear), outline and number up to 12 (op point), or set a filter "
-     "chip (op filter, key, value; an empty value clears it). Shows only: no mail "
-     "changes, no approval. SELECT_OK or POINT_OK: say the count and kind, never a "
+     "add, remove, clear), outline and number up to 12 (op point), set a filter "
+     "chip (op filter, key, value; an empty value clears it), or write text into a "
+     "field they can see (op fill, field, text). Shows only: no mail "
+     "changes, nothing sent or saved, no approval. SELECT_OK or POINT_OK: say the count and kind, never a "
      "name. SELECT_ASK or POINT_ASK: ask it. FAIL: say why. To act on ticks, call "
      "organize_email with selection screen.",
-     {"op": ("string", "select, add, remove, clear, point or filter."),
+     {"op": ("string", "select, add, remove, clear, point, filter or fill."),
       "workspace": ("string", "messages, news, media, library or files."),
       "scope": ("string", "screen or all."),
       "category": ("string", "newsletters, promotions, unread, a status..."),
@@ -460,7 +461,9 @@ _VOICE_LIVE_TOOLS = [
       "ordinals": ("array", "Numbers on screen."),
       "deictic": ("string", "this or these."),
       "key": ("string", "Filter: lane, unread, q, folder, category, sort, status, kind, project."),
-      "value": ("string", "Filter value; empty clears.")},
+      "value": ("string", "Filter value; empty clears."),
+      "field": ("string", "Fill: the field's key on screen."),
+      "text": ("string", "Fill: what to write.")},
      ["op"]),
     ("set_chat_tray",
      "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or "

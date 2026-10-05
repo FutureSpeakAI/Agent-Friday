@@ -481,6 +481,36 @@
     const [sendAt, setSendAt] = useState('');       // datetime-local, '' = as soon as approved
     const [drafting, setDrafting] = useState(false);
     const ed = useRef(null), fileRef = useRef(null);
+    // ── See & Touch: the fields Friday may write into. She never sends: only the owner's Send does. ──
+    const toRef = useRef(to), subjectRef = useRef(subject);
+    toRef.current = to; subjectRef.current = subject;
+    const [fillTick, setFillTick] = useState(0);
+    const rerender = () => setFillTick(n => n + 1);
+    const kind = init.mode && init.mode !== 'new' ? 'reply' : 'compose';
+    // what the owner typed: everything above the signature and the quoted original
+    const anchorOf = el => { const stop = el.querySelector('.fm-sig, .fm-quote'); return stop ? Array.from(el.childNodes).find(n => n === stop || (n.contains && n.contains(stop))) || null : null; };
+    const typedText = () => {
+      const el = ed.current; if (!el) return '';
+      const stop = anchorOf(el); let out = '';
+      for (const n of Array.from(el.childNodes)) { if (n === stop) break; out += n.nodeType === 3 ? n.textContent : (n.nodeName === 'BR' ? '\n' : (n.innerText || '')); }
+      return out.replace(/\n+$/, '');
+    };
+    const writeTyped = text => {
+      const el = ed.current; if (!el) throw new Error('no editor');
+      const stop = anchorOf(el); const frag = document.createDocumentFragment();
+      String(text).split('\n').forEach((line, i, a) => { frag.appendChild(document.createTextNode(line)); if (i < a.length - 1) frag.appendChild(document.createElement('br')); });
+      for (const n of Array.from(el.childNodes)) { if (n === stop) break; n.remove(); }
+      el.insertBefore(frag, stop);
+      rerender();
+    };
+    useEffect(() => {
+      const un = [
+        FS.registerField('messages', { key: kind + '.to', label: 'To', read: () => toRef.current, write: t => { setTo(t); rerender(); } }),
+        FS.registerField('messages', { key: kind + '.subject', label: 'Subject', read: () => subjectRef.current, write: t => { setSubject(String(t).replace(/\s+/g, ' ').trim()); rerender(); } }),
+        FS.registerField('messages', { key: kind + '.body', label: kind === 'reply' ? 'Reply' : 'Message', read: typedText, write: writeTyped })
+      ];
+      return () => un.forEach(f => f());
+    }, []);
     useEffect(() => {
       if (ed.current && init.html != null) ed.current.innerHTML = init.html;
       // replies and forwards start typing above the quoted original
@@ -590,9 +620,12 @@
           (canSend.length ? canSend : accounts).map(a => h('option', { key: a.id, value: a.id }, (a.label || '') + (a.email ? ' <' + a.email + '>' : '') + (canSend.find(c => c.id === a.id) ? '' : ' (read-only)'))))),
       h('div', { className: 'fm-field' }, h('label', null, 'To'), h(AddrInput, { value: to, onChange: setTo, autoFocus: !to }),
         !showCc && h('button', { className: 'fm-tool', onClick: () => setShowCc(true) }, 'Cc')),
+      FS.fillChip(h, 'messages', kind + '.to', fridayName(), rerender),
       showCc && h('div', { className: 'fm-field' }, h('label', null, 'Cc'), h(AddrInput, { value: cc, onChange: setCc })),
       showCc && h('div', { className: 'fm-field' }, h('label', null, 'Bcc'), h(AddrInput, { value: bcc, onChange: setBcc })),
       h('div', { className: 'fm-field' }, h('label', null, 'Subject'), h('input', { value: subject, onChange: e => setSubject(e.target.value) })),
+      FS.fillChip(h, 'messages', kind + '.subject', fridayName(), rerender),
+      FS.fillChip(h, 'messages', kind + '.body', fridayName(), rerender),
       h('div', { ref: ed, className: 'fm-editor', contentEditable: true, suppressContentEditableWarning: true, role: 'textbox', 'aria-multiline': true, 'aria-label': 'Message body', autoFocus: !!to }),
       (atts.length > 0 || fwd.length > 0) && h('div', { className: 'fm-atts', style: { padding: '0 12px 6px' } },
         atts.map((a, i) => h('span', { key: a.sha256, className: 'fm-att' }, '📎 ' + a.filename + ' · ' + Math.max(1, Math.round(a.size / 1024)) + ' KB',
@@ -1238,7 +1271,7 @@
         loaded: all.length, total_hint: (data && data.total) || all.length,
         selection: { id: cur.id, refs: cur.refs, count: cur.refs.length, label: cur.label, source: cur.source, beyond_loaded: beyond },
         filters, focus: focusTouched.current && shown[focus] ? refOf(shown[focus]) : null, open: open ? refOf(open.card) : null,
-        cursor: FS.cursorNow(shown.slice(0, FS.MAX_ROWS).map(refOf)), fields: [],
+        cursor: FS.cursorNow(shown.slice(0, FS.MAX_ROWS).map(refOf)), fields: FS.fieldList('messages'),
         held: Object.keys(cur.held).length ? [{ card_id: 'pending', refs_count: Object.keys(cur.held).length }] : []
       };
       const json = JSON.stringify(st);

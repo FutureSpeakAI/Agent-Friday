@@ -466,7 +466,7 @@
       FS ? FS.chipsRow(h, currentFilters(), () => { fridayFolder.current = null; setFolder(null); FS.touch(); }, (window.fridayName ? window.fridayName() : 'Friday')) : null,
       ss.refs.length > 0 && h('div', { className: 'fr-chips', role: 'group', 'aria-label': 'Selected documents' },
         h('span', { className: 'fr-chip', 'data-testid': 'lb-selchip' }, FS.chipText(ss, (window.fridayName ? window.fridayName() : 'Friday')),
-          Object.keys(ss.held).length > 0 && h('span', { className: 'by', style: { color: 'var(--fr-warn)' } }, '\u00b7 Waiting for your OK'),
+          Object.keys(ss.held).length > 0 && h('span', { className: 'by needs-you' }, '\u00b7 Waiting for your OK'),
           h('button', { onClick: () => commitSel({ type: 'clear' }), title: 'Clear the selection', 'aria-label': 'Clear the selection' }, '\u00d7'))),
       empty ? emptyState : h('table', { className: 'lb-table' },
         h('thead', null, h('tr', null, h('th', { key: 'pick', scope: 'col', style: { width: 28 } }, h('span', { className: 'sr-only', style: { position: 'absolute', left: -9999 } }, 'Select')),

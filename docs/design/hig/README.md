@@ -202,6 +202,10 @@ confirmation that names the thing.
   numeral in `--fr-font-mono`, so "open number two" works. At most 12 are badged; the rest are counted.
   Nothing strobes: the colour changes once, the outlines go on the owner's next input or after 12 s, and
   reduced motion shortens the fade, never removes it.
+- **Fill in place.** When Friday writes into a field (a reply, a quick-add line, a workflow's steps) the text
+  lands in the field and a chip beside it says "Friday wrote this · Subject" with an Undo, and what in it came
+  from something she read ("Check: ..."); the chip goes the moment the owner edits the text. A fill never
+  presses the field's button: Send, Add, Save and Run stay the owner's.
 - **Filters Friday sets are chips.** A spoken filter ("only unread, only this week") is applied through the
   workspace's own filter and also shown as a removable chip marked "by Friday"; nothing is filtered
   invisibly. A filter the owner changes afterwards stops being marked.

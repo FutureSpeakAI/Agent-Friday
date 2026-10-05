@@ -776,10 +776,13 @@ CLAUDE_TOOLS = [
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
-    {"name": "screen_select", "description": "Show the user's open list what you mean. op select/add/remove/clear ticks rows in the Message Center so they see the checks appear; op point outlines and numbers up to 12 rows in the Message Center, News, Media or the Library (the second one = the second thing you just pointed at); op filter sets a filter chip through the workspace's own filter (key and value; an empty value removes it). Shows only: changes no mail and needs no approval. scope=screen picks among the rows shown; scope=all searches the whole inbox. match: category (newsletters, promotions, unread, a news category, a status or project...), lane, unread, from, older_than (days), ordinals, status, kind, project, folder, query (a Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / POINT_OK / FILTER_OK report what the page confirmed. To act on the ticks, call organize_email with selection=screen.",
+    {"name": "screen_select", "description": "Show the user's open list what you mean. op select/add/remove/clear ticks rows in the Message Center so they see the checks appear; op point outlines and numbers up to 12 rows in the Message Center, News, Media or the Library (the second one = the second thing you just pointed at); op=filter sets a filter chip through the workspace's own filter (key and value; an empty value removes it); op=fill writes text into a field the screen offers (a reply, a quick-add line, a workflow's steps) so the user reads it and sends or saves it themselves. Shows only: changes no mail and needs no approval. scope=screen picks among the rows shown; scope=all searches the whole inbox. match: category (newsletters, promotions, unread, a news category, a status or project...), lane, unread, from, older_than (days), ordinals, status, kind, project, folder, query (a Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / POINT_OK / FILTER_OK report what the page confirmed. To act on the ticks, call organize_email with selection=screen.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "messages, news, media or library; default the one in front."},
-         "op": {"type": "string", "enum": ["select", "add", "remove", "clear", "point", "filter"]},
+         "op": {"type": "string", "enum": ["select", "add", "remove", "clear", "point", "filter", "fill"]},
+         "field": {"type": "string", "description": "For op=fill: the field's key as the screen lists it (reply.body, compose.subject, quickadd, name, step.1.prompt, steer.<task>...)."},
+         "text": {"type": "string", "description": "For op=fill: what to write. It is written into the field; nothing is sent or saved."},
+         "mode": {"type": "string", "enum": ["replace", "insert"], "description": "For op=fill: replace what is there, or add after it."},
          "key": {"type": "string", "description": "For op=filter: lane, unread, q, folder, account (mail); category, sort (news); status, kind, project, q (media); folder (library)."},
          "value": {"type": "string", "description": "For op=filter: the value; empty removes the chip."},
          "scope": {"type": "string", "enum": ["screen", "all"]},
@@ -3562,6 +3565,51 @@ def _screen_filter(ws: str, inp, match: dict) -> str:
                                (" - now: " + names) if names else " - no filters on")
 
 
+def _screen_fill(ws: str, inp) -> str:
+    """screen_select op=fill: write text into a field the owner's open workspace registered for it. It never
+    sends, saves or creates anything: only the owner's own button does. A field the page did not register is
+    refused; text that carries a link or address Friday read in something outside is flagged on the screen and
+    on the send card that follows."""
+    from agent_friday.services import desktop_bus, screen_stage as _ss, taint as _taint
+    field = str(inp.get("field") or "").strip()
+    text = inp.get("text")
+    mode = "insert" if str(inp.get("mode") or "").lower() == "insert" else "replace"
+    if not field or not isinstance(text, str) or not text.strip():
+        return "FILL_FAIL: say which field, and what to write in it."
+    if len(text) > _ss.FILL_MAX:
+        return "FILL_FAIL: that is longer than %d characters; write it in parts." % _ss.FILL_MAX
+    st = _fresh_screen_stage(ws)
+    if st is None:
+        return "FILL_FAIL: I can't see that screen right now."
+    fields = {f["key"]: f for f in st.get("fields") or []}
+    if field not in fields:
+        have = ", ".join("%s (%s)" % (k, f.get("label") or k) for k, f in list(fields.items())[:8])
+        return "FILL_FAIL: %s is not a field I can write in here.%s" % (
+            field[:40], (" I can write in: " + have + ".") if have else " There is nothing open that I can write in.")
+    flags = []
+    try:
+        cid = _CURRENT_CONVERSATION.get()
+        dec = _taint.evaluate("conversation:%s" % cid if cid else "default", "screen_select", {"text": text})
+        flags = [f.text for f in dec.warn][:4]
+    except Exception:
+        flags = []
+    sent = desktop_bus.send([{"type": "fill", "workspace": ws, "field": field, "text": text, "mode": mode, "flags": flags}],
+                            timeout=SELECT_ACK_S)
+    if not sent.get("delivered"):
+        return "FILL_FAIL: %s." % sent.get("reason")
+    res = (sent.get("ack") or {}).get("result") or {}
+    if not sent.get("acked") or not res.get("ok"):
+        return "FILL_FAIL: %s" % (res.get("reason") or "the page did not confirm it, so I can't say anything was written.")
+    _ss.remember_fill(field, text, flags)
+    _ss.log_counts("fill", ws, 1, mode)
+    label = (fields[field].get("label") or field)
+    if _cloud_voice() or _voice_room():
+        return "FILL_OK I've written it in. They read it, change it or undo it, and send it themselves."
+    note = (" Part of it uses something I read (%s): they were told to check it." % "; ".join(flags)) if flags else ""
+    return ("FILL_OK written into %s. Nothing is sent: they can read it, edit it or undo it, and press Send themselves."
+            % label) + note
+
+
 def _screen_point(ws: str, inp, match: dict) -> str:
     """screen_select op=point: outline and number rows on the owner's screen. Shows only: nothing
     changes and no card is raised. What was pointed at is remembered for two minutes ("the second
@@ -3631,6 +3679,8 @@ def _tool_screen_select(inp):
         return _screen_filter(ws, inp, match)
     if op == "point":
         return _screen_point(ws, inp, match)
+    if op == "fill":
+        return _screen_fill(ws, inp)
     if ws not in _TICKABLE:
         return "SELECT_FAIL: I can show ticks in the Message Center, Media, the Library and Files so far."
     if ws != "messages" and scope == "all":

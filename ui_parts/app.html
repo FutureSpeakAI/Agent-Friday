@@ -8379,6 +8379,24 @@ function WfEditor({ initial, onCancel, onSaved }) {
   const [ui, setUi] = useState(wfWhenToUi(initial.when));
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  // See & Touch: the editor's name, description and each step's text are fields Friday may write into.
+  // Nothing is saved by a fill: only Save does that.
+  const wfRef = useRef(null); wfRef.current = { name, desc, steps };
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => {
+    const FS = window.fridayStage;
+    if (!FS) return undefined;
+    const bump = () => setFillTick(n => n + 1);
+    const un = [
+      FS.registerField('workflows', { key: 'name', label: 'Name', read: () => wfRef.current.name, write: t => { setName(String(t).replace(/\s+/g, ' ').trim()); bump(); } }),
+      FS.registerField('workflows', { key: 'description', label: 'What it is for', read: () => wfRef.current.desc, write: t => { setDesc(String(t).replace(/\s+/g, ' ').trim()); bump(); } })
+    ];
+    for (let i = 0; i < steps.length; i++) {
+      un.push(FS.registerField('workflows', { key: 'step.' + (i + 1) + '.prompt', label: 'Step ' + (i + 1), read: () => (wfRef.current.steps[i] || {}).prompt || '',
+        write: t => { setSteps(cur => cur.map((s, j) => j === i ? Object.assign({}, s, { prompt: String(t) }) : s)); bump(); } }));
+    }
+    return () => un.forEach(f => f());
+  }, [steps.length]);
   const setU = (k, v) => setUi(Object.assign({}, ui, { [k]: v }));
   const setS = (i, k, v) => { const n = steps.slice(); n[i] = Object.assign({}, n[i], { [k]: v }); setSteps(n); };
   const move = (i, d) => { const n = steps.slice(); const t = n[i]; n[i] = n[i + d]; n[i + d] = t; setSteps(n); };
@@ -8398,6 +8416,7 @@ function WfEditor({ initial, onCancel, onSaved }) {
   const ask = initial.asks_first || [];
   return (<div className="card wfx-card" style={{ borderColor: 'rgba(0,212,255,.35)' }} data-testid="wf-editor">
     <div className="card-title" style={{ marginBottom: 10 }}>{isNew ? 'Check the draft, then save' : 'Edit workflow'}</div>
+    {window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['name', 'description'].concat(steps.map((_, i) => 'step.' + (i + 1) + '.prompt')), fridayName(), () => setFillTick(n => n + 1)) : null}
     {initial.source === 'simple' && isNew && <div className="wfx-quiet" style={{ marginBottom: 10 }}>{fridayName()} couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below.</div>}
     <label className="wfx-lbl" htmlFor="wf-name">Name</label>
     <input id="wf-name" className="wfx-in" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Council agenda watch" />
@@ -8495,6 +8514,10 @@ function WorkflowsWS() {
   const [error, setError] = useState('');
   const [ask, setAsk] = useState('');
   const [composing, setComposing] = useState(false);
+  // See & Touch: the box that describes a workflow is a field Friday may write into; Draft it is the owner's.
+  const askRef = useRef(ask); askRef.current = ask;
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => window.fridayStage ? window.fridayStage.registerField('workflows', { key: 'compose', label: 'Describe it', read: () => askRef.current, write: t => { setAsk(String(t)); setFillTick(n => n + 1); } }) : undefined, []);
   const [drafting, setDrafting] = useState(false);
   const [draftErr, setDraftErr] = useState('');
   const [editing, setEditing] = useState(null);
@@ -8549,6 +8572,7 @@ function WorkflowsWS() {
     <style>{WF_CSS}</style>
     {!editing && <div className="card wfx-card" style={{ borderColor: 'rgba(0,212,255,.3)', marginBottom: 8 }}>
       <label htmlFor="wf-ask" className="card-title" style={{ display: 'block', marginBottom: 6 }}>New workflow — say what, and when</label>
+      {window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['compose'], fridayName(), () => setFillTick(n => n + 1)) : null}
       <div className="wfx-row" style={{ alignItems: 'flex-end' }}>
         <textarea id="wf-ask" className="wfx-in wfx-ask wfx-grow" rows={composing ? 3 : 1}
           style={{ minHeight: composing ? 72 : 38, height: composing ? undefined : 38, resize: composing ? 'vertical' : 'none', overflow: composing ? 'auto' : 'hidden', whiteSpace: composing ? undefined : 'nowrap' }}
@@ -14637,10 +14661,16 @@ function TaskTimeline({taskId,live,fallback}){
 }
 function TaskControls({task,onChanged}){
   const[steer,setSteer]=useState('');const[busy,setBusy]=useState('');
+  // See & Touch: the steer box of a running task is a field Friday may write into; Steer is the owner's.
+  const steerRef = useRef(steer); steerRef.current = steer;
+  const [fillTick, setFillTick] = useState(0);
+  const steerRunning = (task.status || 'running') === 'running' || (task.status || 'running') === 'queued';
+  useEffect(() => (window.fridayStage && steerRunning) ? window.fridayStage.registerField('system', { key: 'steer.' + task.task_id, label: 'Steer', read: () => steerRef.current, write: t => { setSteer(String(t)); setFillTick(n => n + 1); } }) : undefined, [steerRunning, task.task_id]);
   const status=task.status||'running';const running=status==='running'||status==='queued';
   const post=async(path,body)=>{setBusy(path);try{await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})}catch(e){}setBusy('');if(onChanged)onChanged();};
   return(<div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:6,alignItems:'center'}}>
     {running&&<>
+      {window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'system', ['steer.'+task.task_id], fridayName(), () => setFillTick(n => n + 1)) : null}
       <input value={steer} onChange={e=>setSteer(e.target.value)} placeholder="Steer: tell it something without stopping it" onClick={e=>e.stopPropagation()}
         style={{flex:1,minWidth:140,fontSize:11,padding:'2px 6px',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',color:'#fff',borderRadius:4}}/>
       <button className="task-card-btn" disabled={!steer.trim()||!!busy} onClick={e=>{e.stopPropagation();const m=steer.trim();setSteer('');post('/api/agent/steer',{task_id:task.task_id,message:m})}}>Steer</button>
