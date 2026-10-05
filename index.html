@@ -3724,6 +3724,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/step_panel.js"></script>
     <!-- Settings rows by sentence: provenance line, Undo, and the outline a row gets when Friday takes you to it. -->
     <script src="/static/settings_rows.js"></script>
+    <!-- The stage of Calendar, Workflows, People, Career, Trust, Sites, System, the Chat Hub and the counts-only Health, Finance, Family. -->
+    <script src="/static/workspace_stages.js"></script>
     <!-- Media: one card per piece of work (defines window.MediaWS). -->
     <script src="/static/media_ws.js"></script>
     <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
@@ -11594,6 +11596,22 @@ const WS_ALIASES = {
     view: 'library'
   }
 };
+// A list row's identity for the stage (static/workspace_stages.js): spread onto the row's props.
+// kind:id is the ref (the id is URL-encoded), title and facets are what the workspace may publish.
+function fridayRow(kind, id, title, facets) {
+  const o = { 'data-fr-ref': kind + ':' + encodeURIComponent(String(id == null ? '' : id)).slice(0, 150) };
+  if (title) o['data-fr-title'] = String(title).slice(0, 120);
+  if (facets) { try { o['data-fr-facets'] = JSON.stringify(facets); } catch (e) { /* none */ } }
+  return o;
+}
+// When an event is, in words a stage may publish: today, tomorrow, this_week, later or past.
+function fridayWhen(iso) {
+  const t = new Date(iso);
+  if (isNaN(t)) return '';
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const days = Math.floor((t - d0) / 86400000);
+  return days < 0 ? 'past' : days === 0 ? 'today' : days === 1 ? 'tomorrow' : days < 7 ? 'this_week' : 'later';
+}
 function fridayWorkspaceId(id) {
   const a = WS_ALIASES[id];
   return a ? a.workspace : id;
@@ -17745,6 +17763,7 @@ function CareerWS() {
     const color = score >= 4 ? '#00ff80' : score >= 3 ? '#f59e0b' : '#ff0080';
     return /*#__PURE__*/React.createElement("div", {
       key: i,
+      ...fridayRow('job', (e.company || '') + '|' + (e.role || '') + '|' + i, (e.company || '') + ' \u00B7 ' + (e.role || ''), { kind: 'entry', stage: String(e.status || '').toLowerCase().slice(0, 20) }),
       className: "card",
       style: {
         marginBottom: 4
@@ -22315,6 +22334,7 @@ function FSProjectCard({
     }
   };
   return /*#__PURE__*/React.createElement("div", {
+    ...fridayRow('site', p.name, p.name, { kind: 'project', status: String(st.deploy_status || '').slice(0, 20) }),
     className: "card",
     style: {
       borderColor: ds.c + '33',
@@ -23948,6 +23968,7 @@ function FamilyWS() {
     }
   }, cd.countdowns.map((c, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('fam', 'cd-' + i, '', { kind: 'countdown' }),
     style: {
       display: 'flex',
       justifyContent: 'space-between',
@@ -29255,6 +29276,7 @@ function TrustWS() {
     const col = pct > 70 ? '#00ff80' : pct > 40 ? '#f59e0b' : '#ff0080';
     return /*#__PURE__*/React.createElement("div", {
       key: i,
+      ...fridayRow('trust', p.name || p.Name || i, p.name || p.Name, { kind: 'person', level: pct > 70 ? 'high' : pct > 40 ? 'mid' : 'low' }),
       className: "card",
       style: {
         marginBottom: 6,
@@ -29962,6 +29984,7 @@ function WfCard({
   return /*#__PURE__*/React.createElement("div", {
     className: "card wfx-card",
     "data-testid": "wf-card",
+    ...fridayRow('wf', w.slug || w.id, w.name, { status: w.running ? 'running' : w.last_run && w.last_run.status || 'idle', scheduled: !!w.when, steps: (w.steps || []).length }),
     style: paused ? {
       opacity: 0.72
     } : null
@@ -36983,7 +37006,7 @@ function calFmtTime(iso) {
   });
 }
 fridayDeclareNav('calendar', {
-  keys: ['date', 'view', 'meeting_id'],
+  keys: ['date', 'view', 'meeting_id', 'event'],
   sections: [{
     id: 'meetings',
     label: 'Meetings',
@@ -37011,8 +37034,20 @@ function CalendarWS() {
   const tlRef = useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   // what its own tab (↗) opens on: the keys useNavTarget below reads
-  useTabState('calendar', () => ({ date: sel || '' }));
+  const [shownEvent, setShownEvent] = useState('');
+  useTabState('calendar', () => ({ date: sel || '', event: shownEvent }));
   useNavTarget('calendar', t => {
+    setShownEvent('');
+    if (t.event) {
+      // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
+      if (t.date) { setSel(t.date); loadDay(t.date); }
+      const ref = 'event:' + encodeURIComponent(String(t.event));
+      [400, 900, 1800].forEach(ms => setTimeout(() => {
+        const FS = window.fridayStage;
+        if (FS && document.querySelector('[data-fr-ref="' + ref.replace(/"/g, '') + '"]')) { FS.point([ref], { badges: 'none', id: 'nav' }); setShownEvent(String(t.event)); }
+      }, ms));
+      return;
+    }
     if (!t.date) return;
     setSel(t.date);
     loadDay(t.date);
@@ -37245,6 +37280,7 @@ function CalendarWS() {
     return /*#__PURE__*/React.createElement("div", {
       key: e.id,
       className: 'cal-event ' + (e.type || 'normal') + (e.conflict ? ' conflict' : ''),
+      ...(e.media ? {} : fridayRow('event', e.id, e.title, { kind: e.type || 'normal', all_day: false, has_guests: !!(e.attendees && e.attendees.length), when: fridayWhen(e.start_time) })),
       style: {
         top,
         minHeight: ht,
@@ -39071,6 +39107,7 @@ function FinanceWS() {
     className: "card-title"
   }, "Portfolio Positions"), positions.map((p, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('fin', 'pos-' + i, '', { kind: 'position' }),
     className: "card",
     style: {
       marginBottom: 6
@@ -39119,6 +39156,7 @@ function FinanceWS() {
     const expiring = p.expires && (new Date(p.expires) - new Date()) / (1000 * 60 * 60 * 24) < 60;
     return /*#__PURE__*/React.createElement("div", {
       key: i,
+      ...fridayRow('fin', 'perk-' + i, '', { kind: 'perk' }),
       className: "card",
       style: {
         marginBottom: 6,
@@ -39373,6 +39411,7 @@ function HealthWS() {
     className: "card-title"
   }, "Medications"), medList.map((m, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('health', 'med-' + i, '', { kind: 'medication' }),
     className: "card",
     style: {
       marginBottom: 6
@@ -39409,6 +39448,7 @@ function HealthWS() {
     className: "card-title"
   }, "Appointments & Providers"), apptList.map((a, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('health', 'appt-' + i, '', { kind: 'appointment' }),
     className: "card",
     style: {
       marginBottom: 6
@@ -39513,6 +39553,7 @@ function HealthWS() {
     className: "card-title"
   }, "Fleet Health"), vehList.map((v, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('health', 'veh-' + i, '', { kind: 'vehicle' }),
     className: "card",
     style: {
       marginBottom: 8
@@ -40212,6 +40253,7 @@ function ContactsWS() {
     const col = pct > 70 ? '#00ff80' : pct > 40 ? '#f59e0b' : '#ff0080';
     return /*#__PURE__*/React.createElement("div", {
       key: i,
+      ...fridayRow('person', c.name || i, c.name, { kind: 'person' }),
       className: "card",
       style: {
         cursor: 'pointer',
@@ -51169,6 +51211,7 @@ function SidebarRow({ c, active, onOpen, onAct, projects }) {
   const act = (what, arg) => { setMenu(false); onAct(c, what, arg); };
   return E('div', {
     style: { position: 'relative' },
+    ...fridayRow('convo', c.id, c.title, { project: String(c.project_id || c.project || '').slice(0, 40), archived: false, pinned: !!c.pinned_at }),
     onMouseLeave: () => setMenu(false),
   },
     E('div', {
@@ -60403,7 +60446,8 @@ function ApprovalCardBody({
       padding: 8
     },
     "data-testid": "approval-card",
-    "data-approval-id": a.approval_id
+    "data-approval-id": a.approval_id,
+    ...fridayRow('card', a.approval_id, a.title, { kind: String(a.kind || '').slice(0, 30), status: 'pending' })
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
@@ -64184,7 +64228,7 @@ function App() {
         // What the workspace in front shows (rows, ticks, filters), for the server's memory only: null
         // when it has no stage, which clears the last one (static/friday_stage.js).
         stage: (() => {
-          try { return f && window.fridayStage ? window.fridayStage.snapshot(fridayWorkspaceId(f)) : null; } catch (e) { return null; }
+          try { const sid = kind === 'chat' ? 'chat' : f ? fridayWorkspaceId(f) : null; return sid && window.fridayStage ? window.fridayStage.snapshot(sid) : null; } catch (e) { return null; }
         })()
       };
     };

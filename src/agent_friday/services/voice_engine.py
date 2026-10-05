@@ -453,7 +453,7 @@ _VOICE_LIVE_TOOLS = [
      "name. SELECT_ASK or POINT_ASK: ask it. FAIL: say why. To act on ticks, call "
      "organize_email with selection screen.",
      {"op": ("string", "select, add, remove, clear, point, filter or fill."),
-      "workspace": ("string", "messages, news, media, library or files."),
+      "workspace": ("string", "messages, news, media, library, files, calendar, chat..."),
       "scope": ("string", "screen or all."),
       "category": ("string", "newsletters, promotions, unread, a status..."),
       "from": ("string", "Sender domain."),
@@ -478,7 +478,7 @@ _VOICE_LIVE_TOOLS = [
      "Show the start screen's cluster now ('show my day'): their countdowns, the "
      "chat field, the mic and Start my day. With mode, set when it shows on its own "
      "('always show my day' is always): smart (when useful; the default), always, or "
-     "never (only when asked). Their own screen, so no approval is needed. DAY_SHOWN: "
+     "never (only when asked). Showing it needs no approval; a mode waits for their own yes (SETTING_NEEDS_YES: say what would change). DAY_SHOWN: "
      "say so in a few words. DAY_NOT_SHOWN: say why in plain words. DAY_MODE: say what "
      "it will do now. The countdowns are not in the result: do not guess them.",
      {"mode": ("string", "smart, always or never; empty to show it now.")}, []),
@@ -486,8 +486,8 @@ _VOICE_LIVE_TOOLS = [
      "Show a workspace fullscreen with the chat tray docked beside it ('make this "
      "fullscreen with chat'), or back to normal, or, with fullscreen_chat false and a "
      "position, in part of the screen ('put News on the left two thirds'). It is their "
-     "own screen, so no "
-     "approval is needed, and the choice is remembered for that workspace. Leave "
+     "own screen; it is a setting, so "
+     "it waits for their own yes (SETTING_NEEDS_YES: say what would change) and is then remembered for that workspace. Leave "
      "workspace empty for the one in front. LAYOUT_OK means the screen did it: say "
      "so in a few words. LAYOUT_SAVED means it is remembered and applies when that "
      "workspace is open: say that, not that it changed. On LAYOUT_FAIL, ask which "
@@ -806,6 +806,7 @@ _VOICE_SHARED_TOOLS = (
     # Favourite, tag or move Media cards (one at once, two or more on one card): the same tool
     # the screen uses, so what she does is what the cards' history shows.
     "organize_media",
+    "organize_calendar",
     "podcast_play",
     "podcast_source",
     "podcast_format",

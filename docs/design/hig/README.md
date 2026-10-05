@@ -210,6 +210,13 @@ confirmation that names the thing.
   (waiting, doing, done, needs you, skipped, stopped, failed), never colour alone, one change at a time. `--fr-warn`
   marks only "needs you". Stop (also Esc, except while typing or over a dialog) ends the step that is running after
   its step and starts no other; a finished list goes away after nine seconds.
+- **Every list has a stage.** Calendar events, Workflows, People, Career, Trust, Sites, System approvals and the
+  Chat Hub's conversations carry `data-fr-ref="<kind>:<id>"` on each row (`fridayRow` in the page; the ref's id is
+  URL-encoded), so Friday can see the list, point at rows (the numbered Locked outline) and, in the Calendar and the
+  chat list, tick them (Ctrl/Cmd-click, a pinch, or Friday); ticks show, they never act. Health, Finance and Family
+  are counts-only: a row is a kind and a position, with no title, name, figure or date, whatever the page sends
+  (`PRIVATE_WORKSPACES`). A new list opts in by marking its rows and adding itself to `static/workspace_stages.js`
+  and `STAGE_FACETS`.
 - **Filters Friday sets are chips.** A spoken filter ("only unread, only this week") is applied through the
   workspace's own filter and also shown as a removable chip marked "by Friday"; nothing is filtered
   invisibly. A filter the owner changes afterwards stops being marked.

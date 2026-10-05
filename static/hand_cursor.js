@@ -232,6 +232,8 @@
     }
     const box = row.querySelector('[data-fr-tick]');
     if (box) clickTarget({ el: box, rect: box.getBoundingClientRect() }, Core.center(box.getBoundingClientRect()), now);
+    // a list whose rows have no checkbox of their own (static/friday_stage.js domList) hears the tick as an event
+    else if (row.hasAttribute('data-fr-ref')) { try { row.dispatchEvent(new CustomEvent('friday:row-tick', { bubbles: true, detail: { ref: row.getAttribute('data-fr-ref') } })); } catch (e) { /* ignore */ } }
   }
   function actionWord(t) { const s = t && t.el ? (t.el.getAttribute('aria-label') || t.el.textContent || '').trim().toLowerCase().slice(0, 24) : ''; return s || 'do that'; }
   function targetAt(p) { const el = document.elementFromPoint(p.x, p.y); const t = el && targets(performance.now()).find(t => t.el === el || (t.el && t.el.contains(el))); return t || (el ? { el, rect: el.getBoundingClientRect(), guarded: isGuarded(el) } : null); }

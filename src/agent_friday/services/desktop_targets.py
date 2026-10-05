@@ -566,6 +566,17 @@ def _parse_day(text: str, today: date | None = None) -> date | None:
 
 
 def resolve_calendar(query: str = "", id: str = "") -> dict:
+    # One event: "event:<id>" (the ref the screen's stage uses), on its day when the query names one. The page
+    # outlines it, and the verify reads the event back from the page's own report.
+    if id and id.strip().lower().startswith("event:"):
+        eid = id.strip()[6:].strip()
+        if not eid:
+            return _fail("say which event")
+        target = {"workspace": "calendar", "event": eid}
+        d = _parse_day(query) if query else None
+        if d is not None:
+            target["date"] = d.isoformat()
+        return _ok(target, "that event", verify=("event", eid))
     if id and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", id.strip()):
         return _ok({"workspace": "calendar", "view": "meetings", "meeting_id": id},
                    "the meeting %s" % id)

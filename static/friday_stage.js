@@ -579,6 +579,127 @@
     });
   }
 
+  // ── lists whose rows carry their own ref ─────────────────────────────────────
+  //
+  // domList(ws, cfg) -> off(): the stage of a workspace whose component has no selection state of its own. Each
+  // row only has to carry data-fr-ref="<kind>:<id>" (and data-fr-title, data-fr-facets='{"k":"v"}' where the
+  // workspace may publish them). Ticks, if the list is `selectable`, are held here and drawn as data-fr-sel on
+  // the rows (the same ground and edge as every other list); the owner ticks with Ctrl/Cmd-click or a pinch.
+  // cfg: root() -> Element, rows (selector, default [data-fr-ref]), selectable, counts_only (no titles or who
+  // leave the page: Health, Finance, Family), open() -> ref, filters() -> chips, brand.
+  var DOM_FACET_MAX = 160;
+  function domList(ws, cfg) {
+    cfg = cfg || {};
+    ensureStyle();
+    var sel = emptySelection();
+    var counts = !!cfg.counts_only;
+    var selector = cfg.rows || '[data-fr-ref]';
+    function rootEl() { return (cfg.root && cfg.root()) || document; }
+    function rowEls() { return Array.prototype.slice.call(rootEl().querySelectorAll(selector)); }
+    function facetsOf(el) {
+      var raw = el.getAttribute('data-fr-facets');
+      if (!raw) return {};
+      try {
+        var o = JSON.parse(raw), out = {};
+        Object.keys(o).slice(0, 12).forEach(function (k) {
+          var v = o[k];
+          if (typeof v === 'string') out[k] = v.slice(0, DOM_FACET_MAX);
+          else if (typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+        });
+        return out;
+      } catch (e) { return {}; }
+    }
+    function items() {
+      return rowEls().slice(0, MAX_ROWS).map(function (el, i) {
+        return { ref: el.getAttribute('data-fr-ref') || '', n: i + 1, facets: facetsOf(el),
+                 title: counts ? '' : String(el.getAttribute('data-fr-title') || '').slice(0, 120), who: '' };
+      }).filter(function (it) { return it.ref; });
+    }
+    function known() { return items().map(function (i) { return i.ref; }); }
+    function paint() {
+      rowEls().forEach(function (el) {
+        var ref = el.getAttribute('data-fr-ref') || '';
+        if (cfg.selectable && sel.refs.indexOf(ref) >= 0) el.setAttribute('data-fr-sel', 'on'); else el.removeAttribute('data-fr-sel');
+        if (sel.held[ref]) el.setAttribute('data-fr-held', 'on'); else el.removeAttribute('data-fr-held');
+      });
+      chip();
+    }
+    var chipEl = null;
+    function chip() {
+      if (!cfg.selectable || typeof document === 'undefined') return;
+      var text = chipText(sel, cfg.brand);
+      if (!text) { if (chipEl && chipEl.parentNode) chipEl.parentNode.removeChild(chipEl); chipEl = null; return; }
+      if (!chipEl) {
+        chipEl = document.createElement('div');
+        chipEl.className = 'fr-chip fr-dom-chip';
+        chipEl.setAttribute('data-testid', 'fr-dom-chip');
+        chipEl.setAttribute('role', 'status');
+        chipEl.style.cssText = 'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:10030';
+        document.body.appendChild(chipEl);
+      }
+      chipEl.textContent = '';
+      var span = document.createElement('span'); span.textContent = text; chipEl.appendChild(span);
+      var held = Object.keys(sel.held).length;
+      if (held) { var w = document.createElement('span'); w.className = 'needs-you'; w.textContent = 'waiting for your OK'; chipEl.appendChild(w); }
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = 'Clear'; b.setAttribute('aria-label', 'Clear the selection');
+      b.onclick = function () { apply({ type: 'clear' }); };
+      chipEl.appendChild(b);
+    }
+    function apply(evt) {
+      var r = reduceSelection(sel, evt, known());
+      if (r.changed) { sel = r.state; paint(); touch(200); }
+      return r;
+    }
+    var mo = null, timer = null;
+    function settle() {
+      // rows that left the list (a refresh, a delete) leave the selection
+      var have = {}; known().forEach(function (r) { have[r] = 1; });
+      var gone = sel.refs.filter(function (r) { return !have[r]; });
+      if (gone.length && cfg.selectable) apply({ type: 'rows_gone', refs: gone }); else paint();
+      touch(300);
+    }
+    if (typeof MutationObserver === 'function') {
+      mo = new MutationObserver(function () { if (timer) clearTimeout(timer); timer = setTimeout(settle, 350); });
+      var el0 = (cfg.root && cfg.root()) || null;
+      if (el0) mo.observe(el0, { childList: true, subtree: true });
+    }
+    function onClick(e) {
+      if (!cfg.selectable || !(e.ctrlKey || e.metaKey)) return;
+      var row = e.target && e.target.closest ? e.target.closest(selector) : null;
+      if (!row) return;
+      e.preventDefault(); e.stopPropagation();
+      apply({ type: 'toggle', ref: row.getAttribute('data-fr-ref') || '' });
+    }
+    function onRowTick(e) {
+      var ref = e.detail && e.detail.ref;
+      if (cfg.selectable && ref) apply({ type: 'toggle', ref: ref });
+    }
+    var host = (typeof document !== 'undefined') ? document : null;
+    if (host) { host.addEventListener('click', onClick, true); host.addEventListener('friday:row-tick', onRowTick); }
+    var adapter = makeAdapter(ws, function () {
+      var c = {
+        root: rootEl, items: items, loaded: function () { return rowEls().length; },
+        open: cfg.open ? cfg.open : null, filters: cfg.filters ? cfg.filters : null
+      };
+      if (cfg.selectable) {
+        c.getSel = function () { return sel; };
+        c.setSel = function (s) { sel = s; paint(); };
+        c.rowsGone = function (refs) { apply({ type: 'rows_gone', refs: refs }); };
+      }
+      return c;
+    });
+    var unreg = register(ws, adapter);
+    paint();
+    return function () {
+      unreg();
+      if (mo) mo.disconnect();
+      if (timer) clearTimeout(timer);
+      if (host) { host.removeEventListener('click', onClick, true); host.removeEventListener('friday:row-tick', onRowTick); }
+      if (chipEl && chipEl.parentNode) chipEl.parentNode.removeChild(chipEl);
+      rowEls().forEach(function (el) { el.removeAttribute('data-fr-sel'); el.removeAttribute('data-fr-held'); });
+    };
+  }
+
   // Ask the page to send its stage soon (after the owner changes something).
   function touch(ms) {
     if (typeof window !== 'undefined' && typeof window.fridayDeskSoon === 'function') window.fridayDeskSoon(ms == null ? 250 : ms);
@@ -593,6 +714,6 @@
     FILL_MAX: FILL_MAX, fieldList: fieldList, registerField: registerField, fillField: fillField, undoFill: undoFill, fillChip: fillChip, fillChips: fillChips,
     cursor: cursor, cursorNow: cursorNow, CURSOR_MEMORY_MS: CURSOR_MEMORY_MS,
     pointPlan: pointPlan, point: point, clearPoints: clearPoints, chipsRow: chipsRow, makeAdapter: makeAdapter, ensureStyle: ensureStyle,
-    register: register, registered: registered, snapshot: snapshot, handles: handles, run: run, touch: touch
+    domList: domList, register: register, registered: registered, snapshot: snapshot, handles: handles, run: run, touch: touch
   };
 }));

@@ -282,3 +282,11 @@ voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and re
   `call_mode` set_mode, `podcast_format`) hold their write the same way. Showing something (the start
   screen's cluster), reading a status, calibrating and standing back for a call now are not settings and
   run at once. Values are settings, never the owner's content, so the cloud voice hears them.
+- **More lists.** `screen_select` works in the Calendar (chat: `match.when` today, tomorrow, this_week, later,
+  past; voice: by number or "this"), Workflows (`status`), People, Career (`stage`), Trust (`level`), System approvals
+  (`kind`) and the chat list (`project`, `pinned`): point at rows, and tick in the Calendar and the chat list. A cloud voice hears counts and
+  kinds ("2 events marked"), never a title. Health, Finance and Family rows have no titles at all, so only counts exist.
+  `navigate_to(calendar, id: "event:<id>")` opens that event's day with the event outlined, and the page confirms it.
+  `organize_calendar` (voice-native, `selection: "screen"`) moves ticked events by `days` and `minutes`, keeping their
+  length, on ONE card listing each old and new time (even for one event: it reaches Google); nothing moves before the
+  owner's own yes, guests are not notified, and Undo puts each event back. A cloud voice hears counts, never a title.

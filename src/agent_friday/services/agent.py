@@ -776,8 +776,8 @@ CLAUDE_TOOLS = [
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
-    {"name": "set_setting", "description": "Change one Settings row by its path, or undo the last change to it. It shows the old and new value and waits for the user's own yes (SETTING_NEEDS_YES); nothing changes before that, and a conditional yes does not count. Paths: settings.models.chat_model, settings.display.workspace_layout.<workspace>, settings.display.start_screen (smart/always/never), settings.accessibility.big_mode (on/off/auto), settings.hologram.window.<dial> or reset, settings.calls.stand_back (automatic/ask/off), settings.podcasts.format.<show> (solo/duo). op=undo puts the row back (30 days).",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string", "enum": ["set", "undo"]}}, "required": ["path"]}},
+    {"name": "set_setting", "description": "Change one Settings row by its path, or undo its last change (op=undo, 30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string"}}, "required": ["path"]}},
     {"name": "task_control", "description": "Stop or steer work Friday is doing in the background. op=stop ends a running workflow or task after the step it is on: the step that is running finishes, the next never starts, nothing already done is undone. With no target it stops the steps shown on the user's screen. op=steer sends a running task a message without stopping it. target: a workflow name, a task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what actually happened.",
      "input_schema": {"type": "object", "properties": {
          "op": {"type": "string", "enum": ["stop", "steer"]},
@@ -811,12 +811,12 @@ CLAUDE_TOOLS = [
          "size": {"type": "string", "enum": ["third", "half", "two_thirds"],
                   "description": "How much of the screen's width the tray takes."}},
          "required": []}},
-    {"name": "show_my_day", "description": "Show the start screen's cluster now: the owner's countdowns (from their calendar, commitments and wiki), the chat field, the mic and Start my day ('show my day'). With mode, set when it shows on its own: smart (when useful, fading while they work or talk; the default), always, or never (only when asked). It is the owner's own screen, so no approval is needed. DAY_SHOWN: say so in a few words. DAY_NOT_SHOWN: say why, in plain words. DAY_MODE: say what it will do now. The countdowns are not in the result; do not invent them.",
+    {"name": "show_my_day", "description": "Show the start screen's cluster now: the owner's countdowns (from their calendar, commitments and wiki), the chat field, the mic and Start my day ('show my day'). With mode, set when it shows on its own: smart (when useful, fading while they work or talk; the default), always, or never (only when asked). Showing it needs no approval; a mode is a setting, so it comes back SETTING_NEEDS_YES and waits for the owner's own yes: say what would change and that you are waiting. DAY_SHOWN: say so in a few words. DAY_NOT_SHOWN: say why, in plain words. DAY_MODE: say what it will do now. The countdowns are not in the result; do not invent them.",
      "input_schema": {"type": "object", "properties": {
          "mode": {"type": "string", "enum": ["smart", "always", "never"],
                   "description": "Leave empty to show it now; set to change when it shows on its own."}},
          "required": []}},
-    {"name": "set_workspace_layout", "description": "Show a workspace fullscreen with the chat tray docked beside it, or back to its normal layout, or (with fullscreen_chat false and a position) in part of the screen: a half, a third or two thirds ('put News on the left two thirds'). It is the owner's own screen, so no approval is needed, and the choice is remembered for that workspace. Leave workspace empty for the one in front. LAYOUT_OK means the screen applied it; LAYOUT_SAVED means it is remembered and applies when that workspace is next open.",
+    {"name": "set_workspace_layout", "description": "Show a workspace fullscreen with the chat tray docked beside it, or back to its normal layout, or (with fullscreen_chat false and a position) in part of the screen: a half, a third or two thirds ('put News on the left two thirds'). A layout is a setting: it comes back SETTING_NEEDS_YES and waits for the owner's own yes (say what would change), then it is remembered for that workspace. Leave workspace empty for the one in front. LAYOUT_OK means the screen applied it; LAYOUT_SAVED means it is remembered and applies when that workspace is next open.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id or name; empty for the one in front."},
          "fullscreen_chat": {"type": "boolean", "description": "true: fullscreen with the chat beside it; false: the normal layout, or the position given."},
@@ -846,6 +846,8 @@ CLAUDE_TOOLS = [
          "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
          "why": {"type": "string", "description": "One short line for the card."}},
       "required": ["action"]}},
+    {"name": "organize_calendar", "description": "Move calendar events later or earlier by whole days and minutes, keeping their length. ONE card lists each old and new time; nothing moves before the user's own yes. selection screen takes the ticked or pointed-at events. Guests are not notified; undoable. update_calendar_event edits one event's title or place.",
+     "input_schema": {"type": "object", "properties": {"selection": {"type": "string"}, "events": {"type": "array", "items": {"type": "string"}}, "days": {"type": "integer"}, "minutes": {"type": "integer"}}}},
     {"name": "organize_media", "description": "Favourite, unfavourite, tag, untag or move to a project the user's Media cards. One card changes now; two or more wait for ONE approval card (read it back, then answer_card). Pick the cards with selection=screen (ticked, open or pointed at on their screen) or by id in cards. undo_action puts a change back.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["favourite", "unfavourite", "tag", "untag", "project"]},
@@ -3325,8 +3327,8 @@ _LANDING_MODE_WORDS = {
 def _tool_show_my_day(inp):
     """Tool handler: the start screen's cluster (the owner's countdowns, the
     chat field, the mic and Start my day) now, or how it decides to show
-    (settings.landing_mode: smart, always or never). The owner's own screen,
-    so no approval is needed.
+    (settings.landing_mode: smart, always or never). Showing it needs no
+    approval; a mode is a setting and waits for the owner's yes.
 
     With no mode it asks the desktop page to show the cluster and reports what
     the page said: DAY_SHOWN, or DAY_NOT_SHOWN with the page's reason (a
@@ -3534,10 +3536,10 @@ def _mail_select_all(match: dict):
 
 
 #: The lists that can show Friday's ticks.
-_TICKABLE = ("messages", "media", "library", "files")
+_TICKABLE = ("messages", "media", "library", "files", "calendar", "chat")
 
 #: The keys of a request that name what to match, flat (voice) or nested in `match` (chat).
-_MATCH_KEYS = ("category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic",
+_MATCH_KEYS = ("when", "stage", "level", "scheduled", "pinned", "archived", "category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic",
                "status", "kind", "project", "folder", "source", "privacy")
 
 
@@ -3643,7 +3645,7 @@ def _screen_point(ws: str, inp, match: dict) -> str:
     from agent_friday.services import desktop_bus, screen_stage as _ss
     badges = "none" if str(inp.get("badges") or "").lower() == "none" else "numbers"
     if ws not in _ss.NOUNS:
-        return "POINT_FAIL: I can point in the Message Center, News, Media and the Library so far."
+        return "POINT_FAIL: I can point at rows in %s so far." % ", ".join(sorted(_ss.NOUNS))
     st = _fresh_screen_stage(ws)
     if st is None:
         return "POINT_FAIL: I can't see your list right now."
@@ -3707,7 +3709,7 @@ def _tool_screen_select(inp):
     if op == "fill":
         return _screen_fill(ws, inp)
     if ws not in _TICKABLE:
-        return "SELECT_FAIL: I can show ticks in the Message Center, Media, the Library and Files so far."
+        return "SELECT_FAIL: I can show ticks in the Message Center, Media, the Library, Files, the Calendar and the chat list so far."
     if ws != "messages" and scope == "all":
         return "SELECT_FAIL: only the Message Center can search the whole list; use scope screen here."
     if op not in ("select", "add", "remove", "clear") or scope not in ("screen", "all"):
@@ -3829,6 +3831,29 @@ def _tool_organize_media(inp):
                  "stage_rev": st.get("rev") or 0, "rule": rule}
     return _organize_call(_ia.organize_media, inp.get("action") or "", cards=cards, value=inp.get("value") or "",
                           why=inp.get("why") or "", replaces=inp.get("replaces") or "", **extra)
+
+
+def _tool_organize_calendar(inp):
+    """Tool handler: move calendar events by days and minutes, on ONE card. `selection="screen"` takes the events
+    ticked (or pointed at, or open) on the owner's screen."""
+    from agent_friday.services import item_actions as _ia
+    inp = inp or {}
+    events, extra = inp.get("events") or None, {}
+    if str(inp.get("selection") or "").strip().lower() == "screen":
+        refs, st, rule, err = _screen_target("calendar")
+        if err:
+            return err
+        refs = [r for r in refs if str(r).startswith("event:")]
+        if not refs:
+            return "NOT DONE: nothing on their screen is a calendar event."
+        events = refs
+        sel = st.get("selection") or {}
+        extra = {"refs": refs, "selection_id": sel.get("id") or "" if sel.get("refs") else "",
+                 "stage_rev": st.get("rev") or 0, "rule": rule}
+    return _organize_call(_ia.organize_calendar, inp.get("action") or "shift", events=events,
+                          days=inp.get("days") or 0, minutes=inp.get("minutes") or 0,
+                          account=inp.get("account") or "", why=inp.get("why") or "",
+                          replaces=inp.get("replaces") or "", **extra)
 
 
 def _tool_organize_wiki(inp):
@@ -7079,6 +7104,7 @@ CLAUDE_TOOL_HANDLERS = {
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
     "organize_media": _tool_organize_media,
+    "organize_calendar": _tool_organize_calendar,
     "undo_action": _tool_undo_action,
     "answer_card": _tool_answer_card,
     "switch_model": _tool_switch_model,
@@ -7493,6 +7519,7 @@ TOOL_RINGS: dict[str, int] = {
     "organize_files":       1,
     "organize_wiki":        1,
     "organize_media":       1,
+    "organize_calendar":    1,
     "organize_email":       2,
     # Ticks rows on the owner's own screen and changes nothing else (services/screen_stage).
     "screen_select":        1,

@@ -1600,6 +1600,147 @@ def undo_media(receipt: dict) -> dict:
                           conversation_id=(receipt.get("run") or {}).get("conversation_id"), extra={"said": said})
 
 
+# ── Calendar events ─────────────────────────────────────────────────────────
+
+CALENDAR_ACTIONS = ("shift",)
+_CAL_ALIASES = {"move": "shift", "reschedule": "shift"}
+MAX_CAL_EVENTS = 20
+
+
+def _cw():
+    from agent_friday.services import calendar_write
+    return calendar_write
+
+
+def _event_id(text: str) -> str:
+    """The event a ref ("event:<id>", the id URL-encoded) or a bare id means."""
+    from urllib.parse import unquote
+    s = str(text or "").strip()
+    if s.lower().startswith("event:"):
+        s = unquote(s[6:])
+    if not s:
+        raise Refused("name the events, or tick them on the screen")
+    return s
+
+
+def _shifted(iso: str, tz: str, days: int, minutes: int) -> str:
+    """A start or end moved by whole days and minutes on the clock of the event's own time zone, so a day
+    forward is the same wall-clock time even across a daylight-saving change."""
+    from datetime import datetime, timedelta
+    dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo
+            dt = dt.astimezone(ZoneInfo(tz))
+        except Exception:
+            pass
+    return (dt + timedelta(days=days, minutes=minutes)).isoformat()
+
+
+def plan_calendar(action: str, events=None, days=0, minutes=0, account: str = "") -> list[dict]:
+    """The exact moves a request means. Raises Refused for anything it cannot plan: an event it cannot read, an
+    all-day entry, a shift of nothing."""
+    action = _CAL_ALIASES.get(str(action or "").strip().lower(), str(action or "").strip().lower())
+    if action not in CALENDAR_ACTIONS:
+        raise Refused("organize_calendar can: " + ", ".join(CALENDAR_ACTIONS))
+    try:
+        days, minutes = int(days or 0), int(minutes or 0)
+    except (TypeError, ValueError):
+        raise Refused("days and minutes are whole numbers")
+    if not days and not minutes:
+        raise Refused("say how far to move them: days, minutes, or both")
+    if abs(days) > 366 or abs(minutes) > 7 * 24 * 60:
+        raise Refused("that is further than a move can go; do at most a year, or a week of minutes")
+    ids = list(dict.fromkeys(_event_id(e) for e in (events or []) if str(e or "").strip()))
+    if not ids:
+        raise Refused("name the events, or tick them on the screen")
+    if len(ids) > MAX_CAL_EVENTS:
+        raise Refused("that is %d events; move at most %d at a time" % (len(ids), MAX_CAL_EVENTS))
+    cw, ops = _cw(), []
+    for eid in ids:
+        ev = cw.get_event(eid, account_id=account or None)
+        if not ev.get("ok"):
+            raise Refused(ev.get("error") or "that event could not be read")
+        if ev.get("all_day") or not ev.get("start") or not ev.get("end"):
+            raise Refused("\u201c%s\u201d is an all-day entry; I move events that have a time" % ev.get("title"))
+        ops.append({"op": "shift", "id": ev["id"], "title": str(ev["title"])[:120], "start": ev["start"], "end": ev["end"],
+                    "new_start": _shifted(ev["start"], ev.get("tz") or "", days, minutes),
+                    "new_end": _shifted(ev["end"], ev.get("tz") or "", days, minutes),
+                    "guests": int(ev.get("guests") or 0), "account": ev.get("account_id") or "",
+                    "days": days, "minutes": minutes})
+    return ops
+
+
+def classify_calendar(args: dict) -> tuple[str, str]:
+    return "outward", "a change to the calendar waits for one card"
+
+
+def _cal_when(iso: str) -> str:
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(iso).strftime("%a %d %b %H:%M")
+    except Exception:
+        return iso[:16]
+
+
+def _calendar_words(ops: list[dict]) -> tuple[str, list[str]]:
+    n, d, m = len(ops), ops[0].get("days") or 0, ops[0].get("minutes") or 0
+    parts = []
+    if d:
+        parts.append("%d day%s %s" % (abs(d), "" if abs(d) == 1 else "s", "later" if d > 0 else "earlier"))
+    if m:
+        parts.append("%d minute%s %s" % (abs(m), "" if abs(m) == 1 else "s", "later" if m > 0 else "earlier"))
+    doing = "move %s %s" % (_plural(n, "event"), " and ".join(parts))
+    lines = ["%s: %s \u2192 %s%s" % (o["title"], _cal_when(o["start"]), _cal_when(o["new_start"]),
+                                    " (has guests; they are not notified)" if o.get("guests") else "") for o in ops]
+    return doing, lines
+
+
+def run_calendar(ops: list[dict], *, approval_id: str | None = None, conversation_id: str | None = None,
+                 receipt_id: str | None = None) -> dict:
+    """Move the planned events, keeping each one's earlier times for Undo."""
+    cw = _cw()
+    items, undo_rows = [], []
+    for o in ops:
+        it = {"op": "shift", "id": o["id"], "title": o.get("title"), "ok": False}
+        try:
+            res = cw.update_event(o["id"], start=o["new_start"], end=o["new_end"], account_id=o.get("account") or None)
+            if res.get("error"):
+                raise Refused(res["error"])
+            it["ok"] = True
+            undo_rows.append({"id": o["id"], "start": o["start"], "end": o["end"], "account": o.get("account") or ""})
+        except Exception as e:
+            it["error"] = str(getattr(e, "user_message", "") or exception_text(e))[:200]
+        items.append(it)
+    ok, n = sum(1 for i in items if i["ok"]), len(items)
+    doing, _lines = _calendar_words(ops)
+    summary = ("Done: %s." % doing) if ok == n else "%d of %d done (%s)." % (ok, n, doing)
+    said = "Moved %s%s." % (_plural(ok, "event"), ("; %d could not be moved" % (n - ok)) if ok < n else "")
+    return journal.record("organize_calendar", "shift", "calendar", items=items, summary=summary,
+                          status="complete" if ok == n else ("partial" if ok else "failed"),
+                          undo={"calendar": undo_rows} if undo_rows else {}, approval_id=approval_id,
+                          conversation_id=conversation_id, receipt_id=receipt_id, extra={"said": said})
+
+
+def undo_calendar(receipt: dict) -> dict:
+    """Put each event back at the times the receipt found it."""
+    cw = _cw()
+    back, failed = 0, 0
+    for r in (receipt.get("undo") or {}).get("calendar") or []:
+        try:
+            res = cw.update_event(r["id"], start=r["start"], end=r["end"], account_id=r.get("account") or None)
+            ok = not res.get("error")
+        except Exception:
+            ok = False
+        back += 1 if ok else 0
+        failed += 0 if ok else 1
+    journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed)
+    said = "Put back %s%s." % (_plural(back, "event"), ("; %d could not be" % failed) if failed else "")
+    return journal.record("undo_action", "undo", "calendar", items=[{"receipt_id": receipt["receipt_id"]}], summary=said,
+                          status="complete" if not failed else ("partial" if back else "failed"),
+                          conversation_id=(receipt.get("run") or {}).get("conversation_id"), extra={"said": said})
+
+
 def _said(rec: dict) -> str:
     """What a receipt says happened: by name, or in counts when QUIET."""
     return (rec.get("said") or "It finished (%s)." % rec.get("status")) if _quiet() \
@@ -1610,7 +1751,7 @@ def _local(domain: str, action: str, ops: list[dict], *, bulk: bool, why: str,
            conversation_id: str | None, owner_words: str, requested_by: str,
            replaces: str = "", refs=None, selection_id: str = "", stage_rev: int = 0,
            stage_ws: str = "", rule: str = "") -> dict:
-    run = {"files": run_files, "media": run_media}.get(domain, run_wiki)
+    run = {"files": run_files, "media": run_media, "calendar": run_calendar}.get(domain, run_wiki)
     bound = {}
     if refs:
         bound = {"refs": [str(r) for r in refs][:MAX_ITEMS], "selection_id": str(selection_id or "")[:40],
@@ -1624,6 +1765,8 @@ def _local(domain: str, action: str, ops: list[dict], *, bulk: bool, why: str,
         doing, lines = _file_words(ops)
     elif domain == "media":
         doing, lines = _media_words(ops)
+    elif domain == "calendar":
+        doing, lines = _calendar_words(ops)
     else:
         doing = "%s %s" % ({"move": "move", "rename": "rename", "tag": "tag", "untag": "untag",
                             "archive": "archive", "trash": "trash"}[action], _plural(len(ops), "page"))
@@ -1640,7 +1783,7 @@ def _local(domain: str, action: str, ops: list[dict], *, bulk: bool, why: str,
                        requested_by=requested_by, replaces=replaces)
     if card.get("status") == "pending_approval":
         _tell_held(detail, "held", card_id=card.get("approval_id") or "")
-    noun = {"files": "item", "media": "card"}.get(domain, "page")
+    noun = {"files": "item", "media": "card", "calendar": "event"}.get(domain, "page")
     return {**card, "count": len(ops),
             "readback": "That is %s. Shall I %s?" % (_plural(len(ops), noun), doing)}
 
@@ -1670,6 +1813,18 @@ def organize_media(action: str, *, cards=None, value: str = "", why: str = "",
                   conversation_id=conversation_id, owner_words=owner_words, requested_by=requested_by,
                   replaces=replaces, refs=refs, selection_id=selection_id, stage_rev=stage_rev,
                   stage_ws="media", rule=rule)
+
+
+def organize_calendar(action: str, *, events=None, days=0, minutes=0, account: str = "", why: str = "",
+                      conversation_id: str | None = None, owner_words: str = "", requested_by: str = "friday",
+                      replaces: str = "", refs=None, selection_id: str = "", stage_rev: int = 0,
+                      rule: str = "") -> dict:
+    """Move calendar events by whole days and minutes: always ONE card, even for one event, because the change
+    reaches Google. `refs` bind the batch to the events the owner had ticked."""
+    ops = plan_calendar(action, events, days, minutes, account)
+    return _local("calendar", ops[0]["op"], ops, bulk=True, why=why, conversation_id=conversation_id,
+                  owner_words=owner_words, requested_by=requested_by, replaces=replaces, refs=refs,
+                  selection_id=selection_id, stage_rev=stage_rev, stage_ws="calendar", rule=rule)
 
 
 def organize_wiki(action: str, *, pages=None, to: str = "", new_name: str = "", tags=None,
@@ -1722,7 +1877,8 @@ def undo(receipt_id: str = "", *, conversation_id: str | None = None, owner_word
         return {**card, "count": n, "readback": "Shall I put back the %s I %s?" % (
             _plural(n, "conversation"), EMAIL_ACTIONS.get(rec.get("action"), ("", "", "changed"))[2])}
     out = (undo_email(rec) if dom == "email" else undo_files(rec) if dom == "files"
-           else undo_wiki(rec) if dom == "wiki" else undo_media(rec) if dom == "media" else None)
+           else undo_wiki(rec) if dom == "wiki" else undo_media(rec) if dom == "media"
+           else undo_calendar(rec) if dom == "calendar" else None)
     if out is None:
         raise Refused("Friday cannot undo that kind of change")
     _tell_pages(dom, rec["receipt_id"])
@@ -1753,6 +1909,9 @@ def _execute(detail: dict, approval_id: str | None) -> dict:
     if dom == "media":
         return run_media(detail.get("ops") or [], approval_id=approval_id,
                          conversation_id=detail.get("conversation_id"))
+    if dom == "calendar":
+        return run_calendar(detail.get("ops") or [], approval_id=approval_id,
+                            conversation_id=detail.get("conversation_id"))
     raise Refused("unknown batch")
 
 

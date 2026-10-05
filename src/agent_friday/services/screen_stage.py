@@ -48,7 +48,24 @@ STAGE_FACETS: dict[str, frozenset[str]] = {
     "media": frozenset({"kind", "status", "project", "privacy", "origin"}),
     "library": frozenset({"folder", "kind", "tracked"}),
     "files": frozenset({"kind", "ext", "dir"}),
+    # P7: the workspaces that were open-only. What a row may say about itself is a kind, a state, a day: never a
+    # name, an amount, a diagnosis or a date of birth.
+    "calendar": frozenset({"kind", "when", "recurring", "all_day", "has_guests"}),
+    "workflows": frozenset({"status", "scheduled", "steps"}),
+    "contacts": frozenset({"kind", "has_follow_up"}),
+    "career": frozenset({"kind", "stage"}),
+    "trust": frozenset({"kind", "level"}),
+    "futurespeak": frozenset({"kind", "status"}),
+    "system": frozenset({"kind", "status"}),
+    "chat": frozenset({"project", "archived", "age_h", "pinned"}),
+    "health": frozenset({"kind"}),
+    "finance": frozenset({"kind"}),
+    "family": frozenset({"kind"}),
 }
+
+#: Workspaces whose rows are about the owner's body, money or family. Their rows reach Friday as a kind and a
+#: position only: no title, no name, no figure, whatever the page sends.
+PRIVATE_WORKSPACES = frozenset({"health", "finance", "family"})
 
 #: The most rows Friday outlines with a numbered badge at once; the rest are counted ("and N more").
 POINT_CAP = 12
@@ -64,10 +81,13 @@ FILTER_KEYS: dict[str, dict[str, frozenset | None]] = {
     "library": {"folder": None},
 }
 #: What each workspace calls one of its rows, for what a cloud voice may hear.
-NOUNS = {"messages": "conversations", "news": "stories", "media": "cards", "library": "documents", "files": "files"}
+NOUNS = {"messages": "conversations", "news": "stories", "media": "cards", "library": "documents", "files": "files",
+         "calendar": "events", "workflows": "workflows", "contacts": "people", "career": "entries", "trust": "entries",
+         "futurespeak": "sites", "system": "items", "chat": "chats", "health": "records", "finance": "records", "family": "entries"}
 
 #: The kinds of row a ref may name: a conversation, a story, a Media card, a Library document, a file.
-ROW_KINDS = ("mail", "news", "media", "lib", "file")
+ROW_KINDS = ("mail", "news", "media", "lib", "file", "event", "wf", "person", "job", "trust", "site", "card", "convo",
+             "health", "fin", "fam")
 _REF = re.compile(r"^(?:%s):[^\s]{1,160}$" % "|".join(ROW_KINDS))
 
 
@@ -139,8 +159,9 @@ def bound_stage(raw: Any, now: float | None = None) -> dict | None:
             n = int(it.get("n"))
         except (TypeError, ValueError):
             n = len(items) + 1
+        private = ws in PRIVATE_WORKSPACES
         items.append({"ref": ref, "n": n, "facets": facets,
-                      "title": _clip(it.get("title")), "who": _clip(it.get("who"))})
+                      "title": "" if private else _clip(it.get("title")), "who": "" if private else _clip(it.get("who"))})
     sel = raw.get("selection") if isinstance(raw.get("selection"), dict) else {}
     refs = [r for r in (_ref(x) for x in (sel.get("refs") or [])[:MAX_REFS]) if r]
     source = sel.get("source") if sel.get("source") in ("friday", "owner", "mixed") else ""
@@ -227,7 +248,8 @@ CATEGORY_WORDS: dict[str, dict[str, _Pred]] = {
 
 
 #: Facet words a request may name directly on any workspace that publishes that facet.
-_PLAIN_FACETS = ("status", "kind", "project", "folder", "source", "privacy", "origin")
+_PLAIN_FACETS = ("status", "kind", "project", "folder", "source", "privacy", "origin", "when", "stage", "level",
+                 "scheduled", "pinned", "archived")
 
 
 def category_known(ws: str, word: str) -> bool:
