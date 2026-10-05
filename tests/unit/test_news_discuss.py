@@ -8,6 +8,11 @@ import json
 import pytest
 
 from agent_friday.services import news_discuss as nd
+# Imported here, before the autouse fixture swaps core._load_settings: both
+# modules bind it by name at import, so a first import inside a test would keep
+# the stub for every later test in the process (an off-record voice turn would
+# then read settings with no off_record in them and be written to disk).
+from agent_friday.services import agent, voice_engine  # noqa: F401
 
 STORY = {"title": "Council passes the transit budget, 7-2", "url": "https://examplewire.com/transit",
          "source": "examplewire.com"}
