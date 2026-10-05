@@ -1452,8 +1452,9 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
 
 
 def _room_to_speak() -> bool:
-    """Is there room for the local voice now? A speaker already running has it."""
-    if render.speaker_running():
+    """Is there room for the local voice now? A speaker already running has it,
+    and only the out-of-process voice needs any (asking for it starts nothing)."""
+    if render.speaker_running() or not isinstance(render.speaker(), render.ProcessKokoro):
         return True
     head = render.commit_headroom_mb()
     return head is None or head >= VOICE_HEADROOM_MB

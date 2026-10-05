@@ -601,6 +601,18 @@ def meta_problems(lines: list[dict]) -> list[dict]:
             for i, ln in _spoken(lines) for m in [META_RE.search(ln["text"])] if m]
 
 
+#: Content words a lede shares with the outlet's own summary to say what happened in its words.
+SUMMARY_LEDE_KEYS = 4
+
+
+def _summary_keys(story: dict) -> set[str]:
+    """Stems of the outlet's own summary: the brief's text without its headline,
+    outlet and publication lines."""
+    body = [t for t in (story.get("text") or "").split("\n")
+            if t.strip() and t.strip() != story["title"] and not re.match(r"(Outlet|Published):", t)]
+    return {_stem(w) for w in _content(" ".join(body))}
+
+
 def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool = True) -> list[dict]:
     out = []
     fm = first_mentions(lines, story_list)
@@ -623,7 +635,9 @@ def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool =
         aliases = [a for m in members for a in outlet_aliases(m)]
         if aliases and not said_outlet(window, aliases):
             missing.append("the outlet, named aloud (%s)" % (spoken_outlet(s) or s["outlet"]))
-        if not (set().union(*[m["entities"] for m in members]) & wws):
+        # Who or where is owed only when the reporting names someone or somewhere.
+        named = set().union(*[m["entities"] for m in members])
+        if named and not (named & wws):
             missing.append("who or where")
         # The event's place is the one every report of it names: two stories
         # that only look alike (both about one politician) never make one
@@ -633,8 +647,12 @@ def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool =
             missing.append("where (%s)" % ", ".join(sorted(p.title() for p in places)))
         if not _WHEN_RE.search(window):
             missing.append("when")
+        # What happened is the headline's event, or, under a figurative headline,
+        # the facts of the outlet's own summary, said in its words.
         keys = set().union(*[m["keys"] for m in members])
-        if len({_stem(w) for w in _content(window)} & keys) < min(2, len(keys)) \
+        said = {_stem(w) for w in _content(window)}
+        facts = set().union(*[_summary_keys(m) for m in members])
+        if (len(said & keys) < min(2, len(keys)) and len(said & facts) < SUMMARY_LEDE_KEYS) \
                 or len(_words(window)) < MIN_LEDE_WORDS:
             missing.append("what happened")
         if missing:
