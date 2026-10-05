@@ -1003,7 +1003,8 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
                                                if not (c in by and by[c]["cluster"] in gone)]}
                                     if ln.get("own") else {})))
         out = kept
-    return merge_turns(out), cut
+    # A lede that names its outlet but not when says the day the outlet reported it.
+    return quality.dated_ledes(merge_turns(out), story_list), cut
 
 
 _LEDE_RE = re.compile(r"^(?P<who>.{2,80}?) (?:reports?|reported|says|said|confirms?) that (?P<what>.+)$")

@@ -425,6 +425,36 @@ def first_mentions(lines: list[dict], story_list: list[dict]) -> dict:
     return out
 
 
+#: The day an outlet published a story, as its brief gives it ("Published: Tuesday, March 11.").
+_PUBLISHED_RE = re.compile(r"(?m)^Published: (%s)," % "|".join(d.title() for d in _DAYS))
+_REPORTS_THAT_RE = re.compile(r"\b(?:reports|reported) that\b")
+
+
+def dated_ledes(lines: list[dict], story_list: list[dict]) -> list[dict]:
+    """A lede that says which outlet reported a story but not when gets the day
+    the outlet published it: "NPR reports that voters..." becomes "NPR reported
+    on Sunday that voters...". It dates the report, which the brief states, and
+    never the event. A lede that already says when, or has no "reports that",
+    is left as the writer wrote it."""
+    out = list(lines)
+    fm = first_mentions(out, story_list)
+    for s in story_list:
+        i = fm.get(s["sid"])
+        day = _PUBLISHED_RE.search(s.get("text") or "")
+        if i is None or not day:
+            continue
+        window = " ".join(ln["text"] for ln in out[i:i + 2] if not ln.get("signature"))
+        if _WHEN_RE.search(window):
+            continue
+        sents = sentences(out[i]["text"])
+        for k, sent in enumerate(sents):
+            if names_story(sent, s) and _REPORTS_THAT_RE.search(sent):
+                sents[k] = _REPORTS_THAT_RE.sub("reported on %s that" % day.group(1), sent, count=1)
+                out[i] = dict(out[i], text=" ".join(sents))
+                break
+    return out
+
+
 # ── checks ──────────────────────────────────────────────────────────────────
 
 def _p(code: str, message: str, line: int | None = None, sid: str = "") -> dict:
