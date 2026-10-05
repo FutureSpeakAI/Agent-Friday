@@ -583,18 +583,16 @@ def test_lines_with_their_own_sources_are_not_merged_so_each_chip_stays_by_its_s
     assert [o["cites"] for o in out] == [["S1"], ["S2"]]
 
 
-def test_a_local_render_waits_for_the_voice_s_memory(monkeypatch):
-    """Launching the out-of-process voice needs 6 GB of commit headroom (its
-    measured peak, with room); below that every local episode waits, whatever
-    its priority. A cloud voice does not load one."""
+def test_a_local_voice_is_started_only_with_its_room(monkeypatch):
+    """Launching the out-of-process voice needs VOICE_HEADROOM_MB of commit
+    headroom (its measured peak and a margin); below that it is not started,
+    and the episode is still written: the room is made when it is spoken."""
     monkeypatch.setattr(render, "speaker_running", lambda: False)
     monkeypatch.setattr(render, "commit_headroom_mb", lambda: 2000)
-    assert "memory" in pe._gate_reason({"priority": "now"})
-    assert pe.VOICE_HEADROOM_MB == 6144
-    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 7000)
+    assert pe._room_to_speak() is False
     assert pe._gate_reason({"priority": "now"}) == ""
-    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 2000)
-    assert pe._gate_reason({"priority": "now", "voice_engine": "cloud"}) == ""
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: pe.VOICE_HEADROOM_MB)
+    assert pe._room_to_speak() is True
 
 
 def test_commit_headroom_is_a_number_of_megabytes():

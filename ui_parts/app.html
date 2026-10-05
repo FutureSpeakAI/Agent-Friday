@@ -2997,6 +2997,21 @@ function PodcastButton({ sources, title, compact, className }) {
     style: className ? undefined : { fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.font }
   }, label);
 }
+// What a run's episode is doing, in plain words: progress while it is made, a
+// reason in a sentence while it waits (never memory figures), and whether it failed.
+function podcastStatusText(ep) {
+  const pr = ep && ep.progress && ep.progress.of ? ep.progress : null;
+  const st = (ep && ep.status) || '';
+  if (st === 'writing') return 'Writing today’s episode…' + (pr && pr.stage === 'writing' ? ' ' + pr.done + ' of ' + pr.of + ' parts' : '');
+  if (st === 'speaking') return 'Making today’s episode…' + (pr && pr.stage === 'speaking' ? ' ' + pr.done + ' of ' + pr.of + ' segments' : '');
+  if (st === 'checking') return 'Checking today’s episode…';
+  if (st === 'failed') return 'Today’s episode could not be made' + (((ep.error || {}).message) ? ': ' + String(ep.error.message).slice(0, 140) : '.');
+  const why = String((ep && (ep.waiting_reason || '')) || '');
+  // A wait is said plainly; a reason carrying memory figures is an internal one.
+  if (st === 'waiting' && why && !/\d+(\.\d+)?\s*[GM]B/i.test(why)) return 'Waiting to make today’s episode: ' + why;
+  if (st === 'waiting') return 'Waiting for room to make today’s episode; Friday will try again shortly.';
+  return 'Today’s episode is queued to be made on this computer.';
+}
 function PodcastChip({ routine, runId }) {
   const h = React.createElement;
   const [ep, setEp] = useState(null);
@@ -3017,11 +3032,14 @@ function PodcastChip({ routine, runId }) {
       '🎧 Listen · ' + Math.max(1, Math.round((ep.duration_s || 0) / 60)) + ' min');
   }
   if (ep.status === 'failed') {
-    return h('span', { style: Object.assign({}, style, { color: PODCAST_C.error }), title: (ep.error || {}).message || '' },
-      '🎧 Episode failed: ' + (((ep.error || {}).message) || '').slice(0, 90));
+    const retry = () => fetch('/api/podcasts/' + encodeURIComponent(ep.id) + '/retry', { method: 'POST' })
+      .then(r => r.json()).then(d => { if (d && d.episode) setEp(d.episode); }).catch(() => {});
+    return h('span', { role: 'status', 'data-testid': 'podcast-status', style: Object.assign({}, style, { color: PODCAST_C.error }) },
+      '🎧 ' + podcastStatusText(ep),
+      h('button', { className: 'btn', 'data-testid': 'podcast-retry', onClick: retry, style: { fontSize: PODCAST_C.sm } }, 'Retry'));
   }
   if (ep.status === 'cancelled') return null;
-  return h('span', { style: Object.assign({}, style, { color: PODCAST_C.dim }) }, '🎧 Episode: ' + (ep.stage_detail || ep.status));
+  return h('span', { role: 'status', 'data-testid': 'podcast-status', style: Object.assign({}, style, { color: PODCAST_C.dim }) }, '🎧 ' + podcastStatusText(ep));
 }
 const PODCAST_KINDS = [
   { id: 'text', label: 'Text', ph: 'Paste notes or an article' },
@@ -9713,8 +9731,7 @@ function NewsWS(){
       let ep = d.episode;
       while (ep.status !== 'ready') {
         if (ep.status === 'failed' || ep.status === 'cancelled') throw new Error((ep.error || {}).message || 'The episode could not be made');
-        const pr = ep.progress && ep.progress.of ? ' · ' + ep.progress.done + '/' + ep.progress.of : '';
-        setListenState('🎧 ' + (ep.waiting_reason || ep.stage_detail || ep.status) + pr);
+        setListenState('🎧 Getting today\u2019s episode\u2026');
         await new Promise(res => setTimeout(res, 3000));
         const g = await fetch('/api/podcasts/' + encodeURIComponent(ep.id)).then(x => x.json());
         ep = g.episode || ep;

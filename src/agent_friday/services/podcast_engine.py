@@ -93,8 +93,14 @@ def _spoken_credit(ep: dict) -> str:
 FORMATS = ("solo", "duo")
 RECOMMENDED_FORMAT = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
                       "weekly": "duo", "any": "duo"}
-#: Commit headroom the out-of-process voice (Kokoro on the CPU) needs, in MB.
-VOICE_HEADROOM_MB = 6144
+#: Commit headroom the out-of-process voice (Kokoro on the CPU) needs, in MB:
+#: measured on the reference PC speaking eight podcast lines, its private memory
+#: peaked at 2.7 GB and the machine's commit rose by at most 3.0 GB; this is that
+#: peak and a 1 GB margin.
+VOICE_HEADROOM_MB = 4096
+#: What the owner reads when even parking the brain cannot make that room.
+NO_ROOM_TO_SPEAK = ("There isn't room on this computer to speak it right now. "
+                    "Friday will try again in a few minutes.")
 #: Revision passes the writer gets when the script-quality gate finds problems.
 MAX_REVISIONS = 2
 #: Fewer words than this that survived the source check is no episode.
@@ -1373,13 +1379,15 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
                     "voice is not used for them.")
             _refuse_cloud_voice(ep.get("privacy") == "private")
             speak = _cloud_speak()
-        pcm, timings = render.render_lines(
-            ep["lines"], _voices(ep), speak=speak, should_stop=stop,
-            intro=render.sting("intro"), outro=render.sting("outro"),
-            progress=lambda i, n: (
-                _update(eid, progress={"stage": "speaking", "done": i, "of": n})
-                if i % 5 == 0 or i == n else None,
-                _orb(orb, "progress", ep, 0.4 + 0.5 * i / n)))
+        def _render():
+            return render.render_lines(
+                ep["lines"], _voices(ep), speak=speak, should_stop=stop,
+                intro=render.sting("intro"), outro=render.sting("outro"),
+                progress=lambda i, n: (
+                    _update(eid, progress={"stage": "speaking", "done": i, "of": n})
+                    if i % 5 == 0 or i == n else None,
+                    _orb(orb, "progress", ep, 0.4 + 0.5 * i / n)))
+        pcm, timings = _render() if speak is not None else _speak_with_room(eid, _render, len(ep["lines"]))
         d = _dir(eid)
         wav = d / "audio.wav"
         render.write_wav(pcm, wav)
@@ -1440,6 +1448,50 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
         return _update(eid, status="failed",
                        error={"code": "crashed", "message": "%s: %s" % (type(e).__name__, str(e)[:200])},
                        stage_detail="")
+
+
+def _room_to_speak() -> bool:
+    """Is there room for the local voice now? A speaker already running has it."""
+    if render.speaker_running():
+        return True
+    head = render.commit_headroom_mb()
+    return head is None or head >= VOICE_HEADROOM_MB
+
+
+def _speak_with_room(eid: str, run, n_lines: int):
+    """Speak the episode, making room first when the machine is short: the
+    arbiter parks the brain for the speaking job (heavy_job) and puts it back
+    afterwards, verified. When even that leaves no room, or the arbiter cannot
+    take the job, the episode waits and tries again: `low_memory`, retryable."""
+    if _room_to_speak():
+        return run()
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arbiter = get_arbiter()
+    except Exception:
+        arbiter = None
+    if arbiter is None:
+        raise render.RenderError("low_memory", NO_ROOM_TO_SPEAK)
+    _update(eid, stage_detail="making room to speak on this computer")
+
+    def job():
+        # The brain is parked now; the voice gets its room or the job says so.
+        if not _room_to_speak():
+            raise render.RenderError("low_memory", NO_ROOM_TO_SPEAK)
+        try:
+            pcm, timings = run()
+            # A dict: the arbiter reads a job's tuple or list as output file paths.
+            return {"pcm": pcm, "timings": timings}
+        finally:
+            render.release_speaker()            # the room goes back before the brain does
+    hj = arbiter.heavy_job("podcast_voice", job, timeout_s=max(900, 30 * n_lines), expect_files=False)
+    if hj.get("ok") and isinstance(hj.get("result"), dict):
+        return hj["result"]["pcm"], hj["result"]["timings"]
+    exc = hj.get("exception")
+    if isinstance(exc, render.RenderError):
+        raise exc
+    log.warning("podcast %s: the arbiter could not make room to speak: %s", eid, hj.get("error"))
+    raise render.RenderError("low_memory", NO_ROOM_TO_SPEAK)
 
 
 def _retry_or_fail(eid: str, orb: str, ep: dict, e: "render.RenderError") -> dict:
@@ -1647,14 +1699,8 @@ def _gate_reason(ep: dict) -> str:
     * A long episode waits for the owner's own idle window.
     """
     from agent_friday.services import scheduler
-    if ep.get("voice_engine") != "cloud":
-        # The local voice runs in its own process; it is started only when the
-        # machine can hold it, whoever asked.
-        # Launching a speaker needs the room; one already running has it.
-        head = None if render.speaker_running() else render.commit_headroom_mb()
-        if head is not None and head < VOICE_HEADROOM_MB:
-            return ("waiting for memory: the voice needs about %.1f GB free to commit, %.1f GB is"
-                    % (VOICE_HEADROOM_MB / 1024, head / 1024))
+    # The voice's room is not a gate: writing needs none, and speaking makes its
+    # own (`_speak_with_room` parks the brain through the arbiter when short).
     if ep.get("priority") == "now":
         try:
             from agent_friday.services import stand_down

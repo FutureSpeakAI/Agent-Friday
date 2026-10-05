@@ -98,16 +98,16 @@ def test_an_empty_queue_releases_the_speaker(monkeypatch):
 
 # (c) ─────────────────────────────────────────────────────────────────────────
 
-def test_a_speaker_is_launched_only_with_six_gigabytes_of_headroom(monkeypatch):
-    assert pe.VOICE_HEADROOM_MB == 6144
+def test_a_speaker_is_launched_only_with_its_measured_headroom(monkeypatch):
     monkeypatch.setattr(render, "speaker_running", lambda: False)
-    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 5000)
-    assert "memory" in pe._gate_reason({"priority": "now"})
-    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 7000)
-    assert pe._gate_reason({"priority": "now"}) == ""
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: pe.VOICE_HEADROOM_MB - 1)
+    assert pe._room_to_speak() is False
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: pe.VOICE_HEADROOM_MB + 1)
+    assert pe._room_to_speak() is True
 
 
 def test_a_running_speaker_is_not_stalled_by_its_own_memory(monkeypatch):
     monkeypatch.setattr(render, "speaker_running", lambda: True)
     monkeypatch.setattr(render, "commit_headroom_mb", lambda: 2000)
     assert pe._gate_reason({"priority": "now"}) == ""
+    assert pe._room_to_speak() is True
