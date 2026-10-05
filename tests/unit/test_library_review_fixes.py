@@ -429,7 +429,8 @@ def test_the_resolver_offers_only_documents_the_owner_can_see_now(tmp_path):
 
 def test_library_changes_are_classed_by_the_gate_and_held_without_the_page():
     from agent_friday.governance import action_gate
-    for op in ("library_add", "library_remove", "library_forget", "library_shelf", "library_reindex"):
+    for op in ("library_add", "library_remove", "library_forget", "library_shelf", "library_reindex",
+               "library_tracked"):
         v = action_gate.authorize(op, {}, {"screen_click": True})
         assert v.action == "allow" and v.klass == action_gate.INTERNAL, op
         held = action_gate.authorize(op, {}, {})
@@ -439,7 +440,7 @@ def test_library_changes_are_classed_by_the_gate_and_held_without_the_page():
 def test_every_library_change_route_goes_through_the_gate():
     from pathlib import Path
     src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "routes" / "library.py").read_text(encoding="utf-8")
-    assert src.count('_same_origin_json("library_') == 5 and "action_gate.authorize(op" in src
+    assert src.count('_same_origin_json("library_') == 6 and "action_gate.authorize(op" in src
     assert "_api_token_valid" in src.split("def _not_another_site")[1].split("def _gated")[0]
 
 
