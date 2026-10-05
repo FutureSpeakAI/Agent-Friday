@@ -2729,6 +2729,57 @@ function PodcastPlayer() {
     return () => clearInterval(iv);
   }, [playing, ep && ep.id]);
   useEffect(() => { if (audio.current) audio.current.playbackRate = rate; }, [rate, ep && ep.id]);
+  // The avatar shows Friday speaking while an episode plays one of HER lines
+  // (a co-host's line is not her state): the same two signals the voice and
+  // read-aloud paths set, from the episode's real audio. captureStream taps the
+  // element without rerouting it, so playback never depends on this.
+  const speakTap = useRef(null);
+  useEffect(() => {
+    const a = audio.current;
+    if (!playing || !a) return;
+    const hostsNow = (epRef.current && epRef.current.hosts) || {};
+    const herName = typeof fridayName === 'function' ? fridayName() : 'Friday';
+    const isHer = (s) => s === 'a' || ((hostsNow[s] || {}).name || '') === herName;
+    let tap = speakTap.current;
+    if (!tap || tap.el !== a) {
+      tap = { el: a };
+      try {
+        const stream = (a.captureStream || a.mozCaptureStream).call(a);
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        tap.ctx = new Ctx();
+        tap.an = tap.ctx.createAnalyser();
+        tap.an.fftSize = 256;
+        tap.ctx.createMediaStreamSource(stream).connect(tap.an);
+        tap.buf = new Uint8Array(tap.an.frequencyBinCount);
+      } catch (_) { tap.an = null; }
+      speakTap.current = tap;
+    }
+    if (tap.ctx && tap.ctx.state === 'suspended') tap.ctx.resume().catch(() => {});
+    let raf = 0;
+    const loop = () => {
+      const lns = (epRef.current && epRef.current.lines) || [];
+      let ln = null;
+      for (const l of lns) { if ((l.start || 0) <= a.currentTime + 0.05) ln = l; else break; }
+      const hers = !!ln && isHer(ln.speaker);
+      let amp = 0;
+      if (hers && tap.an) {
+        tap.an.getByteFrequencyData(tap.buf);
+        let s = 0;
+        for (let i = 0; i < tap.buf.length; i++) s += tap.buf[i];
+        amp = Math.min(1, s / tap.buf.length / 128);
+      }
+      window._fridayHoloAmplitude = amp;
+      if (!window._fridayMoodSignals) window._fridayMoodSignals = {};
+      window._fridayMoodSignals.ttsActive = hers;
+      raf = requestAnimationFrame(loop);
+    };
+    loop();
+    return () => {
+      cancelAnimationFrame(raf);
+      window._fridayHoloAmplitude = 0;
+      if (window._fridayMoodSignals) window._fridayMoodSignals.ttsActive = false;
+    };
+  }, [playing, ep && ep.id]);
   if (!ep) return null;
   const lines = ep.lines || [];
   let cur = -1;
