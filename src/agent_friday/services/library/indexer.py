@@ -53,9 +53,13 @@ def _home_content(real: str, home: str) -> bool:
 
 #: A file named like a secret is never read, wherever it is: the Library reads
 #: whole folders, and a key dropped in one is still a key.
+#: Only names that ARE secrets: a document about secrets ("secrets.md",
+#: "credentials.pdf") or a Keynote deck (.key) is still a document, and a
+#: .pem/.key the indexer cannot tell from a key is credential_paths' to judge.
 SECRET_NAME = re.compile(
-    r"^(\.env(\..*)?|\.npmrc|\.pypirc|\.netrc|\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)(\..*)?"
-    r"|credentials?(\..*)?|secrets?(\..*)?|.*\.(pem|key|pfx|p12|kdbx|keystore|jks|ppk|asc|gpg))$", re.I)
+    r"^(\.env(\..*)?|\.npmrc|\.pypirc|\.netrc|\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?"
+    r"|(credentials?|secrets?)(\.(json|ya?ml|toml|ini|cfg|conf|env|xml))?"
+    r"|.*\.(pem|pfx|p12|kdbx|keystore|jks|ppk))$", re.I)
 
 
 def _refused(path: Path) -> str | None:

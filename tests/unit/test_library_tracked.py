@@ -232,3 +232,14 @@ def test_the_tracked_consent_reads_her_content_and_never_her_config(home, monkey
         assert not grants.allowed("owner", home / rel), rel
     roots = {r["path"] for r in grants.tracked_roots()}
     assert str((home / "pipelines" / "runs").resolve()) not in roots
+
+
+@pytest.mark.parametrize("name,secret", [
+    (".env", True), (".env.local", True), ("id_rsa", True), ("id_ed25519.pub", True), ("credentials.json", True),
+    ("secrets.yaml", True), ("server.pem", True), ("vault.kdbx", True), ("putty.ppk", True), (".netrc", True),
+    ("secrets.md", False), ("credentials.pdf", False), ("Pitch deck.key", False), ("Credentials Guide.docx", False),
+    ("environment.md", False), ("keynote-notes.txt", False),
+])
+def test_a_secret_name_is_never_read_and_a_document_about_secrets_still_is(name, secret):
+    from agent_friday.services.library import indexer
+    assert bool(indexer.SECRET_NAME.match(name)) is secret, name
