@@ -54571,6 +54571,32 @@ function LibraryTrackedToggle() {
     desc: desc
   });
 }
+// Settings: while every file permission is paused, say so at the top of every
+// tab, with the way to the one place it is fixed (Privacy & Approvals > File access).
+// Keyed by the tab, so every tab switch reads the state again (a fresh start clears it).
+const FILE_ACCESS_LINK = { workspace: 'settings', tab: 'privacy', section: 'File access' };
+function FileAccessPausedBanner() {
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    let live = true;
+    apiFetch('/api/privacy/file-grants').then(r => r.json()).then(d => {
+      if (live) setPaused(!!(d && d.status && d.status.suspended));
+    }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!paused) return null;
+  return /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    "data-testid": "file-access-paused-banner",
+    style: { fontSize: 12, color: 'rgba(255,210,140,0.95)', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '8px 12px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }
+  }, /*#__PURE__*/React.createElement("span", { style: { flex: '1 1 260px' } },
+    "Every file permission is paused, and the Library reads nothing: a line in the permissions record could not be verified."),
+    /*#__PURE__*/React.createElement("button", {
+      className: "settings-btn",
+      style: { fontSize: 11 },
+      onClick: () => window.fridayOpenWorkspace && window.fridayOpenWorkspace(FILE_ACCESS_LINK)
+    }, "Open File access"));
+}
 function FileAccessPanel() {
   const E = React.createElement;
   const [data, setData] = useState(null);
@@ -59257,7 +59283,9 @@ function SettingsWS() {
       padding: '22px 28px 40px',
       maxWidth: 860
     }
-  }, tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabGeneral, {
+  }, /*#__PURE__*/React.createElement(FileAccessPausedBanner, {
+    key: 'fa-' + tab
+  }), tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(SettingsYourProfile, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
