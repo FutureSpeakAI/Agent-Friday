@@ -258,3 +258,30 @@ def test_comfyui_is_told_the_display_reserve(monkeypatch, tmp_path):
 def test_grant_hands_the_reserve_to_comfyui(arb):
     arb.grant("image_job")
     assert arb.comfy.reserve_vram_mib and arb.comfy.reserve_vram_mib >= 256
+
+
+# ── a podcast spoken on this computer ────────────────────────────────────────
+
+def test_a_podcast_is_spoken_with_the_brain_parked_and_the_brain_comes_back(arb, monkeypatch):
+    """The episode's own path (podcast_engine._speak_with_room) through this
+    arbiter: short of room, the speaking job takes a podcast_voice lease, the
+    brain stands down while it speaks, and the brain is back and verified."""
+    from agent_friday.services import podcast_engine as pe
+    from agent_friday.services import podcast_render as render
+    monkeypatch.setattr(ra, "get_arbiter", lambda: arb)
+    monkeypatch.setattr(render, "speaker_running", lambda: False)
+    monkeypatch.setattr(render, "release_speaker", lambda: None)
+    # The brain holds the room the voice needs.
+    monkeypatch.setattr(render, "commit_headroom_mb",
+                        lambda: 1000 if "gemma4:12b" in arb.llama.procs else 9000)
+    seen = {}
+
+    def speak():
+        seen["during"] = set(arb.llama.procs)
+        return b"pcm", [0.0]
+
+    assert pe._speak_with_room("ep-t1", speak, 3) == (b"pcm", [0.0])
+    assert "gemma4:12b" not in seen["during"], "the brain stands down while the episode is spoken"
+    assert set(arb.llama.procs) == {"gemma4:12b", "gemma4:e2b"}, "the brain is back"
+    assert "gemma4:12b" in arb.llama.verified
+    assert arb.lease is None and arb.state == ra.STATE_DEFAULT

@@ -2577,6 +2577,15 @@ class Arbiter:
                                   "model_id": None,
                                   "displaced": displaced,
                                   "expires_at": time.time() + ttl_s}
+                elif kind == "podcast_voice":
+                    # An episode spoken by the out-of-process voice on the
+                    # processor: the pinned seats are parked so its memory
+                    # fits, nothing is loaded, and release restores them.
+                    displaced = self._evict_pinned()
+                    self.lease = {"kind": kind, "role": "podcast_voice",
+                                  "model_id": None,
+                                  "displaced": displaced,
+                                  "expires_at": time.time() + ttl_s}
                 elif kind == "bench_job":
                     # A benchmark needs the card to itself and starts no
                     # server: the seats stand down, the bench runs its own
