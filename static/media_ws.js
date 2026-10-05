@@ -544,6 +544,9 @@
   // ── the Library ──────────────────────────────────────────────────────────
   function Library({ filters, setFilters, sel, setSel, onOpen, onAction }) {
     const [state] = useCards(filters);
+    // Declared before every hook that lists it: a dependency array is read
+    // during render, so a later `const cards` throws before it is set.
+    const cards = state.cards;
     const [ql, setQl] = useState(false);
     const [panel, setPanel] = useState(null);     // 'tidy' | 'trash' | null
     const [groupBy, setGroupBy] = useState('none');
@@ -578,7 +581,6 @@
     }, [setSel]);
     const [layout, setLayout] = useState('grid');
     const searchRef = useRef(null);
-    const cards = state.cards;
     const selCard = cards.find(c => c.id === sel) || null;
     const current = filters.collection ? 'col:' + filters.collection : filters.favorite ? 'fav' : filters.tag ? 'tag:' + filters.tag : filters.kind ? 'kind:' + filters.kind : filters.project != null ? 'proj:' + filters.project : filters.privacy ? 'priv:' + filters.privacy : filters.unsigned ? 'unsigned' : 'view:' + (filters.view || 'today');
     const pick = useCallback(patch => { setFilters(Object.assign({ view: 'all', kind: null, project: null, privacy: null, unsigned: false, favorite: false, tag: null, when: null, collection: null, q: filters.q, sort: filters.sort }, patch)); setSel(null); setMulti([]); }, [filters.q, filters.sort, setFilters, setSel]);
