@@ -831,6 +831,16 @@ CLAUDE_TOOLS = [
          "to": {"type": "string", "description": "Destination folder (move), or the folder to make (new_folder)."},
          "new_name": {"type": "string", "description": "For rename."},
          "moves": {"type": "array", "items": {"type": "string"}, "description": "To sort into several folders in one card: 'file => folder' each."},
+         "selection": {"type": "string", "enum": ["screen"], "description": "screen: the files ticked, open or pointed at on the user's screen, instead of items."},
+         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
+         "why": {"type": "string", "description": "One short line for the card."}},
+      "required": ["action"]}},
+    {"name": "organize_media", "description": "Favourite, unfavourite, tag, untag or move to a project the user's Media cards. One card changes now; two or more wait for ONE approval card (read it back, then answer_card). Pick the cards with selection=screen (ticked, open or pointed at on their screen) or by id in cards. undo_action puts a change back.",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["favourite", "unfavourite", "tag", "untag", "project"]},
+         "cards": {"type": "array", "items": {"type": "string"}, "description": "Card ids (the id of a Media card)."},
+         "selection": {"type": "string", "enum": ["screen"], "description": "screen: the cards ticked, open or pointed at on the user's screen."},
+         "value": {"type": "string", "description": "The tag, or the project name (empty for none)."},
          "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
          "why": {"type": "string", "description": "One short line for the card."}},
       "required": ["action"]}},
@@ -3388,17 +3398,17 @@ def _tool_organize_email(inp):
     extra = {}
     thread_ids, query = inp.get("thread_ids") or None, inp.get("query") or ""
     if str(inp.get("selection") or "").strip().lower() == "screen":
-        st = _fresh_screen_stage("messages")
-        if st is None:
-            return ("NOT DONE: I can't see your list right now, so I won't guess what is ticked. "
-                    "Ask them to tick the mail, or name it with a search.")
-        sel = st.get("selection") or {}
-        refs = [r for r in (sel.get("refs") or []) if _ss.split_mail_ref(r)]
+        refs, st, rule, err = _screen_target("messages")
+        if err:
+            return err
+        refs = [r for r in refs if _ss.split_mail_ref(r)]
         if not refs:
-            return "NOT DONE: nothing is ticked on their screen."
+            return "NOT DONE: nothing on their screen is a conversation."
         thread_ids = ["%s:%s" % _ss.split_mail_ref(r) for r in refs]
         query = ""
-        extra = {"refs": refs, "selection_id": sel.get("id") or "", "stage_rev": st.get("rev") or 0}
+        sel = st.get("selection") or {}
+        extra = {"refs": refs, "selection_id": sel.get("id") or "" if sel.get("refs") else "",
+                 "stage_rev": st.get("rev") or 0, "rule": rule}
     return _organize_call(_ia.propose_email, inp.get("action") or "", query=query,
                           thread_ids=thread_ids, account=inp.get("account") or "",
                           label=inp.get("label") or "", why=inp.get("why") or "",
@@ -3406,6 +3416,30 @@ def _tool_organize_email(inp):
 
 
 # -- See & Touch: what is on the owner's screen (services/screen_stage) --------
+
+#: How the rows a tool acted on were chosen, in the owner's words; the card says it.
+_RULE_WORDS = {"selection": "the rows you ticked", "cursor": "the row your hand was on", "open": "the one you have open",
+               "focus": "the row you were on", "pointed": "the ones I just pointed at"}
+
+
+def _screen_target(workspace: str):
+    """(refs, stage, rule words, error) for "these" / "this" in `workspace`: the ticked rows, then the row
+    the hand cursor is on, then the open one, the one the keyboard is on, the last pointed set. Two rules
+    that disagree become a question, never a guess; an old stage with no answer from the page refuses
+    (nothing falls back to a search)."""
+    from agent_friday.services import desktop_bus, screen_stage as _ss
+    st = _fresh_screen_stage(workspace)
+    if st is None:
+        return [], None, "", ("NOT DONE: I can't see your list right now, so I won't guess what you mean. "
+                              "Ask them to tick the rows, or name them.")
+    d = _ss.resolve_deictic(st, "these", desktop_bus.pointed(workspace))
+    if d["ask"]:
+        return [], st, "", "NOT DONE: " + d["ask"]
+    if not d["refs"]:
+        return [], st, "", "NOT DONE: nothing is ticked, open or pointed at on their screen."
+    return d["refs"][:_ss.MAX_REFS], st, _RULE_WORDS.get(d["rule"], ""), ""
+
+
 
 #: How long a page gets to answer a `stage?` request.
 STAGE_ASK_S = 3.0
@@ -3470,6 +3504,9 @@ def _mail_select_all(match: dict):
     capped = len(res["refs"]) >= _ss.MAX_REFS
     return res["refs"], reveal, capped, ""
 
+
+#: The lists that can show Friday's ticks.
+_TICKABLE = ("messages", "media", "library", "files")
 
 #: The keys of a request that name what to match, flat (voice) or nested in `match` (chat).
 _MATCH_KEYS = ("category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic",
@@ -3564,6 +3601,8 @@ def _screen_point(ws: str, inp, match: dict) -> str:
     if not sent.get("acked") or not res.get("ok"):
         return "POINT_FAIL: the page did not confirm it, so I can't say anything is marked."
     shown = int(res.get("count") or 0)
+    if shown == 0:
+        return "POINT_FAIL: none of those is on screen to mark."
     desktop_bus.set_pointed(ws, plan["badged"][:shown] if shown else [], pid)
     _ss.log_counts("point", ws, shown, rule)
     noun = _ss.NOUNS.get(ws, "items")
@@ -3583,21 +3622,24 @@ def _tool_screen_select(inp):
     op = str(inp.get("op") or "select").strip().lower()
     # ticks are the Message Center's until another list can show them; pointing and filters go to
     # the list the owner has in front
-    ws = str(inp.get("workspace") or "").strip().lower() or (
-        "messages" if op in ("select", "add", "remove", "clear") else _screen_workspace(inp))
+    ws = str(inp.get("workspace") or "").strip().lower() or _screen_workspace(inp)
+    if op in ("select", "add", "remove", "clear") and ws not in _TICKABLE and not inp.get("workspace"):
+        ws = "messages"
     scope = str(inp.get("scope") or "screen").strip().lower()
     match = _flat_match(inp)
     if op == "filter":
         return _screen_filter(ws, inp, match)
     if op == "point":
         return _screen_point(ws, inp, match)
-    if ws != "messages":
-        return "SELECT_FAIL: only the Message Center can show ticks so far."
+    if ws not in _TICKABLE:
+        return "SELECT_FAIL: I can show ticks in the Message Center, Media, the Library and Files so far."
+    if ws != "messages" and scope == "all":
+        return "SELECT_FAIL: only the Message Center can search the whole list; use scope screen here."
     if op not in ("select", "add", "remove", "clear") or scope not in ("screen", "all"):
         return "SELECT_FAIL: op is select, add, remove, clear or filter; scope is screen or all."
     quiet = _cloud_voice() or _voice_room()
     word = str(match.get("category") or "").strip()
-    name = (word if word and _ss.category_known(ws, word) else "conversations") if quiet else (
+    name = (word if word and _ss.category_known(ws, word) else _ss.NOUNS.get(ws, "items")) if quiet else (
         str(inp.get("label") or word or "Selected").strip()[:40])
 
     if op == "clear":
@@ -3635,7 +3677,8 @@ def _tool_screen_select(inp):
         r = _ss.resolve(st, match, desktop_bus.pointed(ws))
         if r["unknown"]:
             return ("SELECT_FAIL: I don't have %r as a kind of mail. Use scope=all with a Gmail "
-                    "search in match.query." % r["unknown"][0])
+                    "search in match.query." % r["unknown"][0]) if ws == "messages" else (
+                "SELECT_FAIL: I don't have %r as a kind of item here." % r["unknown"][0])
         refs, rule = r["refs"], r["rule"]
     if not refs:
         return "SELECT_FAIL: nothing on that list matches."
@@ -3674,10 +3717,43 @@ def _tool_organize_files(inp):
     """Tool handler: one local file change now, or a batch on one card."""
     from agent_friday.services import item_actions as _ia
     inp = inp or {}
-    return _organize_call(_ia.organize_files, inp.get("action") or "", items=inp.get("items") or None,
+    items, extra = inp.get("items") or None, {}
+    if str(inp.get("selection") or "").strip().lower() == "screen":
+        refs, st, rule, err = _screen_target("files")
+        if err:
+            return err
+        refs = [r for r in refs if str(r).startswith("file:") and str(r).count(":") >= 2]
+        if not refs:
+            return "NOT DONE: nothing on their screen is a file."
+        items = [r.split(":", 1)[1] for r in refs]          # "documents:Taxes/w2.pdf", the form file_ref takes
+        sel = st.get("selection") or {}
+        extra = {"refs": refs, "selection_id": sel.get("id") or "" if sel.get("refs") else "",
+                 "stage_rev": st.get("rev") or 0, "rule": rule}
+    return _organize_call(_ia.organize_files, inp.get("action") or "", items=items,
                           to=inp.get("to") or "", new_name=inp.get("new_name") or "",
                           moves=inp.get("moves") or None, why=inp.get("why") or "",
-                          replaces=inp.get("replaces") or "")
+                          replaces=inp.get("replaces") or "", **extra)
+
+
+def _tool_organize_media(inp):
+    """Tool handler: favourite, tag or move Media cards: one at once, two or more on one card.
+    `selection="screen"` takes the cards ticked (or pointed at, or open) on the owner's screen."""
+    from agent_friday.services import item_actions as _ia
+    inp = inp or {}
+    cards, extra = inp.get("cards") or None, {}
+    if str(inp.get("selection") or "").strip().lower() == "screen":
+        refs, st, rule, err = _screen_target("media")
+        if err:
+            return err
+        refs = [r for r in refs if str(r).startswith("media:")]
+        if not refs:
+            return "NOT DONE: nothing on their screen is a Media card."
+        cards = refs
+        sel = st.get("selection") or {}
+        extra = {"refs": refs, "selection_id": sel.get("id") or "" if sel.get("refs") else "",
+                 "stage_rev": st.get("rev") or 0, "rule": rule}
+    return _organize_call(_ia.organize_media, inp.get("action") or "", cards=cards, value=inp.get("value") or "",
+                          why=inp.get("why") or "", replaces=inp.get("replaces") or "", **extra)
 
 
 def _tool_organize_wiki(inp):
@@ -6732,6 +6808,7 @@ CLAUDE_TOOL_HANDLERS = {
     "screen_select": _tool_screen_select,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
+    "organize_media": _tool_organize_media,
     "undo_action": _tool_undo_action,
     "answer_card": _tool_answer_card,
     "switch_model": _tool_switch_model,
@@ -7145,6 +7222,7 @@ TOOL_RINGS: dict[str, int] = {
     # draft_email, and a card is decided by the owner's own words.
     "organize_files":       1,
     "organize_wiki":        1,
+    "organize_media":       1,
     "organize_email":       2,
     # Ticks rows on the owner's own screen and changes nothing else (services/screen_stage).
     "screen_select":        1,

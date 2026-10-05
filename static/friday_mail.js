@@ -668,6 +668,7 @@
     const revealing = useRef(false);
     const revealRef = useRef(null);
     const fridayFilters = useRef({});          // filter key -> the value Friday set; a different value is the owner's
+    const focusTouched = useRef(false);        // the keyboard row counts as "this" only once the owner has moved it
     const [sweepAt, setSweepAt] = useState(0);
     const [announce, setAnnounce] = useState('');
     const sel = useMemo(() => new Set(ss.refs), [ss]);
@@ -726,7 +727,7 @@
       api(url).then(r => r.json()).then(done).catch(e => done({ status: 'error', search_failed: true, error: ("Couldn't reach " + fridayName() + ": ") + e }));
       if (!q && !f) api('/api/messages/stats').then(r => r.json()).then(d => { setStats(d); if (d.actionable != null) window._fridayMsgActionable = d.actionable; }).catch(() => {});
     }, []);
-    useEffect(() => { load(query, folder); if (!revealing.current) commitSel({ type: 'owner_nav' }); setFocus(0); }, [query, folder]);
+    useEffect(() => { load(query, folder); if (!revealing.current) commitSel({ type: 'owner_nav' }); setFocus(0); focusTouched.current = false; }, [query, folder]);
     useEffect(() => { const iv = setInterval(() => { if (!query && !folder && document.visibilityState !== 'hidden') load('', ''); }, 60000); return () => clearInterval(iv); }, [query, folder]);
     useEffect(() => {
       api('/api/google/accounts').then(r => r.json()).then(d => setAccounts((d.accounts || []).filter(hasGmail))).catch(() => {});
@@ -1142,10 +1143,10 @@
         if (pick) { e.preventDefault(); setSelCards(pick()); return; }
       }
       const handled = {
-        j: () => { setFocus(f => Math.min(shown.length - 1, f + 1)); },
-        k: () => { setFocus(f => Math.max(0, f - 1)); },
-        ArrowDown: () => { setFocus(f => Math.min(shown.length - 1, f + 1)); },
-        ArrowUp: () => { setFocus(f => Math.max(0, f - 1)); },
+        j: () => { focusTouched.current = true; setFocus(f => Math.min(shown.length - 1, f + 1)); },
+        k: () => { focusTouched.current = true; setFocus(f => Math.max(0, f - 1)); },
+        ArrowDown: () => { focusTouched.current = true; setFocus(f => Math.min(shown.length - 1, f + 1)); },
+        ArrowUp: () => { focusTouched.current = true; setFocus(f => Math.max(0, f - 1)); },
         o: () => openThread(cur), Enter: () => openThread(cur),
         u: () => setOpen(null), Escape: () => { if (help) setHelp(false); else if (preview) setPreview(null); else if (layout !== 'wide' && sideOpen === true) setSideOpen(null); else if (sel.size) clearSel(); else setOpen(null); },
         x: () => cur && toggleSel(cur),
@@ -1236,7 +1237,8 @@
           title: m.subject || '', who: m.sender || m.sender_email || '' })),
         loaded: all.length, total_hint: (data && data.total) || all.length,
         selection: { id: cur.id, refs: cur.refs, count: cur.refs.length, label: cur.label, source: cur.source, beyond_loaded: beyond },
-        filters, focus: shown[focus] ? refOf(shown[focus]) : null, open: open ? refOf(open.card) : null, cursor: null, fields: [],
+        filters, focus: focusTouched.current && shown[focus] ? refOf(shown[focus]) : null, open: open ? refOf(open.card) : null,
+        cursor: FS.cursorNow(shown.slice(0, FS.MAX_ROWS).map(refOf)), fields: [],
         held: Object.keys(cur.held).length ? [{ card_id: 'pending', refs_count: Object.keys(cur.held).length }] : []
       };
       const json = JSON.stringify(st);
@@ -1332,7 +1334,7 @@
         'data-fr-target': '', 'data-fr-pinch': 'tick', 'data-fr-guarded': 'off',
         style: sweepOn && sel.has(rf) ? { '--fr-d': (sweepDelay[rf] || 0) + 'ms' } : undefined,
         className: 'fm-row' + (m.unread ? ' unread' : '') + (i === focus ? ' focus' : '') + (open && open.card.id === m.id ? ' open' : '') + (sel.has(rf) ? ' sel' : '') + (ss.held[rf] ? ' held' : '') + (sweepOn && sel.has(rf) ? ' fr-sweep' : '') + (busyIds.has(m.id) ? ' busy' : '') + (m.awaiting_reply && !folder ? ' await' : ''),
-        onClick: e => { setFocus(i); if (e.shiftKey || e.ctrlKey || e.metaKey) toggleSel(m, e); else openThread(m); },
+        onClick: e => { focusTouched.current = true; setFocus(i); if (e.shiftKey || e.ctrlKey || e.metaKey) toggleSel(m, e); else openThread(m); },
         onContextMenu: e => { setFocus(i); contextMenu(m, e); },
         role: 'row', 'aria-selected': sel.has(rf), title: m.awaiting_reply && !folder ? 'Waiting for your reply' : undefined
       },

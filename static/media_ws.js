@@ -213,6 +213,13 @@
 .md-thumb:hover .fav,.md-thumb .fav.on{opacity:1}
 .md-thumb .fav.on{color:var(--fr-cyan);border-color:var(--fr-cyan)}
 .md-card.multi{border-color:var(--fr-cyan);box-shadow:0 0 0 2px rgba(0,229,255,.35) inset}
+.md-card{position:relative}
+.md-card.needs-you{border-color:var(--fr-warn);box-shadow:0 0 0 2px var(--fr-warn) inset}
+.md-tick{position:absolute;top:8px;left:8px;z-index:3;width:18px;height:18px;box-sizing:border-box;border:1.5px solid var(--fr-glass-edge);border-radius:5px;background:rgba(0,0,0,.55);color:var(--fr-cyan);font-size:12px;line-height:15px;text-align:center;opacity:0;cursor:pointer;transition:opacity .12s}
+.md-card:hover .md-tick,.md-card:focus-within .md-tick,.md-card.multi .md-tick,.md-grid.picking .md-tick{opacity:1}
+.md-card.multi .md-tick{border-color:var(--fr-cyan);background:var(--fr-cyan-soft)}
+.md-chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;border:1px solid var(--fr-cyan);background:var(--fr-cyan-soft);font-size:var(--fr-text-sm);color:var(--fr-text)}
+.md-chip .needs-you{color:var(--fr-warn)}
 .md-tags{display:flex;gap:4px;flex-wrap:wrap}
 .md-tag{font-size:var(--fr-text-2xs);padding:1px 6px;border-radius:999px;border:1px solid var(--fr-glass-edge);color:var(--fr-dim);background:rgba(255,255,255,.04)}
 .md-grouphead{grid-column:1/-1;font-family:var(--fr-font-display);font-size:var(--fr-text-2xs);letter-spacing:var(--fr-track-label);text-transform:uppercase;color:var(--fr-dim);padding:10px 2px 2px;border-bottom:1px solid var(--fr-glass-edge);display:flex;gap:8px;align-items:center}
@@ -358,16 +365,20 @@
       tx.segments.map((sg, i) => h('button', { key: i, onClick: () => { const m = mediaRef.current; if (m) { m.currentTime = sg.start || 0; m.play && m.play().catch(() => {}); } } }, h('b', null, fmtT(sg.start)), sg.text)));
   }
   function Tags({ tags }) { return tags && tags.length ? h('div', { className: 'md-tags' }, tags.map(t => h('span', { key: t, className: 'md-tag' }, t))) : null; }
-  function Card({ c, selected, onOpen, onSelect, noThumb, onQuick, multi, onMulti }) {
+  function Card({ c, selected, onOpen, onSelect, noThumb, onQuick, multi, onMulti, held }) {
     const where = c.published_at ? h('div', { className: 'md-meta' }, h('span', null, 'at'), h('span', null, c.published_at))
       : (c.targets && c.targets.length ? h('div', { className: 'md-meta' }, h('span', null, 'to'), h('span', null, c.targets.join(', '))) : null);
     const d = c.details || {};
     const made = d.model ? d.model : (c.maker || '').replace(' · this PC', '');
     return h('button', {
-      className: 'md-card' + (multi ? ' multi' : ''), role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id, 'data-fr-ref': 'media:' + c.id,
+      className: 'md-card' + (multi ? ' multi' : '') + (held ? ' needs-you' : ''), role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id, 'data-fr-ref': 'media:' + c.id,
+      // the hand cursor: a quick pinch ticks the card, a pinch held for 700 ms opens it (a double click here)
+      'data-fr-pinch': 'tick', 'data-fr-open-event': 'dblclick', 'data-fr-guarded': 'off', 'data-fr-held': held ? 'on' : undefined,
       onClick: e => { if ((e.ctrlKey || e.metaKey || e.shiftKey) && onMulti) { e.preventDefault(); onMulti(c, e.shiftKey); return; } onSelect && onSelect(c); }, onDoubleClick: () => onOpen && onOpen(c),
       onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); onOpen && onOpen(c); } if (e.key === 'x' && onMulti) { e.preventDefault(); onMulti(c, false); } }
     },
+      onMulti ? h('span', { className: 'md-tick', role: 'checkbox', 'aria-checked': multi ? 'true' : 'false', 'aria-label': 'Select card', 'data-fr-tick': '',
+        onClick: e => { e.stopPropagation(); onMulti(c, false); } }, multi ? '\u2713' : '') : null,
       noThumb ? null : h(Thumb, { c, onQuick }),
       h('div', { className: 'md-body' },
         h('div', { className: 'md-title', title: c.title }, c.title),
@@ -550,13 +561,28 @@
     const [ql, setQl] = useState(false);
     const [panel, setPanel] = useState(null);     // 'tidy' | 'trash' | null
     const [groupBy, setGroupBy] = useState('none');
-    const [multi, setMulti] = useState([]);       // ids picked with Ctrl/Shift-click or X, for one change on many
+    // The picked cards (Ctrl/Shift-click, X, the checkbox, Friday): refs "media:<id>" in the shared reducer, so
+    // Friday's ticks and the owner's are one set and the chip says who made it. `multi` is the ids.
+    const FS = window.fridayStage;
+    const [ss, setSs] = useState(() => FS.emptySelection());
+    const ssRef = useRef(ss);
+    const multi = useMemo(() => ss.refs.map(r => r.slice(6)), [ss]);
+    const commitSel = evt => {
+      const r = FS.reduceSelection(ssRef.current, evt, cards.map(c => 'media:' + c.id));
+      if (r.changed) { ssRef.current = r.state; setSs(r.state); FS.touch(); }
+      return r;
+    };
     const [bulkProj, setBulkProj] = useState('');
     const [bulkTag, setBulkTag] = useState('');
-    const onMulti = useCallback((c, range) => setMulti(m => {
-      if (range && m.length) { const ids = cards.map(x => x.id); const a = ids.indexOf(m[m.length - 1]), b = ids.indexOf(c.id); const lo = Math.min(a, b), hi = Math.max(a, b); return Array.from(new Set(m.concat(ids.slice(lo, hi + 1)))); }
-      return m.includes(c.id) ? m.filter(x => x !== c.id) : m.concat([c.id]);
-    }), [cards]);
+    const onMulti = useCallback((c, range) => {
+      const m = ssRef.current.refs.map(r => r.slice(6));
+      if (range && m.length) {
+        const ids = cards.map(x => x.id); const a = ids.indexOf(m[m.length - 1]), b = ids.indexOf(c.id); const lo = Math.min(a, b), hi = Math.max(a, b);
+        commitSel({ type: 'owner_set', refs: Array.from(new Set(m.concat(ids.slice(lo, hi + 1)))).map(i => 'media:' + i) });
+        return;
+      }
+      commitSel({ type: 'toggle', ref: 'media:' + c.id });
+    }, [cards]);
     const bulk = body => post('/api/media/bulk', Object.assign({ ids: multi }, body)).then(d => { toast(d.status === 'ok' ? d.done + ' card' + (d.done === 1 ? '' : 's') + ' changed.' : (d.message || 'That did not work.')); changed(); });
     const saveCollection = () => {
       const name = window.prompt('Save this view as a collection called\u2026');
@@ -606,7 +632,6 @@
     }, [cards, sel, selCard, onOpen, onAction, setSel, ql]);
     const counts = state.counts || {};
     // ── See & Touch: what this list shows Friday, and what she may point at or filter ──
-    const FS = window.fridayStage;
     const fridayFilters = useRef({});            // key -> the value Friday set; a different value is the owner's
     const rootRef = useRef(null);
     const byOf = (key, val) => (fridayFilters.current[key] !== undefined && String(fridayFilters.current[key]) === String(val || '')) ? 'friday' : 'owner';
@@ -636,7 +661,9 @@
       items: () => cards.slice(0, 120).map((c, i) => ({ ref: 'media:' + c.id, n: i + 1,
         facets: { kind: c.kind || '', status: c.status || '', project: c.project || '', privacy: c.privacy || '', origin: c.origin || '' },
         title: c.title || '', who: c.maker || '' })),
-      open: () => (sel ? 'media:' + sel : null)
+      open: () => (sel ? 'media:' + sel : null),
+      getSel: () => ssRef.current, setSel: next => { ssRef.current = next; setSs(next); },
+      rowsGone: () => { changed(); }
     };
     useEffect(() => FS ? FS.register('media', FS.makeAdapter('media', () => adapterCfg.current)) : undefined, []);
     useEffect(() => { if (FS) FS.touch(); }, [cards, filters, sel]);
@@ -686,13 +713,15 @@
         panel === 'trash' ? h(TrashPanel, { onClose: () => setPanel(null) }) :
         multi.length ? h('div', { className: 'md-multibar', role: 'toolbar', 'aria-label': 'Selected cards' },
           h('b', null, multi.length + ' selected'),
+          h('span', { className: 'md-chip', 'data-testid': 'md-selchip' }, FS.chipText(ss, (window.fridayName ? window.fridayName() : 'Friday')),
+            Object.keys(ss.held).length > 0 ? h('span', { className: 'needs-you' }, '\u00b7 Waiting for your OK') : null),
           h('input', { 'aria-label': 'Move to project', placeholder: 'Move to project\u2026', value: bulkProj, onChange: e => setBulkProj(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && bulkProj.trim()) bulk({ project: bulkProj.trim() }); } }),
           h('input', { 'aria-label': 'Add a tag', placeholder: 'Add a tag\u2026', value: bulkTag, onChange: e => setBulkTag(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && bulkTag.trim()) { bulk({ add_tags: [bulkTag.trim()] }); setBulkTag(''); } } }),
           h('button', { className: 'btn', onClick: () => bulk({ favorite: true }) }, '\u2605 Favourite'),
           h('button', { className: 'btn', onClick: () => bulk({ favorite: false }) }, 'Unfavourite'),
           h('span', { className: 'md-spacer' }),
           h('span', { className: 'md-count' }, 'Ctrl-click or X picks; Shift-click picks a run'),
-          h('button', { className: 'btn', onClick: () => setMulti([]) }, 'Clear')) : null,
+          h('button', { className: 'btn', onClick: () => commitSel({ type: 'clear' }) }, 'Clear')) : null,
         layout === '3d' ? h(window.MediaFiles3D || Placeholder, null) :
         h('div', { className: 'md-stage-wrap' },
           state.error ? h('div', { className: 'md-empty', role: 'alert' }, h('b', null, state.error), h('br'), 'Try again in a moment.') :
@@ -701,7 +730,7 @@
           h('div', { className: 'md-grid' + (layout === 'list' ? ' list' : ''), role: 'listbox', 'aria-label': 'Cards', 'aria-busy': state.loading ? 'true' : 'false', 'aria-multiselectable': 'true' },
             grouped(cards, groupBy).map(g => [
               g.label != null ? h('div', { key: 'g:' + g.label, className: 'md-grouphead', role: 'presentation' }, g.label, h('span', { className: 'n' }, g.items.length)) : null,
-              g.items.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen, onQuick, multi: multi.includes(c.id), onMulti }))
+              g.items.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen, onQuick, multi: ss.refs.indexOf('media:' + c.id) >= 0, held: !!ss.held['media:' + c.id], onMulti }))
             ])),
           h(Details, { c: selCard, onClose: () => setSel(null), onOpen, onAction, onQuick }),
           ql && (selCard || qlCard) ? h(QuickLook, { c: selCard || qlCard, cards, setSel, onClose: () => { setQl(false); setQlCard(null); }, onOpen, q: filters.q }) : null),

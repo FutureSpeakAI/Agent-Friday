@@ -466,10 +466,10 @@ def _tell_held(detail: dict, state: str, receipt_id: str = "", card_id: str = ""
         return
     try:
         from agent_friday.services import desktop_bus, screen_stage
-        desktop_bus.push([{"type": "held", "workspace": "messages", "card_id": card_id,
+        desktop_bus.push([{"type": "held", "workspace": detail.get("stage_ws") or "messages", "card_id": card_id,
                            "refs": refs, "state": state, "action": detail.get("action") or "",
                            "receipt_id": receipt_id, "selection_id": detail.get("selection_id") or ""}])
-        screen_stage.log_counts("held_" + state, "messages", len(refs))
+        screen_stage.log_counts("held_" + state, detail.get("stage_ws") or "messages", len(refs))
     except Exception:
         pass
 
@@ -478,7 +478,7 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
                   label: str = "", why: str = "", conversation_id: str | None = None,
                   owner_words: str = "", requested_by: str = "friday", room_mode: bool = False,
                   replaces: str = "", refs=None, selection_id: str = "",
-                  stage_rev: int = 0) -> dict:
+                  stage_rev: int = 0, rule: str = "") -> dict:
     """Find the mail a request names and raise ONE card to change all of it.
 
     `refs` (with `selection_id` and `stage_rev`) bind the batch to what the owner saw ticked:
@@ -532,6 +532,8 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
             else "The conversations Friday named."]
     if sel["truncated"]:
         said.append("The search matched more than %d; only these %d are in this batch." % (MAX_ITEMS, n))
+    if rule:
+        said.append("Selected on screen: %s." % rule)
     if detail["why"]:
         said.append("Why (Friday's words): " + detail["why"])
     card = _raise_card("email", action, detail, title=title, body=" ".join(said),
@@ -1479,6 +1481,125 @@ def undo_wiki(receipt: dict) -> dict:
 
 # ── The local tools: one change now, a batch on a card ─────────────────────
 
+# ── Media cards ─────────────────────────────────────────────────────────────
+
+MEDIA_ACTIONS = ("favourite", "unfavourite", "tag", "untag", "project")
+_MEDIA_ALIASES = {"favorite": "favourite", "unfavorite": "unfavourite", "move": "project"}
+
+
+def _mi():
+    from agent_friday.services import media_index
+    return media_index
+
+
+def _media_id(text: str) -> str:
+    """The card a name or a ref ("media:<id>") means."""
+    s = str(text or "").strip()
+    mi = _mi()
+    if s and mi.get(s):
+        return s
+    if s.startswith("media:") and mi.get(s[6:]):
+        return s[6:]
+    raise Refused("there is no Media card %s" % (s[:60] or "(empty)"))
+
+
+def plan_media(action: str, cards=None, value: str = "") -> list[dict]:
+    """The exact card changes a request means. Raises Refused for anything it cannot plan."""
+    action = _MEDIA_ALIASES.get(str(action or "").strip().lower(), str(action or "").strip().lower())
+    if action not in MEDIA_ACTIONS:
+        raise Refused("organize_media can: " + ", ".join(MEDIA_ACTIONS))
+    value = " ".join(str(value or "").split())[:80]
+    if action in ("tag", "untag") and not value:
+        raise Refused("say which tag")
+    ids = list(dict.fromkeys(_media_id(c) for c in (cards or []) if str(c or "").strip()))
+    if not ids:
+        raise Refused("name the cards, or tick them on the screen")
+    if len(ids) > MAX_ITEMS:
+        raise Refused("that is %d cards; do at most %d at a time" % (len(ids), MAX_ITEMS))
+    mi = _mi()
+    return [{"op": action, "id": cid, "title": str(mi.get(cid).get("title") or cid)[:120], "value": value}
+            for cid in ids]
+
+
+def classify_media(args: dict) -> tuple[str, str]:
+    n = len((args or {}).get("cards") or [])
+    if n >= BULK_FROM:
+        return "outward", "a batch of %d waits for one card" % n
+    return "internal", "one change to a Media card that Friday can undo"
+
+
+def _media_words(ops: list[dict]) -> tuple[str, list[str]]:
+    op, n = ops[0]["op"], len(ops)
+    v = ops[0].get("value") or ""
+    verb = {"favourite": "favourite", "unfavourite": "unfavourite", "tag": "tag", "untag": "take the tag off",
+            "project": "move to the project"}[op]
+    what = _plural(n, "card")
+    doing = ("%s %s \u201c%s\u201d" % (verb, what, v)) if op in ("tag", "untag", "project") and v else "%s %s" % (verb, what)
+    return doing, [o["title"] for o in ops]
+
+
+def run_media(ops: list[dict], *, approval_id: str | None = None, conversation_id: str | None = None,
+              receipt_id: str | None = None) -> dict:
+    """Carry out planned card changes, keeping each card's earlier state for Undo."""
+    mi = _mi()
+    items, undo_rows = [], []
+    for o in ops:
+        it = {"op": o["op"], "id": o["id"], "title": o.get("title"), "ok": False}
+        try:
+            c = mi.get(o["id"]) or {}
+            before = {"favorite": bool(c.get("favorite")), "tags": list(c.get("tags") or []), "project": c.get("project") or ""}
+            v = o.get("value") or ""
+            if o["op"] == "favourite":
+                r = mi.patch(o["id"], favorite=True)
+            elif o["op"] == "unfavourite":
+                r = mi.patch(o["id"], favorite=False)
+            elif o["op"] == "tag":
+                low = [t.lower() for t in before["tags"]]
+                r = mi.patch(o["id"], tags=before["tags"] + ([] if v.lower() in low else [v]))
+            elif o["op"] == "untag":
+                r = mi.patch(o["id"], tags=[t for t in before["tags"] if t.lower() != v.lower()])
+            else:
+                r = mi.patch(o["id"], project=v)
+            if r.get("status") != "ok":
+                raise Refused(r.get("message") or "that card could not be changed")
+            it["ok"] = True
+            undo_rows.append({"id": o["id"], "before": before})
+        except Exception as e:
+            it["error"] = str(getattr(e, "user_message", "") or exception_text(e))[:200]
+        items.append(it)
+    ok, n = sum(1 for i in items if i["ok"]), len(items)
+    doing, _lines = _media_words(ops)
+    summary = ("Done: %s." % doing) if ok == n else "%d of %d done (%s)." % (ok, n, doing)
+    said = "%s %s%s." % ({"favourite": "Favourited", "unfavourite": "Unfavourited", "tag": "Tagged",
+                          "untag": "Took the tag off", "project": "Moved"}[ops[0]["op"]] if ops else "Changed",
+                         _plural(ok, "card"), ("; %d could not be changed" % (n - ok)) if ok < n else "")
+    return journal.record("organize_media", ops[0]["op"] if ops else "", "media", items=items, summary=summary,
+                          status="complete" if ok == n else ("partial" if ok else "failed"),
+                          undo={"media": undo_rows} if undo_rows else {}, approval_id=approval_id,
+                          conversation_id=conversation_id, receipt_id=receipt_id, extra={"said": said})
+
+
+def undo_media(receipt: dict) -> dict:
+    """Put each card back as the receipt found it."""
+    mi = _mi()
+    rows = (receipt.get("undo") or {}).get("media") or []
+    back, failed = 0, 0
+    for r in rows:
+        b = r.get("before") or {}
+        try:
+            res = mi.patch(r["id"], favorite=bool(b.get("favorite")), tags=list(b.get("tags") or []),
+                           project=b.get("project") or "")
+            back += 1 if res.get("status") == "ok" else 0
+            failed += 0 if res.get("status") == "ok" else 1
+        except Exception:
+            failed += 1
+    journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed)
+    said = "Put back %s%s." % (_plural(back, "card"), ("; %d could not be" % failed) if failed else "")
+    return journal.record("undo_action", "undo", "media", items=[{"receipt_id": receipt["receipt_id"]}], summary=said,
+                          status="complete" if not failed else ("partial" if back else "failed"),
+                          conversation_id=(receipt.get("run") or {}).get("conversation_id"), extra={"said": said})
+
+
 def _said(rec: dict) -> str:
     """What a receipt says happened: by name, or in counts when QUIET."""
     return (rec.get("said") or "It finished (%s)." % rec.get("status")) if _quiet() \
@@ -1487,14 +1608,22 @@ def _said(rec: dict) -> str:
 
 def _local(domain: str, action: str, ops: list[dict], *, bulk: bool, why: str,
            conversation_id: str | None, owner_words: str, requested_by: str,
-           replaces: str = "") -> dict:
-    run = run_files if domain == "files" else run_wiki
+           replaces: str = "", refs=None, selection_id: str = "", stage_rev: int = 0,
+           stage_ws: str = "", rule: str = "") -> dict:
+    run = {"files": run_files, "media": run_media}.get(domain, run_wiki)
+    bound = {}
+    if refs:
+        bound = {"refs": [str(r) for r in refs][:MAX_ITEMS], "selection_id": str(selection_id or "")[:40],
+                 "stage_rev": int(stage_rev or 0), "stage_ws": stage_ws or domain}
     if not bulk:
         rec = run(ops, conversation_id=conversation_id)
         _tell_pages(domain, rec["receipt_id"])
+        _tell_held(dict(bound, action=action), "done", receipt_id=rec["receipt_id"])
         return {"status": rec["status"], "receipt_id": rec["receipt_id"], "text": _said(rec)}
     if domain == "files":
         doing, lines = _file_words(ops)
+    elif domain == "media":
+        doing, lines = _media_words(ops)
     else:
         doing = "%s %s" % ({"move": "move", "rename": "rename", "tag": "tag", "untag": "untag",
                             "archive": "archive", "trash": "trash"}[action], _plural(len(ops), "page"))
@@ -1503,23 +1632,44 @@ def _local(domain: str, action: str, ops: list[dict], *, bulk: bool, why: str,
     lines = [ln[2:] if ln.startswith("- ") else ln for ln in lines]
     detail = {"handler": HANDLER, "domain": domain, "action": action, "ops": ops,
               "count": len(ops), "lines": lines, "conversation_id": conversation_id or "",
-              "asked_with": words_hash(owner_words), "why": str(why or "").strip()[:300]}
-    body = "Friday proposes to %s.%s" % (
-        doing, (" Why (Friday's words): " + detail["why"]) if detail["why"] else "")
+              "asked_with": words_hash(owner_words), "why": str(why or "").strip()[:300], **bound}
+    body = "Friday proposes to %s.%s%s" % (
+        doing, (" Selected on screen: %s." % rule) if rule else "",
+        (" Why (Friday's words): " + detail["why"]) if detail["why"] else "")
     card = _raise_card(domain, action, detail, title="Friday wants to " + doing, body=body,
                        requested_by=requested_by, replaces=replaces)
+    if card.get("status") == "pending_approval":
+        _tell_held(detail, "held", card_id=card.get("approval_id") or "")
+    noun = {"files": "item", "media": "card"}.get(domain, "page")
     return {**card, "count": len(ops),
-            "readback": "That is %s. Shall I %s?" % (_plural(len(ops), "item" if domain == "files" else "page"), doing)}
+            "readback": "That is %s. Shall I %s?" % (_plural(len(ops), noun), doing)}
 
 
 def organize_files(action: str, *, items=None, to: str = "", new_name: str = "", moves=None,
                    why: str = "", conversation_id: str | None = None, owner_words: str = "",
-                   requested_by: str = "friday", replaces: str = "") -> dict:
+                   requested_by: str = "friday", replaces: str = "", refs=None, selection_id: str = "",
+                   stage_rev: int = 0, rule: str = "") -> dict:
+    """`refs` (with `selection_id` and `stage_rev`) bind a batch to the files the owner had ticked:
+    `items` are exactly those, and the card keeps the refs so the browser can hold those tiles."""
     ops = plan_files(action, items, to, new_name, moves)
     klass, _why = classify_files({"action": action, "items": items, "to": to, "moves": moves})
     return _local("files", str(action).lower(), ops, bulk=klass != "internal", why=why,
                   conversation_id=conversation_id, owner_words=owner_words,
-                  requested_by=requested_by, replaces=replaces)
+                  requested_by=requested_by, replaces=replaces, refs=refs, selection_id=selection_id,
+                  stage_rev=stage_rev, stage_ws="files", rule=rule)
+
+
+def organize_media(action: str, *, cards=None, value: str = "", why: str = "",
+                   conversation_id: str | None = None, owner_words: str = "", requested_by: str = "friday",
+                   replaces: str = "", refs=None, selection_id: str = "", stage_rev: int = 0,
+                   rule: str = "") -> dict:
+    """Favourite, tag or move Media cards: one at once, two or more on ONE card. `refs` bind the batch to
+    the cards the owner had ticked. The owner's own bar in Media (/api/media/bulk) stays card-free."""
+    ops = plan_media(action, cards, value)
+    return _local("media", ops[0]["op"], ops, bulk=len(ops) >= BULK_FROM, why=why,
+                  conversation_id=conversation_id, owner_words=owner_words, requested_by=requested_by,
+                  replaces=replaces, refs=refs, selection_id=selection_id, stage_rev=stage_rev,
+                  stage_ws="media", rule=rule)
 
 
 def organize_wiki(action: str, *, pages=None, to: str = "", new_name: str = "", tags=None,
@@ -1572,7 +1722,7 @@ def undo(receipt_id: str = "", *, conversation_id: str | None = None, owner_word
         return {**card, "count": n, "readback": "Shall I put back the %s I %s?" % (
             _plural(n, "conversation"), EMAIL_ACTIONS.get(rec.get("action"), ("", "", "changed"))[2])}
     out = (undo_email(rec) if dom == "email" else undo_files(rec) if dom == "files"
-           else undo_wiki(rec) if dom == "wiki" else None)
+           else undo_wiki(rec) if dom == "wiki" else undo_media(rec) if dom == "media" else None)
     if out is None:
         raise Refused("Friday cannot undo that kind of change")
     _tell_pages(dom, rec["receipt_id"])
@@ -1600,6 +1750,9 @@ def _execute(detail: dict, approval_id: str | None) -> dict:
     if dom == "wiki":
         return run_wiki(detail.get("ops") or [], approval_id=approval_id,
                         conversation_id=detail.get("conversation_id"))
+    if dom == "media":
+        return run_media(detail.get("ops") or [], approval_id=approval_id,
+                         conversation_id=detail.get("conversation_id"))
     raise Refused("unknown batch")
 
 

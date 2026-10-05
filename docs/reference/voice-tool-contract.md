@@ -245,3 +245,15 @@ voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and re
 - **Stale means ask.** A stage older than two seconds is asked for again; if the page does not
   answer, `organize_email(selection="screen")` refuses ("I can't see your list right now") and
   never falls back to a search.
+- **"This" and "these".** `selection: "screen"` on `organize_email`, `organize_files` and
+  `organize_media` resolves in a fixed order: the ticked rows, the row the hand cursor is on (for three
+  seconds after it leaves), the open item, the row the keyboard is on, the last thing Friday pointed at.
+  Two rules that disagree (three ticked, and the hand on another row) come back as a question to ask
+  aloud, never a guess; the card says how the rows were chosen ("Selected on screen: the row your hand
+  was on"). The keyboard row counts only once the owner has moved it. A guarded control is never a target.
+- **Media by voice.** `navigate_to` takes `kind: "card"`; `media_cards`, `media_show` and `organize_media`
+  are on the contract, and a cloud voice hears counts and states of cards ("6 cards: 3 draft, 3
+  published"), never a title.
+- **The ceiling.** `VOICE_CONTRACT_MAX_TOKENS` is 10000, up from 9000 (which had 359 tokens spare): the
+  See & Touch tools and the Media parity take about 700 of the 1,000 added. That is about 11% more cold
+  prefill on the local front; bench it with `scripts/bench_voice_turn.py` before the next speed pass.

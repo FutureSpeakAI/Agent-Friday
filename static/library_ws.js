@@ -254,7 +254,13 @@
         if (!t || (t.workspace && t.workspace !== 'library')) return;
         if (t.view === 'shelves' || t.view === '3d' || t.view3d) { setStage('shelves'); setView('shelves'); }
         else if (t.view === 'list') { setStage('list'); setView('docs'); }
-        else if (t.view === 'pc') { setView('pc'); }
+        else if (t.view === 'pc') {
+          // {view:'pc', root, path, file}: the Files browser on that folder with the file chosen. The browser
+          // takes it on mount, or from the event when it is already open.
+          if (t.root) window.__files3dOpen = { root: t.root, path: t.path || '', file: t.file || '' };
+          setView('pc');
+          if (t.root) setTimeout(() => window.dispatchEvent(new Event('friday-files3d-open')), 150);
+        }
         if (t.q) { setQ(String(t.q)); setView('ask'); }
         const lib = t.lib || (t.libblock ? { doc: Number(t.libdoc), block: Number(t.libblock) } : null);
         if (lib && (lib.block || lib.doc)) {
@@ -271,7 +277,12 @@
       return () => window.removeEventListener('friday-nav', f);
     }, []);
     const tabState = window.useTabState || window.fridayUseTabState;
-    if (tabState) tabState('library', () => ({ view: view === 'shelves' ? 'shelves' : 'list', doc: reader && reader.doc ? reader.doc : undefined }));
+    if (tabState) tabState('library', () => {
+      // what it shows: the view, the open document, and in the Files browser the folder and chosen file
+      const f = view === 'pc' && window.__files3dShowing || {};
+      return { view: view === 'pc' ? 'pc' : view === 'shelves' ? 'shelves' : 'list', doc: reader && reader.doc ? reader.doc : undefined,
+        root: f.root, path: f.path, file: f.file };
+    });
 
     // ── asking ───────────────────────────────────────────────────────────
     const ask = useCallback((question, wantAnswer) => {
@@ -345,6 +356,14 @@
 
     // ── See & Touch: the documents on screen. A vault document is never reported: its title is private. ──
     const FS = window.fridayStage;
+    // The ticked documents (the checkbox, a pinch, Friday): refs "lib:<id>" in the shared reducer.
+    const [ss, setSs] = useState(() => FS.emptySelection());
+    const ssRef = useRef(ss);
+    const commitSel = evt => {
+      const r = FS.reduceSelection(ssRef.current, evt, shown.filter(d => d.shelf !== 'vault').map(d => 'lib:' + d.id));
+      if (r.changed) { ssRef.current = r.state; setSs(r.state); FS.touch(); }
+      return r;
+    };
     const fridayFolder = useRef(null);
     const docsRoot = useRef(null);
     const folderTitle = id => { const f = folders.find(x => x.id === id); return f ? f.title : ''; };
@@ -356,6 +375,7 @@
     const adapterCfg = useRef(null);
     adapterCfg.current = {
       root: () => docsRoot.current, filters: currentFilters, loaded: () => shown.length,
+      getSel: () => ssRef.current, setSel: next => { ssRef.current = next; setSs(next); },
       items: () => shown.filter(d => d.shelf !== 'vault').slice(0, 120).map((d, i) => ({ ref: 'lib:' + d.id, n: i + 1,
         facets: { folder: folderTitle(d.parent), kind: KIND_WORD[d.ext] || d.ext || '', tracked: !!d.tracked },
         title: d.title || '', who: '' })),
@@ -444,11 +464,21 @@
 
     const docsView = h('div', { className: 'lb-main', ref: docsRoot },
       FS ? FS.chipsRow(h, currentFilters(), () => { fridayFolder.current = null; setFolder(null); FS.touch(); }, (window.fridayName ? window.fridayName() : 'Friday')) : null,
+      ss.refs.length > 0 && h('div', { className: 'fr-chips', role: 'group', 'aria-label': 'Selected documents' },
+        h('span', { className: 'fr-chip', 'data-testid': 'lb-selchip' }, FS.chipText(ss, (window.fridayName ? window.fridayName() : 'Friday')),
+          Object.keys(ss.held).length > 0 && h('span', { className: 'by', style: { color: 'var(--fr-warn)' } }, '\u00b7 Waiting for your OK'),
+          h('button', { onClick: () => commitSel({ type: 'clear' }), title: 'Clear the selection', 'aria-label': 'Clear the selection' }, '\u00d7'))),
       empty ? emptyState : h('table', { className: 'lb-table' },
-        h('thead', null, h('tr', null, ['Document', 'Kind', 'Pages', 'Shelf'].map(c => h('th', { key: c, scope: 'col' }, c)))),
+        h('thead', null, h('tr', null, h('th', { key: 'pick', scope: 'col', style: { width: 28 } }, h('span', { className: 'sr-only', style: { position: 'absolute', left: -9999 } }, 'Select')),
+          ['Document', 'Kind', 'Pages', 'Shelf'].map(c => h('th', { key: c, scope: 'col' }, c)))),
         h('tbody', null, shown.map(d => h('tr', { key: d.id, 'data-fr-ref': d.shelf === 'vault' ? undefined : 'lib:' + d.id, 'aria-selected': sel && sel.id === d.id ? 'true' : 'false', tabIndex: 0,
+          // the hand cursor: a quick pinch ticks the document, a pinch held for 700 ms opens it (a double click here)
+          'data-fr-pinch': d.shelf === 'vault' ? undefined : 'tick', 'data-fr-open-event': 'dblclick', 'data-fr-guarded': 'off',
+          'data-fr-sel': ss.refs.indexOf('lib:' + d.id) >= 0 ? 'on' : undefined, 'data-fr-held': ss.held['lib:' + d.id] ? 'on' : undefined,
           onClick: () => setSel(d), onDoubleClick: () => { setReader({ doc: Number(d.id.slice(2)) }); setView('reader'); },
           onKeyDown: e => { if (e.key === 'Enter') { setReader({ doc: Number(d.id.slice(2)) }); setView('reader'); } else if (e.key === ' ') { e.preventDefault(); setSel(d); } } },
+          h('td', null, d.shelf === 'vault' ? null : h('input', { type: 'checkbox', 'data-fr-tick': '', 'aria-label': 'Select document',
+            checked: ss.refs.indexOf('lib:' + d.id) >= 0, onClick: e => e.stopPropagation(), onChange: () => commitSel({ type: 'toggle', ref: 'lib:' + d.id }) })),
           h('td', null, d.title), h('td', null, KIND_WORD[d.ext] || d.ext), h('td', { className: 'lb-num' }, d.pages || '–'),
           h('td', null, h('span', { className: 'lb-pill' + (d.shelf === 'vault' ? ' vault' : '') }, d.shelf === 'vault' ? 'Vault' : 'Open')))))),
       h(Twin, { nodes, shown: false, onOpen: n => { if (n.kind === 'document') setSel(n); } }));
@@ -571,7 +601,7 @@
   }
   (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['library', {
     key: 'view',
-    keys: ['view', 'lib', 'q', 'libdoc', 'libblock'],
+    keys: ['view', 'lib', 'q', 'libdoc', 'libblock', 'root', 'path', 'file'],
     sections: [
       { id: 'pc', label: 'Browse this PC', aliases: ['this pc', 'my pc', 'file browser'] },
       { id: 'list', label: 'Documents', aliases: ['documents', 'list', 'files'] },

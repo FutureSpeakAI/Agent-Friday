@@ -177,6 +177,7 @@
       const cc = Core.center(res.target.rect); const top = document.elementFromPoint(cc.x, cc.y);
       if (top && top !== res.target.el && !res.target.el.contains(top) && !top.closest('#hand-cursor,.fr-snap-box')) { res.target.disabled = true; snap.release(); }
     }
+    reportCursor(res.target, pinch.pinched);
     if (res.target !== locked) { locked = res.target; highlight(locked); if (locked && locked.orb && typeof window.fridayOrbPointer === 'function') window.fridayOrbPointer(locked.orb.sx, locked.orb.sy); }
     else if (locked && locked.el) { const lr = locked.el.getBoundingClientRect(); if (Math.abs(lr.left - locked.rect.left) > 0.5 || Math.abs(lr.width - locked.rect.width) > 0.5 || Math.abs(lr.top - locked.rect.top) > 0.5) { locked.rect = { left: lr.left, top: lr.top, width: lr.width, height: lr.height }; highlight(locked); } }
     const drawAt = frozen || (locked ? Core.center(locked.rect) : res.point);
@@ -210,11 +211,25 @@
       case 'pinchEnd': endDrag(); setArc(0); setState('free', now); break;
     }
   }
+  // Tell the stage which row the reticle is on, so "archive this" means it. A guarded control and an
+  // orb are never reported: only a row that carries a ref is something "this" can mean.
+  function reportCursor(t, pinched) {
+    const FS = window.fridayStage;
+    if (!FS || !FS.cursor) return;
+    let ref = '';
+    if (t && t.el && !t.guarded && !t.orb && t.el.closest) { const r = t.el.closest('[data-fr-ref]'); ref = r ? r.getAttribute('data-fr-ref') || '' : ''; }
+    FS.cursor(ref, ref ? (pinched ? 'pinched' : 'locked') : '');
+  }
   // A list row that opts in (data-fr-pinch="tick") is ticked by a quick pinch and opened by a held one.
   function pinchClick(t, ev, now) {
     const row = t && t.el && t.el.closest ? t.el.closest('[data-fr-pinch="tick"]') : null;
     if (!row || (t.el.matches && t.el.matches('input,button,a,select,textarea'))) { clickTarget(t, ev.point, now); return; }
-    if (Core.pinchIntent(ev.durationMs, 700) === 'open') { clickTarget({ el: row, rect: row.getBoundingClientRect() }, ev.point, now); return; }
+    if (Core.pinchIntent(ev.durationMs, 700) === 'open') {
+      clickTarget({ el: row, rect: row.getBoundingClientRect() }, ev.point, now);
+      // a row that opens on a double click (a Media card: one click selects it) says so
+      if (row.getAttribute('data-fr-open-event') === 'dblclick') { try { row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window })); } catch (e) { /* ignore */ } }
+      return;
+    }
     const box = row.querySelector('[data-fr-tick]');
     if (box) clickTarget({ el: box, rect: box.getBoundingClientRect() }, Core.center(box.getBoundingClientRect()), now);
   }

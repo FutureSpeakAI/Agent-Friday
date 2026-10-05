@@ -94,7 +94,7 @@ def test_nothing_ticked_raises_no_card(gmail, monkeypatch):
     report(newsletter_stage(selected=[]))
     Page(monkeypatch)
     out = _org(action="archive", selection="screen")
-    assert out.startswith("NOT DONE") and "nothing is ticked" in out
+    assert out.startswith("NOT DONE") and "Nothing is ticked" in out
     assert not ap.list_approvals()
 
 

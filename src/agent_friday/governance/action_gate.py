@@ -181,7 +181,7 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         # services/item_actions: a batch, or a change that
                         # reaches past this PC, raises ONE card and runs on
                         # approval; one local change runs with an undo.
-                        "organize_email", "organize_files", "organize_wiki",
+                        "organize_email", "organize_files", "organize_wiki", "organize_media",
                         "undo_action",
                         # A command or Claude's agent in a codebase's own folder
                         # (services/codebase_tasks): the first of a task raises
@@ -352,7 +352,7 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # By the seed image they upload: services/seed_images.py.
                          "generate_video", "generate_music",
                          # By how many items and where: services/item_actions.
-                         "organize_files", "organize_wiki", "undo_action",
+                         "organize_files", "organize_wiki", "organize_media", "undo_action",
                          # By which codebase (classify, below): reading one is
                          # internal; changing a codebase Friday made, under her
                          # own folder, is internal and every change is an
@@ -707,7 +707,7 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
                     else _co.classify_scan(a))
         except Exception as e:
             return OUTWARD, f"the career-ops action could not be classified ({e})"
-    if tool_name in ("organize_files", "organize_wiki", "undo_action"):
+    if tool_name in ("organize_files", "organize_wiki", "organize_media", "undo_action"):
         # One local change Friday can undo is internal. A batch, anything in
         # the code projects, a move into a folder a cloud client syncs, and
         # putting mail back wait for one card (the handler raises it).
@@ -717,6 +717,8 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
                 return _ia.classify_files(a)
             if tool_name == "organize_wiki":
                 return _ia.classify_wiki(a)
+            if tool_name == "organize_media":
+                return _ia.classify_media(a)
             return _ia.classify_undo(a, (ctx or {}).get("conversation_id"))
         except Exception as e:
             return OUTWARD, f"the change could not be classified ({e})"

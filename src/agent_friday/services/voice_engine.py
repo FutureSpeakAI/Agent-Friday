@@ -426,7 +426,7 @@ _VOICE_LIVE_TOOLS = [
      "results; the screen shows them.",
      {"kind": ("string", "One of: workspace, email, mail_search, file, wiki_page, "
                          "graph_node, news_article, creation, settings, calendar, "
-                         "contact, content_post."),
+                         "contact, content_post, card."),
       "query": ("string", "Their words for the thing; for mail_search, the Gmail search."),
       "id": ("string", "An exact id, if you already have one."),
       "workspace": ("string", "For kind=workspace: which workspace."),
@@ -452,7 +452,7 @@ _VOICE_LIVE_TOOLS = [
      "name. SELECT_ASK or POINT_ASK: ask it. FAIL: say why. To act on ticks, call "
      "organize_email with selection screen.",
      {"op": ("string", "select, add, remove, clear, point or filter."),
-      "workspace": ("string", "messages, news, media or library."),
+      "workspace": ("string", "messages, news, media, library or files."),
       "scope": ("string", "screen or all."),
       "category": ("string", "newsletters, promotions, unread, a status..."),
       "from": ("string", "Sender domain."),
@@ -534,6 +534,7 @@ _VOICE_LIVE_TOOLS = [
       "to": ("string", "Destination folder (move), or the folder to make (new_folder)."),
       "new_name": ("string", "For rename."),
       "moves": ("array", "To sort into several folders at once: 'file => folder' each."),
+      "selection": ("string", "screen: the files ticked or open on their screen."),
       "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
       "why": ("string", "One short line for the card.")},
      ["action"]),
@@ -792,8 +793,12 @@ _VOICE_SHARED_TOOLS = (
     "make_podcast",
     "podcast_list",
     "media_show",
+    "media_cards",
     "media_play",
     "media_turn",
+    # Favourite, tag or move Media cards (one at once, two or more on one card): the same tool
+    # the screen uses, so what she does is what the cards' history shows.
+    "organize_media",
     "podcast_play",
     "podcast_source",
     "podcast_format",
@@ -887,8 +892,12 @@ def _voice_tool_names():
 
 #: Ceiling on the rendered voice tool contract (local voice spec §2, P1). The
 #: front model prefills it on every cold start; the 124-tool registry (~22.8K
-#: tokens) is what put local voice at a 63-199 s first token.
-VOICE_CONTRACT_MAX_TOKENS = 9000
+#: tokens) is what put local voice at a 63-199 s first token. It stood at 9000
+#: with 359 tokens spare; the See & Touch tools (screen_select, organize_media,
+#: media_cards, the selection parameters) take about 1,000 more, so it is 10000.
+#: That is about 11% more cold prefill on the local front: bench it with
+#: scripts/bench_voice_turn.py before the next speed pass.
+VOICE_CONTRACT_MAX_TOKENS = 10000
 
 #: Never declared to any voice engine, curated or full (voice_engine
 #: decision: shell execution from a speech recogniser is its own risk class;

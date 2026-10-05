@@ -206,7 +206,11 @@ confirmation that names the thing.
   workspace's own filter and also shown as a removable chip marked "by Friday"; nothing is filtered
   invisibly. A filter the owner changes afterwards stops being marked.
 - **A pinch on a row** (hand cursor) ticks it; a pinch held for 700 ms opens it. A row opts in with
-  `data-fr-pinch="tick"` and names its checkbox `data-fr-tick`.
+  `data-fr-pinch="tick"` and names its checkbox `data-fr-tick`; a row that opens on a double click (a
+  Media card, a Library document) says so with `data-fr-open-event="dblclick"`. The row the reticle is on
+  is what "this" means to Friday for three seconds after it leaves; a guarded control never is.
+- **Held rows are the same everywhere:** a 2px `--fr-warn` left edge on a row (`data-fr-held`), amber on
+  a Media card's border, and the engine's amber glow on a Files tile, until the card is decided.
 - A row's actions appear on hover and focus at the right, and in the row's context menu.
 - Counts are right-aligned in `--fr-font-mono` so columns of numbers line up.
 

@@ -204,9 +204,9 @@ def test_a_file_becomes_its_studio_folder_and_name(monkeypatch, roots):
                         lambda **kw: seen.update(kw) or _rows(notes, target))
     r = dt.resolve_file("my budget spreadsheet")
     assert r["ok"]
-    assert r["target"] == {"workspace": "studio", "view": "files", "root": "documents",
+    assert r["target"] == {"workspace": "library", "view": "pc", "root": "documents",
                            "path": "Finance/2026", "file": "HouseholdBudget.xlsx"}
-    assert r["verify"] == {"workspace": "studio", "key": "file", "value": "HouseholdBudget.xlsx"}
+    assert r["verify"] == {"workspace": "library", "key": "file", "value": "HouseholdBudget.xlsx"}
     assert seen["query"] == "budget" and seen["root"] is None
 
 
@@ -324,8 +324,9 @@ def test_a_contact_that_is_not_there_says_so(monkeypatch):
 
 def test_a_content_post_needs_its_id():
     assert not dt.resolve_content_post("my latest post")["ok"]
+    from agent_friday.services import media_index as mi
     assert dt.resolve_content_post(id="post_abc123")["target"] == {
-        "workspace": "content", "post": "post_abc123"}
+        "workspace": "media", "card": mi._id_for("post", "post_abc123")}
 
 
 def test_an_unknown_kind_lists_the_kinds():

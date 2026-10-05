@@ -47,6 +47,7 @@ STAGE_FACETS: dict[str, frozenset[str]] = {
     "news": frozenset({"category", "source", "age_h", "saved"}),
     "media": frozenset({"kind", "status", "project", "privacy", "origin"}),
     "library": frozenset({"folder", "kind", "tracked"}),
+    "files": frozenset({"kind", "ext", "dir"}),
 }
 
 #: The most rows Friday outlines with a numbered badge at once; the rest are counted ("and N more").
@@ -63,9 +64,11 @@ FILTER_KEYS: dict[str, dict[str, frozenset | None]] = {
     "library": {"folder": None},
 }
 #: What each workspace calls one of its rows, for what a cloud voice may hear.
-NOUNS = {"messages": "conversations", "news": "stories", "media": "cards", "library": "documents"}
+NOUNS = {"messages": "conversations", "news": "stories", "media": "cards", "library": "documents", "files": "files"}
 
-_REF = re.compile(r"^[a-z]{2,12}:[^\s]{1,160}$")
+#: The kinds of row a ref may name: a conversation, a story, a Media card, a Library document, a file.
+ROW_KINDS = ("mail", "news", "media", "lib", "file")
+_REF = re.compile(r"^(?:%s):[^\s]{1,160}$" % "|".join(ROW_KINDS))
 
 
 def mail_ref(account_id: Any, thread_id: Any) -> str:
@@ -384,7 +387,7 @@ def resolve_deictic(stage: dict | None, kind: str = "these", pointed: dict | Non
     if pointed and pointed.get("refs") and now - float(pointed.get("at") or 0) <= POINTED_S:
         out.update(refs=list(pointed["refs"]), rule="pointed", count=len(pointed["refs"]))
         return out
-    out["ask"] = "Which one do you mean? Nothing is ticked or open."
+    out["ask"] = "Which one do you mean? Nothing is ticked, open or pointed at."
     return out
 
 

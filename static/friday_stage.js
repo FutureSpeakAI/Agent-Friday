@@ -192,6 +192,9 @@
   var STYLE = [
     '[data-fr-ref]{outline:2px solid transparent;outline-offset:-2px;transition:outline-color var(--fr-reveal-time,0.35s)}',
     '[data-fr-point]{outline-color:var(--fr-cyan)}',
+    '[data-fr-held]{box-shadow:inset 2px 0 0 var(--fr-warn)}',
+    '[data-fr-sel]{background-image:linear-gradient(var(--fr-cyan-soft),var(--fr-cyan-soft));box-shadow:inset 2px 0 0 var(--fr-cyan)}',
+    '[data-fr-sel][data-fr-held]{box-shadow:inset 2px 0 0 var(--fr-warn)}',
     '[data-fr-point][data-fr-n]::after{content:attr(data-fr-n);position:absolute;top:6px;right:8px;z-index:2;width:18px;height:18px;',
     'box-sizing:border-box;border:1.5px solid var(--fr-cyan);border-radius:50%;background:var(--fr-surface);color:var(--fr-cyan);',
     'font:600 10px/15px var(--fr-font-mono,monospace);text-align:center;pointer-events:none}',
@@ -283,6 +286,37 @@
 
   // ── the page side: adapters, stage reports, commands ─────────────────────
 
+  // ── the hand cursor: what the reticle is on, for "this" ──────────────────────
+
+  var CURSOR_MEMORY_MS = 3000;
+  var cursorRec = { ref: '', state: '', t: 0, since: 0 };
+
+  // cursor(ref, state): called every frame by the hand cursor with the row ref its locked target belongs
+  // to ('' when it is on nothing, or on a guarded control), and 'locked' or 'pinched'. A change is
+  // reported soon; the same thing seen again only keeps the time fresh.
+  function cursor(ref, state) {
+    var now = Date.now();
+    if (ref) {
+      if (cursorRec.ref !== ref || cursorRec.state !== state) { cursorRec = { ref: ref, state: state, t: now, since: now }; touch(250); }
+      else cursorRec.t = now;
+    } else if (cursorRec.ref && cursorRec.state !== 'left') {
+      cursorRec = { ref: cursorRec.ref, state: 'left', t: now, since: cursorRec.since };
+      touch(250);
+    }
+  }
+
+  // The target for the stage: still on it, or left it within the last 3 s (age_s says how long ago).
+  function cursorNow(known) {
+    if (!cursorRec.ref) return null;
+    if (known && known.indexOf(cursorRec.ref) < 0) return null;
+    var age = (Date.now() - cursorRec.t) / 1000;
+    if (cursorRec.state === 'left') {
+      if (age * 1000 > CURSOR_MEMORY_MS) return null;
+      return { ref: cursorRec.ref, state: 'locked', age_s: Math.round(age * 10) / 10 };
+    }
+    return { ref: cursorRec.ref, state: cursorRec.state, age_s: 0 };
+  }
+
   var adapters = {};
   var commandTypes = { select: 1, clear_selection: 1, stage_request: 1, held: 1, point: 1, chips: 1 };
 
@@ -295,14 +329,26 @@
    * It answers stage_request, point and chips; a workspace that also ticks adds its own `run`. */
   function makeAdapter(ws, get) {
     var rev = { json: '', n: 0 };
+    function known() { var c = get(); return (c.items ? c.items() : []).map(function (i) { return i.ref; }); }
+    function selectionOf(c) {
+      if (c.getSel) {
+        var s = c.getSel(), k = known(), on = 0;
+        s.refs.forEach(function (r) { if (k.indexOf(r) >= 0) on++; });
+        return { id: s.id, refs: s.refs, count: s.refs.length, label: s.label, source: s.source, beyond_loaded: s.refs.length - on };
+      }
+      return c.selection ? c.selection() : { id: '', refs: [], count: 0, label: '', source: '', beyond_loaded: 0 };
+    }
     function stage() {
       var c = get();
       var items = (c.items ? c.items() : []).slice(0, MAX_ROWS);
+      var heldN = c.getSel ? Object.keys(c.getSel().held || {}).length : 0;
       var st = {
         workspace: ws, items: items, loaded: c.loaded ? c.loaded() : items.length,
         total_hint: c.total ? c.total() : 0,
-        selection: c.selection ? c.selection() : { id: '', refs: [], count: 0, label: '', source: '', beyond_loaded: 0 },
-        filters: c.filters ? c.filters() : [], focus: null, open: c.open ? c.open() : null, cursor: null, fields: [], held: [],
+        selection: selectionOf(c),
+        filters: c.filters ? c.filters() : [], focus: c.focus ? c.focus() : null, open: c.open ? c.open() : null,
+        cursor: cursorNow(items.map(function (i) { return i.ref; })), fields: [],
+        held: heldN ? [{ card_id: 'pending', refs_count: heldN }] : [],
         pointed: pointedNow()
       };
       var json = JSON.stringify(st);
@@ -313,6 +359,17 @@
     function run(a) {
       var c = get();
       if (a.type === 'stage_request') return { ok: true, rev: rev.n };
+      if ((a.type === 'select' || a.type === 'clear_selection' || a.type === 'held') && c.getSel && c.setSel) {
+        var evt = a.type === 'select' ? { type: 'select', mode: (a.selection || {}).mode || 'replace', refs: (a.selection || {}).refs || [],
+                                          id: (a.selection || {}).id, label: (a.selection || {}).label }
+          : a.type === 'clear_selection' ? { type: 'clear' }
+          : { type: 'held', state: a.state, refs: a.refs || [], card_id: a.card_id };
+        var r = reduceSelection(c.getSel(), evt, known());
+        if (r.changed) c.setSel(r.state);
+        if (a.type === 'held' && a.state === 'done' && c.rowsGone) c.rowsGone(a.refs || [], a);
+        touch(200);
+        return { ok: true, applied: r.applied, missing: r.missing, accepted: r.accepted, count: r.count, rev: rev.n + 1 };
+      }
       if (a.type === 'point') {
         var r = point(a.refs || [], { root: c.root ? c.root() : null, badges: a.badges, id: a.id });
         touch(200);
@@ -388,6 +445,7 @@
     MIN_GAP_MS: MIN_GAP_MS,
     emptySelection: emptySelection, reduceSelection: reduceSelection, chipText: chipText,
     sweepDelays: sweepDelays, limiter: limiter, POINT_CAP: POINT_CAP, POINT_FADE_MS: POINT_FADE_MS,
+    cursor: cursor, cursorNow: cursorNow, CURSOR_MEMORY_MS: CURSOR_MEMORY_MS,
     pointPlan: pointPlan, point: point, clearPoints: clearPoints, chipsRow: chipsRow, makeAdapter: makeAdapter, ensureStyle: ensureStyle,
     register: register, registered: registered, snapshot: snapshot, handles: handles, run: run, touch: touch
   };
