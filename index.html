@@ -16923,7 +16923,7 @@ function podcastStatusText(ep) {
   const why = String((ep && (ep.waiting_reason || '')) || '');
   // A wait is said plainly; a reason carrying memory figures is an internal one.
   if (st === 'waiting' && why && !/\d+(\.\d+)?\s*[GM]B/i.test(why)) return 'Waiting to make today’s episode: ' + why;
-  if (st === 'waiting') return 'Waiting for room to make today’s episode; Friday will try again shortly.';
+  if (st === 'waiting') return 'Waiting for room to make today’s episode; ' + fridayName() + ' will try again shortly.';
   return 'Today’s episode is queued to be made on this computer.';
 }
 function PodcastChip({ routine, runId }) {
