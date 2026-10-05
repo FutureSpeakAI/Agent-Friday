@@ -259,7 +259,7 @@ def library_show(inp: dict) -> str:
 def show_files_3d(inp: dict) -> str:
     """Move the owner's screen: the one 3D file browser, on a lens, with a search lit."""
     from agent_friday.services.library import ui
-    return ui.show_files_3d(inp if isinstance(inp, dict) else {})
+    return ui.files3d_show(inp if isinstance(inp, dict) else {})
 
 
 TOOLS = [

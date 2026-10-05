@@ -51,7 +51,7 @@ def _of(e: dict) -> dict:
     return {"doc": e["doc_id"], "block": e.get("block_id"), "page": e.get("page"), "section": e.get("section_id")}
 
 
-def show_files_3d(inp: dict) -> str:
+def files3d_show(inp: dict) -> str:
     """Open the one 3D file browser on a lens (Library, Media or Files), and
     light the path of a search in it. Moves the owner's own screen only."""
     from agent_friday.services import desktop_bus

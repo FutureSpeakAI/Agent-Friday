@@ -69,12 +69,12 @@ def test_show_files_3d_opens_the_lens_s_workspace_and_lights_the_search(monkeypa
     from agent_friday.services.library import ui
     sent = []
     monkeypatch.setattr(desktop_bus, "send", lambda acts: sent.append(acts) or {"delivered": True, "acked": True})
-    out = ui.show_files_3d({"lens": "media", "query": "poster"})
+    out = ui.files3d_show({"lens": "media", "query": "poster"})
     assert out.startswith("FILES3D_OK")
     nav, act = sent[0]
     assert nav["type"] == "navigate" and nav["workspace"] == "media" and nav["view"] == "3d"
     assert act == {"type": "files3d", "lens": "media", "query": "poster"}
-    assert ui.show_files_3d({"lens": "everything"}).startswith("FILES3D_FAIL")
+    assert ui.files3d_show({"lens": "everything"}).startswith("FILES3D_FAIL")
     assert len(sent) == 1, "an unknown lens moves nothing"
 
 
