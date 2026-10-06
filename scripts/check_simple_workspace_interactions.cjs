@@ -17,7 +17,7 @@ const baseline=process.env.FRIDAY_BASELINE_REV;
  let custom={library:{note:'Original workspace note'}},failChat=true,failReset=true,failClear=true,malformedReset=false,acks=[];
  let nextNote='Revised workspace note',delayNextRead=false,releaseRead,readFinished;
  if(baseline){
-   const old=spawnSync('git',['-c','safe.directory='+root,'show',baseline+':index.html'],{cwd:root,encoding:'utf8',windowsHide:true});
+   const old=spawnSync('git',['-c','safe.directory='+root,'show',baseline+':index.html'],{cwd:root,encoding:'utf8',windowsHide:true,maxBuffer:12e6});
    assert.equal(old.status,0,old.stderr);
    // Only the document comes from the baseline; current assets and mocked APIs stay identical.
    await page.route(url=>url.origin===new URL(base).origin&&url.pathname===new URL(base).pathname,r=>r.request().resourceType()==='document'?r.fulfill({status:200,contentType:'text/html',body:old.stdout}):r.continue());
