@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -81,12 +82,60 @@ def _config(tmp_path, **over):
 
 
 def _run(tmp_path, cfg_path, *args):
-    return subprocess.run([sys.executable, str(SCRIPT), "--config", str(cfg_path), "--session", "test", *args],
+    return subprocess.run([sys.executable, str(SCRIPT), "--config", str(cfg_path), "--session", "test",
+                           "--", "--rootdir", str(tmp_path), "--confcutdir", str(tmp_path), *args],
                           capture_output=True, text=True, timeout=300, cwd=str(ROOT))
 
 
 def _receipts(tmp_path):
     return list((tmp_path / "receipts").glob("*/suite.json"))
+
+
+def test_zero_workers_overrides_pytest_worker_options(tmp_path, monkeypatch):
+    cfg = dict(rs.DEFAULTS, suite_lock=str(tmp_path / "SUITE_LOCK"),
+               receipts_dir=str(tmp_path / "receipts"),
+               max_workers_with_seat=0, max_workers_without_seat=0)
+    commands = []
+    monkeypatch.setattr(rs, "load_config", lambda path=None: cfg)
+    monkeypatch.setattr(rs, "floor_refusal", lambda cfg, tree: None)
+    monkeypatch.setattr(rs, "seat_up", lambda port: False)
+    monkeypatch.setattr(rs, "git_sha", lambda tree: "a" * 40)
+    monkeypatch.setattr(guard, "free_ram_gb", lambda: 64)
+    monkeypatch.setattr(guard, "free_disk_gb", lambda tree: 100)
+    monkeypatch.setattr(rs, "run_pytest",
+                        lambda cmd, tree, log, cfg: commands.append(cmd) or (0, None, ""))
+    assert rs.main(["--tree", str(tmp_path), "--", "-n", "auto", "tests/unit"]) == 0
+    assert commands[0][-2:] == ["-n", "0"]
+    [receipt] = _receipts(tmp_path)
+    rec = json.loads(receipt.read_text(encoding="utf-8"))
+    assert rec["workers"] == 0 and rec["cmd"][-2:] == ["-n", "0"]
+
+
+@pytest.mark.parametrize("failure", ["encoding", "closed-pipe"])
+def test_console_failure_does_not_stop_log_or_child_output_drain(tmp_path, monkeypatch, failure):
+    lines = ["Unicode snowman: \u2603\n", "Second line.\n", "Last line.\n"]
+    child = SimpleNamespace(stdout=iter(lines), poll=lambda: 7, wait=lambda: 7)
+
+    class Console:
+        def write(self, text):
+            if failure == "encoding":
+                text.encode("ascii")
+            return len(text)
+
+        def flush(self):
+            if failure == "closed-pipe":
+                raise BrokenPipeError("The console output pipe closed")
+
+    monkeypatch.setattr(rs, "sys", SimpleNamespace(stdout=Console()))
+    monkeypatch.setattr(rs, "subprocess", SimpleNamespace(Popen=lambda *a, **kw: child,
+                                                         PIPE=subprocess.PIPE,
+                                                         STDOUT=subprocess.STDOUT))
+    log = tmp_path / "suite.log"
+    rc, abort, tail = rs.run_pytest(["synthetic-pytest"], tmp_path, log, rs.DEFAULTS)
+    assert rc == 7 and abort is None
+    assert tail == "".join(lines)
+    assert log.read_text(encoding="utf-8") == "".join(lines) + "EXIT=7\n"
+    assert list(child.stdout) == [], "every child output line must be consumed"
 
 
 def test_a_failing_run_writes_a_not_ok_receipt_with_the_real_exit_code(tmp_path):

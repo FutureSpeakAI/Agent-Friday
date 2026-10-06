@@ -218,7 +218,12 @@ def run_pytest(cmd: list[str], tree: Path, log: Path, cfg: dict, poll_s: float =
         def pump():
             for line in proc.stdout:
                 fh.write(line); fh.flush()
-                sys.stdout.write(line); sys.stdout.flush()
+                try:
+                    sys.stdout.write(line); sys.stdout.flush()
+                except (UnicodeError, OSError):
+                    # A restricted console encoding or closed output pipe must
+                    # not stop draining the child or its UTF-8 log.
+                    pass
                 tail.append(line)
                 if len(tail) > 60:
                     del tail[0]
@@ -281,8 +286,8 @@ def main(argv: list[str] | None = None) -> int:
         seat = seat_up(cfg["seat_port"])
         n = worker_count(a.workers, seat, cfg)
         cmd = [sys.executable, "-m", "pytest", *args, "-p", "no:cacheprovider"]
-        if n > 0:
-            cmd += ["-n", str(n)]
+        # Explicit zero also overrides inherited -n auto or caller options.
+        cmd += ["-n", str(n)]
         state, fields = lock_state(lock)
         if state == "stale":
             print(f"[suite-guard] taking over a stale lock (holder {fields.get('holder')} pid {fields.get('pid')} is gone)", file=sys.stderr)
