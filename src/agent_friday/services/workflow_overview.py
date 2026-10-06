@@ -461,6 +461,9 @@ def overview() -> dict:
     """Everything the Workflows screen shows, joined into one list."""
     from agent_friday.services import agent as _agent
     from agent_friday.services import scheduler as _sched
+    from agent_friday.services.workflow_templates import list_templates
+    templates = list_templates()
+    invalid_starters = {item["slug"] for item in templates if item.get("problem")}
     schedules = _sched.list_schedules()
     by_ref = {}
     for r in schedules:
@@ -470,6 +473,8 @@ def overview() -> dict:
     workflows, routines = [], []
     for c in _agent.list_workflow_chains():
         slug = c.get("slug")
+        if slug in invalid_starters:
+            continue
         full = _agent.load_workflow_chain(slug) or {}
         steps = [{"name": s.get("name"), "prompt": s.get("prompt")} for s in full.get("steps") or []]
         rec = by_ref.get(slug)
@@ -515,7 +520,7 @@ def overview() -> dict:
     workflows.sort(key=lambda w: (not w["running"], -(w["last_run"] or {}).get("at", 0),
                                   (w["name"] or "").lower()))
     routines.sort(key=lambda r: (not r["enabled"], (r["name"] or "").lower()))
-    return {"workflows": workflows, "routines": routines,
+    return {"workflows": workflows, "routines": routines, "templates": templates,
             "pending_approvals": _pending_approvals(), "now": _time.time()}
 
 
