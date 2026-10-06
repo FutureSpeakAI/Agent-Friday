@@ -277,7 +277,7 @@ const server=http.createServer(async(req,res)=>{
   let body=fs.readFileSync(file);
   if(rel==='/index.html'){
    const boot='<script>window.__FRIDAY_PREVIEW__=true;window.__FRIDAY_API_TOKEN="design-preview";'+(workspace?'window.__FRIDAY_STANDALONE__='+JSON.stringify(workspace)+';document.documentElement.classList.add("ws-standalone");':'')+'</script>'; // Synthetic fixture marker, never a credential. # pragma: allowlist secret
-   const label='<div class="fx-preview-label" role="note" style="position:fixed;bottom:8px;right:16px;z-index:9999;padding:6px 12px;border-radius:8px;background:var(--fr-surface);color:var(--fr-label);font:12px Inter,sans-serif;border:1px solid var(--fr-glass-edge);pointer-events:none">Design preview · Sample data · No live actions</div>';
+   const label='<style>:root{--friday-safe-bottom:26px!important}.fx-preview-label{position:fixed;box-sizing:border-box;bottom:0;left:0;right:0;height:26px;z-index:9999;display:flex;align-items:center;justify-content:center;padding:3px 8px;background:var(--fr-surface);color:var(--fr-label);font:10px Inter,sans-serif;border-top:1px solid var(--fr-glass-edge);pointer-events:none}</style><div class="fx-preview-label" role="note">Design preview · Sample data · No live actions</div>';
    let html=body.toString('utf8').replace('<head>','<head>'+boot);
    const closeBody=html.lastIndexOf('</body>');
    html=closeBody<0?html+label:html.slice(0,closeBody)+label+html.slice(closeBody);

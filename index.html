@@ -3604,6 +3604,7 @@ window.addEventListener('DOMContentLoaded',function(){
 <link rel="stylesheet" href="/static/friday_workspace_compositions.css"/>
 <link rel="stylesheet" href="/static/friday_shared_surfaces.css"/>
 <link rel="stylesheet" href="/static/friday_native_shell.css"/>
+<link rel="stylesheet" href="/static/friday_responsive_topbar.css"/>
 </head>
 
 <body>
@@ -3750,6 +3751,7 @@ window.addEventListener('DOMContentLoaded',function(){
 <script src="/static/friday_holographic_workspace.js"></script>
 <script src="/static/friday_workspace_compositions.js"></script>
 <script src="/static/friday_experience.js"></script>
+<script src="/static/friday_responsive_topbar.js"></script>
     <script src="/static/friday_workspace_switcher.js"></script>
 
     <script>
@@ -9458,7 +9460,7 @@ window.addEventListener('DOMContentLoaded',function(){
         // shrinks a little (a smaller hole is a hotter one). Never amber, never
         // the alert red: ember is dark, and the next step is the brand's pink.
         const FridayBlackHole = (function () {
-            const RS0 = 0.62, RB = 13, DUST = 320, PAIRS = 48, MOTES = 72, CL = 24;
+            const RS0 = 0.62, RB = 13, FRAME_R = 11, DUST = 320, PAIRS = 48, MOTES = 72, CL = 24;
             let holder = null, shell = null, mat = null, sparks = null, dust = null, rs = RS0, heatBase = 0.3, dustN = DUST;
             let clock = 0, spin = 0, think = 0, listen = 0, voice = 0, emitAcc = 0;
             const pairs = [], motes = [], grains = [];
@@ -9490,7 +9492,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     vec3 rd = normalize((uToLocal * vec4(vWorld, 1.0)).xyz - ro);
                     // Light passing wider than the disk is barely bent: nothing to draw.
                     vec3 lc = cross(ro, rd);
-                    if (dot(lc, lc) > 11.0 * 11.0) discard;
+                    if (dot(lc, lc) > ${FRAME_R.toFixed(1)} * ${FRAME_R.toFixed(1)}) discard;
                     float b = dot(ro, rd), c = dot(ro, ro) - uRb * uRb, disc = b * b - c;
                     if (disc < 0.0) discard;
                     vec3 x = ro + rd * max(0.0, -b - sqrt(disc)), v = rd;
@@ -9553,9 +9555,19 @@ window.addEventListener('DOMContentLoaded',function(){
                         mv.xy = (c + dir * max(0.5 * t + sqrt(0.25 * t * t + te * te), uLensR * 1.03)) * ds;
                     }
                     gl_PointSize = clamp(aS * (300.0 / max(1.0, -mv.z)), 1.0, 5.0); gl_Position = projectionMatrix * mv; }`;
-            const PFS = `uniform float uOpacity; varying float vA; varying vec3 vC;
+            const PFS = `uniform float uOpacity; uniform float uStageEnabled; uniform vec4 uStageRect; uniform float uStageFeather;
+                varying float vA; varying vec3 vC;
                 void main() { float d = length(gl_PointCoord - 0.5); float a = 1.0 - smoothstep(0.15, 0.5, d);
-                    gl_FragColor = vec4(vC, a * vA * uOpacity); }`;
+                    // Ambient radiation dissolves before reserved UI edges;
+                    // the disk and the world's starfield keep their own light.
+                    float stageAlpha = 1.0;
+                    if (uStageEnabled > 0.5) {
+                        vec2 edge = min(gl_FragCoord.xy - uStageRect.xy, uStageRect.zw - gl_FragCoord.xy);
+                        float clearance = min(edge.x, edge.y);
+                        if (clearance <= 0.0) discard;
+                        stageAlpha = smoothstep(0.0, uStageFeather, clearance);
+                    }
+                    gl_FragColor = vec4(vC, a * vA * uOpacity * stageAlpha); }`;
             function points(n) {
                 const g = new THREE.BufferGeometry();
                 g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
@@ -9564,8 +9576,10 @@ window.addEventListener('DOMContentLoaded',function(){
                 g.setAttribute('aC', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
                 const p = new THREE.Points(g, own(new THREE.ShaderMaterial({ vertexShader: PVS, fragmentShader: PFS, transparent: true,
                     depthWrite: false, blending: THREE.AdditiveBlending,
-                    uniforms: { uOpacity: { value: 1 }, uLens: { value: new THREE.Vector3() }, uLensR: { value: 0 } } }), 1));
+                    uniforms: { uOpacity: { value: 1 }, uLens: { value: new THREE.Vector3() }, uLensR: { value: 0 },
+                        uStageEnabled: { value: 0 }, uStageRect: { value: new THREE.Vector4() }, uStageFeather: { value: 18 } } }), 1));
                 p.frustumCulled = false;
+                p.userData.fridayStageAmbient = true;
                 return p;
             }
 
@@ -9581,6 +9595,9 @@ window.addEventListener('DOMContentLoaded',function(){
                     uniforms: { uToLocal: { value: new THREE.Matrix4() }, uRb: { value: RB }, uSpin: { value: 0 }, uHeat: { value: heatBase },
                         uShimmer: { value: 0 }, uTime: { value: 0 }, uOpacity: { value: 1 }, uRing: { value: new THREE.Color() } } }), 1);
                 shell = new THREE.Mesh(new THREE.SphereGeometry(RB * rs, 48, 32), mat);
+                // The shader emits only rays within its analytic impact limit;
+                // its larger transparent carrier is not the visible avatar.
+                shell.userData.fridayStageRadius = FRAME_R * rs;
                 shell.renderOrder = -1;                        // first, so dots in front draw over the shadow
                 holder.add(shell);
                 dustN = Math.max(60, Math.round(+opts.dust || DUST));              // the dust gene
@@ -9616,6 +9633,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (!reduced) spin += dt * (0.5 + 0.9 * think);
                 holder.updateMatrixWorld(true);
                 const u = mat.uniforms;
+                const stage = typeof window !== 'undefined' && window.FridayHolographicWorkspace;
+                if (stage && stage.updateAmbientStage) { stage.updateAmbientStage(sparks.material); stage.updateAmbientStage(dust.material); }
+                else { sparks.material.uniforms.uStageEnabled.value = 0; dust.material.uniforms.uStageEnabled.value = 0; }
                 u.uToLocal.value.copy(holder.matrixWorld).invert().premultiply(_s.makeScale(1 / rs, 1 / rs, 1 / rs));
                 u.uSpin.value = spin; u.uTime.value = clock; u.uShimmer.value = think;
                 u.uHeat.value = heatBase;
@@ -65718,10 +65738,12 @@ function App() {
     onOpenTab: id => !!fridayOpenWorkspaceTab(id, null, {background:true}),
     onHome: () => { if (shellChat || shellTab) navigateWithDrafts('/'); else setExperienceDesktop(true); }
   });
-  const shellTopBar = /*#__PURE__*/React.createElement("div", {
+  const ShellTopBar = shellExperienceAvailable && window.FridayResponsiveTopBar || 'div';
+  const shellTopBar = /*#__PURE__*/React.createElement(ShellTopBar, {
     className: `top-bar ${topBarHidden ? 'hidden' : ''}`,
     "data-testid": "friday-top-bar",
-    "data-shell-kind": shellChat ? 'chat' : shellTab ? 'tab' : 'desktop'
+    "data-shell-kind": shellChat ? 'chat' : shellTab ? 'tab' : 'desktop',
+    ...(ShellTopBar !== 'div' ? {onDismissMenus:() => {setSceneMenuOpen(false);setModelMenuOpen(false);}} : {})
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',

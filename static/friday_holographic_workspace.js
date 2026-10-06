@@ -14,6 +14,15 @@
     function spatialLayout(area, options) {
         if (!options.enabled) return { layout: 'classic', content: { ...area }, stage: null };
         const gap = 16, content = { ...area };
+        // A short landscape viewport has room beside the work, not above it.
+        // Preserve useful avatar height while the work region stays scrollable.
+        if (options.shortLandscape) {
+            const width = Math.min(200, Math.max(80, Math.round(area.w * .27)), Math.max(1, area.w - 176));
+            const stage = { x: options.rightChat ? area.x : area.x + area.w - width, y: area.y, w: width, h: area.h };
+            content.w = Math.max(1, area.w-width-gap);
+            if (options.rightChat) content.x += width+gap;
+            return { layout: 'compact', stage, content };
+        }
         if (options.compact || options.viewportWidth < 1100 || area.w < 680) {
             const height = Math.max(110, Math.min(230, Math.round(area.h * .30)));
             const stage = { x: area.x, y: area.y, w: area.w, h: Math.min(height, Math.max(1, area.h - 160)) };
@@ -51,6 +60,54 @@
         };
         const x = extent(c.x, e[0], e[8]), y = extent(c.y, e[5], e[9]);
         return { x:(x[0]+1)*width/2, y:(1-y[1])*height/2, w:(x[1]-x[0])*width/2, h:(y[1]-y[0])*height/2 };
+    }
+
+    function projectedPieces(camera, pieces, width, height) {
+        let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+        for (const piece of pieces) {
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, valid = true;
+            const point = piece.box.min.clone();
+            for (let corner = 0; corner < 8; corner++) {
+                point.set(corner & 1 ? piece.box.max.x : piece.box.min.x,
+                    corner & 2 ? piece.box.max.y : piece.box.min.y,
+                    corner & 4 ? piece.box.max.z : piece.box.min.z);
+                point.applyMatrix4(piece.matrix).applyMatrix4(camera.matrixWorldInverse);
+                if (point.z >= -camera.near) { valid = false; break; }
+                point.applyMatrix4(camera.projectionMatrix);
+                const x = (point.x+1)*width/2, y = (1-point.y)*height/2;
+                x0 = Math.min(x0,x); y0 = Math.min(y0,y); x1 = Math.max(x1,x); y1 = Math.max(y1,y);
+            }
+            const sphere = piece.sphere && projectedSphere(camera,piece.sphere,width,height);
+            if (!valid && !sphere) return null;
+            // Both volumes contain the geometry. Their screen-space
+            // intersection is tighter than either diagonal envelope alone.
+            if (sphere) {
+                x0 = valid ? Math.max(x0,sphere.x) : sphere.x;
+                y0 = valid ? Math.max(y0,sphere.y) : sphere.y;
+                x1 = valid ? Math.min(x1,sphere.x+sphere.w) : sphere.x+sphere.w;
+                y1 = valid ? Math.min(y1,sphere.y+sphere.h) : sphere.y+sphere.h;
+            }
+            left=Math.min(left,x0);top=Math.min(top,y0);right=Math.max(right,x1);bottom=Math.max(bottom,y1);
+        }
+        return Number.isFinite(left) && right>left && bottom>top ? {x:left,y:top,w:right-left,h:bottom-top} : null;
+    }
+
+    function stageFill(bounds, width, height, padding) {
+        if (!bounds || !(bounds.w>0 && bounds.h>0)) return {scale:1,x:0,y:0};
+        padding=Math.max(0,Math.min(padding,width/4,height/4));
+        const scale = Math.min((width-padding*2)/bounds.w,(height-padding*2)/bounds.h);
+        return {scale, x:(width/2-bounds.x-bounds.w/2)*scale, y:(height/2-bounds.y-bounds.h/2)*scale};
+    }
+
+    function ambientStageUniforms(material, stage, viewportHeight, pixelRatio) {
+        const u=material?.uniforms;
+        if(!u?.uStageEnabled||!u.uStageRect||!u.uStageFeather)return;
+        const enabled=stage&&stage.w>0&&stage.h>0&&viewportHeight>0;
+        u.uStageEnabled.value=enabled?1:0;
+        if(!enabled)return;
+        const ratio=Number.isFinite(pixelRatio)&&pixelRatio>0?pixelRatio:1;
+        u.uStageRect.value.set(stage.x*ratio,(viewportHeight-stage.y-stage.h)*ratio,(stage.x+stage.w)*ratio,(viewportHeight-stage.y)*ratio);
+        u.uStageFeather.value=Math.max(1,Math.min(18,stage.w/6,stage.h/6))*ratio;
     }
 
     function constrainSpatialRect(rect, area) {
@@ -123,6 +180,8 @@
         let chromeObserver = null, chromeFrame = 0, chromeUntil = 0, ownedTopbar = false;
         const observedChrome = new Set(), previousTopbar = root.style.getPropertyValue('--fr-topbar-h');
         let occupancy = { layout: 'classic', content: null, stage: null };
+        let caption = null, captionSignature = '';
+        const captionNodes = new Map();
         let fitBounds = null, fitKey = '', fitAt = 0, fittedDistance = 0, projectedBounds = null;
         const originalFog = new WeakMap();
         const tagged = new Map();
@@ -163,6 +222,42 @@
         function activeWorkspace() {
             return workspaces().sort((a, b) => (parseFloat(win.getComputedStyle(b).zIndex) || 0) - (parseFloat(win.getComputedStyle(a).zIndex) || 0))[0];
         }
+        function restoreCaption() {
+            captionNodes.forEach((anchor, node) => {
+                if (anchor.parentNode) { anchor.parentNode.insertBefore(node, anchor); anchor.remove(); }
+            });
+            captionNodes.clear();
+            if (caption) { chromeObserver?.unobserve(caption); caption.remove(); caption = null; }
+        }
+        function reserveCaption(layout) {
+            if (!layout.stage) { restoreCaption(); return layout; }
+            if (!caption) {
+                caption = doc.createElement('div');
+                caption.className = 'friday-avatar-caption';
+                caption.setAttribute('aria-label', 'Friday’s state');
+                doc.body.appendChild(caption);
+                chromeObserver?.observe(caption);
+            }
+            // Keep the native nodes and their live updates. Their previous HUD
+            // stacking context cannot make text compete with workspace cards.
+            for (const id of ['state-indicator', 'presence-status']) {
+                const node = doc.getElementById(id);
+                if (node && !captionNodes.has(node)) {
+                    const anchor = doc.createComment('native avatar status');
+                    node.parentNode.insertBefore(anchor, node);
+                    if (id === 'state-indicator') node.setAttribute('role', 'status');
+                    captionNodes.set(node, anchor); caption.appendChild(node);
+                }
+            }
+            const frame = { ...layout.stage };
+            caption.style.width = Math.min(frame.w, 420) + 'px';
+            const height = Math.min(Math.max(34, Math.ceil(caption.scrollHeight) + 1), Math.max(1, frame.h - 40));
+            const gap = Math.min(8, Math.max(0, frame.h - height - 1));
+            const status = { x: frame.x + (frame.w - Math.min(frame.w,420))/2, y: frame.y + frame.h - height, w: Math.min(frame.w,420), h: height };
+            caption.style.left = status.x + 'px'; caption.style.top = status.y + 'px';
+            caption.style.maxHeight = height + 'px';
+            return { ...layout, stageFrame: frame, caption: status, stage: { ...frame, h: Math.max(1, frame.h-height-gap) } };
+        }
         function workspaceArea(area) {
             if (!area || destroyed) return area;
             const rightChat = parseFloat(win.getComputedStyle(root).getPropertyValue('--fr-chat-dock')) || 0;
@@ -176,7 +271,8 @@
                 const bar = doc.querySelector('.top-bar'), dock = doc.querySelector('.dock');
                 const barBox = bar?.getBoundingClientRect(), dockBox = dock?.getBoundingClientRect();
                 const top = barBox?.height > 0 ? Math.ceil(barBox.bottom) : area.y-12;
-                const floor = dockBox?.height > 0 && dockBox.bottom > 0 ? Math.min(win.innerHeight,Math.round(dockBox.top)) : win.innerHeight;
+                const safeBottom = parseFloat(win.getComputedStyle(root).getPropertyValue('--friday-safe-bottom')) || 0;
+                const floor = dockBox?.height > 0 && dockBox.bottom > 0 ? Math.min(win.innerHeight-safeBottom,Math.round(dockBox.top)) : win.innerHeight-safeBottom;
                 base.y = top+12; base.h = Math.max(1,floor-base.y-12);
                 const value = top+'px';
                 if(root.style.getPropertyValue('--fr-topbar-h')!==value)root.style.setProperty('--fr-topbar-h',value);
@@ -186,7 +282,7 @@
                 if(previousTopbar)root.style.setProperty('--fr-topbar-h',previousTopbar);else root.style.removeProperty('--fr-topbar-h');
                 ownedTopbar=false;
             }
-            occupancy = spatialLayout(base, { enabled, compact, viewportWidth: win.innerWidth, arrangement: state.arrangement, rightChat: rightChat > 0 });
+            occupancy = reserveCaption(spatialLayout(base, { enabled, compact, shortLandscape: win.innerHeight <= 500 && win.innerWidth > win.innerHeight, viewportWidth: win.innerWidth, arrangement: state.arrangement, rightChat: rightChat > 0 }));
             return occupancy.content;
         }
         function updateLayout() {
@@ -223,25 +319,48 @@
             const tick=()=>{chromeFrame=0;if(destroyed||doc.hidden)return;const now=win.performance.now();if(now-last>=32){last=now;updateLayout();}if(now<chromeUntil)chromeFrame=win.requestAnimationFrame(tick);};
             chromeFrame=win.requestAnimationFrame(tick);
         }
+        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null };
         function fitSceneCamera(sceneState) {
             const stage = destroyed ? null : occupancy.stage;
             const { camera, scene, basePosition, targetLook, structures, keys, delta } = sceneState;
             camera.aspect = stage ? stage.w / stage.h : win.innerWidth / win.innerHeight;
             if (scene?.fog && !originalFog.has(scene.fog)) originalFog.set(scene.fog, scene.fog.density);
-            if (!stage || !win.THREE) { fitBounds = null; projectedBounds = null; fittedDistance = 0; camera.far = Math.max(camera.far,1000); if(scene?.fog && originalFog.has(scene.fog))scene.fog.density=originalFog.get(scene.fog); return; }
+            if (!stage || !win.THREE) { fitBounds = null; projectedBounds = null; fittedDistance = 0; frameFit.pieces=[];frameFit.ready=false; camera.far = Math.max(camera.far,1000); if(scene?.fog && originalFog.has(scene.fog))scene.fog.density=originalFog.get(scene.fog); return; }
             const THREE = win.THREE, now = win.performance.now(), key = keys.join('|');
-            if (!fitBounds || key !== fitKey || now - fitAt > 500) {
+            frameFit.delta = Number.isFinite(delta) ? Math.max(0,delta) : 1/60;
+            if (!fitBounds || key !== fitKey || now - fitAt > 100) {
                 let union = null;
+                frameFit.pieces=[];
                 for (const name of keys) {
                     const group = structures[name]; if (!group) continue;
                     group.updateMatrixWorld(true);
                     const local = new THREE.Box3();
+                    const breathing=1.08*Math.max(1,sceneState.rootBreath||1,Math.abs(group.scale.x),Math.abs(group.scale.y),Math.abs(group.scale.z));
+                    // Compose from the native pose rather than decomposing a
+                    // possibly zero-scale morph matrix.
+                    const fullRoot=new THREE.Matrix4().compose(group.position,group.quaternion,new THREE.Vector3().setScalar(breathing));
+                    if(group.parent)fullRoot.premultiply(group.parent.matrixWorld);
+                    const addPiece=(geometry,relative,shader,radius)=>{
+                        const box=geometry.boundingBox.clone();
+                        const declared=Number.isFinite(radius)&&radius>0?new THREE.Sphere(new THREE.Vector3(),radius):geometry.boundingSphere;
+                        if(Number.isFinite(radius)&&radius>0)box.setFromCenterAndSize(declared.center,new THREE.Vector3().setScalar(radius*2));
+                        const shaderExtent=declared && box.min.equals(box.max);
+                        if(shaderExtent)box.setFromCenterAndSize(declared.center,new THREE.Vector3().setScalar(declared.radius*2));
+                        const matrix=new THREE.Matrix4().multiplyMatrices(fullRoot,relative);
+                        const sphere=(!shader||shaderExtent||geometry.type==='SphereGeometry'||geometry.type==='IcosahedronGeometry')?declared?.clone().applyMatrix4(matrix):null;
+                        frameFit.pieces.push({box,matrix,sphere});
+                    };
                     group.traverseVisible(node => {
-                        if (!node.geometry) return;
+                        if (!node.geometry || node.userData.fridayStageAmbient) return;
                         // Buffer positions and instance transforms change as
                         // the native forms breathe, build and move.
                         node.geometry.computeBoundingBox();
                         if (!node.geometry.boundingBox || node.geometry.boundingBox.isEmpty()) return;
+                        const materials=Array.isArray(node.material)?node.material:[node.material];
+                        const shader=materials.some(material=>material?.isShaderMaterial);
+                        // Shader-owned bounds may describe vertices that do
+                        // not live in the CPU position buffer.
+                        if(!shader)node.geometry.computeBoundingSphere();
                         // Do not invert the morph root: its scale can be zero
                         // on the first frame of a new form.
                         const relative = node === group ? new THREE.Matrix4() : node.matrix.clone();
@@ -252,9 +371,11 @@
                                 node.getMatrixAt(index,instance);
                                 combined.multiplyMatrices(relative,instance);
                                 local.union(node.geometry.boundingBox.clone().applyMatrix4(combined));
+                                addPiece(node.geometry,combined,shader,node.userData.fridayStageRadius);
                             }
                         } else {
                             local.union(node.geometry.boundingBox.clone().applyMatrix4(relative));
+                            addPiece(node.geometry,relative,shader,node.userData.fridayStageRadius);
                             // Some shader-driven points declare their extent
                             // explicitly while their CPU positions stay zero.
                             const sphere = node.geometry.boundingSphere;
@@ -303,14 +424,34 @@
             // Framing changes camera distance, not the avatar material. Keep
             // the original atmospheric amount at that new viewing distance.
             if (scene?.fog && typeof originalFog.get(scene.fog) === 'number') scene.fog.density = originalFog.get(scene.fog) * Math.min(1, 22 / Math.max(22, fittedDistance));
+            // Use the visible pieces in a neutral view for apparent size.
+            // The large sphere remains a camera-distance safety envelope; it
+            // must not decide how small a narrow or sparse form appears.
+            const neutral=frameFit.neutral||(frameFit.neutral=camera.clone());
+            neutral.fov=camera.fov;neutral.aspect=camera.aspect;neutral.near=camera.near;neutral.far=camera.far;
+            neutral.position.copy(basePosition);neutral.lookAt(targetLook);neutral.updateMatrixWorld(true);neutral.updateProjectionMatrix();
+            const raw=projectedPieces(neutral,frameFit.pieces,stage.w,stage.h);
+            const pad=Math.max(8,Math.min(stage.w,stage.h)*.045);
+            const desired=stageFill(raw,stage.w,stage.h,pad);
+            const follow=frameFit.ready?1-Math.exp(-frameFit.delta*3):1;
+            frameFit.scale+=(desired.scale-frameFit.scale)*follow;
+            frameFit.x+=(desired.x-frameFit.x)*follow;frameFit.y+=(desired.y-frameFit.y)*follow;
+            frameFit.ready=true;
         }
         function projectSceneStage(camera) {
             const stage = destroyed ? null : occupancy.stage;
-            // Fit the current projected sphere, including off-axis head pose,
-            // before placing it in the full-resolution viewport. A uniform
-            // projection adjustment preserves shape and leaves the glass
-            // camera's angle intact while keeping the avatar clear of UI.
-            const raw = stage && fitBounds ? projectedSphere(camera, fitBounds, stage.w, stage.h) : null;
+            // Neutral framing can enlarge as well as shrink. Keep it stable
+            // while the head moves, then enforce only the stage's clear edge;
+            // this preserves the native lean-in and lateral parallax.
+            if(stage&&frameFit.ready){
+                const e=camera.projectionMatrix.elements;
+                for(let column=0;column<4;column++){
+                    const i=column*4;
+                    e[i]=e[i]*frameFit.scale+(2*frameFit.x/stage.w)*e[i+3];
+                    e[i+1]=e[i+1]*frameFit.scale-(2*frameFit.y/stage.h)*e[i+3];
+                }
+            }
+            const raw = stage && fitBounds ? projectedPieces(camera,frameFit.pieces,stage.w,stage.h) || projectedSphere(camera, fitBounds, stage.w, stage.h) : null;
             if (raw) {
                 const pad = Math.min(12, stage.w/8, stage.h/8);
                 const scale = Math.min(1, (stage.w-pad*2)/raw.w, (stage.h-pad*2)/raw.h);
@@ -326,8 +467,11 @@
             }
             stageProjection(camera, stage, win.innerWidth, win.innerHeight);
             if (!stage || !fitBounds || !win.THREE) { projectedBounds = null; return; }
-            const bounds = projectedSphere(camera, fitBounds, win.innerWidth, win.innerHeight);
+            const bounds = projectedPieces(camera,frameFit.pieces,win.innerWidth,win.innerHeight) || projectedSphere(camera, fitBounds, win.innerWidth, win.innerHeight);
             projectedBounds = bounds ? { ...bounds, inside:bounds.x>=stage.x&&bounds.y>=stage.y&&bounds.x+bounds.w<=stage.x+stage.w&&bounds.y+bounds.h<=stage.y+stage.h, form:fitKey } : null;
+        }
+        function updateAmbientStage(material) {
+            ambientStageUniforms(material,destroyed?null:occupancy.stage,win.innerHeight,win.__fridayRenderer?.getPixelRatio?.()||1);
         }
         function sourceDescription(current) {
             if (state.error) return state.error;
@@ -443,6 +587,10 @@
         function poll() {
             if (destroyed || doc.hidden) return;
             ensureDepth();
+            const nextCaption = ['state-indicator','presence-status'].map(id => {
+                const node = doc.getElementById(id); return node ? node.textContent + ':' + node.style.display : '';
+            }).join('|');
+            if (nextCaption !== captionSignature) { captionSignature = nextCaption; updateLayout(); }
             const current = sample();
             if (state.source === 'camera' && session?.superseded) { state.source = 'off'; depth?.setSource('off'); void session.release(); }
             if (state.source === 'camera' && !current.hologram?.enabled && !session?.busy) { state.source = 'off'; depth?.setSource('off'); }
@@ -455,6 +603,7 @@
         function destroy() {
             if (destroyed) return;
             destroyed = true; selectSerial++; clearPreview(); void session?.release();
+            restoreCaption();
             win.clearInterval(timer); observer?.disconnect(); chromeObserver?.disconnect(); win.cancelAnimationFrame(chromeFrame); depth?.destroy(); dialog?.remove();
             doc.removeEventListener('pointermove', onPointer); doc.removeEventListener('pointerleave', leavePointer); doc.removeEventListener('visibilitychange', onVisibility);
             doc.removeEventListener('transitionrun',onChromeTransition,true); doc.removeEventListener('transitionend',onChromeTransition,true);
@@ -477,7 +626,7 @@
             win.addEventListener('resize', updateLayout); win.addEventListener('friday:surface-changed', updateLayout); win.addEventListener('friday:chat-dock', updateLayout); win.addEventListener('pagehide', destroy); reduced.addEventListener?.('change', refreshReduced);
         }
         if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start, { once: true }); else start();
-        return { open, close, setMode, setArrangement, workspaceArea, fitSceneCamera, projectSceneStage, constrainRect: rect => constrainSpatialRect(rect, occupancy.stage ? occupancy.content : null), destroy, get stageRect() { return occupancy.stage ? { ...occupancy.stage } : null; }, get state() { return { ...state, ownsTracking: !!session?.owns, spatial: JSON.parse(JSON.stringify(occupancy)), projectedAvatarBounds: projectedBounds ? {...projectedBounds} : null }; } };
+        return { open, close, setMode, setArrangement, workspaceArea, fitSceneCamera, projectSceneStage, updateAmbientStage, constrainRect: rect => constrainSpatialRect(rect, occupancy.stage ? occupancy.content : null), destroy, get stageRect() { return occupancy.stage ? { ...occupancy.stage } : null; }, get state() { return { ...state, ownsTracking: !!session?.owns, spatial: JSON.parse(JSON.stringify(occupancy)), projectedAvatarBounds: projectedBounds ? {...projectedBounds} : null }; } };
     }
-    return { trackingSession, spatialLayout, stageProjection, projectedSphere, constrainSpatialRect, fitRadialDistance, mount };
+    return { trackingSession, spatialLayout, stageProjection, projectedSphere, projectedPieces, stageFill, ambientStageUniforms, constrainSpatialRect, fitRadialDistance, mount };
 });

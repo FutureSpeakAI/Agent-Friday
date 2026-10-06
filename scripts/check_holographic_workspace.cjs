@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { trackingSession, spatialLayout, stageProjection, projectedSphere, constrainSpatialRect, fitRadialDistance } = require('../static/friday_holographic_workspace.js');
+const { trackingSession, spatialLayout, stageProjection, projectedSphere, projectedPieces, stageFill, ambientStageUniforms, constrainSpatialRect, fitRadialDistance } = require('../static/friday_holographic_workspace.js');
 const THREE = require('../static/vendor/three-r128.min.js');
 const root = path.resolve(__dirname, '..');
 function extractHooks(relative) {
@@ -25,6 +25,21 @@ function extractHeldMessage(relative) {
     return source.slice(start,end+14);
 }
 const heldSource=extractHeldMessage('index.html');
+function blackHoleSource(relative){
+    const source=fs.readFileSync(path.join(root,relative),'utf8').replace(/\r\n/g,'\n');
+    return source.match(/\/\/ <black-hole>([\s\S]*?)\/\/ <\/black-hole>/)[1];
+}
+function fragmentStageAlpha(source){
+    const start=source.indexOf('float stageAlpha = 1.0;'),end=source.indexOf('gl_FragColor',start);
+    assert.ok(start>=0&&end>start,'Ambient shader must own a fragment-level stage boundary');
+    // Execute the shipped scalar fragment branch, replacing only GLSL vector
+    // subtraction and built-ins with their JavaScript equivalents.
+    const branch=source.slice(start,end)
+        .replace('vec2 edge = min(gl_FragCoord.xy - uStageRect.xy, uStageRect.zw - gl_FragCoord.xy);','const edge = {x:Math.min(x-uStageRect[0],uStageRect[2]-x),y:Math.min(y-uStageRect[1],uStageRect[3]-y)};')
+        .replace(/\bfloat\b/g,'let').replace('min(edge.x, edge.y)','Math.min(edge.x, edge.y)').replace('discard;','return 0;');
+    const run=new Function('x','y','uStageEnabled','uStageRect','uStageFeather','smoothstep',branch+'return stageAlpha;');
+    return (x,y,u)=>run(x,y,u.uStageEnabled.value,u.uStageRect.value.toArray(),u.uStageFeather.value,(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);});
+}
 function checkHeldMessage(source) {
     let now=350;
     const context={heldNote:0,performance:{now:()=>now}};
@@ -127,6 +142,69 @@ async function run() {
             const x=(p.x+1)*800,y=(1-p.y)*500;
             assert.ok(x>=bounds.x-1e-6&&x<=bounds.x+bounds.w+1e-6&&y>=bounds.y-1e-6&&y<=bounds.y+bounds.h+1e-6);
         }
+    });
+    await check('piece projection fits narrow forms without the empty diagonal-sphere margin',()=>{
+        const geometry=new THREE.BoxGeometry(1,8,.5);geometry.computeBoundingBox();geometry.computeBoundingSphere();
+        const camera=new THREE.PerspectiveCamera(60,.5,.1,1000);camera.position.set(0,0,30);camera.lookAt(0,0,0);camera.updateMatrixWorld();
+        const piece={box:geometry.boundingBox,matrix:new THREE.Matrix4(),sphere:geometry.boundingSphere};
+        const actual=projectedPieces(camera,[piece],400,800),envelope=projectedSphere(camera,piece.sphere,400,800);
+        assert.ok(actual.w<envelope.w*.2,'A tall form must not inherit a wide empty sphere');
+        for(const [width,height] of [[400,800],[700,180],[220,110],[1,1]]){
+            const pad=Math.min(width,height)*.045,raw=projectedPieces(camera,[piece],width,height),fit=stageFill(raw,width,height,pad);
+            assert.ok(Math.abs(Math.max(raw.w*fit.scale/(width-pad*2),raw.h*fit.scale/(height-pad*2))-1)<1e-8);
+            assert.ok(fit.scale>0);
+        }
+    });
+    await check('piece bounds contain every rotated mesh vertex under head-pose projection',()=>{
+        for(const geometry of [new THREE.BoxGeometry(2,8,1),new THREE.SphereGeometry(3,24,16)]){
+            geometry.computeBoundingBox();geometry.computeBoundingSphere();
+            const matrix=new THREE.Matrix4().compose(new THREE.Vector3(1,-2,0),new THREE.Quaternion().setFromEuler(new THREE.Euler(.4,.9,.3)),new THREE.Vector3(1.2,1.2,1.2));
+            const piece={box:geometry.boundingBox,matrix,sphere:geometry.boundingSphere.clone().applyMatrix4(matrix)};
+            for(const eye of [[0,0,30],[8,5,30],[-8,-5,30]]){
+                const camera=new THREE.PerspectiveCamera(60,.5,.1,1000);camera.position.set(...eye);camera.lookAt(0,0,0);camera.updateMatrixWorld();
+                camera.projectionMatrix.elements[8]=.35;camera.projectionMatrix.elements[9]=-.25;
+                const bounds=projectedPieces(camera,[piece],400,800),point=new THREE.Vector3(),positions=geometry.attributes.position;
+                for(let i=0;i<positions.count;i++){
+                    point.fromBufferAttribute(positions,i).applyMatrix4(matrix).project(camera);
+                    const x=(point.x+1)*200,y=(1-point.y)*400;
+                    assert.ok(x>=bounds.x-1e-6&&x<=bounds.x+bounds.w+1e-6&&y>=bounds.y-1e-6&&y<=bounds.y+bounds.h+1e-6);
+                }
+            }
+        }
+    });
+    await check('neutral framing enlarges small forms and catches the former shrink-only policy',()=>{
+        const raw={x:170,y:240,w:60,h:120};
+        const verify=fit=>assert.ok(Math.max(raw.w*fit.scale/400,raw.h*fit.scale/800)>.89,'An undersized avatar must fill its available stage');
+        verify(stageFill(raw,400,800,18));
+        assert.throws(()=>verify({scale:Math.min(1,(400-36)/raw.w,(800-36)/raw.h)}),/undersized avatar must fill/);
+    });
+    await check('black hole frames its analytic shader body and fades only ambient radiation at UI edges',()=>{
+        const source=blackHoleSource('index.html');assert.equal(blackHoleSource('ui_parts/styles_and_scene.html'),source,'Both native scene sources keep the same shader contract');
+        let stage={x:1100,y:70,w:450,h:700};
+        const context={FridayHolographicWorkspace:{updateAmbientStage:material=>ambientStageUniforms(material,stage,1000,2)}};
+        const hole=new Function('THREE','window','FridayGenome','FridayField',source+';return FridayBlackHole;')(THREE,context,{current:()=>null},{setLens(){}});
+        const group=new THREE.Group();hole.build(group,{dust:60,lowCost:true});
+        let shell;const ambient=[];group.traverse(node=>{if(node.userData.fridayStageRadius)shell=node;if(node.userData.fridayStageAmbient)ambient.push(node);});
+        assert.ok(shell,'The ray-traced body needs its authored framing radius');assert.equal(ambient.length,2);
+        const limit=Number(shell.material.fragmentShader.match(/dot\(lc, lc\) > ([0-9.]+) \*/)[1]);
+        assert.equal(shell.userData.fridayStageRadius,limit*hole._rs());assert.ok(limit<hole.RB);
+        assert.doesNotMatch(shell.material.fragmentShader,/uStageEnabled/,'The disk itself must never be clipped');
+        const s={base:new THREE.Color(0x1e54c7),accent:new THREE.Color(0x5fa8ff),reduced:true,toward:[0,0,1]};hole.animate(1/60,s);
+        for(const points of ambient){
+            const u=points.material.uniforms,rect=u.uStageRect.value;
+            assert.deepEqual(rect.toArray(),[2200,460,3100,1860]);assert.equal(u.uStageFeather.value,36);
+            const alpha=fragmentStageAlpha(points.material.fragmentShader);
+            for(const [x,y] of [[2199,1000],[3101,1000],[2500,459],[2500,1861]])assert.equal(alpha(x,y,u),0,'Ambient fragments outside the avatar stage must disappear');
+            assert.equal(alpha(2500,1000,u),1);assert.ok(alpha(2209,1000,u)>0&&alpha(2209,1000,u)<1,'The stage edge fades gently');
+            const broken=fragmentStageAlpha(points.material.fragmentShader.replace('if (uStageEnabled > 0.5)','if (false)'));
+            assert.throws(()=>assert.equal(broken(2199,1000,u),0),/1 !== 0/,'Negative control must catch ambient light beneath UI');
+            ambientStageUniforms(points.material,stage,1000,2);assert.equal(u.uStageRect.value,rect,'Per-frame updates reuse the uniform vector');
+        }
+        stage=null;hole.animate(1/60,s);
+        for(const points of ambient){const u=points.material.uniforms;assert.equal(u.uStageEnabled.value,0);assert.equal(fragmentStageAlpha(points.material.fragmentShader)(0,0,u),1,'Classic scene keeps its original unbounded radiation');}
+        const oldSource=source.replace('shell.userData.fridayStageRadius = FRAME_R * rs;','');
+        const oldHole=new Function('THREE','window','FridayGenome','FridayField',oldSource+';return FridayBlackHole;')(THREE,context,{current:()=>null},{setLens(){}}),oldGroup=new THREE.Group();oldHole.build(oldGroup,{dust:60,lowCost:true});
+        let oldBound;oldGroup.traverse(node=>{if(node.userData.fridayStageRadius)oldBound=node;});assert.equal(oldBound,undefined,'Negative control proves the old transparent carrier has no analytic framing metadata');
     });
     process.stdout.write(passed+' native ownership and spatial layout checks passed; no browser, camera, server, or source patch was run.\n');
 }

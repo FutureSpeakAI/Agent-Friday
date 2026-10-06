@@ -331,15 +331,25 @@ body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spat
   left: calc(var(--fs-work-left) + 8px) !important; right: calc(var(--fs-work-right) + 8px) !important;
   top: calc(var(--fs-work-top) + 8px) !important; flex-wrap: wrap;
 }
-/* Scene notices remain readable beside the scene, including when the stage
- * changes sides or moves above the workspace. They do not veil the avatar. */
-body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(#state-indicator, #presence-status) {
-  box-sizing: border-box; left: calc(var(--fs-work-left) + 8px) !important; right: auto !important;
-  top: auto !important; bottom: calc(var(--fs-work-bottom) + 8px) !important;
-  max-width: var(--fs-work-inner-width) !important; max-height: var(--fs-work-inner-height) !important;
-  white-space: normal; overflow-wrap: anywhere; overflow: auto; transform: none !important;
+/* Native mood and presence text are part of the reserved stage, below its
+ * camera rectangle. Their live semantics remain owned by the scene. */
+.friday-avatar-caption {
+  position: fixed; z-index: 61; box-sizing: border-box; display: flex; flex-direction: column;
+  align-items: center; gap: 5px; padding: 7px 10px; min-width: 0; overflow: auto;
+  border-top: 1px solid color-mix(in srgb, var(--fr-cyan) 20%, transparent);
+  border-radius: 0 0 10px 10px; background: color-mix(in srgb, var(--fr-surface) 74%, transparent);
+  backdrop-filter: var(--fr-glass-blur); pointer-events: auto; text-align: center;
+  scrollbar-width: thin; overscroll-behavior: contain;
 }
-body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) #presence-status { bottom: calc(var(--fs-work-bottom) + 42px) !important; max-height: max(0px, calc(var(--fs-work-inner-height) - 34px)) !important; }
+.friday-avatar-caption :is(#state-indicator, #presence-status) {
+  position: static !important; inset: auto !important; flex: none; box-sizing: border-box;
+  max-width: 100% !important; max-height: none !important; margin: 0 !important; padding: 0 !important;
+  border: 0 !important; border-radius: 0 !important; background: transparent !important;
+  box-shadow: none !important; backdrop-filter: none !important; transform: none !important;
+  white-space: normal; overflow-wrap: anywhere; text-align: center; pointer-events: none;
+  font: 500 10px/1.6 var(--fr-font-display) !important; letter-spacing: .08em !important;
+}
+.friday-avatar-caption #presence-status { color: var(--fr-label) !important; font: 12px/1.5 var(--fr-font-body) !important; letter-spacing: .01em !important; }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) #camera-indicator { right: calc(var(--fs-work-right) + 8px) !important; bottom: calc(var(--fs-work-bottom) + 8px) !important; }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.friday-orb-notes, #friday-scene-lost) {
   box-sizing: border-box; left: calc(var(--fs-work-left) + 8px) !important; right: calc(var(--fs-work-right) + 8px) !important;

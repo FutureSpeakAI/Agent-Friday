@@ -1,0 +1,69 @@
+/* One measured row; native controls move into a bounded, scrollable pullout. */
+.top-bar.friday-responsive-topbar,
+body.friday-experience-enabled .top-bar.friday-responsive-topbar{display:flex;flex-wrap:nowrap;justify-content:flex-start;align-items:center;gap:8px;height:auto;min-height:54px;padding:8px 14px;box-sizing:border-box;overflow:visible}
+.friday-responsive-topbar:not([data-ready=true]){visibility:hidden}
+.top-bar.friday-responsive-topbar>.friday-topbar-row{display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:visible}
+body.friday-experience-enabled .top-bar.friday-responsive-topbar>.friday-topbar-row{flex-wrap:nowrap;gap:8px!important}
+.friday-topbar-cell{box-sizing:border-box;flex:0 0 auto;min-width:0}
+.friday-topbar-native{display:flex;align-items:center;min-width:0}
+.friday-topbar-cell[hidden],.friday-topbar-more[hidden],.friday-topbar-pullout-group[hidden]{display:none!important}
+.friday-topbar-cell[data-kind=scene] .friday-topbar-native>div>button[aria-label="Scene selection"]{display:none!important}
+.friday-topbar-cell[data-floating-only=true]{position:absolute;width:0;height:0;overflow:visible}
+.friday-responsive-topbar .friday-topbar-brand{margin-right:7px}
+.top-bar.friday-responsive-topbar .fr-lockup{display:inline-flex;flex-wrap:nowrap;gap:5px;white-space:nowrap;max-width:none}
+.top-bar.friday-responsive-topbar .fr-lockup-by,
+.top-bar.friday-responsive-topbar .fr-lockup-maker{display:inline!important}
+.friday-topbar-cell .fx-shell-entry{min-height:34px;padding:7px 10px;white-space:nowrap;border:1px solid var(--fr-glass-edge);border-radius:7px;background:var(--fr-glass);color:var(--fr-text);font:500 11px var(--fr-font-body);cursor:pointer}
+.friday-topbar-cell .fx-shell-entry:hover{color:var(--fr-cyan);border-color:var(--fr-cyan)}
+.friday-topbar-cell .fx-shell-depth{color:var(--fr-cyan);font-size:11px}
+.friday-topbar-cell .fx-shell-depth:after{content:none}
+.friday-responsive-topbar .fx-shell-activity{display:inline-flex!important}
+.friday-topbar-cell .top-bar-clock{display:inline!important}
+.friday-topbar-cell .arbiter-strip .arb-res{display:inline-flex!important}
+.friday-topbar-cell:not(.friday-topbar-brand) button{min-height:34px;box-sizing:border-box}
+.friday-topbar-more{flex:0 0 40px;display:flex;align-items:center;justify-content:center;min-width:40px;min-height:36px;padding:7px;border:1px solid var(--fr-glass-edge);border-radius:9px;color:var(--fr-text);background:var(--fr-glass);cursor:pointer;box-sizing:border-box}
+.friday-topbar-more:hover,.friday-topbar-more[aria-expanded=true]{color:var(--fr-cyan);border-color:var(--fr-cyan);background:var(--fr-cyan-soft)}
+.friday-topbar-more:focus-visible,.friday-topbar-pullout button:focus-visible{outline:2px solid var(--fr-cyan);outline-offset:3px}
+.friday-topbar-action-label{display:none}
+.friday-topbar-pullout{position:fixed;z-index:9000;top:calc(var(--friday-content-top,var(--fr-topbar-h,54px)) + 8px);left:calc(var(--friday-content-left,0px) + 12px);width:min(420px,calc(100vw - var(--friday-content-left,0px) - var(--friday-content-right,0px) - 24px));max-height:calc(100dvh - var(--friday-content-top,var(--fr-topbar-h,54px)) - var(--friday-content-bottom,12px) - 20px);box-sizing:border-box;overflow:auto;overscroll-behavior:contain;padding:16px;background:var(--fr-surface);border:1px solid var(--fr-glass-edge);border-radius:14px;color:var(--fr-text);box-shadow:0 20px 60px color-mix(in srgb,var(--fr-surface) 80%,transparent);font:12px/1.5 var(--fr-font-body)}
+.friday-topbar-pullout[data-open=false]{visibility:hidden;pointer-events:none}
+.friday-topbar-pullout-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:15px}
+.friday-topbar-pullout-heading strong{display:block;font:500 18px/1.3 var(--fr-font-display);letter-spacing:-.025em}
+.friday-topbar-pullout-heading span{display:block;margin-top:4px;font-size:11px;color:var(--fr-dim)}
+.friday-topbar-pullout-heading button{display:flex;align-items:center;justify-content:center;flex:0 0 34px;min-height:34px;border:1px solid var(--fr-glass-edge);border-radius:8px;background:var(--fr-glass);color:var(--fr-text);font-size:20px;cursor:pointer}
+.friday-topbar-pullout-group{padding:12px 0;border-top:1px solid var(--fr-glass-edge)}
+.friday-topbar-pullout-group:last-child{padding-bottom:0}
+.friday-topbar-pullout-group h2{margin:0 0 9px;color:var(--fr-dim);font:500 10px/1.4 var(--fr-font-mono);letter-spacing:.08em;text-transform:uppercase}
+.friday-topbar-pullout-group>div{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px}
+.friday-topbar-pullout .friday-topbar-cell{max-width:100%;flex:1 1 calc(50% - 8px)}
+.friday-topbar-pullout .friday-topbar-cell[data-group=system],
+.friday-topbar-pullout .friday-topbar-cell[data-kind=context],
+.friday-topbar-pullout .friday-topbar-cell[data-kind=model],
+.friday-topbar-pullout .friday-topbar-cell[data-kind=approvals]{flex-basis:100%}
+.friday-topbar-pullout .friday-topbar-native{min-height:38px;max-width:100%}
+.friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .friday-topbar-native>button,
+.friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .friday-topbar-native>div:not(.friday-shell-menu)>button{display:flex!important;align-items:center;justify-content:flex-start;gap:9px;width:100%;min-height:40px!important;padding:9px 11px!important;border:1px solid var(--fr-glass-edge)!important;border-radius:8px!important;background:var(--fr-glass)!important;color:var(--fr-text)!important;text-align:left;white-space:normal;font:500 12px/1.4 var(--fr-font-body)!important}
+.friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .friday-topbar-native>div{min-width:0;width:100%}
+.friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .friday-topbar-native>button:hover,
+.friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .friday-topbar-native>div>button:hover{border-color:var(--fr-cyan)!important;color:var(--fr-cyan)!important}
+.friday-topbar-pullout .friday-topbar-action-label{display:inline;font:500 12px/1.4 var(--fr-font-body)}
+.friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .arbiter-strip{flex-wrap:wrap;max-width:100%}
+.friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .ws-tab-name{display:flex;flex-wrap:wrap;max-width:100%;white-space:normal}
+.friday-topbar-cell.friday-topbar-measuring{position:fixed!important;left:0!important;top:0!important;width:max-content!important;max-width:none!important;flex:none!important;visibility:hidden!important}
+.friday-topbar-cell.friday-topbar-measuring .friday-topbar-native{width:max-content!important;max-width:none!important;min-height:0!important}
+.friday-topbar-cell.friday-topbar-measuring .friday-topbar-action-label{display:none!important}
+.friday-topbar-cell.friday-topbar-measuring .friday-topbar-native>button,
+.friday-topbar-cell.friday-topbar-measuring .friday-topbar-native>div>button{width:max-content!important;white-space:nowrap!important}
+@media(max-width:600px){
+  .top-bar.friday-responsive-topbar,body.friday-experience-enabled .top-bar.friday-responsive-topbar{padding:8px 10px;gap:8px}
+  .top-bar.friday-responsive-topbar .fr-lockup{display:grid;grid-template-columns:auto 1fr;column-gap:4px;row-gap:5px;line-height:1.1;max-width:calc(100vw - 72px)}
+  .top-bar.friday-responsive-topbar .fr-lockup-name{grid-column:1/-1;font-size:12px!important;justify-self:start;min-width:0;white-space:normal;text-align:left}
+  .top-bar.friday-responsive-topbar .fr-lockup-by{margin-left:0;font-size:9px!important}
+  .top-bar.friday-responsive-topbar .fr-lockup-maker{font-size:10px!important;white-space:normal;overflow-wrap:anywhere}
+  .friday-responsive-topbar .friday-topbar-brand{margin-right:0}
+  .friday-topbar-cell[data-kind=workspaces] .fx-switcher-trigger{max-width:145px;font-size:11px}
+  .friday-topbar-pullout{padding:12px;border-radius:12px}
+}
+@media(max-width:360px){.friday-topbar-pullout .friday-topbar-cell{flex-basis:100%}}
+@media(prefers-reduced-motion:no-preference){.friday-topbar-pullout[data-open=true]{animation:friday-topbar-reveal 130ms ease-out}}
+@keyframes friday-topbar-reveal{from{opacity:0}to{opacity:1}}

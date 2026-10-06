@@ -23953,7 +23953,8 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     onOpenTab: id => !!fridayOpenWorkspaceTab(id, null, {background:true}),
     onHome: () => { if (shellChat || shellTab) navigateWithDrafts('/'); else setExperienceDesktop(true); }
   });
-  const shellTopBar = <div className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar" data-shell-kind={shellChat?'chat':shellTab?'tab':'desktop'}>
+  const ShellTopBar = shellExperienceAvailable && window.FridayResponsiveTopBar || 'div';
+  const shellTopBar = <ShellTopBar className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar" data-shell-kind={shellChat?'chat':shellTab?'tab':'desktop'} {...(ShellTopBar!=='div'?{onDismissMenus:()=>{setSceneMenuOpen(false);setModelMenuOpen(false);}}:{})}>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
         {shellChat?<FridayLockup size={15} href={'/?conversation='+encodeURIComponent(convId||'')} onClick={shellHomeLink} title="Back to the desktop, with this chat open"/>
           :shellTab?<FridayLockup size={15} href={'/?workspace='+encodeURIComponent(shellTab.id)} onClick={shellHomeLink} title="Back to the desktop, with this workspace open"/>
@@ -24309,7 +24310,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           {connHealth==='ok'?'● LIVE':connHealth==='degraded'?'● DEGRADED':connHealth==='down'?'○ DOWN':'○ —'}
         </span>
       </div>
-    </div>;
+    </ShellTopBar>;
   const shellKillSwitch = ccGranted&&<button className="kill-switch" onClick={killSwitch} title="STOP — terminate all computer control immediately (Ctrl+Shift+Q)">
       <span className="ks-icon">&#x26D4;</span>STOP
     </button>;

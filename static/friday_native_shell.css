@@ -1,4 +1,6 @@
 /* A single navigation layer keeps the original world and working surfaces legible. */
+:root{--friday-safe-bottom:env(safe-area-inset-bottom,0px)}
+body.friday-experience-enabled .dock{bottom:var(--friday-safe-bottom,0px)!important}
 body.friday-experience-enabled{--fx-rail-width:0px;--fx-panel:color-mix(in srgb,var(--fr-surface) 91%,transparent);--fx-muted:color-mix(in srgb,var(--fr-text) 65%,transparent);--fx-radius:14px}
 body.friday-experience-enabled .top-bar{min-height:52px;padding:8px 20px;gap:12px;border-bottom:1px solid var(--fr-glass-edge);background:color-mix(in srgb,var(--fr-surface) 95%,transparent);backdrop-filter:var(--fr-glass-blur);box-shadow:none}
 body.friday-experience-enabled .top-bar .fr-lockup{white-space:nowrap}.top-bar .fx-shell-entry{padding:7px 10px;min-height:32px;white-space:nowrap;border:1px solid var(--fr-glass-edge);border-radius:7px;background:var(--fr-glass);color:var(--fr-text);font:500 11px var(--fr-font-body);cursor:pointer}.top-bar .fx-shell-entry:hover{color:var(--fr-cyan);border-color:var(--fr-cyan)}
@@ -50,4 +52,14 @@ body[data-friday-spatial-layout] .fwin.closing{animation:friday-surface-dismiss 
 @keyframes friday-surface-dismiss{from{opacity:1}to{opacity:0}}
 @media(prefers-reduced-motion:reduce){body[data-friday-spatial-layout] .fwin,body[data-friday-spatial-layout] .fwin.closing{animation:none!important}}
 /* Keep the primary conversation entry in view on shorter desktop displays. */
+/* The same workspace switcher replaces the floor dock when vertical or short
+ * viewports need the space. Its native actions also remain in header overflow. */
+@media (orientation: portrait), (max-height: 500px) {
+  body.friday-experience-enabled { --fx-dock-height: 0px; }
+  body.friday-experience-enabled .dock { display: none !important; }
+}
+body.friday-experience-enabled .fx-main[data-view=day]{max-height:none;min-width:0}
+.fx-home-bottom,.fx-home-composer{min-width:0}
+.fx-home-composer-footer,.fx-home-context{flex-wrap:wrap}
+.fx-home-composer textarea{min-width:0;box-sizing:border-box}
 @media(max-height:800px){body[data-friday-spatial-layout] :is(.fx-home-day,.fx-home-resume,.fx-home-scene-tools){display:none}body[data-friday-spatial-layout] .fx-home-bottom{grid-template-columns:1fr}body[data-friday-spatial-layout] .fx-home-greeting{max-width:580px}body[data-friday-spatial-layout] .fx-home-greeting h1{max-width:none;font-size:27px!important}body[data-friday-spatial-layout] .fx-home-greeting .fx-subtitle{margin:10px 0 14px}body[data-friday-spatial-layout] .fx-home-composer{padding:16px}body[data-friday-spatial-layout] .fx-home-composer textarea{min-height:48px}}
