@@ -49,8 +49,6 @@ def test_a_path_that_is_not_a_folder_is_refused(client, folder, tmp_path):
 
 
 def test_the_tracker_is_read_from_the_configured_folder_by_column(client, folder, server_module):
-    if (server_module.WIKI_PROFESSIONAL_DIR / "application-log.md").exists():
-        pytest.skip("a wiki application log takes precedence in this home")
     data = client.get("/api/career-ops/tracker").get_json()
     assert data["status"] == "ok"
     e = data["entries"][0]

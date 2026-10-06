@@ -8616,6 +8616,38 @@ CLAUDE_TOOLS.append({
 })
 
 
+CLAUDE_TOOLS.append({
+    "name": "codebase_understand",
+    "description": (
+        "Explore this chat's repository map, learn from its guided tour, or plan an adaptation. "
+        "Reads a bounded local structural graph or an existing Understand-Anything graph; runs no code. "
+        "Use node_id to focus on a component or query to find it. Verify interpretations with codebase_read; "
+        "adapt returns a planning brief and does not edit anything."),
+    "input_schema": {"type": "object", "properties": {
+        "codebase_id": {"type": "string", "description": "Normally omitted: use this chat's codebase."},
+        "mode": {"type": "string", "enum": ["explore", "learn", "adapt"]},
+        "node_id": {"type": "string", "description": "An exact node id from the map."},
+        "query": {"type": "string", "description": "Find files, symbols or concepts by text."},
+    }},
+})
+
+
+def _tool_codebase_understand(inp):
+    from agent_friday.services import repo_atlas, repo_atlas_context
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return "codebase_understand: open a codebase or study a repository in the salon first."
+    try:
+        return repo_atlas_context.brief(rec["id"], mode=inp.get("mode", "explore"),
+                                        node_id=inp.get("node_id", ""), query=inp.get("query", ""))
+    except repo_atlas.AtlasBusyError:
+        return {"status": "busy", "note": "The repository inspector is busy. Retry shortly."}
+    except (ValueError, KeyError, OSError) as error:
+        return {"status": "error", "error": "The repository map could not be read.",
+                "reason": type(error).__name__}
+
+
 def _tool_codebase_export(inp):
     rec = _codebase_in_scope(inp or {})
     if rec is None:
@@ -8625,8 +8657,8 @@ def _tool_codebase_export(inp):
 
 
 CLAUDE_TOOL_HANDLERS.update({"codebase_edit": _tool_codebase_edit, "codebase_undo": _tool_codebase_undo,
-                             "codebase_read": _tool_codebase_read, "codebase_export": _tool_codebase_export})
-TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "codebase_export": 0})
+                             "codebase_read": _tool_codebase_read, "codebase_understand": _tool_codebase_understand, "codebase_export": _tool_codebase_export})
+TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "codebase_understand": 0, "codebase_export": 0})
 
 
 # ── "Improve this workspace" (services/workspace_bundles; spec §4.9.1) ───────
@@ -13607,7 +13639,7 @@ def _start_kill_hotkey():
 # improve_workspace, open_project).
 HUB_TOOL_NAMES = (
     "artifact_put", "improve_workspace", "open_project",
-    "publish_artifact", "codebase_edit", "codebase_undo", "codebase_read", "codebase_export",
+    "publish_artifact", "codebase_edit", "codebase_undo", "codebase_read", "codebase_understand", "codebase_export",
     "plan_first", "plan_approve", "plan_milestone", "workspace_swap",
     "codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent",
     "codebase_run", "show_preview", "build_mode",

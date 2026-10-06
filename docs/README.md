@@ -20,6 +20,7 @@ document it is.
 | [Approvals and receipts](user-guide/approvals-and-receipts.md) | What Friday asks before it acts, cards, grants for scheduled jobs, and the signed receipts. |
 | [Privacy: local and cloud](user-guide/privacy.md) | What stays on your PC, what can leave, and the egress gate's limits. |
 | [Mail](user-guide/mail.md) | Messages and Gmail: connecting, what Friday can do, how sending is approved. |
+| [Career](user-guide/career.md) | The walkthrough, setup files, job actions, reports, approval cards, and the manual Career search workflow. |
 | [Calendar](user-guide/calendar.md) | Google Calendar and Tasks, and which changes ask first. |
 | [Voice](user-guide/voice.md) | Voice engines, local voice, and push-to-transcribe (Alt+T). |
 | [Documents](user-guide/documents.md) | Word, Excel and PowerPoint files through OfficeCLI. |

@@ -55,11 +55,21 @@ def create_codebase():
     cid = body.get("conversation_id") or None
     from agent_friday.services import conversations as convs
     conv = None
-    if not cid:
-        conv = convs.create(title)
-        cid = conv["id"]
-    rec = cb.create(title, template=str(body.get("template") or "static"),
-                    conversation_id=cid, existing_path=body.get("path") or None)
+    if body.get("study_path"):
+        from agent_friday.services import repo_intake
+        # A refused folder must not leave an empty conversation behind.
+        rec = repo_intake.create(title, str(body["study_path"]), conversation_id=cid)
+        if not cid:
+            conv = convs.create(title)
+            cid = conv["id"]
+            cb.bind(rec["id"], cid)
+            rec = cb.load(rec["id"])
+    else:
+        if not cid:
+            conv = convs.create(title)
+            cid = conv["id"]
+        rec = cb.create(title, template=str(body.get("template") or "static"),
+                        conversation_id=cid, existing_path=body.get("path") or None)
     conv = conv or convs.load(cid)
     return jsonify({"status": "ok", "codebase": rec, "conversation": conv})
 
@@ -71,6 +81,20 @@ def get_codebase(cid):
     if rec is None:
         return _bad("no such codebase", 404)
     return jsonify({"status": "ok", "codebase": rec})
+
+
+@codebases_bp.route("/api/codebases/<cid>/atlas", methods=["GET"])
+@login_required
+def codebase_atlas(cid):
+    """A bounded local map. Reading it never executes the repository."""
+    from agent_friday.services import repo_atlas
+    try:
+        atlas = repo_atlas.build(cid, refresh=request.args.get("refresh") == "1")
+    except repo_atlas.AtlasBusyError:
+        return _bad("The repository inspector is busy. Try again shortly.", 409)
+    response = jsonify({"status": "ok", "atlas": atlas})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @codebases_bp.route("/api/codebases/<cid>/files", methods=["GET"])

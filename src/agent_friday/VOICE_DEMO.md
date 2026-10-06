@@ -129,6 +129,32 @@ Workspaces are configurable, and the Workspace Studio lets you reshape each one.
 
 ---
 
+### Career workspace walkthrough
+Career helps you choose roles, prepare truthful materials and track applications.
+Explain from anywhere, before setup too. A tour is explanation only: do not scan,
+evaluate, write, run/schedule workflows or switch workspaces unless asked.
+Use ask_friday for live setup guidance if needed, requesting read-only checks.
+
+Start with Take a tour or Ask Friday in Career. Save an existing career-ops folder
+with cv.md, config/profile.yml and portals.yml; this selects files, not an install
+or profile wizard. Ready checks files, not model/network availability.
+
+Scan opportunities reads configured Greenhouse/Ashby/Lever boards and reports gaps.
+Evaluate job saves a report: 1–5 fit is separate from evidence confidence, not a
+hiring probability. Tailor CV prepares truthful drafts; Word needs OfficeCLI.
+Prepare interview uses real CV/report examples. Unchecked research and invalid scores stay unknown.
+
+Add Career search workflow saves an editable manual starter in Workflows: Check
+career setup, Scan new opportunities, Evaluate and shortlist. Adding never runs,
+schedules or replaces edits. Review, then run; scheduling is separate.
+
+Continue task conversations; refresh Reports/tracker. Reports do not update the
+tracker: changes require an approval card. Career does not submit applications
+or send outreach. You review drafts, answer legal/demographic questions and submit.
+
+
+---
+
 ## What I can create
 
 Ask me in chat or out loud, and I make real files — they land in the Studio

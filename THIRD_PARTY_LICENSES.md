@@ -294,6 +294,7 @@ installs. Each is MIT; the licence notices are reproduced below as the licence r
 
 | Project | What Friday carries | Where | Copyright |
 |---|---|---|---|
+| career-ops | evaluation guidance, location-filter precedence, public-board compatibility and lifecycle vocabulary; adapted from commit `24745c5f8a6b2ee56d7c25176d05c4dfe97c5b3b` | `src/agent_friday/services/career_ops.py` | Copyright (c) 2026 Santiago Fernández de Valderrama |
 | obsidian-wiki | ported code: graph analysis, structural queries, wikilink and frontmatter parsing, the canonical-path rule | `src/agent_friday/services/knowledge_graph/{graph_analysis,structural_query,wiki_graph,store}.py` | Copyright (c) 2026 Ar9av |
 | Microsoft GraphRAG | the prompt set, copied as text (via graphrag-workbench) | `src/agent_friday/services/knowledge_graph/prompts/*.txt` | Copyright (c) Microsoft Corporation |
 | graphrag-workbench | the artifact contract and the force-layout design, ported to Python | `src/agent_friday/services/knowledge_graph/{store,wiki_graph,layout}.py` | Copyright (c) 2026 Lyon Industries (Christopher Lyon) |
@@ -301,6 +302,34 @@ installs. Each is MIT; the licence notices are reproduced below as the licence r
 Ideas only, no code or text: SkillOpt (Microsoft, MIT) for `skillopt_engine.py`; podcastfy
 (Apache-2.0) for `services/podcast_engine.py`; Goose (Apache-2.0) and Adrian for the
 patterns listed in CREDITS.md. No notice is required for an idea; the credits are courtesy.
+
+### career-ops licence
+
+Adapted from [career-ops](https://github.com/career-ops-hq/career-ops), commit `24745c5f8a6b2ee56d7c25176d05c4dfe97c5b3b`. Agent Friday is an independent integration; upstream branding is not included.
+
+```
+MIT License
+
+Copyright (c) 2026 Santiago Fernández de Valderrama
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ### obsidian-wiki licence
 
