@@ -22524,14 +22524,8 @@ function App(){
     else{const moodEl=document.getElementById('mood-text');if(moodEl)moodEl.innerText='STATE: '+sysMood;}
   }},1000);return()=>clearInterval(t)},[]);
 
-  // --- Processing energy pulse (drives the holographic scene while thinking) ---
-  // The scene reacts to audio via window._fridayHoloAmplitude, but a TEXT chat or
-  // a background task produces no audio — so without this the scene barely shifts
-  // while Friday works. This rAF loop pushes a pulsing amplitude (and a _fridayBusy
-  // flag the scene uses to stay at full energy) whenever a chat/task/routine is in
-  // flight, so the state change is dramatic and obvious on a demo. It yields to the
-  // voice/TTS analyser (which owns amplitude while Friday is actually speaking) and
-  // decays smoothly back to calm when idle.
+  // Speech amplitude belongs to actual playback. Processing and creating
+  // use the scene's anatomy-specific state channels, never synthetic audio.
   useEffect(()=>{
     let raf,t0=performance.now();
     const loop=()=>{
@@ -22541,11 +22535,8 @@ function App(){
       const busy=!!(sig.chatLoad||sig.taskRunning||sig.routineRunning);
       window._fridayBusy=busy;  // state/color signal only — must NOT drive motion
       if(!speaking&&!micOn){
-        // Design rule: the holographic scene animates ONLY while Friday is
-        // actually speaking (audio playing back). Thinking / executing / running
-        // a task is a COLOR + state shift, never a synthetic motion pulse — so we
-        // never fake an amplitude here. Just decay to rest, busy or not; the
-        // EXECUTING/REASONING *color* is applied separately via the mood system.
+        // Decay the old playback envelope when no voice or microphone owns
+        // it. The mood system supplies processing articulation separately.
         const cur=window._fridayHoloAmplitude||0;
         window._fridayHoloAmplitude=cur>0.02?cur*0.9:0;
       }
@@ -22639,21 +22630,8 @@ function App(){
 
   // --- Process Polling (Layer 2→3 integration) ---
   useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();
-        // Demo safety: failed/errored processes must NOT become orbs. They were
-        // spawning alarming magenta "error" orbs that lingered ~30s server-side
-        // (and piled up on repeated API failures). Filtering them out here means
-        // new failures never spawn an orb, and any existing orb whose process
-        // flips to error drops out of pIds below → auto-dismisses within ~2s.
-        /* Which processes still ORBIT. The server owns this now (orb_visible): a
-           completed orb is gone 30s after it finishes, while its record stays
-           explorable far longer — two lifetimes that used to be one, which is why
-           fifteen minutes of green orbs piled up around the avatar.
-
-           Failures are NOT filtered out any more. They used to be dropped here
-           entirely (_BAD_ORB), so a run that failed left nothing in orbit at all —
-           the machine quietly hid its own bad news. They now stay until dismissed
-           and wear a ⚠ so they read differently from work in progress. */
-        const procs=(d.processes||[]).filter(p=>p.orb_visible!==false);const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){const _ico=p.orb_failed?'⚠':(p.icon||'⚡');if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:_ico,model:p.model||null,color:(p.color!=null?p.color:null)});window.fridayUpdateOrb?.(p.id,{progress:(p.progress==null?null:p.progress),status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
+        window.fridaySyncOrbs?.(d.processes || []);
+}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
 
   // B1/B2: rehydrated history keeps model/seat badges and system lines; the
   // server persists `timestamp` while live messages carry `time` — map it so
@@ -22668,11 +22646,25 @@ function App(){
      and "what finished". */
   const[liveProcs,setLiveProcs]=useState([]);
   const[failedProcs,setFailedProcs]=useState([]);
+  const[orbiting,setOrbiting]=useState([]);
+  const[clearingOrbs,setClearingOrbs]=useState(false);
+  const clearOrbs=()=>{
+    setClearingOrbs(true);
+    const ids=[...new Set([...orbiting,...(window.fridayGetOrbs?.()||[])].filter(p=>window.fridayOrbFinished(p)).map(p=>p.id))];
+    ids.forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}});
+    setFailedProcs([]);setOrbiting(o=>o.filter(p=>!window.fridayOrbFinished(p)));
+    apiFetch('/api/orbs/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope:'finished'})})
+      .then(r=>r.json()).then(d=>{[...(d.ids||[]),...(d.orphan_ids||[])].forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}})})
+      .catch(()=>{}).finally(()=>setClearingOrbs(false));
+  };
   useEffect(()=>{let on=true;
     const tick=()=>apiFetch('/api/processes').then(r=>r.json()).then(d=>{
       if(!on)return;
       setLiveProcs((d.processes||[]).filter(p=>p.status==='running'));
       setFailedProcs((d.processes||[]).filter(p=>p.orb_failed&&!p.dismissed));
+      const visible=(d.processes||[]).filter(p=>p.orb_visible&&!p.dismissed);
+      const known=new Set((d.processes||[]).map(p=>p.id));
+      setOrbiting([...visible,...(window.fridayGetOrbs?.()||[]).filter(p=>!known.has(p.id))]);
     }).catch(()=>{});
     tick();const iv=setInterval(tick,1500);return()=>{on=false;clearInterval(iv)}},[]);
   const cancelProc=(id)=>{apiFetch('/api/processes/'+encodeURIComponent(id)+'/cancel',{method:'POST'})
@@ -23773,6 +23765,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           </div>}
         </div>)}
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
+        {!shellChat&&!shellTab&&orbiting.length>0&&<button onClick={clearOrbs} disabled={clearingOrbs}
+          title={orbiting.length+' orb(s) in orbit. Clears everything that has finished or failed; anything still working is left alone.'}
+          aria-label="Clear finished orbs"
+          style={{background:'rgba(245,158,11,0.12)',border:'1px solid rgba(245,158,11,0.45)',borderRadius:10,padding:'3px 9px',marginRight:8,cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'#f59e0b',display:'flex',alignItems:'center',gap:6}}>
+          {'✦ '+orbiting.length}<span style={{opacity:0.75,fontSize:10}}>{clearingOrbs?'clearing...':'clear'}</span>
+        </button>}
         {/* Model selector pill — click to open dropdown with routing */}
         <div ref={modelMenuRef} style={{position:'relative'}}>
           <button onClick={()=>{setModelMenuOpen(o=>!o);setModelMenuRole(null);setLocalAllOpen(false);setSceneMenuOpen(false)}}

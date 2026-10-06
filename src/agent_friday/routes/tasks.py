@@ -697,38 +697,18 @@ def rerun_task(task_id):
     return jsonify({"ok": True, "task_id": new_id, "rerun_of": task_id})
 
 
-# How long a finished orb keeps ORBITING. Separate from how long its record
-# stays explorable, which is the distinction the old code was missing: it kept
-# monitoring processes for 900s and drew an orb for every one of them, so
-# fifteen minutes of green orbs accumulated around the avatar.
-ORB_VISIBLE_AFTER_DONE_S = 30
-# A failed orb stays until acknowledged — but "until acknowledged" turned into
-# "forever" because nothing could acknowledge it. Two caps keep persistence
-# from becoming accumulation, without a failure ever vanishing unseen: it stops
-# orbiting after this long, and only this many orbit at once. The RECORD
-# survives either way (24h), so nothing is lost — it just stops crowding out
-# the work in progress.
-ORB_FAILED_MAX_AGE_S = 3600
+# Every finished outcome drifts for up to five minutes, or until cleared.
+ORB_VISIBLE_AFTER_DONE_S = 300
+ORB_TERMINAL_STATES = ("completed", "error", "failed", "cancelled", "timeout", "interrupted")
+# Failed records stay inspectable for 24 hours; only five orbit at once.
 ORB_FAILED_MAX_VISIBLE = 5
 
 
 @tasks_bp.route('/api/processes')
 def list_processes():
-    """Live processes, each carrying whether it should still be ORBITING.
-
-    Two lifetimes, deliberately different:
-
-      * **orbit** — a completed orb is gone 30 seconds after it finishes.
-        Maintainer ruling: "I do not want them hanging around in orbit
-        around Friday's avatar for longer than that."
-      * **record** — the detail (model, intent, log, result) stays explorable
-        for the full retention window. The original comment here was right that
-        transparency needs the detail to outlive the orb; it just expressed
-        that by keeping the ORB alive too.
-
-    A FAILED run never expires on the 30-second timer. A success that vanishes
-    is fine — you saw it succeed, or you did not need to. A failure that
-    vanishes before you looked at it is the machine hiding something.
+    """Live processes and their visibility; finished orbs remain for five
+    minutes or until dismissed. Failure records and monitoring records
+    remain inspectable under their longer retention windows.
     """
     # An orphan should disappear on its own rather than wait to be asked
     # about. Runs before the lock: _reap_orphans takes it itself.
@@ -747,30 +727,28 @@ def list_processes():
                 row["elapsed"] = int(row["ended"] - row["started"])
 
             status = row.get("status")
-            failed = status in ("error", "failed", "cancelled", "timeout")
+            failed = status in ("error", "failed", "cancelled", "timeout", "interrupted")
             ended = row.get("ended")
-            if not ended:
+            if not ended and status in ORB_TERMINAL_STATES:
+                # Some producers report only a terminal status. Remember its
+                # first observation so repeated polling cannot restart the clock.
+                ended = row["ended"] = p["ended"] = now
+            if row.get("dismissed"):
+                row["orb_visible"] = False
+            elif not ended:
                 row["orb_visible"] = True                  # still working
-            elif failed:
-                # Persistent, but not permanent, and not a swarm. An orb older
-                # than the cap stops ORBITING while its record stays queryable
-                # — the failure is still there to read, it has just stopped
-                # standing in front of everything else. Newest failures win the
-                # remaining slots (applied after this loop).
-                row["orb_visible"] = (not row.get("dismissed")
-                                      and (now - ended) <= ORB_FAILED_MAX_AGE_S)
             else:
-                row["orb_visible"] = (now - ended) <= ORB_VISIBLE_AFTER_DONE_S
+                row["orb_visible"] = (now - ended) < ORB_VISIBLE_AFTER_DONE_S
             row["orb_failed"] = failed
             out.append(row)
 
-            # Record retention, unchanged for successes. A failure is kept far
+            # Records cover the visible lifetime. A failure is kept far
             # longer because it is the one a human still has questions about.
-            if status in ("completed", "error", "failed", "timeout") and ended:
+            if status in ORB_TERMINAL_STATES and ended:
                 if failed and not row.get("dismissed"):
                     _keep = 86400
                 else:
-                    _keep = 900 if row.get("category") == "monitoring" else 30
+                    _keep = 900 if row.get("category") == "monitoring" else ORB_VISIBLE_AFTER_DONE_S
                 if now - ended > _keep:
                     del PROCESSES[pid]
 
@@ -872,20 +850,11 @@ def cancel_process(pid):
 
 @tasks_bp.route('/api/processes/dismiss-failed', methods=['POST'])
 def dismiss_failed_processes():
-    """Clear every failed orb at once.
-
-    A failure that vanishes on the same 30-second timer as a success is a
-    failure the machine hid from you — but persistent must not become
-    permanent, or failed orbs accumulate around the avatar until they are the
-    only thing there.
-
-    A failure still never disappears on its own. It leaves when the user
-    says so.
-    """
+    """Dismiss every failed orb and acknowledge its retained record."""
     cleared = 0
     with PROCESSES_LOCK:
         for _pid, row in PROCESSES.items():
-            if (row.get("status") in ("error", "failed", "cancelled", "timeout")
+            if (row.get("status") in ("error", "failed", "cancelled", "timeout", "interrupted")
                     and not row.get("dismissed")):
                 row["dismissed"] = True
                 cleared += 1
@@ -968,7 +937,7 @@ def clear_orbs():
         for pid, row in list(PROCESSES.items()):
             if row.get("dismissed"):
                 continue
-            done = bool(row.get("ended")) or row.get("status") != "running"
+            done = bool(row.get("ended")) or row.get("status") in ORB_TERMINAL_STATES
             if scope == "all" or done:
                 row["dismissed"] = True
                 if not row.get("ended"):
@@ -981,11 +950,7 @@ def clear_orbs():
 
 @tasks_bp.route('/api/processes/<pid>/dismiss', methods=['POST'])
 def dismiss_process(pid):
-    """Acknowledge a failed orb so it stops orbiting.
-
-    Failures persist until dismissed rather than on a timer — a timer just
-    means the failure disappears while you are looking somewhere else.
-    """
+    """Acknowledge a process and remove its orb before its visible deadline."""
     with PROCESSES_LOCK:
         p = PROCESSES.get(pid)
         if p is None:

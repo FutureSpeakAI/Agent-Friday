@@ -3,7 +3,7 @@
 Pins that a local-inference orb's detail endpoint must carry
 model + intent log + result, the raw process status must map to the vocabulary
 the detail panel renders RESULT under ('completed' -> 'complete'), and
-monitoring processes must stay explorable well past the 30s ephemeral purge.
+monitoring processes must stay explorable past the five-minute orb lifetime.
 """
 import time
 
@@ -53,7 +53,7 @@ def test_monitoring_processes_outlive_ephemeral_purge(client):
     _register_inference_orb(pid_mon)
     core.process_register(pid_eph, name="Ephemeral", category="scheduler")
     try:
-        old = time.time() - 120  # 2 minutes ago: past 30s, inside 15 min
+        old = time.time() - 360  # 6 minutes ago: past the orbit, inside 15 min
         with core.PROCESSES_LOCK:
             for p in (pid_mon, pid_eph):
                 core.PROCESSES[p]["status"] = "completed"
@@ -63,7 +63,7 @@ def test_monitoring_processes_outlive_ephemeral_purge(client):
             assert pid_mon in core.PROCESSES, (
                 "monitoring orb purged too early — the detail view must stay "
                 "explorable after completion")
-            assert pid_eph not in core.PROCESSES, "ephemeral orb should purge at 30s"
+            assert pid_eph not in core.PROCESSES, "ephemeral records expire after five minutes"
     finally:
         core.process_remove(pid_mon)
         core.process_remove(pid_eph)

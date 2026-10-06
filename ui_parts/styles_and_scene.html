@@ -618,9 +618,9 @@
                 general:  { word: 'helper', also: [] },
             };
             const KIND_IDS = Object.keys(KINDS);
-            const SPIRAL_S = 1.6;
+            const DONE_VISIBLE_MS = 300000;
+            const isFinished = p => !!(p && p.ended) || /^(completed|error|failed|cancelled|timeout|interrupted)$/.test((p && p.status) || '');
             const clamp01 = v => Math.max(0, Math.min(1, v));
-            const smooth = t => { t = clamp01(t); return t * t * (3 - 2 * t); };
             const num = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
             function fnv(s) {
                 let h = 0x811c9dc5;
@@ -768,11 +768,6 @@
                 return null;
             }
             const orbitRadius = (p, outer, inner) => (p === null || p === undefined) ? outer : outer - (outer - inner) * clamp01(p);
-            // A finished orb spirals into the core: radius to zero, a turn and a quarter.
-            function spiralAt(t, r0, a0) {
-                const e = smooth(t / SPIRAL_S);
-                return { r: r0 * (1 - e), a: a0 + Math.PI * 2.5 * e, s: 1 - 0.7 * e, done: t >= SPIRAL_S };
-            }
 
             // What the server knows about a finished helper, and for a failed
             // one, the fix it can actually offer.
@@ -879,8 +874,8 @@
                 }
             }
 
-            return { HUES, KINDS, KIND_IDS, SPIRAL_S, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
-                     progressOf, orbitRadius, spiralAt, receipt, starAt, keepOut, inKeepOut, liftFor, sparkGate, tint,
+            return { HUES, KINDS, KIND_IDS, DONE_VISIBLE_MS, isFinished, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
+                     progressOf, orbitRadius, receipt, starAt, keepOut, inKeepOut, liftFor, sparkGate, tint,
                      approvalTask, orbForFrame, formParams };
         })();
         // </orb-life>
@@ -1314,7 +1309,7 @@
             }
             function open(o) {
                 // A failed helper opens on its fix, and has now been looked at.
-                if (/^(failed|error|timeout)$/.test(String(o.status || ''))) {
+                if (/^(failed|error|timeout|cancelled|interrupted)$/.test(String(o.status || ''))) {
                     if (typeof fridayNavigate === 'function') fridayNavigate({ workspace: 'system', tab: 'task', task: o.task_id || o.id });
                     call('lookedAt', o.id);
                     return { ok: true, opened: 'fix' };
@@ -1387,10 +1382,10 @@
         //            out of the centre UI (the prompt row, the dock, the bar);
         //   OK:      amber, a slow gentle glow, a little forward: the one
         //            place amber shows;
-        //   failed:  error red with the word, dim, and it stays until looked at;
+        //   failed:  error red with the word, dim, and inspectable until expiry or dismissal;
         //   sparks:  one small spark per tool call, rate-limited;
         //   moons:   a helper's own helpers orbit it, small;
-        //   done:    it spirals into Friday and leaves its receipt.
+        //   done:    it keeps drifting until its five-minute deadline or Clear.
         // It is FridayOrbHands' source: where each orb is on screen, and
         // what the hand is doing to it.
         const FridayOrbScene = (function () {
@@ -1461,16 +1456,17 @@
                 dot.style.color = '#' + FridayOrbLife.HUES[s.hue].hex.toString(16).padStart(6, '0');
                 const name = document.createElement('span');
                 name.className = 'orb-name';
-                name.textContent = FridayOrbLife.hueWord(s.hue) + (s.failed ? ' · Failed' : s.approval ? ' · needs your OK' : '');
+                name.textContent = s.failed ? 'Failed · ' : s.approval ? 'needs your OK · ' : '';
                 const text = document.createElement('span');
                 text.className = 'orb-text';
                 text.textContent = ' ' + String(o.label || '').slice(0, 22);
                 el.appendChild(dot); el.appendChild(name); el.appendChild(text);
-                if (o.model) {
+                const runner = o.model || s.row.name;
+                if (runner) {
                     const m = document.createElement('span');
                     m.className = s.cloud ? 'model-badge-cloud' : 'model-badge-local';
-                    m.title = String(o.model);
-                    m.textContent = ' ' + String(o.model).split('/').slice(-1)[0];
+                    m.title = String(runner);
+                    m.textContent = ' ' + String(runner).split('/').slice(-1)[0];
                     el.appendChild(m);
                 }
             }
@@ -1489,7 +1485,7 @@
                 const row = Object.assign({}, spec);
                 const kind = FridayOrbLife.kindOf(row);
                 const s = { row, kind, hue: FridayOrbLife.pickHue(others), mark: null, approval: null, failed: false,
-                            drag: null, spiral: null, sparks: [], sx: NaN, sy: NaN, baseR: o.oRadius, lift: 0 };
+                            drag: null, finished: false, sparks: [], sx: NaN, sy: NaN, baseR: o.oRadius, lift: 0 };
                 s.form = FridayOrbForms.build(kind, FridayOrbLife.formParams(kind, seed()), FridayOrbLife.HUES[s.hue].hex);
                 s.cloudRing = lineCircle(0.66, 0xdfe8f5, 0.35);
                 s.failRing = lineCircle(0.6, ERROR, 0.8);
@@ -1520,15 +1516,15 @@
                     o.group.add(s.form);
                 }
                 const st = String((upd && upd.status) || o.status || '');
-                const failed = /^(failed|error|timeout)$/.test(st);
-                if (failed !== s.failed) { s.failed = failed; if (failed) s.spiral = null; }
+                const failed = /^(failed|error|timeout|cancelled|interrupted)$/.test(st);
+                s.failed = failed;
+                if (!FridayOrbLife.isFinished(s.row)) s.finished = false;
                 paint(o, s);
             }
             function finish(o, s) {
-                // Done: spiral into Friday, then the layer's own exit; and the receipt.
-                const p = o.group.position;
-                s.spiral = { t: 0, r0: Math.hypot(p.x, p.z), a0: Math.atan2(p.z, p.x), y0: p.y };
-                receipt(o, s);
+                // Every finished outcome keeps its orbit and stops the form's spin.
+                s.finished = true;
+                if (o.status === 'completed') receipt(o, s);
             }
             async function receipt(o, s) {
                 const id = s.row.task_id;
@@ -1605,15 +1601,15 @@
                 each((o, s) => {
                     if (o.dying) return;
                     // the form turns slowly; a paused one is still
-                    if (s.mark !== 'paused' && !reduced) s.form.rotation.y += SPIN * dt;
+                    if (!s.finished && s.mark !== 'paused' && !reduced) s.form.rotation.y += SPIN * dt;
                     s.cloudRing.lookAt(cam.position); s.failRing.lookAt(cam.position);
                     // real progress closes the orbit; unknown never moves it
                     const p = FridayOrbLife.progressOf({ progress: o.progress, step_n: s.row.step_n, step_total: s.row.step_total });
                     const target = FridayOrbLife.orbitRadius(p, s.baseR, INNER);
-                    o.oRadius += (target - o.oRadius) * Math.min(1, dt * 0.6);
+                    if (!s.finished) o.oRadius += (target - o.oRadius) * Math.min(1, dt * 0.6);
                     // a helper's own helpers are its moons
                     const parent = moonOf(s);
-                    if (parent && !s.drag && !s.spiral) {
+                    if (parent && !s.drag) {
                         const a = clock * 0.6 + s.hue;
                         o.group.position.copy(parent.group.position).add(v.set(Math.cos(a) * MOON_R, 0.3 * Math.sin(a * 0.7), Math.sin(a) * MOON_R));
                         o.group.scale.setScalar(Math.min(o.group.scale.x, 0.55));
@@ -1625,23 +1621,15 @@
                     }
                     // waiting on you: a little forward, toward the camera
                     if (s.approval && !s.drag) o.group.position.lerp(v.copy(cam.position), 0.04 * Math.min(1, dt * 60) * 0.25);
-                    // done: the spiral home
-                    if (s.spiral) {
-                        s.spiral.t += dt;
-                        const sp = FridayOrbLife.spiralAt(s.spiral.t, s.spiral.r0, s.spiral.a0);
-                        o.group.position.set(Math.cos(sp.a) * sp.r, s.spiral.y0 * (sp.r / Math.max(1e-6, s.spiral.r0)), Math.sin(sp.a) * sp.r);
-                        o.group.scale.setScalar(sp.s);
-                        if (sp.done && !s.spiralled) { s.spiralled = true; mgr.__rm0(o.id); }
-                    }
                     // where it is on screen; out of the centre UI
                     const q = o.group.position.clone().project(cam);
                     s.sx = (q.x * 0.5 + 0.5) * W; s.sy = (-q.y * 0.5 + 0.5) * H;
                     // Behind Friday: farther than her centre and inside her outline.
                     // Its label fades and the hand cannot take it until it comes round.
-                    s.behind = !s.drag && !s.spiral && o.group.position.distanceTo(cam.position) > coreDist
+                    s.behind = !s.drag && o.group.position.distanceTo(cam.position) > coreDist
                         && Math.hypot(s.sx - core.x, s.sy - core.y) < core.r;
                     o.labelEl.style.opacity = s.behind ? '0' : '';
-                    if (!s.drag && !s.spiral && q.z < 1) {
+                    if (!s.drag && q.z < 1) {
                         if (FridayOrbLife.liftFor(s.sx, s.sy, W, H) > 0) o.oHeight += LIFT_RATE * dt;     // above the prompt row and dock
                         else if (s.sy < 48) o.oHeight -= LIFT_RATE * dt;                                // below the top bar
                     }
@@ -1687,7 +1675,7 @@
                     orbs: () => {
                         const out = [];
                         each((o, s) => {
-                            if (o.dying || s.spiral || s.behind) return;
+                            if (o.dying || s.behind) return;
                             out.push({ id: o.id, task_id: s.row.task_id || null, trace_id: s.row.trace_id || null, kind: s.kind, hue: s.hue,
                                        label: o.label, status: s.failed ? 'failed' : (s.row.status || o.status), step_n: s.row.step_n,
                                        step_total: s.row.step_total, approval_id: s.approval, started: o.createdAt, pausable: !!s.row.pausable,
@@ -1714,15 +1702,8 @@
                     upd0(id, upd);
                     if (s) {
                         merge(o, s, upd);
-                        if (upd && upd.status === 'completed' && !s.spiral) finish(o, s);
+                        if (FridayOrbLife.isFinished(s.row) && !s.finished) finish(o, s);
                     }
-                };
-                m.removeOrb = id => {
-                    const o = m.orbs.get(id), s = state(o);
-                    if (!s) return rm0(id);
-                    if (s.failed && !s.looked) return;                  // a failure stays until looked at
-                    if (s.spiral) return;                               // already on its way home
-                    return rm0(id);
                 };
                 m._cleanup = id => {
                     const o = m.orbs.get(id), s = state(o);
@@ -1749,9 +1730,9 @@
         //   local work (her private handoff; her local answers): the dots
         //     nearest her glow;
         //   a cloud call (her sealed egress, "sent": the only trigger): a pulse
-        //     leaves her and spools a web of links across the dots, pulled
-        //     back in when the answer comes (her next route, tool, round,
-        //     verify or error frame), or after a cap;
+        //     travels across the stars, fading behind its leading edge. A sent
+        //     wave finishes even when its reply is quick; reply state remains
+        //     available separately to the avatar;
         //   offline (the network check says so): the field goes still.
         // The web is a privacy signal, so it never fires for decoration.
         // Brightness changes are gentle and the web fades in; the scene's
@@ -1809,17 +1790,23 @@
         })();
 
         const FridayField = (function () {
-            // The box the dots live in, around the view; travel is toward +z.
-            const MIN = [-70, -42, -130], SIZE = [140, 84, 150], TRAVEL = 1.4;        // units per second at full speed
-            const WEB_DIR = [0.38, 0.78, -0.5], WEB_N = 240, WEB_K = 3, WEB_R = 46;
-            // A lens (uLens: its centre in view space, uLensR: its Einstein
-            // radius as an angle, 0 = none) moves each dot behind it to where a
-            // point mass would show it: outward along the line from the lens, so
-            // the dots crowd round it as a ring. The radius is also the shadow's:
-            // nothing behind shows inside it, however near behind it is. Dots in
-            // front of the lens are not touched.
-            const VS = `attribute float phase; uniform float uDist; uniform float uCurrent; uniform float uGlow; uniform float uSize;
-                uniform vec3 uMin; uniform vec3 uSize3; uniform vec3 uLens; uniform float uLensR; varying float vBright;
+            // A connected constellation spans near stars and the deep sky. Its
+            // topology changes only on a real send; endpoints remain the moving
+            // stars themselves. A finite wavefront reveals and then erases it.
+            const MIN = [-80, -48, -155], SIZE = [160, 96, 175], TRAVEL = 0.7;
+            const WEB_N = 320, WEB_K = 4, SEGMENTS = 6, WAVE_S = 6.5;
+            const LENS = `if (uLensR > 0.0 && mv.z < uLens.z - 0.5) {
+                float ds = -mv.z, dl = -uLens.z;
+                vec2 c = uLens.xy / dl, th = mv.xy / ds - c;
+                float t = length(th), te = uLensR * sqrt(max(0.0, (ds - dl) / ds));
+                vec2 dir = t > 1e-5 ? th / t : vec2(1.0, 0.0);
+                mv.xy = (c + dir * max(0.5 * t + sqrt(0.25 * t * t + te * te), uLensR * 1.03)) * ds;
+            }`;
+            const VS = `attribute float phase; attribute float arrival;
+                uniform float uDist; uniform float uCurrent; uniform float uGlow; uniform float uSize;
+                uniform float uFront[3]; uniform float uWidth; uniform float uWave[3];
+                uniform vec3 uMin; uniform vec3 uSize3; uniform vec3 uLens; uniform float uLensR;
+                varying float vBright; varying float vPhase; varying float vPulse;
                 void main() {
                     vec3 p = position;
                     p.z = uMin.z + mod(position.z - uMin.z + uDist, uSize3.z);
@@ -1828,45 +1815,56 @@
                     p -= normalize(p + vec3(1e-4)) * uCurrent * 1.8 * (0.5 + 0.5 * sin(phase * 40.0 + uDist * 0.6));
                     float near = 1.0 - smoothstep(4.0, 16.0, length(p));
                     float zf = (p.z - uMin.z) / uSize3.z;
-                    vBright = (0.8 + uGlow * near * 1.4) * smoothstep(0.0, 0.12, zf) * (1.0 - smoothstep(0.86, 1.0, zf));
-                    vec4 mv = modelViewMatrix * vec4(p, 1.0);
-                    if (uLensR > 0.0 && mv.z < uLens.z - 0.5) {
-                        float ds = -mv.z, dl = -uLens.z;
-                        vec2 c = uLens.xy / dl, th = mv.xy / ds - c;
-                        float t = length(th), te = uLensR * sqrt(max(0.0, (ds - dl) / ds));
-                        vec2 dir = t > 1e-5 ? th / t : vec2(1.0, 0.0);
-                        mv.xy = (c + dir * max(0.5 * t + sqrt(0.25 * t * t + te * te), uLensR * 1.03)) * ds;
+                    vPulse = 0.0;
+                    for (int i = 0; i < 3; i++) {
+                        float behind = (uFront[i] - arrival) / max(0.01, uWidth);
+                        float light = smoothstep(0.0, 0.18, behind) * (1.0 - smoothstep(0.25, 1.0, behind)) * uWave[i];
+                        if (arrival >= 0.0) vPulse = max(vPulse, light);
                     }
-                    gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)), 1.0, 6.0);
+                    vBright = (0.42 + phase * 0.5 + uGlow * near + vPulse * 1.2)
+                        * smoothstep(0.0, 0.08, zf) * (1.0 - smoothstep(0.91, 1.0, zf));
+                    vPhase = phase;
+                    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                    ${LENS}
+                    gl_PointSize = clamp(uSize * (0.65 + phase * 1.5 + vPulse) * (300.0 / max(1.0, -mv.z)), 1.0, 5.0);
                     gl_Position = projectionMatrix * mv;
                 }`;
-            const FS = `uniform vec3 uColor; varying float vBright;
+            const FS = `uniform vec3 uColor; varying float vBright; varying float vPhase; varying float vPulse;
                 void main() {
                     float d = length(gl_PointCoord - 0.5);
-                    float a = 1.0 - smoothstep(0.15, 0.5, d);
-                    gl_FragColor = vec4(uColor * vBright, a * vBright * 0.75);
+                    float a = 1.0 - smoothstep(0.08, 0.5, d);
+                    vec3 stellar = mix(uColor, vec3(0.72, 0.83, 1.0), 0.35 + vPhase * 0.4);
+                    stellar = mix(stellar, vec3(0.85, 0.97, 1.0), vPulse * 0.65);
+                    gl_FragColor = vec4(stellar * vBright, a * vBright * 0.75);
                 }`;
+            const WEB_VS = `attribute vec3 color; varying vec3 vColor; uniform vec3 uLens; uniform float uLensR;
+                void main() { vColor = color; vec4 mv = modelViewMatrix * vec4(position, 1.0);
+                    ${LENS} gl_Position = projectionMatrix * mv; }`;
+            const WEB_FS = `varying vec3 vColor; void main() { gl_FragColor = vec4(vColor, 1.0); }`;
             let pts = null, mat = null, seeds = null, phases = null, n = 0, dist = 0, current = 0, scn = null;
-            let web = null, webGeo = null, webMat = null, webNodes = null, webEdges = null, pulse = null, offlineAt = -1, clock = 0;
-            const _c = new THREE.Color();
-            // How many dots the hardware gets.
+            let web = null, webGeo = null, webMat = null, webNodes = null, webEdges = [], routes = [], span = 1;
+            let waves = [];
+            let positions = null, lastSend = 0, offlineAt = -1, clock = 0, litEdges = 0;
+            const smooth = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+            function lightAt(distance, front, width) {
+                const behind = (front - distance) / Math.max(0.01, width);
+                return smooth(behind / 0.18) * (1 - smooth((behind - 0.25) / 0.75));
+            }
             function count() {
                 if (window.__fridayLowCost) return 1200;
                 const c = navigator.hardwareConcurrency || 4, m = navigator.deviceMemory || 4;
                 return c >= 8 && m >= 8 ? 7000 : c >= 4 && m >= 4 ? 4000 : 2000;
             }
-            // Where dot i is now: the vertex shader's own arithmetic, for the web.
             function posOf(i, out) {
                 const x = seeds[i * 3], y = seeds[i * 3 + 1], z = seeds[i * 3 + 2], ph = phases[i];
-                let pz = MIN[2] + (((z - MIN[2] + dist) % SIZE[2]) + SIZE[2]) % SIZE[2];
-                let px = x + Math.sin(dist * 0.05 + ph * 6.2832) * 0.6, py = y + Math.cos(dist * 0.04 + ph * 6.2832) * 0.4;
+                const pz = MIN[2] + (((z - MIN[2] + dist) % SIZE[2]) + SIZE[2]) % SIZE[2];
+                const px = x + Math.sin(dist * 0.05 + ph * 6.2832) * 0.6, py = y + Math.cos(dist * 0.04 + ph * 6.2832) * 0.4;
                 const l = Math.hypot(px, py, pz) || 1e-4, k = current * 1.8 * (0.5 + 0.5 * Math.sin(ph * 40 + dist * 0.6));
                 out[0] = px - (px / l) * k; out[1] = py - (py / l) * k; out[2] = pz - (pz / l) * k;
                 return out;
             }
             function build(scene) {
-                dispose();
-                scn = scene; n = count(); dist = 0;
+                dispose(); scn = scene; n = count(); dist = clock = 0; offlineAt = -1; lastSend = FridayFieldState.fired(); waves = [];
                 seeds = new Float32Array(n * 3); phases = new Float32Array(n);
                 for (let i = 0; i < n; i++) {
                     seeds[i * 3] = MIN[0] + Math.random() * SIZE[0];
@@ -1877,124 +1875,156 @@
                 const g = new THREE.BufferGeometry();
                 g.setAttribute('position', new THREE.BufferAttribute(seeds, 3));
                 g.setAttribute('phase', new THREE.BufferAttribute(phases, 1));
-                g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 200);   // drawn wherever the shader puts them
+                g.setAttribute('arrival', new THREE.BufferAttribute(new Float32Array(n).fill(-1), 1));
+                g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 230);
                 mat = new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false,
                     blending: THREE.AdditiveBlending, uniforms: { uDist: { value: 0 }, uCurrent: { value: 0 }, uGlow: { value: 0 },
-                    uSize: { value: 0.4 }, uMin: { value: new THREE.Vector3(...MIN) }, uSize3: { value: new THREE.Vector3(...SIZE) },
-                    uLens: { value: new THREE.Vector3() }, uLensR: { value: 0 },
-                    uColor: { value: new THREE.Color(0x5fa8ff) } } });
-                pts = new THREE.Points(g, mat);
-                pts.userData.worldField = true;
-                scene.add(pts);
+                    uFront: { value: new Float32Array(3).fill(-1) }, uWidth: { value: 1 }, uWave: { value: new Float32Array(3) },
+                    uSize: { value: 0.45 }, uMin: { value: new THREE.Vector3(...MIN) }, uSize3: { value: new THREE.Vector3(...SIZE) },
+                    uLens: { value: new THREE.Vector3() }, uLensR: { value: 0 }, uColor: { value: new THREE.Color(0x5fa8ff) } } });
+                pts = new THREE.Points(g, mat); pts.userData.worldField = true; scene.add(pts);
+                const capacity = WEB_N * (WEB_K + 1) * SEGMENTS * 6;
                 webGeo = new THREE.BufferGeometry();
-                webGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(WEB_N * WEB_K * 6), 3));
-                webGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(WEB_N * WEB_K * 6), 3));
-                webMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
-                web = new THREE.LineSegments(webGeo, webMat);
-                web.frustumCulled = false; web.visible = false;
-                scene.add(web);
-                const pg = new THREE.BufferGeometry();
-                pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
-                pulse = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xbfefff, size: 0.5, transparent: true, opacity: 0,
-                    blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true }));
-                pulse.frustumCulled = false; pulse.visible = false;
-                scene.add(pulse);
+                webGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(capacity), 3));
+                webGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(capacity), 3));
+                webGeo.setDrawRange(0, 0);
+                webMat = new THREE.ShaderMaterial({ vertexShader: WEB_VS, fragmentShader: WEB_FS, transparent: true,
+                    blending: THREE.AdditiveBlending, depthWrite: false,
+                    uniforms: { uLens: mat.uniforms.uLens, uLensR: mat.uniforms.uLensR } });
+                web = new THREE.LineSegments(webGeo, webMat); web.frustumCulled = false; web.visible = false;
+                web.userData.constellation = true; scene.add(web);
                 return pts;
             }
-            // The dots the web spans: those in a cone from her toward "the
-            // cloud", each linked to its nearest few.
-            function chooseWeb() {
-                const dir = WEB_DIR, dl = Math.hypot(...dir), p = [0, 0, 0], cand = [];
+            // Nearest-neighbour filaments plus an outward spanning tree keep
+            // the deep branches connected. Graph distances determine arrival,
+            // so light follows connections rather than flashing a radial shell.
+            function chooseWeb(id) {
+                const p = [0, 0, 0], candidates = [];
                 for (let i = 0; i < n; i++) {
-                    posOf(i, p);
-                    const r = Math.hypot(p[0], p[1], p[2]);
-                    if (r < 4 || r > WEB_R) continue;
-                    const cos = (p[0] * dir[0] + p[1] * dir[1] + p[2] * dir[2]) / (r * dl);
-                    if (cos > 0.55) cand.push([i, r]);
+                    posOf(i, p); const r = Math.hypot(...p);
+                    if (r > 5 && r < 160 && p[2] < 12) candidates.push({ i, r });
                 }
-                cand.sort((a, b) => a[1] - b[1]);
-                webNodes = cand.slice(0, WEB_N).map(c => c[0]);
-                const at = webNodes.map(i => posOf(i, [0, 0, 0]));
-                webEdges = [];
+                candidates.sort((a, b) => a.r - b.r);
+                const limit = window.__fridayLowCost ? 180 : WEB_N;
+                const near = candidates.slice(0, 24), far = candidates.slice(24);
+                // Rotate the sampled deep stars for each send, retaining a
+                // nearby origin and coverage across the entire depth range.
+                const stride = far.length / Math.max(1, limit - near.length);
+                webNodes = near.map(v => v.i);
+                for (let k = 0; k < limit - near.length && k < far.length; k++) {
+                    const j = Math.min(far.length - 1, Math.floor((k + (id * 0.381966 % 1)) * stride));
+                    webNodes.push(far[j].i);
+                }
+                const at = webNodes.map(i => posOf(i, [0, 0, 0])), links = at.map(() => []), seen = new Set();
+                webEdges = []; routes = at.map(() => Infinity); positions = new Float32Array(at.length * 3);
+                function link(a, b, length) {
+                    const key = Math.min(a, b) + ':' + Math.max(a, b);
+                    if (seen.has(key)) return;
+                    seen.add(key); webEdges.push([a, b, length]); links[a].push([b, length]); links[b].push([a, length]);
+                }
                 for (let a = 0; a < at.length; a++) {
                     const near = [];
-                    for (let b = 0; b < at.length; b++) if (b !== a) near.push([b, Math.hypot(at[a][0] - at[b][0], at[a][1] - at[b][1], at[a][2] - at[b][2])]);
+                    for (let b = 0; b < at.length; b++) if (a !== b)
+                        near.push([b, Math.hypot(at[a][0] - at[b][0], at[a][1] - at[b][1], at[a][2] - at[b][2])]);
                     near.sort((x, y) => x[1] - y[1]);
-                    for (const [b] of near.slice(0, WEB_K)) if (a < b || !webEdges.some(e => e[0] === b && e[1] === a)) webEdges.push([a, b]);
+                    for (const [b, length] of near.slice(0, WEB_K)) link(a, b, length);
+                    const parent = near.find(v => v[0] < a);
+                    if (parent) link(a, parent[0], parent[1]);
                 }
-                webEdges = webEdges.slice(0, WEB_N * WEB_K);
+                if (!at.length) return;
+                routes[0] = Math.hypot(...at[0]);
+                const visited = new Uint8Array(at.length);
+                for (let k = 0; k < at.length; k++) {
+                    let a = -1;
+                    for (let j = 0; j < at.length; j++) if (!visited[j] && (a < 0 || routes[j] < routes[a])) a = j;
+                    visited[a] = 1;
+                    for (const [b, length] of links[a]) routes[b] = Math.min(routes[b], routes[a] + length);
+                }
+                span = Math.max(1, ...webEdges.map(([a, b, length]) => (routes[a] + routes[b] + length) * 0.5));
+                const arrival = pts.geometry.attributes.arrival;
+                arrival.array.fill(-1);
+                for (let i = 0; i < webNodes.length; i++) arrival.array[webNodes[i]] = routes[i];
+                arrival.needsUpdate = true;
             }
-            // The lens: a world-space centre and an Einstein radius in world
-            // units at that centre, set each frame by whatever bends light (0
-            // or no call: none). Read in view space so it follows the camera.
-            let lensAt = null, lensR = 0, last = null;
-            const _lv = new THREE.Vector3();
+            let lensAt = null, lensR = 0, last = null, subscribed = false;
+            const _lv = new THREE.Vector3(), _p = [0, 0, 0];
             function setLens(worldPos, radius) { lensAt = worldPos ? (lensAt || new THREE.Vector3()).copy(worldPos) : null; lensR = radius || 0; }
-            let subscribed = false;
             function update(dt, opts) {
                 if (!pts) return null;
                 clock += dt;
-                // Her frames, once the feed exists (the page's script defines it after the scene's).
                 if (!subscribed && window.fridayApprovalFeed && window.fridayApprovalFeed.onPresence) {
-                    subscribed = true;
-                    window.fridayApprovalFeed.onPresence(f => FridayFieldState.frame(f));
+                    subscribed = true; window.fridayApprovalFeed.onPresence(f => FridayFieldState.frame(f));
                 }
-                // The network check (body.net-offline), read once a second.
                 if (clock - offlineAt > 1) { offlineAt = clock; FridayFieldState.setOffline(document.body && document.body.classList.contains('net-offline')); }
-                const reduced = !!(opts && opts.reduced);
-                const s = FridayFieldState.step(dt);
-                dist += s.speed * TRAVEL * (reduced ? 0.35 : 1) * dt;
+                const reduced = !!(opts && opts.reduced), s = FridayFieldState.step(dt);
+                dist += s.speed * TRAVEL * (reduced ? 0 : 1) * dt;
                 current = reduced ? 0 : s.current;
-                mat.uniforms.uDist.value = dist;
-                mat.uniforms.uCurrent.value = current;
-                mat.uniforms.uGlow.value = s.glow;
+                mat.uniforms.uDist.value = dist; mat.uniforms.uCurrent.value = current; mat.uniforms.uGlow.value = s.glow;
                 if (opts && opts.color) mat.uniforms.uColor.value.copy(opts.color).multiplyScalar(0.8);
                 if (lensAt && lensR > 0 && opts && opts.camera) {
-                    _lv.copy(lensAt).applyMatrix4(opts.camera.matrixWorldInverse);
-                    mat.uniforms.uLens.value.copy(_lv);
+                    _lv.copy(lensAt).applyMatrix4(opts.camera.matrixWorldInverse); mat.uniforms.uLens.value.copy(_lv);
                     mat.uniforms.uLensR.value = _lv.z < -0.5 ? lensR / -_lv.z : 0;
                 } else mat.uniforms.uLensR.value = 0;
-                lensR = 0;                                         // set again next frame, or gone
-                last = s;
-                // The web.
-                if (s.web) {
-                    if (!webNodes) chooseWeb();
-                    const pos = webGeo.attributes.position.array, col = webGeo.attributes.color.array, p = [0, 0, 0], q = [0, 0, 0];
-                    const front = s.web.front * WEB_R, cy = new THREE.Color(0x00d4ff);
-                    let k = 0;
-                    for (const [a, b] of webEdges) {
-                        posOf(webNodes[a], p); posOf(webNodes[b], q);
-                        const reach = Math.max(Math.hypot(p[0], p[1], p[2]), Math.hypot(q[0], q[1], q[2]));
-                        const lit = s.web.intensity * (1 - Math.max(0, Math.min(1, (reach - front + 6) / 6))) * 0.35;
-                        for (const [v, j] of [[p, 0], [q, 1]]) {
-                            pos[(k * 2 + j) * 3] = v[0]; pos[(k * 2 + j) * 3 + 1] = v[1]; pos[(k * 2 + j) * 3 + 2] = v[2];
-                            col[(k * 2 + j) * 3] = cy.r * lit; col[(k * 2 + j) * 3 + 1] = cy.g * lit; col[(k * 2 + j) * 3 + 2] = cy.b * lit;
-                        }
-                        k++;
-                    }
-                    webGeo.setDrawRange(0, k * 2);
-                    webGeo.attributes.position.needsUpdate = true; webGeo.attributes.color.needsUpdate = true;
-                    web.visible = true;
-                    // the pulse rides the front, out along the cone
-                    const d = WEB_DIR, dl = Math.hypot(...d), r = Math.max(2, front - 3);
-                    const pp = pulse.geometry.attributes.position.array;
-                    pp[0] = d[0] / dl * r; pp[1] = d[1] / dl * r; pp[2] = d[2] / dl * r;
-                    pulse.geometry.attributes.position.needsUpdate = true;
-                    pulse.material.opacity = 0.7 * s.web.intensity * (s.web.phase === 'hold' ? 0 : 1);
-                    pulse.visible = pulse.material.opacity > 0.01;
-                } else if (web.visible) {
-                    web.visible = false; pulse.visible = false; webNodes = null;
+                lensR = 0; last = s; litEdges = 0;
+                const sent = FridayFieldState.fired();
+                if (sent !== lastSend) {
+                    // Concurrent sends share this constellation. Three bounded
+                    // wavefronts can overlap without rebuilding the network or
+                    // multiplying its brightness. A later quiet send reroutes it.
+                    if (!waves.length) chooseWeb(sent);
+                    waves.push(0); if (waves.length > 3) waves.shift(); lastSend = sent;
                 }
+                waves = waves.map(age => age + dt).filter(age => age < WAVE_S * 1.18);
+                const fronts = mat.uniforms.uFront.value, gains = mat.uniforms.uWave.value;
+                gains.fill(0);
+                for (let i = 0; i < waves.length; i++) {
+                    fronts[i] = waves[i] / WAVE_S * span;
+                    gains[i] = smooth(waves[i] / 0.6) * (reduced ? 0.45 : 1);
+                }
+                if (waves.length) {
+                    const width = span * 0.18; mat.uniforms.uWidth.value = width;
+                    for (let i = 0; i < webNodes.length; i++) {
+                        posOf(webNodes[i], _p); positions.set(_p, i * 3);
+                    }
+                    const pos = webGeo.attributes.position.array, col = webGeo.attributes.color.array;
+                    let k = 0;
+                    for (const [a, b, length] of webEdges) {
+                        const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
+                        const bx = positions[b * 3], by = positions[b * 3 + 1], bz = positions[b * 3 + 2];
+                        // A wrapped star fades out rather than drawing a line
+                        // across the universe to its old neighbours.
+                        const wrapped = Math.abs(az - bz) > length + 12;
+                        let edgeLit = false;
+                        for (let j = 0; j < SEGMENTS; j++) for (let end = 0; end < 2; end++) {
+                            const t = (j + end) / SEGMENTS;
+                            const arrival = Math.min(routes[a] + length * t, routes[b] + length * (1 - t));
+                            let light = 0;
+                            if (!wrapped) for (let w = 0; w < waves.length; w++)
+                                light = Math.max(light, lightAt(arrival, fronts[w], width) * gains[w] * 0.48);
+                            edgeLit = edgeLit || light > 0.015;
+                            pos[k] = ax + (bx - ax) * t; pos[k + 1] = ay + (by - ay) * t; pos[k + 2] = az + (bz - az) * t;
+                            const tint = arrival / span;
+                            col[k] = light * (0.25 + 0.4 * tint); col[k + 1] = light * (0.9 - 0.4 * tint); col[k + 2] = light;
+                            k += 3;
+                        }
+                        if (edgeLit) litEdges++;
+                    }
+                    webGeo.setDrawRange(0, k / 3); webGeo.attributes.position.needsUpdate = true; webGeo.attributes.color.needsUpdate = true;
+                    web.visible = litEdges > 0;
+                } else { web.visible = false; }
                 return s;
             }
             function dispose() {
-                for (const o of [pts, web, pulse]) if (o) { if (scn) scn.remove(o); o.geometry.dispose(); o.material.dispose(); }
-                pts = web = pulse = null; webNodes = null;
+                for (const o of [pts, web]) if (o) { if (scn) scn.remove(o); o.geometry.dispose(); o.material.dispose(); }
+                pts = web = null; webNodes = null; webEdges = []; routes = []; positions = null; last = null; waves = [];
             }
             return { build, update, dispose, count, setLens, state: () => last, _posOf: posOf, _n: () => n,
-                     _lens: () => (mat ? mat.uniforms.uLensR.value : 0),
-                     _web: () => (web ? { visible: web.visible, edges: webEdges ? webEdges.length : 0 } : null) };
+                _lens: () => (mat ? mat.uniforms.uLensR.value : 0), _lightAt: lightAt,
+                _web: () => (web ? { visible: web.visible, waves: waves.length, edges: webEdges.length, lit: litEdges, nodes: webNodes ? webNodes.length : 0,
+                    depth: positions ? Math.min(...Array.from(positions).filter((v, i) => i % 3 === 2)) : 0,
+                    span, routes: routes.slice(), ids: webNodes ? webNodes.slice() : [] } : null) };
         })();
+
         // </world-field>
 
         // --- THREE.JS ENGINE ---
@@ -2057,6 +2087,7 @@
             constructor(scn, cam, rend) {
                 this.scene = scn; this.camera = cam; this.renderer = rend;
                 this.orbs = new Map();
+                this.dismissed = new Map();
                 this.maxOrbs = 8;
                 this.labelContainer = document.createElement('div');
                 this.labelContainer.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:55;';
@@ -2098,12 +2129,19 @@
             _catColor(cat) {
                 return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x00ff80}[cat] || 0x00d4ff;
             }
-            addOrb({id, label, category, icon, model, color: explicitColor}) {
+            addOrb({id, label, category, icon, model, started, color: explicitColor}) {
+                // A late poll cannot recreate an orb just cleared by the user.
+                const dismissedAt = this.dismissed.get(id);
+                if (dismissedAt != null) {
+                    if (!(typeof started === 'number' && started * 1000 > dismissedAt)
+                        && Date.now() - dismissedAt < FridayOrbLife.DONE_VISIBLE_MS) return;
+                    this.dismissed.delete(id);
+                }
                 if (this.orbs.has(id)) return;
                 if (this.orbs.size >= this.maxOrbs) {
                     let oldest = null;
                     for (const [oid, o] of this.orbs) {
-                        if (o.status === 'completed' && (!oldest || o.createdAt < oldest.t)) oldest = {id: oid, t: o.createdAt};
+                        if (FridayOrbLife.isFinished(o) && (!oldest || o.createdAt < oldest.t)) oldest = {id: oid, t: o.createdAt};
                     }
                     if (oldest) this._cleanup(oldest.id); else return;
                 }
@@ -2139,21 +2177,28 @@
                 this.labelContainer.appendChild(labelEl);
                 this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,
                     oAngle,oRadius,oHeight,oSpeed, /* null = nobody can compute a fraction for this yet; 0 would be a claim */ progress:null, status:'running',
-                    birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[],
+                    birthTime:0, birthDone:false, dying:false, finishedAt:null, createdAt:Date.now(), steps:[],
                     hoverScale:1.0, baseGlowOpacity:0.4, snapping:false});
             }
             updateOrb(id, upd) {
                 const o = this.orbs.get(id); if (!o) return;
                 if (upd.progress !== undefined) o.progress = (upd.progress === null) ? null : Math.max(0,Math.min(1,upd.progress));
-                if (upd.status !== undefined) o.status = upd.status;
+                if (upd.model !== undefined) o.model = upd.model;
+                if (upd.status !== undefined) {
+                    o.status = upd.status;
+                    if (FridayOrbLife.isFinished(upd)) {
+                        const ended = typeof upd.ended === 'number' && Number.isFinite(upd.ended) ? Math.min(Date.now(), upd.ended * 1000) : Date.now();
+                        o.finishedAt = o.finishedAt == null ? ended : Math.min(o.finishedAt, ended);
+                    } else o.finishedAt = null;
+                }
                 if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
                 if (upd.status === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
                 else if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
             }
             removeOrb(id) {
-                const o = this.orbs.get(id); if (!o || o.dying) return;
-                o.dying = true; o.deathTime = 0;
-                o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80);
+                // Clear and expiry remove the orb without a completion animation.
+                this.dismissed.set(id, Date.now());
+                this._cleanup(id);
             }
             getOrbs() {
                 const out = [];
@@ -2190,7 +2235,11 @@
             }
             update(dt, elapsed) {
                 const amp = holoAmplitude;
-                const dead = [];
+                const now = Date.now();
+                for (const [id, at] of this.dismissed) if (now - at >= FridayOrbLife.DONE_VISIBLE_MS) this.dismissed.delete(id);
+                for (const [id, o] of this.orbs) {
+                    if (o.finishedAt != null && now - o.finishedAt >= FridayOrbLife.DONE_VISIBLE_MS) this._cleanup(id);
+                }
 
                 // Pre-pass: project every live orb to screen so we can both clamp the label
                 // and run a screen-space hit test for hover. Screen-space hover is much more
@@ -2259,18 +2308,12 @@
                     }
                     if (o.snapping) anyInSnapRange = true;
 
-                    // Scale: birth > death > hover. Use mutually exclusive branches so they don't fight.
+                    // Scale eases in at birth, then follows hover.
                     if (!o.birthDone) {
                         o.birthTime += dt;
                         const t = Math.min(1, o.birthTime/0.6);
                         o.group.scale.setScalar(1-Math.pow(1-t,3));
                         if (t>=1) o.birthDone = true;
-                    } else if (o.dying) {
-                        o.deathTime += dt;
-                        const t = Math.min(1, o.deathTime/0.5);
-                        o.group.scale.setScalar(1-t);
-                        o.labelEl.style.opacity = String(1-t);
-                        if (t>=1) { dead.push(id); continue; }
                     } else {
                         const target = isHovered ? 1.2 : 1.0;
                         o.hoverScale += (target - o.hoverScale) * Math.min(1, dt*8);
@@ -2361,7 +2404,6 @@
                 }
                 // Pointer cursor for the whole snap zone, not just the tight hover radius.
                 this.renderer.domElement.style.cursor = (hoveredId || anyInSnapRange) ? 'pointer' : '';
-                for (const id of dead) this._cleanup(id);
             }
         }
 
@@ -2428,6 +2470,91 @@
         function clearMoodOverride() {
             moodOverride = null;
         }
+
+        // <avatar-signature-motion>
+        // State envelopes are shared; articulation belongs to each anatomy.
+        // No head coordinates enter this layer: the avatar stays in its world.
+        const FridayAvatarMotion = (() => {
+            const state = { voice: 0, processing: 0, creating: 0, listening: 0, phase: 0, reduced: false };
+            const clamp = x => Math.max(0, Math.min(1, Number.isFinite(+x) ? +x : 0));
+            function step(dt, input) {
+                dt = Math.max(0, Math.min(0.1, +dt || 0));
+                const s = input || {}, mood = s.mood || 'IDLE';
+                const wants = { voice: s.speaking ? clamp(s.voice) : 0,
+                    processing: ['REASONING', 'EXECUTING', 'FOCUSED'].includes(mood) ? 1 : 0,
+                    creating: ['CREATING', 'CREATIVE'].includes(mood) ? 1 : 0,
+                    listening: mood === 'LISTENING' ? 1 : 0 };
+                for (const k of ['voice', 'processing', 'creating', 'listening']) {
+                    const tau = wants[k] > state[k] ? 0.45 : 0.85;
+                    state[k] += (wants[k] - state[k]) * (1 - Math.exp(-dt / tau));
+                }
+                state.reduced = !!s.reduced;
+                if (!state.reduced) state.phase += dt;
+                return state;
+            }
+            // a/b identify a layer, ring, iteration band, point or nerve.
+            // Reuse the caller's output so dense forms allocate nothing per point.
+            function sample(id, a, b, out) {
+                out.lift = out.twist = out.scale = 0;
+                if (state.reduced) return out;
+                const t = state.phase, v = state.voice, p = state.processing,
+                      c = state.creating, l = state.listening;
+                const sin = Math.sin, cos = Math.cos;
+                switch (id) {
+                    case 'CUBES':
+                        out.lift = 0.22 * v * sin(t * 2.1 - a * 1.3) + 0.08 * c * cos(t - a);
+                        out.twist = 0.3 * p * sin(t * 0.9 - a * 1.1);
+                        out.scale = 0.045 * p * sin(t * 1.2 - a * 1.4) - 0.025 * l;
+                        break;
+                    case 'DOME':
+                        out.lift = 0.28 * v * sin(t * 1.8 - a * 0.75) + 0.12 * p * cos(t * 0.8 - a);
+                        out.twist = 0.08 * c * sin(t * 0.6 + a * 1.7);
+                        out.scale = 0.035 * v * cos(t * 1.8 - a * 0.75) - 0.015 * l;
+                        break;
+                    case 'GRID':
+                        out.lift = 0.6 * v * sin(Math.hypot(a, b) * 0.24 - t * 2)
+                            + 0.24 * p * sin(a * 0.15 + b * 0.11 - t * 0.9)
+                            + 0.18 * c * sin(a * 0.2 - t) * cos(b * 0.17 + t * 0.7);
+                        break;
+                    case 'MANDELBROT':
+                        out.lift = a * (0.75 * v * sin(a * 13 - t * 1.9)
+                            + 0.38 * p * (0.5 + 0.5 * sin(a * 17 - t * 0.85))
+                            + 0.25 * c * sin(b * 2 + t * 0.6));
+                        break;
+                    case 'ASTROLABE':
+                        out.lift = 0.13 * v * sin(t * 1.7 - a * 0.8) + 0.07 * c * cos(t * 0.65 + a);
+                        out.twist = (a % 2 ? -1 : 1) * (0.65 * p + 0.35 * c);
+                        out.scale = 0.035 * v * sin(t * 1.7 - a) - 0.02 * l;
+                        break;
+                    case 'TESSERACT':
+                        out.lift = 0.42 * p + 0.15 * c * cos(t * 0.7);
+                        out.twist = 0.24 * p + 0.18 * v * sin(t * 1.6);
+                        out.scale = 0.035 * v * sin(t * 1.3) - 0.02 * l;
+                        break;
+                    case 'NETWORK':
+                        out.lift = 0.25 * v * sin(t * 2.2 - a * 0.67) + 0.12 * c * cos(t + a);
+                        out.twist = 0.18 * p * sin(t * 1.1 - a * 0.43);
+                        out.scale = 0.025 * p * cos(t * 1.1 - a * 0.43) - 0.012 * l;
+                        break;
+                    case 'MOBIUS':
+                        out.lift = 0.12 * c * sin(a * 2 - t * 0.6);
+                        out.twist = 0.16 * v * sin(a * 3 - t * 2) + 0.09 * p * sin(a * 2 + t * 0.85);
+                        out.scale = -0.025 * l;
+                        break;
+                    case 'CABLES':
+                        out.lift = 0.12 * c * sin(t * 0.6 + a * 2.4);
+                        out.twist = 0.045 * p * sin(t * 1.2 - a * 0.37);
+                        out.scale = 0.07 * v * sin(t * 2.2 - a * 0.55)
+                            + 0.025 * p * sin(t * 1.2 - a * 0.37) - 0.018 * l;
+                        break;
+                }
+                return out;
+            }
+            function reset() { state.voice = state.processing = state.creating = state.listening = state.phase = 0; state.reduced = false; }
+            return { step, sample, reset };
+        })();
+        const avatarArticulation = { lift: 0, twist: 0, scale: 0 };
+        // </avatar-signature-motion>
 
         // <scene-motion>
         // Motion safety for the holographic scene. A structure change used to
@@ -3950,7 +4077,7 @@
                 clock += dt;
                 const reduced = !!s.reduced;
                 // Her state, eased: nothing here jumps.
-                think += ((s.thinking ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                think += (Math.max(0, Math.min(1, +s.thinking || 0)) - think) * Math.min(1, dt / 0.8);
                 listen += ((s.listening ? 1 : 0) - listen) * Math.min(1, dt / 0.9);
                 const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
                 voice += (v - voice) * Math.min(1, dt / 0.16);    // a low-pass well under a beat a second for syllables
@@ -3975,7 +4102,8 @@
                     // Listening: the panel turns toward the viewer, as far as it can.
                     if (tilt > 0) _n.addScaledVector(tw, tilt).normalize();
                     faceOut(_n, C.q);
-                    C.q.multiply(_q2.setFromAxisAngle(_ax.set(0, 0, 1), P.twist));
+                    C.q.multiply(_q2.setFromAxisAngle(_ax.set(0, 0, 1), P.twist +
+                        (reduced ? 0 : 0.12 * (s.creating || 0) * Math.sin(clock * 0.65 + P.shell * 1.7))));
                     const g = P.grow * P.grow * (3 - 2 * P.grow);
                     C.s.set(S.size * g, S.size * g, 1);
                     _m.compose(C.p, C.q, C.s);
@@ -4197,13 +4325,13 @@
                 dt = Math.max(0, Math.min(0.1, dt));
                 clock += dt;
                 const reduced = !!s.reduced;
-                think += ((s.thinking && !reduced ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                think += ((reduced ? 0 : Math.max(0, Math.min(1, +s.thinking || 0))) - think) * Math.min(1, dt / 0.8);
                 // Thinking walks the orbitals, one into the next every few
                 // seconds; otherwise the cloud settles back to its rest.
                 let want = REST;
                 if (think > 0.05) {
                     cycleT += dt * think;
-                    if (cycleT > 3.6) { cycleT = 0; cycleK = (cycleK + 1) % ORB; }
+                    if (cycleT > 3.6 - 0.6 * (s.creating || 0)) { cycleT = 0; cycleK = (cycleK + 1) % ORB; }
                     want = CYCLE[cycleK];
                 }
                 const k = Math.min(1, dt / 1.1);
@@ -4355,7 +4483,7 @@
                 dt = Math.max(0, Math.min(0.1, dt));
                 clock += dt;
                 const reduced = !!s.reduced;
-                think += ((s.thinking && !reduced ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                think += ((reduced ? 0 : Math.max(0, Math.min(1, +s.thinking || 0))) - think) * Math.min(1, dt / 0.8);
                 taut += ((s.listening ? 1 : 0) - taut) * Math.min(1, dt / 0.9);
                 const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
                 voice += (v - voice) * Math.min(1, dt / 0.25);
@@ -4363,7 +4491,8 @@
                 // wider while she thinks, eased to nothing as the rings pull taut.
                 if (!reduced) turn += dt * (0.22 + 0.55 * think);
                 // Under reduced motion it holds the shape it has.
-                if (!reduced) ang = (A_REST + (A_THINK - A_REST) * think) * (1 - taut) * Math.sin(turn);
+                if (!reduced) ang = (A_REST + (A_THINK - A_REST) * think) * (1 - taut) * Math.sin(turn)
+                    + 0.12 * (s.creating || 0) * Math.sin(turn * 0.6);
                 // A slow turn about the tori's own axis keeps the view through their holes.
                 if (!reduced) { flow += dt * (1.2 + 3.0 * voice); lines.rotation.z += dt * 0.05; }
                 flowAmp += (Math.min(0.85, voice * 1.5) - flowAmp) * Math.min(1, dt / 0.5);
@@ -4590,7 +4719,7 @@
                 dt = Math.max(0, Math.min(0.1, dt));
                 clock += dt;
                 const reduced = !!s.reduced;
-                think += ((s.thinking && !reduced ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                think += ((reduced ? 0 : Math.max(0, Math.min(1, +s.thinking || 0))) - think) * Math.min(1, dt / 0.8);
                 listen += ((s.listening ? 1 : 0) - listen) * Math.min(1, dt / 0.9);
                 const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
                 voice += (v - voice) * Math.min(1, dt / 0.25);
@@ -4603,7 +4732,7 @@
                 web += ((f && f.web ? f.web.intensity : 0) - web) * Math.min(1, dt / 0.3);
                 if (!reduced) flow += dt * (0.18 + 0.25 * think);
                 const gu = grid.material.uniforms;
-                gu.uTight.value = think; gu.uWiden.value = listen * (reduced ? 0.5 : 1);
+                gu.uTight.value = think; gu.uWiden.value = listen * (reduced ? 0.5 : 1) + 0.15 * (s.creating || 0);
                 gu.uRipple.value = ripple; if (!reduced) gu.uPhase.value += dt * 2.6;
                 gu.uNear.value.copy(s.accent).lerp(WHITE, 0.15).multiplyScalar(0.75);
                 gu.uDeep.value.copy(s.base).lerp(s.accent, 0.3).multiplyScalar(0.55);
@@ -4841,7 +4970,7 @@
                 dt = Math.max(0, Math.min(0.1, dt));
                 clock += dt;
                 const reduced = !!s.reduced;
-                think += ((s.thinking && !reduced ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                think += ((reduced ? 0 : Math.max(0, Math.min(1, +s.thinking || 0))) - think) * Math.min(1, dt / 0.8);
                 listen += ((s.listening && !reduced ? 1 : 0) - listen) * Math.min(1, dt / 0.9);
                 const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
                 voice += (v - voice) * Math.min(1, dt / 0.25);
@@ -4867,7 +4996,7 @@
                 const up2 = _up2.crossVectors(_v, _u);
                 const hot = _hot.copy(s.accent).lerp(WHITE, 0.7);
                 // Pairs: new ones at a rate set by her state.
-                const rate = reduced ? 0 : 1.2 + 3.2 * think + 4.5 * voice;
+                const rate = reduced ? 0 : 1.2 + 3.2 * think + 4.5 * voice + 2 * (s.creating || 0);
                 emitAcc += rate * dt;
                 const P = sparks.geometry.attributes, pos = P.position.array, al = P.aA.array, sz = P.aS.array, col = P.aC.array;
                 while (emitAcc >= 1) {
@@ -5139,13 +5268,15 @@
 
             // One frame of the structure's own motion: sections turn, arms
             // swirl, rings spin, at the structure's idle rate (speaking adds).
-            function animate(dt, rate, voice, base, accent, reduced) {
+            function animate(dt, rate, voice, base, accent, reduced, activity) {
                 if (!root) return;
                 // rate is the scene's per-frame idle turn (at 60 frames a second).
                 // Capped: tiles sweeping past faster than about three a second
                 // (a section at 0.9 rad/s, 18 degrees a tile) flicker, seam and
                 // face in turn, which is what speaking at full speed did.
-                const turn = reduced ? 0 : Math.min(rate * 60, MAX_TURN) * dt;
+                const process = reduced ? 0 : Math.max(0, Math.min(1, activity && activity.processing || 0));
+                const create = reduced ? 0 : Math.max(0, Math.min(1, activity && activity.creating || 0));
+                const turn = reduced ? 0 : Math.min(rate * 60 + 0.12 * process + 0.08 * create, MAX_TURN) * dt;
                 // The sway eases in, and under reduced motion eases back to the
                 // middle and stays there.
                 swayK += ((reduced ? 0 : 1) - swayK) * Math.min(1, dt / 1.5);
@@ -5158,7 +5289,9 @@
                 // with a voice, sized by it. Silent, or reduced motion: none.
                 const amp = reduced ? 0 : Math.min(0.12, 0.25 * (voice || 0));
                 if (amp > 0.005) beat += dt * 2 * Math.PI * 1.6;
-                const pulseOf = s => 1 + amp * (0.55 + 0.45 * Math.sin(beat - (SECTIONS - 1 - s) * 1.3));
+                const pulseOf = s => 1 + amp * (0.55 + 0.45 * Math.sin(beat - (SECTIONS - 1 - s) * 1.3))
+                    + 0.035 * process * Math.sin(swayT * 1.1 - s * 1.4)
+                    + 0.025 * create * Math.cos(swayT * 0.7 + s * 1.7);
                 for (let i = 0; i < N; i++) {
                     const C = cur[i], h = home[i];
                     if (place[i] === -2) { C.s.set(0, 0, 0); C.p.set(0, 0, 0); C.q.identity(); }
@@ -5449,7 +5582,9 @@
             const end = new THREE.Vector3((Math.random()-0.5)*30, (Math.random()-0.5)*30, (Math.random()-0.5)*30);
             const mid1 = start.clone().lerp(end, 0.3).add(new THREE.Vector3((Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*10));
             const mid2 = start.clone().lerp(end, 0.7).add(new THREE.Vector3((Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*10));
-            const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new THREE.CatmullRomCurve3([start, mid1, mid2, end]).getPoints(50)), new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, linewidth: 2 }));
+            // Faint additive decoration contributes light without cutting
+            // depth holes through transparent avatars behind the curve.
+            const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new THREE.CatmullRomCurve3([start, mid1, mid2, end]).getPoints(50)), new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false, linewidth: 2 }));
             line.userData = { pulse: Math.random()*Math.PI, pulseSpeed: 0.05+Math.random()*0.1, intensity: 0 }; 
             scene.add(line); energyLines.push(line);
         }
@@ -5815,10 +5950,9 @@
             }
             for (const k in audioEnv) audioData[k] = audioEnv[k] = soundEnvelope(audioEnv[k], audioData[k], delta);
 
-            // Design rule: the scene only ANIMATES (elevated energy / motion)
-            // while Friday is actually SPEAKING (audio playing back). Thinking /
-            // executing / running a task is a color + state shift at the calm idle
-            // baseline — so energy is gated on speaking, NOT on _fridayBusy.
+            // Global spin and glow follow actual speech. Processing has its
+            // own bounded articulation inside each avatar's anatomy below;
+            // it never fabricates a voice amplitude or a cloud send.
             const _speaking = !!(window._fridayMoodSignals && window._fridayMoodSignals.ttsActive)
                               || (window._fridayHoloAmplitude || 0) > 0.12;
             const isQuiet = (elapsed - lastSoundTime > 6.0) && !_speaking;
@@ -5932,6 +6066,8 @@
             const isExecutingMood = currentMood === 'EXECUTING';
             const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
             const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
+            const avatarState = FridayAvatarMotion.step(delta, { mood: currentMood,
+                voice: holoAmplitude, speaking: _speaking, reduced: SceneMotion.reduced() });
 
             if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN','ICOSAHEDRON','NONE','WORMHOLE','BLACKHOLE'].includes(targetStructure)) {
                 activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
@@ -5946,7 +6082,9 @@
             if (structures['CUBES'] && structures['CUBES'].visible && coreCubes.length > 0) {
                 coreCubes.forEach(c => {
                     if (c && c.rotation && c.position && c.userData) {
-                        c.rotation.x += 0.01 * c.userData.speed * idleFactor; c.rotation.y += 0.012 * c.userData.speed * idleFactor;
+                        const a = FridayAvatarMotion.sample('CUBES', c.userData.iy + c.userData.ix * 0.35, 0, avatarArticulation);
+                        c.rotation.x += (0.6 * c.userData.speed * idleFactor + a.twist) * delta;
+                        c.rotation.y += (0.72 * c.userData.speed * idleFactor - a.twist * 0.6) * delta;
                         const organicBreathe = Math.sin(elapsed * 2.0 * c.userData.speed + c.userData.rx) * 0.15;
                         // Genesis Lattice cohesion: the voice/active drive (audio + voiceBreath +
                         // face interaction) used to blast the cubes out so far the cube-of-cubes
@@ -5956,14 +6094,14 @@
                         // (the calm resting breath) are kept at full strength.
                         const LATTICE_SPREAD = 0.65;
                         const activeExpansion = ((audioData.low * 1.5) + voiceBreath) * LATTICE_SPREAD;
-                        const expansion = organicBreathe + activeExpansion + idlePulse;
+                        const expansion = organicBreathe + activeExpansion + idlePulse + a.lift;
                         c.position.set(
                             c.userData.baseX + c.userData.dir.x * expansion,
                             c.userData.baseY + c.userData.dir.y * expansion,
                             c.userData.baseZ + c.userData.dir.z * expansion
                         );
                         // Vertex displacement: scale cubes with voice amplitude
-                        const vScale = 1.0 + holoAmplitude * 0.3 + audioData.mid * 0.15;
+                        const vScale = 1.0 + holoAmplitude * 0.3 + audioData.mid * 0.15 + a.scale;
                         c.scale.setScalar(vScale);
                     }
                 });
@@ -5976,16 +6114,28 @@
                 }
                 cathedralRings.forEach((c, i) => {
                     if(c && c.rotation && c.scale) {
-                        c.rotation.y += 0.002 * (i%2==0?1:-1) * idleFactor;
-                        c.scale.setScalar(1.0 + audioData.mid * 0.1 + holoAmplitude * 0.25 + idlePulse * 0.5);
+                        const a = FridayAvatarMotion.sample('DOME', i, 0, avatarArticulation);
+                        c.rotation.y += (0.12 * (i%2==0?1:-1) * idleFactor + a.twist) * delta;
+                        c.rotation.x = a.lift * 0.35;
+                        c.scale.setScalar(1.0 + audioData.mid * 0.1 + holoAmplitude * 0.25 + idlePulse * 0.5 + a.scale);
                     }
+                });
+            }
+
+            // Nerve impulses travel branch by branch, without moving the core.
+            if (structures['CABLES'] && structures['CABLES'].visible) {
+                structures['CABLES'].children.forEach((c, i) => {
+                    const a = FridayAvatarMotion.sample('CABLES', i, 0, avatarArticulation);
+                    c.rotation.z = a.twist; c.rotation.x = a.lift;
+                    c.scale.set(1 + a.scale * 0.6, 1 + a.scale, 1 + a.scale * 0.4);
                 });
             }
 
             if (structures['GRID'] && structures['GRID'].visible && gridOcean && gridOcean.geometry && gridOcean.geometry.attributes.position && gridOcean.userData) {
                 const positions = gridOcean.geometry.attributes.position.array; const baseYs = gridOcean.userData.baseY;
                 for(let i=0; i<gridOcean.geometry.attributes.position.count; i++) {
-                    positions[i*3+1] = baseYs[i] + Math.sin(positions[i*3] * 0.1 + elapsed) * 0.8 + Math.cos(positions[i*3+2] * 0.1 - elapsed * 1.2) * 0.8 + Math.sin(positions[i*3]*0.3 + positions[i*3+2]*0.3) * (audioData.low * 3.0 * idleFactor) + voiceBreath * 0.6;
+                    const a = FridayAvatarMotion.sample('GRID', positions[i*3], positions[i*3+2], avatarArticulation);
+                    positions[i*3+1] = baseYs[i] + Math.sin(positions[i*3] * 0.1 + elapsed) * 0.8 + Math.cos(positions[i*3+2] * 0.1 - elapsed * 1.2) * 0.8 + Math.sin(positions[i*3]*0.3 + positions[i*3+2]*0.3) * (audioData.low * 3.0 * idleFactor) + voiceBreath * 0.6 + a.lift;
                 }
                 gridOcean.geometry.attributes.position.needsUpdate = true;
             }
@@ -5996,7 +6146,8 @@
                 const colors = mandelbrotSystem.geometry.attributes.color.array;
                 for(let i=0; i<mData.length; i++) {
                     const wave = Math.sin(mData[i].baseX*0.5 + elapsed) * Math.cos(mData[i].baseZ*0.5 + elapsed) * (audioData.low * 3.0);
-                    positions[i*3+1] = mData[i].baseY + (audioData.low * 4.0 * mData[i].iterRatio * idleFactor) + wave + voiceBreath * mData[i].iterRatio;
+                    const a = FridayAvatarMotion.sample('MANDELBROT', mData[i].iterRatio, mData[i].baseX, avatarArticulation);
+                    positions[i*3+1] = mData[i].baseY + (audioData.low * 4.0 * mData[i].iterRatio * idleFactor) + wave + voiceBreath * mData[i].iterRatio + a.lift;
                     const c = new THREE.Color().copy(moodLerpValues.baseColor).lerp(moodLerpValues.accentColor, mData[i].iterRatio + audioData.mid);
                     colors[i*3] = c.r; colors[i*3+1] = c.g; colors[i*3+2] = c.b;
                 }
@@ -6007,9 +6158,11 @@
             if (structures['ASTROLABE'] && structures['ASTROLABE'].visible && astrolabeRings.length > 0) {
                 astrolabeRings.forEach((ring, i) => {
                     if (ring && ring.rotation && ring.userData) {
-                        ring.rotation.x += ring.userData.rxSpeed * (1 + audioData.mid*3);
-                        ring.rotation.y += ring.userData.rySpeed * (1 + audioData.mid*3);
-                        if (ring.scale) ring.scale.setScalar(1.0 + holoAmplitude * 0.2 + idlePulse * 0.3);
+                        const a = FridayAvatarMotion.sample('ASTROLABE', i, 0, avatarArticulation);
+                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta;
+                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta;
+                        ring.rotation.z = a.lift;
+                        if (ring.scale) ring.scale.setScalar(1.0 + holoAmplitude * 0.2 + idlePulse * 0.3 + a.scale);
                     }
                 });
             }
@@ -6018,8 +6171,10 @@
                 const tessGroup = structures['TESSERACT'];
                 if (tessGroup && tessGroup.children.length > 1) {
                     const tessNodes = tessGroup.children[1];
-                    tesseractLines.userData.angleXW += (0.5 + audioData.low * 3.0) * delta * idleFactor;
-                    tesseractLines.userData.angleYW += (0.3 + audioData.low * 2.0) * delta * idleFactor;
+                    const a = FridayAvatarMotion.sample('TESSERACT', 0, 0, avatarArticulation);
+                    tesseractLines.userData.angleXW += (0.5 + audioData.low * 3.0 + a.lift) * delta * idleFactor;
+                    tesseractLines.userData.angleYW += (0.3 + audioData.low * 2.0 + a.twist) * delta * idleFactor;
+                    tessGroup.scale.setScalar(1 + a.scale);
                     const cosXW = Math.cos(tesseractLines.userData.angleXW), sinXW = Math.sin(tesseractLines.userData.angleXW);
                     const cosYW = Math.cos(tesseractLines.userData.angleYW), sinYW = Math.sin(tesseractLines.userData.angleYW);
                     const pts3D = [];
@@ -6060,14 +6215,23 @@
                     for(let i=0; i<shannonNodes.length; i++) {
                         if (!shannonNodes[i] || !shannonNodes[i].pos || !shannonNodes[i].velocity) continue;
                         let p = shannonNodes[i].pos; let v = shannonNodes[i].velocity;
-                        p.add(v); if(p.length() > 20) v.multiplyScalar(-1);
-                        const nDir = p.clone().normalize();
-                        nodePos[i*3] = p.x + nDir.x * voiceBreath * 0.5; nodePos[i*3+1] = p.y + nDir.y * voiceBreath * 0.5; nodePos[i*3+2] = p.z + nDir.z * voiceBreath * 0.5;
+                        p.addScaledVector(v, delta * 60); if(p.length() > 20) v.multiplyScalar(-1);
+                        const a = FridayAvatarMotion.sample('NETWORK', i, 0, avatarArticulation);
+                        const r = Math.max(1e-5, p.length()), grow = voiceBreath * 0.5 + a.lift;
+                        const drawn = shannonNodes[i].drawn || (shannonNodes[i].drawn = new THREE.Vector3());
+                        drawn.set(p.x + p.x / r * grow + a.twist, p.y + p.y / r * grow,
+                            p.z + p.z / r * grow - a.twist);
+                        nodePos[i*3] = drawn.x; nodePos[i*3+1] = drawn.y; nodePos[i*3+2] = drawn.z;
+                    }
+                    for(let i=0; i<shannonNodes.length; i++) {
+                        const p = shannonNodes[i] && shannonNodes[i].drawn;
+                        if (!p) continue;
                         let connected = 0;
                         for(let j=i+1; j<shannonNodes.length; j++) {
                             if(connected > 3 || !shannonNodes[j] || !shannonNodes[j].pos) break;
-                            if(p.distanceTo(shannonNodes[j].pos) < 6 + (audioData.high * 6)) { 
-                                linePts.push(p, shannonNodes[j].pos); connected++; 
+                            const end = shannonNodes[j].drawn;
+                            if(end && p.distanceTo(end) < 6 + (audioData.high * 6)) {
+                                linePts.push(p, end); connected++;
                             }
                         }
                     }
@@ -6083,10 +6247,12 @@
                 if (mData) {
                     for(let i=0; i<mData.length; i++) {
                         const u = mData[i].u + flowOffset; const v = mData[i].v; const R = 3.0, r = 1.5;
-                        const breathR = R + voiceBreath * 0.3;
-                        positions[i*3] = (breathR + r * v * Math.cos(u/2)) * Math.cos(u);
-                        positions[i*3+1] = (breathR + r * v * Math.cos(u/2)) * Math.sin(u);
-                        positions[i*3+2] = r * v * Math.sin(u/2);
+                        const a = FridayAvatarMotion.sample('MOBIUS', mData[i].u, v, avatarArticulation);
+                        const breathR = R + voiceBreath * 0.3 + a.lift;
+                        const twist = u / 2 + a.twist, width = r * (1 + a.scale);
+                        positions[i*3] = (breathR + width * v * Math.cos(twist)) * Math.cos(u);
+                        positions[i*3+1] = (breathR + width * v * Math.cos(twist)) * Math.sin(u);
+                        positions[i*3+2] = width * v * Math.sin(twist);
                     }
                 }
                 mobiusSystem.geometry.attributes.position.needsUpdate = true;
@@ -6094,7 +6260,9 @@
 
             // Dirac and Transcendence: her state only (her voice, her own thinking
             // and listening moods), like the Dyson sphere's.
-            const herState = { voice: holoAmplitude, thinking: currentMood === 'REASONING', listening: currentMood === 'LISTENING',
+            const herState = { voice: holoAmplitude,
+                thinking: Math.max(avatarState.processing, avatarState.creating * 0.65),
+                creating: SceneMotion.reduced() ? 0 : avatarState.creating, listening: currentMood === 'LISTENING',
                 base: moodLerpValues.baseColor, accent: moodLerpValues.accentColor, reduced: SceneMotion.reduced() };
             if (structures['QUANTUM'] && structures['QUANTUM'].visible) FridayDirac.animate(delta, Object.assign({ wave: FridayGenome.EX('QUANTUM', 'wave', 10) }, herState));
             if (structures['NONE'] && structures['NONE'].visible) FridayHopf.animate(delta, herState);
@@ -6102,7 +6270,7 @@
             if (structures['ICOSAHEDRON'] && structures['ICOSAHEDRON'].visible) {
                 // Her state only: her voice, and her own thinking and listening moods.
                 const g = structures['ICOSAHEDRON'], tw = g.worldToLocal(camera.position.clone());
-                FridayDyson.animate(delta, { voice: holoAmplitude, thinking: currentMood === 'REASONING',
+                FridayDyson.animate(delta, { voice: holoAmplitude, thinking: herState.thinking, creating: herState.creating,
                     listening: currentMood === 'LISTENING', base: moodLerpValues.baseColor, accent: moodLerpValues.accentColor,
                     reduced: SceneMotion.reduced(), toward: [tw.x, tw.y, tw.z] });
             }
@@ -6117,7 +6285,7 @@
             if (structures['EDEN'] && structures['EDEN'].visible) {
                 if (edenLady) {
                     FridayRez.animate(delta, moodLerpValues.rotationSpeed * 5.0 * idleFactor, holoAmplitude,
-                        moodLerpValues.baseColor, moodLerpValues.accentColor, SceneMotion.reduced());
+                        moodLerpValues.baseColor, moodLerpValues.accentColor, SceneMotion.reduced(), avatarState);
                 }
                 if (edenPlayer) {
                     // The player weaves in front of the boss, facing it, as in
@@ -6333,6 +6501,33 @@ window.fridayGetOrbs = function() {
     if (typeof processOrbManager !== 'undefined' && processOrbManager) return processOrbManager.getOrbs();
     return [];
 };
+
+// <orb-process-sync>
+window.fridayOrbFinished = FridayOrbLife.isFinished;
+// The server controls visibility. A producer that removes its record early
+// leaves a completed orb on its existing five-minute clock.
+window.fridaySyncOrbs = function(rows) {
+    const existing = window.fridayGetOrbs?.() ?? [];
+    const eIds = new Set(existing.map(o => o.id));
+    const byId = new Map((rows || []).map(p => [p.id, p]));
+    for (const p of rows || []) {
+        if (p.orb_visible === false || p.dismissed) continue;
+        const spec = Object.assign({}, p, {
+            pid: p.id, label: p.label || p.name || 'Task', category: p.category || 'default',
+            icon: p.orb_failed ? '⚠' : (p.icon || '⚡'), model: p.model || null,
+            progress: p.progress == null ? null : p.progress, status: p.status || 'running'
+        });
+        if (!eIds.has(p.id)) window.fridayAddOrb?.(spec);
+        window.fridayUpdateOrb?.(p.id, spec);
+        if (p.steps) window.fridayUpdateThread?.(p.id, p.steps);
+    }
+    for (const o of existing) {
+        const row = byId.get(o.id);
+        if (row && (row.orb_visible === false || row.dismissed)) window.fridayRemoveOrb?.(o.id);
+        else if (!row && !window.fridayOrbFinished(o)) window.fridayUpdateOrb?.(o.id, { status: 'completed', progress: 1 });
+    }
+};
+// </orb-process-sync>
 
 // === REASONING THREAD API (Layer 3) ===
 window._fridayThreads = {};
