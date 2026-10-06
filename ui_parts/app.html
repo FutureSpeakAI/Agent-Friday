@@ -1924,12 +1924,12 @@ function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
 // change inside it. When the script is absent the shell is a Fragment.
 function FridayChatShell(props){
   const Host=window.FridayArtifactHost;
-  if(Host) return <Host convId={props.convId} mode={props.mode} traySide={props.traySide} trayFrac={props.trayFrac} onTrayPlace={props.onTrayPlace}>{props.children}</Host>;
+  if(Host) return <Host convId={props.convId} mode={props.mode} traySide={props.traySide} trayFrac={props.trayFrac} onTrayPlace={props.onTrayPlace} onCodebaseAsk={props.onCodebaseAsk} chatBusy={props.chatBusy}>{props.children}</Host>;
   return <React.Fragment>{props.children}</React.Fragment>;
 }
 function ChatSurface({mode,convId,traySide,trayFrac,onTrayPlace,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
   const trayMenu=useSnapMenuOpener();
-  return(<FridayChatShell convId={convId} mode={mode} traySide={traySide} trayFrac={trayFrac} onTrayPlace={onTrayPlace}>
+  return(<FridayChatShell convId={convId} mode={mode} traySide={traySide} trayFrac={trayFrac} onTrayPlace={onTrayPlace} chatBusy={chatLoad} onCodebaseAsk={message=>sendChat(message,{preserveDraft:true})}>
       <div data-chat-head="" style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',rowGap:6,padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -23595,7 +23595,7 @@ function App(){
        thing to do, and the user sends twice: duplicate turns and duplicate
        tokens. */
     if(!opts.alreadyShown){
-      setChatIn('');
+      if(!opts.preserveDraft)setChatIn('');
       setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);
     }
     /* And a hard guard: one turn in flight at a time. The optimistic render is

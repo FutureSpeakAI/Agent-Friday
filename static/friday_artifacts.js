@@ -532,8 +532,8 @@
   const WIDTHS = [['phone', 390], ['tablet', 768], ['desktop', 0]];
 
   const stepKeyOf = cb => (cb && cb.updated_at) || '';
-  function CodebasePanel({ convId, codebase, artifactsTab, onCollapse, tab, width, refreshKey, wantView }) {
-    const [view, setView] = useState('preview');
+  function CodebasePanel({ convId, codebase, artifactsTab, onCollapse, tab, width, refreshKey, wantView, onCodebaseAsk, chatBusy }) {
+    const [view, setView] = useState(codebase.source_snapshot ? 'understand' : 'preview');
     useEffect(() => { if (wantView && wantView.view) setView(wantView.view); }, [wantView]);
     const [html, setHtml] = useState(null);
     const [files, setFiles] = useState([]);
@@ -658,12 +658,13 @@
             h('button', { className: 'fa-icon', title: tab ? 'Back to the chat' : 'Collapse the panel', 'aria-label': 'Collapse', onClick: onCollapse }, tab ? '✕' : '⟩'))),
         h('div', { className: 'fa-title-row' },
           h('span', { className: 'fa-title', title: codebase.title }, codebase.title),
-          chipEl(codebase.template || 'folder', 'rgba(255,255,255,0.6)'),
+          chipEl(codebase.source_snapshot ? 'text snapshot' : codebase.template || 'folder', 'rgba(255,255,255,0.6)'),
           chipEl((codebase.tier || 'B0') + ' · ' + (TIER_LABEL[codebase.tier || 'B0'] || ''), ACCENT, 'Where the code runs: B0 is the browser frame, no process, no install')),
         hdr ? h('div', { className: 'fa-header-line', 'data-codebase-header': hdr.red ? 'red' : 'ok', title: hdr.spoken || '',
           style: { fontFamily: MONO, fontSize: 10, lineHeight: 1.5, color: hdr.red ? '#ff6b9d' : 'rgba(255,255,255,0.72)', margin: '4px 0 0', wordBreak: 'break-word' } },
           hdr.text.replace(/^[^·]*·\s*/, ''), hdr.red && hdr.note ? h('span', { style: { display: 'block', color: '#ff6b9d' } }, hdr.note) : null) : null,
         h('div', { className: 'fa-tools', role: 'tablist' },
+          window.FridayRepoAtlas ? tabBtn('understand', 'Understand') : null,
           tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')), tabBtn('terminal', 'Terminal' + (runs.length ? ' · ' + runs.length : '')),
           artifactsTab ? tabBtn('artifacts', 'Artifacts') : null,
           view === 'preview' ? h('button', { className: 'fa-btn' + (pointing ? ' fa-primary' : ' fa-quiet'), 'data-point-mode': pointing ? 'on' : 'off', onClick: () => setPointing(v => !v), title: 'Point at something in the preview, then say what to change' }, '\u2316 Point') : null,
@@ -695,6 +696,10 @@
       : view === 'preview' ? h('div', { className: 'fa-body fa-flush', style: { display: 'flex', justifyContent: 'center', background: frameW ? 'rgba(0,0,0,0.35)' : undefined } },
         doc == null ? h('div', { className: 'fa-empty' }, 'Loading the preview…')
           : h('iframe', { key: reload + ':' + codebase.id + ':' + (pointing ? 'p' : 'v'), ref: frameRef, className: 'fa-frame', sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer', title: 'Preview (sandboxed)', style: frameW ? { width: frameW, maxWidth: '100%', borderLeft: '1px solid rgba(0,212,255,0.15)', borderRight: '1px solid rgba(0,212,255,0.15)' } : undefined })) : null,
+      view === 'understand' && window.FridayRepoAtlas ? h(window.FridayRepoAtlas, {
+        key: convId + ':' + codebase.id, codebase, convId, refreshKey, onAsk: onCodebaseAsk, chatBusy, onShowChat: onCollapse,
+        onOpenFile: f => { setView('files'); openFile(f); }
+      }) : null,
       view === 'files' ? h('div', { className: 'fa-body', style: { display: 'flex', gap: 10, padding: 0 } },
         h('div', { style: { width: 180, flexShrink: 0, borderRight: '1px solid rgba(0,212,255,0.10)', overflow: 'auto', padding: '8px 6px', fontFamily: MONO, fontSize: 11 } },
           files.map(f => h('div', { key: f.path, onClick: () => openFile(f), title: f.bytes + ' bytes', style: { padding: '3px 6px', cursor: 'pointer', borderRadius: 4, color: file && file.path === f.path ? ACCENT : '#dfe7f2', background: file && file.path === f.path ? 'rgba(0,212,255,0.08)' : undefined, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, f.path))),
@@ -728,7 +733,7 @@
               h('pre', { style: { margin: 0, padding: '6px 8px', maxHeight: 220, overflow: 'auto', fontFamily: MONO, fontSize: 11, lineHeight: 1.45, color: '#dfe7f2', whiteSpace: 'pre-wrap' } }, r.output || '(no output)')))) : null,
       view === 'artifacts' && artifactsTab ? artifactsTab : null,
       h('div', { className: 'fa-foot' },
-        h('span', null, codebase.existing ? 'your folder · branch ' + codebase.branch : 'Friday\'s codebase · ' + (codebase.template || '')),
+        h('span', null, codebase.source_snapshot ? 'salon copy · original untouched' : codebase.existing ? 'your folder · branch ' + codebase.branch : 'Friday\'s codebase · ' + (codebase.template || '')),
         h('span', null, (steps.length ? steps.length - 1 : 0) + ' step' + (steps.length === 2 ? '' : 's'))));
   }
   // The export download goes through the same authenticated fetch as every
@@ -750,7 +755,7 @@
   const SIDE_MIN_HOST_W = 860;   // below this the panel is a tab over the chat
   const PANEL_MIN_W = 300, CHAT_MIN_W = 360;
 
-  function FridayArtifactHost({ convId, mode, traySide, trayFrac, onTrayPlace, children }) {
+  function FridayArtifactHost({ convId, mode, traySide, trayFrac, onTrayPlace, onCodebaseAsk, chatBusy, children }) {
     ensureCss();
     const [items, setItems] = useState([]);
     const [sel, setSel] = useState(null);
@@ -790,7 +795,7 @@
       }).catch(() => {});
     }, [convId]);
 
-    useEffect(() => { setItems([]); setSel(null); refresh(); }, [convId, refresh]);
+    useEffect(() => { setItems([]); setSel(null); setWantView(null); refresh(); }, [convId, refresh]);
     // Is this chat bound to a codebase? Read once per conversation.
     useEffect(() => {
       setCodebase(null);
@@ -876,7 +881,7 @@
     const onChanged = rec => refresh(rec && rec.id);
     const artifactPanel = items.length ? h(FridayArtifactPanel, { convId, items, selectedId: sel, onSelect: setSel, onCollapse: () => setOpen(false), tab: !side, width: panelW, onChanged }) : null;
     const panel = codebase
-      ? h(CodebasePanel, { convId, codebase, artifactsTab: artifactPanel, onCollapse: () => setOpen(false), tab: !side, width: panelW, refreshKey: stepKey, wantView })
+      ? h(CodebasePanel, { key: convId + ':' + codebase.id, convId, codebase, artifactsTab: artifactPanel, onCollapse: () => setOpen(false), tab: !side, width: panelW, refreshKey: stepKey, wantView, onCodebaseAsk, chatBusy })
       : artifactPanel;
     const stripTitle = codebase ? codebase.title : (cur ? (KIND_GLYPH[cur.kind] || '') + ' ' + cur.title : 'Panel');
     const stripCount = codebase ? null : items.length;

@@ -3744,6 +3744,7 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- The chart renderer the panel and published chart pages share (defines window.FridayChart). -->
     <script src="/static/friday_chart.js"></script>
     <!-- The artifact panel beside every chat (defines window.FridayArtifactHost). -->
+    <script src="/static/friday_repo_atlas.js"></script>
     <script src="/static/friday_artifacts.js"></script>
     <!-- Publish to web: the card body and the Settings section (defines window.FridayPublishCard). -->
     <script src="/static/friday_publish.js"></script>
@@ -15123,7 +15124,7 @@ function fridayResizeCursor(dir) {
 // change inside it. When the script is absent the shell is a Fragment.
 function FridayChatShell(props) {
   const Host = window.FridayArtifactHost;
-  if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace }, props.children);
+  if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, onCodebaseAsk: props.onCodebaseAsk, chatBusy: props.chatBusy }, props.children);
   return /*#__PURE__*/React.createElement(React.Fragment, null, props.children);
 }
 function ChatSurface(props) {
@@ -15188,7 +15189,8 @@ function ChatSurface(props) {
     voiceStatus
   } = props;
   const trayMenu = useSnapMenuOpener();
-  return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace }, React.createElement("div", {
+  return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, chatBusy: chatLoad,
+    onCodebaseAsk: message => sendChat(message, { preserveDraft: true }) }, React.createElement("div", {
     "data-chat-head": "",
     style: {
       display: 'flex',
@@ -16458,7 +16460,7 @@ function ConversationWindow({
     opts = opts || {};
     const stamp = () => new Date().toLocaleTimeString();
     if (!opts.alreadyShown) {
-      setInput('');
+      if (!opts.preserveDraft) setInput('');
       setMsgs(p => [...p, { role: 'user', text: m, time: stamp() }]);
     }
     if (loading) {
@@ -51807,25 +51809,37 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
   // the same way a project chat carries a project, and the chat's panel then
   // shows Preview, Files and Changes (static/friday_artifacts.js).
   const [cbMenu, setCbMenu] = useState(false);
+  const [cbNotice, setCbNotice] = useState(null);
+  const cbPending = useRef(false);
   const newCodebase = (template) => {
+    if (busy || cbPending.current) return;
     setCbMenu(false);
-    const name = prompt(template === 'existing' ? 'Name this codebase' : 'Name this codebase (e.g. Rent tracker)');
+    const name = prompt(template === 'study' ? 'Name this repository study' : template === 'existing' ? 'Name this codebase' : 'Name this codebase (e.g. Rent tracker)');
     if (!name) return;
     const body = { title: name };
-    if (template === 'existing') {
+    if (template === 'study') {
+      const path = prompt('Repository folder on this PC to study as a text snapshot in the salon. Your original stays untouched. Dependencies, generated files, and binary assets are omitted.');
+      if (!path) return;
+      body.study_path = path;
+    } else if (template === 'existing') {
       const path = prompt('Folder on this PC to open (' + fridayName() + ' works on a salon branch, never on yours)');
       if (!path) return;
       body.path = path;
     } else body.template = template;
+    cbPending.current = true;
+    setBusy(true);
+    setCbNotice({ text: template === 'study' ? 'Making a salon copy…' : 'Opening the codebase…' });
     api('/api/codebases', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    }).then(d => {
+    }).then(async d => {
       // api() already returns the parsed body.
-      if (d && d.conversation) onOpenConversation(d.conversation.id);
-      else if (d && d.error) note(d);
+      if (!d || !d.conversation || d.status === 'error') throw new Error((d && d.error) || 'The codebase could not be opened.');
+      await onOpenConversation(d.conversation.id);
+      setCbNotice(null);
       onRefresh();
-    }).catch(() => {});
+    }).catch(error => setCbNotice({ text: error.message || 'The codebase could not be opened.', error: true }))
+      .finally(() => { cbPending.current = false; setBusy(false); });
   };
 
   const onAct = (c, what, arg) => {
@@ -51893,7 +51907,7 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
         },
       }, '+ Project'),
       E('button', {
-        onClick: () => setCbMenu(v => !v), title: 'New codebase: a chat whose panel runs the thing you are building',
+        onClick: () => setCbMenu(v => !v), disabled: busy, title: 'New codebase: a chat whose panel runs the thing you are building',
         'aria-label': 'New codebase', 'aria-expanded': cbMenu,
         style: {
           cursor: 'pointer', background: cbMenu ? 'rgba(0,212,255,0.10)' : 'transparent',
@@ -51907,7 +51921,10 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
       E(MenuItem, { onClick: () => newCodebase('static') }, 'A page or small app (HTML, CSS, JS)'),
       E(MenuItem, { onClick: () => newCodebase('react') }, 'A React app, built in the browser'),
       E(MenuItem, { onClick: () => newCodebase('bundle') }, 'A new workspace for the dock'),
+      E(MenuItem, { onClick: () => newCodebase('study') }, 'Study a repository · make a salon copy'),
       E(MenuItem, { onClick: () => newCodebase('existing') }, 'A folder already on this PC')) : null,
+    cbNotice ? E('div', { role: cbNotice.error ? 'alert' : 'status', style: { margin: '0 10px 8px', padding: 8,
+      fontSize: 11, color: cbNotice.error ? 'var(--fr-error)' : 'var(--fr-label)', overflowWrap: 'anywhere' } }, cbNotice.text) : null,
 
     E('input', {
       value: q, onChange: e => setQ(e.target.value),
@@ -65203,7 +65220,7 @@ function App() {
        thing to do, and the user sends twice: duplicate turns and duplicate
        tokens. */
     if (!opts.alreadyShown) {
-      setChatIn('');
+      if (!opts.preserveDraft) setChatIn('');
       setChatMsgs(p => [...p, {
         role: 'user',
         text: m,
