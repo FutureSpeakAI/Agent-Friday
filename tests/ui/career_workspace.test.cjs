@@ -7,11 +7,12 @@ const source = fs.readFileSync(process.env.FRIDAY_UI_SOURCE || path.resolve(__di
 const begin = source.indexOf('async function careerRequest(');
 const career = source.slice(begin < 0 ? source.indexOf('function CareerWS(') : begin, source.indexOf('function OutreachPanel('));
 const workflows = source.slice(source.indexOf('function WorkflowsWS('), source.indexOf('function SitesWS('));
+const workflowRequest = source.slice(source.indexOf('function wfPost('), source.indexOf('function WfSwitch('));
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const response = (data, ok = true) => ({ok, status:ok ? 200 : 503, json:async()=>data});
 const deferred = () => {let resolve;const promise=new Promise(r=>{resolve=r});return {promise,resolve}};
 
-function mount({ready=true,failStatus=false,request,workflow=false}={}) {
+function mount({ready=true,failStatus=false,request,workflow=false,search=''}={}) {
   const states=[], refs=[], effects=[], calls=[], toasts=[];
   let cursor=0, refCursor=0, mounted=false;
   const element=(type,props,...children)=>({type,props:props||{},children});
@@ -24,6 +25,7 @@ function mount({ready=true,failStatus=false,request,workflow=false}={}) {
       '/api/conversations':{status:'ok',conversation:{id:'career-test'}},'/api/chat':{response:'Evidence-backed evaluation'},
       '/api/workflows/templates/career-search/add':{status:'ok',slug:'career-search',created:true,schedule_id:null},
       '/api/workflows/overview':{status:'ok',workflows:[],routines:[],templates:[{id:'career-search',slug:'career-search',name:'Career search',description:'Find and evaluate roles.',step_count:3,installed:false}]},
+      '/api/workflows/starters':{status:'ok',starters:[]},
       '/api/tasks':{tasks:[]}
     };
     if(failStatus&&url==='/api/career-ops/status')return response({error:'Setup unavailable'},false);
@@ -31,14 +33,14 @@ function mount({ready=true,failStatus=false,request,workflow=false}={}) {
     return response(values[url]);
   };
   const context=vm.createContext({
-    React:{createElement:element},useState:initial=>{const n=cursor++;if(!(n in states))states[n]=initial;return [states[n],v=>{states[n]=typeof v==='function'?v(states[n]):v}]},
+    React:{createElement:element,useCallback:fn=>fn},useState:initial=>{const n=cursor++;if(!(n in states))states[n]=typeof initial==='function'?initial():initial;return [states[n],v=>{states[n]=typeof v==='function'?v(states[n]):v}]},
     useRef:initial=>{const n=refCursor++;return refs[n]||(refs[n]={current:initial})},useEffect:fn=>{if(!mounted)effects.push(fn)},
-    fetch,apiFetch:fetch,URL,Promise,fridayName:()=> 'Friday',fridayToast:s=>toasts.push(s),
+    fetch,apiFetch:fetch,URL,URLSearchParams,Promise,useNavTarget:()=>{},fridayName:()=> 'Friday',fridayToast:s=>toasts.push(s),
     FridaySays:'FridaySays',FridayDoc:'FridayDoc',SendTo:'SendTo',OutreachPanel:'OutreachPanel',
     WF_CSS:'',WF_EXAMPLES:[],WfCard:'WfCard',WfEditor:'WfEditor',WfSwitch:'WfSwitch',wfOpenApprovals:()=>{},
-    setInterval:()=>1,clearInterval:()=>{},setTimeout:()=>1,window:{},document:{},
+    setInterval:()=>1,clearInterval:()=>{},setTimeout:()=>1,window:{location:{search}},document:{},
   });
-  vm.runInContext(career+workflows,context);
+  vm.runInContext(career+workflowRequest+workflows,context);
   const render=()=>{cursor=0;refCursor=0;return workflow?context.WorkflowsWS():context.CareerWS()};
   const nodes=t=>[t,...(t.children||[]).flat(Infinity).filter(x=>x&&typeof x==='object').flatMap(nodes)];
   const all=()=>nodes(render());
@@ -109,6 +111,27 @@ test('Workflow Manager offers the manual Career starter and displays add errors'
   assert.match(JSON.stringify(ui.render()),/Could not save starter/);
   assert.equal(ui.button('Add Career search workflow').props.disabled,false);
   assert.equal(ui.calls.some(c=>c.url.includes('/run')||c.url.includes('/schedules')),false);
+});
+
+test('Workflow starter chooser guards repeated adds without running or scheduling',async()=>{
+  const save=deferred();const ui=mount({workflow:true,request:url=>url.includes('/templates/')?save.promise:null});await flush();
+  assert.equal(ui.all().filter(n=>n.type==='summary'&&n.children.includes('Start from an example')).length,1);
+  const add=ui.button('Add Career search workflow');add.props.onClick();add.props.onClick();await flush();
+  assert.equal(ui.calls.filter(c=>c.url.includes('/templates/')).length,1);
+  assert.equal(ui.button('Adding…').props.disabled,true);
+  save.resolve(response({status:'ok',slug:'career-search',created:true}));await flush();await flush();
+  assert.match(JSON.stringify(ui.render()),/Career search added/);
+  assert.equal(ui.calls.some(c=>c.url.includes('/run')||c.url.includes('/schedules')),false);
+});
+
+test('Installed starter review uses its saved workflow despite a different project filter',async()=>{
+  const saved={id:'wf:career-search',slug:'career-search',name:'Career search',project_id:'career-project',revision:4,steps:[{name:'My saved step',prompt:'Keep my edited instruction.',retries:0,with_context:true}],when:null};
+  const ui=mount({workflow:true,search:'?project_id=another-project',request:url=>url==='/api/workflows/overview'?response({status:'ok',workflows:[saved],templates:[{id:'career-search',slug:'career-search',name:'Career search',step_count:1,installed:true}]}):null});await flush();
+  ui.button('Review workflow').props.onClick();
+  const editor=ui.all().find(n=>n.type==='WfEditor');
+  assert.equal(editor.props.initial.revision,4);
+  assert.equal(editor.props.initial.steps[0].prompt,'Keep my edited instruction.');
+  assert.equal(ui.calls.some(c=>c.url.includes('/templates/')||c.url.includes('/run')||c.url.includes('/schedules')),false);
 });
 
 test('an invalid existing Career starter is explained and cannot be overwritten',async()=>{

@@ -427,10 +427,9 @@ def _compose_final_voice_error(attempt_errors, key_source):
 # tts_pause lands while she's speaking, the fetch blocks with dead air, and the
 # turn resumes incoherently — the on-stage "freeze then stutter". The contract
 # is announce → act → confirm, one action at a time.
-#: Default ceiling on a SPOKEN reply, in tokens: "Natural" in Settings. ~400
-#: tokens is ~300 words, two minutes of speech — a backstop, not the target
-#: (the target is the adaptive length rule in the voice prompt, which matches
-#: the moment).
+#: Compatibility default for a brief turn/proof without a user utterance.
+#: Real turns use voice_delivery.reply_budget for intent and explicit settings;
+#: the provider transport enforces the served context's safety ceiling.
 _VOICE_REPLY_TOKENS_DEFAULT = 400
 
 
@@ -445,42 +444,15 @@ def _num_setting(settings, key, default) -> float:
         return float(default)
 
 
-def _voice_reply_cap(settings=None) -> int:
-    """How many tokens a single spoken turn may generate.
+def _voice_reply_cap(settings=None, user_text="") -> int:
+    """Bounded seat headroom, sized for this request rather than every reply.
 
-    THIS IS NOT ONLY A BREVITY DIAL — it is what keeps the local seat alive.
-
-    The local voice path called ``_generate_agent`` without a cap, so it
-    inherited that function's TEXT default of 16,384. llama.cpp counts the
-    requested generation against the context window, so a voice turn asked the
-    seat for:
-
-        13,669 (voice prompt = the full text-chat system prompt)
-      + 11,131 (all 67 tool schemas, which the tool budgeter passed as fitting)
-      + 16,384 (the unset reply cap)
-      = 41,184 tokens against a served window of 32,768
-
-    and gemma4:12b answers ``500 Context size has been exceeded``
-    (reproducible on demand). Because a vault-touching turn is
-    forbidden from retrying on a cloud provider, that 500 was the whole turn:
-    Friday could not call a single tool. The identical request with this cap at
-    300 succeeded in 19 seconds and called tools normally.
-
-    So "voice can't call tools" and "voice drones on" were ONE defect wearing
-    two faces — an unset spoken-reply length. Keep this small. A voice reply
-    that needs thousands of tokens is a background task, not a spoken turn.
+    Explicit owner limits win. An unset local cap never inherits the text
+    agent's large token allowance; explanations get more room than check-ins.
     """
-    try:
-        s = settings if settings is not None else (_load_settings() or {})
-        n = int(s.get("voice_max_tokens") or 0)
-    except Exception:
-        n = 0
-    # 0 means "unset" in settings today (the Gemini path reads it the same way)
-    # and MUST NOT mean "unlimited" here, which is the bug above.
-    if n <= 0:
-        return _VOICE_REPLY_TOKENS_DEFAULT
-    # A cap larger than the seat can hold is the same defect with a nicer name.
-    return max(64, min(n, 2048))
+    from agent_friday.services.voice_delivery import reply_budget
+    return reply_budget(settings if settings is not None else (_load_settings() or {}),
+                        user_text)
 
 
 async def _run_calls_concurrently(calls, one):
@@ -1961,7 +1933,7 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None):
         ACTION_PERMISSION_POLICY, seal_system_prompt, strip_authority_overrides)
     volatile = strip_authority_overrides(
         volatile.replace(ACTION_PERMISSION_POLICY, ""), source="voice volatile context")
-    return (seal_system_prompt(compose_live_instruction(_style, voice_prefix + full_ctx),
+    return (seal_system_prompt(compose_live_instruction(_style, voice_prefix + full_ctx, settings),
                                "local voice prompt"),
             {"is_local_brain": _is_local_brain, "provider": _prov,
              "seat": seat, "volatile": volatile})
@@ -2023,8 +1995,27 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
         style = _get_voice_style_prompt() or ""
     except Exception:
         style = ""
-    return seal_system_prompt(compose_live_instruction(style, body),
+    return seal_system_prompt(compose_live_instruction(style, body, settings),
                               "voice front prompt")
+
+
+def _local_voice_messages(conversation_id, user_text, settings=None, volatile=None):
+    """Actual bounded thread history and depth continuity for the local seat."""
+    from agent_friday.services.voice_delivery import local_history
+    history = local_history(conversation_id)
+    state = _vcs.new_state()
+    for index, item in enumerate(history):
+        if item["role"] == "user":
+            following = history[index + 1] if index + 1 < len(history) else {}
+            answer = following.get("content", "") if following.get("role") == "assistant" else ""
+            state = _vcs.update(state, item["content"], answer)
+    state = _vcs.update(state, user_text)
+    from agent_friday.services.voice_delivery import preferences
+    delivery = preferences(settings)
+    content = (_vcs.render(state) + "\n[Spoken preferences for this turn: "
+               + json.dumps(delivery) + ". The user's current direction wins.]\n"
+               + _voice_user_message(user_text, settings, volatile))
+    return history + [{"role": "user", "content": content}]
 
 
 def _voice_user_message(user_text, settings=None, volatile=None):
@@ -2821,6 +2812,8 @@ if sock is not None:
                          "async_routing": settings.get("voice_async_routing")
                          or "local_only",
                          "after_call": [], "news_offered": [], "spoken": []}
+        from agent_friday.services.voice_delivery import initialize_session_preferences
+        initialize_session_preferences(_tool_session, settings)
         # THE VOICE FRONT (local voice spec P1): a small fast model on its own
         # seat answers the turns with the voice tool contract; the brain takes
         # deep work through ask_friday/delegate_to_friday. With no front
@@ -2884,11 +2877,12 @@ if sock is not None:
                 try:
                     return _front["seat"].run_turn(
                         _front["prompt"],
-                        [{"role": "user", "content": _voice_user_message(
-                            user_text, settings, volatile=_volatile())}],
+                        _local_voice_messages(_tool_session.get("conversation_id"),
+                                              user_text, settings, volatile=_volatile()),
                         _front["contract"], on_delta=on_delta,
                         run_tool=lambda n, a: _local_voice_tool(n, a, _send, _tool_session),
-                        max_tokens=_voice_reply_cap(settings),
+                        max_tokens=_voice_reply_cap(settings, user_text),
+                        allow_continuation=not settings.get("voice_max_tokens"),
                         temperature=settings.get("temperature"), timings=_timings)
                 finally:
                     _vol["text"] = None        # the next utterance gets a fresh clock
@@ -2929,16 +2923,17 @@ if sock is not None:
                 try:
                     with _presence.acting_as(_presence.FRIDAY):
                         reply, _trace = _generate_agent(
-                            [{"role": "user",
-                              "content": _voice_user_message(user_text, settings)}],
+                            _local_voice_messages(_tool_session.get("conversation_id"),
+                                                  user_text, settings),
                             system=system_prompt,
                             model=_brain,
-                            max_tokens=_voice_reply_cap(settings),
+                            max_tokens=_voice_reply_cap(settings, user_text),
                             temperature=settings.get("temperature"),
                             # The owner's own words for this turn, and that they were
                             # spoken: a card is decided by those words (answer_card),
                             # exactly as a typed or cloud-voice answer is.
                             session_ctx={"authenticated": _ws_authenticated,
+                                         "conversation_id": _tool_session.get("conversation_id"),
                                          "provider": _prov,
                                          "is_voice": True,
                                          "surface": "voice-local",
@@ -3000,10 +2995,10 @@ if sock is not None:
                                 # First-token deadline: a filler line, then an
                                 # honest abort at the voice tool hard limit.
                                 first_token_filler_s=_num_setting(
-                                    settings, "voice_first_token_filler_s", 6),
+                                    settings, "voice_first_token_filler_s", 0),
                                 first_token_abort_s=_num_setting(
                                     settings, "voice_tool_hard_limit_s", 20),
-                                stream_ear=_stream_ear)
+                                stream_ear=_stream_ear, delivery_session=_tool_session)
             sess.conversation_id = _open_cid[0]
 
             # Results that finish after the turn that asked for them come back
@@ -3449,7 +3444,7 @@ if sock is not None:
         # The persona opens and closes the instruction (voice_persona), so it
         # is neither the first line of a long prompt that everything after it
         # outvotes, nor lost at the far end of the context.
-        sys_text = compose_live_instruction(live_style, system_instruction)
+        sys_text = compose_live_instruction(live_style, system_instruction, live_settings)
         # Continuity, tone and the tool-surface note are appended after the
         # context, so the action policy is re-placed last and derived text
         # stripped of overrides before the gate sees the final instruction.
@@ -3600,8 +3595,8 @@ if sock is not None:
 
         done = threading.Event()
 
-        # The thread the user has OPEN, carried by the client on the socket, and
-        # rebound below if the user switches conversations mid-call. Same contract as
+        # The call's captured owner, carried by the client on the socket.
+        # Switching chats ends the call before another chat can own it. Same contract as
         # /ws/voice-local. None means "no open thread", which
         # _persist_voice_turn resolves to Main as an explicit fallback.
         _open_cid = [(request.args.get('conversation_id') or '').strip() or None]
@@ -3721,6 +3716,8 @@ if sock is not None:
                               # What he cares about now, how much to say, what is
                               # open (services/voice_conversation_state).
                               "conv_state": _vcs.new_state()}
+            from agent_friday.services.voice_delivery import initialize_session_preferences
+            initialize_session_preferences(_voice_session, live_settings)
             _state_sig = [None]
             # Results that finish after the turn that asked for them (a task
             # delegated to the full agent, context he approved on a card)
@@ -3735,14 +3732,21 @@ if sock is not None:
             _voice_live_channel.register(_voice_session["conversation_id"], _deliver_to_call)
 
             def _retarget_call(cid):
-                """He switched threads mid-call: tasks, cards and results follow."""
-                old = _voice_session.get("conversation_id")
-                if cid == old:
-                    return
-                _voice_live_channel.unregister(old, _deliver_to_call)
-                _voice_session["conversation_id"] = cid
-                _live_chan[0] = (cid, _deliver_to_call)
-                _voice_live_channel.register(cid, _deliver_to_call)
+                """End the provider session before a different chat can own it."""
+                from agent_friday.services.voice_delivery import end_live_on_conversation_change
+                def clear_resume():
+                    resume_handle[0] = None
+                    _live_resume_clear(gen=_conn_gen)
+                def end_call():
+                    _barged_turn[0] = True
+                    _safe_send({"type": "interrupted"})
+                    _safe_send({"type": "error", "error":
+                                "Voice call ended because you changed chats. Start voice again in this chat to continue."})
+                    done.set()
+                return end_live_on_conversation_change(
+                    _voice_session, cid, flush_turn=_flush_turn,
+                    pending=(in_buf, out_buf, _inject_q),
+                    clear_resume=clear_resume, end_call=end_call)
 
             async def _flush_injections(sess):
                 """Hand queued results to the model, one per call, between turns."""
@@ -3796,7 +3800,7 @@ if sock is not None:
                     return _client_playing[0]
                 return _model_speaking[0] or now < _est_play_end_ts[0]
 
-            def _flush_turn():
+            def _flush_turn(conversation_id=None):
                 user_text = ''.join(in_buf).strip()
                 agent_text = ''.join(out_buf).strip()
                 in_buf.clear()
@@ -3809,6 +3813,8 @@ if sock is not None:
                 try:
                     _voice_session["conv_state"] = _vcs.update(
                         _voice_session.get("conv_state"), user_text, agent_text)
+                    from agent_friday.services.voice_delivery import update_session_preferences
+                    update_session_preferences(_voice_session, user_text, conversation_id)
                 except Exception:
                     pass
                 if user_text:
@@ -3822,7 +3828,7 @@ if sock is not None:
                         pass
                 try:
                     _persist_voice_turn(user_text, agent_text,
-                                        conversation_id=_open_cid[0],
+                                        conversation_id=conversation_id or _open_cid[0],
                                         provider="google-gemini")
                 except Exception as e:
                     print(f'[live] persist_voice_turn error: {e}')
@@ -4124,11 +4130,12 @@ if sock is not None:
                                     if (_time.time() - _last_barge_ts[0]) > 0.5:
                                         await _fire_barge(sess, 'client request')
                                 elif t == 'conversation':
-                                    # He switched threads while the mic was
-                                    # live. Voice follows the conversation on
-                                    # screen, so retarget from here on.
-                                    _open_cid[0] = (msg.get('id') or '').strip() or None
-                                    _retarget_call(_call_cid())
+                                    # Do not reuse a provider session containing
+                                    # another chat's words, results or preferences.
+                                    from agent_friday.services import conversations as _cv_target
+                                    _target_cid = _cv_target.resolve((msg.get('id') or '').strip() or None)
+                                    if _retarget_call(_target_cid):
+                                        return
                                 elif t == 'speaking':
                                     # Client playback transition — the precise
                                     # barge window. A closed→open transition is

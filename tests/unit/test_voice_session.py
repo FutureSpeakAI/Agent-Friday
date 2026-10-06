@@ -25,7 +25,7 @@ def _run(chunker, pieces):
 
 
 def test_clause_chunker():
-    c = ClauseChunker()
+    c = ClauseChunker(comma_words=6, hard_words=12)
     out = _run(c, ["Pulling that up now. ", "Your morning looks completely clear today, and Priya ",
                    "replied an hour ago! Anything else?"])
     assert out == ["Pulling that up now.", "Your morning looks completely clear today,",
@@ -34,7 +34,7 @@ def test_clause_chunker():
     assert _run(ClauseChunker(), ["Yes, I can. "]) == ["Yes, I can."]
     # hard cut at 12 words, at a whitespace boundary, never an empty clause
     long = " ".join(f"w{i}" for i in range(1, 30))
-    out = _run(ClauseChunker(), [long])
+    out = _run(ClauseChunker(hard_words=12), [long])
     assert out[0] == " ".join(f"w{i}" for i in range(1, 13))
     assert all(o.strip() for o in out)
     assert " ".join(out) == long
@@ -173,10 +173,13 @@ _OPEN: list = []
 
 
 @pytest.fixture(autouse=True)
-def _close_sessions():
+def _close_sessions(monkeypatch):
     """Every session's speaker thread ends on close(); leaving them running
     trips tests/api/test_smoke.py::test_no_background_threads later in the
     same process."""
+    from agent_friday.services import off_record, voice_delivery
+    monkeypatch.setattr(off_record, "_settings", lambda: {})
+    monkeypatch.setattr(voice_delivery, "settings_snapshot", lambda: {})
     yield
     for s in _OPEN:
         try:
@@ -210,6 +213,77 @@ def _types(frames):
     return [f["type"] for f in frames]
 
 
+def test_conversation_switch_cancels_old_turn_and_keeps_its_persistence_owner():
+    s, _frames = _session([])
+    entered = threading.Event()
+    persisted = []
+    def generate(text, on_delta, cancel):
+        entered.set()
+        assert cancel.wait(2), "conversation switch must cancel the old generation"
+        return "Partial answer."
+    s.generate = generate
+    s.hooks["persist"] = lambda user, answer, cid: persisted.append(cid)
+    s.handle({"type": "conversation", "id": "conv-one"})
+    worker = threading.Thread(target=lambda: s.run_turn("Explain the old project."))
+    worker.start()
+    assert entered.wait(2)
+    s.handle({"type": "conversation", "id": "conv-two"})
+    worker.join(2)
+    assert not worker.is_alive()
+    assert s.conversation_id == "conv-one" and s.done.is_set()
+    assert persisted == ["conv-one"]
+
+
+def test_conversation_switch_before_turn_publication_does_not_start_generation(monkeypatch):
+    from agent_friday.services import voice_delivery
+    s, _frames = _session([])
+    s.handle({"type": "conversation", "id": "conv-one"})
+    entered, release = threading.Event(), threading.Event()
+    generated = []
+    def prepare(*args):
+        entered.set()
+        assert release.wait(2), "fixture must release preference preparation"
+        return {}
+    monkeypatch.setattr(voice_delivery, "session_preferences", prepare)
+    s.generate = lambda *args: generated.append(args) or "Too late."
+    worker = threading.Thread(target=lambda: s.run_turn("Old question"))
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert s._current_turn is None
+        s.handle({"type": "conversation", "id": "conv-two"})
+    finally:
+        release.set()
+        worker.join(2)
+        if worker.is_alive():
+            # Clean up the known-broken implementation after the assertion
+            # snapshot so the red run cannot leak a waiting worker.
+            s.close()
+            worker.join(2)
+    assert not generated
+    assert s._current_turn is None and s.done.is_set()
+
+
+def test_spoken_pace_reaches_each_turn_and_does_not_follow_another_chat(monkeypatch):
+    from agent_friday.services import voice_delivery
+    monkeypatch.setattr(voice_delivery, "settings_snapshot", lambda: {})
+    observed = []
+    class Mouth(_Mouth):
+        def synthesize_stream(self, text, cancel):
+            observed.append(voice_delivery.preferences()["pace"])
+            yield b"\x01\x00" * 100
+    s, _frames = _session(["I can give that thought room."], mouth=Mouth())
+    s.handle({"type": "conversation", "id": "conv-one"})
+    s.run_turn("Slow down.")
+    s.run_turn("Explain this.")
+    s.handle({"type": "conversation", "id": "conv-two"})
+    assert s.done.is_set()
+    next_call, _frames = _session(["I can explain that."], mouth=Mouth())
+    next_call.handle({"type": "conversation", "id": "conv-two"})
+    next_call.run_turn("Explain this.")
+    assert observed == ["measured", "measured", "adaptive"]
+
+
 # ── session start ────────────────────────────────────────────────────────────
 
 def test_session_start_sends_manifest_and_contract_then_stage_lamps():
@@ -237,10 +311,10 @@ def test_first_clause_speaks_while_the_model_is_still_writing():
     # audio for clause 1 arrived BEFORE the final `text` frame (i.e. before
     # the model finished), which is the whole point of the pipeline.
     assert t.index("audio") < t.index("text")
-    assert mouth.spoken == ["Pulling that up now.", "Your morning looks completely clear today,",
-                            "and Priya replied."]
+    assert mouth.spoken == ["Pulling that up now.",
+                           "Your morning looks completely clear today, and Priya replied."]
     rec = [f for f in frames if f["type"] == "turn_receipt"][0]
-    assert rec["clauses"] == 3 and rec["outcome"] == "served"
+    assert rec["clauses"] == 2 and rec["outcome"] == "served"
     assert rec["first_clause_ms"] is not None and rec["first_audio_ms"] is not None
     assert t[-3:] == ["turn_end", "voice_turn_done", "status"]
     assert frames[-2]["agent_text"] == "".join(script).strip()

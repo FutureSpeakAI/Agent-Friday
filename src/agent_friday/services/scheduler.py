@@ -25,6 +25,8 @@ daemons) but leaves the store + dispatch callable for unit tests.
 
 import json
 import logging
+import os
+import tempfile
 import threading
 import time as _time
 import uuid
@@ -230,11 +232,21 @@ def _read_store() -> list:
 
 
 def _write_store(records: list):
+    """Publish complete schedule state or propagate a failed write to its caller."""
+    SCHEDULES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp = None
     try:
-        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
-        SCHEDULES_FILE.write_text(json.dumps(records, indent=2), encoding="utf-8")
-    except Exception as e:
-        print(f"  [scheduler] store write failed: {e}")
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                prefix="schedules-", suffix=".tmp", dir=SCHEDULES_FILE.parent,
+                delete=False) as stream:
+            temp = Path(stream.name)
+            json.dump(records, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, SCHEDULES_FILE)
+    finally:
+        if temp is not None and temp.exists():
+            temp.unlink()
 
 
 def list_schedules() -> list:
@@ -1154,6 +1166,16 @@ WORKFLOW_POLL_S = 3.0
 WORKFLOW_STALL_S = 90.0
 
 
+class WorkflowRunResult(str):
+    """Keep the legacy result text while retaining the invocation's real status."""
+    def __new__(cls, text, *, status, run_id, changed=True):
+        value = super().__new__(cls, text)
+        value.status = status
+        value.run_id = run_id
+        value.changed = changed
+        return value
+
+
 def _run_workflow(rec, task):
     """Run a saved multi-step workflow and wait until its last step settles.
 
@@ -1167,19 +1189,36 @@ def _run_workflow(rec, task):
     slug = (task.get("ref") or "").strip()
     if not slug:
         raise RuntimeError("workflow schedule has no workflow to run")
-    tid = _agent.run_workflow_chain(slug)
+    run_id = rec.get("_active_run_id") or "wfr_" + uuid.uuid4().hex
+    tid = _agent.run_workflow_chain(slug, conversation_id=task.get("conversation_id"),
+        project_id=task.get("project_id"), schedule_id=rec.get("id"), run_id=run_id,
+        notify=rec.get("notify"))
     if not tid:
         raise RuntimeError(f"the workflow {slug!r} is missing or has no steps")
+    owner = _agent._task_run_context(tid)
+    _patch_record(rec.get("id"), last_workflow_run_id=run_id,
+                  last_workflow_context={"run_id": run_id, "task_id": tid,
+                      "conversation_id": owner.get("conversation_id"),
+                      "project_id": owner.get("project_id")})
     deadline = _time.time() + int(rec.get("timeout_seconds", 1800))
     seen_failed = False
     stalled_since = None
     while _time.time() < deadline:
-        st = _agent.chain_run_status(slug) or {}
+        st = _agent.chain_run_status(slug, run_id=run_id) or {}
         state = st.get("state")
         steps = st.get("steps") or []
-        if state == "completed":
+        if state in ("completed", "completed_unverified", "cancelled", "interrupted", "failed"):
+            _patch_record(rec.get("id"), last_workflow_run_id=run_id,
+                last_workflow_context={key: st.get(key) for key in (
+                    "run_id", "workflow_revision", "conversation_id", "project_id",
+                    "schedule_id", "verification", "outputs", "delivery")})
+        if state in ("completed", "completed_unverified"):
             tail = (steps[-1].get("result_tail") or "").strip() if steps else ""
-            return tail or f"All {len(steps)} steps finished."
+            return WorkflowRunResult(tail or f"All {len(steps)} steps finished.",
+                status="complete" if state == "completed" else state, run_id=run_id,
+                changed=(st.get("delivery") or {}).get("changed", True))
+        if state in ("cancelled", "interrupted"):
+            return WorkflowRunResult(f"Workflow {state}.", status=state, run_id=run_id)
         if state == "failed":
             # A failed step may be about to retry itself; only a failure that
             # is still there on the next read ends the run.
@@ -1237,7 +1276,14 @@ def dispatch(rec, *, manual=False):
                 started_at=started)
     if rec.get("trigger") == "once":
         _mark["enabled"] = False
-    _patch_record(sid, **_mark)
+    if (rec.get("task") or {}).get("kind") == "workflow":
+        _mark["last_workflow_run_id"] = run_id
+    try:
+        _patch_record(sid, **_mark)
+    except Exception:
+        with _RUNNING_LOCK:
+            _RUNNING.discard(sid)
+        raise
 
     # Holographic orb policy:
     #   • silent schedules (e.g. the 1-min content publisher) are invisible
@@ -1268,6 +1314,7 @@ def dispatch(rec, *, manual=False):
         catch_up = rec.get("catch_up") or None
         try:
             result = _run_task(rec_live)
+            status = result.status if isinstance(result, WorkflowRunResult) else "complete"
             summary = _summarize(result)
             if catch_up:
                 summary = _late_note(catch_up, started) + (
@@ -1300,7 +1347,7 @@ def dispatch(rec, *, manual=False):
             #   on_change → only on a real delta
             #   else      → always
             _mode = rec.get("notify", "on_complete")
-            _patch_record(sid, last_status="complete", last_summary=summary,
+            _patch_record(sid, last_status=status, last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0,
                           catch_up=None)
             try:
@@ -1310,14 +1357,15 @@ def dispatch(rec, *, manual=False):
                     _ne_ok.resolve(f"sched-wait:{sid}")
             except Exception:
                 pass
-            if _mode == "silent":
+            if isinstance(result, WorkflowRunResult) or _mode in ("silent", "never"):
+                # The invocation owns delivery to its original conversation.
                 pass
             elif _mode == "status":
                 _notify_status(rec, summary)
             elif _mode == "on_change" and not _changed(result):
                 pass
             else:
-                _notify_run(rec, "complete", summary)
+                _notify_run(rec, status, summary)
         except SeatWaiting as e:
             # Waits for the seat and runs again the moment it is back, the
             # same day (`_is_due`); the tick records MISSED if the day ends

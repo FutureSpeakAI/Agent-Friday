@@ -4,13 +4,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from agent_friday.services import agent, scheduler, workflow_templates
+from agent_friday.services import agent, conversations, scheduler, workflow_templates
 
 
 @pytest.fixture
 def workflow_store(tmp_path, monkeypatch):
     folder = tmp_path / "workflows"
     monkeypatch.setattr(agent, "WORKFLOWS_DIR", folder)
+    monkeypatch.setattr(conversations, "FRIDAY_DIR", tmp_path / "conversation-store")
 
     def unexpected(*args, **kwargs):
         pytest.fail("Adding a starter must not create a schedule or start a task")
@@ -42,11 +43,13 @@ def test_add_creates_native_manual_chain_without_starting(workflow_store, monkey
 
     calls = []
     monkeypatch.setattr(agent, "_spawn_task", lambda **kwargs: calls.append(kwargs) or "task-1")
-    assert agent.run_workflow_chain(result["slug"], conversation_id="conversation-1") == "task-1"
+    conversation = conversations.create(title="Example career search")
+    assert agent.run_workflow_chain(result["slug"], conversation_id=conversation["id"]) == "task-1"
     assert calls[0]["chain"] == "career-search"
     assert calls[0]["chain_step"] == 0
-    assert calls[0]["conversation_id"] == "conversation-1"
-    assert calls[0]["prompt"] == chain["steps"][0]["prompt"]
+    assert calls[0]["conversation_id"] == conversation["id"]
+    assert calls[0]["prompt"].startswith(chain["steps"][0]["prompt"] + "\n\n")
+    assert 'Expected final deliverable:' in calls[0]["prompt"]
 
 
 def test_readding_preserves_saved_edits_byte_for_byte(workflow_store):

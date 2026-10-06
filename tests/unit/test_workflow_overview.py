@@ -279,13 +279,16 @@ def test_taking_the_timing_off_removes_the_schedule(stores):
     assert sch.get_schedule(out["schedule_id"]) is None
 
 
-def test_renaming_moves_the_workflow_and_keeps_one_schedule(stores):
+def test_renaming_preserves_workflow_identity_and_keeps_one_schedule(stores):
     out = wo.save({"name": "Tip roundup", "steps": STEPS, "when": WEEKDAYS_730})
     again = wo.save({"name": "Reader tips", "steps": STEPS, "when": WEEKDAYS_730,
                      "slug": out["slug"], "schedule_id": out["schedule_id"]})
     assert again["schedule_id"] == out["schedule_id"]
-    assert ag.load_workflow_chain("tip-roundup") is None
-    assert sch.get_schedule(out["schedule_id"])["task"]["ref"] == "reader-tips"
+    assert again["slug"] == out["slug"]
+    assert ag.load_workflow_chain(out["slug"])["name"] == "Reader tips"
+    assert ag.load_workflow_chain("reader-tips") is None
+    assert sch.get_schedule(out["schedule_id"])["task"]["ref"] == out["slug"]
+    assert len(sch.list_schedules()) == 1
     assert [w["name"] for w in wo.overview()["workflows"]] == ["Reader tips"]
 
 

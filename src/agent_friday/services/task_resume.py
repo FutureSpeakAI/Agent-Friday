@@ -143,6 +143,11 @@ def _local_only_label():
         return None
 
 
+def _run_context(task_id):
+    from agent_friday.services import agent
+    return agent._task_run_context(task_id)
+
+
 def checkpoint(task_id, *, convo, tool_trace=None, iteration=0, model=None,
                max_tokens=None, system=None, orb_label=None,
                orb_category="default", orb_icon="🧠", loop="anthropic") -> bool:
@@ -173,6 +178,7 @@ def checkpoint(task_id, *, convo, tool_trace=None, iteration=0, model=None,
             "orb_category": orb_category,
             "orb_icon": orb_icon,
             "pending_tool": None,
+            "run_context": _run_context(task_id),
             # A local-only run's checkpoint resumes local-only.
             "local_only": _local_only_label(),
             "saved": time.time(),
@@ -434,6 +440,11 @@ def resume(task_id, *, confirm_pending: bool = False,
     "probably fine" path, because the thing being guessed at is whether an
     email was sent.
     """
+    from agent_friday.services import agent as _ag
+    if not _ag._prepare_task_start(task_id):
+        with _ag.TASKS_LOCK:
+            reason = (_ag.TASKS.get(task_id) or {}).get("status_reason")
+        raise ResumeRefused(reason or "The recorded run cannot resume with its current authority.")
     verdict = resumability(task_id)
     if not verdict["resumable"]:
         raise ResumeRefused(verdict["reason"])
@@ -451,7 +462,11 @@ def resume(task_id, *, confirm_pending: bool = False,
     tool_trace = blob.get("tool_trace") or []
 
     ctx = dict(session_ctx or {})
-    ctx.setdefault("task_id", task_id)
+    # Only the stored invocation supplies grant/owner context after a restart.
+    ctx.update(blob.get("run_context") or _run_context(task_id))
+    ctx["task_id"] = task_id
+    ctx.setdefault("authenticated", True)
+    ctx["is_background_task"] = True
     ctx["resumed_from_iteration"] = verdict["iteration"]
 
     _bump_attempts(task_id)
@@ -466,13 +481,21 @@ def resume(task_id, *, confirm_pending: bool = False,
     import contextlib
     from agent_friday.services.agent import _call_claude_agent
     guard = contextlib.nullcontext()
-    if blob.get("local_only"):
+    pin = ctx.get("cloud_pin")
+    local_policy = ctx.get("local_only")
+    if pin:
+        from agent_friday.services.local_only_guard import cloud_pinned
+        guard = cloud_pinned(pin.get("model"), pin.get("label"))
+    elif blob.get("local_only") or local_policy:
         from agent_friday.services.local_only_guard import local_only
-        guard = local_only(blob["local_only"])
+        label = blob.get("local_only") or (local_policy or {}).get("label")
+        guard = local_only(label)
     # A resumed task is a helper: its frames carry its own id, never Friday's.
     from agent_friday.services import presence as _presence
+    from agent_friday.services.agent import _carry_workflow_baseline
+    _carry_workflow_baseline(task_id)
     with guard, _presence.acting_as(_presence.helper_id(task_id)):
-        return _call_claude_agent(
+        result = _call_claude_agent(
             convo,
             model=blob.get("model"),
             max_tokens=blob.get("max_tokens") or 16384,
@@ -482,6 +505,25 @@ def resume(task_id, *, confirm_pending: bool = False,
             orb_icon=blob.get("orb_icon") or "🧠",
             resumed_tool_trace=tool_trace,
         )
+    # Transcript recovery must perform the same verification, delivery and
+    # chaining as the worker; merely assigning "complete" loses the workflow.
+    from agent_friday.services import agent as _ag
+    with _ag.TASKS_LOCK:
+        rec = dict(_ag.TASKS.get(task_id) or {})
+    if rec.get("run_id"):
+        text, trace = result
+        outcome = _ag._verify_workflow_task(task_id, text or "", trace)
+        status = "complete" if outcome and outcome["verified"] else "completed_unverified"
+        if _ag._looks_like_provider_failure(text):
+            status = "failed"
+        _ag._task_set(task_id, status=status, result=text or "", ended=time.time(),
+                      verified=bool(outcome and outcome["verified"]))
+        _ag._report_task_completion(task_id, rec.get("name") or "Workflow", status, text or "")
+        if status == "failed":
+            _ag._retry_chain_step(task_id, text or "Provider failure")
+        else:
+            _ag._advance_task_chain(task_id, text or "")
+    return result
 
 
 def _resume_from_ledger(task_id, verdict) -> Tuple[Optional[str], list]:

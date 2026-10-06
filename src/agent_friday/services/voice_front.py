@@ -281,7 +281,7 @@ class FrontSeat:
 
     def run_turn(self, system: str, messages: list, contract: dict, *,
                  on_delta=None, run_tool=None, max_tokens: int = 400,
-                 temperature=None, timings=None) -> str:
+                 temperature=None, timings=None, allow_continuation=False) -> str:
         """One spoken turn: stream text, run validated tool calls through
         ``run_tool(name, args) -> result``, and loop until the model answers
         (at most ``MAX_TOOL_ROUNDS`` tool rounds). The caller's turn cancel
@@ -291,11 +291,24 @@ class FrontSeat:
                                                         turn_cancelled)
         convo = [{"role": "system", "content": system}] + list(messages)
         spoken = []
+        continued = False
+        from agent_friday.services.turn_budget import clamp_output
+        window = FRONT_MODELS.get(self.model or DEFAULT_FRONT_MODEL, FRONT_MODELS[DEFAULT_FRONT_MODEL])["ctx"]
+        # Fit the oldest history out before sacrificing this utterance. The
+        # remaining estimate includes tools and a margin for the chat template.
+        def room():
+            return window - len(json.dumps({"messages": convo, "tools": contract.get("tools") or []})) // 4 - 512
+        while len(convo) > 2 and room() < min(int(max_tokens), 1400):
+            convo.pop(1)
+        allowance = clamp_output(max_tokens, window)
         for rnd in range(MAX_TOOL_ROUNDS + 1):
             if turn_cancelled():
                 break
+            remaining = room()
+            if remaining < 128:
+                raise RuntimeError("The local voice context is full; start a fresh conversation or hand this work to the main agent.")
             body = {"model": seat_id(self.model or ""), "stream": True,
-                    "max_tokens": int(max_tokens), "cache_prompt": True,
+                    "max_tokens": min(int(allowance), remaining), "cache_prompt": True,
                     "id_slot": 0, "messages": convo,
                     "tools": contract.get("tools") or None,
                     "chat_template_kwargs": dict(_NO_THINKING)}
@@ -314,6 +327,12 @@ class FrontSeat:
             if text.strip():
                 spoken.append(text.strip())
             calls = msg.get("tool_calls") or []
+            if (not calls and ch.get("finish_reason") == "length" and allow_continuation
+                    and not continued and rnd < MAX_TOOL_ROUNDS and not turn_cancelled()):
+                continued = True
+                convo.extend([{"role": "assistant", "content": text},
+                              {"role": "user", "content": "Continue the unfinished thought naturally, without repeating what was already spoken. Finish when the requested substance is covered."}])
+                continue
             if not calls or ch.get("finish_reason") == "cancelled":
                 break
             convo.append({"role": "assistant", "content": text,

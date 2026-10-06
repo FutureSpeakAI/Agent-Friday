@@ -3178,6 +3178,9 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     # describing capabilities she does not have — and improvisation about
     # yourself is indistinguishable from lying about yourself.
     prefix += honest_limits_block()
+    from agent_friday.services.workflow_tools import CAPABILITY_INDEX
+    from agent_friday.services.voice_delivery import PRESENCE_RULE
+    prefix += "\n" + CAPABILITY_INDEX + "\n" + PRESENCE_RULE
     try:
         from agent_friday.services.self_account import describe as _self_account
         _acct = _self_account()

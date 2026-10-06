@@ -258,7 +258,7 @@ def readmit_queued() -> dict:
     out = {"readmitted": [], "failed": []}
     try:
         TASKS, TASKS_LOCK = _tasks()
-        from agent_friday.services.agent import _spawn_task
+        from agent_friday.services.agent import requeue_task
         from agent_friday.services import task_journal as _tj
     except Exception as e:
         print(f"  [reconcile] seat-queue re-admission unavailable: {e}")
@@ -279,11 +279,10 @@ def readmit_queued() -> dict:
                         "no prompt was recorded, so it cannot be re-queued.")
             continue
         try:
-            new_id = _spawn_task(t.get("name") or "Task", prompt,
-                                 description=t.get("description") or "",
-                                 chain=t.get("chain"),
-                                 chain_step=int(t.get("chain_step") or 0),
-                                 model=t.get("model"))
+            new_id = requeue_task(t)
+            if not new_id:
+                # Cancellation or unavailable ownership is already terminal.
+                continue
         except Exception as e:
             out["failed"].append(tid)
             print(f"  [reconcile] could not re-queue {tid}: {e}")

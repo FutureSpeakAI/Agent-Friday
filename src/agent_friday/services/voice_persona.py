@@ -168,8 +168,10 @@ def strip_text_chat_hints(context: str, *, keep_tone: bool) -> str:
     return context
 
 
-def compose_live_instruction(style: str, body: str) -> str:
+def compose_live_instruction(style: str, body: str, settings=None) -> str:
     """The persona opens and closes the instruction; the body sits between."""
+    from agent_friday.services.voice_delivery import instruction
+    body = instruction(settings) + "\n" + body
     block = persona_block(style)
     if not block:
         return body

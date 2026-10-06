@@ -71,12 +71,15 @@ def test_the_live_session_reads_the_real_setting():
 
 def test_the_persona_opens_and_closes_the_instruction():
     body = "BODY " * 5000
-    out = vp.compose_live_instruction(STYLE, body)
+    out = vp.compose_live_instruction(STYLE, body, settings={})
     assert out.startswith(vp.PERSONA_HEADER)
     assert out.rstrip().endswith(vp.persona_block(STYLE).rstrip())
     assert out.count(STYLE) == 2
     assert "outranks any generic tone hint" in out
-    assert vp.compose_live_instruction("", body) == body
+    adaptive = vp.compose_live_instruction("", body, settings={})
+    assert adaptive.endswith(body) and adaptive.count(body) == 1
+    assert "CONVERSATIONAL PRESENCE" in adaptive and "SPOKEN DELIVERY" in adaptive
+    assert vp.PERSONA_HEADER not in adaptive
 
 
 def test_the_persona_survives_the_action_policy_seal():

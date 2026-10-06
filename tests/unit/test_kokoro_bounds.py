@@ -58,7 +58,7 @@ def small_budget(monkeypatch):
 def test_a_wedged_synthesis_is_abandoned_at_its_budget(small_budget):
     release = threading.Event()
 
-    def wedged(text, voice=None):
+    def wedged(text, voice=None, speed=1.0):
         release.wait(20)                 # a GPU that never answers
         yield "g", "ph", _second(1)
 
@@ -76,7 +76,7 @@ def test_a_wedged_synthesis_is_abandoned_at_its_budget(small_budget):
     # When the stuck call finally returns, the engine works again.
     release.set()
     time.sleep(0.3)
-    tts._pipeline = lambda text, voice=None: iter([("g", "ph", _second(0.5))])
+    tts._pipeline = lambda text, voice=None, speed=1.0: iter([("g", "ph", _second(0.5))])
     pcm, err, _ = _call(tts, "Tadhg")
     assert err is None and len(pcm) == int(0.5 * kv.KOKORO_NATIVE_RATE) * 2
 
@@ -84,7 +84,7 @@ def test_a_wedged_synthesis_is_abandoned_at_its_budget(small_budget):
 def test_runaway_audio_is_cut_to_the_phoneme_cap():
     phonemes = "kəkˈoɹo"                 # 7 phonemes: cap = 2 + 0.5*7 = 5.5 s
 
-    def runaway(text, voice=None):
+    def runaway(text, voice=None, speed=1.0):
         yield "Kokoro", phonemes, _second(300)
 
     pcm, err, _ = _call(_tts(runaway), "Kokoro")
@@ -95,7 +95,7 @@ def test_runaway_audio_is_cut_to_the_phoneme_cap():
 
 
 def test_ordinary_speech_is_untouched():
-    def normal(text, voice=None):
+    def normal(text, voice=None, speed=1.0):
         yield "Siobhan", "ʃɪvˈɔːn", _second(0.6)
         yield "and Aoife", "ænd ˈiːfə", _second(0.8)
 
@@ -105,7 +105,7 @@ def test_ordinary_speech_is_untouched():
 
 
 def test_a_failing_pipeline_still_names_itself():
-    def broken(text, voice=None):
+    def broken(text, voice=None, speed=1.0):
         raise TypeError("unknown word")
         yield  # pragma: no cover
 

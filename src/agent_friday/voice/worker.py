@@ -306,10 +306,12 @@ def serve(engine, inp, out) -> int:
             elif op == "synth":
                 cancelled.clear()
                 n = 0
-                for chunk in engine.synth_stream(str(msg.get("text") or ""), cancelled):
-                    if chunk:
-                        write_frame(out, _KIND_BIN, chunk)
-                        n += len(chunk)
+                from agent_friday.services.voice_delivery import using_preferences
+                with using_preferences(msg.get("delivery")):
+                    for chunk in engine.synth_stream(str(msg.get("text") or ""), cancelled):
+                        if chunk:
+                            write_frame(out, _KIND_BIN, chunk)
+                            n += len(chunk)
                 send_json(out, {"op": "done", "job": job, "bytes": n,
                                 "cancelled": cancelled.is_set()})
             elif op == "transcribe":

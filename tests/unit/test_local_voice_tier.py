@@ -1,4 +1,4 @@
-﻿"""Tier-1 ⇄ Tier-2 selection, hot-swap, graceful fallback, and perf monitoring.
+"""Tier-1 ⇄ Tier-2 selection, hot-swap, graceful fallback, and perf monitoring.
 
 Exercises the LocalVoiceEngine tier machinery (services/local_voice.py) plus the
 provider/health/capability wiring for NeMo — all with mock backends, no GPU, no
@@ -264,11 +264,11 @@ def test_voice_reply_cap_leaves_room_for_prompt_and_tools():
     assert _voice_reply_cap({}) + 13_567 + 11_539 < 32_768
 
 
-def test_voice_reply_cap_honors_setting_but_clamps():
+def test_voice_reply_cap_honors_setting_before_provider_context_clamp():
     from agent_friday.routes.voice import _voice_reply_cap
     assert _voice_reply_cap({"voice_max_tokens": 500}) == 500
-    # A cap bigger than the seat can hold is the same bug with a nicer name.
-    assert _voice_reply_cap({"voice_max_tokens": 16384}) <= 2048
+    # The provider request, which knows its context window, enforces the ceiling.
+    assert _voice_reply_cap({"voice_max_tokens": 16384}) == 16384
 
 
 # ── the voice path must carry an authenticated session ────────────────────────

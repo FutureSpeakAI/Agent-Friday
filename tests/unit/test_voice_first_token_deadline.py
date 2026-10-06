@@ -10,8 +10,15 @@ that has started speaking is never cut by the deadline.
 import inspect
 import threading
 import time
+import pytest
 
 from agent_friday.services import voice_session as vs
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_settings(monkeypatch):
+    from agent_friday.services import off_record
+    monkeypatch.setattr(off_record, "_settings", lambda: {})
 
 
 class _Mouth:
@@ -107,8 +114,8 @@ def test_a_mind_that_starts_speaking_is_never_cut_by_the_deadline():
 def test_the_route_wires_both_deadlines_from_settings():
     from agent_friday import core
     import agent_friday.routes.voice as rv
-    assert core.DEFAULT_SETTINGS["voice_first_token_filler_s"] == 6
+    assert core.DEFAULT_SETTINGS["voice_first_token_filler_s"] == 0
     assert core.DEFAULT_SETTINGS["voice_tool_hard_limit_s"] == 20
     src = inspect.getsource(rv)
-    assert '"voice_first_token_filler_s", 6' in src
+    assert '"voice_first_token_filler_s", 0' in src
     assert '"voice_tool_hard_limit_s", 20' in src

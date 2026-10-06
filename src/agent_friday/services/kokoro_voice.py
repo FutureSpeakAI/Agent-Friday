@@ -559,6 +559,8 @@ class KokoroTTS:
         self.load()
         import numpy as np
         text = str(text)
+        from agent_friday.services.voice_delivery import synthesis_plan, finish_pcm
+        plan = synthesis_plan(text)
         stuck = self._stuck
         if stuck is not None and stuck.is_alive():
             raise KokoroUnavailable(
@@ -579,7 +581,7 @@ class KokoroTTS:
         # failure here becomes a refusal that names itself instead.
         def generate():
             try:
-                for _gs, _ps, audio in self._pipeline(text, voice=self.voice):
+                for _gs, _ps, audio in self._pipeline(text, voice=self.voice, speed=plan["speed"]):
                     if abandoned.is_set():
                         return                 # nobody is waiting; stop working
                     if audio is None:
@@ -630,4 +632,4 @@ class KokoroTTS:
         if self._native_rate() != PLAYBACK_RATE:  # pragma: no cover - guard
             from agent_friday.services.local_voice import _resample_pcm16
             pcm = _resample_pcm16(pcm, self._native_rate(), PLAYBACK_RATE)
-        return pcm
+        return finish_pcm(pcm, plan)

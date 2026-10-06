@@ -320,6 +320,9 @@ def write_state(task_id: str, state: Dict[str, Any]) -> bool:
         if _unwritten(task_id):
             return True
         try:
+            previous = read_state(task_id)
+            if previous and previous.get("stop_requested"):
+                clean["stop_requested"] = previous["stop_requested"]
             raw = json.dumps(clean, default=str, ensure_ascii=False).encode("utf-8")
             _write_atomic(task_dir(task_id) / "state.json", _protect(raw))
             return True
@@ -898,7 +901,11 @@ _SEALED_FIELDS = ("summary", "text", "thinking", "args", "result_summary", "reas
                   "detail", "last_checkpoint", "now",
                   # task rows served by /api/tasks and /api/tasks/<id> (these
                   # are on the observer allowlist, so they must be sealed)
-                  "log", "label", "output", "error")
+                  "log", "label", "output", "error",
+                  # Saved workflow contracts and output references also carry
+                  # user content when included in task snapshots.
+                  "inputs", "success_criteria", "title", "path", "content",
+                  "result_tail", "log_tail", "note")
 
 WITHHELD = "[withheld by the privacy gate]"
 
@@ -970,7 +977,12 @@ def request_stop(task_id: str) -> None:
 
 
 def stop_requested(task_id: Optional[str]) -> bool:
-    return bool(task_id) and str(task_id) in _STOP_REQUESTED
+    if not task_id:
+        return False
+    if str(task_id) in _STOP_REQUESTED:
+        return True
+    state = read_state(str(task_id))
+    return bool(state and state.get("stop_requested"))
 
 
 def consume_stop(task_id: Optional[str]) -> bool:

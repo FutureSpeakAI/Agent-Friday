@@ -33,7 +33,8 @@ DROPPED_SECTIONS = (
 )
 
 #: Taken first, in this order, after the preamble.
-PRIORITY_SECTIONS = ("CORE IDENTITY",)
+PRIORITY_SECTIONS = ("CORE IDENTITY", "AGENT PERSONALITY", "USER MODEL",
+                     "LEARNED HEURISTICS", "CAPABILITY DISCOVERY")
 
 _HEADER = re.compile(r"^== (.+?) ==\s*$", re.M)
 

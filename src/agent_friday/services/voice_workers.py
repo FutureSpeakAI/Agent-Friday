@@ -398,7 +398,9 @@ class VoiceWorker:
             if not self.alive():
                 self._finish("died")
                 raise WorkerDied(f"the {self.stage} worker is not running")
-            send_json(self.proc.stdin, {"op": "synth", "text": text, "job": self.jobs})
+            from agent_friday.services.voice_delivery import current_overrides
+            send_json(self.proc.stdin, {"op": "synth", "text": text, "job": self.jobs,
+                                        "delivery": current_overrides()})
             sent_cancel = False
             while True:
                 if cancel is not None and cancel.is_set() and not sent_cancel:

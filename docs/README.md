@@ -24,6 +24,7 @@ document it is.
 | [Calendar](user-guide/calendar.md) | Google Calendar and Tasks, and which changes ask first. |
 | [Voice](user-guide/voice.md) | Voice engines, local voice, and push-to-transcribe (Alt+T). |
 | [Documents](user-guide/documents.md) | Word, Excel and PowerPoint files through OfficeCLI. |
+| [Workflows](user-guide/workflows.md) | Project context, checked results, reusable procedures, and shared desktop, chat and voice controls. |
 | [Scheduled jobs](user-guide/scheduled-jobs.md) | Where jobs run, local-only defaults, and grants. |
 | [Phone](user-guide/phone.md) | Texts, voicemail and calls over your own Twilio account (off by default). |
 | [Backup and restore](user-guide/backup-and-restore.md) | What to back up, what cannot be recovered, restoring on a new PC. |

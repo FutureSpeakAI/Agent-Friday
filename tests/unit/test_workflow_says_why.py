@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from agent_friday.services import agent as A
+from agent_friday.services import conversations
 from agent_friday.services import reconcile as R
 
 
@@ -90,7 +91,14 @@ def test_the_notice_goes_to_the_conversation_that_started_it(tasks, monkeypatch)
     assert "restart" in sent[0][1].lower()
 
 
-def test_a_task_spawned_from_a_tool_carries_its_conversation(monkeypatch):
+@pytest.fixture
+def workflow_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(A, 'WORKFLOWS_DIR', tmp_path / 'workflows')
+    monkeypatch.setattr(conversations, 'FRIDAY_DIR', tmp_path / 'conversation-store')
+    A.save_workflow_chain({'name': 'demo', 'steps': [{'name': 's1', 'prompt': 'go'}]})
+
+
+def test_a_task_spawned_from_a_tool_carries_its_conversation(monkeypatch, workflow_store):
     """The plumbing that makes the above possible: a tool call knows which
     conversation it belongs to, and hands that to the work it starts."""
     seen = {}
@@ -100,27 +108,27 @@ def test_a_task_spawned_from_a_tool_carries_its_conversation(monkeypatch):
         return "task-1"
 
     monkeypatch.setattr(A, "_spawn_task", _fake_spawn)
-    monkeypatch.setattr(A, "load_workflow_chain",
-                        lambda n: {"name": n, "slug": n,
-                                   "steps": [{"name": "s1", "prompt": "go"}]})
-    tok = A._CURRENT_CONVERSATION.set("conv-xyz")
+    conversation = conversations.create(title='Example workflow owner')
+    tok = A._CURRENT_CONVERSATION.set(conversation['id'])
     try:
         A.run_workflow_chain("demo", conversation_id=A._CURRENT_CONVERSATION.get())
     finally:
         A._CURRENT_CONVERSATION.reset(tok)
-    assert seen.get("conversation_id") == "conv-xyz"
+    assert seen.get("conversation_id") == conversation['id']
 
 
-def test_without_a_conversation_nothing_breaks(monkeypatch):
+def test_without_a_conversation_binds_one_durable_destination(monkeypatch, workflow_store):
     """Voice, channels and the scheduler predate conversations. They must keep
-    working - they simply report to Main, as they always have."""
+    working, with a persistent destination for the workflow's later runs."""
     seen = {}
     monkeypatch.setattr(A, "_spawn_task", lambda **kw: seen.update(kw) or "t")
-    monkeypatch.setattr(A, "load_workflow_chain",
-                        lambda n: {"name": n, "slug": n,
-                                   "steps": [{"name": "s1", "prompt": "go"}]})
     A.run_workflow_chain("demo")
-    assert seen.get("conversation_id") is None
+    owner = seen.get('conversation_id')
+    assert owner and owner != conversations.MAIN_ID
+    assert conversations.load(owner)
+    assert A.load_workflow_chain('demo')['conversation_id'] == owner
+    A.run_workflow_chain('demo')
+    assert seen['conversation_id'] == owner
 
 
 # ── the status tool actually shows it ───────────────────────────────────────

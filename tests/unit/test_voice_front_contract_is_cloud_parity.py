@@ -76,3 +76,23 @@ def test_the_compact_rendering_changes_only_descriptions_and_never_the_registry(
     for t in lean["tools"]:
         assert t["function"]["description"], t["function"]["name"]
     assert CLAUDE_TOOLS == before, "rendering the contract edited the shared registry"
+
+
+def test_compact_guidance_keeps_authority_constraints_and_full_discovery(monkeypatch):
+    import copy
+    import json
+    from agent_friday.services import workflow_tools
+    guide = copy.deepcopy(workflow_tools._WORKFLOW_GUIDE)
+    compact = {entry["function"]["name"]: entry["function"]
+               for entry in ve.build_voice_tool_contract()["tools"]}
+    for name in ("organize_email", "organize_files", "organize_wiki"):
+        assert "approval" in compact[name]["description"].lower()
+    private = compact["ask_local_for_context"]["description"].lower()
+    assert "local" in private and "private" in private and "instead" in private
+    lasting = compact["voice_preferences"]["description"].lower()
+    assert "default" in lasting and "explicit" in lasting
+    monkeypatch.setattr(workflow_tools, "_private_discovery_allowed", lambda: False)
+    discovered = json.loads(workflow_tools.discover_capabilities({"name": "workflow_action"}))
+    assert discovered["guide"] == guide
+    assert discovered["instructions"]["input_schema"] == compact["workflow_action"]["parameters"]
+    assert "queued is not completed" in discovered["instructions"]["description"]

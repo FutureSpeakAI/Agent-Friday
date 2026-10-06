@@ -119,11 +119,11 @@ def priorities(state: dict, n: int = 3) -> list:
 
 
 _DEPTH_WORDS = {
-    "deep": ("they want depth right now: take real room, about a minute of talking, in "
+    "deep": ("they want depth right now: give the substance room, in "
              "connected paragraphs that build on each other, with the reasons, a concrete "
              "example and what it means for them, the way a person explains; no list unless "
              "they asked for options or steps"),
-    "normal": "a natural, complete answer in a few spoken sentences; no reflexive list",
+    "normal": "a natural, complete answer at the depth the subject deserves; no sentence quota or reflexive list",
     "brief": "they want it short: a sentence or two, and nothing extra",
 }
 

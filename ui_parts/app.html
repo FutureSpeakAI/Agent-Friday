@@ -8475,6 +8475,14 @@ const WF_EXAMPLES = [
   'Every morning, give me a one-paragraph summary of overnight news on my beats',
 ];
 const WF_STATUS = {
+  complete: { color: 'var(--fr-ok)', label: 'Finished' },
+  completed: { color: 'var(--fr-ok)', label: 'Finished' },
+  completed_unverified: { color: 'var(--fr-warn)', label: 'Finished · not verified' },
+  unverified: { color: 'var(--fr-warn)', label: 'Finished · not verified' },
+  waiting: { color: 'var(--fr-warn)', label: 'Needs your decision' },
+  awaiting_approval: { color: 'var(--fr-warn)', label: 'Needs your decision' },
+  interrupted: { color: 'var(--fr-warn)', label: 'Interrupted' },
+  queued: { color: 'var(--fr-cyan)', label: 'Queued' },
   finished: { color: '#00ff80', label: 'Finished' },
   failed: { color: '#ff5f7a', label: "Didn't finish" },
   running: { color: '#00d4ff', label: 'Running now' },
@@ -8520,6 +8528,45 @@ const WF_CSS = `
 .wfx-err{color:#ff8fae;font-size:12.5px;margin-top:6px}
 .wfx-icon{background:none;border:1px solid transparent;color:#a8a8b4;cursor:pointer;border-radius:4px;padding:2px 6px;font-size:13px}
 .wfx-icon:hover{border-color:rgba(255,255,255,.2);color:#fff}
+.wfx-fieldset{border:0;padding:0;margin:12px 0;min-width:0}
+.wfx-editor .wfx-lbl{margin-top:12px}
+.wfx-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px}
+.wfx-field{display:flex;flex-direction:column;gap:5px;color:var(--fr-dim);font-size:12px;margin:10px 0;min-width:0}
+.wfx-in{min-width:0;max-width:100%}
+.wfx-in option{background:var(--fr-surface);color:var(--fr-text)}
+.wfx-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px}
+.wfx-actions .btn,.wfx-link{white-space:normal;text-align:left;overflow-wrap:anywhere}
+.wfx-editor-actions{justify-content:flex-end;border-top:1px solid var(--fr-glass-edge);padding-top:14px}
+.wfx-disclosure{border-top:1px solid var(--fr-glass-edge);padding-top:12px;margin-top:14px;min-width:0}
+.wfx-disclosure>summary{cursor:pointer;color:var(--fr-text);font-size:12px;font-weight:600;list-style-position:inside}
+.wfx-disclosure>summary:focus-visible,.wfx-link:focus-visible{outline:2px solid var(--fr-cyan);outline-offset:3px}
+.wfx-outcome{border-left:2px solid var(--fr-cyan);padding:0 0 2px 12px;margin:12px 0}
+.wfx-result-copy{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6;margin:10px 0}
+.wfx-checks{padding-left:20px;color:var(--fr-dim);font-size:12px;overflow-wrap:anywhere}
+.wfx-output-list{display:grid;gap:8px;margin:10px 0;overflow-wrap:anywhere}
+.wfx-output-list small{display:block}
+.wfx-starters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr));gap:10px;margin-top:12px}
+.wfx-starter{border:1px solid var(--fr-glass-edge);background:var(--fr-glass);color:var(--fr-text);padding:12px;border-radius:8px;cursor:pointer;text-align:left;font:inherit;min-width:0}
+.wfx-starter:hover{border-color:var(--fr-cyan)}
+.wfx-starter strong,.wfx-starter span{display:block;overflow-wrap:anywhere}
+.wfx-starter span{font-size:12px;color:var(--fr-dim);margin-top:4px}
+.wfx-compose{display:flex;align-items:flex-end;gap:10px;margin:12px 0}
+.wfx-compose textarea{flex:1;min-width:0;resize:vertical}
+.wfx-compose>.btn{flex:none}
+.wfx-details{margin-top:14px;border-top:1px solid var(--fr-glass-edge);padding-top:2px}
+.wfx-step-label{color:var(--fr-cyan);font-weight:600}
+.wfx-step-head{margin-bottom:8px;flex-wrap:wrap}
+.wfx-step-head .wfx-grow{flex:1 1 120px}
+.wfx-step-head .wfx-actions{margin:0}
+.wfx-timing{width:auto;flex:1 1 140px}
+.wfx-hours{width:68px}
+.wfx-days{gap:5px}
+.wfx-routine{padding:12px 0;border-bottom:1px solid var(--fr-glass-edge)}
+.wfx [disabled]{cursor:default;opacity:.5}
+.wfx-promise{flex-wrap:wrap}
+.wfx-desc,.wfx-name{overflow-wrap:anywhere}
+@media(max-width:560px){.wfx-compose{flex-direction:column;align-items:stretch}.wfx-compose textarea{width:100%}.wfx-card{padding:12px}.wfx-fields{grid-template-columns:1fr}.wfx-card-actions{gap:9px}.wfx-starters{grid-template-columns:1fr}}
+
 `;
 
 function wfClock(h, m) {
@@ -8609,273 +8656,307 @@ function wfOpenApprovals() {
   if (window.fridayOpenWorkspace) window.fridayOpenWorkspace(t); else fridayNavigate(t);
 }
 function wfPost(url, body) {
-  return apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
-    .then(r => r.json().catch(() => ({})).then(d => (r.ok ? d : Promise.reject(new Error(d.message || ('HTTP ' + r.status))))));
+    return apiFetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body || {})})
+      .then(r => r.json().catch(() => ({})).then(d => { if (!r.ok || d.status === 'error' || d.ok === false) throw new Error(d.message || d.error || ('HTTP ' + r.status)); return d; }));
+  }
+
+function WfSwitch({ on, onChange, label, disabled }) {
+  return <button type="button" role="switch" aria-checked={!!on} aria-label={label} title={on ? 'On — click to pause' : 'Paused — click to turn on'} className="wfx-sw" disabled={disabled} onClick={onChange} />;
 }
 
-function WfSwitch({ on, onChange, label }) {
-  return <button type="button" role="switch" aria-checked={!!on} aria-label={label} title={on ? 'On — click to pause' : 'Paused — click to turn on'} className="wfx-sw" onClick={onChange} />;
+function wfOutcomeState(value) {
+  return typeof value === 'string' ? value : value && (value.status || value.state) || 'unknown';
+}
+function wfChatUrl(cid, artifact, version) {
+  const q = new URLSearchParams({ chrome: 'chat', conversation: cid });
+  if (artifact) q.set('artifact', artifact);
+  if (Number.isSafeInteger(version) && version > 0) q.set('version', String(version));
+  return '/?' + q.toString();
+}
+function wfResultUrl(item, run) {
+  const cid = item.conversation_id || run.conversation_id || (run.delivery || {}).conversation_id;
+  const aid = item.artifact_id || (item.kind === 'artifact' ? item.id : null);
+  if (cid && aid) return wfChatUrl(cid, aid, item.version);
+  const url = item.url || item.href;
+  return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//') && !url.includes('\\') ? url : null;
+}
+function wfOpenTask(id) {
+  const target = { workspace: 'system', tab: 'task', task: id };
+  if (window.fridayOpenWorkspace) window.fridayOpenWorkspace(target); else fridayNavigate(target);
+}
+function WfOutcome({ run }) {
+  if (!run) return null;
+  const verification = wfOutcomeState(run.verification);
+  const delivery = wfOutcomeState(run.delivery);
+  const checked = ['verified', 'passed'].includes(verification);
+  const checks = run.verification && Array.isArray(run.verification.checks) ? run.verification.checks : [];
+  const outputs = Array.isArray(run.outputs) ? run.outputs : [];
+  const cid = run.conversation_id || (run.delivery || {}).conversation_id;
+  const deliveryLabels = { delivered: 'Delivered to the conversation', sent: 'Delivered to the conversation', failed: 'Delivery failed', pending: 'Delivery pending', deferred: 'Delivery after the final step', not_requested: 'No delivery requested', suppressed: 'Routine notification suppressed', unchanged: 'No notification: unchanged' };
+  return <div className="wfx-outcome" data-testid="wf-outcome">
+    <div className="wfx-meta">
+      <span data-verification={verification}>{checked ? run.verification.scope === 'deliverable_structure' ? 'Deliverable verified' : 'Checks passed' : verification === 'failed' ? 'Checks did not pass' : ['pending','running'].includes(verification) ? 'Checks pending' : 'Result not verified'}</span>
+      <span data-delivery={delivery}>{deliveryLabels[delivery] || 'Delivery not confirmed'}</span>
+    </div>
+    {run.summary && <p className="wfx-result-copy">{run.summary}</p>}
+    {run.verification && run.verification.summary && <p className="wfx-quiet">{run.verification.summary}</p>}
+    {run.delivery && (run.delivery.error || run.delivery.reason) && <p className="wfx-quiet">{run.delivery.error || run.delivery.reason}</p>}
+    {checks.length > 0 && <ul className="wfx-checks">{checks.map((c, i) => <li key={c.id || i}>{typeof c === 'string' ? c : (c.label || c.name || c.check || 'Check').replaceAll('_', ' ') + ': ' + (c.status || (c.passed === true ? 'passed' : 'not confirmed')).replaceAll('_', ' ') + (c.message || c.detail ? ' · ' + (c.message || c.detail) : '')}</li>)}</ul>}
+    {outputs.length > 0 && <div className="wfx-output-list" aria-label="Workflow results">{outputs.map((o, i) => {
+      const href = wfResultUrl(o, run);
+      const label = o.title || o.name || o.path || 'Result ' + (i + 1);
+      return <div key={o.id || o.artifact_id || i}>{href ? <a className="wfx-link" href={href} target="_blank" rel="noopener noreferrer">{label} ↗</a> : <span>{label}</span>}{o.path && o.path !== label && <small className="wfx-quiet">{o.path}</small>}</div>;
+    })}</div>}
+    <div className="wfx-actions">
+      {cid && <a className="wfx-link" href={wfChatUrl(cid)} target="_blank" rel="noopener noreferrer">Open conversation ↗</a>}
+      {(run.task_ids || []).length > 0 && <button type="button" className="wfx-link" onClick={() => wfOpenTask(run.task_ids[run.task_ids.length - 1])}>View task and progress</button>}
+    </div>
+  </div>;
 }
 
-function WfEditor({ initial, onCancel, onSaved }) {
+function WfEditor({ initial, projects = [], conversations = [], onCancel, onSaved }) {
   const [name, setName] = useState(initial.name || '');
   const [desc, setDesc] = useState(initial.description || '');
-  const [steps, setSteps] = useState((initial.steps && initial.steps.length ? initial.steps : [{ name: '', prompt: '' }]).map(s => ({ name: s.name || '', prompt: s.prompt || '' })));
+  const [steps, setSteps] = useState((initial.steps && initial.steps.length ? initial.steps : [{ name: '', prompt: '' }]).map(s => ({ ...s, name: s.name || '', prompt: s.prompt || '' })));
   const [ui, setUi] = useState(wfWhenToUi(initial.when));
+  const [project, setProject] = useState(initial.project_id || '');
+  const [conversation, setConversation] = useState(initial.conversation_id || '');
+  const [inputs, setInputs] = useState((initial.inputs || []).join('\n'));
+  const [criteria, setCriteria] = useState(initial.success_criteria || '');
+  const [output, setOutput] = useState(initial.output || { kind: 'reply' });
+  const [notify, setNotify] = useState(initial.notify || 'on_complete');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const setU = (k, v) => setUi(Object.assign({}, ui, { [k]: v }));
-  const setS = (i, k, v) => { const n = steps.slice(); n[i] = Object.assign({}, n[i], { [k]: v }); setSteps(n); };
-  const move = (i, d) => { const n = steps.slice(); const t = n[i]; n[i] = n[i + d]; n[i + d] = t; setSteps(n); };
+  const saving = useRef(false);
+  const editor = useRef(null);
+  useEffect(() => { editor.current?.scrollIntoView({ block: 'start' }); }, []);
+  const setU = (k, v) => setUi(p => ({ ...p, [k]: v }));
+  const setS = (i, k, v) => setSteps(p => p.map((s, n) => n === i ? { ...s, [k]: v } : s));
+  const move = (i, d) => setSteps(p => { const n = p.slice(); [n[i], n[i + d]] = [n[i + d], n[i]]; return n; });
   const when = wfUiToWhen(ui);
   const isNew = !initial.slug && !initial.schedule_id;
+  const choices = conversations.filter(c => !project || (c.project_id || c.project) === project);
+  const chooseProject = id => { setProject(id); if (conversation && !conversations.some(c => c.id === conversation && (!id || (c.project_id || c.project) === id))) setConversation(''); };
   const save = () => {
+    if (saving.current) return;
     setErr('');
-    const clean = steps.filter(s => s.prompt.trim()).map((s, i) => ({ name: s.name.trim() || 'Step ' + (i + 1), prompt: s.prompt.trim() }));
+    const clean = steps.filter(s => s.prompt.trim()).map((s, i) => ({ ...s, name: s.name.trim() || 'Step ' + (i + 1), prompt: s.prompt.trim() }));
     if (!name.trim()) { setErr('Give it a name.'); return; }
-    if (!clean.length) { setErr(('Say what ' + fridayName() + ' should do in at least one step.')); return; }
+    if (!clean.length) { setErr('Add instructions in at least one step.'); return; }
     if (ui.repeat === 'once' && !ui.date) { setErr('Pick the day it should run.'); return; }
-    setBusy(true);
-    wfPost('/api/workflows/save', { name: name.trim(), description: desc.trim(), steps: clean, when, slug: initial.slug || null, schedule_id: initial.schedule_id || null, enabled: initial.enabled === undefined ? true : initial.enabled })
-      .then(d => { setBusy(false); onSaved(d, name.trim()); })
-      .catch(e => { setBusy(false); setErr(e.message); });
+    saving.current = true; setBusy(true);
+    wfPost('/api/workflows/save', { ...initial, name: name.trim(), description: desc.trim(), steps: clean, when,
+      slug: initial.slug || null, schedule_id: initial.schedule_id || null, enabled: initial.enabled === undefined ? true : initial.enabled,
+      project_id: project || null, conversation_id: conversation || null, inputs: inputs.split('\n').map(s => s.trim()).filter(Boolean),
+      success_criteria: criteria.trim(), output, notify })
+      .then(d => onSaved(d, name.trim())).catch(e => setErr(e.message))
+      .finally(() => { saving.current = false; setBusy(false); });
   };
-  const ask = initial.asks_first || [];
-  return (<div className="card wfx-card" style={{ borderColor: 'rgba(0,212,255,.35)' }} data-testid="wf-editor">
-    <div className="card-title" style={{ marginBottom: 10 }}>{isNew ? 'Check the draft, then save' : 'Edit workflow'}</div>
-    {initial.source === 'simple' && isNew && <div className="wfx-quiet" style={{ marginBottom: 10 }}>{fridayName()} couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below.</div>}
-    <label className="wfx-lbl" htmlFor="wf-name">Name</label>
-    <input id="wf-name" className="wfx-in" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Council agenda watch" />
-    <label className="wfx-lbl" htmlFor="wf-desc" style={{ marginTop: 10 }}>What it's for <span className="wfx-quiet">(optional)</span></label>
-    <input id="wf-desc" className="wfx-in" value={desc} onChange={e => setDesc(e.target.value)} placeholder="One line, for you" />
-
-    <div className="wfx-h" style={{ marginTop: 16 }}>When</div>
-    <div className="wfx-row" style={{ flexWrap: 'wrap', gap: 8 }}>
-      <select aria-label="How often" className="wfx-in" style={{ width: 'auto', flex: '1 1 180px' }} value={ui.repeat} onChange={e => setU('repeat', e.target.value)}>
-        <option value="manual">Only when I run it</option>
-        <option value="daily">Every day</option>
-        <option value="weekdays">Every weekday (Mon–Fri)</option>
-        <option value="days">On certain days</option>
-        <option value="hours">Every few hours</option>
-        <option value="once">Once</option>
-      </select>
-      {ui.repeat === 'once' && <input aria-label="Date" type="date" className="wfx-in" style={{ width: 'auto' }} value={ui.date} onChange={e => setU('date', e.target.value)} />}
-      {['daily', 'weekdays', 'days', 'once'].includes(ui.repeat) && <input aria-label="Time" type="time" className="wfx-in" style={{ width: 'auto' }} value={ui.time} onChange={e => setU('time', e.target.value)} />}
-      {ui.repeat === 'hours' && <span className="wfx-row">every <input aria-label="Hours between runs" type="number" min="1" max="24" className="wfx-in" style={{ width: 64 }} value={ui.hours} onChange={e => setU('hours', e.target.value)} /> hours</span>}
-    </div>
-    {ui.repeat === 'days' && <div className="wfx-row" style={{ gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
-      {WF_DAYS.map((d, i) => <button key={d} type="button" className="wfx-daybtn" aria-pressed={ui.days.includes(i)} onClick={() => setU('days', ui.days.includes(i) ? ui.days.filter(x => x !== i) : ui.days.concat([i]))}>{d}</button>)}
-    </div>}
-    <div style={{ marginTop: 8, color: '#9fe8ff', fontSize: 12.5 }} data-testid="wf-when-sentence">🕒 {wfDescribe(when)}</div>
-    {initial.when_note && <div className="wfx-err" style={{ color: '#ffd08a' }}>{initial.when_note}</div>}
-
-    <div className="wfx-h" style={{ marginTop: 16 }}>What {fridayName()} does</div>
-    <div className="wfx-quiet" style={{ marginBottom: 8 }}>Steps run in order. Each step gets what the step before it found.</div>
-    {steps.map((s, i) => <div key={i} className="wfx-step">
-      <div className="wfx-row" style={{ marginBottom: 6 }}>
-        <span style={{ color: '#00d4ff', fontWeight: 600, fontSize: 12 }}>Step {i + 1}</span>
-        <input aria-label={'Step ' + (i + 1) + ' name'} className="wfx-in wfx-grow" style={{ padding: '5px 8px' }} value={s.name} onChange={e => setS(i, 'name', e.target.value)} placeholder="Short name" />
-        {i > 0 && <button type="button" className="wfx-icon" title="Move up" aria-label={'Move step ' + (i + 1) + ' up'} onClick={() => move(i, -1)}>↑</button>}
-        {i < steps.length - 1 && <button type="button" className="wfx-icon" title="Move down" aria-label={'Move step ' + (i + 1) + ' down'} onClick={() => move(i, 1)}>↓</button>}
-        {steps.length > 1 && <button type="button" className="wfx-icon" title="Remove this step" aria-label={'Remove step ' + (i + 1)} onClick={() => setSteps(steps.filter((_, j) => j !== i))}>✕</button>}
+  return <div ref={editor} className="card wfx-card wfx-editor" data-testid="wf-editor">
+    <div className="card-title">{isNew ? 'Check the draft, then save' : initial.make_routine ? 'Make this a routine' : 'Edit workflow'}</div>
+    {initial.source === 'simple' && isNew && <p className="wfx-quiet">The model was unavailable, so this draft keeps your words as one step. You can edit it below.</p>}
+    <fieldset disabled={busy} className="wfx-fieldset">
+      <label className="wfx-lbl" htmlFor="wf-name">Name</label>
+      <input id="wf-name" className="wfx-in" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Weekly research brief" />
+      <label className="wfx-lbl" htmlFor="wf-desc">What it should accomplish</label>
+      <input id="wf-desc" className="wfx-in" value={desc} onChange={e => setDesc(e.target.value)} placeholder="The result you want" />
+      <div className="wfx-h">Result and context</div>
+      <div className="wfx-fields">
+        <label className="wfx-field">Project<select aria-label="Workflow project" className="wfx-in" value={project} onChange={e => chooseProject(e.target.value)}><option value="">No project</option>{project && !projects.some(p => p.id === project) && <option value={project}>Saved project (unavailable)</option>}{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+        <label className="wfx-field">Return the result to<select aria-label="Result conversation" className="wfx-in" value={conversation} onChange={e => setConversation(e.target.value)}><option value="">A conversation for this workflow</option>{conversation && !choices.some(c => c.id === conversation) && <option value={conversation}>Saved conversation (unavailable)</option>}{choices.map(c => <option key={c.id} value={c.id}>{c.title || 'Untitled chat'}</option>)}</select></label>
+        <label className="wfx-field">Deliverable<select aria-label="Deliverable" className="wfx-in" value={output.kind} onChange={e => setOutput({ ...output, kind: e.target.value })}><option value="reply">Answer in the conversation</option><option value="artifact">Editable artifact</option><option value="file">Saved file</option><option value="code">Code change</option></select></label>
+        {output.kind !== 'reply' && <label className="wfx-field">Result title<input aria-label="Result title" className="wfx-in" value={output.title || ''} onChange={e => setOutput({ ...output, title: e.target.value })} placeholder="e.g. Research brief" /></label>}
       </div>
-      <textarea aria-label={'Step ' + (i + 1) + ' instructions'} className="wfx-in" style={{ minHeight: 60, resize: 'vertical' }} value={s.prompt} onChange={e => setS(i, 'prompt', e.target.value)} placeholder={("Tell " + fridayName() + " what to do, the way you'd tell a colleague.")} />
-    </div>)}
-    <button type="button" className="btn" onClick={() => setSteps(steps.concat([{ name: '', prompt: '' }]))}>+ Add a step</button>
-
-    <div className="wfx-promise" style={{ marginTop: 14, marginBottom: 0 }}>
-      <span aria-hidden="true">🛡️</span>
-      <div>{ask.length
-        ? <span>This looks like it will <b>{wfJoin(ask)}</b>. {fridayName()} won't do that on her own: when a step gets there, she stops and asks you with an approval card.</span>
-        : <span>If a step ever tries to send, post, buy, delete or change something outside your computer, {fridayName()} stops and asks you first with an approval card.</span>}</div>
-    </div>
+      {['file','code'].includes(output.kind) && <label className="wfx-field">Expected file or folder<input aria-label="Expected file or folder" className="wfx-in" value={output.path || ''} onChange={e => setOutput({ ...output, path: e.target.value })} placeholder="A location Friday is allowed to use" /></label>}
+      <label className="wfx-lbl" htmlFor="wf-checks">What should be checked?</label>
+      <textarea id="wf-checks" className="wfx-in" rows="2" value={criteria} onChange={e => setCriteria(e.target.value)} placeholder="e.g. Cite the sources, compare with last week, and mark anything uncertain." />
+      <details className="wfx-disclosure" open={inputs ? true : undefined}><summary>Sources and notes{inputs ? ' · ' + inputs.split('\n').filter(Boolean).length : ' (optional)'}</summary>
+        <label className="wfx-lbl" htmlFor="wf-inputs">One source or instruction per line</label>
+        <textarea id="wf-inputs" className="wfx-in" rows="3" value={inputs} onChange={e => setInputs(e.target.value)} placeholder="Document reference, website, file path, or a note to carry into each run" />
+      </details>
+      <details className="wfx-disclosure" open><summary>Steps · {steps.length}</summary>
+        <p className="wfx-quiet">Each step receives the previous step's result.</p>
+        {steps.map((s, i) => <div key={i} className="wfx-step">
+          <div className="wfx-row wfx-step-head"><span className="wfx-step-label">{i + 1}</span><input aria-label={'Step ' + (i + 1) + ' name'} className="wfx-in wfx-grow" value={s.name} onChange={e => setS(i, 'name', e.target.value)} placeholder="Short name" />
+            <span className="wfx-actions">{i > 0 && <button type="button" className="wfx-icon" aria-label={'Move step ' + (i + 1) + ' up'} onClick={() => move(i, -1)}>↑</button>}{i < steps.length - 1 && <button type="button" className="wfx-icon" aria-label={'Move step ' + (i + 1) + ' down'} onClick={() => move(i, 1)}>↓</button>}{steps.length > 1 && <button type="button" className="wfx-icon" aria-label={'Remove step ' + (i + 1)} onClick={() => setSteps(p => p.filter((_, j) => j !== i))}>×</button>}</span>
+          </div>
+          <textarea aria-label={'Step ' + (i + 1) + ' instructions'} className="wfx-in" rows="3" value={s.prompt} onChange={e => setS(i, 'prompt', e.target.value)} placeholder={'Tell ' + fridayName() + ' what to do.'} />
+        </div>)}
+        <button type="button" className="btn" onClick={() => setSteps(p => p.concat([{ name: '', prompt: '' }]))}>+ Add a step</button>
+      </details>
+      <div className="wfx-h">When and notifications</div>
+      <div className="wfx-actions">
+        <select aria-label="How often" className="wfx-in wfx-timing" value={ui.repeat} onChange={e => setU('repeat', e.target.value)}><option value="manual">Only when I run it</option><option value="daily">Every day</option><option value="weekdays">Every weekday (Mon–Fri)</option><option value="days">On certain days</option><option value="hours">Every few hours</option><option value="once">Once</option></select>
+        {ui.repeat === 'once' && <input aria-label="Date" type="date" className="wfx-in wfx-timing" value={ui.date} onChange={e => setU('date', e.target.value)} />}
+        {['daily','weekdays','days','once'].includes(ui.repeat) && <input aria-label="Time" type="time" className="wfx-in wfx-timing" value={ui.time} onChange={e => setU('time', e.target.value)} />}
+        {ui.repeat === 'hours' && <label className="wfx-row">Every <input aria-label="Hours between runs" type="number" min="1" max="24" className="wfx-in wfx-hours" value={ui.hours} onChange={e => setU('hours', e.target.value)} /> hours</label>}
+      </div>
+      {ui.repeat === 'days' && <div className="wfx-actions wfx-days">{WF_DAYS.map((d, i) => <button key={d} type="button" className="wfx-daybtn" aria-pressed={ui.days.includes(i)} onClick={() => setU('days', ui.days.includes(i) ? ui.days.filter(x => x !== i) : ui.days.concat(i))}>{d}</button>)}</div>}
+      <p className="wfx-quiet" data-testid="wf-when-sentence">{wfDescribe(when)}</p>
+      {initial.when_note && <p className="wfx-quiet">{initial.when_note}</p>}
+      <label className="wfx-field">Notify me<select aria-label="Workflow notifications" className="wfx-in" value={notify} onChange={e => setNotify(e.target.value)}><option value="on_complete">When a run finishes</option><option value="on_change">Only when something changes</option><option value="never">Keep results here; no routine notifications</option></select></label>
+      <p className="wfx-quiet">Approval requests still need your decision. Scheduled work runs while Friday is running on this computer.</p>
+    </fieldset>
     {err && <div className="wfx-err" role="alert">{err}</div>}
-    <div className="wfx-row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
-      <button type="button" className="btn" onClick={onCancel}>Cancel</button>
-      <button type="button" className="btn wfx-save" disabled={busy} onClick={save}>{busy ? 'Saving…' : isNew ? 'Save workflow' : 'Save changes'}</button>
-    </div>
-  </div>);
+    <div className="wfx-actions wfx-editor-actions"><button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button><button type="button" className="btn wfx-save" disabled={busy} onClick={save}>{busy ? 'Saving…' : isNew ? 'Save workflow' : 'Save changes'}</button></div>
+  </div>;
 }
 
-function WfCard({ w, onRun, onToggle, onEdit, onDelete, busy }) {
-  const [open, setOpen] = useState(w.steps.length > 1);
+function WfCard({ w, onAction, onToggle, onEdit, onDelete, busy }) {
+  const [open, setOpen] = useState(false);
   const last = w.last_run;
-  const st = w.running ? WF_STATUS.running : last ? (WF_STATUS[last.status] || WF_STATUS.finished) : null;
+  const steps = w.steps || [];
+  const runState = w.running ? 'running' : last && (last.status || last.state);
+  const waitingStep = (last?.steps || []).find(s => ['waiting','waiting_approval','waiting_for_approval','queued-for-seat'].includes(s.status));
+  const state = runState === 'running' && waitingStep ? waitingStep.status : runState;
+  const active = w.running || ['running','queued','queued-for-seat','waiting','waiting_approval','waiting_for_approval'].includes(state);
+  const st = state === 'queued-for-seat' ? {color:'var(--fr-warn)',label:'Waiting for a model'} : ['waiting','waiting_approval','waiting_for_approval'].includes(state) ? {color:'var(--fr-warn)',label:'Needs your decision'} : state && WF_STATUS[state];
   const paused = w.when && !w.enabled;
-  const what = w.description || (w.steps[0] && w.steps[0].prompt) || '';
-  return (<div className="card wfx-card" data-running={w.running?'true':'false'} data-testid="wf-card" style={paused ? { opacity: 0.72 } : null}>
-    <div className="wfx-row" style={{ alignItems: 'flex-start' }}>
-      <div className="wfx-grow">
-        <div className="wfx-name">{w.name}</div>
-        {what && <div className="wfx-desc" style={open ? null : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{what}</div>}
+  const verified = last && ['verified','passed'].includes(wfOutcomeState(last.verification));
+  const cid = w.conversation_id || (last || {}).conversation_id;
+  return <div className="card wfx-card" data-running={w.running ? 'true' : 'false'} data-testid="wf-card">
+    <div className="wfx-row"><div className="wfx-grow"><div className="wfx-name">{w.name}</div><div className="wfx-desc">{w.description || (steps[0] || {}).prompt}</div></div>
+      {w.when && <WfSwitch on={w.enabled} disabled={busy} label={'Run ' + w.name + ' on its schedule'} onChange={() => onToggle(w)} />}
+    </div>
+    <div className="wfx-meta"><span>{w.when_text || wfDescribe(w.when)}{paused ? ' · paused' : ''}</span><span>{state ? <><span className="wfx-dot" style={{ background: st ? st.color : 'var(--fr-dim)' }} />{st ? st.label : String(state).replaceAll('_', ' ')}{!w.running && last.at ? ' ' + wfAgo(last.at) : ''}</> : "Hasn't run yet"}</span>{w.when && w.enabled && w.next_run && !w.running && <span>Next: {wfNext(w.next_run)}</span>}{w.project_name && <span>{w.project_name}</span>}</div>
+    {w.asks_first && w.asks_first.length > 0 && <div className="wfx-shield">Asks you before it can {wfJoin(w.asks_first)}</div>}
+    <div className="wfx-actions wfx-card-actions">
+      {active ? w.slug ? <button type="button" className="btn" disabled={busy} onClick={() => onAction('stop', w)}>Stop run</button> : <button type="button" className="btn" disabled>Run in progress</button> : <button type="button" className="btn wfx-go" disabled={busy} onClick={() => onAction(last ? 'repeat' : 'run', w)}>{busy ? 'Working…' : last ? 'Do again' : 'Run now'}</button>}
+      {active && last && (last.task_ids || []).length > 0 && <button type="button" className="btn" onClick={() => wfOpenTask(last.task_ids[last.task_ids.length - 1])}>View progress</button>}
+      <button type="button" className="btn" disabled={busy || active} onClick={() => onEdit(w)}>Edit</button>
+      <button type="button" className="wfx-link" onClick={() => setOpen(v => !v)} aria-expanded={open}>{open ? 'Hide details' : 'Details'}</button>
+    </div>
+    {open && <div className="wfx-details">
+      <WfOutcome run={last} />
+      {last?.run_id && wfOutcomeState(last.delivery) === 'failed' && <button type="button" className="btn" disabled={busy || active} onClick={() => onAction('retry_delivery', w)}>Retry delivery</button>}
+      {w.success_criteria && <p className="wfx-quiet"><b>Checks requested: </b>{w.success_criteria}</p>}
+      {(w.inputs || []).length > 0 && <details className="wfx-disclosure"><summary>Sources and notes · {w.inputs.length}</summary><ul className="wfx-checks">{w.inputs.map((x, i) => <li key={i}>{x}</li>)}</ul></details>}
+      <ol className="wfx-steps">{steps.map((s, i) => <li key={i}><b>{s.name}</b><div className="wfx-quiet">{s.prompt}</div></li>)}</ol>
+      <div className="wfx-actions">
+        {!w.when && <button type="button" className="btn" disabled={busy || active} onClick={() => onEdit({ ...w, make_routine: true, when: { trigger: 'weekly', spec: { weekdays: [0,1,2,3,4], hour: 9, minute: 0 } } })}>Make routine</button>}
+        {verified && <button type="button" className="btn" disabled={busy || active} onClick={() => onAction('learn', w)}>Keep as reusable procedure</button>}
+        {!last && cid && <a className="wfx-link" href={wfChatUrl(cid)} target="_blank" rel="noopener noreferrer">Open conversation ↗</a>}
+        <button type="button" className="wfx-link" disabled={busy || active} onClick={() => onDelete(w)}>Delete workflow</button>
       </div>
-      {w.when && <WfSwitch on={w.enabled} label={'Run ' + w.name + ' on its schedule'} onChange={() => onToggle(w)} />}
-    </div>
-    <div className="wfx-meta">
-      <span title="When it runs">🕒 <b>{w.when_text}</b>{paused ? ' · paused' : ''}</span>
-      <span title="Last run">{st ? <><span className="wfx-dot" style={{ background: st.color, boxShadow: '0 0 6px ' + st.color }} />{w.running ? 'Running now' : st.label + ' ' + wfAgo(last.at)}</> : <span className="wfx-quiet">Hasn't run yet</span>}</span>
-      {w.when && w.enabled && w.next_run && !w.running && <span title="Next run">Next: {wfNext(w.next_run)}</span>}
-      {w.steps.length > 1 && <span className="wfx-quiet">{w.steps.length} steps</span>}
-    </div>
-    {w.asks_first && w.asks_first.length > 0 && <div className="wfx-shield" title={(fridayName() + " stops and asks you before doing these")}>🛡️ Asks you before it can {wfJoin(w.asks_first)}</div>}
-    {open && <div style={{ marginTop: 10, borderTop: '1px solid rgba(255,255,255,.08)', paddingTop: 8 }}>
-      <ol className="wfx-steps">{w.steps.map((s, i) => {
-        const ls = last && last.steps && last.steps[i];
-        return <li key={i}><b style={{ color: '#fff', fontWeight: 600 }}>{s.name}</b>{ls && ls.status && ls.status !== 'pending' ? <span className="wfx-quiet"> — last time: {ls.status === 'completed' ? 'done' : ls.status}</span> : null}<div className="wfx-quiet" style={{ whiteSpace: 'pre-wrap' }}>{s.prompt}</div></li>;
-      })}</ol>
-      {last && last.summary && <div style={{ marginTop: 6 }}><span className="wfx-lbl" style={{ display: 'inline' }}>Last result: </span><span style={{ color: last.status === 'failed' ? '#ff8fae' : '#d6d6e0', fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{last.summary}</span></div>}
     </div>}
-    <div className="wfx-row" style={{ marginTop: 10 }}>
-      <button type="button" className="btn wfx-go" disabled={busy || w.running} onClick={() => onRun(w)}>{busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'}</button>
-      <button type="button" className="btn" onClick={() => onEdit(w)}>Edit</button>
-      <button type="button" className="wfx-link" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? 'Hide details' : 'Details'}</button>
-      <span className="wfx-grow" />
-      <button type="button" className="wfx-icon" title="Delete this workflow" aria-label={'Delete ' + w.name} onClick={() => onDelete(w)}>🗑</button>
-    </div>
-  </div>);
+  </div>;
 }
 
+fridayDeclareNav('workflows', { keys: ['project_id', 'slug'] });
 function WorkflowsWS() {
   const [data, setData] = useState(null);
-  const [addingTemplate, setAddingTemplate] = useState(false);
-  const [templateError, setTemplateError] = useState('');
-  const templatePending = useRef(false);
   const [error, setError] = useState('');
   const [ask, setAsk] = useState('');
-  const [composing, setComposing] = useState(false);
   const [drafting, setDrafting] = useState(false);
-  const [draftErr, setDraftErr] = useState('');
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState('');
+  const [notice, setNotice] = useState('');
+  const [starters, setStarters] = useState([]);
+  const [templateError, setTemplateError] = useState(null);
   const [showRoutines, setShowRoutines] = useState(false);
-  const [otherActivity, setOtherActivity] = useState([]);
-  const load = () => fetch('/api/workflows/overview').then(r => r.json()).then(d => {
-    if (d.status !== 'ok') throw new Error(d.message || 'error');
-    setData(d); setError('');
-  }).catch(e => setError(e.message || 'error'));
-  useEffect(() => { load(); }, []);
-  const anyRunning = !!(data && data.workflows.some(w => w.running));
-  useEffect(() => {
-    const t = setInterval(load, anyRunning ? 4000 : 20000);
-    return () => clearInterval(t);
-  }, [anyRunning]);
-  // Background work that isn't one of these workflows still shows here, so an
-  // idle list never reads as "Friday is doing nothing" while she is busy.
-  useEffect(() => {
-    let alive = true;
-    const tick = () => fetch('/api/tasks').then(r => r.json()).then(d => {
-      if (alive) setOtherActivity((d.tasks || d || []).filter(t => t.status === 'running' && !t.chain && !String(t.description || '').startsWith('scheduled:')));
-    }).catch(() => {});
-    tick();
-    const t = setInterval(tick, 5000);
-    return () => { alive = false; clearInterval(t); };
+  const [projectFilter, setProjectFilter] = useState(() => new URLSearchParams(window.location.search).get('project_id') || '');
+  const [focusedSlug, setFocusedSlug] = useState(() => new URLSearchParams(window.location.search).get('slug') || '');
+  const epoch = useRef(0);
+  const mutation = useRef(false);
+  const alive = useRef(true);
+  useNavTarget('workflows', target => { if (target.project_id !== undefined) setProjectFilter(target.project_id || ''); if (target.slug !== undefined) setFocusedSlug(target.slug || ''); });
+  const load = React.useCallback(() => {
+    const revision = ++epoch.current;
+    return apiFetch('/api/workflows/overview').then(r => r.json().then(d => { if (!r.ok || d.status !== 'ok') throw new Error(d.message || d.error || 'Could not load workflows.'); return d; }))
+      .then(d => { if (alive.current && revision === epoch.current) { setData(d); setError(''); } })
+      .catch(e => { if (alive.current && revision === epoch.current) setError(e.message); });
   }, []);
-  const draft = () => {
-    if (!ask.trim()) { setDraftErr(('Describe what you want ' + fridayName() + ' to do.')); return; }
-    setDrafting(true); setDraftErr('');
-    wfPost('/api/workflows/draft', { text: ask }).then(d => { setDrafting(false); setEditing(d.draft); })
-      .catch(e => { setDrafting(false); setDraftErr(e.message); });
+  useEffect(() => {
+    alive.current = true; load();
+    apiFetch('/api/workflows/starters').then(r => r.ok ? r.json() : {}).then(d => { if (alive.current) setStarters(Array.isArray(d.starters) ? d.starters : []); }).catch(() => {});
+    return () => { alive.current = false; ++epoch.current; };
+  }, [load]);
+  const anyRunning = !!data?.workflows?.some(w => w.running);
+  useEffect(() => { const timer = setInterval(() => { if (!mutation.current) load(); }, anyRunning ? 4000 : 20000); return () => clearInterval(timer); }, [anyRunning, load]);
+  const contextDraft = value => {
+    const context = typeof window.fridayWorkflowContext === 'function' ? window.fridayWorkflowContext() : {};
+    if (projectFilter && context.project_id !== projectFilter) { context.project_id = projectFilter; context.conversation_id = null; }
+    return { ...context, ...value };
   };
-  const addCareerTemplate = async () => {
-    if (templatePending.current) return;
-    templatePending.current = true; setAddingTemplate(true); setTemplateError('');
+  const draft = async () => {
+    if (mutation.current) return;
+    if (!ask.trim()) { setError('Describe what you want ' + fridayName() + ' to do.'); return; }
+    mutation.current = true; ++epoch.current; setDrafting(true); setError('');
+    try { const d = await wfPost('/api/workflows/draft', { text: ask }); if (alive.current) setEditing(contextDraft(d.draft)); }
+    catch (e) { if (alive.current) setError(e.message); }
+    finally { mutation.current = false; if (alive.current) setDrafting(false); }
+  };
+  const action = async (operation, w) => {
+    if (mutation.current) return;
+    mutation.current = true; ++epoch.current; setBusy(w.id || w.schedule_id); setError(''); setNotice('');
     try {
-      const d = await careerRequest('/api/workflows/templates/career-search/add', {});
+      const legacyRun = !w.slug && w.schedule_id && ['run','repeat'].includes(operation);
+      const d = legacyRun ? await wfPost('/api/schedules/' + encodeURIComponent(w.schedule_id) + '/run-now') : await wfPost('/api/workflows/action', { action: operation, slug: w.slug, run_id: w.last_run?.run_id });
+      if (alive.current) setNotice(d.note || (legacyRun ? 'Run requested. Its schedule is unchanged.' : 'Request accepted.'));
+      await load();
+    }
+    catch (e) { if (alive.current) setError(e.message); }
+    finally { mutation.current = false; if (alive.current) setBusy(''); }
+  };
+  const addTemplate = async template => {
+    if (mutation.current) return;
+    mutation.current = true; ++epoch.current; setBusy('template:' + template.id); setTemplateError(null); setError(''); setNotice('');
+    try {
+      const d = await wfPost('/api/workflows/templates/' + encodeURIComponent(template.id) + '/add', {});
       if (d.status !== 'ok' || !d.slug) throw new Error('The workflow was not saved.');
       await load();
-      fridayToast(d.created ? 'Career search added. Review its steps before running or scheduling it.' : 'Career search is already saved. Your steps are unchanged.');
-    } catch (e) { setTemplateError(e.message || 'Could not add Career search.'); }
-    finally { templatePending.current = false; setAddingTemplate(false); }
+      if (alive.current) setNotice(d.created ? template.name + ' added. Review its steps before running or scheduling it.' : template.name + ' is already saved. Your steps are unchanged.');
+    } catch (e) { if (alive.current) setTemplateError({id:template.id,message:e.message || 'Could not add this starter.'}); }
+    finally { mutation.current = false; if (alive.current) setBusy(''); }
   };
-  const saved = (d, name) => { setEditing(null); setAsk(''); setComposing(false); load(); fridayToast('Saved “' + name + '”.'); };
-  const run = w => {
-    setBusy(w.id);
-    const url = w.schedule_id ? '/api/schedules/' + w.schedule_id + '/run-now' : '/api/workflows/chains/' + encodeURIComponent(w.slug) + '/run';
-    wfPost(url).then(() => { fridayToast('Started “' + w.name + '”.'); })
-      .catch(e => fridayToast(/already running/i.test(e.message) ? '“' + w.name + '” is already running.' : 'Could not start it: ' + e.message))
-      .then(() => { setBusy(''); setTimeout(load, 1200); });
+  const toggle = async w => {
+    if (w.slug) return action(w.enabled ? 'pause' : 'resume', w);
+    if (mutation.current) return;
+    mutation.current = true; ++epoch.current; setBusy(w.id || w.schedule_id); setError('');
+    try { await apiFetch('/api/schedules/' + encodeURIComponent(w.schedule_id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !w.enabled }) }).then(r => r.json().then(d => { if (!r.ok || d.status === 'error') throw new Error(d.message || d.error || 'Could not change the schedule.'); })); await load(); }
+    catch (e) { if (alive.current) setError(e.message); }
+    finally { mutation.current = false; if (alive.current) setBusy(''); }
   };
-  const toggle = w => apiFetch('/api/schedules/' + w.schedule_id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !w.enabled }) }).then(load);
-  const remove = w => {
-    if (!confirm('Delete “' + w.name + '”? This removes it and its schedule, and can’t be undone.')) return;
-    wfPost('/api/workflows/remove', { slug: w.slug, schedule_id: w.schedule_id }).then(load).catch(e => fridayToast(e.message));
+  const remove = async w => {
+    if (mutation.current || !confirm('Delete “' + w.name + '” and its schedule?')) return;
+    mutation.current = true; ++epoch.current; setBusy(w.id); setError('');
+    try { await wfPost('/api/workflows/remove', { slug: w.slug, schedule_id: w.schedule_id }); await load(); }
+    catch (e) { if (alive.current) setError(e.message); }
+    finally { mutation.current = false; if (alive.current) setBusy(''); }
   };
-  if (error && !data) return <div style={{ color: '#ff8fae', textAlign: 'center', padding: 40 }}>Couldn't load your workflows ({error}). <button className="btn" onClick={load}>Try again</button></div>;
-  if (!data) return <div style={{ color: '#a8a8b4', textAlign: 'center', padding: 40 }}>Loading workflows…</div>;
-  const wfs = data.workflows, routines = data.routines || [], pending = data.pending_approvals || 0;
-  const onCount = routines.filter(r => r.enabled).length;
-  return (<div className="wfx">
-    <style>{WF_CSS}</style>
-    {error && <div className="wfx-err" role="alert">Could not refresh workflows: {error}. <button className="btn" onClick={load}>Try again</button></div>}
-    {!editing && (data.templates || []).filter(t => t.id === 'career-search').map(t => <div key={t.id} className="card wfx-card" data-testid="wf-career-starter" style={{marginBottom:12}}>
-      <div className="card-title">{t.name}</div>
-      <div className="wfx-quiet" style={{marginBottom:8}}>{t.description}</div>
-      <div className="wfx-row" style={{flexWrap:'wrap'}}><span className="wfx-quiet wfx-grow" data-testid="wf-career-meta" style={{flex:'1 1 240px'}}>{t.step_count} steps · Choose when to run after adding</span>
-        <button className="btn" disabled={addingTemplate||!!t.problem} onClick={()=>{const saved=t.installed&&wfs.find(w=>w.slug===t.slug);if(saved)setEditing(Object.assign({},saved,{when_note:''}));else addCareerTemplate()}}>{addingTemplate?'Adding…':t.installed?'Review workflow':'Add Career search workflow'}</button>
-        <a className="wfx-link" href="/w/career">Open Career →</a>
-      </div>
-      {(t.problem||templateError) && <div className="wfx-err" role="alert">{t.problem||templateError}</div>}
-    </div>)}
-
-    {!editing && <div className="card wfx-card" style={{ borderColor: 'rgba(0,212,255,.3)', marginBottom: 8 }}>
-      <label htmlFor="wf-ask" className="card-title" style={{ display: 'block', marginBottom: 6 }}>New workflow — say what, and when</label>
-      <div className="wfx-row" style={{ alignItems: 'flex-end' }}>
-        <textarea id="wf-ask" className="wfx-in wfx-ask wfx-grow" rows={composing ? 3 : 1}
-          style={{ minHeight: composing ? 72 : 38, height: composing ? undefined : 38, resize: composing ? 'vertical' : 'none', overflow: composing ? 'auto' : 'hidden', whiteSpace: composing ? undefined : 'nowrap' }}
-          value={ask} onChange={e => setAsk(e.target.value)} onFocus={() => setComposing(true)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); draft(); } }}
-          placeholder="e.g. Every weekday at 7:30am, check the council site and tell me what changed" />
-        <button type="button" className="btn wfx-go" style={{ height: 38, whiteSpace: 'nowrap' }} disabled={drafting} onClick={draft}>{drafting ? 'Drafting…' : 'Draft it →'}</button>
-      </div>
-      {(composing || !wfs.length) && <>
-        <div className="wfx-quiet" style={{ marginTop: 8 }}>Use your own words. {fridayName()} writes a draft for you to check; nothing is saved until you say so.</div>
-        {!ask && <div style={{ marginTop: 8 }}>{WF_EXAMPLES.map(x => <button key={x} type="button" className="wfx-chip" onClick={() => setAsk(x)}>{x}</button>)}</div>}
-        <div className="wfx-row" style={{ marginTop: 4 }}>
-          <button type="button" className="wfx-link" onClick={() => setEditing({ name: '', steps: [], when: null })}>Or build it step by step</button>
-          <span className="wfx-grow" />
-          {composing && wfs.length > 0 && <button type="button" className="wfx-link" style={{ color: '#a8a8b4' }} onClick={() => { setComposing(false); setAsk(''); setDraftErr(''); }}>Close</button>}
-        </div>
-      </>}
-      {draftErr && <div className="wfx-err" role="alert">{draftErr}</div>}
-    </div>}
-    {editing && <WfEditor key={editing.slug || editing.schedule_id || editing.request || 'new'} initial={editing} onCancel={() => setEditing(null)} onSaved={saved} />}
-
-    <div className="wfx-promise" data-testid="wf-promise" style={{ padding: '8px 12px', alignItems: 'center' }}>
-      <span aria-hidden="true">🛡️</span>
-      <div className="wfx-grow">Workflows run on their own, but {fridayName()} <b>asks you first</b> before any of them sends, posts, buys or deletes anything.</div>
-      {pending > 0 && <button type="button" className="btn" style={{ borderColor: 'rgba(245,158,11,.6)', color: '#ffd08a', whiteSpace: 'nowrap' }} onClick={wfOpenApprovals}>{pending === 1 ? '1 waiting for your OK' : pending + ' waiting for your OK'} →</button>}
-    </div>
-
-    {otherActivity.length > 0 && <div className="wfx-quiet" style={{ marginBottom: 10 }}>Also working on right now: {otherActivity.map(t => t.name || t.description || t.task_id).join(', ')}</div>}
-
-    <div className="wfx-h">Your workflows{wfs.length ? ' (' + wfs.length + ')' : ''}</div>
-    {!wfs.length && <div className="wfx-quiet" style={{ padding: '14px 2px' }}>Nothing yet. Describe one above — for example, a daily check of a website you watch, or a weekly roundup of your notes.</div>}
-    {wfs.map(w => <WfCard key={w.id} w={w} busy={busy === w.id} onRun={run} onToggle={toggle} onDelete={remove}
-      onEdit={x => {
-        setEditing(Object.assign({}, x, { when_note: '' }));
-        setTimeout(() => { const el = document.querySelector('[data-testid="wf-editor"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
-      }} />)}
-
-    {routines.length > 0 && <>
-      <button type="button" className="wfx-h wfx-link" style={{ textDecoration: 'none', display: 'block', marginTop: 20 }} aria-expanded={showRoutines} onClick={() => setShowRoutines(!showRoutines)}>
-        {showRoutines ? '▾' : '▸'} {fridayName()}'s built-in routines ({onCount} of {routines.length} on)
-      </button>
-      {showRoutines && <div className="card" style={{ padding: '4px 12px' }}>
-        <div className="wfx-quiet" style={{ padding: '6px 0' }}>Jobs that come with {fridayName()}, like the news briefings. You can switch them on or off.</div>
-        {routines.map(r => {
-          const st = r.running ? WF_STATUS.running : r.last_run ? (WF_STATUS[r.last_run.status] || WF_STATUS.finished) : null;
-          return <div key={r.schedule_id} className="wfx-row" style={{ padding: '8px 0', borderTop: '1px solid rgba(255,255,255,.06)' }}>
-            <div className="wfx-grow">
-              <div style={{ color: r.enabled ? '#fff' : '#a8a8b4', fontWeight: 500 }}>{r.name}</div>
-              <div className="wfx-quiet">{r.when_text}{st ? <> · <span className="wfx-dot" style={{ background: st.color }} />{r.running ? 'running now' : st.label.toLowerCase() + ' ' + wfAgo(r.last_run.at)}</> : ''}</div>
+  const saved = (d, name) => { ++epoch.current; setEditing(null); setAsk(''); setNotice('Saved “' + name + '”.'); load(); };
+  if (!data) return <div className="wfx"><style>{WF_CSS}</style><p className="wfx-quiet">{error || 'Loading workflows…'}</p>{error && <button type="button" className="btn" onClick={load}>Try again</button>}</div>;
+  const all = data.workflows || [], wfs = all.filter(w => (!projectFilter || w.project_id === projectFilter) && (!focusedSlug || w.slug === focusedSlug)), routines = data.routines || [], templates = data.templates || [];
+  return <div className="wfx"><style>{WF_CSS}</style>
+    {error && <div className="wfx-err" role="alert">{error}</div>}
+    {notice && <p className="wfx-quiet" role="status">{notice}</p>}
+    {editing ? <WfEditor key={editing.slug || editing.id || editing.request || 'new'} initial={editing} projects={data.projects || []} conversations={data.conversations || []} onCancel={() => setEditing(null)} onSaved={saved} /> : <>
+      <div className="card wfx-card"><label htmlFor="wf-ask" className="card-title">What would you like {fridayName()} to take care of?</label>
+        <div className="wfx-compose"><textarea id="wf-ask" className="wfx-in" rows="2" value={ask} onChange={e => setAsk(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); draft(); } }} placeholder="e.g. Each Friday, turn my project notes into a source-linked brief" /><button type="button" className="btn wfx-go" disabled={drafting || !!busy} onClick={draft}>{drafting ? 'Drafting…' : 'Draft it →'}</button></div>
+        <div className="wfx-actions"><span className="wfx-quiet">Review the steps, result and timing before saving.</span><button type="button" className="wfx-link" disabled={drafting || !!busy} onClick={() => setEditing(contextDraft({ name: '', steps: [], when: null }))}>Build step by step</button></div>
+        {(starters.length > 0 || templates.length > 0) && <details className="wfx-disclosure" open={!wfs.length}><summary>Start from an example</summary><div className="wfx-starters">
+          {starters.filter(s => !templates.some(t => t.id === s.id)).map(s => <button key={s.id || s.name} type="button" className="wfx-starter" disabled={drafting || !!busy} onClick={() => s.steps?.length ? setEditing(contextDraft({ ...s, slug: null, schedule_id: null })) : setAsk(s.request || s.description || s.name)}><strong>{s.name}</strong><span>{s.description}</span></button>)}
+          {templates.map(t => <div key={t.id} className="wfx-starter" style={{cursor:'default'}} data-testid={t.id === 'career-search' ? 'wf-career-starter' : 'wf-template-starter'}>
+            <strong>{t.name}</strong><span>{t.description}</span>
+            <div className="wfx-actions"><span className="wfx-quiet" data-testid={t.id === 'career-search' ? 'wf-career-meta' : undefined} style={{flex:'1 1 240px'}}>{t.step_count} steps · Choose when to run after adding</span>
+              <button type="button" className="btn" disabled={drafting || !!busy || !!t.problem} onClick={() => { const saved = t.installed && all.find(w => w.slug === t.slug); if (saved) setEditing({...saved,when_note:''}); else addTemplate(t); }}>{busy === 'template:' + t.id ? 'Adding…' : t.installed ? 'Review workflow' : 'Add ' + t.name + ' workflow'}</button>
+              {t.id === 'career-search' && <a className="wfx-link" href="/w/career">Open Career →</a>}
             </div>
-            <WfSwitch on={r.enabled} label={'Run ' + r.name} onChange={() => toggle(r)} />
-          </div>;
-        })}
-      </div>}
+            {(t.problem || templateError?.id === t.id) && <div className="wfx-err" role="alert">{t.problem || templateError.message}</div>}
+          </div>)}
+        </div></details>}
+      </div>
+      <div className="wfx-promise" data-testid="wf-promise"><div>{fridayName()} <b>asks you first</b> before a workflow sends, posts, buys or deletes anything.</div>{data.pending_approvals > 0 && <button type="button" className="wfx-link" onClick={wfOpenApprovals}>All pending approvals ({data.pending_approvals})</button>}</div>
+      <div className="wfx-h">Your workflows{wfs.length ? ' · ' + wfs.length : ''}</div>
+      {(data.projects || []).length > 0 && <label className="wfx-field">Show workflows for<select aria-label="Filter workflows by project" className="wfx-in" value={projectFilter} onChange={e => { setProjectFilter(e.target.value); setFocusedSlug(''); }}><option value="">All projects</option>{projectFilter && !data.projects.some(p => p.id === projectFilter) && <option value={projectFilter}>Selected project</option>}{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
+      {focusedSlug && <button type="button" className="wfx-link" onClick={() => setFocusedSlug('')}>Show other workflows</button>}
+      {!wfs.length && <p className="wfx-quiet">{projectFilter || focusedSlug ? 'No workflows match this view. Create one above or choose another project.' : 'Begin with one useful result. You can run it once, then make it a routine.'}</p>}
+      {wfs.map(w => <WfCard key={w.id || w.slug} w={w} busy={!!busy} onAction={action} onToggle={toggle} onDelete={remove} onEdit={setEditing} />)}
+      {routines.length > 0 && <details className="wfx-disclosure" open={showRoutines} onToggle={e => setShowRoutines(e.currentTarget.open)}><summary>{fridayName()}'s built-in routines · {routines.filter(r => r.enabled).length} on</summary>{routines.map(r => <div key={r.schedule_id} className="wfx-row wfx-routine"><div className="wfx-grow"><strong>{r.name}</strong><div className="wfx-quiet">{r.when_text}</div></div><WfSwitch disabled={!!busy} on={r.enabled} label={'Run ' + r.name} onChange={() => toggle(r)} /></div>)}</details>}
     </>}
-  </div>);
+  </div>;
 }
+
 
 function SitesWS(){
   // Sites — general-purpose portfolio & deploy manager (wraps FSStudio).
@@ -16868,6 +16949,18 @@ function SettingsTabVoice({s,save}){
         </select>
       </StRow>}
     </StSection>
+    <StSection title="Conversation style" desc="These preferences apply to your next voice session.">
+      <StRow label="Answer depth" desc="Adaptive follows the request and conversation. You can always ask for a shorter answer or more detail.">
+        <select className="input" aria-label="Voice answer depth" style={{width:'100%'}} value={s.voice_response_depth||'adaptive'} onChange={e=>save({voice_response_depth:e.target.value})}>
+          <option value="adaptive">Adaptive</option><option value="concise">Concise</option><option value="detailed">Detailed</option>
+        </select>
+      </StRow>
+      <StRow label="Speaking pace" desc="Adaptive slows for dense detail and follows the conversation. Choose a fixed pace if you prefer.">
+        <select className="input" aria-label="Voice speaking pace" style={{width:'100%'}} value={s.voice_speaking_pace||'adaptive'} onChange={e=>save({voice_speaking_pace:e.target.value})}>
+          <option value="adaptive">Adaptive</option><option value="measured">Measured</option><option value="natural">Natural</option><option value="brisk">Brisk</option>
+        </select>
+      </StRow>
+    </StSection>
     <StSection title="Listening">
       <StRow label={("Interrupting " + fridayName())} desc={gem?"Talk over her and she stops when you start talking, which works best with headphones: on open speakers her own voice can echo back and cut her off. Speaker-safe stops her only when you are clearly louder than her own voice coming back through the mic. Esc always stops her.":"Talk over her and she stops once you are clearly louder than her own voice coming back through the mic, so open speakers work too. With Esc only, talking over her does nothing. Esc always stops her."}>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -20367,6 +20460,18 @@ function fridayScrollToSettingsSection(want) {
   });
   return el.getAttribute('data-st-section');
 }
+const SETTINGS_RESPONSIVE_CSS = `
+body[data-friday-display-style="classic"] .ws-custom-root[data-ws="settings"]{container-type:inline-size;container-name:friday-workspace}
+@container friday-workspace (max-width:630px){
+  body .ws-custom-root[data-ws="settings"] .st-root{flex-direction:column}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-rail{flex-direction:row!important;flex:0 0 auto;width:100%!important;overflow-x:auto;overflow-y:hidden!important;padding:6px 0 10px!important;border-right:0!important;border-bottom:1px solid var(--st-line);gap:6px}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-rail>div{display:none}
+  body .ws-custom-root[data-ws="settings"] .st-rail-btn{width:auto;white-space:nowrap;flex:0 0 auto;margin:0;padding:8px 12px;min-height:34px}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-content{min-height:0}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-heading{position:static!important;padding:16px!important}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-sections{padding:16px!important}
+}
+`;
 function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
   // Settings straight onto Accounts & Keys. The global covers a window that
@@ -20434,7 +20539,7 @@ function SettingsWS() {
       fontFamily: 'var(--st-font)',
       color: 'var(--st-text)'
     }
-  }, /*#__PURE__*/React.createElement("nav", {
+  }, /*#__PURE__*/React.createElement("style", null, SETTINGS_RESPONSIVE_CSS), /*#__PURE__*/React.createElement("nav", {
     "aria-label": "Settings sections",
     className: "fx-settings-rail",
     style: {
@@ -21367,6 +21472,14 @@ function App(){
   const [convList, setConvList] = useState([]);
   const [projList, setProjList] = useState([]);
   const {convId,setConvId,chatIn,setChatIn,getConversationId,navigateWithDrafts} = useFridayConversationDrafts(() => new URLSearchParams(window.location.search).get('conversation') || null);
+  useEffect(() => {
+    window.fridayWorkflowContext = () => {
+      const id = getConversationId();
+      const current = convList.find(c => c.id === id);
+      return current ? { conversation_id: id, project_id: current.project || null } : {};
+    };
+    return () => { delete window.fridayWorkflowContext; };
+  }, [convList, getConversationId]);
   const refreshConvs = React.useCallback(() => apiFetch('/api/conversations')
     .then(r => r.json()).then(d => {
       if (d && d.status === 'ok') {

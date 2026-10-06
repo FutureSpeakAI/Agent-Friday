@@ -752,6 +752,10 @@ def _tool_ask_friday(inp, session=None):
 # recogniser is a different risk class from reading a file, and nothing in the
 # reported failure needs it.
 _VOICE_SHARED_TOOLS = (
+    "workflow_action",
+    "discover_capabilities",
+    "read_skill",
+    "voice_preferences",
     "read_file",
     "search_files",
     "write_file",
@@ -894,6 +898,33 @@ def _native_tool_schema(props, required):
 
 _LEAD_SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
+# Compact presentation omits examples repeated by the typed properties. Full
+# declarations remain available to cloud voice and on-demand discovery.
+_COMPACT_TOOL_DESCRIPTIONS = {
+    "navigate_to": "Open a specific resource, workspace or settings view on the desktop.",
+    "make_podcast": "Create a two-host podcast with a source per claim; compute dataset numbers.",
+    "media_show": "Show or search media by view, kind, project, status or date.",
+    "organize_email": "Organize Gmail search results or thread ids through approval cards.",
+    "spawn_task": "Start background work and continue the conversation while it runs.",
+    "organize_wiki": "Move, rename, tag, archive or trash wiki pages through approval cards.",
+    "set_workspace_layout": "Arrange a workspace normally, in part of the screen, or fullscreen beside chat.",
+    "organize_files": "Organize files in Documents, Downloads, Desktop, Creations or Projects through approval cards.",
+    "search_files": "Find local files by name or content.",
+    "set_chat_tray": "Show, hide, resize or position the chat tray beside its workspace.",
+}
+
+_COMPACT_PARAMETER_DESCRIPTIONS = {
+    "navigate_to": {"query": "Search text; Gmail syntax for mail_search.",
+                    "id": "Exact existing id.", "workspace": "Workspace for kind=workspace.",
+                    "section": "Named tab or section.", "new_tab": "Open in a new Chrome tab.",
+                    "max": "Maximize the desktop window."},
+    "media_show": {"query": "Search titles and content.", "when": "Date or range in the user's words.",
+                   "board": "Show Pipeline.", "calendar": "Show Calendar."},
+    "spawn_task": {"name": "Task title.", "prompt": "Full task instructions.",
+                   "description": "Task Tray subtitle.", "on_complete_spawn": "Follow-up task title.",
+                   "on_complete_prompt": "Follow-up instructions."},
+}
+
 
 def _lead_sentence(text) -> str:
     """The first sentence of a declaration's description."""
@@ -901,14 +932,14 @@ def _lead_sentence(text) -> str:
 
 
 def _compact_declaration(tool: dict) -> dict:
-    """The same declaration with each description cut to its lead sentence:
-    name, schema, types and required fields unchanged."""
+    """Concise descriptions with names, types and required fields unchanged."""
     t = copy.deepcopy(tool)
     f = t["function"]
-    f["description"] = _lead_sentence(f.get("description"))
-    for prop in ((f.get("parameters") or {}).get("properties") or {}).values():
+    f["description"] = _COMPACT_TOOL_DESCRIPTIONS.get(f["name"], _lead_sentence(f.get("description")))
+    param_descriptions = _COMPACT_PARAMETER_DESCRIPTIONS.get(f["name"], {})
+    for name, prop in ((f.get("parameters") or {}).get("properties") or {}).items():
         if isinstance(prop, dict) and "description" in prop:
-            prop["description"] = _lead_sentence(prop["description"])
+            prop["description"] = param_descriptions.get(name, _lead_sentence(prop["description"]))
     return t
 
 
@@ -923,11 +954,11 @@ def build_voice_tool_contract(full: bool = False, compact: bool = True) -> dict:
     from both.
 
     ``compact`` (the default; the local voice front's rendering) keeps every
-    name and schema and cuts each description to its lead sentence. The
-    curated surface has grown past 60 tools, and in full it is ~12.5K tokens,
-    over the ceiling that keeps the front's cold prefill fast; its lead
-    sentences are ~8.2K. Gemini Live renders its own declarations, in full,
-    from the same tables (``_build_voice_live_tools``).
+    name and schema with concise descriptions: lead sentences, or summaries
+    of verbose examples whose details are already in the typed properties.
+    This keeps the cold prefill inside its existing budget. Gemini Live
+    renders its own full declarations from the same tables
+    (``_build_voice_live_tools``).
 
     Returns ``{"tools": [...], "names": [...], "tokens": int, "fits": bool}``;
     ``fits`` holds the curated contract to ``VOICE_CONTRACT_MAX_TOKENS``.
@@ -1091,9 +1122,17 @@ def _json_schema_leaf(types, spec, type_map, pname, tool=""):
                                     pname + "[]", tool),
             **kwargs)
     if jtype == "object":
-        # Nested free-form objects have no faithful rendering here; refuse
-        # rather than flatten it to a string the handler cannot parse.
-        raise ValueError("nested object property %r is not supported" % pname)
+        # Structured nested objects keep their real contract on Live, including
+        # objects inside arrays. Free-form maps still have no faithful schema.
+        nested = spec.get("properties")
+        if not isinstance(nested, dict) or not nested:
+            raise ValueError("free-form object property %r is not supported" % pname)
+        return types.Schema(
+            type=types.Type.OBJECT,
+            properties={key: _json_schema_leaf(types, value, type_map,
+                                              pname + "." + key, tool)
+                        for key, value in nested.items()},
+            required=list(spec.get("required") or []) or None, **kwargs)
     if jtype not in type_map:
         raise ValueError("unsupported type %r on property %r" % (jtype, pname))
     return types.Schema(type=type_map[jtype], **kwargs)
@@ -1535,6 +1574,9 @@ def _voice_tool_run(name, args, send_client, session=None):
         return _execute_tool(tool, a, handler=fn, session_ctx=_voice_ctx(session))
 
     try:
+        if name == "voice_preferences":
+            from agent_friday.services.workflow_tools import voice_preferences
+            return _governed(name, lambda a: voice_preferences(a, session), args)
         if name == "ask_friday":
             try:
                 send_client({"type": "status", "text": "asking local model"})
@@ -2617,53 +2659,36 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
     role=user/friday entries in CHAT_HISTORY with `via:'voice'` so the chat
     panel can render them when the user comes back.
     """
+    from agent_friday.services import conversations as _conv
+    # A late turn keeps the call's original owner. Only a genuinely ownerless
+    # caller falls back to Main; deleting an explicit owner must not redirect
+    # its words to another chat or resurrect the deleted conversation.
+    if conversation_id is not None and (
+            not isinstance(conversation_id, str) or not _conv.load(conversation_id)):
+        return False
+    # Settings may resolve provider availability; never do that while holding
+    # the conversation store's shared write lock.
     settings = _load_settings()
+    return _persist_owned_voice_turn(
+        user_text, agent_text, _conv, conversation_id, provider, settings)
+
+
+def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, settings):
+    """Revalidate and append before any ancillary transcript-bearing writes."""
     off_record = bool(settings.get('off_record'))
     # Which provider heard this exchange (the Gemini Live bridge passes
     # google-gemini, local voice passes local), so a later call knows what it
     # may recall directly (services/conversation_provenance).
     from agent_friday.services import conversation_provenance as _prov
-    _turn_meta = _prov.turn_meta(provider, off_record)
     # Off the record, the turn lives in this session's memory only: the
     # conversation store keeps it in memory (services/off_record) and the
     # chat-history rows are marked so they are never written.
     _unsaved = _prov.stops_storage(settings)
-    if not off_record:
-        if user_text:
-            _log_context("voice_user", {"text": user_text})
-        if agent_text:
-            _log_context("voice_agent", {"text": agent_text})
     now_iso = datetime.now().isoformat()
-    # Voice turns used to land in the global CHAT_HISTORY list with NO
-    # conversation key at all, while text chat writes to a real conversation and
-    # only mirrors here. GET /api/chat/history returns this flat list unfiltered,
-    # so a voice session and an unrelated text thread rendered interleaved in one
-    # window. Address voice to a real conversation and stamp the mirror rows so
-    # history can be filtered per thread.
-    #
-    # `conversation_id` is the thread OPEN on screen, carried from the client on
-    # the voice socket. Speaking is a way of typing into the conversation you are
-    # looking at, so a voice turn belongs where the user is. Passing None here --
-    # a caller with genuinely no open thread, e.g. the scheduler or a channel --
-    # still falls back to Main, but resolve() makes that an explicit fallback for
-    # callers that have nothing rather than the destination for everyone. The old
-    # unconditional resolve(None) is why talking while a non-Main thread was open
-    # filed the exchange out of sight.
-    try:
-        from agent_friday.services import conversations as _conv
-        _cid = _conv.resolve(conversation_id)
-    except Exception:
-        _conv, _cid = None, None
+    # Mirror rows carry the checked owner so history can be filtered per chat.
     # Did this spoken answer read the Library? The tool left a mark on the conversation; taking it here
     # keeps the answer out of the memory index and the voice-session distillation, as a typed one is.
     _library_turn = False
-    try:
-        from agent_friday.services.library import cite as _lib_cite
-        _library_turn = bool(agent_text) and _lib_cite.turn_used_library(None, _cid)
-        if _library_turn:
-            _lib_cite.remember_library_reply(agent_text)
-    except Exception:
-        _library_turn = False
     user_msg = friday_msg = None
     if user_text:
         user_msg = {
@@ -2677,7 +2702,6 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
         }
         if _unsaved:
             user_msg['off_record'] = True
-        CHAT_HISTORY.append(user_msg)
     if agent_text:
         friday_msg = {
             'id': str(uuid.uuid4()),
@@ -2691,18 +2715,53 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
         }
         if _unsaved:
             friday_msg['off_record'] = True
-        CHAT_HISTORY.append(friday_msg)
-    if _conv is not None and _cid:
+    # This is the ownership linearization point: another store mutation cannot
+    # remove the owner between this check and either canonical message row.
+    with _conv._LOCK:
+        if _cid is None:
+            _cid = _conv.resolve(None)
+        elif not _conv.load(_cid):
+            return False
+        _turn_meta = _prov.turn_meta(provider, off_record)
+        try:
+            from agent_friday.services.library import cite as _lib_cite
+            _library_turn = bool(agent_text) and _lib_cite.turn_used_library(None, _cid)
+        except Exception:
+            _library_turn = False
+        if friday_msg:
+            friday_msg['library'] = _library_turn
         for _m in (user_msg, friday_msg):
             if not _m:
                 continue
+            _m['conversation_id'] = _cid
             try:
                 _conv.append(_cid, {"id": _m['id'], "role": _m['role'],
                                     "text": _m['text'], "pinned": False,
                                     "meta": dict(_turn_meta, kind="turn", via="voice",
-                                                 library=bool(_m.get('library')))})
+                                                 library=bool(_m.get('library')))}, settings=settings)
             except Exception as _ce:
                 print(f'  [voice] could not persist turn to {_cid}: {_ce}')
+                return False
+    if _library_turn:
+        try:
+            _lib_cite.remember_library_reply(agent_text)
+        except Exception:
+            pass
+    if not _unsaved and user_text:
+        # Use the same reversible, session-level adaptation as typed turns.
+        # Lasting traits still require the existing owner/acceptance path.
+        try:
+            from agent_friday.services.user_model import observe_message
+            observe_message(user_text, role="user", workspace="voice")
+        except Exception:
+            pass
+    if not off_record:
+        if user_text:
+            _log_context("voice_user", {"text": user_text})
+        if agent_text:
+            _log_context("voice_agent", {"text": agent_text})
+    CHAT_HISTORY.extend(m for m in (user_msg, friday_msg) if m)
+    if not _unsaved:
         try:
             _conv.prune(_cid)
         except Exception:
@@ -2710,7 +2769,8 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
     try:
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
         CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned') or m.get('timestamp', '') >= cutoff][-500:]
-        _save_chat_history(CHAT_HISTORY)
+        if not _unsaved:
+            _save_chat_history(CHAT_HISTORY)
     except Exception as e:
         print(f'  [voice] chat history save failed: {e}')
 
@@ -2728,6 +2788,7 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
             ).start()
         except Exception as _ve:
             print(f'  [voice] memory indexing skipped: {_ve}')
+    return True
 
 
 def _spawn_voice_distill(turn_log):
@@ -2778,5 +2839,3 @@ def _spawn_voice_distill_unchecked(turn_log):
         prompt=prompt,
         description='Looking for anything wiki-worthy in the voice session…',
     )
-
-

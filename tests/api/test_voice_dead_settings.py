@@ -36,8 +36,8 @@ def test_dead_setting_voice_max_tokens_caps_the_spoken_reply():
     from agent_friday.routes.voice import _voice_reply_cap, _VOICE_REPLY_TOKENS_DEFAULT
     assert _voice_reply_cap({}) == _VOICE_REPLY_TOKENS_DEFAULT
     assert _voice_reply_cap({"voice_max_tokens": 120}) == 120
-    assert _voice_reply_cap({"voice_max_tokens": 99999}) == 2048     # clamped
-    assert _voice_reply_cap({"voice_max_tokens": 1}) == 64            # floored
+    assert _voice_reply_cap({"voice_max_tokens": 99999}) == 99999    # provider context owns the safety ceiling
+    assert _voice_reply_cap({"voice_max_tokens": 1}) == 1        # explicit owner budget is honored
     from agent_friday.services import voice_manifest as vm
     assert vm.read_selection({"voice_max_tokens": 150})["mind"]["reply_cap"] == 150
 

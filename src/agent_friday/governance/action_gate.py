@@ -264,6 +264,10 @@ INTERNAL_TOOLS = frozenset({
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
     "create_workflow", "run_workflow", "workflow_status", "creative_project",
+    # Local definition/discovery and initiation only; workflow execution keeps
+    # every constituent action on the existing governed task/tool path.
+    "workflow_action", "discover_capabilities", "read_skill",
+    "voice_preferences",  # local spoken style preferences only; no permissions
     "start_creative_pipeline", "compare_image_takes", "content_post_status",
     "content_repurpose", "knowledge_query", "knowledge_related",
     "knowledge_communities", "inspect_image", "inspect_audio", "save_output",

@@ -385,11 +385,13 @@
   }
 
   // ── The panel ─────────────────────────────────────────────────────────
-  function FridayArtifactPanel({ convId, items, selectedId, onSelect, onCollapse, tab, width, onChanged }) {
+  function FridayArtifactPanel({ convId, items, selectedId, onSelect, onCollapse, tab, width, onChanged, initialVersion = null }) {
     const cur = items.find(i => i.id === selectedId) || items[items.length - 1];
     const [versions, setVersions] = useState([]);
-    const [viewV, setViewV] = useState(null);       // null = current
+    const [viewV, setViewV] = useState(initialVersion);       // null = current
     const [rec, setRec] = useState(null);
+    const [readState, setReadState] = useState('loading');
+    const [readAttempt, setReadAttempt] = useState(0);
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(null);
     const [busy, setBusy] = useState(false);
@@ -406,28 +408,40 @@
       const ro = new ResizeObserver(es => { const r = es[0].contentRect; setSize({ w: r.width - 20, h: r.height - 20 }); });
       ro.observe(bodyRef.current);
       return () => ro.disconnect();
-    }, [cur && cur.id]);
+    }, [cur && cur.id, readState]);
 
-    // A new current version (Friday's, or ours) shows the latest again.
-    useEffect(() => { setViewV(null); setEditing(false); setDraft(null); }, [cur && cur.id, cur && cur.version]);
+    // Exact result links retain the evidenced version as newer edits arrive.
+    useEffect(() => { setViewV(initialVersion); setEditing(false); setDraft(null); }, [cur && cur.id, cur && cur.version, initialVersion]);
     // Another artifact: never leave the previous one's body on screen.
-    useEffect(() => { setRec(cur && cache.current[cur.id + '@' + cur.version] || null); setNote(null); }, [cur && cur.id]);
+    useEffect(() => { setRec(null); setNote(null); }, [cur && cur.id]);
 
     useEffect(() => {
       if (!cur) return;
       let dead = false;
       const q = '?include=versions' + (viewV ? '&version=' + viewV : '');
-      const key = cur.id + '@' + (viewV || cur.version);
-      if (cache.current[key]) setRec(cache.current[key]);
-      getJ('/api/artifacts/' + encodeURIComponent(convId) + '/' + encodeURIComponent(cur.id) + q)
-        .then(d => {
-          if (d.artifact) { cache.current[cur.id + '@' + d.artifact.version] = d.artifact; if (!dead) setRec(d.artifact); }
-          if (!dead && d.versions) setVersions(d.versions);
-        }).catch(() => {});
+      const key = convId + ':' + cur.id + '@' + (viewV || cur.version);
+      setReadState('loading'); setRec(cache.current[key] || null);
+      api('/api/artifacts/' + encodeURIComponent(convId) + '/' + encodeURIComponent(cur.id) + q)
+        .then(async r => ({ ok: r.ok, status: r.status, data: await r.json() }))
+        .then(({ok, status, data: d}) => {
+          if (dead) return;
+          if (!ok || !d.artifact || d.artifact.id !== cur.id || (viewV && d.artifact.version !== viewV)) {
+            setRec(null); setReadState(status === 404 || ok ? 'missing' : 'error'); return;
+          }
+          cache.current[convId + ':' + cur.id + '@' + d.artifact.version] = d.artifact;
+          setRec(d.artifact); setReadState('ready');
+          if (d.versions) setVersions(d.versions);
+        }).catch(() => { if (!dead) { setRec(null); setReadState('error'); } });
       return () => { dead = true; };
-    }, [convId, cur && cur.id, cur && cur.version, viewV]);
+    }, [convId, cur && cur.id, cur && cur.version, viewV, readAttempt]);
 
     if (!cur) return null;
+    if (readState === 'missing' || readState === 'error') return h('div', {className:'fa-panel' + (tab ? ' fa-tab' : ''), style:tab ? undefined : {width, flexShrink:0}, role:'complementary', 'aria-label':'Requested artifact', 'data-artifact-link-state':readState === 'missing' && viewV ? 'missing-version' : readState},
+      h('div', {className:'fa-empty', style:{flexDirection:'column',gap:12,padding:24}},
+        readState === 'error' ? 'The requested artifact could not be loaded.' : viewV ? 'This artifact version is no longer available.' : 'This artifact is no longer available.',
+        h('div', {style:{display:'flex',flexWrap:'wrap',gap:8,justifyContent:'center'}},
+          h('button', {type:'button',className:'fa-btn',onClick:()=>{setReadState('loading');setReadAttempt(n=>n+1);}}, 'Try again'),
+          h('button', {type:'button',className:'fa-btn',onClick:()=>{setViewV(null);setReadState('loading');setReadAttempt(n=>n+1);onSelect(items[items.length-1].id);}}, 'Browse other artifacts'))));
     const total = cur.version;
     const shown = viewV || total;
     const editable = rec && (rec.kind === 'markdown' || rec.kind === 'table' || rec.kind === 'html' || rec.kind === 'svg') && !viewV;
@@ -759,6 +773,12 @@
     ensureCss();
     const [items, setItems] = useState([]);
     const [sel, setSel] = useState(null);
+    const [linkedArtifact, setLinkedArtifact] = useState(null);
+    const [linkedVersion, setLinkedVersion] = useState(null);
+    const [linkState, setLinkState] = useState('loading');
+    const requestedArtifact = useRef(null);
+    const currentConversation = useRef(convId);
+    currentConversation.current = convId;
     const [codebase, setCodebase] = useState(null);
     // The chat's project and the codebases it connects (chat-hub.md M3a): what
     // the Build switch offers when the chat is not yet bound to one.
@@ -788,14 +808,27 @@
     const refresh = useCallback((selectId) => {
       if (!convId) return Promise.resolve();
       return getJ('/api/artifacts?conversation_id=' + encodeURIComponent(convId)).then(d => {
+        if (currentConversation.current !== convId) return;
+        if (d.status === 'error' || !Array.isArray(d.artifacts)) throw new Error('Artifact list unavailable');
         const list = d.artifacts || [];
         setItems(list);
+        if (requestedArtifact.current) setLinkState(list.some(i => i.id === requestedArtifact.current) ? 'ready' : 'missing');
         if (selectId) setSel(selectId);
         else setSel(s => list.some(i => i.id === s) ? s : (list.length ? list[list.length - 1].id : null));
-      }).catch(() => {});
+      }).catch(() => { if (currentConversation.current === convId && requestedArtifact.current) setLinkState('error'); });
     }, [convId]);
 
-    useEffect(() => { setItems([]); setSel(null); setWantView(null); refresh(); }, [convId, refresh]);
+    useEffect(() => {
+      setItems([]); setSel(null); setWantView(null);
+      const query = new URLSearchParams(window.location.search);
+      const requested = query.get('conversation') === convId ? query.get('artifact') : null;
+      const rawVersion = requested ? query.get('version') : null;
+      const version = rawVersion === null ? null : /^[1-9]\d*$/.test(rawVersion) && Number.isSafeInteger(Number(rawVersion)) ? Number(rawVersion) : -1;
+      requestedArtifact.current = requested;
+      setLinkedArtifact(requested); setLinkedVersion(version); setLinkState('loading');
+      if (requested) setOpen(true);
+      refresh(requested);
+    }, [convId, refresh]);
     // Is this chat bound to a codebase? Read once per conversation.
     useEffect(() => {
       setCodebase(null);
@@ -874,16 +907,21 @@
       return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
     }, [dragging, hostW]);
 
-    const has = items.length > 0 || !!codebase;
+    const has = items.length > 0 || !!codebase || !!linkedArtifact;
     const side = hostW >= SIDE_MIN_HOST_W;
-    const cur = items.find(i => i.id === sel) || items[items.length - 1];
+    const cur = linkedArtifact ? items.find(i => i.id === linkedArtifact) : items.find(i => i.id === sel) || items[items.length - 1];
     const panelW = Math.min(width, Math.max(PANEL_MIN_W, hostW - CHAT_MIN_W - 6));
     const onChanged = rec => refresh(rec && rec.id);
-    const artifactPanel = items.length ? h(FridayArtifactPanel, { convId, items, selectedId: sel, onSelect: setSel, onCollapse: () => setOpen(false), tab: !side, width: panelW, onChanged }) : null;
-    const panel = codebase
+    const selectArtifact = id => { requestedArtifact.current = null; setLinkedArtifact(null); setLinkedVersion(null); setSel(id); };
+    const missingPanel = linkedArtifact && linkState !== 'ready' ? h('div', { className: 'fa-panel' + (!side ? ' fa-tab' : ''), style: side ? {width: panelW, flexShrink: 0} : undefined, role: 'complementary', 'aria-label': 'Requested artifact', 'data-artifact-link-state': linkState },
+      h('div', {className: 'fa-empty'}, linkState === 'loading' ? 'Loading the requested artifact…' : linkState === 'error' ? 'The requested artifact could not be loaded.' : 'This artifact is no longer available in this conversation.',
+        linkState !== 'loading' ? h('div', {style: {marginTop: 12}}, h('button', {type: 'button', className: 'fa-btn', onClick: () => { setLinkState('loading'); refresh(linkedArtifact); }}, 'Try again'),
+          items.length ? h('button', {type: 'button', className: 'fa-btn', onClick: () => selectArtifact(items[items.length - 1].id)}, 'Browse other artifacts') : null) : null)) : null;
+    const artifactPanel = missingPanel || (items.length ? h(FridayArtifactPanel, { convId, items, selectedId: linkedArtifact || sel, initialVersion: linkedVersion, onSelect: selectArtifact, onCollapse: () => setOpen(false), tab: !side, width: panelW, onChanged }) : null);
+    const panel = codebase && !linkedArtifact
       ? h(CodebasePanel, { key: convId + ':' + codebase.id, convId, codebase, artifactsTab: artifactPanel, onCollapse: () => setOpen(false), tab: !side, width: panelW, refreshKey: stepKey, wantView, onCodebaseAsk, chatBusy })
       : artifactPanel;
-    const stripTitle = codebase ? codebase.title : (cur ? (KIND_GLYPH[cur.kind] || '') + ' ' + cur.title : 'Panel');
+    const stripTitle = linkedArtifact ? (cur ? cur.title : 'Requested artifact') : codebase ? codebase.title : (cur ? (KIND_GLYPH[cur.kind] || '') + ' ' + cur.title : 'Panel');
     const stripCount = codebase ? null : items.length;
     // In the docked chat tray (unified-shell.md §11) the host is usually too
     // narrow for a side panel. The strip offers to place the tray at two
