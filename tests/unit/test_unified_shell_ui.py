@@ -174,6 +174,29 @@ def test_the_chat_button_docks_the_tray_beside_the_workspace(browser_page):
     assert got["trayTop"] >= got["barBottom"] - 1, got
 
 
+@pytest.mark.parametrize("style", ["simple", "classic"])
+@pytest.mark.parametrize("size", [(1600, 1000), (390, 844), (568, 320)])
+def test_standalone_chat_respects_the_header_at_every_size(browser_page, style, size):
+    page, base = browser_page
+    try:
+        page.set_viewport_size({"width": size[0], "height": size[1]})
+        page.goto(base + "/w/news?experience=" + style, wait_until="domcontentloaded")
+        page.wait_for_selector('[data-standalone="news"]', timeout=60000)
+        assert page.locator("body").get_attribute("data-friday-display-style") == style
+        chat = page.get_by_role("button", name="Open chat with Friday", exact=True)
+        if not chat.is_visible():
+            page.get_by_role("button", name="More Friday controls", exact=True).click()
+        chat.click()
+        page.wait_for_selector(".chat-panel.open", timeout=10000)
+        page.wait_for_function("""() => {
+          const bar = document.querySelector('.top-bar').getBoundingClientRect();
+          const tray = document.querySelector('.chat-panel.open').getBoundingClientRect();
+          return tray.top >= bar.bottom - 1 && tray.bottom <= innerHeight + 1 && tray.height > 0;
+        }""")
+    finally:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+
+
 def test_the_desktop_keeps_its_scene_menu_and_one_bar(browser_page):
     page, base = browser_page
     page.goto(base + "/index.html", wait_until="domcontentloaded")

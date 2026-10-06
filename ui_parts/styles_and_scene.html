@@ -52,7 +52,7 @@
             padding-top: var(--fr-topbar-h, 36px); padding-right: var(--fr-chat-dock, 0px);
             padding-left: var(--fr-chat-dock-left, 0px); box-sizing: border-box;
             transition: padding-right 0.3s ease, padding-left 0.3s ease; }
-        html.ws-standalone .chat-panel { bottom: 0; }
+        html.ws-standalone .chat-panel { top: var(--fr-topbar-h, 36px) !important; bottom: 0 !important; height: auto !important; }
         /* the workspace's name in the top bar's context slot, in a tab */
         .ws-tab-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; }
         .ws-tab-name img { width: 18px; height: 18px; }

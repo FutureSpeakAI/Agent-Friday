@@ -732,7 +732,7 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Chat panel — frosted glass slide-in.
            bottom must clear the dock (with group labels) + its box-shadow. */
         .chat-panel {
-            position: fixed; top: 36px; right: 0; bottom: 116px;
+            position: fixed; top: var(--fr-topbar-h, 36px); right: 0; bottom: 116px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
             background: rgba(10,14,26,0.75);
             backdrop-filter: blur(16px) saturate(1.2);
@@ -863,7 +863,7 @@ window.addEventListener('DOMContentLoaded',function(){
             padding-top: var(--fr-topbar-h, 36px); padding-right: var(--fr-chat-dock, 0px);
             padding-left: var(--fr-chat-dock-left, 0px); box-sizing: border-box;
             transition: padding-right 0.3s ease, padding-left 0.3s ease; }
-        html.ws-standalone .chat-panel { bottom: 0; }
+        html.ws-standalone .chat-panel { top: var(--fr-topbar-h, 36px) !important; bottom: 0 !important; height: auto !important; }
         /* the workspace's name in the top bar's context slot, in a tab */
         .ws-tab-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; }
         .ws-tab-name img { width: 18px; height: 18px; }

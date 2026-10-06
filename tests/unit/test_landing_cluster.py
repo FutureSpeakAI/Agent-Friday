@@ -216,7 +216,7 @@ def test_the_cluster_is_on_the_desktop_and_the_judge_fades_it(rel):
     assert re.search(r"aria-hidden\"?:? ?=?\{?landing\.show ?\? ?undefined ?: ?'true'", text), rel
     assert "el.setAttribute('inert', '')" in text, rel
     assert "fridayLandingStep(st, " in text and "console.info('[landing] ' + (r.show ? 'shown' : 'hidden') + ': ' + r.reason)" in text, rel
-    assert "landingJudge.current();" in text and "[landingMode, openWins, focusWin, voiceOn, chatOpen, countdowns]" in text, rel
+    assert "landingJudge.current();" in text and "[landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, countdowns]" in text, rel
 
 
 @pytest.mark.parametrize("rel", PAGES)
@@ -419,8 +419,9 @@ def _cluster(page):
 
 def test_the_cluster_fades_away_and_a_key_brings_it_back(browser_page):
     page, base, logs = browser_page
-    page.goto(base + "/index.html", wait_until="domcontentloaded")
+    page.goto(base + "/index.html?experience=classic", wait_until="domcontentloaded")
     page.wait_for_selector('[data-testid="landing-cluster"]', timeout=60000)
+    assert page.locator("body").get_attribute("data-friday-display-style") == "classic"
     c = _cluster(page)
     assert c["state"] == "shown" and not c["inert"] and c["hidden"] is None
     assert "opacity 0.35s cubic-bezier(0.2, 0.8, 0.3, 1)" in c["transition"]
@@ -458,8 +459,9 @@ def test_the_key_gives_the_field_the_cursor_when_the_cluster_shows(browser_page)
     after a fixed delay lost that race under load; with the page's timers
     stopped, nothing but the showing itself can give the field the cursor."""
     page, base, logs = browser_page
-    page.goto(base + "/index.html", wait_until="domcontentloaded")
+    page.goto(base + "/index.html?experience=classic", wait_until="domcontentloaded")
     page.wait_for_selector('[data-testid="landing-cluster"]', timeout=60000)
+    assert page.locator("body").get_attribute("data-friday-display-style") == "classic"
     page.mouse.move(40, 500)
     page.clock.fast_forward(61_000)
     page.clock.fast_forward(31_000)
