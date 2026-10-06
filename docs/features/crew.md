@@ -3,7 +3,9 @@
 Status: cloud-first implementation. Offline execution is not supported.
 
 Crew gives a named specialist a persistent identity across conversations. Open
-**Crew** in a chat to create an agent, choose its reasoning provider and model,
+**Workspaces → Crew** to manage saved agents across projects, or **Crew** in a
+chat to invite agents and hand off work. The hub is also available at `/w/crew`.
+Create an agent, choose its reasoning provider and model,
 choose its speech provider, model and voice, and set its name, caption label,
 role and personality. This release requires Gemini Live for the room's host
 voice; invited specialists use a separate configured speech provider.
@@ -14,6 +16,13 @@ Crew grants narrow access; Friday's ordinary governance, file approvals and
 cloud privacy controls still apply. Credentials and linked files are excluded.
 The first tool set supports file reads and writes, web search, news search and
 web browsing. Other capabilities require a future explicitly scoped adapter.
+
+The hub shows the roster and its model, voice, project and lifecycle settings.
+Its current-work list includes up to one hundred recent Crew tasks, with active
+work first. The list contains task identity and status, not prompts, results or
+tool logs. It reflects the runtime's current task records; it is not a separate
+permanent task archive. The same editor and revision checks serve both the hub
+and the chat panel.
 
 An agent keeps its ID when its name, model or voice changes. Every edit creates
 a new revision. Work using an older revision stops before its next governed

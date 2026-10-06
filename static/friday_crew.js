@@ -41,7 +41,7 @@
     const top = document.querySelector('.top-bar')?.getBoundingClientRect().bottom || 60;
     return {left:12,top:top+12,width:Math.max(1,window.innerWidth-24),height:Math.max(1,window.innerHeight-top-116)};
   }
-  window.FridayCrewEntry = function CrewEntry({conversationId,apiFetch,onMessages}) {
+  window.FridayCrewEntry = function CrewEntry({conversationId,apiFetch,onMessages,profileOnly=false,editorRequest=null,onEditorRequestHandled}) {
     const [open,setOpen] = useState(false), [agents,setAgents] = useState([]), [caps,setCaps] = useState(null), [selected,setSelected] = useState('new');
     const [draft,setDraft] = useState(()=>cache.drafts.new || blank()), [room,setRoom] = useState(null), [members,setMembers] = useState([]);
     const [error,setError] = useState(''), [notice,setNotice] = useState(''), [busy,setBusy] = useState(false), [conflict,setConflict] = useState(null);
@@ -63,6 +63,13 @@
       setAgents(profiles.agents || []); setCaps(capabilities);
       return profiles.agents || [];
     }
+    useEffect(()=>{
+      if(!editorRequest||busy)return;
+      const profile=editorRequest.profile;
+      select(profile?.id || 'new',profile?[profile]:[]);setOpen(true);
+      if(profileOnly)buttonRef.current=editorRequest.opener||null;
+      onEditorRequestHandled?.();
+    },[editorRequest,busy]);
     useEffect(()=>{
       const id = conversationId, epoch = ++generation.current;
       setRoom(cache.rooms[id] || null); setMembers(cache.rooms[id]?.member_ids || []); setPending([]); setRequest(''); requestRef.current = null;
@@ -124,12 +131,14 @@
       const result=await call(creating?'/api/crew/agents':'/api/crew/agents/'+encodeURIComponent(selected),{method:creating?'POST':'PATCH',body});
       delete cache.drafts[selected]; const agent=result.agent;
       setAgents(list=>[...list.filter(a=>a.id!==agent.id),agent]); setSelected(agent.id); setDraft(copy(agent)); setConflict(null); setNotice('Agent saved.');
+      window.dispatchEvent(new CustomEvent('friday:crew-profiles-changed'));
     });
     const lifecycle=status=>run(async()=>{
       if(cache.drafts[selected])throw new Error('Save this profile’s draft before changing its status.');
       const endpoint='/api/crew/agents/'+encodeURIComponent(selected)+(status==='retired'?'/retire':'');
       const result=await call(endpoint,{method:status==='retired'?'POST':'PATCH',body:status==='retired'?{revision:draft.revision}:{revision:draft.revision,status}});
       delete cache.drafts[selected];setAgents(list=>list.map(a=>a.id===selected?result.agent:a));setDraft(copy(result.agent));setNotice(status==='retired'?'Agent retired. Its history is kept.':'Agent '+status+'.');
+      window.dispatchEvent(new CustomEvent('friday:crew-profiles-changed'));
     });
     const saveRoom=enabled=>run(async()=>{
       const result=await call(base,{method:'PUT',body:{revision:room?.revision || 0,member_ids:members,enabled}});
@@ -147,7 +156,7 @@
       if(latest.current.conversationId!==conversationId)return;
       setRequest('');requestRef.current=null;setPending(list=>[...list,{task_id:result.task_id,agent_id:target,status:'running'}]);setNotice('Task handed to '+(agents.find(a=>a.id===target)?.name || 'the agent')+'.');
     });
-    function close() { setOpen(false);window.requestAnimationFrame(()=>buttonRef.current?.focus()); }
+    function close() { setOpen(false);window.requestAnimationFrame(()=>(editorRequest?.opener || buttonRef.current)?.focus()); }
     function keys(e) {
       if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}
       if(e.key==='Tab'){
@@ -165,11 +174,11 @@
     const multi=(key,list,label)=>h('fieldset',null,h('legend',null,label),list.length?list.map(item=>{const id=typeof item==='string'?item:item.id;return h('div',{key:id},toggle(typeof item==='string'?item:item.name||item.label||id,(draft[key]||[]).includes(id),checked=>field(key,checked?[...(draft[key]||[]),id]:(draft[key]||[]).filter(x=>x!==id))));}):h('p',{className:'fr-crew-muted'},'None available.'));
     const roomMembers=agents.filter(a=>(room?.member_ids||[]).includes(a.id)&&a.status==='active');
     const activeSpeech=speaker?.conversation_id===conversationId ? speaker : null;
-    return h(React.Fragment,null,h('button',{ref:buttonRef,type:'button',className:'fr-crew-entry','aria-expanded':open,onClick:()=>setOpen(true),title:'Crew agents and room'},'Crew',room?.enabled?' · on':''),
-      open && window.ReactDOM.createPortal(h('section',{ref:dialogRef,className:'fr-crew-dialog',role:'dialog','aria-modal':'true','aria-label':'Friday Crew',style:bounds,onKeyDown:keys},
-        h('header',{className:'fr-crew-head'},h('div',null,h('h2',null,'Friday Crew'),h('p',null,'Distinct agents, one conversation.')),h('button',{onClick:close,'aria-label':'Close Crew'},'Close')),
+    return h(React.Fragment,null,!profileOnly&&h('button',{ref:buttonRef,type:'button',className:'fr-crew-entry','aria-expanded':open,onClick:()=>setOpen(true),title:'Crew agents and room'},'Crew',room?.enabled?' · on':''),
+      open && window.ReactDOM.createPortal(h('section',{ref:dialogRef,className:'fr-crew-dialog',role:'dialog','aria-modal':'true','aria-label':profileOnly?'Crew agent profile':'Friday Crew',style:bounds,onKeyDown:keys},
+        h('header',{className:'fr-crew-head'},h('div',null,h('h2',null,profileOnly?'Agent profile':'Friday Crew'),h('p',null,profileOnly?'Identity, model, voice and permissions.':'Distinct agents, one conversation.')),h('button',{onClick:close,'aria-label':'Close Crew'},'Close')),
         h('div',{className:'fr-crew-notices','aria-live':'polite'},error&&h('p',{role:'alert',className:'fr-crew-error'},error),notice&&h('p',null,notice),conflict&&h('div',null,'A newer revision exists. Your draft is kept. ',h('button',{onClick:()=>{setDraft(copy(conflict));delete cache.drafts[selected];setConflict(null);setError('');}},'Load saved revision'))),
-        h('div',{className:'fr-crew-scroll'},h('section',{className:'fr-crew-room'},h('h3',null,'This chat’s room'),
+        h('div',{className:'fr-crew-scroll'},!profileOnly&&h('section',{className:'fr-crew-room'},h('h3',null,'This chat’s room'),
           !conversationId?h('p',null,'Open a chat to assemble its Crew.'):h(React.Fragment,null,
             h('p',{className:'fr-crew-muted'},'Invited members can use requests and replies shared in this Crew conversation. Their private files and memories follow their own permissions. Earlier chat history is not automatically shared.'),
             agents.filter(a=>a.status==='active').length===0&&h('p',null,'Create an agent below, then invite it to this chat.'),
@@ -198,5 +207,71 @@
                 input('Offline provider',draft.offline?.provider,v=>field('offline',{...(draft.offline||{}),provider:v})),input('Offline model',draft.offline?.model,v=>field('offline',{...(draft.offline||{}),model:v})),input('Offline voice provider',draft.offline?.voice?.provider,v=>field('offline',{...(draft.offline||{}),voice:{...draft.offline?.voice,provider:v}})),input('Offline voice model',draft.offline?.voice?.model,v=>field('offline',{...(draft.offline||{}),voice:{...draft.offline?.voice,model:v}})),input('Offline voice ID',draft.offline?.voice?.voice_id,v=>field('offline',{...(draft.offline||{}),voice:{...draft.offline?.voice,voice_id:v}}))),
               h('div',{className:'fr-crew-actions'},h('button',{type:'submit',disabled:busy||frozen||!caps},busy?'Saving…':'Save agent'),draft.id&&!frozen&&h('button',{type:'button',disabled:busy,onClick:()=>lifecycle(draft.status==='suspended'?'active':'suspended')},draft.status==='suspended'?'Reactivate':'Suspend'),draft.id&&!frozen&&h('button',{type:'button',disabled:busy,onClick:()=>{if(window.confirm('Retire this agent? Its history is kept, but this profile cannot be reactivated.'))lifecycle('retired');}},'Retire')),
               draft.status==='retired'&&h('p',null,'Retired profiles remain available for their history. Create a new agent to work again.'))))),document.body));
+  };
+  window.FridayCrewWorkspace = function CrewWorkspace({apiFetch,active=true}) {
+    const [agents,setAgents]=useState([]),[projects,setProjects]=useState([]),[tasks,setTasks]=useState([]);
+    const [loading,setLoading]=useState(true),[errors,setErrors]=useState({}),[filter,setFilter]=useState('all'),[editor,setEditor]=useState(null),[refreshKey,setRefreshKey]=useState(0),[tasksLoading,setTasksLoading]=useState(true);
+    const [pageVisible,setPageVisible]=useState(!document.hidden),sequence=useRef(0);
+    useEffect(()=>{
+      const visible=()=>setPageVisible(!document.hidden);
+      document.addEventListener('visibilitychange',visible);
+      return()=>document.removeEventListener('visibilitychange',visible);
+    },[]);
+    useEffect(()=>{
+      if(!active)return;
+      const refresh=()=>setRefreshKey(n=>n+1);
+      window.addEventListener('friday:crew-profiles-changed',refresh);
+      return()=>window.removeEventListener('friday:crew-profiles-changed',refresh);
+    },[active]);
+    useEffect(()=>{
+      if(!active||!pageVisible)return;
+      let cancelled=false;const abort=new AbortController();setLoading(true);
+      async function read(url){const r=await apiFetch(url,{signal:abort.signal});const d=await r.json();if(!r.ok||d.status==='error')throw Error(d.message||d.error||'Could not load Crew.');return d;}
+      async function load(){
+        const results=await Promise.allSettled([read('/api/crew/agents?include_retired=true'),read('/api/crew/capabilities')]);
+        if(cancelled)return;
+        const nextErrors={agents:undefined,projects:undefined};
+        if(results[0].status==='fulfilled')setAgents(results[0].value.agents||[]);else nextErrors.agents=results[0].reason.message;
+        if(results[1].status==='fulfilled')setProjects(results[1].value.projects||[]);else nextErrors.projects=results[1].reason.message;
+        setErrors(previous=>({...previous,...nextErrors}));setLoading(false);
+      }
+      load();return()=>{cancelled=true;abort.abort();};
+    },[active,pageVisible,refreshKey]);
+    useEffect(()=>{
+      if(!active||!pageVisible)return;
+      let cancelled=false,timer;const abort=new AbortController();setTasksLoading(true);
+      async function load(){
+        try{
+          const response=await apiFetch('/api/crew/tasks',{signal:abort.signal}),data=await response.json();
+          if(!response.ok||data.status==='error')throw Error(data.message||data.error||'Could not load current work.');
+          if(cancelled)return;setTasks(data.tasks||[]);setErrors(previous=>({...previous,tasks:undefined}));
+        }catch(error){if(cancelled)return;setErrors(previous=>({...previous,tasks:error.message}));}
+        if(cancelled)return;setTasksLoading(false);timer=window.setTimeout(load,5000);
+      }
+      load();return()=>{cancelled=true;abort.abort();window.clearTimeout(timer);};
+    },[active,pageVisible,refreshKey]);
+    const projectName=id=>projects.find(p=>p.id===id)?.name||id;
+    const stateLabel=status=>({active:'Active',suspended:'Suspended',retired:'Retired',queued:'Queued',running:'Working',complete:'Complete',completed:'Complete',completed_unverified:'Reply ready',failed:'Could not finish',cancelled:'Cancelled'}[status]||status||'Unknown');
+    const editProfile=(profile,event)=>setEditor({profile,sequence:++sequence.current,opener:event.currentTarget});
+    const shown=agents.filter(a=>filter==='all'||a.status===filter);
+    return h('div',{className:'fr-crew-workspace','data-testid':'crew-workspace'},
+      h('header',{className:'fr-crew-hub-head'},h('div',null,h('h2',null,'Your Crew'),h('p',null,'Specialist agents with their own roles, models, voices and permissions.')),
+        h('div',{className:'fr-crew-actions'},h('button',{onClick:e=>editProfile(null,e)},'Create agent'),h('button',{onClick:()=>setRefreshKey(n=>n+1)},'Refresh'))),
+      h('p',{className:'fr-crew-muted'},'Manage agents here, then invite them from Crew in any chat. Room requests and replies are shared with its invited members; files and private memory follow each agent’s permissions.'),
+      h('section',{'aria-labelledby':'crew-roster-title'},h('div',{className:'fr-crew-hub-heading'},h('h3',{id:'crew-roster-title'},'Agent roster'),h('label',null,'Show ',h('select',{'aria-label':'Agent status',value:filter,onChange:e=>setFilter(e.target.value)},['all','active','suspended','retired'].map(v=>h('option',{key:v,value:v},v==='all'?'All agents':stateLabel(v)))))),
+        loading&&h('p',{role:'status'},'Loading agents…'),
+        errors.agents&&h('p',{role:'alert'},'Could not refresh agents. ',errors.agents,agents.length?' Previously loaded profiles are shown.':''),
+        errors.projects&&h('p',{role:'alert'},'Could not refresh project names. Saved IDs or previously loaded names are shown.'),
+        !loading&&!errors.agents&&!shown.length&&h('div',{className:'fr-crew-empty'},h('h4',null,agents.length?'No agents with this status':'Build your first Crew agent'),h('p',null,agents.length?'Choose another status to see your roster.':'Give an agent a role, choose its model and voice, and decide what it may access.')),
+        h('div',{className:'fr-crew-agent-grid'},shown.map(agent=>h('article',{key:agent.id,className:'fr-crew-agent-card','data-agent-id':agent.id},
+          h('div',{className:'fr-crew-hub-heading'},h('h4',null,agent.name),h('span',{className:'fr-crew-agent-status'},stateLabel(agent.status))),
+          h('p',{className:'fr-crew-agent-role'},agent.role||'No role specified'),
+          h('dl',null,h('dt',null,'Model'),h('dd',null,[agent.provider,agent.model].filter(Boolean).join(' / ')||'Not selected'),h('dt',null,'Voice'),h('dd',null,[agent.voice?.provider,agent.voice?.model,agent.voice?.voice_id].filter(Boolean).join(' / ')||'Not selected'),h('dt',null,'Projects'),h('dd',null,(agent.project_ids||[]).map(projectName).join(', ')||'No projects assigned')),
+          h('button',{'aria-label':(agent.status==='retired'?'View ':'Edit ')+agent.name,onClick:e=>editProfile(agent,e)},agent.status==='retired'?'View profile':'Edit profile'))))),
+      h('section',{'aria-labelledby':'crew-work-title',className:'fr-crew-work-list'},h('h3',{id:'crew-work-title'},'Current work'),
+        tasksLoading&&h('p',{role:'status'},'Loading current work…'),errors.tasks&&h('p',{role:'alert'},'Could not refresh current work. ',errors.tasks,tasks.length?' Previously loaded tasks are shown.':''),
+        !tasksLoading&&!errors.tasks&&!tasks.length&&h('p',{className:'fr-crew-empty'},'No Crew work to show. Open a chat, assemble a room and hand a request to an agent.'),
+        tasks.length>0&&h('ul',null,tasks.map(task=>h('li',{key:task.task_id},h('div',null,h('strong',null,task.speaker_name||agents.find(a=>a.id===task.agent_id)?.name||'Crew agent'),h('span',null,' · '+stateLabel(task.status)),h('small',null,task.project_id?projectName(task.project_id):'No project')),task.conversation_id&&h('a',{href:'/?chrome=chat&conversation='+encodeURIComponent(task.conversation_id),target:'_blank',rel:'noopener'},'Open chat'))))),
+      active&&h(window.FridayCrewEntry,{apiFetch,profileOnly:true,editorRequest:editor,onEditorRequestHandled:()=>setEditor(null)}));
   };
 })(window);

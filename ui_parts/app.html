@@ -3378,6 +3378,9 @@ async function careerRequest(url, body) {
   if (!r.ok || d.error || d.status === 'error' || d.status === 'failed') throw new Error(d.error || d.message || ('Request failed ('+r.status+')'));
   return d;
 }
+function CrewWS({active=true}) {
+  return window.FridayCrewWorkspace ? React.createElement(window.FridayCrewWorkspace,{apiFetch,active}) : React.createElement('p',{role:'alert'},'Crew did not load. Reload this workspace to try again.');
+}
 function CareerWS(){
   const[tracker,setTracker]=useState(null);const[reports,setReports]=useState([]);const[pipeline,setPipeline]=useState('');
   const[jobs,setJobs]=useState('');const[loading,setLoading]=useState(true);const[refreshing,setRefreshing]=useState(false);const[view,setView]=useState('overview');
@@ -23863,7 +23866,7 @@ function App(){
   const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces,agentSettings.held_features]);
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
-  const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,library:window.LibraryWS?<window.LibraryWS/>:<div style={{color:'#888',fontSize:12,padding:20}}>The Library did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
+  const wsMap={crew:<CrewWS active={STANDALONE_WS==='crew'||(!experienceDesktop&&focusWin==='crew')}/>,career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,library:window.LibraryWS?<window.LibraryWS/>:<div style={{color:'#888',fontSize:12,padding:20}}>The Library did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   // A bundle workspace (installed from the salon) has no React component of its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
 const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id].bundle)?<window.FridayBundleFrame wsId={id}/>:<div>Coming soon</div>;
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});

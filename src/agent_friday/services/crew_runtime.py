@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import threading
@@ -187,6 +188,43 @@ def turns(cid):
                if (m.get("meta") or {}).get("kind") in
                ("crew_request", "crew_result", "crew_speech", "crew_playback")]
     return {"messages": results, "tasks": pending}
+
+
+def hub_tasks():
+    """Bounded owner-facing activity, without prompts, outputs or tool logs."""
+    from agent_friday.services import agent
+
+    def timestamp(value):
+        return value if type(value) in (int, float) and math.isfinite(value) else None
+
+    def identifier(value):
+        return value if isinstance(value, str) and _ID.fullmatch(value) else None
+
+    rows = []
+    with agent.TASKS_LOCK:
+        for task in agent.TASKS.values():
+            binding = task.get("crew_context")
+            if not isinstance(binding, dict):
+                continue
+            aid = binding.get("agent_id")
+            if not isinstance(aid, str) or not re.fullmatch(r"crew-[0-9a-f]{16}", aid):
+                continue
+            tid = identifier(task.get("task_id"))
+            if not tid:
+                continue
+            name = task.get("name")
+            status = task.get("status")
+            created = timestamp(task.get("created"))
+            updated = timestamp(task.get("ended")) or timestamp(task.get("started")) or created
+            rows.append({"task_id": tid, "agent_id": aid,
+                         "speaker_name": name[:80] if isinstance(name, str) else aid,
+                         "status": status[:40] if isinstance(status, str) else "unknown",
+                         "conversation_id": identifier(task.get("conversation_id")),
+                         "project_id": identifier(binding.get("project_id")),
+                         "created_at": created, "updated_at": updated})
+    rows.sort(key=lambda row: (row["status"] in ("queued", "running"),
+                              row["created_at"] or 0), reverse=True)
+    return rows[:100]
 
 
 def dispatch(cid, data):

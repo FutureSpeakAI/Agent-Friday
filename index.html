@@ -17921,6 +17921,9 @@ async function careerRequest(url, body) {
   if (!r.ok || d.error || d.status === 'error' || d.status === 'failed') throw new Error(d.error || d.message || 'Request failed (' + r.status + ')');
   return d;
 }
+function CrewWS({active=true}) {
+  return window.FridayCrewWorkspace ? React.createElement(window.FridayCrewWorkspace,{apiFetch,active}) : React.createElement('p',{role:'alert'},'Crew did not load. Reload this workspace to try again.');
+}
 function CareerWS() {
   const [tracker, setTracker] = useState(null);
   const [reports, setReports] = useState([]);
@@ -65905,6 +65908,7 @@ function App() {
     source
   }, el) : el;
   const wsMap = {
+    crew: React.createElement(CrewWS,{active:STANDALONE_WS==='crew'||(!experienceDesktop&&focusWin==='crew')}),
     career: /*#__PURE__*/React.createElement(CareerWS, null),
     knowledge: /*#__PURE__*/React.createElement(KnowledgeWS, null),
     futurespeak: showAllWorkspaces ? /*#__PURE__*/React.createElement(FuturespeakWS, null) : /*#__PURE__*/React.createElement(SitesWS, null),

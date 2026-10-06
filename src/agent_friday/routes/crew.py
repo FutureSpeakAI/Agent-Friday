@@ -42,6 +42,16 @@ def crew_agents():
         return _error(exc, "Couldn't load Crew agents")
 
 
+@crew_bp.route("/api/crew/tasks", methods=["GET"])
+@login_required
+def crew_tasks():
+    try:
+        from agent_friday.services import crew_runtime
+        return jsonify({"status": "ok", "tasks": crew_runtime.hub_tasks()})
+    except Exception as exc:
+        return _error(exc, "Couldn't load Crew work")
+
+
 @crew_bp.route("/api/crew/agents", methods=["POST"])
 @login_required
 def crew_create():

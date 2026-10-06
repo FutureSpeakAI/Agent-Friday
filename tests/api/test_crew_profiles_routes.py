@@ -23,8 +23,19 @@ def test_profile_endpoints_require_registered_authentication(client, crew_store)
     assert "/api/crew/agents" in rules
     assert "/api/crew/capabilities" in rules
     from agent_friday.routes import crew
-    for name in ("crew_capabilities", "crew_agents", "crew_create", "crew_get", "crew_update", "crew_retire"):
+    assert "/api/crew/tasks" in rules
+    for name in ("crew_capabilities", "crew_agents", "crew_create", "crew_get", "crew_update", "crew_retire", "crew_tasks"):
         assert hasattr(getattr(crew, name), "__wrapped__")
+
+
+def test_hub_task_endpoint_returns_only_the_runtime_summary(client, monkeypatch):
+    from agent_friday.services import crew_runtime
+    rows = [{"task_id": "example-task", "agent_id": "crew-" + "a" * 16,
+             "speaker_name": "Reviewer", "status": "running"}]
+    monkeypatch.setattr(crew_runtime, "hub_tasks", lambda: rows)
+    response = client.get("/api/crew/tasks")
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok", "tasks": rows}
 
 
 def test_create_edit_conflict_and_retire_round_trip(client, crew_store):
