@@ -576,9 +576,13 @@
             if (it) anchorRef.current = i;
             if (!it) { setSel(null); eng.select(-1); return; }
             setSel(it); eng.select(i, true);
+            if (source === 'media' && window.FridayMaterials) window.FridayMaterials.select(window.FridayMaterials.fromMedia(it.rec));
             if (activate) src.open(it.rec);
           },
-          onStep: d => { const cur = itemsRef.current.indexOf(selRef.current); const j = eng.step(cur, d); if (j >= 0) { setSel(itemsRef.current[j]); eng.select(j, true); } },
+          onStep: d => { const cur = itemsRef.current.indexOf(selRef.current); const j = eng.step(cur, d); if (j >= 0) {
+            setSel(itemsRef.current[j]); eng.select(j, true);
+            if (source === 'media' && window.FridayMaterials) window.FridayMaterials.select(window.FridayMaterials.fromMedia(itemsRef.current[j].rec));
+          } },
           onInteract: () => boxRef.current && boxRef.current.focus({ preventScroll: true }),
           onItemDrag: zones ? (phase, i, x, y) => fnRef.current.carry(phase, i, x, y) : undefined
         });
@@ -840,7 +844,10 @@
       const cur = itemsRef.current.indexOf(sel);
       const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
       const vi = '123456789'.indexOf(e.key);
-      if (dir) { const j = eng.nav(cur, dir); if (j >= 0) { setSel(itemsRef.current[j]); eng.select(j, true); } }
+      if (dir) { const j = eng.nav(cur, dir); if (j >= 0) {
+        setSel(itemsRef.current[j]); eng.select(j, true);
+        if (source === 'media' && window.FridayMaterials) window.FridayMaterials.select(window.FridayMaterials.fromMedia(itemsRef.current[j].rec));
+      } }
       else if (vi >= 0 && vi < src.views.length) setView(src.views[vi]);
       else if (e.key === 'Enter' && sel) src.open(sel.rec);
       else if (zones && (e.key === 'z' || e.key === 'Z') && !e.ctrlKey) undo();

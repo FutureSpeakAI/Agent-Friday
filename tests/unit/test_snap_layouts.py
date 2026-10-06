@@ -17,6 +17,7 @@ import datetime as _dt
 import functools
 import http.server
 import json
+import math
 import pathlib
 import re
 import shutil
@@ -269,8 +270,9 @@ def browser():
 class _Site:
     """A page of this tree, its settings kept here across reloads."""
 
-    def __init__(self, browser, settings=None, local=None):
+    def __init__(self, browser, settings=None, local=None, classic=False):
         b, self.base = browser
+        self.classic = classic
         self.settings, self.saved, self.errors = dict(settings or {}), [], []
         self.ctx = b.new_context(viewport={"width": 1600, "height": 1000})
         if local:
@@ -281,6 +283,8 @@ class _Site:
         self.page.route("**/api/desktop/events**", lambda r: r.fulfill(status=204, body=""))
         self.page.route("**/api/**", lambda r: r.fulfill(status=200, content_type="application/json",
                                                          body=json.dumps({"status": "ok"})))
+        self.page.route("**/api/setup/status", lambda r: r.fulfill(status=200, content_type="application/json",
+                                                                    body=json.dumps({"initialized": True})))
         self.page.route("**/api/settings", self._settings)
 
     def _settings(self, route):
@@ -292,8 +296,11 @@ class _Site:
                       body=json.dumps({"status": "ok", "settings": self.settings}))
 
     def desktop(self):
-        self.page.goto(self.base + "/index.html", wait_until="domcontentloaded")
+        self.page.goto(self.base + "/index.html" + ("?experience=classic" if self.classic else ""),
+                       wait_until="domcontentloaded")
         self.page.wait_for_selector('.dock-btn[data-ws="news"]', timeout=60000)
+        if not self.classic:
+            self.page.wait_for_selector('.fx-rail', timeout=15000)
         self.page.wait_for_timeout(500)
         return self
 
@@ -309,7 +316,7 @@ class _Site:
           const w = document.querySelector('.fwin');
           const area = fridayDesktopArea();
           return {win: r('.fwin'), snap: w && w.dataset.snap || null, tray: r('.chat-panel.open'),
-                  trayLeft: !!document.querySelector('.chat-panel.open.left'), area, vw: innerWidth,
+                  trayLeft: !!document.querySelector('.chat-panel.open.left'), rail: r('.fx-rail'), area, vw: innerWidth,
                   menu: !!document.querySelector('[data-testid="snap-menu"]'),
                   preview: (document.querySelector('[data-testid="snap-preview"]') || {dataset: {}}).dataset.slot || null};
         }""")
@@ -344,26 +351,41 @@ def _exact(box, want):
         assert abs(box[k] - want[k]) < 0.6, (k, box, want)
 
 
-def test_the_menu_snaps_a_window_to_an_exact_half(site):
-    s = site().desktop().open_news().menu()
+def _assert_desktop_edge(g, classic=False):
+    if classic:
+        assert g["rail"] is None, g
+        assert g["area"]["x"] == 0, g
+    else:
+        rail = g["rail"]
+        assert rail and rail["width"] > 0 and rail["height"] > 0, g
+        assert g["area"]["x"] == math.ceil(rail["right"]) + 16, g
+
+
+@pytest.mark.parametrize("classic", [False, True], ids=["spatial", "classic"])
+def test_the_menu_snaps_a_window_to_an_exact_half(site, classic):
+    s = site(classic=classic).desktop().open_news().menu()
     s.page.click('[data-testid="snap-menu"] [data-snap="left_half"]')
     s.page.wait_for_timeout(500)
     g = s.boxes()
     a = g["area"]
+    _assert_desktop_edge(g, classic)
     assert g["snap"] == "left_half" and not g["menu"], g
-    _exact(g["win"], {"x": 0, "y": a["y"], "width": round(a["w"] / 2), "height": a["h"]})
+    _exact(g["win"], {"x": a["x"], "y": a["y"], "width": round(a["w"] / 2), "height": a["h"]})
     assert {"workspace_layouts": {"news": {"window": "left_half"}}} in s.saved, s.saved
 
 
-def test_beside_the_chat_the_window_fills_the_rest_exactly(site):
-    s = site().desktop().open_news().menu()
+@pytest.mark.parametrize("classic", [False, True], ids=["spatial", "classic"])
+def test_beside_the_chat_the_window_fills_the_rest_exactly(site, classic):
+    s = site(classic=classic).desktop().open_news().menu()
     s.page.click('[data-testid="snap-menu"] [aria-label="This window in two thirds, the chat beside it"]')
     s.page.wait_for_selector(".chat-panel.open", timeout=5000)
     s.page.wait_for_timeout(900)
     g = s.boxes()
+    _assert_desktop_edge(g, classic)
     assert g["snap"] == "full", g
     assert round(g["tray"]["width"]) == round(1600 / 3), g
-    assert g["win"]["x"] == 0 and abs(g["win"]["x"] + g["win"]["width"] - g["tray"]["x"]) < 0.6, ("no gutter", g)
+    assert g["win"]["x"] == g["area"]["x"], g
+    assert abs(g["win"]["x"] + g["win"]["width"] - g["tray"]["x"]) < 0.6, ("no gutter", g)
     saved = s.saved[-1]["workspace_layouts"]["news"]
     assert saved["window"] == "full" and saved["chat"]["side"] == "right" and abs(saved["chat"]["frac"] - 0.333) < 0.002
     # the two resize together: the tray's edge moves the window's
@@ -376,8 +398,29 @@ def test_beside_the_chat_the_window_fills_the_rest_exactly(site):
     s.page.mouse.up()
     s.page.wait_for_timeout(700)
     g2 = s.boxes()
+    _assert_desktop_edge(g2, classic)
+    assert g2["win"]["x"] == g2["area"]["x"], g2
     assert g2["tray"]["width"] > g["tray"]["width"] + 100, (g, g2)
     assert abs(g2["win"]["x"] + g2["win"]["width"] - g2["tray"]["x"]) < 0.6, ("they moved together", g2)
+
+
+def test_left_docked_chat_keeps_the_rail_and_window_separate(site):
+    s = site().desktop().open_news().menu()
+    s.page.click('[data-testid="snap-menu"] [data-snap="full"]')
+    s.page.get_by_role("navigation", name="Desktop").get_by_role("button", name="Chat", exact=True).click()
+    s.page.wait_for_selector(".chat-panel.open", timeout=10000)
+    s.page.wait_for_timeout(500)
+    s.menu('[data-testid="chat-layout"]')
+    s.page.click('[data-testid="snap-menu"] [aria-label="Chat on the left, a half"]')
+    s.page.wait_for_timeout(900)
+    g = s.boxes()
+    _assert_desktop_edge(g)
+    assert g["trayLeft"] and g["tray"]["x"] == 0 and round(g["tray"]["width"]) == 800, g
+    assert g["rail"]["x"] >= g["tray"]["right"], ("the chat leaves the rail visible", g)
+    assert g["win"]["x"] >= g["rail"]["right"] + 16, ("the window leaves the rail visible", g)
+    assert g["snap"] == "full", g
+    a = g["area"]
+    _exact(g["win"], {"x": a["x"], "y": a["y"], "width": g["vw"] - a["x"], "height": a["h"]})
 
 
 def test_the_keys_step_a_window_through_the_slots(site):
@@ -460,8 +503,10 @@ def test_in_a_workspace_tab_the_arrows_stay_out_of_the_scene(site):
     assert s.page.evaluate("window.__steps") == []
 
 
-def test_dragging_to_an_edge_previews_holds_and_snaps(site):
-    s = site().desktop().open_news()
+@pytest.mark.parametrize("classic", [False, True], ids=["spatial", "classic"])
+def test_dragging_to_an_edge_previews_holds_and_snaps(site, classic):
+    s = site(classic=classic).desktop().open_news()
+    edge = s.boxes()["area"]["x"]
     bar = s.page.locator(".fwin .fwin-title").bounding_box()
     # The edge-hold dwell steps on a clock the test moves, so each size is
     # reached at its own time however slow the machine (FRIDAY_SNAP_HOLD_MS).
@@ -469,7 +514,7 @@ def test_dragging_to_an_edge_previews_holds_and_snaps(site):
     s.page.clock.pause_at(_dt.datetime.now() + _dt.timedelta(seconds=1))   # time stands still between steps
     s.page.mouse.move(bar["x"] + 40, bar["y"] + bar["height"] / 2)
     s.page.mouse.down()
-    for x in (300, 150, 60, 4):
+    for x in (edge + 300, edge + 150, edge + 60, edge + 4):
         s.page.mouse.move(x, 420)
     s.page.clock.run_for(150)
     s.page.wait_for_timeout(50)
@@ -481,8 +526,9 @@ def test_dragging_to_an_edge_previews_holds_and_snaps(site):
     s.page.clock.run_for(400)
     s.page.wait_for_timeout(50)
     g = s.boxes()
+    _assert_desktop_edge(g, classic)
     assert g["snap"] == "left_two_thirds" and g["preview"] is None, g
-    _exact(g["win"], {"x": 0, "y": g["area"]["y"], "width": round(g["area"]["w"] * 2 / 3), "height": g["area"]["h"]})
+    _exact(g["win"], {"x": g["area"]["x"], "y": g["area"]["y"], "width": round(g["area"]["w"] * 2 / 3), "height": g["area"]["h"]})
     # dragged away, it is free again at its own size
     bar = s.page.locator(".fwin .fwin-title").bounding_box()
     s.page.mouse.move(bar["x"] + 40, bar["y"] + bar["height"] / 2)

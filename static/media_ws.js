@@ -358,6 +358,16 @@
       tx.segments.map((sg, i) => h('button', { key: i, onClick: () => { const m = mediaRef.current; if (m) { m.currentTime = sg.start || 0; m.play && m.play().catch(() => {}); } } }, h('b', null, fmtT(sg.start)), sg.text)));
   }
   function Tags({ tags }) { return tags && tags.length ? h('div', { className: 'md-tags' }, tags.map(t => h('span', { key: t, className: 'md-tag' }, t))) : null; }
+  function selectMaterial(c) {
+    if (window.FridayMaterials) window.FridayMaterials.select(window.FridayMaterials.fromMedia(c));
+  }
+  // Kept-mounted workspaces do not own keyboard input while hidden.
+  function shortcutsVisible(ref, event) {
+    const target = event && event.target;
+    if (target && target.closest && target.closest('.fx-switcher-popover, .fm-selection')) return false;
+    const node = ref.current;
+    return !!(node && node.isConnected && !node.closest('[hidden], [inert]') && node.getClientRects().length);
+  }
   function Card({ c, selected, onOpen, onSelect, noThumb, onQuick, multi, onMulti }) {
     const where = c.published_at ? h('div', { className: 'md-meta' }, h('span', null, 'at'), h('span', null, c.published_at))
       : (c.targets && c.targets.length ? h('div', { className: 'md-meta' }, h('span', null, 'to'), h('span', null, c.targets.join(', '))) : null);
@@ -365,8 +375,8 @@
     const made = d.model ? d.model : (c.maker || '').replace(' · this PC', '');
     return h('button', {
       className: 'md-card' + (multi ? ' multi' : ''), role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id,
-      onClick: e => { if ((e.ctrlKey || e.metaKey || e.shiftKey) && onMulti) { e.preventDefault(); onMulti(c, e.shiftKey); return; } onSelect && onSelect(c); }, onDoubleClick: () => onOpen && onOpen(c),
-      onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); onOpen && onOpen(c); } if (e.key === 'x' && onMulti) { e.preventDefault(); onMulti(c, false); } }
+      onClick: e => { selectMaterial(c); if ((e.ctrlKey || e.metaKey || e.shiftKey) && onMulti) { e.preventDefault(); onMulti(c, e.shiftKey); return; } onSelect && onSelect(c); }, onDoubleClick: () => onOpen && onOpen(c),
+      onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); selectMaterial(c); onOpen && onOpen(c); } if (e.key === 'x' && onMulti) { e.preventDefault(); onMulti(c, false); } }
     },
       noThumb ? null : h(Thumb, { c, onQuick }),
       h('div', { className: 'md-body' },
@@ -498,10 +508,13 @@
     const [full, setFull] = useState(null);
     const [page, setPage] = useState(0);
     const mediaRef = useRef(null);
+    const keyboardRoot = useRef(null);
+    // Quick look can be opened by a thumbnail or an external source reference.
+    useEffect(() => { if (c && shortcutsVisible(keyboardRoot)) selectMaterial(c); }, [c && c.id]);
     useEffect(() => { setFull(null); setPage(0); if (c && (c.kind === 'draft' || c.kind === 'article' || c.kind === 'doc' || AV_KINDS[c.kind])) json('/api/media/' + encodeURIComponent(c.id) + (q ? '?q=' + encodeURIComponent(q) : '')).then(d => { if (d.status === 'ok') { setFull(d); const at = c.at != null ? c.at : d.hit_t; if (at != null && mediaRef.current) { mediaRef.current.currentTime = at; mediaRef.current.play && mediaRef.current.play().catch(() => {}); } } }).catch(() => {}); }, [c && c.id, q]);
     useEffect(() => {
       const onKey = e => {
-        if (!c) return;
+        if (!c || !shortcutsVisible(keyboardRoot, e)) return;
         const ids = cards.map(x => x.id); const i = ids.indexOf(c.id);
         if (e.key === 'Escape' || e.key === ' ') { e.preventDefault(); onClose(); }
         if (e.key === 'ArrowRight' && i < ids.length - 1) { e.preventDefault(); setSel(ids[i + 1]); }
@@ -525,7 +538,7 @@
     else if (c.thumb) stage = h('img', { key: c.id, src: c.thumb, alt: c.title });
     else stage = h('div', { className: 'text' }, h('b', null, c.title), '\n\n', facts(c), d.snippet ? '\n\n' + d.snippet : '', '\n\nNo preview for this type; open it in its app.');
     const act = what => post('/api/media/' + encodeURIComponent(c.id) + '/' + what, {}).then(r => { if (r.status !== 'ok') toast(r.message || 'That did not work.'); });
-    return h('div', { className: 'md-ql', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Quick look: ' + c.title, onClick: e => { if (e.target === e.currentTarget) onClose(); } },
+    return h('div', { ref: keyboardRoot, className: 'md-ql', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Quick look: ' + c.title, onClick: e => { if (e.target === e.currentTarget) onClose(); } },
       h('div', { className: 'md-ql-head' }, glyph(c.kind), h('strong', null, c.title), h('span', { className: 'md-count' }, (i + 1) + ' of ' + ids.length), h('span', { className: 'md-spacer' }),
         c.renders && c.renders.length > 1 ? h('span', { className: 'md-seg' }, h('button', { className: 'btn', onClick: () => setPage(p => Math.max(0, p - 1)) }, '‹'), h('span', { className: 'md-count' }, 'page ' + (page + 1) + ' / ' + c.renders.length), h('button', { className: 'btn', onClick: () => setPage(p => Math.min(c.renders.length - 1, p + 1)) }, '›')) : null,
         h('button', { className: 'btn', onClick: onClose, 'aria-label': 'Close quick look' }, 'Esc')),
@@ -565,7 +578,7 @@
         .then(d => { toast(d.status === 'ok' ? 'Saved \u201c' + name + '\u201d.' : (d.message || 'Could not save it.')); changed(); });
     };
     const [qlCard, setQlCard] = useState(null);   // a card asked for by id that the current list may not hold
-    const onQuick = useCallback(c => { setSel(c.id); setQl(true); }, [setSel]);
+    const onQuick = useCallback(c => { selectMaterial(c); setSel(c.id); setQl(true); }, [setSel]);
     useEffect(() => {
       const on = e => {
         const d = e.detail || {};
@@ -573,7 +586,7 @@
         json('/api/media/' + encodeURIComponent(d.id) + (d.q ? '?q=' + encodeURIComponent(d.q) : '')).then(r => {
           if (r.status !== 'ok') return;
           const c = Object.assign({}, r.card, { play: true, at: d.at != null ? d.at : r.hit_t });
-          setQlCard(c); setSel(c.id); setQl(true);
+          selectMaterial(c); setQlCard(c); setSel(c.id); setQl(true);
         }).catch(() => {});
       };
       window.addEventListener('friday:media-quicklook', on);
@@ -581,20 +594,23 @@
     }, [setSel]);
     const [layout, setLayout] = useState('grid');
     const searchRef = useRef(null);
+    const keyboardRoot = useRef(null);
     const selCard = cards.find(c => c.id === sel) || null;
+    useEffect(() => { if (selCard && shortcutsVisible(keyboardRoot)) selectMaterial(selCard); }, [selCard && selCard.id]);
     const current = filters.collection ? 'col:' + filters.collection : filters.favorite ? 'fav' : filters.tag ? 'tag:' + filters.tag : filters.kind ? 'kind:' + filters.kind : filters.project != null ? 'proj:' + filters.project : filters.privacy ? 'priv:' + filters.privacy : filters.unsigned ? 'unsigned' : 'view:' + (filters.view || 'today');
     const pick = useCallback(patch => { setFilters(Object.assign({ view: 'all', kind: null, project: null, privacy: null, unsigned: false, favorite: false, tag: null, when: null, collection: null, q: filters.q, sort: filters.sort }, patch)); setSel(null); setMulti([]); }, [filters.q, filters.sort, setFilters, setSel]);
     const openCollection = col => pick(Object.assign({ view: 'all', q: '' }, col.filters || {}, { collection: col.id }));
     useEffect(() => {
       const onKey = e => {
+        if (!shortcutsVisible(keyboardRoot, e)) return;
         const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName) || (document.activeElement && document.activeElement.isContentEditable);
         if (e.key === '/' && !typing) { e.preventDefault(); searchRef.current && searchRef.current.focus(); return; }
         if (e.key === 'Escape') { if (ql) setQl(false); else setSel(null); return; }
         if (typing || ql) return;
         if (e.key === ' ' && selCard) { e.preventDefault(); setQl(true); return; }
         const ids = cards.map(c => c.id); const i = ids.indexOf(sel);
-        if (e.key === 'ArrowRight' && ids.length) { e.preventDefault(); setSel(ids[Math.min(ids.length - 1, i + 1)]); }
-        if (e.key === 'ArrowLeft' && ids.length) { e.preventDefault(); setSel(ids[Math.max(0, i - 1)]); }
+        if (e.key === 'ArrowRight' && ids.length) { e.preventDefault(); setSel(ids[Math.min(ids.length - 1, i + 1)]); selectMaterial(cards[Math.min(ids.length - 1, i + 1)]); }
+        if (e.key === 'ArrowLeft' && ids.length) { e.preventDefault(); setSel(ids[Math.max(0, i - 1)]); selectMaterial(cards[Math.max(0, i - 1)]); }
         if (e.key === 'Enter' && selCard) onOpen(selCard);
         if ((e.key === 'n' || e.key === 'N')) onAction('new');
         if ((e.key === 'o' || e.key === 'O') && selCard) onAction('tab', selCard);
@@ -606,7 +622,7 @@
     }, [cards, sel, selCard, onOpen, onAction, setSel, ql]);
     const counts = state.counts || {};
     const railBtn = (key, label, n, patch) => h('button', { key, 'aria-current': current === key ? 'true' : undefined, onClick: () => pick(patch) }, label, n != null ? h('span', { className: 'n' }, n) : null);
-    return h('div', { className: 'md-lib' },
+    return h('div', { ref: keyboardRoot, className: 'md-lib' },
       h('aside', { className: 'md-rail', 'aria-label': 'Library' },
         h('div', { className: 'md-label' }, 'Default views'),
         h('div', { className: 'md-group' }, DEFAULT_VIEWS.map(v => railBtn('view:' + v[0], v[1], counts[v[0]], { view: v[0] }))),
@@ -822,10 +838,12 @@
     const [state] = useCards({ view: 'all', project: proj || null, kind: kind || null, sort: 'next' });
     const [over, setOver] = useState(null);
     const [focus, setFocus] = useState(null);
+    const keyboardRoot = useRef(null);
     const cards = state.cards;
     useEffect(() => {
       const onKey = e => {
-        const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName);
+        if (!shortcutsVisible(keyboardRoot, e)) return;
+        const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName) || (document.activeElement && document.activeElement.isContentEditable);
         if (typing) return;
         const c = cards.find(x => x.id === focus);
         if (e.key === ']' && c) { e.preventDefault(); moveCard(c, nextStatus(c.status)); }
@@ -842,7 +860,7 @@
         h('select', { 'aria-label': 'Type', value: kind, onChange: e => setKind(e.target.value) },
           h('option', { value: '' }, 'All types'), TYPE_GROUPS.map(t => h('option', { key: t[0], value: t[0] }, t[1]))),
         h('span', { className: 'md-count' }, 'Drag a card to the next stage. Into Scheduled asks when; into Published always asks you first, because it leaves this computer.' + (state.counts && state.counts.kept ? ' ' + state.counts.kept + ' finished pieces are kept in the Library, outside the pipeline.' : ''))),
-      h('div', { className: 'md-board', 'aria-label': 'Pipeline by status', 'aria-busy': state.loading ? 'true' : 'false' },
+      h('div', { ref: keyboardRoot, className: 'md-board', 'aria-label': 'Pipeline by status', 'aria-busy': state.loading ? 'true' : 'false' },
         STATUSES.map(s => {
           const col = cards.filter(c => c.status === s[0]);
           return h('section', { key: s[0], className: 'md-col', 'aria-label': s[1] },

@@ -2496,6 +2496,7 @@
     const stageRef = useRef(null);
     const itemsRef = useRef([]); itemsRef.current = items;
     const selRef = useRef(-1); selRef.current = sel;
+    const materialViewRef = useRef(view); materialViewRef.current = view;
 
     // engine lifecycle
     useEffect(() => {
@@ -2563,6 +2564,7 @@
       const o = window.__files3dOpen;
       if (!o) return;
       window.__files3dOpen = null;
+      if (VIEWS.some(v => v.id === o.arrangement)) setView(o.arrangement);
       pendingFileRef.current = o.file ? (o.path ? o.path + '/' + o.file : o.file) : null;
       if (o.root === rootRef.current && (o.path || '') === pathRef.current && itemsRef.current.length) {
         choosePending();
@@ -2575,7 +2577,7 @@
       if (!want) return;
       pendingFileRef.current = null;
       const i = itemsRef.current.findIndex(x => x.rel === want);
-      if (i >= 0) choose(i, true);
+      if (i >= 0) choose(i, true, false);
     }
     useEffect(() => {
       window.addEventListener('friday-files3d-open', openPending);
@@ -2676,12 +2678,13 @@
     useEffect(() => { if (root && !props.root) remember('root', root); }, [root]);
     useEffect(() => { engRef.current && engRef.current.setGroupBy(groupBy); }, [groupBy]);
 
-    function choose(i, fly) {
+    function choose(i, fly, explicit = true) {
       setSel(i);
       engRef.current && engRef.current.select(i, fly);
       const it = itemsRef.current[i];
       if (!it) { setPreview(null); return; }
       setPreview({ it, text: null });
+      if (explicit && window.FridayMaterials) window.FridayMaterials.select(window.FridayMaterials.fromFile(it, rootRef.current, materialViewRef.current));
       if (!it.dir && TEXT_PREVIEW.has(it.ext) && it.size < 4 * 1024 * 1024) {
         api('/api/studio-files/raw?' + qs(rootRef.current, it.rel) + '&text=1').then(r => r.json()).then(j => {
           setPreview(p => p && p.it === it ? Object.assign({}, p, { text: j.binary ? '(binary file)' : j.text, truncated: j.truncated }) : p);

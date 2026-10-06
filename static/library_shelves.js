@@ -471,10 +471,11 @@
       st.openSec = secKey; st.cite = cite == null ? null : cite;
       return loadPassages(secKey).then(d => { if (st.openSec !== secKey || st.disposed) return null; showReading(secKey, d); return d; });
     }
-    function select(id) {
+    function select(id, explicit) {
       st.sel = id;
       const i = st.idx.get(id);
       eng.select(i == null ? -1 : i, false);
+      if (explicit && window.FridayMaterials) window.FridayMaterials.select(window.FridayMaterials.fromLibrary(st.byId.get(id), 'shelves'));
       caption();
     }
     function pick(i, activate) {
@@ -485,7 +486,7 @@
     // Choosing a document opens it in place; Enter or a double click on an open
     // one is the Reader. A section shows its passages.
     function activateNode(n, openReader) {
-      select(n.id);
+      select(n.id, true);
       if (n.kind === 'folder') {
         const s = st.plan && st.plan.shelves.find(x => x.key === n.id);
         if (s) fly([frame([s.cx, s.cy, s.cz], s.w / 2 + 1, s.h / 2 + 1, s.yaw, Math.PI / 2 - 0.06, 1.06)], 800);
@@ -831,7 +832,7 @@
         if (cur && cur.kind === 'section' && st.openDoc) {
           const secs = st.sections[st.openDoc], at = secs.findIndex(s => s.id === cur.id);
           const nx = secs[Math.max(0, Math.min(secs.length - 1, at + (k === 'ArrowRight' ? 1 : -1)))];
-          if (nx) { select(nx.id); if (st.openSec) openSection(nx.id).then(d => { if (d) flyToLevel(st.openDoc, 3, st.idx.get(nx.id)); }); }
+          if (nx) { select(nx.id, true); if (st.openSec) openSection(nx.id).then(d => { if (d) flyToLevel(st.openDoc, 3, st.idx.get(nx.id)); }); }
           return true;
         }
         return moveSel(eng.nav(selI, k === 'ArrowLeft' ? 'left' : 'right'));
@@ -857,7 +858,7 @@
     function moveSel(i) {
       if (i == null || i < 0) return true;
       const n = nodeAt(i);
-      if (n) { select(n.id); if (eng.reveal(i)) st.home = false; }
+      if (n) { select(n.id, true); if (eng.reveal(i)) st.home = false; }
       return true;
     }
 

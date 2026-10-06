@@ -181,6 +181,7 @@
     const [err, setErr] = useState(null);
     const [page, setPage] = useState(wantPage || 1);
     const audioRef = useRef(null);
+    const keyboardRoot = useRef(null);
     useEffect(() => {
       setB(null); setErr(null);
       if (!block) return undefined;
@@ -209,6 +210,8 @@
     }, [b, timed, recording]);
     useEffect(() => {
       const k = e => {
+        const root = keyboardRoot.current;
+        if (!root || !root.isConnected || root.closest('[hidden], [inert]') || !root.getClientRects().length) return;
         if (e.key === 'Escape') { e.preventDefault(); onClose && onClose(); }
         else if (e.key === 'ArrowRight' && isPdf) setPage(p => Math.min((useV2 ? v2Pages : img.pages) || p + 1, p + 1));
         else if (e.key === 'ArrowLeft' && isPdf) setPage(p => Math.max(1, p - 1));
@@ -219,9 +222,9 @@
       return () => window.removeEventListener('keydown', k);
     }, [isPdf, img.pages, v2Pages, useV2, onClose, onStep]);
 
-    if (err) return h('div', { className: 'lr-root' }, h('div', { className: 'lr-empty' }, err, h('button', { className: 'btn', onClick: onClose }, 'Back')));
+    if (err) return h('div', { ref: keyboardRoot, className: 'lr-root' }, h('div', { className: 'lr-empty' }, err, h('button', { className: 'btn', onClick: onClose }, 'Back')));
     const where = b ? [b.title, b.page ? 'p. ' + b.page : (timed ? clock(b.t_start) : null)].filter(Boolean).join(' · ') : 'Page ' + page;
-    return h('div', { className: 'lr-root' },
+    return h('div', { ref: keyboardRoot, className: 'lr-root' },
       h('div', { className: 'lr-head' },
         h('button', { className: 'btn', onClick: onClose, 'aria-label': 'Back to the Library' }, '‹ Back'),
         h('div', { className: 'lr-where' }, where),

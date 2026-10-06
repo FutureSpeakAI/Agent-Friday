@@ -158,10 +158,14 @@
     if (r.top + dy < POP_MARGIN) dy = POP_MARGIN - r.top;
     if (dx || dy) el.style.transform = 'translate(' + Math.round(dx) + 'px,' + Math.round(dy) + 'px)';
   }
+  function shortcutsVisible(ref) {
+    const node = ref.current;
+    return !!(node && node.isConnected && !node.closest('[hidden], [inert]') && node.getClientRects().length);
+  }
   function Pop({ children, onClose, label }) {
     const ref = useRef(null);
     useEffect(() => {
-      const k = e => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+      const k = e => { if (e.key === 'Escape' && shortcutsVisible(ref)) { e.stopPropagation(); onClose(); } };
       document.addEventListener('keydown', k, true);
       return () => document.removeEventListener('keydown', k, true);
     }, [onClose]);
@@ -219,6 +223,10 @@
     const [folder, setFolder] = useState(null);          // folder id string "f:3" or null = all
     const [nodes, setNodes] = useState([]);
     const [sel, setSel] = useState(null);                // selected document node
+    const selectDocument = node => {
+      setSel(node);
+      if (window.FridayMaterials) window.FridayMaterials.select(window.FridayMaterials.fromLibrary(node, 'list'));
+    };
     const [detail, setDetail] = useState(null);
     const [inspector, setInspector] = useState(true);
     const [adding, setAdding] = useState(false);
@@ -229,6 +237,7 @@
     const [stage, setStage] = useState('list');          // list | shelves  (the 2D/3D toggle)
     const inputRef = useRef(null);
     const esRef = useRef(null);
+    const keyboardRoot = useRef(null);
 
     const refresh = useCallback(() => {
       json('/api/library/status').then(d => { if (d.status === 'ok') setStatus(d); }).catch(() => {});
@@ -329,8 +338,9 @@
     // ── keys ──────────────────────────────────────────────────────────────
     useEffect(() => {
       const k = e => {
+        if (!shortcutsVisible(keyboardRoot) || e.defaultPrevented) return;
         const tag = (e.target && e.target.tagName) || '';
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return;
         if (e.key === '/') { e.preventDefault(); setView('ask'); setTimeout(() => inputRef.current && inputRef.current.focus(), 0); }
         else if (e.key === 'Escape' && view === 'reader') { setView(stage === 'shelves' ? 'shelves' : 'ask'); }
       };
@@ -418,11 +428,11 @@
       empty ? emptyState : h('table', { className: 'lb-table' },
         h('thead', null, h('tr', null, ['Document', 'Kind', 'Pages', 'Shelf'].map(c => h('th', { key: c, scope: 'col' }, c)))),
         h('tbody', null, shown.map(d => h('tr', { key: d.id, 'aria-selected': sel && sel.id === d.id ? 'true' : 'false', tabIndex: 0,
-          onClick: () => setSel(d), onDoubleClick: () => { setReader({ doc: Number(d.id.slice(2)) }); setView('reader'); },
-          onKeyDown: e => { if (e.key === 'Enter') { setReader({ doc: Number(d.id.slice(2)) }); setView('reader'); } else if (e.key === ' ') { e.preventDefault(); setSel(d); } } },
+          onClick: () => selectDocument(d), onDoubleClick: () => { setReader({ doc: Number(d.id.slice(2)) }); setView('reader'); },
+          onKeyDown: e => { if (e.key === 'Enter') { selectDocument(d); setReader({ doc: Number(d.id.slice(2)) }); setView('reader'); } else if (e.key === ' ') { e.preventDefault(); selectDocument(d); } } },
           h('td', null, d.title), h('td', null, KIND_WORD[d.ext] || d.ext), h('td', { className: 'lb-num' }, d.pages || '–'),
           h('td', null, h('span', { className: 'lb-pill' + (d.shelf === 'vault' ? ' vault' : '') }, d.shelf === 'vault' ? 'Vault' : 'Open')))))),
-      h(Twin, { nodes, shown: false, onOpen: n => { if (n.kind === 'document') setSel(n); } }));
+      h(Twin, { nodes, shown: false, onOpen: n => { if (n.kind === 'document') selectDocument(n); } }));
 
     const failView = h('div', { className: 'lb-main' },
       status && (status.failures.length + status.skipped.length) === 0 && h('div', { className: 'lb-note' }, 'Everything added was read.'),
@@ -436,7 +446,7 @@
         ? 'Documents Friday judged private are kept here, encrypted with your vault key, and are searched only while the vault is open.'
         : 'The vault is locked, so documents on this shelf cannot be searched.'),
       h('div', { className: 'lb-count' }, status ? status.vault.documents + ' documents on this shelf' : ''),
-      h('table', { className: 'lb-table' }, h('tbody', null, docs.filter(d => d.shelf === 'vault').map(d => h('tr', { key: d.id, onClick: () => setSel(d) }, h('td', null, d.title))))));
+      h('table', { className: 'lb-table' }, h('tbody', null, docs.filter(d => d.shelf === 'vault').map(d => h('tr', { key: d.id, onClick: () => selectDocument(d) }, h('td', null, d.title))))));
 
     const pcView = h('div', { className: 'lb-stage' },
       h('div', { className: 'lb-count', style: { marginBottom: 6 } }, 'Browse this PC. These files are not in your Library until you add them.'),
@@ -449,11 +459,12 @@
       empty ? emptyState : (window.LibraryShelves3D
         ? h(window.FridayFiles3D || window.LibraryShelves3D, { lens: 'library', nodes, onOpen: n => { setReader({ doc: Number(String(n.doc || n.id).replace(/\D/g, '')) }); setView('reader'); }, status })
         : h('div', { className: 'lb-note' }, 'The 3D view did not load. Your documents are listed on the left.')),
-      h(Twin, { nodes, shown: false, label: 'Your Library as a list', onOpen: n => { if (n.kind === 'document') setSel(n); } }));
+      h(Twin, { nodes, shown: false, label: 'Your Library as a list', onOpen: n => { if (n.kind === 'document') selectDocument(n); } }));
 
     const readerView = h(window.LibraryReader || 'div', { block: reader && reader.block, doc: reader && reader.doc, page: reader && reader.page,
       onClose: () => setView(stage === 'shelves' ? 'shelves' : 'ask'), onStep: run && run.evidence ? stepEvidence : null });
 
+    const showInspector = inspector && view !== 'pc';
     const main = view === 'reader' ? readerView : view === 'docs' ? docsView : view === 'failures' ? failView
       : view === 'vault' ? vaultView : view === 'pc' ? pcView : view === 'shelves' ? shelvesView : askView;
 
@@ -461,7 +472,7 @@
       onClick: () => { setFolder(null); setView(id); if (id === 'shelves') setStage('shelves'); if (id === 'docs') setStage('list'); } },
       h('span', null, label), n != null ? h('span', { className: 'n' }, n) : null);
 
-    return h('div', { className: 'lb-root ws-fill', onKeyDown: undefined },
+    return h('div', { ref: keyboardRoot, className: 'lb-root ws-fill', onKeyDown: undefined },
       h('div', { className: 'lb-head' },
         h('h2', null, 'Library'), h('span', { className: 'lb-count', role: 'status' }, line),
         status && status.waiting_because && h('span', { className: 'lb-count' }, 'Reading paused: ' + status.waiting_because),
@@ -476,8 +487,8 @@
         h('div', { style: { position: 'relative' } },
           h('button', { className: 'btn', onClick: () => setAdding(a => !a), 'aria-haspopup': 'dialog', 'aria-expanded': adding }, 'Add…'),
           adding && h(AddPopup, { onClose: () => setAdding(false), onDone: () => { setAdding(false); refresh(); setView('docs'); } })),
-        h('button', { className: 'btn', 'aria-pressed': inspector, onClick: () => setInspector(i => !i) }, 'Inspector')),
-      h('div', { className: 'lb-body ' + (inspector ? 'insp' : 'noinsp') },
+        view !== 'pc' && h('button', { className: 'btn', 'aria-pressed': showInspector, onClick: () => setInspector(i => !i) }, 'Inspector')),
+      h('div', { className: 'lb-body ' + (showInspector ? 'insp' : 'noinsp') },
         h('nav', { className: 'lb-side', 'aria-label': 'Library' },
           nav('ask', 'Ask'),
           nav('docs', 'All documents', counts.indexed),
@@ -489,7 +500,7 @@
           nav('pc', 'Browse this PC'),
           h('div', { className: 'lb-foot' }, 'Indexed on this PC · nothing sent. ' + indexLine(status) + ' Private documents are also encrypted with your vault key.')),
         main,
-        inspector && h('aside', { className: 'lb-insp', 'aria-label': 'Details' },
+        showInspector && h('aside', { className: 'lb-insp', 'aria-label': 'Details' },
           sel && detail ? h(React.Fragment, null,
             h('div', { className: 'lb-label' }, 'Document'),
             h('div', { style: { fontWeight: 600 } }, detail.title),

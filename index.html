@@ -3598,6 +3598,7 @@ window.addEventListener('DOMContentLoaded',function(){
         @container (max-width: 620px) { .kw-side { width: 160px; } .kw-reader { padding: 10px 12px; } }
         @media (max-width: 700px) { .kw-view { padding: 6px 9px; } }
     </style>
+<link rel="stylesheet" href="/static/friday_experience.css"/>
 </head>
 
 <body>
@@ -3739,6 +3740,9 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_publish.js"></script>
     <script src="/static/friday_bundles.js"></script>
     <script src="/static/friday_salon.js"></script>
+    <script src="/static/friday_materials.js"></script>
+    <script src="/static/friday_experience.js"></script>
+    <script src="/static/friday_workspace_switcher.js"></script>
 
     <script>
         // --- UI INTERACTION LOGIC ---
@@ -12259,7 +12263,18 @@ function fridayDesktopArea() {
   const dock = document.querySelector('.dock:not(.hidden)');
   const dr = dock && dock.getBoundingClientRect();
   const floor = dr && dr.height ? Math.round(dr.top) : vh;
-  return fridaySnapArea(vw, vh, top, floor, left ? { side: 'left', w: left } : right ? { side: 'right', w: right } : null);
+  const area = fridaySnapArea(vw, vh, top, floor, left ? { side: 'left', w: left } : right ? { side: 'right', w: right } : null);
+  const classes = document.body && document.body.classList;
+  if (classes && typeof classes.contains === 'function' && classes.contains('friday-experience-desktop') && vw >= 760) {
+    const rail = document.querySelector('.fx-rail');
+    const rr = rail && typeof rail.getBoundingClientRect === 'function' ? rail.getBoundingClientRect() : null;
+    // The rail moves with left-docked chat. Reserve its measured far edge;
+    // before its first layout, use the same desktop gutter after that chat.
+    const edge = rr && rr.width > 0 && rr.height > 0 && Number.isFinite(rr.right) ? Math.ceil(rr.right) + 16 : left + 104;
+    const inset = Math.min(area.w, Math.max(0, edge - area.x));
+    area.x += inset; area.w = Math.max(0, area.w - inset);
+  }
+  return area;
 }
 // One window's snap state. `key` names it for the keys and for Friday
 // ('news', 'chat:<id>'); a slot the owner chose is announced so App can
@@ -13269,6 +13284,10 @@ function ConnectorDot({
 // version for that size (see FWin). Knowledge shows its galaxy and a page
 // side by side.
 const FWIN_FIRST_SIZE = {
+  library: {w:1040,h:720,v:1,firstOnly:true},
+  settings: {w:980,h:760,v:1,firstOnly:true},
+  media: {w:1040,h:720,v:1,firstOnly:true},
+  code: {w:1100,h:760,v:1,firstOnly:true},
   knowledge: {
     w: 1180,
     h: 760,
@@ -13510,9 +13529,13 @@ function FWin({
   }, [closing]);
   const vw = () => window.innerWidth || document.documentElement.clientWidth || 1280;
   const vh = () => window.innerHeight || document.documentElement.clientHeight || 800;
-  const clampW = w => Math.max(400, Math.min(w, vw() - 20));
+  const experienceInset = () => {
+    const classes = document.body && document.body.classList;
+    return classes && typeof classes.contains === 'function' && classes.contains('friday-experience-desktop') && vw() >= 760 ? fridayDesktopArea().x : 0;
+  };
+  const clampW = w => Math.max(400, Math.min(w, vw() - experienceInset() - 20));
   const clampH = h => Math.max(280, Math.min(h, vh() - 50));
-  const clampX = x => Math.max(0, Math.min(x, vw() - 120));
+  const clampX = x => Math.max(experienceInset(), Math.min(x, vw() - 120));
   const clampY = y => Math.max(30, Math.min(y, vh() - 60));
   const saved = (() => {
     try {
@@ -13526,10 +13549,17 @@ function FWin({
   // entry (pv below v). Once saved with the current pv, the user's own size
   // is kept. A grown window is placed whole between the top bar and the
   // dock, so nothing the workspace keeps at its foot starts out under the
-  // dock. Worked out once, on the first render.
+  // dock. firstOnly entries preserve every saved size. Worked out once,
+  // on the first render.
   const pref = FWIN_FIRST_SIZE[id];
   const [grown] = useState(() => {
-    if (!pref || saved && saved.w != null && ((saved.pv || 0) >= pref.v || saved.w >= pref.w && saved.h >= pref.h)) return null;
+    if (!pref || saved && saved.w != null && (pref.firstOnly || (saved.pv || 0) >= pref.v || saved.w >= pref.w && saved.h >= pref.h)) return null;
+    if (pref.firstOnly) {
+      const area = fridayDesktopArea();
+      const w = Math.max(1, Math.min(pref.w, area.w - 20));
+      const h = Math.max(1, Math.min(pref.h, area.h - 20));
+      return {w,h,x:Math.round(area.x + (area.w - w) / 2),y:Math.round(area.y + Math.min(24, (area.h - h) / 2))};
+    }
     const dock = document.querySelector('.dock:not(.hidden)');
     const dr = dock && dock.getBoundingClientRect();
     const floor = (dr && dr.height ? dr.top : vh()) - 8;
@@ -13545,7 +13575,7 @@ function FWin({
     return {
       w,
       h,
-      x: Math.max(0, Math.min(p.x, vw() - w - 10)),
+      x: Math.max(experienceInset(), Math.min(p.x, vw() - w - 10)),
       y: Math.max(30, Math.min(p.y, floor - h))
     };
   });
@@ -13556,7 +13586,7 @@ function FWin({
     x: clampX(saved.x),
     y: clampY(saved.y)
   } : {
-    x: 60 + Math.random() * 300,
+    x: clampX(60 + Math.random() * 300),
     y: 40 + Math.random() * 80
   });
   const [size, setSize] = useState(grown ? {
@@ -14814,6 +14844,7 @@ function ChatSurface(props) {
       cursor: 'pointer'
     }
   }, "\u2715"))), /*#__PURE__*/React.createElement("div", {
+    className: 'fx-chat-transcript',
     style: {
       flex: 1,
       overflowY: 'auto',
@@ -14867,6 +14898,7 @@ function ChatSurface(props) {
       justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: 'fx-chat-bubble', 'data-role': m.role,
     style: {
       padding: '7px 11px',
       borderRadius: 8,
@@ -15089,6 +15121,7 @@ function ChatSurface(props) {
   /*#__PURE__*/React.createElement("div", {
     ref: chatEnd
   })), /*#__PURE__*/React.createElement("div", {
+    className: "fx-chat-footer",
     style: {
       padding: 10,
       borderTop: '1px solid rgba(255,255,255,0.04)'
@@ -15152,6 +15185,7 @@ function ChatSurface(props) {
       fontFamily: 'JetBrains Mono'
     }
   }, voiceStatus), /*#__PURE__*/React.createElement("div", {
+    className: "fx-chat-sources",
     style: {
       display: 'flex',
       gap: 6,
@@ -15191,13 +15225,23 @@ function ChatSurface(props) {
       transition: 'all .15s'
     }
   }, "\uD83D\uDCCB Show Sources")), /*#__PURE__*/React.createElement("div", {
+    className: "fx-chat-composer",
     style: {
       display: 'flex',
       gap: 6,
       minWidth: 0,
       alignItems: 'flex-end'
     }
-  }, /*#__PURE__*/React.createElement("button", { "aria-label": voiceOn ? 'Stop voice mode'
+  }, /*#__PURE__*/React.createElement(FridayChatInput, {
+    className: "input fx-chat-message",
+    style: {flex: 1, minWidth: 0},
+    value: chatIn,
+    onChange: setChatIn,
+    maxHeight: 160,
+    // Enter sends, Shift+Enter is a new line (fridayEnterSends).
+    onSend: () => sendChat(),
+    placeholder: voiceOn ? 'Voice mode active — just speak…' : ('Talk to ' + fridayName() + '...')
+  }), /*#__PURE__*/React.createElement("button", { "aria-label": voiceOn ? 'Stop voice mode'
       : ((agentSettings.voice_engine || 'local') === 'gemini'
         ? 'Start voice mode — Gemini Live (cloud; your speech is sent to Google)'
         : 'Start voice mode — on-device voice (nothing leaves this machine)'), 
@@ -15457,19 +15501,8 @@ function ChatSurface(props) {
        which reads as duplicate buttons. */
     style: { flexShrink: 0, opacity: uploading ? 0.55 : 1 },
     onClick: () => { if (!uploading && chatFileRef.current) chatFileRef.current.click(); }
-  }, uploading ? '⋯' : '📁'), /*#__PURE__*/React.createElement(FridayChatInput, {
-    className: "input",
-    style: {
-      flex: 1,
-      minWidth: 0
-    },
-    value: chatIn,
-    onChange: setChatIn,
-    // Enter sends, Shift+Enter is a new line (fridayEnterSends).
-    onSend: () => sendChat(),
-    placeholder: voiceOn ? 'Voice mode active — just speak…' : ('Talk to ' + fridayName() + '...')
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
+  }, uploading ? '⋯' : '📁'), /*#__PURE__*/React.createElement("button", {
+    className: "btn fx-chat-send",
     style: {
       flexShrink: 0
     },
@@ -48954,6 +48987,7 @@ function StSection({
       marginBottom: 30
     }
   }, /*#__PURE__*/React.createElement("h3", {
+    className: "fx-setting-title",
     style: {
       margin: 0,
       fontFamily: 'var(--st-font)',
@@ -48966,6 +49000,7 @@ function StSection({
       borderBottom: '1px solid rgba(0,212,255,0.12)'
     }
   }, title), desc && /*#__PURE__*/React.createElement("div", {
+    className: "fx-setting-description",
     style: {
       fontSize: 11.5,
       color: 'var(--st-dim)',
@@ -59209,6 +59244,7 @@ function SettingsWS() {
     }
   }, /*#__PURE__*/React.createElement("nav", {
     "aria-label": "Settings sections",
+    className: "fx-settings-rail",
     style: {
       width: 184,
       borderRight: '1px solid var(--st-line)',
@@ -59243,12 +59279,14 @@ function SettingsWS() {
     "aria-current": tab === t.id ? 'page' : undefined,
     onClick: () => setTab(t.id)
   }, t.label)))), /*#__PURE__*/React.createElement("div", {
+    className: 'fx-settings-content',
     style: {
       flex: 1,
       overflowY: 'auto',
       minWidth: 0
     }
   }, /*#__PURE__*/React.createElement("header", {
+    className: "fx-settings-heading",
     style: {
       position: 'sticky',
       top: 0,
@@ -59291,6 +59329,7 @@ function SettingsWS() {
       paddingTop: 3
     }
   }, msg || '')), /*#__PURE__*/React.createElement("div", {
+    className: 'fx-settings-sections',
     style: {
       padding: '22px 28px 40px',
       maxWidth: 860
@@ -60568,9 +60607,94 @@ function StandaloneShell({ ws, histOpen, onCloseHistory, children }) {
     histOpen && /*#__PURE__*/React.createElement("div", { className: 'ws-tab-hist' },
       /*#__PURE__*/React.createElement(WorkspaceHistory, { wsId: ws.id, label: ws.label, onClose: onCloseHistory, top: 0 })));
 }
+
+// Unsent text belongs to its conversation. A same-tab navigation can carry it
+// once through this tab's session storage; the destination consumes and removes it.
+function useFridayConversationDrafts(initialId) {
+  const restored = useRef(undefined);
+  if (restored.current === undefined) {
+    restored.current = null;
+    try {
+      const url = new URL(window.location.href), nonce = url.searchParams.get('draft_handoff');
+      if (nonce && /^[a-z0-9-]{16,64}$/i.test(nonce)) {
+        const key = 'friday.draft-handoff.' + nonce, raw = sessionStorage.getItem(key);
+        sessionStorage.removeItem(key);
+        url.searchParams.delete('draft_handoff'); history.replaceState(history.state, '', url);
+        const value = raw && JSON.parse(raw);
+        if (value && (value.id === null || typeof value.id === 'string') && Array.isArray(value.entries)) {
+          restored.current = {id:value.id,entries:value.entries.filter(e => Array.isArray(e) && (e[0] === null || typeof e[0] === 'string') && typeof e[1] === 'string')};
+        }
+      }
+      // Abandoned navigation transfers are never a durable draft store.
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key && key.startsWith('friday.draft-handoff.')) sessionStorage.removeItem(key);
+      }
+    } catch (_) {}
+  }
+  const [convId, setId] = useState(() => restored.current ? restored.current.id : typeof initialId === 'function' ? initialId() : initialId);
+  const [chatIn, setText] = useState(() => restored.current ? new Map(restored.current.entries).get(convId) || '' : '');
+  const drafts = useRef({id:convId,text:chatIn,byId:new Map(restored.current ? restored.current.entries : [])});
+  const setChatIn = React.useCallback(value => {
+    const d = drafts.current;
+    d.text = typeof value === 'function' ? value(d.text) : value;
+    d.byId.set(d.id, d.text); setText(d.text);
+  }, []);
+  const setConvId = React.useCallback(value => {
+    const d = drafts.current, next = typeof value === 'function' ? value(d.id) : value;
+    if (next === d.id) return;
+    d.byId.set(d.id, d.text);
+    d.text = d.id === null && !d.byId.has(next) ? d.text : d.byId.get(next) || '';
+    d.id = next; setText(d.text); setId(next);
+  }, []);
+  const getConversationId = React.useCallback(() => drafts.current.id, []);
+  const navigateWithDrafts = React.useCallback(target => {
+    const url = new URL(target, window.location.href), d = drafts.current;
+    if (url.origin !== window.location.origin) throw new Error('Workspaces open within this Friday window.');
+    if (d.id) url.searchParams.set('conversation', d.id);
+    d.byId.set(d.id, d.text);
+    const entries = [...d.byId.entries()].filter(e => e[1]);
+    if (entries.length) {
+      const nonce = crypto.randomUUID();
+      try { sessionStorage.setItem('friday.draft-handoff.' + nonce, JSON.stringify({id:d.id,entries,created:Date.now()})); }
+      catch (_) { throw new Error('Your browser could not keep the unsent drafts during the switch. Open the workspace in a new tab with Ctrl-click.'); }
+      url.searchParams.set('draft_handoff', nonce);
+    }
+    window.location.assign(url.href);
+  }, []);
+  return {convId,setConvId,chatIn,setChatIn,getConversationId,navigateWithDrafts};
+}
+function ExperienceApprovals() {
+  const items = useApprovalFeed();
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const decide = async (id, decision) => {
+    if (busy) return;
+    setBusy(id); setError('');
+    try { await fridayDecideApproval(id, decision); }
+    catch (e) { setError('Could not record the decision. Try again.'); }
+    finally { setBusy(''); }
+  };
+  return React.createElement('div', {className:'fx-approvals'},
+    error && React.createElement('p', {role:'alert'}, error),
+    items.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
+}
 function App() {
   const [openWins, setOpenWins] = useState(new Set());
   const [focusWin, setFocusWin] = useState(null);
+  // The desktop preserves native window instances when returning to a project.
+  const experienceEnabled = typeof window.FridayExperience === 'function' && !STANDALONE_WS && !window.__FRIDAY_CHROME__ && new URLSearchParams(window.location.search).get('experience') !== 'classic';
+  const [experienceDesktop, setExperienceDesktop] = useState(true);
+  const [projectsStatus, setProjectsStatus] = useState({loading:true,error:''});
+  const [tasksStatus, setTasksStatus] = useState({loading:true,error:''});
+  useEffect(() => {
+    const styled = new URLSearchParams(window.location.search).get('experience') !== 'classic';
+    document.body.classList.toggle('friday-experience-enabled', styled);
+    document.body.classList.toggle('friday-experience-desktop', experienceEnabled);
+    return () => { document.body.classList.remove('friday-experience-enabled', 'friday-experience-desktop'); };
+  }, [experienceEnabled]);
+  useEffect(() => { if (openWins.size === 0) setExperienceDesktop(true); }, [openWins.size]);
+
   // Workspace Studio: which workspace's contextual chat is open, + the live
   // customization map shared down to every FWin via WsCustomCtx.
   const [wsChat, setWsChat] = useState(null); // {wsId,label,emoji,seed} | null
@@ -60590,7 +60714,7 @@ function App() {
   const [chatOpen, setChatOpen] = useState(
     () => window.__FRIDAY_CHROME__ === 'chat');
   const [chatMsgs, setChatMsgs] = useState([]);
-  const [chatIn, setChatIn] = useState('');
+
   const [chatLoad, setChatLoad] = useState(false);
   /* Which conversation the in-flight turn belongs to.
      `chatLoad` was one flag for the whole app and "+ New Chat" never reset it,
@@ -60609,7 +60733,7 @@ function App() {
      `refreshConvs` does `setConvId(cur => cur || d.main_id)` — an effect that
      set it afterwards would race the list and the window could flash Main
      before landing on the thread it was opened for. */
-  const [convId, setConvId] = useState(() => {
+  const {convId,setConvId,chatIn,setChatIn,getConversationId,navigateWithDrafts} = useFridayConversationDrafts(() => {
     try {
       return new URLSearchParams(window.location.search).get('conversation')
              || null;
@@ -60629,24 +60753,28 @@ function App() {
   const refreshConvs = React.useCallback(() => apiFetch('/api/conversations')
     .then(r => r.json()).then(d => {
       if (d && d.status === 'ok') {
+        setProjectsStatus({loading:false,error:''});
         setConvList(d.conversations || []);
         setProjList(d.projects || []);
         setConvId(cur => cur || d.main_id);
       }
+      if (!d || d.status !== 'ok') setProjectsStatus({loading:false,error:(d && (d.error || d.message)) || 'Could not load projects.'});
       return d;
-    }).catch(() => null), []);
+    }).catch(() => { setProjectsStatus({loading:false,error:'Could not load projects. Try again.'}); return null; }), []);
 
   useEffect(() => { refreshConvs(); }, [refreshConvs]);
 
   const openConversation = React.useCallback(cid => {
     if (!cid) return;
-    chatEpoch.current += 1;
+    const epoch = ++chatEpoch.current;
+    setChatMsgs([]);
     setChatLoad(false);
     setPausePending(null);
     setConvId(cid);
     setConvOpen(false);
     apiFetch('/api/conversations/' + encodeURIComponent(cid) + '/messages')
       .then(r => r.json()).then(d => {
+        if (chatEpoch.current !== epoch) return;
         setChatMsgs((d.messages || []).map(m => ({
           role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
           text: m.text || '',
@@ -60656,10 +60784,10 @@ function App() {
           kind: (m.meta || {}).kind,
           trace_id: (m.meta || {}).trace_id,
         })));
-      }).catch(() => setChatMsgs([]));
+      }).catch(() => { if (chatEpoch.current === epoch) setChatMsgs([]); });
     apiFetch('/api/conversations/' + encodeURIComponent(cid))
-      .then(r => r.json()).then(d => setConvSeat((d.conversation || {}).seat || null))
-      .catch(() => setConvSeat(null));
+      .then(r => r.json()).then(d => { if (chatEpoch.current === epoch) setConvSeat((d.conversation || {}).seat || null); })
+      .catch(() => { if (chatEpoch.current === epoch) setConvSeat(null); });
   }, []);
 
   /* An APPROVED CARD FINISHING has to show up in the DOCKED chat too.
@@ -60820,6 +60948,41 @@ function App() {
       if (on) localStorage.removeItem('friday_chat_hidden');else localStorage.setItem('friday_chat_hidden', '1');
     } catch (_) {}
   };
+
+  // A gathered reference prepares a draft in the actual project conversation.
+  // It never reads document contents or sends a message on the owner's behalf.
+  const experienceDraft = async (text, projectId) => {
+    if (!String(text || '').trim()) return;
+    const sourceConversation = getConversationId();
+    let cid = sourceConversation;
+    if (projectId) {
+      const current = convList.find(c => c.id === cid && c.project === projectId);
+      const existing = current || convList.find(c => c.project === projectId && c.status !== 'archived');
+      if (existing) cid = existing.id;
+      else {
+        const response = await apiFetch('/api/conversations', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Working with materials',project:projectId})});
+        const result = await response.json();
+        if (!response.ok || result.status !== 'ok' || !result.conversation) throw new Error(result.error || result.message || 'Could not open the project conversation.');
+        if (result.conversation.project !== projectId) throw new Error('This project is no longer available. Refresh Projects and try again.');
+        cid = result.conversation.id;
+        await refreshConvs();
+      }
+    }
+    if (getConversationId() !== sourceConversation) throw new Error('The active chat changed. Gathered materials are still here; choose Discuss again.');
+    if (cid && cid !== getConversationId()) openConversation(cid);
+    setChatIn(previous => previous.trim() ? previous + '\n\n' + String(text) : String(text));
+    showChat(true);
+  };
+  useEffect(() => {
+    const draft = event => {
+      const detail = event.detail || {};
+      if (typeof detail.text !== 'string') return;
+      experienceDraft(detail.text, detail.projectId).catch(error => fridayToast(error.message));
+    };
+    window.addEventListener('friday:chat-draft', draft);
+    return () => window.removeEventListener('friday:chat-draft', draft);
+  }, [convId, convList]);
+
   // The tray's width as a fraction of the window's, once the owner chose one
   // (a snap layout, a key, Friday) or dragged it (unified-shell.md §11.2).
   const [chatFrac, setChatFrac] = useState(() => {
@@ -63626,10 +63789,11 @@ function App() {
     const tick = async () => {
       try {
         const r = await fetch('/api/tasks');
-        if (!r.ok) return;
+        if (!r.ok) throw new Error('Activity could not be read.');
         const d = await r.json();
         if (cancelled) return;
         const list = Array.isArray(d) ? d : d.tasks || [];
+        setTasksStatus({loading:false,error:''});
         setBgTasks(prev => {
           // Detect newly completed tasks and notify in chat
           // Process-derived entries (briefings, compression, vault orbs) show in
@@ -63655,7 +63819,7 @@ function App() {
         // Mood signal
         if (!window._fridayMoodSignals) window._fridayMoodSignals = {};
         window._fridayMoodSignals.taskRunning = list.some(t => (t.status || 'running') === 'running');
-      } catch (e) {}
+      } catch (e) { if (!cancelled) setTasksStatus({loading:false,error:'Could not read activity. Reconnecting…'}); }
     };
     tick();
     const iv = setInterval(tick, 2000);
@@ -63880,6 +64044,8 @@ function App() {
   };
   const toggle = id => {
     if (tabGo(id)) return;
+    if (experienceEnabled && experienceDesktop && openWinsRef.current.has(id)) { setExperienceDesktop(false); bringFront(id); return; }
+    setExperienceDesktop(false);
     if (openWinsRef.current.has(id) && !closingRef.current.has(id)) {
       close(id);
       return;
@@ -63898,6 +64064,7 @@ function App() {
   // so clicking a notification for an already-open workspace doesn't close it.
   const openWs = rawId => {
     if (tabGo(rawId)) return;
+    setExperienceDesktop(false);
     const id = fridayWorkspaceId(rawId);
     cancelClose(id);
     setOpenWins(p => {
@@ -65111,7 +65278,7 @@ function App() {
   // Ctrl+/: the cluster's chat field when the desktop shows no window (the
   // cluster comes with it), else the chat tray's.
   const focusChatField = () => {
-    if (!STANDALONE_WS && openWins.size === 0) {
+    if (!experienceEnabled && !STANDALONE_WS && openWins.size === 0) {
       window.dispatchEvent(new CustomEvent('friday:landing', { detail: { summon: true, focus: true, via: 'key' } }));
       return;
     }
@@ -65263,6 +65430,20 @@ function App() {
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const [tabHistOpen, setTabHistOpen] = useState(false);
   const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);
+  const shellWorkspaceSwitcher = new URLSearchParams(window.location.search).get('experience') !== 'classic' && typeof window.FridayWorkspaceSwitcher === 'function' && React.createElement(window.FridayWorkspaceSwitcher, {
+    workspaces: WS.filter(w => !fridayWsHeld(w.id)),
+    currentWorkspace: shellTab ? shellTab.id : shellChat || experienceDesktop ? null : focusWin,
+    onSelect: id => {
+      if (shellChat || shellTab) {
+        if (shellTab && shellTab.id === id) return true;
+        navigateWithDrafts(id === 'settings' ? '/?workspace=settings' : '/w/' + encodeURIComponent(id));
+        return true;
+      }
+      openWs(id); return true;
+    },
+    onOpenTab: id => !!fridayOpenWorkspaceTab(id, null, {background:true}),
+    onHome: () => { if (shellChat || shellTab) navigateWithDrafts('/'); else setExperienceDesktop(true); }
+  });
   const shellTopBar = /*#__PURE__*/React.createElement("div", {
     className: `top-bar ${topBarHidden ? 'hidden' : ''}`,
     "data-testid": "friday-top-bar",
@@ -65293,6 +65474,7 @@ function App() {
       userSelect: 'none'
     }
   }, "|"),
+  shellWorkspaceSwitcher,
   // Not positioned, on purpose: the menu's containing block is then the
   // top bar itself, not this half of it, whose sides clip on a narrow
   // window. With no top or left the menu sits where it would flow, right
@@ -67004,7 +67186,23 @@ function App() {
     onDone: finishSetupChat
   }), setupDone && needsCloudConsent && /*#__PURE__*/React.createElement(CloudConsentGate, {
     onDone: () => setNeedsCloudConsent(false)
-  }), shellMeeting, shellTopBar, shellKillSwitch, !STANDALONE_WS && /*#__PURE__*/React.createElement("div", {
+  }), shellMeeting, shellTopBar, shellKillSwitch, experienceEnabled && setupDone && !setupRerun && !needsCloudConsent && React.createElement(window.FridayExperience, {
+      workspaces: WS.filter(w => !fridayWsHeld(w.id)),
+      openWorkspaceIds: openWins, activeWorkspaceId: focusWin,
+      projects: projList, conversations: convList, activeConversationId: convId,
+      tasks: bgTasks, settings: agentSettings, projectsStatus, tasksStatus,
+      desktopVisible: experienceDesktop,
+      onShowDesktop: () => setExperienceDesktop(true),
+      onOpenWorkspace: target => { const nav = fridayResolveTarget(target); openWs(nav.workspace); fridayNavigate(nav); },
+      onOpenConversation: cid => { openConversation(cid); showChat(true); },
+      onRefreshProjects: refreshConvs,
+      onOpenTask: id => { openWs('system'); fridayNavigate({workspace:'system',tab:'task',task:id}); },
+      onOpenSettings: () => openWs('settings'),
+      onCustomize: id => { const w=wsInfo[id]; if(w && window.fridayOpenWorkspaceChat) window.fridayOpenWorkspaceChat(id,w.label,w.ico); },
+      onOpenSearch: () => setPaletteOpen(true), onShowChat: () => showChat(true),
+      onDraftChat: experienceDraft, apiFetch,
+      renderApprovals: () => React.createElement(ExperienceApprovals)
+}), !experienceEnabled && !STANDALONE_WS && /*#__PURE__*/React.createElement("div", {
     ref: landingElRef,
     className: 'landing-cluster' + (landing.show ? '' : ' hidden'),
     "aria-hidden": landing.show ? undefined : 'true',
@@ -67245,7 +67443,7 @@ function App() {
       setCameraControlsOpen(false);
       cameraFrameRef.current = null;
     }
-  }, "Stop"))), [...openWins].map(id => {
+  }, "Stop"))), React.createElement("div", {className:"fx-native-windows", hidden:experienceEnabled && experienceDesktop}, [...openWins].map(id => {
     const w = wsInfo[id];
     if (!w) return null;
     return /*#__PURE__*/React.createElement(FWin, {
@@ -67260,7 +67458,7 @@ function App() {
     }, /*#__PURE__*/React.createElement(Safe, {
       name: w.label
     }, wsMap[id] || fridayBundleBody(id)));
-  }), convWins.map((cw, i) => /*#__PURE__*/React.createElement(ConversationWindow, {
+  })), convWins.map((cw, i) => /*#__PURE__*/React.createElement(ConversationWindow, {
     key: cw.cid,
     convId: cw.cid,
     title: cw.title,
