@@ -1219,7 +1219,7 @@
             window.addEventListener('keydown', e => { if (e.key === 'Escape') abort(); }, true);
             window.addEventListener('click', e => {
                 // The click that ends a press on an orb is the orb's, not the page's.
-                if (performance.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); return; }
+                if (performance.now() < swallowUntil && onScene(e.target)) { e.stopPropagation(); e.preventDefault(); return; }
                 // A synthetic click (hand-tracking dwell) on the bare scene opens the orb under it.
                 if (e.detail !== 0 || !onScene(e.target)) return;
                 const o = src ? hit(e.clientX, e.clientY) : null;
@@ -1352,7 +1352,7 @@
                     return { ok: true, opened: 'approval' };
                 }
                 window.dispatchEvent(new CustomEvent('fridayOrbClicked', { detail: { id: o.id, label: o.label, category: o.category,
-                    icon: o.icon, progress: o.progress, status: o.status, steps: o.steps, sx: o.sx, sy: o.sy } }));
+                    icon: o.icon, progress: o.progress, status: o.status, steps: o.steps, task_id: o.task_id, trace_id: o.trace_id, model: o.model, sx: o.sx, sy: o.sy } }));
                 return { ok: true, opened: 'thread' };
             }
             function status(o, via) {
@@ -1712,7 +1712,7 @@
                             out.push({ id: o.id, task_id: s.row.task_id || null, trace_id: s.row.trace_id || null, kind: s.kind, hue: s.hue,
                                        label: o.label, status: s.failed ? 'failed' : (s.row.status || o.status), step_n: s.row.step_n,
                                        step_total: s.row.step_total, approval_id: s.approval, started: o.createdAt, pausable: !!s.row.pausable,
-                                       category: o.category, icon: o.icon, progress: o.progress, steps: o.steps, sx: s.sx, sy: s.sy, sr: 26 });
+                                       category: o.category, icon: o.icon, model: o.model, progress: o.progress, steps: o.steps, sx: s.sx, sy: s.sy, sr: 26 });
                         });
                         return out;
                     },
@@ -2248,7 +2248,7 @@
                 const my = ev.clientY - rect.top;
                 let bestDist = 50, hit = null;
                 for (const [id, o] of this.orbs) {
-                    if (o.dying) continue;
+                    if (o.dying || o.__s?.behind) continue;
                     const p3 = o.group.position.clone().project(this.camera);
                     if (p3.z >= 1) continue;
                     const sx = (p3.x*0.5+0.5)*window.innerWidth;
@@ -2257,8 +2257,11 @@
                     if (d < bestDist) { bestDist = d; hit = o; }
                 }
                 if (hit) {
-                    window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id:hit.id,label:hit.label,category:hit.category,icon:hit.icon,progress:hit.progress,status:hit.status,steps:hit.steps,sx:ev.clientX,sy:ev.clientY}}));
+                    if (typeof FridayOrbHands !== 'undefined' && hit.__s) return FridayOrbHands.act('open', [hit.id], 'hand')[0] || {ok:false,reason:'gone'};
+                    window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id:hit.id,label:hit.label,category:hit.category,icon:hit.icon,progress:hit.progress,status:hit.status,steps:hit.steps,task_id:hit.task_id,trace_id:hit.trace_id,model:hit.model,sx:ev.clientX,sy:ev.clientY}}));
+                    return {ok:true,opened:'thread'};
                 }
+                return {ok:false,reason:'gone'};
             }
             _cleanup(id) {
                 const o = this.orbs.get(id); if (!o) return;

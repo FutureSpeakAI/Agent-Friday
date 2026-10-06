@@ -241,6 +241,7 @@ def get_task(task_id):
         # thread panel that polls this route renders the enriched trace.
         "steps": steps,
         "model": proc.get("model"),
+        "trace_id": proc.get("trace_id"),
         "linked_task_id": linked_tid,
         "result": proc.get("result"),
         "model": proc.get("model"),

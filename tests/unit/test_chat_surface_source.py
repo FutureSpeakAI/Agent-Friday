@@ -74,7 +74,7 @@ def test_windows_resize_from_every_edge():
 def test_mirror_has_the_same_pieces():
     app = _read("ui_parts/app.html")
     assert app.count("function ChatSurface(") == 1
-    assert '<ChatSurface mode="panel"' in app
+    assert re.search(r'<ChatSurface\b[^>]*\bmode="panel"', app)
     assert "function fridayEnterSends(" in app
     assert "fridayEdgeHandles(startResize)" in app
     css = _read("ui_parts/styles_and_scene.html")

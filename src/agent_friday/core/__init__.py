@@ -2060,6 +2060,7 @@ SOUL_FILE = FRIDAY_DIR / "SOUL.md"
 _SETTINGS_CACHE: dict = {"value": None, "ts": 0.0}
 _SETTINGS_CACHE_TTL: float = 2.0  # seconds
 _SETTINGS_CACHE_LOCK = threading.Lock()
+_SETTINGS_WRITE_LOCK = threading.RLock()
 
 
 #: Bumped by every invalidation. A reader stores what it read only when no
@@ -3290,13 +3291,22 @@ def _routing_mode_caller() -> str:
     """'file:function:line' of the code that asked for this settings write."""
     import traceback as _tb
     for fr in reversed(_tb.extract_stack()):
-        if fr.name in ("_save_settings", "_routing_mode_caller"):
+        if fr.name in ("_save_settings", "_save_settings_locked", "_routing_mode_caller"):
             continue
         return "%s:%s:%s" % (Path(fr.filename).name, fr.name, fr.lineno)
     return "unknown"
 
 
 def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
+                   owner_routing_change: bool = False):
+    """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
+    with _SETTINGS_WRITE_LOCK:
+        return _save_settings_locked(data,
+            _internal_cloud_consent_write=_internal_cloud_consent_write,
+            owner_routing_change=owner_routing_change)
+
+
+def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this

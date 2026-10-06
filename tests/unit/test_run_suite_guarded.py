@@ -8,6 +8,7 @@ and receipts under ``tmp_path``, so they never touch the machine's real lock.
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -89,6 +90,20 @@ def _receipts(tmp_path):
     return list((tmp_path / "receipts").glob("*/suite.json"))
 
 
+def test_console_encoding_cannot_drop_child_output_or_deadlock(tmp_path, monkeypatch):
+    console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    log = tmp_path / "suite.log"
+    cfg = dict(rs.DEFAULTS, abort_free_ram_gb=0, abort_free_disk_gb=0)
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", console)
+        code, aborted, tail = rs.run_pytest(
+            [sys.executable, "-c", "print('\\u21b5'); print('FINISHED')"],
+            tmp_path, log, cfg, poll_s=.05)
+    assert code == 0 and aborted is None
+    assert "\u21b5\nFINISHED\n" in log.read_text(encoding="utf-8")
+    assert "FINISHED" in tail
+
+
 def test_a_failing_run_writes_a_not_ok_receipt_with_the_real_exit_code(tmp_path):
     t = tmp_path / "test_red.py"
     t.write_text("def test_red():\n    assert 1 == 2\n", encoding="utf-8")
@@ -109,6 +124,7 @@ def test_a_passing_run_writes_an_ok_receipt_and_exits_0(tmp_path):
     [receipt] = _receipts(tmp_path)
     rec = json.loads(receipt.read_text(encoding="utf-8"))
     assert rec["ok"] is True and rec["exit_code"] == 0 and rec["aborted"] is None
+    assert rec["cmd"][-2:] == ["-n", "0"]
     assert len(rec["tree"]) == 40
 
 

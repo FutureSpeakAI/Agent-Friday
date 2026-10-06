@@ -33,6 +33,54 @@ function source(name){
       FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:33});
       return {was,locked:!!FridayHandCursor.locked,selected:FridayHandCursor.select().ok,clicks:window.clicks};
     },{was:'target',locked:false,selected:false,clicks:0}],
+    ['visible scene orb remains reachable by snap and voice select',()=>{
+      mountOrb();
+      FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:0});
+      return {locked:FridayHandCursor.locked?.orb.id,selected:FridayHandCursor.select().ok,clicks:orbClicks};
+    },{locked:'orb-fixture',selected:true,clicks:1}],
+    ...[{ok:false,reason:'gone'},null].map(result=>['orb selection reports an unaccepted open '+JSON.stringify(result),new Function(`
+      mountOrb();window.fridayOrbClickAt=()=>(${JSON.stringify(result)});
+      FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:0});
+      return {selected:FridayHandCursor.select().ok,clicks:orbClicks};
+    `),{selected:false,clicks:0}]),
+    ...['approval','fix'].map(opened=>['orb selection accepts its '+opened+' surface',new Function(`
+      mountOrb();window.fridayOrbClickAt=()=>({ok:true,opened:${JSON.stringify(opened)}});
+      FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:0});
+      return {selected:FridayHandCursor.select().ok};
+    `),{selected:true}]),
+    ['pointer-transparent scene orb also works through bare body',()=>{
+      mountOrb();document.querySelector('#ui-root').remove();
+      FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:0});
+      return {locked:FridayHandCursor.locked?.orb.id,selected:FridayHandCursor.select().ok,clicks:orbClicks};
+    },{locked:'orb-fixture',selected:true,clicks:1}],
+    ...['covered','modal','hidden','inert','aria-hidden','opacity','opaque-root','missing'].map(kind=>[
+      'scene orb cannot acquire behind '+kind,new Function(`
+        mountOrb();blockOrb(${JSON.stringify(kind)});
+        FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:0});
+        return {orb:!!FridayHandCursor.locked?.orb,selected:FridayHandCursor.select().ok,clicks:orbClicks};
+      `),{orb:false,selected:false,clicks:0}]),
+    ...['covered','modal'].map(kind=>[
+      'scene orb activation revalidates '+kind,new Function(`
+        mountOrb();
+        FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:0});
+        const was=FridayHandCursor.locked?.orb.id;
+        blockOrb(${JSON.stringify(kind)});
+        return {was,selected:FridayHandCursor.select().ok,clicks:orbClicks};
+      `),{was:'orb-fixture',selected:false,clicks:0}]),
+    ['cover arriving during an orb pinch revokes its target',()=>{
+      mountOrb();
+      FridayHandCursor.frame({x:130,y:120,pinching:true,visible:true,t:0});
+      blockOrb('covered');
+      FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:100});
+      return {orb:!!FridayHandCursor.locked?.orb,clicks:orbClicks};
+    },{orb:false,clicks:0}],
+    ['uncovering a scene orb restores normal acquisition',()=>{
+      mountOrb();blockOrb('covered');
+      FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:0});
+      document.querySelector('#cover').hidden=true;
+      FridayHandCursor.frame({x:130,y:120,pinching:false,visible:true,t:150});
+      return {orb:FridayHandCursor.locked?.orb.id,selected:FridayHandCursor.select().ok,clicks:orbClicks};
+    },{orb:'orb-fixture',selected:true,clicks:1}],
     ...['disabled','aria-disabled','inert','covered','removed'].map(kind=>[
       'voice select rejects '+kind+' stale target',new Function(`
         FridayHandCursor.next(1);
@@ -165,6 +213,40 @@ function source(name){
         }
         await page.addScriptTag({content:source('hand_cursor_core.js')});
         await page.addScriptTag({content:source('hand_cursor.js')});
+        await page.evaluate(()=>{
+          window.mountOrb=()=>{
+            document.querySelector('#target').remove();
+            const css=document.createElement('style');
+            css.textContent='body > canvas { position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none; }';
+            document.head.appendChild(css);
+            const canvas=document.createElement('canvas');canvas.id='friday-scene-canvas';
+            document.body.appendChild(canvas);
+            const ui=document.createElement('div');ui.id='ui-root';ui.style.cssText='position:fixed;inset:0;z-index:60;pointer-events:none';
+            const inner=document.createElement('div');inner.id='ui-inner';inner.style.cssText='pointer-events:auto;height:100vh';
+            ui.appendChild(inner);document.body.appendChild(ui);
+            window.__fridayRenderer={domElement:canvas};window.orbClicks=0;
+            window.fridayOrbTargets=()=>[{id:'orb-fixture',sx:130,sy:120}];
+            window.fridayOrbClickAt=()=>{window.orbClicks++;return {ok:true,opened:'thread'};};
+            FridayHandCursor.refresh();
+          };
+          window.blockOrb=kind=>{
+            const canvas=window.__fridayRenderer.domElement;
+            if(kind==='covered')document.querySelector('#cover').hidden=false;
+            if(kind==='hidden')canvas.hidden=true;
+            if(kind==='inert')canvas.inert=true;
+            if(kind==='aria-hidden')canvas.setAttribute('aria-hidden','true');
+            if(kind==='opacity')canvas.style.opacity='0';
+            if(kind==='opaque-root')document.querySelector('#ui-inner').style.backgroundColor='#111';
+            if(kind==='missing')canvas.remove();
+            if(kind==='modal'){
+              const dialog=document.createElement('dialog');
+              // Outside the orb's rectangle: the modal's implicit inert
+              // background must block scene actions as well as its body.
+              dialog.style.cssText='position:fixed;left:500px;top:300px;margin:0;width:100px;height:60px';
+              dialog.textContent='Scene controls';document.body.appendChild(dialog);dialog.showModal();
+            }
+          };
+        });
         await page.evaluate(()=>{window.mountRange=options=>{
           const holder=document.querySelector('#holder');holder.innerHTML='';
           const range=document.createElement('input');range.type='range';range.id='range';

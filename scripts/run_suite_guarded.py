@@ -218,10 +218,18 @@ def run_pytest(cmd: list[str], tree: Path, log: Path, cfg: dict, poll_s: float =
         def pump():
             for line in proc.stdout:
                 fh.write(line); fh.flush()
-                sys.stdout.write(line); sys.stdout.flush()
                 tail.append(line)
                 if len(tail) > 60:
                     del tail[0]
+                # A legacy Windows console cannot represent every traceback.
+                # Keep the UTF-8 log intact and always drain the child pipe.
+                if sys.stdout is not None:
+                    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+                    printable = line.encode(encoding, errors="backslashreplace").decode(encoding)
+                    try:
+                        sys.stdout.write(printable); sys.stdout.flush()
+                    except (OSError, ValueError):
+                        pass  # A closed output consumer does not cancel the run.
 
         t = threading.Thread(target=pump, daemon=True)
         t.start()
@@ -281,8 +289,8 @@ def main(argv: list[str] | None = None) -> int:
         seat = seat_up(cfg["seat_port"])
         n = worker_count(a.workers, seat, cfg)
         cmd = [sys.executable, "-m", "pytest", *args, "-p", "no:cacheprovider"]
-        if n > 0:
-            cmd += ["-n", str(n)]
+        # Zero means serial, not pytest.ini's default of all available CPUs.
+        cmd += ["-n", str(n)]
         state, fields = lock_state(lock)
         if state == "stale":
             print(f"[suite-guard] taking over a stale lock (holder {fields.get('holder')} pid {fields.get('pid')} is gone)", file=sys.stderr)

@@ -323,7 +323,8 @@ def test_calibration_is_a_setting(engine):
 HEAD_READ = re.compile(r"currFace[XYZ]|TKh\.[xyz]\b|TK\.head\.[xyz]\b|FridayTracking\.head\.[xyz]\b")
 # Every place the page may read the head: the head state itself and its
 # easing, the camera at the window, the HUD and the dock in front of the
-# glass, and the tracking debug overlay.
+# glass, the reserved-stage camera fit, the read-only workspace snapshot,
+# and the tracking debug overlay.
 ALLOWED = [re.compile(p) for p in (
     r"^\s*let currFaceX = 0, currFaceY = 0, currFaceZ = 0;",
     r"^\s*const dz = TKh\.z - headZHeld;",
@@ -331,6 +332,8 @@ ALLOWED = [re.compile(p) for p in (
     r"^\s*updateDock3D\(currFaceX, currFaceY, currFaceZ\);",
     r"^\s*hudEl\.style\.transform = `perspective\(1000px\) rotateY\(\$\{currFaceX \* -2\}deg\)",
     r"^\s*currFaceX, currFaceY, currFaceZ\)\.zoom;",
+    r"^\s*headZoom: TK\.headZoom\(currFaceZ\), glassAt: GLASS_AT,$",
+    r"^\s*head: \{ x: currFaceX, y: currFaceY, z: currFaceZ, seen: !!window\.FridayTracking\.head\.seen \},$",
     r"^\s*rootStyle\.setProperty\('--holo-",
     r"^\s*const h[xy] = \(0\.5 \+ TK\.head\.[xy] \* 0\.5\) \* [WH];",
     r"^\s*ctx\.arc\(hx, hy, 10 \+ TK\.head\.z \* 8,",
@@ -341,8 +344,9 @@ ALLOWED = [re.compile(p) for p in (
 
 def test_nothing_in_an_avatar_reads_the_head():
     """The avatar holds its place: only the camera at the window, the HUD and
-    the dock in front of the glass, and the debug overlay read where the head
-    is. An avatar that leaned with the head would be following it."""
+    the dock in front of the glass, and the read-only workspace/debug
+    snapshots read where the head is. An avatar that leaned with the head
+    would be following it."""
     stray = []
     for n, line in enumerate(INDEX.read_text(encoding="utf-8").splitlines(), 1):
         if HEAD_READ.search(line) and not any(a.search(line) for a in ALLOWED):
@@ -451,6 +455,10 @@ def page():
             except Exception as exc:                           # pragma: no cover
                 pytest.skip("no chromium for playwright: %s" % exc)
             pg = browser.new_page(viewport={"width": 1280, "height": 800})
+            # These physical-window assertions describe Classic's complete
+            # desktop. Simple composes the same projection into a reserved
+            # stage and refits moving geometry to keep it clear of the UI.
+            pg.add_init_script("localStorage.setItem('friday.display-style.v1', 'classic')")
             # The page's API calls 404 against the static server; the scene
             # does not need any of them. Settings must not arrive at all,
             # so the engine runs on its shipped defaults.
@@ -459,6 +467,8 @@ def page():
             pg.goto(url, wait_until="domcontentloaded")
             pg.wait_for_function("() => window.fridayDebugScene && !!fridayDebugScene().camera"
                                  " && !!window.FridayTracking && !!window.FridayGenome", timeout=60000)
+            assert pg.evaluate("window.FridayDisplayStyle.get()") == "classic"
+            assert pg.evaluate("window.FridayHolographicWorkspace?.stageRect || null") is None
             pg.evaluate(MEASURE)
             _until(pg, "() => __holo.measure() !== null", "the scene never drew a structure")
             yield pg

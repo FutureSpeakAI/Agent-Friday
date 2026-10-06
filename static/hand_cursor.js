@@ -33,13 +33,13 @@
   window.addEventListener('scroll', () => { dirty = true; }, true);
   window.addEventListener('resize', () => { dirty = true; });
 
-  function visible(el, r) {
+  function visible(el, r, pointerTransparent = false) {
     if (!r || r.width < 2 || r.height < 2) return false;
     if (r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) return false;
     if (el.disabled || el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') return false;
     if (el.closest('[inert],[aria-hidden="true"],[hidden],[data-fr-target="off"]')) return false;
     const cs = getComputedStyle(el);
-    if (cs.visibility === 'hidden' || cs.pointerEvents === 'none' || +cs.opacity < 0.05) return false;
+    if (cs.visibility === 'hidden' || (!pointerTransparent && cs.pointerEvents === 'none') || +cs.opacity < 0.05) return false;
     return true;
   }
   function isGuarded(el) {
@@ -110,9 +110,26 @@
   }
 
   // ── Clicking ─────────────────────────────────────────────────────────────────
+  function usableOrb(t) {
+    const orb = typeof window.fridayOrbTargets === 'function' && window.fridayOrbTargets().find(o => o.id === t.orb.id);
+    const canvas = window.__fridayRenderer && window.__fridayRenderer.domElement;
+    if (!orb || !canvas || !canvas.isConnected || !Number.isFinite(orb.sx) || !Number.isFinite(orb.sy)) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (!visible(canvas, rect, true) || orb.sx < rect.left || orb.sx > rect.right || orb.sy < rect.top || orb.sy > rect.bottom) return null;
+    // The native canvas deliberately passes pointers through. Only the exact
+    // transparent app roots count as bare scene; their children, arbitrary
+    // covers and modal backdrops must block the scene's direct hit test.
+    const top = document.elementFromPoint(orb.sx, orb.sy);
+    if (top === canvas || top === document.body || top === document.documentElement) return orb;
+    if (top && (top === document.getElementById('ui-root') || top === document.getElementById('ui-inner'))) {
+      const style = getComputedStyle(top);
+      if (style.backgroundImage === 'none' && (style.backgroundColor === 'transparent' || style.backgroundColor === 'rgba(0, 0, 0, 0)')) return orb;
+    }
+    return null;
+  }
   function targetUsable(t, point) {
     if (!t) return false;
-    if (t.orb) return typeof window.fridayOrbTargets === 'function' && window.fridayOrbTargets().some(o => o.id === t.orb.id);
+    if (t.orb) return !!usableOrb(t);
     const el = t.el;
     if (!el || !el.isConnected) return false;
     const r = el.getBoundingClientRect();
@@ -125,7 +142,11 @@
   function clickTarget(t, point, now, held) {
     if (!t) return false;
     if (!targetUsable(t, point)) return false;
-    if (t.orb) { if (typeof window.fridayOrbClickAt !== 'function') return false; window.fridayOrbClickAt(t.orb.sx, t.orb.sy); return true; }
+    if (t.orb) {
+      const orb = usableOrb(t);
+      if (!orb || typeof window.fridayOrbClickAt !== 'function') return false;
+      return window.fridayOrbClickAt(orb.sx, orb.sy)?.ok === true;
+    }
     const el = t.el; if (!el || !el.isConnected) return false;
     if (isGuarded(el) && !held) return false;
     const r = el.getBoundingClientRect();

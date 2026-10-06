@@ -204,56 +204,91 @@ def test_the_avatar_stays_centred_and_visible(desktop, w, h):
 
 
 
-MENU_PROBE = """label => {
+MENU_PROBE = """({label, selector}) => {
   const btn = document.querySelector('button[aria-label="' + label + '"]');
   if (!btn) return {found: false};
-  const menu = Array.from(btn.parentElement.children).find(c => c !== btn);
+  const menu = document.querySelector(selector);
   if (!menu) return {found: true, opened: false};
-  // A menu that hangs from a zero-height row is measured by what hangs from it.
-  const m = menu.getBoundingClientRect().height > 0 ? menu : (menu.firstElementChild || menu);
   const bar = document.querySelector('.top-bar').getBoundingClientRect();
-  const r = m.getBoundingClientRect(), b = btn.getBoundingClientRect();
-  const y = Math.max(r.top, bar.bottom) + 12;
-  const seen = x => { const hit = document.elementFromPoint(x, y); return !!hit && menu.contains(hit); };
+  const r = menu.getBoundingClientRect(), b = btn.getBoundingClientRect();
+  const seen = (x, y) => { const hit = document.elementFromPoint(x, y); return !!hit && menu.contains(hit); };
+  const stage = window.FridayHolographicWorkspace?.stageRect;
+  const overlapsStage = stage && Math.min(r.right, stage.x + stage.w) > Math.max(r.left, stage.x) + 1 &&
+      Math.min(r.bottom, stage.y + stage.h) > Math.max(r.top, stage.y) + 1;
   return {found: true, opened: true, box: [Math.round(r.left), Math.round(r.top),
           Math.round(r.width), Math.round(r.height)], barBottom: Math.round(bar.bottom),
-          dropsDown: r.top >= bar.bottom - 12, visible: seen(r.left + r.width / 2),
-          whole: seen(r.left + 6) && seen(r.right - 6), gap: Math.round(r.top - b.bottom),
+          dropsDown: r.top >= bar.bottom - 12,
+          visible: seen(r.left + r.width / 2, r.top + 12),
+          whole: [[r.left + 8, r.top + 12], [r.right - 8, r.top + 12],
+                  [r.left + 8, r.bottom - 12], [r.right - 8, r.bottom - 12]].every(p => seen(...p)),
+          inViewport: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+          overlapsStage: !!overlapsStage, gap: Math.round(r.top - b.bottom),
           fromLeft: Math.round(r.left - b.left), fromRight: Math.round(r.right - b.right)};
 }"""
 
 
+@pytest.mark.parametrize("style", ["simple", "classic"])
 @pytest.mark.parametrize("label", ["Scene selection", "Model quick switch"])
-@pytest.mark.parametrize("w,h", [(1600, 900), (1024, 768), (800, 700)], ids=lambda v: str(v))
-def test_the_top_bar_menus_open_where_they_can_be_seen(desktop, w, h, label):
-    """A menu that drops out of the top bar is seen, whole, where it always was.
+@pytest.mark.parametrize("w,h", [(1600, 900), (1024, 768), (800, 700), (420, 760), (320, 568), (568, 320)], ids=lambda v: str(v))
+def test_the_top_bar_menus_open_where_they_can_be_seen(desktop, w, h, label, style):
+    """Both display styles keep their scene and model controls reachable.
 
-    The bar's halves clip what does not fit on a narrow window. Clipping them
-    vertically as well hid the scene selector's menu and the model quick
-    switch's menu completely: the click opened each one and nothing appeared.
-    Clipping at the side still cut the right-hand end off both menus once the
-    window was narrow enough for the halves to shrink.
+    Classic inline menus retain their anchor. Simple's depth dialog replaces
+    the legacy scene menu, and menus move out of the avatar's reserved stage.
+    Narrow bars put native controls into More; hidden legacy buttons are not
+    a user entry point. Opening a panel must still make it wholly visible and
+    usable, including when its trigger came from the pullout.
     """
     desktop.evaluate("() => { const c = window.fridayCondensed; if (c && c.exit) c.exit(); }")
+    desktop.evaluate("style => window.FridayDisplayStyle.set(style)", style)
     desktop.set_viewport_size({"width": w, "height": h})
     desktop.wait_for_timeout(900)
-    desktop.locator('button[aria-label="%s"]' % label).click()
-    desktop.wait_for_timeout(700)
-    r = desktop.evaluate(MENU_PROBE, label)
-    desktop.keyboard.press("Escape")
-    desktop.mouse.click(w // 2, int(h * 0.45))
-    desktop.wait_for_timeout(400)
-    assert r.get("found"), "no %r button in the top bar" % label
-    assert r.get("opened"), "%r did not open its menu at %dpx" % (label, w)
-    assert r["dropsDown"], "%r's menu opens above the bar at %dpx: %r" % (label, w, r)
-    assert r["visible"], "%r's menu opened but cannot be seen at %dpx: %r" % (label, w, r)
-    assert r["whole"], "%r's menu is cut off at the side at %dpx: %r" % (label, w, r)
-    # Where each menu has always been: 6px under its button, the scene
-    # selector's flush with the button's left edge, the quick switch's with
-    # the pill's right edge.
-    assert abs(r["gap"] - 6) <= 1, "%r's menu moved at %dpx: %r" % (label, w, r)
-    edge = "fromLeft" if label == "Scene selection" else "fromRight"
-    assert abs(r[edge]) <= 1, "%r's menu moved at %dpx: %r" % (label, w, r)
+    depth = style == "simple" and label == "Scene selection"
+    entry = "Scene and workspace depth" if depth else label
+    selector = ".fr-holo-dialog[open]" if depth else (
+        ".friday-scene-menu" if label == "Scene selection" else ".friday-model-menu")
+    button = desktop.get_by_role("button", name=entry, exact=True)
+    more = desktop.get_by_role("button", name="More Friday controls", exact=True, include_hidden=True)
+    try:
+        overflowed = not button.is_visible()
+        if overflowed:
+            more.click()
+            desktop.get_by_role("dialog", name="Friday controls", exact=True).wait_for(state="visible")
+        button.click()
+        menu = desktop.locator(selector)
+        menu.wait_for(state="visible")
+        desktop.wait_for_timeout(700)
+        r = desktop.evaluate(MENU_PROBE, {"label": entry, "selector": selector})
+        context = (style, entry, w, r)
+        assert r.get("found") and r.get("opened"), context
+        assert r["dropsDown"], context
+        assert r["inViewport"] and r["visible"] and r["whole"], context
+        if style == "simple":
+            assert not r["overlapsStage"], context
+        elif not overflowed:
+            assert abs(r["gap"] - 6) <= 1, context
+            edge = "fromLeft" if label == "Scene selection" else "fromRight"
+            assert abs(r[edge]) <= 1, context
+        if label == "Model quick switch":
+            search = menu.locator('input[placeholder^="Search all "]')
+            search.fill("fixture search")
+            assert search.input_value() == "fixture search"
+            search.fill("")
+        else:
+            choices = menu.locator('[data-holo-form]') if depth else menu.locator("button")
+            assert choices.count() > 1, "the avatar collection disappeared"
+            choices.first.click(trial=True)
+            choices.last.click(trial=True)
+    finally:
+        # Use real dismissal controls; a fitted panel may cover its opener.
+        close_depth = desktop.get_by_role("button", name="Close Scene and depth", exact=True)
+        if close_depth.is_visible():
+            close_depth.click()
+        desktop.mouse.click(2, 2)
+        if more.get_attribute("aria-expanded") == "true":
+            desktop.get_by_role("button", name="Close Friday controls", exact=True).click()
+        desktop.evaluate("() => window.FridayDisplayStyle.set('simple')")
+        desktop.wait_for_timeout(400)
 
 def test_condensed_mode_is_the_avatar_and_nothing_else(desktop):
     desktop.set_viewport_size({"width": 340, "height": 400})

@@ -312,9 +312,9 @@ def _json(body):
 
 def test_a_tab_carries_the_workspace_tools_its_customization_and_the_rocket(browser_page):
     page, base = browser_page
-    cust = _json({"customizations": {"news": {"note": "Pinned by Friday",
+    cust = _json({"status": "ok", "customizations": {"news": {"note": "Pinned by Friday",
                                               "actions": [{"label": "Do the thing", "prompt": "do it"}]}}})
-    hist = _json({"entries": [], "current_keys": []})
+    hist = _json({"status": "ok", "entries": [], "current_keys": []})
     page.route("**/api/workspace/customizations", cust)
     page.route("**/api/workspace/news/history", hist)
     try:

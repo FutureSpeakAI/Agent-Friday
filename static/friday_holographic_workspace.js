@@ -19,19 +19,25 @@
 
     function trackingTuner(win, notify = () => {}) {
         let pending = Promise.resolve(), revision = 0;
+        const unsaved = new Map();
         const read = () => win.FridayTracking?.get?.() || {};
         const live = patch => { win.FridayTracking?.apply?.(patch); return read(); };
         function save(patch) {
-            live(patch);
+            const edit = {...patch};
+            live(edit);
             const mine = ++revision;
+            Object.keys(edit).forEach(key => unsaved.set(key, mine));
             notify('Saving tracking preferences…');
             const task = pending.catch(() => {}).then(async () => {
                 if (typeof win.apiFetch !== 'function') throw new Error('Settings are still loading.');
                 const response = await win.apiFetch('/api/settings', { method:'POST',
-                    headers:{'Content-Type':'application/json'}, body:JSON.stringify({settings:{tracking:patch}}) });
+                    headers:{'Content-Type':'application/json'}, body:JSON.stringify({settings:{tracking:edit}}) });
                 const result = await response.json();
                 if (!response.ok || result.status !== 'ok') throw new Error('Your preference could not be saved.');
-                if (mine === revision) notify('Tracking preferences saved.');
+                Object.keys(edit).forEach(key => { if (unsaved.get(key) === mine) unsaved.delete(key); });
+                if (mine === revision) notify(unsaved.size
+                    ? 'Some tracking preferences are not saved. Try those controls again.'
+                    : 'Tracking preferences saved.');
                 return result;
             });
             pending = task;
