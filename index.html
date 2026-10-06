@@ -4468,10 +4468,10 @@ window.addEventListener('DOMContentLoaded',function(){
         // (in octaves of face width: 0.035 is about 2.5%).
         const HEAD_TAU = 0.045, HEAD_Z_DEAD = 0.035;
         let headZHeld = 0;
-        // Where the window's glass stands, as a share of the way from the
-        // resting eye to what it looks at: in front of the avatar, which sits
-        // behind the screen like something seen through a window.
-        const GLASS_AT = 0.62;
+        // The screen plane sits beyond the avatar's focal point so the
+        // avatar appears in front of the display: its image moves against
+        // head motion and leaning in enlarges it. Neutral framing is unchanged.
+        const GLASS_AT = 1.25;
         let lastFaceBoxW = 0;   // for the calibrate button and the debug overlay
         let isFaceVisible = false;
         let faceLostTimeout = null;
@@ -10596,23 +10596,18 @@ window.addEventListener('DOMContentLoaded',function(){
                 const idealLook = targetCamLook.clone().sub(baseCamPos).normalize();
                 currentLook.lerp(idealLook, Math.min(1, delta * 2.0)).normalize();
 
-                // The glass stands in front of the avatar, GLASS_AT of the way
-                // to what the camera looks at, where every structure is built:
-                // the avatar sits behind it and the world's dots on both sides,
-                // so a head that moves sees the avatar from a new place, and
-                // sees around it, without dragging it along. Leaning in brings
-                // the eye nearer the same glass: the avatar comes closer and
-                // the view through the glass widens. Reduced motion keeps only
-                // a gentle lean (lateralGain is 0).
+                // The screen plane sits behind the avatar's focal point.
+                // The avatar holds its world position: moving right reveals
+                // its right side while its image shifts left, and leaning in
+                // enlarges its image. With a neutral head this is the plain
+                // camera projection; reduced motion keeps only a gentle lean.
                 const screenDist = Math.max(4, GLASS_AT * baseCamPos.distanceTo(targetCamLook));
                 const zoom = TK.placeWindow(camera, baseCamPos, currentLook, screenDist,
                                             currFaceX, currFaceY, currFaceZ).zoom;
 
                 // ── DEPTH-LAYERED PARALLAX + HOLOGRAPHIC CUES ───────────
-                // The DOM HUD floats in front of the glass, so it must move
-                // MORE than the scene behind it or the illusion breaks at the
-                // edges. Cues are driven off head angle, not a clock, so they
-                // read as a response rather than an animation.
+                // The DOM HUD's depth cues follow the head angle, not a
+                // clock, so they read as a response rather than an animation.
                 const cue = Math.max(0, Math.min(1, TK.cfg.holo_cues));
                 const rootStyle = document.documentElement.style;
                 rootStyle.setProperty('--holo-par-x', (currFaceX * 18 * pStr).toFixed(2) + 'px');
@@ -55140,7 +55135,7 @@ function TrackingPanel({
       marginBottom: 6,
       lineHeight: 1.6
     }
-  }, "Head tracking turns the screen into a window: the avatar holds its place behind the glass and your head moves the view. Move to one side and you see around it; lean in and it comes closer while the view widens. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the view moves with your head. At 1 it is true to life: the avatar holds still behind the glass and you see it from where you are. 0 turns the sideways movement off.', 0, 2.5, 0.05), sl('viewing_distance_cm', 'Viewing distance', 'How far your eyes usually are from the screen. The window uses it to match the view to how far you really move.', 30, 120, 1, v => Math.round(v) + ' cm'), sl('screen_width_cm', 'Screen width', 'The width of the picture on your screen. 0 works it out from the display; set it if the view moves too much or too little.', 0, 120, 1, v => v > 0 ? Math.round(v) + ' cm' : 'auto'), sl('depth_strength', 'Depth effect', 'How much leaning in and out moves your eye through the window. At 1 it follows your real distance: lean in and the avatar comes closer while the view through the glass widens. 0 turns it off.', 0, 2.5, 0.05), sl('zoom_in_max', 'Lean in, at most', 'How many times nearer the glass your eye may come as you lean in.', 1, 2.5, 0.05, v => v.toFixed(2) + 'x'), sl('zoom_out_max', 'Lean back, at most', 'How many times farther it may go as you lean back.', 1, 2.5, 0.05, v => '1/' + v.toFixed(2)), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('head_response', 'Head response', 'How quickly a fast lean is followed. Left is calmer with a little lag, right is immediate.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
+  }, "Head tracking makes the avatar float in front of the screen. Move to one side and you see around it; lean in and it grows larger. The avatar holds its place while your head moves the view. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the view moves with your head. At 1 the avatar holds its place in front of the screen and you see it from where you are. 0 turns the sideways movement off.', 0, 2.5, 0.05), sl('viewing_distance_cm', 'Viewing distance', 'How far your eyes usually are from the screen. The window uses it to match the view to how far you really move.', 30, 120, 1, v => Math.round(v) + ' cm'), sl('screen_width_cm', 'Screen width', 'The width of the picture on your screen. 0 works it out from the display; set it if the view moves too much or too little.', 0, 120, 1, v => v > 0 ? Math.round(v) + ' cm' : 'auto'), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the view. At 1 it follows your real distance: lean in and the avatar grows larger; lean back and it gets smaller. 0 turns it off.', 0, 2.5, 0.05), sl('zoom_in_max', 'Lean in, at most', 'How many times nearer the glass your eye may come as you lean in.', 1, 2.5, 0.05, v => v.toFixed(2) + 'x'), sl('zoom_out_max', 'Lean back, at most', 'How many times farther it may go as you lean back.', 1, 2.5, 0.05, v => '1/' + v.toFixed(2)), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('head_response', 'Head response', 'How quickly a fast lean is followed. Left is calmer with a little lag, right is immediate.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": "Click method",
     style: {

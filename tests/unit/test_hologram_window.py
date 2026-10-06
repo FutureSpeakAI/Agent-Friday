@@ -1,9 +1,8 @@
-"""The hologram window: with face tracking on, the screen is a window and the
-avatar holds its place in the world behind it. The user's head moves only the
-eye: move aside and the avatar is seen from there, and what was past the far
-edge comes into view; lean in and the avatar comes closer while the view
-through the glass widens. The glass is the screen, so what sits on it stays
-put on screen. It is done at the camera and projection level, so every
+"""The hologram window: with face tracking on, the avatar holds its place in
+front of the screen. The user's head moves only the eye: move aside and the
+avatar moves the opposite way across the screen; lean in and its projected
+size grows. The glass is the screen, so what sits on it stays put on screen.
+It is done at the camera and projection level, so every
 structure answers to it at once and a structure that evolves cannot lose it,
 and nothing in an avatar reads the head.
 
@@ -12,13 +11,13 @@ index.html with the vendored three.js, through the same placeWindow the render
 loop calls: the avatar's world position is the same at every head position
 while the projection changes, the glass is fixed to the screen, the sides and
 the lean behave like a window, a head movement in centimetres is the same
-movement behind the glass, the clamps hold, reduced motion keeps only a gentle
+movement across the glass, the clamps hold, reduced motion keeps only a gentle
 lean, and a lost face eases back in about 300 ms. A static check holds every
 reader of the head state to the camera, the HUD and the dock. Then a real
 browser loads the served page and, for each of the fifteen structures,
-measures how close its centre is to the eye at rest and leaned in, before and
-again after a genome step has rebuilt every structure, and that the structure
-stays where it is.
+measures the projected size of a unit at its centre at rest and leaned in,
+before and again after a genome step has rebuilt every structure, and that
+the structure stays where it is.
 """
 import functools
 import http.server
@@ -44,7 +43,13 @@ BLOCK = re.compile(r"// <tracking-engine>\n(.*?)// </tracking-engine>", re.S)
 # capped by zoom_in_max.
 NEUTRAL_W = 0.18
 STRUCTURE_COUNT = 15
-GLASS_AT = 0.62          # the page's share of the way from the eye to the look target
+
+
+def served_glass_at(src):
+    """Use the served depth so an old production value fails behavioural tests."""
+    match = re.search(r"const GLASS_AT = ([0-9.]+);", src)
+    assert match, "index.html has no GLASS_AT constant"
+    return float(match.group(1))
 
 
 # ── the engine under node ─────────────────────────────────────────────────────
@@ -86,23 +91,47 @@ const FAR = 40;
 const pastRight = onGlass(1.1 * (S + FAR) / S, 0).addScaledVector(look, FAR);
 const front = base.clone().addScaledVector(look, 0.6 * S);      // between the eye and the glass
 const ndc = v => { const p = v.clone().project(cam); return [p.x, p.y]; };
+// Project a fixed unit at the avatar: camera distance alone misses the
+// changing focal scale of an off-axis frustum.
+const projectedUnit = () => [right, up].map((axis, i) =>
+  Math.abs(ndc(target.clone().addScaledVector(axis, 0.5))[i] -
+           ndc(target.clone().addScaledVector(axis, -0.5))[i]));
 const snap = (hx, hy, hz) => {
   const r = at(hx, hy, hz);
   return { r, avatar: avatar.getWorldPosition(new THREE.Vector3()).toArray(),
            proj: Array.from(cam.projectionMatrix.elements), quat: cam.quaternion.toArray(),
-           eye: cam.position.toArray(), glass: glassPts.map(ndc), centre: ndc(target),
+           eye: cam.position.toArray(), glass: glassPts.map(ndc), centre: ndc(target), size: projectedUnit(),
            pastRight: ndc(pastRight), front: ndc(front), dist: cam.position.distanceTo(target) };
 };
-const out = {};
+const out = { glassAt: GLASS_AT };
 TK.apply({ depth_strength: 1, zoom_in_max: 1.8, zoom_out_max: 1.5, parallax_strength: 1,
            viewing_distance_cm: 60, screen_width_cm: 0 });
 out.poses = { left: snap(-0.5, 0, 0), centre: snap(0, 0, 0), right: snap(0.5, 0, 0),
-              near: snap(0, 0, 1), far: snap(0, 0, -1), up: snap(0, -0.5, 0) };
+              near: snap(0, 0, 1), far: snap(0, 0, -1), up: snap(0, -0.5, 0), down: snap(0, 0.5, 0) };
+// Run the real detector callback as well as the projection. Raw webcam X
+// decreases when the viewer moves right; Y decreases when the viewer rises.
+let rawFaceX = 0, rawFaceY = 0, rawFaceZ = 0, lastFaceBoxW = 0;
+let isFaceVisible = false, faceLostTimeout = null, lastFaceAt = 0, faceGapMs = 0;
+const FACE_HOLD_MS = 300;
+function updateCameraIndicator() {}
+globalThis.setTimeout = () => 0; globalThis.clearTimeout = () => {};
+FACE_RESULTS
+function detected(xCenter, yCenter, width = 0.18) {
+  TK.calibrate(0.18);
+  onFaceResults({ detections: [{ boundingBox: { xCenter, yCenter, width } }] });
+  return { head: [TK.head.x, TK.head.y, TK.head.z], pose: snap(TK.head.x, TK.head.y, TK.head.z) };
+}
+out.detected = { right: detected(0.3, 0.5), left: detected(0.7, 0.5),
+                 up: detected(0.5, 0.3), down: detected(0.5, 0.7),
+                 centre: detected(0.5, 0.5), near: detected(0.5, 0.5, 0.36) };
 out.plain_when_neutral = (() => {
   at(0, 0, 0);
   const plain = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 1000);
   return cam.projectionMatrix.elements.every((v, i) => Math.abs(v - plain.projectionMatrix.elements[i]) < 1e-9);
 })();
+TK.apply({ depth_strength: 0, parallax_strength: 0 });
+out.dials_off = snap(0.8, 0.6, 2);
+TK.apply({ depth_strength: 1, parallax_strength: 1 });
 // True to the head: a screen 50 cm wide filling the page, a head 10 cm right.
 TK.apply({ screen_width_cm: 50 });
 const gw = TK.glassHalf(cam, S).w, hx10 = 10 / (TK.WEBCAM_TAN_X * 60);
@@ -118,6 +147,8 @@ TK.apply({ depth_strength: 0 }); out.zoom_off = TK.headZoom(1);
 TK.apply({ depth_strength: 1, zoom_in_max: 9, zoom_out_max: 9 });
 out.zoom_hard_cap = TK.headZoom(5); out.zoom_nan = TK.headZoom(NaN);
 out.dolly_floor = (S - TK.eyeDolly(S, TK.headZoom(5))) / S;
+out.closest = snap(0, 0, 5);
+out.closest_depth = target.clone().sub(cam.position).dot(look) / D;
 reduced = true;
 out.reduced_in = TK.headZoom(3); out.reduced_out = TK.headZoom(-3); out.reduced_lateral = TK.lateralGain();
 out.reduced_eye = at(0.5, 0.3, 0).ex;
@@ -146,10 +177,15 @@ console.log(JSON.stringify(out));
 def engine():
     if not node:
         pytest.skip("node is not installed")
-    m = BLOCK.search(INDEX.read_text(encoding="utf-8"))
+    page_src = INDEX.read_text(encoding="utf-8")
+    m = BLOCK.search(page_src)
     assert m, "index.html has no <tracking-engine> block"
+    face = re.search(r"        function onFaceResults\(results\) \{.*?\n        \}", page_src, re.S)
+    assert face, "index.html has no onFaceResults callback"
     three = str(REPO / "static" / "vendor" / "three-r128.min.js")
-    src = NODE_HARNESS.replace("BLOCK", m.group(1)).replace("GLASS_AT", repr(GLASS_AT))
+    src = (NODE_HARNESS.replace("BLOCK", m.group(1))
+           .replace("FACE_RESULTS", face.group(0))
+           .replace("GLASS_AT", repr(served_glass_at(page_src))))
     r = subprocess.run([node, "-", three], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout.strip().splitlines()[-1])
@@ -159,9 +195,9 @@ def _close(a, b, tol=1e-9):
     return all(abs(x - y) <= tol for x, y in zip(a, b))
 
 
-def test_the_page_puts_the_glass_where_this_test_does():
+def test_the_page_puts_the_avatar_in_front_of_the_glass(engine):
     src = INDEX.read_text(encoding="utf-8")
-    assert "const GLASS_AT = %s;" % GLASS_AT in src
+    assert engine["glassAt"] > 1, "the avatar is still behind the screen"
     assert "TK.placeWindow(camera, baseCamPos, currentLook, screenDist," in src
 
 
@@ -169,7 +205,7 @@ def test_the_avatar_holds_its_place_while_the_projection_changes(engine):
     """Left, centre, right, near and far: the avatar is where it was, the
     camera faces the same way, and only the eye and the projection move."""
     poses = engine["poses"]
-    names = ["left", "centre", "right", "near", "far"]
+    names = ["left", "centre", "right", "near", "far", "up", "down"]
     for n in names:
         assert _close(poses[n]["avatar"], poses["centre"]["avatar"], 0), n
         assert _close(poses[n]["quat"], poses["centre"]["quat"], 1e-12), n
@@ -189,29 +225,40 @@ def test_the_glass_is_the_screen(engine):
 
 
 def test_moving_aside_sees_the_avatar_from_there(engine):
-    """Behind the glass, the avatar slides toward the side the head went (it
-    is seen past the frame from a new place); what is in front of the glass
-    moves the other way; and moving left brings into view what was past the
-    right edge."""
+    """The foreground avatar projects opposite the head; the distant
+    background moves with it, while the screen itself remains anchored."""
     p = engine["poses"]
-    assert p["right"]["centre"][0] > 0.05 and p["left"]["centre"][0] < -0.05
+    assert p["right"]["centre"][0] < -0.05 and p["left"]["centre"][0] > 0.05
     assert p["right"]["front"][0] < p["centre"]["front"][0] < p["left"]["front"][0]
     assert p["centre"]["pastRight"][0] == pytest.approx(1.1, abs=1e-6)
     assert p["left"]["pastRight"][0] < 1, "moving left should show what was past the right edge"
     assert p["right"]["pastRight"][0] > 1.1
-    assert p["up"]["centre"][1] > 0.05, "the head up, the avatar slides up past the frame"
+    assert p["up"]["centre"][1] < -0.05, "head up must reveal the avatar from above"
+    assert p["down"]["centre"][1] > 0.05, "head down must reveal the avatar from below"
 
 
-def test_leaning_in_brings_it_closer_and_widens_the_view(engine):
+def test_detector_coordinates_reach_the_foreground_projection(engine):
+    p = engine["detected"]
+    assert p["right"]["head"][0] > 0 and p["left"]["head"][0] < 0
+    assert p["up"]["head"][1] < 0 and p["down"]["head"][1] > 0
+    assert p["right"]["pose"]["centre"][0] < 0 < p["left"]["pose"]["centre"][0]
+    assert p["up"]["pose"]["centre"][1] < 0 < p["down"]["pose"]["centre"][1]
+    assert p["near"]["pose"]["size"][0] > p["centre"]["pose"]["size"][0]
+
+
+def test_leaning_in_enlarges_the_avatar_and_widens_the_background_view(engine):
     p = engine["poses"]
     assert p["near"]["dist"] < 0.8 * p["centre"]["dist"], "leaning in should bring the avatar closer"
     assert p["far"]["dist"] > 1.2 * p["centre"]["dist"]
+    for axis in (0, 1):
+        assert p["near"]["size"][axis] > 1.1 * p["centre"]["size"][axis]
+        assert p["far"]["size"][axis] < 0.99 * p["centre"]["size"][axis]
     # The glass shows more: something far behind it draws nearer the middle.
     assert abs(p["near"]["pastRight"][0]) < 0.8 * abs(p["centre"]["pastRight"][0])
     assert abs(p["far"]["pastRight"][0]) > abs(p["centre"]["pastRight"][0])
 
 
-def test_a_head_movement_is_the_same_movement_behind_the_glass(engine):
+def test_a_head_movement_is_the_same_movement_at_the_glass(engine):
     """With the screen's width known, a head 10 cm to the right puts the eye
     10 screen-centimetres to the right of the glass's middle; leaning in, the
     same place in the camera's view is fewer centimetres off; the parallax
@@ -228,6 +275,11 @@ def test_with_the_head_at_rest_the_projection_is_the_plain_camera(engine):
     assert engine["plain_when_neutral"]
 
 
+def test_turning_both_tracking_dials_off_preserves_the_neutral_view(engine):
+    for field in ("eye", "proj", "centre", "size"):
+        assert _close(engine["dials_off"][field], engine["poses"]["centre"][field]), field
+
+
 def test_the_lean_follows_the_head_and_is_bounded(engine):
     assert engine["zoom_octave"] == pytest.approx(1.8)          # 2, capped by zoom_in_max
     assert engine["zoom_back"] == pytest.approx(1 / 1.5)        # 0.5, capped by zoom_out_max
@@ -236,9 +288,11 @@ def test_the_lean_follows_the_head_and_is_bounded(engine):
     assert engine["zoom_nan"] == 1
 
 
-def test_the_eye_can_never_reach_the_avatar_whatever_the_dials_say(engine):
+def test_maximum_lean_stays_short_of_the_avatar_focal_point(engine):
     assert engine["zoom_hard_cap"] == pytest.approx(2.5)
     assert engine["dolly_floor"] == pytest.approx(0.4)
+    assert engine["closest_depth"] >= 0.25 - 1e-9, "maximum lean crosses the avatar's resting depth"
+    assert all(0 < value < 1 for value in engine["closest"]["size"])
 
 
 def test_reduced_motion_keeps_only_a_gentle_lean(engine):
@@ -325,11 +379,10 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
 MEASURE = r"""
 window.__holo = {
-  // How near the active structure's centre is to the eye, as 1 / distance:
-  // the size a unit there subtends, which is what "closer" means through a
-  // window. The bounding sphere's centre, so a structure's own breathing and
-  // transition scale cancel out; only the eye is left. `at` is where the
-  // structure itself stands in the world.
+  // Project a fixed unit at the active structure's centre through the real
+  // camera matrix. This includes the frustum's changing focal scale, which
+  // an inverse-distance check misses. A fixed unit cancels the structure's
+  // breathing and transition scale; `at` is its unchanged world position.
   measure() {
     const s = fridayDebugScene(); const g = s.structures[s.targetStructure]; const cam = s.camera;
     if (!g || !cam) return null;
@@ -343,7 +396,12 @@ window.__holo = {
     if (box.isEmpty()) return null;
     const sph = box.getBoundingSphere(new THREE.Sphere());
     if (!(sph.radius > 0.05) || !isFinite(sph.radius)) return null;
-    return { unit: 1 / cam.position.distanceTo(sph.center), structure: s.targetStructure,
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+    const a = sph.center.clone().addScaledVector(right, -0.5).project(cam);
+    const b = sph.center.clone().addScaledVector(right, 0.5).project(cam);
+    const unit = Math.abs(b.x - a.x);
+    if (!(unit > 0) || !isFinite(unit)) return null;
+    return { unit, structure: s.targetStructure,
              at: g.getWorldPosition(new THREE.Vector3()).toArray(),
              zoom: FridayTracking.head.zoom, z: FridayTracking.head.z };
   },
@@ -454,8 +512,8 @@ def _unit_at(pg, octaves, samples=3):
 
 
 def _ratio(pg, octaves):
-    """Leaned by `octaves`, how much nearer the eye the structure's centre is
-    than at rest, and where the structure stood each time. Rest is sampled on
+    """Leaned by `octaves`, how much larger a projected unit at the structure's
+    centre is than at rest, and where it stood each time. Rest is sampled on
     both sides of the lean."""
     _settled(pg, 0)
     _eye_still(pg, "a held head at rest")
@@ -466,9 +524,8 @@ def _ratio(pg, octaves):
 
 
 def _each_structure(pg, label):
-    """For every structure: how much nearer its centre comes leaned in by one
-    octave, and that the structure itself stays where it is, leaned or moved
-    aside. Returns what is wrong."""
+    """For every structure: a unit at its centre grows on screen when leaned
+    in by one octave, and the structure stays put. Returns what is wrong."""
     ids = pg.evaluate("__holo.structures()")
     assert len(ids) == STRUCTURE_COUNT, ids
     wrong = []
@@ -480,23 +537,20 @@ def _each_structure(pg, label):
         pg.evaluate("__holo.aside(0.6)")
         _until(pg, "() => __holo.x() > 0.5", "the head never moved sideways")
         ats.append(pg.evaluate("__holo.measure()")["at"])
-        # zoom_in_max is 1.8: the eye comes from the glass's distance to 1/1.8
-        # of it, and the glass stands GLASS_AT of the way to the look target,
-        # so a centre at the look target comes 1 / (1 - 0.62 * (1 - 1/1.8)),
-        # about 1.38x, nearer. A centre in front of its look target comes
-        # nearer still, one behind it less. A structure that ignored the lean
-        # would sit at 1.0 and the gentle reduced-motion lean at about 1.07.
-        if not 1.2 <= ratio <= 3:
-            wrong.append("%s: %.2fx nearer (%s)" % (sid, ratio, label))
+        # The frustum widens as the eye approaches the glass. The avatar
+        # must nevertheless GROW on screen, which only happens when its
+        # centre is in front of the glass. Its world position must not move.
+        if not 1.02 <= ratio <= 3:
+            wrong.append("%s: %.2fx projected size (%s)" % (sid, ratio, label))
         if any(max(abs(a - b) for a, b in zip(at, ats[0])) > 1e-9 for at in ats):
             wrong.append("%s moved with the head: %s (%s)" % (sid, ats, label))
     pg.evaluate("__holo.release()")
     return wrong
 
 
-def test_every_structure_comes_closer_when_you_lean_in_and_stays_put(page):
+def test_every_structure_grows_on_screen_when_you_lean_in_and_stays_put(page):
     wrong = _each_structure(page, "v1 look")
-    assert not wrong, "leaning in one octave should bring each structure about 1.4x nearer, and none may move:\n  " \
+    assert not wrong, "leaning in should enlarge each structure on screen, and none may move:\n  " \
         + "\n  ".join(wrong)
 
 
@@ -511,7 +565,7 @@ def test_leaning_back_makes_it_recede(page):
     page.evaluate("__holo.show(1)")                              # the sphere, centred on its look target
     ratio, _ = _ratio(page, -1)
     page.evaluate("__holo.release()")
-    assert 0.68 <= ratio <= 0.84, ratio                          # 1 / (1 + 0.62 * 0.5) = 0.76
+    assert 0.91 <= ratio <= 0.97, ratio                          # projected size: 1.5 / (1 + 1.25 * 0.5)
 
 
 def test_with_no_face_the_scene_is_the_plain_camera(page):
@@ -542,7 +596,7 @@ def test_reduced_motion_keeps_a_gentle_lean_and_no_sideways_shear(page):
     try:
         page.evaluate("__holo.show(1)")
         ratio, _ = _ratio(page, 1)
-        assert 1.03 <= ratio <= 1.12, ratio                      # GENTLE_ZOOM 1.12: about 1.07
+        assert 1.01 <= ratio <= 1.05, ratio                      # GENTLE_ZOOM 1.12: about 1.031 on screen
         page.evaluate("__holo.aside(0.8)")
         _until(page, "() => __holo.x() > 0.7", "the head never moved sideways")
         page.wait_for_timeout(100)
@@ -563,7 +617,7 @@ def test_the_action_bus_applies_a_spoken_change_live(page):
         assert res["cfg"] == 1.25 and res["result"]["tracking"]["zoom_in_max"] == 1.25
         page.evaluate("__holo.show(1)")
         ratio, _ = _ratio(page, 1)
-        assert 1.08 <= ratio <= 1.22, ratio                      # zoom_in_max 1.25: about 1.14
+        assert 1.03 <= ratio <= 1.08, ratio                      # zoom_in_max 1.25: about 1.067 on screen
         # No face on the camera: a calibrate says so rather than storing a stale width.
         cal = page.evaluate("""() => { const a = { type: 'tracking', op: 'calibrate' };
                                      fridayRunActions([a]); return a.result; }""")

@@ -1,8 +1,8 @@
 """The hologram window, by voice and chat: the hologram_window tool.
 
-With face tracking on, the screen is a window onto the avatar: it holds its
-place behind the glass and the head moves the view, so moving aside shows it
-from the side and leaning in brings it closer while the view widens. The dials that shape that live in Settings (tracking) and are the
+With face tracking on, the avatar holds its place in front of the screen
+and the head moves the view: moving aside shows it from the side and leaning
+in enlarges it. The dials that shape that live in Settings (tracking) and are the
 owner's to tune by ear, so one tool, declared once in the text registry and
 shared into voice (voice_engine._VOICE_SHARED_TOOLS), sets them: "make the
 depth stronger", "let me lean in further", "I sit eighty centimetres away",
@@ -223,9 +223,9 @@ TOOLS = [
     {"name": "hologram_window",
      "description": (
          "The hologram window on the user's Friday desktop: with face tracking on, "
-         "the 3D avatar holds its place behind the screen and the user's head moves "
-         "the view: moving aside shows it from the side, leaning in brings it closer "
-         "while the view widens. action=status says how it is set; set changes any "
+         "the 3D avatar holds its place in front of the screen and the user's head moves "
+         "the view: moving aside shows it from the side, leaning in enlarges it. "
+         "action=status says how it is set; set changes any "
          "of the dials given (depth_strength 0-2.5, 1 means the view follows their "
          "real distance; zoom_in_max and zoom_out_max 1-2.5, how many times nearer "
          "or farther the eye may go; parallax_strength 0-2.5, 1 is true to life; "
