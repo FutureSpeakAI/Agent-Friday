@@ -188,6 +188,7 @@ def test_standalone_chat_respects_the_header_at_every_size(browser_page, style, 
             page.get_by_role("button", name="More Friday controls", exact=True).click()
         chat.click()
         page.wait_for_selector(".chat-panel.open", timeout=10000)
+        assert not page.locator(".chat-panel.open .chat-resize-h").is_visible()
         page.wait_for_function("""() => {
           const bar = document.querySelector('.top-bar').getBoundingClientRect();
           const tray = document.querySelector('.chat-panel.open').getBoundingClientRect();
