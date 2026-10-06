@@ -186,6 +186,7 @@
         const originalFog = new WeakMap();
         const tagged = new Map();
         const reduced = win.matchMedia('(prefers-reduced-motion: reduce)');
+        const simpleStyle = () => win.FridayDisplayStyle ? win.FridayDisplayStyle.get() === 'simple' : doc.body?.classList.contains('friday-experience-enabled');
 
         function persist() {
             try { win.localStorage.setItem('friday_holographic_workspace_v1', JSON.stringify({ mode: state.mode, arrangement: state.arrangement })); } catch (_) {}
@@ -211,6 +212,7 @@
             ownedPreview = null;
         }
         function ensureDepth() {
+            if (!simpleStyle()) return;
             if (!depth && win.FridayWorkspaceDepth) {
                 depth = new win.FridayWorkspaceDepth({ root }); depth.setMode(state.mode); depth.setSource(state.source);
             }
@@ -261,7 +263,7 @@
         function workspaceArea(area) {
             if (!area || destroyed) return area;
             const rightChat = parseFloat(win.getComputedStyle(root).getPropertyValue('--fr-chat-dock')) || 0;
-            const enabled = doc.body.classList.contains('friday-experience-enabled') && !win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat';
+            const enabled = simpleStyle() && doc.body.classList.contains('friday-experience-enabled') && !win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat';
             const compact = enabled && (win.innerWidth < 1100 || area.w < 680);
             const gutter = win.innerWidth < 760 ? 8 : 16;
             // A compact chat shares the work region beneath the stage. Its
@@ -279,7 +281,9 @@
                 ownedTopbar = true;
                 for (const el of [bar,dock]) if(el && chromeObserver && !observedChrome.has(el)){observedChrome.add(el);chromeObserver.observe(el);}
             } else if(ownedTopbar) {
-                if(previousTopbar)root.style.setProperty('--fr-topbar-h',previousTopbar);else root.style.removeProperty('--fr-topbar-h');
+                if(!doc.querySelector('.friday-responsive-topbar')){
+                    if(previousTopbar)root.style.setProperty('--fr-topbar-h',previousTopbar);else root.style.removeProperty('--fr-topbar-h');
+                }
                 ownedTopbar=false;
             }
             occupancy = reserveCaption(spatialLayout(base, { enabled, compact, shortLandscape: win.innerHeight <= 500 && win.innerWidth > win.innerHeight, viewportWidth: win.innerWidth, arrangement: state.arrangement, rightChat: rightChat > 0 }));
@@ -287,10 +291,19 @@
         }
         function updateLayout() {
             if (destroyed || !doc.body) return;
+            const styled = simpleStyle();
             const windows = workspaces();
             const present = windows.length > 0 && !win.__FRIDAY_STANDALONE__;
-            doc.body.dataset.fridayHoloArrangement = state.arrangement;
-            doc.body.dataset.fridayHoloWorking = String(present);
+            if (styled) {
+                doc.body.dataset.fridayHoloArrangement = state.arrangement;
+                doc.body.dataset.fridayHoloWorking = String(present);
+            } else {
+                delete doc.body.dataset.fridayHoloArrangement; delete doc.body.dataset.fridayHoloWorking;
+                // Display style changes preserve the native avatar and any live
+                // camera owner. Only workspace decoration and fitting pause.
+                depth?.destroy(); depth = null;
+                tagged.forEach((value, el) => { if (el.getAttribute('data-depth') === 'middle') el.removeAttribute('data-depth'); }); tagged.clear();
+            }
             if (typeof win.fridayDesktopArea === 'function') win.fridayDesktopArea();
             const content = occupancy.content, stage = occupancy.stage;
             if (stage) doc.body.dataset.fridaySpatialLayout = occupancy.layout;
@@ -304,10 +317,10 @@
                 '--friday-avatar-width': stage?.w || 0, '--friday-avatar-height': stage?.h || 0,
                 '--friday-avatar-gap': 16,
             };
-            Object.entries(values).forEach(([name,value]) => root.style.setProperty(name, value + 'px'));
+            Object.entries(values).forEach(([name,value]) => { if (styled) root.style.setProperty(name, value + 'px'); else root.style.removeProperty(name); });
             const spatialNext=JSON.stringify(occupancy);
             if(spatialNext!==spatialSignature){spatialSignature=spatialNext;win.dispatchEvent(new win.CustomEvent('friday:spatial-layout',{detail:JSON.parse(spatialNext)}));}
-            for (const el of doc.querySelectorAll('.fwin-body,.chat-panel,.chat-win')) {
+            for (const el of styled ? doc.querySelectorAll('.fwin-body,.chat-panel,.chat-win') : []) {
                 if (!tagged.has(el) && !el.hasAttribute('data-depth')) { tagged.set(el, null); el.setAttribute('data-depth', 'middle'); }
             }
         }
@@ -607,7 +620,7 @@
             win.clearInterval(timer); observer?.disconnect(); chromeObserver?.disconnect(); win.cancelAnimationFrame(chromeFrame); depth?.destroy(); dialog?.remove();
             doc.removeEventListener('pointermove', onPointer); doc.removeEventListener('pointerleave', leavePointer); doc.removeEventListener('visibilitychange', onVisibility);
             doc.removeEventListener('transitionrun',onChromeTransition,true); doc.removeEventListener('transitionend',onChromeTransition,true);
-            win.removeEventListener('resize', updateLayout); win.removeEventListener('friday:surface-changed', updateLayout); win.removeEventListener('friday:chat-dock', updateLayout); win.removeEventListener('pagehide', destroy); reduced.removeEventListener?.('change', refreshReduced);
+            win.removeEventListener('resize', updateLayout); win.removeEventListener('friday:surface-changed', updateLayout); win.removeEventListener('friday:chat-dock', updateLayout); win.removeEventListener('friday:display-style', onDisplayStyle); win.removeEventListener('pagehide', destroy); reduced.removeEventListener?.('change', refreshReduced);
             tagged.forEach((value, el) => { if (el.getAttribute('data-depth') === 'middle') el.removeAttribute('data-depth'); }); tagged.clear();
             delete doc.body.dataset.fridayHoloArrangement; delete doc.body.dataset.fridayHoloWorking; delete doc.body.dataset.fridayHoloStudio; delete doc.body.dataset.fridaySpatialLayout;
             for (const name of ['content-left','content-right','content-top','content-bottom','avatar-left','avatar-top','avatar-width','avatar-height','avatar-gap']) root.style.removeProperty('--friday-'+name);
@@ -615,6 +628,10 @@
             occupancy={layout:'classic',content:null,stage:null};projectedBounds=null;
         }
         function refreshReduced() { if (reduced.matches) clearPreview(); refreshPanel(); }
+        function onDisplayStyle() {
+            if (!simpleStyle() && state.open) close();
+            updateLayout(); ensureDepth();
+        }
         function start() {
             if (destroyed || timer !== null) return;
             if(win.ResizeObserver)chromeObserver=new win.ResizeObserver(updateLayout);
@@ -623,7 +640,7 @@
             observer = new win.MutationObserver(updateLayout); observer.observe(doc.getElementById('ui-root') || doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
             doc.addEventListener('pointermove', onPointer, { passive: true }); doc.addEventListener('pointerleave', leavePointer); doc.addEventListener('visibilitychange', onVisibility);
             doc.addEventListener('transitionrun',onChromeTransition,true); doc.addEventListener('transitionend',onChromeTransition,true);
-            win.addEventListener('resize', updateLayout); win.addEventListener('friday:surface-changed', updateLayout); win.addEventListener('friday:chat-dock', updateLayout); win.addEventListener('pagehide', destroy); reduced.addEventListener?.('change', refreshReduced);
+            win.addEventListener('resize', updateLayout); win.addEventListener('friday:surface-changed', updateLayout); win.addEventListener('friday:chat-dock', updateLayout); win.addEventListener('friday:display-style', onDisplayStyle); win.addEventListener('pagehide', destroy); reduced.addEventListener?.('change', refreshReduced);
         }
         if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start, { once: true }); else start();
         return { open, close, setMode, setArrangement, workspaceArea, fitSceneCamera, projectSceneStage, updateAmbientStage, constrainRect: rect => constrainSpatialRect(rect, occupancy.stage ? occupancy.content : null), destroy, get stageRect() { return occupancy.stage ? { ...occupancy.stage } : null; }, get state() { return { ...state, ownsTracking: !!session?.owns, spatial: JSON.parse(JSON.stringify(occupancy)), projectedAvatarBounds: projectedBounds ? {...projectedBounds} : null }; } };

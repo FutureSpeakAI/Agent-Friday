@@ -20442,7 +20442,9 @@ function SettingsTabAppearance({
   const dz = ['off', 'subtle', 'full'];
   const cur = s.studio_dazzle || 'full';
   const lm = FRIDAY_LANDING_MODES.indexOf(s.landing_mode) >= 0 ? s.landing_mode : 'smart';
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null,
+    window.FridayDisplayStyleOptions && React.createElement(StSection, {title:"Display style", desc:"Choose your desktop presentation. Avatars and holographic features remain available in both styles."}, React.createElement(window.FridayDisplayStyleOptions)),
+    /*#__PURE__*/React.createElement(StSection, {
     title: "Dock",
     desc: "Which workspaces the dock shows, and in what order."
   }, /*#__PURE__*/React.createElement(DockSettingsPanel, null), /*#__PURE__*/React.createElement("div", {
@@ -21210,16 +21212,21 @@ function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const [focusWin, setFocusWin] = useState(null);
   // The desktop preserves native window instances when returning to a project.
-  const experienceEnabled = typeof window.FridayExperience === 'function' && !STANDALONE_WS && !window.__FRIDAY_CHROME__ && new URLSearchParams(window.location.search).get('experience') !== 'classic';
+  const [displayStyle, setDisplayStyle] = useState(() => window.FridayDisplayStyle?.get() || 'simple');
+  useEffect(() => window.FridayDisplayStyle?.subscribe(value => setDisplayStyle(value.style)), []);
+  const experienceAvailable = typeof window.FridayExperience === 'function' && !STANDALONE_WS && !window.__FRIDAY_CHROME__;
+  const experienceEnabled = experienceAvailable && displayStyle === 'simple';
   const [experienceDesktop, setExperienceDesktop] = useState(true);
   const [projectsStatus, setProjectsStatus] = useState({loading:true,error:''});
   const [tasksStatus, setTasksStatus] = useState({loading:true,error:''});
   useEffect(() => {
-    const styled = new URLSearchParams(window.location.search).get('experience') !== 'classic';
+    const styled = displayStyle === 'simple';
+    document.body.dataset.fridayDisplayStyle = displayStyle;
     document.body.classList.toggle('friday-experience-enabled', styled);
     document.body.classList.toggle('friday-experience-desktop', experienceEnabled);
+    window.dispatchEvent(new CustomEvent('friday:surface-changed'));
     return () => { document.body.classList.remove('friday-experience-enabled', 'friday-experience-desktop'); };
-  }, [experienceEnabled]);
+  }, [experienceEnabled, displayStyle]);
   useEffect(() => { if (openWins.size === 0) setExperienceDesktop(true); }, [openWins.size]);
 
   const [convList, setConvList] = useState([]);
@@ -23138,7 +23145,7 @@ function App(){
   // after everything in the page has had it and before the document does.
   // With no workspace open the scene has them as before.
   const shellOwnsArrows=useRef(false);
-  shellOwnsArrows.current = !!STANDALONE_WS || openWins.size > 0 && !(experienceEnabled && experienceDesktop);
+  shellOwnsArrows.current = !!STANDALONE_WS || openWins.size > 0 && !experienceDesktop;
   useEffect(()=>{
     const h=e=>{if(shellOwnsArrows.current&&fridaySceneKey(e))e.stopPropagation()};
     document.documentElement.addEventListener('keydown',h);
@@ -23245,7 +23252,7 @@ function App(){
   // Every open and toggle passes here first. A held workspace counts as
   // handled: it neither opens a window nor navigates a tab.
   const tabGo=rawId=>{if(fridayWsHeld(rawId))return true;if(!STANDALONE_WS||STANDALONE_WS==='settings')return false;const id=fridayWorkspaceId(rawId);if(id==='settings')setSettingsOpen(true);else if(id!==STANDALONE_WS)window.location.href='/w/'+encodeURIComponent(id);return true};
-  const toggle=id=>{if(tabGo(id))return;if(experienceEnabled&&experienceDesktop&&openWinsRef.current.has(id)){setExperienceDesktop(false);bringFront(id);return}setExperienceDesktop(false);if(openWinsRef.current.has(id)&&!closingRef.current.has(id)){close(id);return}cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
+  const toggle=id=>{if(tabGo(id))return;if(experienceDesktop&&openWinsRef.current.has(id)){setExperienceDesktop(false);bringFront(id);return}setExperienceDesktop(false);if(openWinsRef.current.has(id)&&!closingRef.current.has(id)){close(id);return}cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
   // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
   // so clicking a notification for an already-open workspace doesn't close it.
   const openWs=rawId=>{if(tabGo(rawId))return;setExperienceDesktop(false);const id=fridayWorkspaceId(rawId);cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
@@ -23820,8 +23827,8 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   const landingSees = useRef({});
   landingSees.current = {
     mode: landingMode,
-    windows: openWins.size,
-    front: focusWin && openWins.has(focusWin) ? (WS.find(w => w.id === focusWin) || {}).label || '' : '',
+    windows: experienceDesktop ? 0 : openWins.size,
+    front: !experienceDesktop && focusWin && openWins.has(focusWin) ? (WS.find(w => w.id === focusWin) || {}).label || '' : '',
     voice: !!voiceOn,
     chat: !!chatOpen,
     items: countdowns
@@ -23829,7 +23836,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   const landingJudge = useRef(() => {});
   useEffect(() => {
     landingJudge.current();
-  }, [landingMode, openWins, focusWin, voiceOn, chatOpen, countdowns]);
+  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, countdowns]);
   // Hidden, the cluster takes no focus and no screen reader's attention.
   useEffect(() => {
     const el = landingElRef.current;
@@ -23853,7 +23860,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   // Ctrl+/: the cluster's chat field when the desktop shows no window (the
   // cluster comes with it), else the chat tray's.
   const focusChatField = () => {
-    if (!experienceEnabled && !STANDALONE_WS && openWins.size === 0) {
+    if (!experienceEnabled && !STANDALONE_WS && (experienceDesktop || openWins.size === 0)) {
       window.dispatchEvent(new CustomEvent('friday:landing', { detail: { summon: true, focus: true, via: 'key' } }));
       return;
     }
@@ -24001,7 +24008,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const[tabHistOpen,setTabHistOpen]=useState(false);
   const shellMeeting = <MeetingRecIndicator/>;
-  const shellExperienceAvailable = typeof window.FridayExperience === 'function' && new URLSearchParams(window.location.search).get('experience') !== 'classic';
+  const shellExperienceAvailable = typeof window.FridayExperience === 'function' && displayStyle === 'simple';
   const shellNavigate = target => {
     try { navigateWithDrafts(target); return true; }
     catch (error) { fridayToast(error.message || 'The page could not open. Your unsent draft is still here.', {error:true}); return false; }
@@ -24015,7 +24022,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     window.dispatchEvent(new CustomEvent('friday:desktop-view', {detail:{view}}));
     return true;
   };
-  const shellWorkspaceSwitcher = new URLSearchParams(window.location.search).get('experience') !== 'classic' && typeof window.FridayWorkspaceSwitcher === 'function' && React.createElement(window.FridayWorkspaceSwitcher, {
+  const shellWorkspaceSwitcher = typeof window.FridayWorkspaceSwitcher === 'function' && React.createElement(window.FridayWorkspaceSwitcher, {
     workspaces: WS.filter(w => !fridayWsHeld(w.id)),
     currentWorkspace: shellTab ? shellTab.id : shellChat || experienceDesktop ? null : focusWin,
     onSelect: id => {
@@ -24027,9 +24034,9 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
       openWs(id); return true;
     },
     onOpenTab: id => !!fridayOpenWorkspaceTab(id, null, {background:true}),
-    onHome: () => { if (shellChat || shellTab) navigateWithDrafts('/'); else setExperienceDesktop(true); }
+    onHome: () => { if (shellChat || shellTab) navigateWithDrafts('/'); else { setExperienceDesktop(true); if (!experienceEnabled) summonLanding(); } }
   });
-  const ShellTopBar = shellExperienceAvailable && window.FridayResponsiveTopBar || 'div';
+  const ShellTopBar = window.FridayResponsiveTopBar || 'div';
   const shellTopBar = <ShellTopBar className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar" data-shell-kind={shellChat?'chat':shellTab?'tab':'desktop'} {...(ShellTopBar!=='div'?{onDismissMenus:()=>{setSceneMenuOpen(false);setModelMenuOpen(false);}}:{})}>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
         {shellChat?<FridayLockup size={15} href={'/?conversation='+encodeURIComponent(convId||'')} onClick={shellHomeLink} title="Back to the desktop, with this chat open"/>
@@ -24037,6 +24044,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           :<FridayLockup size={15} onClick={()=>{if(!shellExperienceAvailable){toggle('system');return;}setExperienceDesktop(true);window.dispatchEvent(new CustomEvent('friday:desktop-view',{detail:{view:'day'}}));}} title={shellExperienceAvailable?"Return to desktop":"Open System workspace"}/>}
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {shellWorkspaceSwitcher}
+        {window.FridayDisplayStyleControl&&React.createElement(window.FridayDisplayStyleControl)}
         {shellExperienceAvailable&&<button className="fx-shell-entry" onClick={()=>shellDesktopView('projects')}>Projects</button>}
         {shellExperienceAvailable&&<button className="fx-shell-entry fx-shell-activity" onClick={()=>shellDesktopView('activity')}>Activity</button>}
         {shellExperienceAvailable&&<button className="fx-shell-entry fx-shell-depth" aria-label="Scene and workspace depth" onClick={()=>window.FridayHolographicWorkspace&&window.FridayHolographicWorkspace.open()}>◈ Depth</button>}
@@ -24734,12 +24742,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
         bottom must clear the dock (icons + group labels, ~78px) plus its upward
         box-shadow so the input never sits under the menubar. Matches the
         chat-panel's dock-clearance constant (116px). */}
-    {experienceEnabled&&setupDone&&!setupRerun&&!needsCloudConsent&&React.createElement(window.FridayExperience,{
+    {experienceAvailable&&setupDone&&!setupRerun&&!needsCloudConsent&&React.createElement(window.FridayExperience,{
       workspaces: WS.filter(w => !fridayWsHeld(w.id)),
       openWorkspaceIds: openWins, activeWorkspaceId: focusWin,
       projects: projList, conversations: convList, activeConversationId: convId,
       tasks: bgTasks, settings: agentSettings, projectsStatus, tasksStatus,
-      desktopVisible: experienceDesktop,
+      enabled: experienceEnabled, desktopVisible: experienceDesktop,
       onShowDesktop: () => setExperienceDesktop(true),
       onOpenWorkspace: target => { const nav = fridayResolveTarget(target); openWs(nav.workspace); fridayNavigate(nav); },
       onOpenConversation: cid => { openConversation(cid); showChat(true); },
@@ -24813,7 +24821,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     </div>}
 
     {/* Floating Windows */}
-    <div className="fx-native-windows" hidden={experienceEnabled&&experienceDesktop}>{[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||fridayBundleBody(id)}</Safe></FWin>)})}</div>
+    <div className="fx-native-windows" hidden={experienceDesktop}>{[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||fridayBundleBody(id)}</Safe></FWin>)})}</div>
 
     {/* Workspace Studio — contextual per-workspace chat (💬 button on each window) */}
     {shellWsChat}

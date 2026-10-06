@@ -416,9 +416,9 @@
         h('p', { className: 'fx-session-note' }, (sessionStored ? 'Pins, layouts and your last view are remembered in this browser session. ' : 'Session storage is unavailable; pins and layouts last while this window stays open. ') + 'Workspace content and project changes are saved by ' + agentName + '.'));
     }
     const count = approvals.length;
-    return h('div', { className: 'fx-shell', 'data-view': view, 'data-desktop-visible': visible ? 'true' : 'false' },
+    return h('div', { className: 'fx-shell', hidden: p.enabled === false, 'data-view': view, 'data-desktop-visible': visible ? 'true' : 'false' },
       visible && view!=='day' && h('nav',{className:'fx-desktop-views','aria-label':'Desktop views'},VIEWS.map(v=>h('button',{type:'button',key:v[0],'aria-current':view===v[0]?'page':undefined,onClick:()=>go(v[0])},v[1],v[0]==='activity'&&count>0?h('span',{className:'fx-count'},count):null))),
-      !visible && window.FridayMaterials && window.FridayMaterials.SelectionBar && ReactDOM.createPortal(h(window.FridayMaterials.SelectionBar, {
+      p.enabled !== false && !visible && window.FridayMaterials && window.FridayMaterials.SelectionBar && ReactDOM.createPortal(h(window.FridayMaterials.SelectionBar, {
         key: materialProject ? materialProject.id : 'session',
         projectId: materialProject ? materialProject.id : 'session',
         projectName: materialProject ? materialProject.name : '',

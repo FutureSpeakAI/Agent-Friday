@@ -1,0 +1,43 @@
+/* The choice surface shares Friday's materials and respects the avatar stage. */
+.friday-style-trigger {display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:7px 10px;white-space:nowrap;border:1px solid var(--fr-glass-edge);border-radius:8px;background:var(--fr-glass);color:var(--fr-text);font:500 11px/1.3 var(--fr-font-body);cursor:pointer}
+.friday-style-trigger:hover,.friday-style-trigger[aria-expanded=true] {border-color:var(--fr-cyan);color:var(--fr-cyan)}
+.friday-style-trigger:focus-visible,.friday-style-dialog button:focus-visible,.friday-style-options button:focus-visible {outline:2px solid var(--fr-cyan);outline-offset:3px}
+.friday-style-dialog {position:fixed;inset:auto;margin:0;padding:22px;box-sizing:border-box;max-width:none;overflow:auto;overscroll-behavior:contain;border:1px solid color-mix(in srgb,var(--fr-cyan) 25%,var(--fr-glass-edge));border-radius:18px;background:var(--fr-surface);color:var(--fr-text);box-shadow:0 20px 60px color-mix(in srgb,var(--fr-surface) 65%,transparent);font:12px/1.5 var(--fr-font-body)}
+.friday-style-dialog::backdrop {background:transparent}
+.friday-style-heading {display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px}
+.friday-style-eyebrow {margin:0 0 5px;color:var(--fr-cyan);font:500 9px/1.4 var(--fr-font-mono);letter-spacing:.09em;text-transform:uppercase}
+.friday-style-heading h2 {margin:0;font:500 23px/1.25 var(--fr-font-display);letter-spacing:-.025em}
+.friday-style-heading>button {display:flex;align-items:center;justify-content:center;flex:0 0 32px;min-height:32px;border:1px solid var(--fr-glass-edge);border-radius:9px;background:var(--fr-glass);color:var(--fr-text);font:300 22px/1 var(--fr-font-body);cursor:pointer}
+.friday-style-intro {margin:0 0 20px;color:var(--fr-dim);font-size:12px}
+.friday-style-options {min-width:0;text-align:left}
+.friday-style-choices {display:grid;gap:9px}
+.friday-style-choice {display:flex;align-items:center;gap:14px;width:100%;min-width:0;box-sizing:border-box;padding:14px;text-align:left;color:var(--fr-text);background:color-mix(in srgb,var(--fr-text) 3%,transparent);border:1px solid var(--fr-glass-edge);border-radius:12px;cursor:pointer;font:inherit}
+.friday-style-choice:hover:not(:disabled) {border-color:color-mix(in srgb,var(--fr-cyan) 50%,transparent);background:color-mix(in srgb,var(--fr-cyan) 5%,transparent)}
+.friday-style-choice[aria-checked=true] {border-color:color-mix(in srgb,var(--fr-cyan) 65%,transparent);background:color-mix(in srgb,var(--fr-cyan) 7%,transparent)}
+.friday-style-choice:disabled {opacity:.5;cursor:default}
+.friday-style-choice-copy {display:block;flex:1;min-width:0}
+.friday-style-choice-title {display:flex;align-items:center;justify-content:space-between;gap:9px;flex-wrap:wrap;font:500 15px/1.3 var(--fr-font-display)}
+.friday-style-choice-title>small {font:500 9px/1.4 var(--fr-font-body);padding:3px 6px;border:1px solid var(--fr-glass-edge);border-radius:5px;color:var(--fr-dim)}
+.friday-style-choice-description {display:block;margin-top:5px;color:var(--fr-dim);font:11px/1.5 var(--fr-font-body)}
+.friday-style-radio {display:inline-flex;align-items:center;justify-content:center;flex:0 0 17px;width:17px;height:17px;box-sizing:border-box;border:1px solid var(--fr-glass-edge);border-radius:50%;color:var(--fr-cyan);font:600 11px/1 var(--fr-font-body)}
+.friday-style-choice[aria-checked=true] .friday-style-radio {border-color:var(--fr-cyan);background:color-mix(in srgb,var(--fr-cyan) 12%,transparent)}
+.friday-style-preview {position:relative;display:block;flex:0 0 66px;height:47px;border:1px solid var(--fr-glass-edge);border-radius:6px;background:color-mix(in srgb,var(--fr-surface) 75%,transparent);overflow:hidden}
+.friday-style-preview::before {content:'';position:absolute;inset:0 0 auto;height:6px;border-bottom:1px solid var(--fr-glass-edge);background:color-mix(in srgb,var(--fr-text) 6%,transparent)}
+.friday-style-preview-work {position:absolute;left:7px;top:13px;width:27px;height:25px;border:1px solid color-mix(in srgb,var(--fr-cyan) 35%,transparent);border-radius:3px;background:linear-gradient(180deg,color-mix(in srgb,var(--fr-cyan) 10%,transparent) 35%,transparent 35%)}
+.friday-style-preview-avatar {position:absolute;right:8px;top:17px;width:18px;height:18px;border:1px solid var(--fr-cyan);border-radius:50%;box-shadow:0 0 9px color-mix(in srgb,var(--fr-cyan) 18%,transparent)}
+[data-display-style=classic] .friday-style-preview-work {left:auto;right:5px;top:17px;width:20px;height:21px;opacity:.7}
+[data-display-style=classic] .friday-style-preview-avatar {left:8px;right:auto;top:11px;width:27px;height:27px}
+[data-display-style=advanced] .friday-style-preview-work {left:8px;top:14px;width:25px;height:24px;transform:rotate(-9deg)}
+[data-display-style=advanced] .friday-style-preview-avatar {width:20px;height:20px;right:9px;transform:rotate(25deg);border-radius:4px}
+.friday-style-storage {margin:14px 2px 0;color:var(--fr-dim);font:10px/1.55 var(--fr-font-body)}
+.friday-style-storage[data-storage-error=true] {color:var(--fr-text);border-left:2px solid var(--fr-cyan);padding-left:9px}
+.friday-style-dialog[data-compact=true] {padding:14px}
+.friday-style-dialog[data-compact=true] :is(.friday-style-eyebrow,.friday-style-intro,.friday-style-preview,.friday-style-choice-description) {display:none}
+.friday-style-dialog[data-compact=true] .friday-style-heading h2 {font-size:19px}
+.friday-style-dialog[data-compact=true] .friday-style-choice {padding:9px 11px}
+.friday-style-dialog[data-compact=true] .friday-style-choices {gap:7px}
+.friday-style-dialog[data-compact=true] .friday-style-storage {margin-top:10px}
+@media(max-width:420px) {.friday-style-dialog {padding:16px;border-radius:14px}.friday-style-choice {gap:11px;padding:12px}.friday-style-preview {flex-basis:54px}.friday-style-preview-work {width:22px}.friday-style-preview-avatar {right:5px;width:14px;height:14px}.friday-style-heading h2 {font-size:21px}.friday-style-intro {margin-bottom:15px}}
+@media(max-height:500px) {.friday-style-dialog {padding:14px}.friday-style-eyebrow,.friday-style-intro,.friday-style-preview {display:none}.friday-style-heading {margin-bottom:12px}.friday-style-choice {padding:10px}.friday-style-choice-description {margin-top:3px}}
+@media(prefers-reduced-motion:no-preference) {.friday-style-dialog[open] {animation:friday-style-reveal 140ms ease-out}.friday-style-choice {transition:background 120ms ease,border-color 120ms ease}}
+@keyframes friday-style-reveal {from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}

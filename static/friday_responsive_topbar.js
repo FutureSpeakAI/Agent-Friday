@@ -226,10 +226,12 @@
       };
       document.addEventListener('pointerdown', outside, true);
       document.addEventListener('keydown', key, true);
+      const styleSelected = () => closeRef.current(true);
       window.addEventListener('friday:workspace-tool-action', workspaceAction);
+      window.addEventListener('friday:display-style-selected', styleSelected);
       panel.current.addEventListener('click', contextAction, true);
       const currentPanel = panel.current;
-      return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); window.removeEventListener('friday:workspace-tool-action', workspaceAction); currentPanel.removeEventListener('click', contextAction, true); };
+      return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); window.removeEventListener('friday:workspace-tool-action', workspaceAction); window.removeEventListener('friday:display-style-selected', styleSelected); currentPanel.removeEventListener('click', contextAction, true); };
     }, [open]);
 
     const nativeCell = item => {

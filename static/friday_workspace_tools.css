@@ -1,6 +1,6 @@
 /* Shared workspace tools keep context primary and secondary actions reachable. */
-.fwin {container-type:inline-size;container-name:friday-window}
-.fwin-bar {gap:12px}
+body.friday-experience-enabled .fwin {container-type:inline-size;container-name:friday-window}
+body.friday-experience-enabled .fwin-bar {gap:12px}
 .fwin-title {display:flex;align-items:center;min-width:0;flex:1;overflow:hidden}
 .fwin-title-text {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fwin-title>.ws-icon,.fwin-title>.ws-customized-mark {flex-shrink:0}
@@ -42,4 +42,8 @@
 }
 /* Menus are body portals; the owning toolbar marks whether Arrange was tucked. */
 .ws-tools-menu[data-arrange-tucked=true]>button.ws-more-arrange {display:flex}
-
+/* Classic keeps its compact window chrome while sharing the same actions. */
+body[data-friday-display-style="classic"] .ws-tools .ws-tool-label {display:none}
+body[data-friday-display-style="classic"] .ws-tools {gap:2px}
+body[data-friday-display-style="classic"] .ws-tools>button {min-width:25px;min-height:25px;padding:3px;background:transparent;border-color:transparent;border-radius:5px}
+body[data-friday-display-style="classic"] .ws-tools .ws-pickaxe {width:17px;height:17px}

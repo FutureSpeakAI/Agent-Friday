@@ -7,7 +7,7 @@ body.friday-experience-enabled .top-bar.friday-responsive-topbar>.friday-topbar-
 .friday-topbar-cell{box-sizing:border-box;flex:0 0 auto;min-width:0}
 .friday-topbar-native{display:flex;align-items:center;min-width:0}
 .friday-topbar-cell[hidden],.friday-topbar-more[hidden],.friday-topbar-pullout-group[hidden]{display:none!important}
-.friday-topbar-cell[data-kind=scene] .friday-topbar-native>div>button[aria-label="Scene selection"]{display:none!important}
+body.friday-experience-enabled .friday-topbar-cell[data-kind=scene] .friday-topbar-native>div>button[aria-label="Scene selection"]{display:none!important}
 .friday-topbar-cell[data-floating-only=true]{position:absolute;width:0;height:0;overflow:visible}
 .friday-responsive-topbar .friday-topbar-brand{margin-right:7px}
 .top-bar.friday-responsive-topbar .fr-lockup{display:inline-flex;flex-wrap:nowrap;gap:5px;white-space:nowrap;max-width:none}

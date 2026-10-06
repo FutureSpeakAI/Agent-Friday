@@ -11,6 +11,9 @@
   let frame = 0;
   let destroyed = false;
   let treeObserver = null;
+  let styleObserver = null;
+  let active = false;
+  const simpleStyle = () => window.FridayDisplayStyle?.get() === 'simple' || (!window.FridayDisplayStyle && document.body?.classList.contains('friday-experience-enabled'));
   const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
   let observed = new Set();
 
@@ -123,6 +126,7 @@
   function refresh() {
     frame = 0;
     if (destroyed) return;
+    if (!simpleStyle()) { suspend(); return; }
     const openMenus = menus();
     const overlays = Array.from(document.querySelectorAll(overlaySelector));
     const current = new Set([...openMenus, ...overlays]);
@@ -136,11 +140,11 @@
       observed = next;
     }
   }
-  function schedule() { if (!destroyed && !frame) frame = requestAnimationFrame(refresh); }
+  function schedule() { if (!destroyed && active && !frame) frame = requestAnimationFrame(refresh); }
   function affectsOverlay(target) {
     return target instanceof Element && [...tracked.keys()].some(element => target === element || target.contains(element));
   }
-  function menus() { return Array.from(document.querySelectorAll(menuSelector + '[open]')); }
+  function menus() { return active ? Array.from(document.querySelectorAll(menuSelector + '[open]')) : []; }
   function sizeMenu(menu) {
     const summary = menu.querySelector('summary');
     const main = menu.closest('.md-main');
@@ -158,6 +162,7 @@
     if (focus) menu.querySelector('summary')?.focus();
   }
   document.addEventListener('toggle', event => {
+    if (!active) return;
     if (event.target instanceof Element && event.target.matches(menuSelector)) {
       if (event.target.open) {
         menus().filter(menu => menu !== event.target).forEach(menu => closeMenu(menu, false));
@@ -170,6 +175,7 @@
     menus().forEach(menu => { if (!menu.contains(event.target)) closeMenu(menu, false); });
   }, {capture: true, signal: listeners.signal});
   document.addEventListener('keydown', event => {
+    if (!active) return;
     if (event.key !== 'Escape') return;
     const target = event.target instanceof Element ? event.target : null;
     if (!target || target.closest('[role="dialog"]')) return;
@@ -189,7 +195,8 @@
     document.addEventListener(type, event => { if (affectsOverlay(event.target)) schedule(); }, {capture: true, signal: listeners.signal});
   }
   function watch() {
-    if (!document.body || destroyed) return;
+    if (!document.body || destroyed || active || !simpleStyle()) return;
+    active = true;
     treeObserver = new MutationObserver(changes => {
       // Release detached nodes immediately, even when a background tab defers RAF.
       [...tracked.keys()].filter(element => !element.isConnected).forEach(release);
@@ -210,14 +217,28 @@
       attributeFilter: ['hidden', 'inert', 'class', 'style', 'data-friday-spatial-layout', 'data-friday-home-visible'] });
     schedule();
   }
+  function suspend() {
+    active = false;
+    cancelAnimationFrame(frame); frame = 0;
+    treeObserver?.disconnect(); resizeObserver?.disconnect();
+    [...tracked.keys()].forEach(release); observed.clear();
+  }
+  function syncStyle() { if (simpleStyle()) watch(); else suspend(); }
+  function start() {
+    if (!document.body || destroyed) return;
+    styleObserver = new MutationObserver(syncStyle);
+    styleObserver.observe(document.body, {attributes:true, attributeFilter:['class','data-friday-display-style']});
+    syncStyle();
+  }
+  window.addEventListener('friday:display-style', syncStyle, {signal:listeners.signal});
   function destroy() {
     if (destroyed) return;
     destroyed = true;
     cancelAnimationFrame(frame); frame = 0;
-    listeners.abort(); treeObserver?.disconnect(); resizeObserver?.disconnect();
+    listeners.abort(); treeObserver?.disconnect(); resizeObserver?.disconnect(); styleObserver?.disconnect();
     [...tracked.keys()].forEach(release); observed.clear();
     delete window.FridayWorkspaceCompositions;
   }
-  if (document.body) watch(); else document.addEventListener('DOMContentLoaded', watch, { once: true, signal: listeners.signal });
+  if (document.body) start(); else document.addEventListener('DOMContentLoaded', start, { once: true, signal: listeners.signal });
   window.FridayWorkspaceCompositions = Object.freeze({ refresh: schedule, destroy });
 })();

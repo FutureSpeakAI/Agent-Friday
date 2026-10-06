@@ -609,6 +609,9 @@
 
   // ── the Library ──────────────────────────────────────────────────────────
   function Library({ filters, setFilters, sel, setSel, onOpen, onAction }) {
+    const [displayStyle, setDisplayStyle] = useState(() => window.FridayDisplayStyle?.get() || 'simple');
+    useEffect(() => window.FridayDisplayStyle?.subscribe(value => setDisplayStyle(value.style)), []);
+    const classic = displayStyle === 'classic';
     const [state] = useCards(filters);
     // Declared before every hook that lists it: a dependency array is read
     // during render, so a later `const cards` throws before it is set.
@@ -704,10 +707,11 @@
           h('button', { 'aria-current': panel === 'tidy' ? 'true' : undefined, onClick: () => setPanel(panel === 'tidy' ? null : 'tidy'), title: 'Near-duplicate renders and stale drafts, offered as one card' }, 'Tidy up\u2026'),
           h('button', { 'aria-current': panel === 'trash' ? 'true' : undefined, onClick: () => setPanel(panel === 'trash' ? null : 'trash'), title: 'What was removed; everything here can be restored' }, 'Trash')),
         h('div', { className: 'md-rail-note' }, 'Not here: the News editions and their shows (in News); your wiki (in Knowledge). Search finds them and links across.')));
-    return h('div', { ref: keyboardRoot, className: 'md-lib md-lighttable' },
+    return h('div', { ref: keyboardRoot, className: classic ? 'md-lib' : 'md-lib md-lighttable' },
+      classic && filterMenu.props.children[1],
       h('section', { className: 'md-main', 'aria-label': 'Cards' },
         h('div', { className: 'md-toolbar' },
-          filterMenu,
+          !classic && filterMenu,
           h('input', { ref: searchRef, type: 'search', placeholder: 'Search titles, text, sources, transcripts…  /', 'aria-label': 'Search', value: filters.q || '', onChange: e => setFilters(Object.assign({}, filters, { q: e.target.value })) }),
           h('span', { className: 'md-spacer' }),
           h('select', { 'aria-label': 'Sort', value: filters.sort || 'next', onChange: e => setFilters(Object.assign({}, filters, { sort: e.target.value })) },
