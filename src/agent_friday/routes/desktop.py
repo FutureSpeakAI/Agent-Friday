@@ -24,6 +24,35 @@ from agent_friday.services import desktop_bus
 
 desktop_bp = Blueprint("desktop", __name__)
 
+
+@desktop_bp.route("/api/desktop/cards", methods=["GET", "POST"])
+@login_required
+def desktop_cards():
+    from agent_friday.services import desktop_cards as cards
+    from agent_friday.routes._errors import api_error
+    try:
+        if request.method == "GET":
+            return jsonify({"status": "ok", "cards": cards.list_cards()})
+        card = cards.upsert_card(request.get_json(silent=True))
+        return jsonify({"status": "ok", "card": card})
+    except cards.CardError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return api_error(exc, "Couldn't load Home cards" if request.method == "GET" else "Couldn't save the Home card")
+
+
+@desktop_bp.route("/api/desktop/cards/<card_id>", methods=["DELETE"])
+@login_required
+def desktop_card_remove(card_id):
+    from agent_friday.services import desktop_cards as cards
+    from agent_friday.routes._errors import api_error
+    try:
+        return jsonify({"status": "ok", "removed": cards.remove_card(card_id)})
+    except cards.CardError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return api_error(exc, "Couldn't remove the Home card")
+
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 
 

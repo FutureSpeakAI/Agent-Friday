@@ -22,9 +22,13 @@ customization patch. She returns the patch in a fenced ```friday-customize
 {json}``` block which this module parses, sanitizes, applies, and versions.
 """
 
+import hashlib
 import json
 import logging
+import os
 import re
+import tempfile
+import threading
 import uuid
 from datetime import datetime
 
@@ -38,6 +42,28 @@ WS_STUDIO_DIR.mkdir(parents=True, exist_ok=True)
 # Cap stored history so the docs never grow without bound.
 _MAX_CHAT = 200
 _MAX_VERSIONS = 40
+_SAVE_LOCK = threading.RLock()
+
+
+class WorkspaceConflictError(OSError):
+    """A newer workspace state must be read before retrying this change."""
+
+
+class _WorkspaceDoc(dict):
+    def __init__(self, values, revision=None):
+        super().__init__(values)
+        self._revision = revision
+
+
+def _doc_bytes(path):
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(4 * 1024 * 1024 + 1)
+    except FileNotFoundError:
+        return None
+    if len(raw) > 4 * 1024 * 1024:
+        raise OSError("Workspace customization is too large to read")
+    return raw
 
 # Keys a customization patch may contain. Anything else is dropped.
 _ALLOWED_KEYS = {"css", "note", "accent", "density", "hidden", "actions", "summary"}
@@ -64,38 +90,77 @@ def _ws_path(ws_id):
 
 
 def _blank_doc(ws_id):
-    return {
+    return _WorkspaceDoc({
         "workspace": ws_id,
         "chat": [],
         "customization": {},
         "versions": [],
         "updated": datetime.now().isoformat(),
-    }
+    })
 
 
 def load_ws_doc(ws_id):
     p = _ws_path(ws_id)
-    if not p.exists():
+    raw = _doc_bytes(p)
+    if raw is None:
         return _blank_doc(ws_id)
     try:
-        doc = json.loads(p.read_text(encoding="utf-8"))
+        doc = json.loads(raw)
+        if not isinstance(doc, dict) or doc.get("workspace", ws_id) != ws_id:
+            raise ValueError("invalid workspace document")
         doc.setdefault("workspace", ws_id)
         doc.setdefault("chat", [])
         doc.setdefault("customization", {})
         doc.setdefault("versions", [])
-        return doc
-    except Exception:
-        return _blank_doc(ws_id)
+        if not isinstance(doc["chat"], list) or not isinstance(doc["customization"], dict) or not isinstance(doc["versions"], list):
+            raise ValueError("invalid workspace document fields")
+        if any(not isinstance(entry, dict) for entry in doc["chat"] + doc["versions"]):
+            raise ValueError("invalid workspace history entry")
+        doc["customization"] = _sanitize_patch(doc["customization"])
+        for version in doc["versions"]:
+            if not isinstance(version.get("customization", {}), dict):
+                raise ValueError("invalid workspace snapshot")
+            version["customization"] = _sanitize_patch(version.get("customization", {}))
+        return _WorkspaceDoc(doc, hashlib.sha256(raw).digest())
+    except (ValueError, TypeError, UnicodeError) as exc:
+        raise OSError("Workspace customization could not be read") from exc
 
 
 def save_ws_doc(ws_id, doc):
+    # Generation happens outside this brief commit lock. A response built from
+    # older state must never replace a voice change, reset or cleared history.
+    with _SAVE_LOCK:
+        return _save_current_doc(ws_id, doc)
+
+
+def _save_current_doc(ws_id, doc):
+    path = _ws_path(ws_id)
+    current = _doc_bytes(path)
+    revision = hashlib.sha256(current).digest() if current is not None else None
+    if revision != getattr(doc, "_revision", None):
+        raise WorkspaceConflictError("The workspace changed while this request was running. Read the latest state and try again.")
     doc["updated"] = datetime.now().isoformat()
     doc["chat"] = doc.get("chat", [])[-_MAX_CHAT:]
     doc["versions"] = doc.get("versions", [])[-_MAX_VERSIONS:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8")
+    fd, name = tempfile.mkstemp(prefix=".workspace-", suffix=".tmp", dir=path.parent)
     try:
-        _ws_path(ws_id).write_text(json.dumps(doc, indent=2), encoding="utf-8")
-    except Exception as e:  # pragma: no cover - disk failure
-        _log.warning("workspace_studio save failed (%s): %s", ws_id, e)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+    if isinstance(doc, _WorkspaceDoc):
+        doc._revision = hashlib.sha256(data).digest()
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.broadcast({"type": "workspace_customizations_changed", "workspace": ws_id}, kind="desktop")
+    except Exception:
+        _log.exception("Could not notify the desktop about saved workspace changes")
     return doc
 
 
@@ -108,12 +173,83 @@ _CSS_FETCHERS = re.compile(r"(?:-webkit-)?(?:image-set|cross-fade)\s*\(|\bsrc\s*
 _KEPT_MARK = "\x01"
 
 
+def _selector_branches(selector):
+    """Split a selector list without treating commas in attributes/functions as branches."""
+    if not selector or any(c in selector for c in "{};@&\\<"):
+        return []
+    branches, start, stack, quote = [], 0, [], None
+    for index, char in enumerate(selector):
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+        elif char in "([":
+            stack.append(char)
+        elif char in ")]":
+            if not stack or stack.pop() != {")": "(", "]": "["}[char]:
+                return []
+        elif char == "," and not stack:
+            branches.append(selector[start:index].strip())
+            start = index + 1
+    if stack or quote:
+        return []
+    branches.append(selector[start:].strip())
+    return branches if all(branches) else []
+
+
+def _scoped_selector(selector):
+    """The root's first relationship can only stay inside that root."""
+    root = ".ws-custom-root"
+    if not selector.startswith(root) or re.match(r"[\w-]", selector[len(root):]):
+        return False
+    suffix = selector[len(root):]
+    depth, quote = 0, None
+    for index, char in enumerate(suffix):
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+        elif char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+        elif not depth and (char.isspace() or char in ">+~|"):
+            tail = suffix[index:].lstrip()
+            return bool(tail) and tail[0] not in "+~|"
+    return True
+
+
+def _scoped_css(css):
+    """Keep only flat rules whose every selector is anchored inside the workspace."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    if "/*" in css:
+        return ""
+    rules, pos = [], 0
+    while pos < len(css):
+        opening = css.find("{", pos)
+        if opening < 0:
+            break
+        closing = css.find("}", opening + 1)
+        if closing < 0 or "{" in css[opening + 1:closing]:
+            return ""  # nested rules and at-rule blocks are outside the contract
+        selector = css[pos:opening].strip()
+        branches = _selector_branches(selector)
+        if branches and all(_scoped_selector(branch) for branch in branches):
+            rules.append(selector + "{" + css[opening + 1:closing] + "}")
+        pos = closing + 1
+    return "\n".join(rules)
+
+
 def _sanitize_css(css):
     """Reduce model- or file-supplied CSS to something inert inside a <style>
     element of Friday's own page.
 
-    The page additionally scopes every rule to the workspace root, so this only
-    neutralises injection: no `<` (so no tag and no `</style`, however it is
+    Each rule is anchored to the workspace root before the page qualifies that
+    root by workspace id. This also neutralises injection: no `<` (so no tag and no `</style`, however it is
     spelled or nested), no backslash (so no escaped `url(`), no @import, no
     script or expression URLs, and no request to anywhere but an inline image.
     Removals repeat until nothing more can be removed, so a payload cannot be
@@ -142,14 +278,19 @@ def _sanitize_css(css):
         css = _CSS_FETCHERS.sub("(", css)
         css = _CSS_REMOTE.sub("", css)
     css = re.sub(_KEPT_MARK + r"(\d+)" + _KEPT_MARK, lambda m: kept[int(m.group(1))], css)
-    return css.strip()
+    return _scoped_css(css.strip())
 
 
 def _sanitize_selector(sel):
     """A `hidden` entry is one selector: it cannot open a rule, end a
     declaration, start an at-rule or fetch anything."""
-    sel = re.sub(r"[{};@]", "", _sanitize_css(str(sel)))
-    return sel.strip()[:200]
+    if not isinstance(sel, str) or len(sel) > 200:
+        return ""
+    sel = re.sub(r"/\*.*?\*/", "", sel, flags=re.S).strip()
+    branches = _selector_branches(sel)
+    if len(branches) != 1 or sel.startswith(("+", "~", "|")) or "/*" in sel:
+        return ""
+    return sel
 
 
 def _sanitize_patch(patch):
@@ -422,13 +563,10 @@ def all_customizations():
     apply everything on first paint."""
     out = {}
     for p in WS_STUDIO_DIR.glob("*.json"):
-        try:
-            doc = json.loads(p.read_text(encoding="utf-8"))
-            cust = _sanitize_patch(doc.get("customization") or {})
-            if cust:
-                out[doc.get("workspace") or p.stem] = cust
-        except Exception:
-            pass
+        doc = load_ws_doc(p.stem)
+        cust = doc.get("customization") or {}
+        if cust:
+            out[p.stem] = cust
     return out
 
 

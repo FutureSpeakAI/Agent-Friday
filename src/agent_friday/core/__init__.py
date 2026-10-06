@@ -3283,7 +3283,7 @@ def _load_settings():
 #: it edited (rounds, or the clock, or tokens), and a wholesale replace would
 #: drop the other two back to the module defaults every time one is changed.
 _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
-                       "turn_budget", "local_address", "scheduled_cloud")
+                       "turn_budget", "local_address", "scheduled_cloud", "tracking")
 
 
 def _routing_mode_caller() -> str:

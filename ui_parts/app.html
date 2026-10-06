@@ -718,7 +718,7 @@ function fridayRunActions(actions){
             const got=TK.calibrate(w);
             a.result={calibrated:got||null};
             if(got){apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({settings:{tracking:TK.get()}})}).catch(()=>{});}
+              body:JSON.stringify({settings:{tracking:{neutral_face_width:got}}})}).catch(()=>{});}
           }else if(a.op==='reset'){
             a.result={tracking:TK.reset()};
           }else if(a.tracking&&typeof a.tracking==='object'){
@@ -2356,27 +2356,40 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
   const {setCust}=useContext(WsCustomCtx);
   const endRef=useRef(null);const inRef=useRef(null);const seededRef=useRef(false);
   const flash=t=>{setToast(t);};
+  const operation=useRef(0), busy=useRef(false), alive=useRef(true);
+  useEffect(()=>()=>{alive.current=false;operation.current++},[]);
+  const begin=()=>{if(busy.current)return false;busy.current=true;operation.current++;setLoading(true);return true};
+  const finish=()=>{busy.current=false;if(alive.current)setLoading(false)};
   useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:Math.max(0,Math.min(e.clientX-dOff.current.x,(window.innerWidth||1280)-120)),y:Math.max(28,Math.min(e.clientY-dOff.current.y,(window.innerHeight||800)-80))});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
-  const load=()=>fetch(`/api/workspace/${wsId}/chat`).then(r=>r.json()).then(d=>{setMsgs(d.chat||[]);setVersions(d.versions||[]);if(d.customization!==undefined)setCust(wsId,d.customization)}).catch(()=>{});
+  const readReply=async r=>{const d=await r.json();if(!r.ok||!d||d.status!=='ok')throw new Error(d.message||d.error||'The workspace request failed.');return d};
+  const load=()=>{const ticket=++operation.current;fetch('/api/workspace/'+wsId+'/chat').then(readReply).then(d=>{if(!alive.current||ticket!==operation.current)return;setMsgs(d.chat||[]);setVersions(d.versions||[]);if(d.customization!==undefined)setCust(wsId,d.customization)}).catch(()=>{if(alive.current&&ticket===operation.current)flash('Could not load workspace history.')})};
   useEffect(()=>{load()},[wsId]);
   useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[msgs.length,loading]);
-  const send=async(override)=>{const m=(override||input).trim();if(!m||loading)return;setInput('');
+  const send=async(override)=>{const m=(override||input).trim();if(!m||!begin())return;setInput('');
     setMsgs(p=>[...p,{role:'user',text:m,time:new Date().toISOString()}]);setLoading(true);
     try{
       const r=await fetch(`/api/workspace/${wsId}/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m,label})});
-      const d=await r.json();
+      const d=await readReply(r);
+      if(!alive.current)return;
       setMsgs(p=>[...p,{role:'friday',text:d.response||'[no response]',applied:d.applied,revert_to:d.revert_to,change:d.change,time:new Date().toISOString()}]);
       if(d.customization!==undefined)setCust(wsId,d.customization);
       if(d.versions)setVersions(d.versions);
       if(d.applied)flash('✨ Applied: '+(d.change||'change'));
-    }catch(e){setMsgs(p=>[...p,{role:'friday',text:'[Connection error]'}])}
-    setLoading(false);inRef.current?.focus();
+    }catch(e){if(!alive.current)return;setInput(current=>current||m);setMsgs(p=>[...p,{role:'friday',text:'Could not apply that request. Your draft is ready to retry.'}]);flash(e.message||'Workspace request failed')}
+    finish();inRef.current?.focus();
   };
   // Auto-send a seed prompt (e.g. clicked quick-action) exactly once.
   useEffect(()=>{if(seedPrompt&&!seededRef.current){seededRef.current=true;send(seedPrompt)}},[seedPrompt]);
-  const revert=async(vid)=>{try{const r=await fetch(`/api/workspace/${wsId}/revert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version_id:vid})});const d=await r.json();if(d.status!=='ok'){flash('Revert failed');return}if(d.customization!==undefined)setCust(wsId,d.customization);if(d.versions)setVersions(d.versions);flash('↩ Reverted')}catch(e){flash('Revert failed')}};
-  const reset=async()=>{if(!window.confirm(('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?')))return;try{const r=await fetch(`/api/workspace/${wsId}/reset`,{method:'POST'});const d=await r.json();setCust(wsId,d.customization||{});if(d.versions)setVersions(d.versions);flash('Workspace reset to default')}catch(e){flash('Reset failed')}};
-  const clearChat=()=>{fetch(`/api/workspace/${wsId}/chat/clear`,{method:'POST'}).then(()=>{setMsgs([]);flash('History cleared')}).catch(()=>{})};
+  const change=async(path,options,onSaved,failure)=>{
+    if(!begin())return;
+    try{const d=await fetch('/api/workspace/'+wsId+'/'+path,options).then(readReply);if(alive.current)onSaved(d)}
+    catch(e){if(alive.current)flash(failure)}
+    finally{finish()}
+  };
+  const applyReply=d=>{if(d.customization!==undefined)setCust(wsId,d.customization);if(d.versions)setVersions(d.versions)};
+  const revert=vid=>change('revert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version_id:vid})},d=>{applyReply(d);flash('↩ Reverted')},'Revert failed');
+  const reset=()=>{if(busy.current||!window.confirm('Reset ALL of '+fridayName()+'’s changes to this workspace back to default?'))return;return change('reset',{method:'POST'},d=>{applyReply(d);flash('Workspace reset to default')},'Reset failed')};
+  const clearChat=()=>change('chat/clear',{method:'POST'},()=>{setMsgs([]);flash('History cleared')},'Could not clear history.');
   const STARTERS=['Make this layout more compact','I don’t like the colors — try a warmer accent','Pin a note reminding me what this workspace is for','Add quick-action buttons for my common tasks here'];
   return(<div className="friday-workspace-studio" role="dialog" aria-label={label+" customization"} style={{position:'fixed','--friday-shared-x':pos.x+'px','--friday-shared-y':pos.y+'px',left:pos.x,top:pos.y,width:390,maxWidth:'94vw',height:'min(620px,76vh)',zIndex:130,display:'flex',flexDirection:'column',background:'rgba(10,14,24,0.97)',border:'1px solid rgba(0,212,255,0.28)',borderRadius:14,boxShadow:'0 18px 60px rgba(0,0,0,0.6)',backdropFilter:'blur(14px)',overflow:'hidden'}}>
     <div className="friday-studio-head" onMouseDown={e=>{if(e.target.closest('button'))return;setDragging(true);const box=e.currentTarget.closest('.friday-workspace-studio').getBoundingClientRect();dOff.current={x:e.clientX-box.left,y:e.clientY-box.top}}} style={{cursor:'grab',padding:'10px 12px',borderBottom:'1px solid rgba(0,212,255,0.18)',display:'flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.05)'}}>
@@ -2385,7 +2398,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.04em'}}>{emoji} {label} · Studio</div>
         <div style={{fontSize:10,color:'#8891a8'}}>Shape this workspace by talking to {fridayName()}</div>
       </div>
-      <button onClick={()=>setShowVer(v=>!v)} title="Version history" style={{background:'none',border:'1px solid rgba(255,255,255,0.14)',borderRadius:6,color:'#aab',cursor:'pointer',fontSize:11,padding:'2px 7px'}}>🕘 {versions.length}</button>
+      <button onClick={()=>setShowVer(v=>!v)} aria-label="Version history" title="Version history" style={{background:'none',border:'1px solid rgba(255,255,255,0.14)',borderRadius:6,color:'#aab',cursor:'pointer',fontSize:11,padding:'2px 7px'}}>🕘 {versions.length}</button>
       <button aria-label="Close" onClick={onClose} title="Close" style={{background:'none',border:'none',color:'#9aa',cursor:'pointer',fontSize:18,lineHeight:1}}>×</button>
     </div>
     {showVer&&<div style={{maxHeight:160,overflowY:'auto',borderBottom:'1px solid rgba(255,255,255,0.08)',padding:'6px 10px',background:'rgba(0,0,0,0.25)'}}>
@@ -2403,7 +2416,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
     <div className="friday-studio-log" role="log" aria-live="polite" style={{flex:1,overflowY:'auto',padding:'10px 12px'}}>
       {msgs.length===0&&!loading&&<div style={{color:'#8891a8',fontSize:12,lineHeight:1.6}}>
         <div style={{marginBottom:10}}>Tell {fridayName()} what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features — and undo anything.</div>
-        {STARTERS.map((s,i)=><div key={i} onClick={()=>send(s)} className="card" style={{cursor:'pointer',padding:'7px 10px',marginBottom:5,fontSize:11.5}}>{s}</div>)}
+        {STARTERS.map((s,i)=><button type="button" key={i} onClick={()=>send(s)} className="card" style={{display:'block',width:'100%',textAlign:'left',color:'inherit',cursor:'pointer',padding:'7px 10px',marginBottom:5,fontSize:11.5}}>{s}</button>)}
       </div>}
       {msgs.map((m,i)=>(<div key={i} style={{marginBottom:10,display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
         <div style={{maxWidth:'90%',padding:'7px 11px',borderRadius:10,fontSize:12.5,lineHeight:1.5,background:m.role==='user'?'rgba(0,212,255,0.12)':'rgba(255,255,255,0.05)',border:m.role==='user'?'1px solid rgba(0,212,255,0.22)':'1px solid rgba(255,255,255,0.07)',color:'#dde'}}>
@@ -17530,24 +17543,28 @@ function TrackingPanel({
 }) {
   const TK = typeof window !== 'undefined' ? window.FridayTracking : null;
   const defaults = TK ? TK.DEFAULTS : {};
-  const [cfg, setCfg] = useState(() => Object.assign({}, defaults, s && s.tracking || {}));
+  const [cfg, setCfg] = useState(() => Object.assign({}, defaults, TK ? TK.get() : s && s.tracking || {}));
   const [calib, setCalib] = useState(null);
 
-  // Push to the engine on mount so a reload matches what is stored.
+  // The engine owns the live dials, including voice and Scene & depth edits.
+  // A kept-mounted panel must not restore an older settings snapshot.
   useEffect(() => {
-    if (TK) TK.apply(cfg);
+    const sync = () => { if (TK) setCfg(TK.get()); };
+    window.addEventListener('friday:tracking-settings', sync);
+    sync();
+    return () => window.removeEventListener('friday:tracking-settings', sync);
   }, []);
   const live = patch => {
-    const next = Object.assign({}, cfg, patch);
+    const next = Object.assign({}, TK ? TK.get() : cfg, patch);
     setCfg(next);
     if (TK) TK.apply(next); // immediate, before any save round-trip
   };
   const commit = patch => {
-    const next = Object.assign({}, cfg, patch);
+    const next = Object.assign({}, TK ? TK.get() : cfg, patch);
     setCfg(next);
     if (TK) TK.apply(next);
     save({
-      tracking: next
+      tracking: patch
     });
   };
   const sl = (key, label, desc, min, max, step, fmt) => /*#__PURE__*/React.createElement(TrackingSlider, {
@@ -23401,7 +23418,10 @@ function App(){
         // show_my_day: answer with what the cluster did, once the page has judged.
         setTimeout(() => {
           const l = deskRef.current.landing || {};
-          answer({ opened: true, matched: null, landing: { show: !!l.show, reason: l.reason || '' } });
+          const simple=document.body.dataset.fridayDisplayStyle==='simple';
+          const home=document.querySelector('.fx-main[data-view="day"]');
+          const shown=simple?document.body.dataset.fridayHomeVisible==='true'&&!!home&&home.getBoundingClientRect().height>0:!!l.show;
+          answer({ opened: shown, matched: null, landing: { show: shown, reason: simple?'Simple Home':l.reason || '' } });
         }, 250);
         return;
       }
@@ -23447,6 +23467,8 @@ function App(){
         try { m = JSON.parse(e.data); } catch (_) { return; }
         if (!m) return;
         if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
+        else if (m.type === 'desktop_cards_changed') window.dispatchEvent(new Event('friday:desktop-cards-changed'));
+        else if (m.type === 'workspace_customizations_changed') window.dispatchEvent(new Event('friday:ws-custom-changed'));
       };
     };
     connect();
@@ -23540,7 +23562,14 @@ function App(){
   useEffect(()=>{window.fridayOpenWorkspaceChat=(wsId,label,emoji,seed)=>{if(!wsId)return;openWs(wsId);setWsChat({wsId,label:label||wsId,emoji:emoji||'',seed:seed||'',key:Date.now()})};return()=>{if(window.fridayOpenWorkspaceChat)delete window.fridayOpenWorkspaceChat}},[]);
   // Load every workspace's saved customization once, so applied changes are live
   // on first paint without opening each chat.
-  useEffect(()=>{fetch('/api/workspace/customizations').then(r=>r.json()).then(d=>{if(d&&d.customizations)setWsCustMap(d.customizations)}).catch(()=>{})},[]);
+  useEffect(()=>{
+    let stopped=false, sequence=0;
+    const refresh=()=>{const request=++sequence;fetch('/api/workspace/customizations').then(r=>{if(!r.ok)throw new Error('load failed');return r.json()}).then(d=>{if(!stopped&&request===sequence&&d.status==='ok'&&d.customizations)setWsCustMap(d.customizations)}).catch(()=>{})};
+    refresh();
+    window.addEventListener('friday:ws-custom-changed',refresh);
+    window.addEventListener('focus',refresh);
+    return()=>{stopped=true;window.removeEventListener('friday:ws-custom-changed',refresh);window.removeEventListener('focus',refresh)};
+  },[]);
   // Global voice bridge — lets any child component (e.g. NewsWS "Listen to
   // Front Page") drive the live session that lives here in App without
   // prop-drilling. startAnchor() drops a source card into the chat, opens the
@@ -23935,7 +23964,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
         setAgentSettings(a => Object.assign({}, a, { landing_mode: d.mode }));
         landingSees.current = Object.assign({}, landingSees.current, { mode: d.mode });
       }
-      if (d.summon) st.summonedAt = Date.now();
+      if (d.summon) { st.summonedAt = Date.now(); setExperienceDesktop(true); window.dispatchEvent(new CustomEvent('friday:desktop-view',{detail:{view:'day'}})); if(d.focus)requestAnimationFrame(()=>document.querySelector('.fx-home-composer textarea')?.focus()); }
       judge();
       // The key asked for the cursor. Shown already, the field takes it now;
       // hidden, the cluster is a render away from showing, and the effect

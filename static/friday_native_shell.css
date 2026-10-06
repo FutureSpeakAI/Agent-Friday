@@ -87,3 +87,46 @@ body.friday-experience-enabled .fx-main[data-view=day]{max-height:none;min-width
 @container friday-desktop (max-height:240px){
   :where(body.friday-experience-enabled) .fx-home-top{display:none}
 }
+
+/* Authored cards replace optional summaries; full text stays inside the work area. */
+:where(body.friday-experience-enabled) .fx-home-card-deck{flex:0 0 auto;min-width:0;max-width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;margin:16px 0;padding:16px 18px;border:1px solid var(--fr-glass-edge);border-radius:13px;background:var(--fx-panel);backdrop-filter:var(--fr-glass-blur);pointer-events:auto;color:var(--fr-text)}
+:where(body.friday-experience-enabled) .fx-home-card-heading,:where(body.friday-experience-enabled) .fx-home-card-footer,:where(body.friday-experience-enabled) .fx-home-card-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
+:where(body.friday-experience-enabled) .fx-home-card-heading .fx-eyebrow{margin:0;flex:1;font-size:10px}
+:where(body.friday-experience-enabled) .fx-home-card-heading .fx-meta{font-size:11px}
+:where(body.friday-experience-enabled) .fx-home-card-title{font:500 17px/1.4 var(--fr-font-display);margin:0;color:var(--fr-text);overflow-wrap:anywhere}
+:where(body.friday-experience-enabled) .fx-home-card-body{font:13px/1.6 var(--fr-font-body);white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0;color:var(--fx-muted)}
+:where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=false] .fx-home-card-body{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+:where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=false] .fx-home-card-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=false] .fx-home-card-actions>button:not(:first-child){display:none}
+:where(body.friday-experience-enabled) .fx-home-card-actions:empty{display:none}
+:where(body.friday-experience-enabled) .fx-home-card-deck button{min-height:32px;font-size:12px;overflow-wrap:anywhere;max-width:100%}
+:where(body.friday-experience-enabled) .fx-home-card-error,:where(body.friday-experience-enabled) .fx-home-card-undo{font:12px/1.5 var(--fr-font-body);display:flex;align-items:center;flex-wrap:wrap;gap:8px;overflow-wrap:anywhere}
+:where(body.friday-experience-enabled) .fx-home-card-error{color:var(--fr-warn)}
+body.friday-experience-enabled .fx-main[data-view=day]:has(.fx-home-card-deck) .fx-home-scene-tools{display:none}
+body.friday-experience-enabled .fx-main[data-view=day]:has(.fx-home-card-deck) :is(.fx-home-day,.fx-home-greeting .fx-subtitle){display:none}
+body.friday-experience-enabled .fx-main[data-view=day]:has(.fx-home-card-deck[data-expanded=true])>:is(.fx-home-top,.fx-home-bottom,.fx-home-scene-tools){display:none}
+body.friday-experience-enabled .fx-home-card-deck[data-expanded=true]{flex:1 1 0;min-height:0;margin:0;overflow:auto;overscroll-behavior:contain}
+:where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=true] .fx-home-card-content{flex:1 1 80px;min-height:80px;overflow:auto;overscroll-behavior:contain}
+@container friday-desktop (max-height:620px){
+  body.friday-experience-enabled .fx-main[data-view=day]:has(.fx-home-card-deck)>.fx-home-top{display:none}
+  :where(body.friday-experience-enabled) .fx-home-card-deck{margin:0 0 12px;padding:12px;gap:8px}
+  :where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=false] .fx-home-card-actions{display:none}
+}
+@container friday-desktop (max-height:360px){
+  :where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=false]{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:6px 9px;margin:0;gap:8px}
+  :where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=false] :is(.fx-home-card-heading,.fx-home-card-body,.fx-home-card-actions){display:none}
+  :where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=false] .fx-home-card-footer>button:not(:first-child){display:none}
+  :where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=false] .fx-home-card-title{font:500 12px/1.4 var(--fr-font-body)}
+  :where(body.friday-experience-enabled) :is(.fx-home-card-error,.fx-home-card-undo){grid-column:1/-1}
+  :where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=true]{padding:9px;gap:7px}
+  :where(body.friday-experience-enabled) .fx-home-card-deck[data-expanded=true] .fx-home-card-heading .fx-eyebrow{display:none}
+}
+@container friday-desktop (max-height:240px){
+  body:where(.friday-experience-enabled)[data-friday-spatial-layout] .fx-main[data-view=day]:has(.fx-home-card-deck){gap:8px}
+  body:where(.friday-experience-enabled)[data-friday-spatial-layout] .fx-main:has(.fx-home-card-deck) .fx-home-composer{padding:8px}
+  body:where(.friday-experience-enabled)[data-friday-spatial-layout] .fx-main:has(.fx-home-card-deck) .fx-home-composer textarea{height:34px;min-height:34px;padding-bottom:4px}
+  :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-composer-footer{flex-wrap:nowrap}
+  :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-context{flex:1;flex-wrap:nowrap}
+  :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-context select{width:100%;min-width:0;max-width:140px}
+  :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-context>button{display:none}
+}

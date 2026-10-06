@@ -10,6 +10,119 @@
     const OWNER = 'workspace-depth';
     const MODES = ['flat', 'quiet', 'balanced', 'immersive'];
     const ARRANGEMENTS = ['companion', 'present', 'focus'];
+    const TRACKING_DIALS = [
+        { key:'parallax_strength', label:'Head movement', min:0, max:2.5, step:.05, help:'Lower values make looking around calmer. Zero stops sideways parallax.' },
+        { key:'depth_strength', label:'Lean response', min:0, max:2.5, step:.05, help:'How much leaning closer changes the view. Zero keeps its size steady.' },
+        { key:'head_smoothing', label:'Steadiness', min:0, max:1, step:.01, help:'Higher values smooth out small movements and camera shake.' },
+        { key:'head_response', label:'Quick movement response', min:0, max:1, step:.01, help:'Lower values follow a quick lean more gently.' }
+    ];
+
+    function trackingTuner(win, notify = () => {}) {
+        let pending = Promise.resolve(), revision = 0;
+        const read = () => win.FridayTracking?.get?.() || {};
+        const live = patch => { win.FridayTracking?.apply?.(patch); return read(); };
+        function save(patch) {
+            live(patch);
+            const mine = ++revision;
+            notify('Saving tracking preferences…');
+            const task = pending.catch(() => {}).then(async () => {
+                if (typeof win.apiFetch !== 'function') throw new Error('Settings are still loading.');
+                const response = await win.apiFetch('/api/settings', { method:'POST',
+                    headers:{'Content-Type':'application/json'}, body:JSON.stringify({settings:{tracking:patch}}) });
+                const result = await response.json();
+                if (!response.ok || result.status !== 'ok') throw new Error('Your preference could not be saved.');
+                if (mine === revision) notify('Tracking preferences saved.');
+                return result;
+            });
+            pending = task;
+            return task.catch(error => {
+                if (mine === revision) notify('Preview applied, but not saved. Try the control again.');
+                throw error;
+            });
+        }
+        return { read, live, save };
+    }
+
+    // Enclosing scenery is authored for a camera inside a world. Framing that
+    // entire world as an object exposes its carrier and dwarfs the character.
+    const sceneryStates = new WeakMap(), fieldUniforms = new WeakMap();
+    function prepareStageField(material) {
+        let uniforms = fieldUniforms.get(material);
+        if (uniforms) return uniforms;
+        uniforms = { uFridayFieldStage: {value:0} };
+        fieldUniforms.set(material, uniforms);
+        const previous = material.onBeforeCompile;
+        material.onBeforeCompile = function (shader, renderer) {
+            previous?.call(this, shader, renderer);
+            Object.assign(shader.uniforms, uniforms);
+            shader.vertexShader = 'varying float vFridayFieldEdge;\n' + shader.vertexShader;
+            shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+                '#include <begin_vertex>\nvFridayFieldEdge = 1.0 - smoothstep(12.0, 18.0, length(position.xz));');
+            shader.fragmentShader = 'uniform float uFridayFieldStage; varying float vFridayFieldEdge;\n' + shader.fragmentShader;
+            shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>',
+                '#include <color_fragment>\ndiffuseColor.a *= mix(1.0, vFridayFieldEdge, uFridayFieldStage);');
+        };
+        const previousKey = material.customProgramCacheKey.bind(material);
+        material.customProgramCacheKey = () => previousKey() + ':friday-field-edge';
+        material.needsUpdate = true;
+        return uniforms;
+    }
+    function setStageScenery(structures, enabled) {
+        for (const group of Object.values(structures || {})) {
+            if (!group || sceneryStates.get(group) === enabled) continue;
+            group.traverse(node => {
+                if (node.userData?.fridayStageScenery) node.visible = !enabled;
+                if (node.userData?.fridayStageField && node.material) prepareStageField(node.material).uFridayFieldStage.value = enabled ? 1 : 0;
+            });
+            sceneryStates.set(group, enabled);
+        }
+    }
+    const pointMaterials = new WeakMap(), authoredPointSizes = new WeakMap(), pointFloors = new WeakMap();
+    function prepareStagePoints(material) {
+        let uniform = pointFloors.get(material);
+        if (uniform) return uniform;
+        uniform = {value:0}; pointFloors.set(material, uniform);
+        const previous = material.onBeforeCompile, previousKey = material.customProgramCacheKey.bind(material);
+        material.onBeforeCompile = function (shader, renderer) {
+            previous?.call(this, shader, renderer);
+            shader.uniforms.uFridayStagePointFloor = uniform;
+            shader.vertexShader = 'uniform float uFridayStagePointFloor;\n' + shader.vertexShader;
+            shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>',
+                'gl_PointSize = max(gl_PointSize, uFridayStagePointFloor);\n#include <fog_vertex>');
+        };
+        material.customProgramCacheKey = () => previousKey() + ':friday-stage-points';
+        material.needsUpdate = true;
+        return uniform;
+    }
+    function scaleStagePoints(structures, factor, stagePixelRatio = 0) {
+        factor = Number.isFinite(factor) ? Math.max(.5, Math.min(4, factor)) : 1;
+        for (const group of Object.values(structures || {})) {
+            if (!group) continue;
+            let materials = pointMaterials.get(group);
+            if (!materials) {
+                materials = new Map();
+                group.traverse(node => {
+                    const list = Array.isArray(node.material) ? node.material : [node.material];
+                    list.forEach(material => {
+                        if (material?.isPointsMaterial && material.sizeAttenuation) {
+                            materials.set(material, Number(node.userData?.fridayStagePointFloor) || 0);
+                            if (!authoredPointSizes.has(material)) authoredPointSizes.set(material, material.size);
+                        } else if (material?.uniforms?.uFridayStagePointFloor) {
+                            materials.set(material, Number(node.userData?.fridayStagePointFloor) || 0);
+                        }
+                    });
+                });
+                pointMaterials.set(group, materials);
+            }
+            materials.forEach((floor, material) => {
+                if (authoredPointSizes.has(material)) material.size = authoredPointSizes.get(material) * factor;
+                // A distant fitted terrain still needs a visible luminous
+                // core. The floor is in screen pixels and leaves Classic's
+                // authored point size, texture, color and opacity untouched.
+                if (floor) (material.uniforms?.uFridayStagePointFloor || prepareStagePoints(material)).value = floor * Math.max(0, stagePixelRatio);
+            });
+        }
+    }
 
     function spatialLayout(area, options) {
         if (!options.enabled) return { layout: 'classic', content: { ...area }, stage: null };
@@ -183,6 +296,8 @@
         let caption = null, captionSignature = '';
         const captionNodes = new Map();
         let fitBounds = null, fitKey = '', fitAt = 0, fittedDistance = 0, projectedBounds = null;
+        let trackingStatus = '';
+        const tuner = trackingTuner(win, message => { trackingStatus = message; refreshTracking(); });
         const originalFog = new WeakMap();
         const tagged = new Map();
         const reduced = win.matchMedia('(prefers-reduced-motion: reduce)');
@@ -332,10 +447,12 @@
             const tick=()=>{chromeFrame=0;if(destroyed||doc.hidden)return;const now=win.performance.now();if(now-last>=32){last=now;updateLayout();}if(now<chromeUntil)chromeFrame=win.requestAnimationFrame(tick);};
             chromeFrame=win.requestAnimationFrame(tick);
         }
-        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null };
+        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null, structures:null };
         function fitSceneCamera(sceneState) {
             const stage = destroyed ? null : occupancy.stage;
             const { camera, scene, basePosition, targetLook, structures, keys, delta } = sceneState;
+            setStageScenery(structures, !!stage);
+            frameFit.structures = structures;
             camera.aspect = stage ? stage.w / stage.h : win.innerWidth / win.innerHeight;
             if (scene?.fog && !originalFog.has(scene.fog)) originalFog.set(scene.fog, scene.fog.density);
             if (!stage || !win.THREE) { fitBounds = null; projectedBounds = null; fittedDistance = 0; frameFit.pieces=[];frameFit.ready=false; camera.far = Math.max(camera.far,1000); if(scene?.fog && originalFog.has(scene.fog))scene.fog.density=originalFog.get(scene.fog); return; }
@@ -369,6 +486,9 @@
                         // the native forms breathe, build and move.
                         node.geometry.computeBoundingBox();
                         if (!node.geometry.boundingBox || node.geometry.boundingBox.isEmpty()) return;
+                        const framedBox = node.userData.fridayStageField
+                            ? new THREE.Box3(new THREE.Vector3(-18,-8,-18), new THREE.Vector3(18,8,18))
+                            : node.geometry.boundingBox;
                         const materials=Array.isArray(node.material)?node.material:[node.material];
                         const shader=materials.some(material=>material?.isShaderMaterial);
                         // Shader-owned bounds may describe vertices that do
@@ -387,8 +507,11 @@
                                 addPiece(node.geometry,combined,shader,node.userData.fridayStageRadius);
                             }
                         } else {
-                            local.union(node.geometry.boundingBox.clone().applyMatrix4(relative));
-                            addPiece(node.geometry,relative,shader,node.userData.fridayStageRadius);
+                            local.union(framedBox.clone().applyMatrix4(relative));
+                            const framedGeometry = node.userData.fridayStageField
+                                ? { boundingBox:framedBox, boundingSphere:framedBox.getBoundingSphere(new THREE.Sphere()) }
+                                : node.geometry;
+                            addPiece(framedGeometry,relative,shader,node.userData.fridayStageRadius);
                             // Some shader-driven points declare their extent
                             // explicitly while their CPU positions stay zero.
                             const sphere = node.geometry.boundingSphere;
@@ -453,6 +576,7 @@
         }
         function projectSceneStage(camera) {
             const stage = destroyed ? null : occupancy.stage;
+            let pointScale = stage && frameFit.ready ? frameFit.scale * stage.h / win.innerHeight : 1;
             // Neutral framing can enlarge as well as shrink. Keep it stable
             // while the head moves, then enforce only the stage's clear edge;
             // this preserves the native lean-in and lateral parallax.
@@ -468,6 +592,7 @@
             if (raw) {
                 const pad = Math.min(12, stage.w/8, stage.h/8);
                 const scale = Math.min(1, (stage.w-pad*2)/raw.w, (stage.h-pad*2)/raw.h);
+                pointScale *= scale;
                 const x = stage.w/2+(raw.x-stage.w/2)*scale, y = stage.h/2+(raw.y-stage.h/2)*scale;
                 const dx = Math.max(pad-x, Math.min(0,stage.w-pad-x-raw.w*scale));
                 const dy = Math.max(pad-y, Math.min(0,stage.h-pad-y-raw.h*scale));
@@ -479,6 +604,10 @@
                 }
             }
             stageProjection(camera, stage, win.innerWidth, win.innerHeight);
+            // Point sprites do not inherit projection-matrix magnification.
+            // Match their authored light to the projected terrain, then restore
+            // the native sizes when Classic owns the full desktop again.
+            scaleStagePoints(frameFit.structures, pointScale, stage ? win.__fridayRenderer?.getPixelRatio?.() || 1 : 0);
             if (!stage || !fitBounds || !win.THREE) { projectedBounds = null; return; }
             const bounds = projectedPieces(camera,frameFit.pieces,win.innerWidth,win.innerHeight) || projectedSphere(camera, fitBounds, win.innerWidth, win.innerHeight);
             projectedBounds = bounds ? { ...bounds, inside:bounds.x>=stage.x&&bounds.y>=stage.y&&bounds.x+bounds.w<=stage.x+stage.w&&bounds.y+bounds.h<=stage.y+stage.h, form:fitKey } : null;
@@ -512,6 +641,20 @@
             dialog.querySelectorAll('[data-holo-arrangement]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoArrangement === state.arrangement)));
             dialog.querySelectorAll('[data-holo-form]').forEach(el => el.setAttribute('aria-pressed', String(Number(el.dataset.holoForm) === current.scene?.index)));
             const reduce = dialog.querySelector('[data-holo-reduced]'); if (reduce) reduce.hidden = !reduced.matches;
+            refreshTracking();
+        }
+        function refreshTracking() {
+            if (!dialog?.open) return;
+            const cfg = tuner.read();
+            dialog.querySelectorAll('[data-holo-tracking]').forEach(input => {
+                const key = input.dataset.holoTracking;
+                if (doc.activeElement !== input) input.value = Number.isFinite(Number(cfg[key])) ? cfg[key] : win.FridayTracking?.DEFAULTS?.[key] || 0;
+                const value = dialog.querySelector('[data-holo-tracking-value="' + key + '"]');
+                if (value) value.textContent = Number(input.value).toFixed(2);
+                input.disabled = !win.FridayTracking;
+            });
+            const status = dialog.querySelector('[data-holo-tracking-status]');
+            if (status) status.textContent = trackingStatus || 'Applies to the avatar in both display styles. Your existing preferences are kept.';
         }
         async function setSource(source, userInitiated) {
             if (!['off', 'preview', 'camera'].includes(source) || destroyed) return;
@@ -574,6 +717,18 @@
                     }
                 });
                 dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+                dialog.addEventListener('input', event => {
+                    const key = event.target.dataset?.holoTracking;
+                    if (!TRACKING_DIALS.some(dial => dial.key === key)) return;
+                    tuner.live({[key]:Number(event.target.value)});
+                    trackingStatus = 'Previewing · release the control to save.';
+                    refreshTracking();
+                });
+                dialog.addEventListener('change', event => {
+                    const key = event.target.dataset?.holoTracking;
+                    if (!TRACKING_DIALS.some(dial => dial.key === key)) return;
+                    void tuner.save({[key]:Number(event.target.value)}).catch(() => {});
+                });
                 dialog.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } });
                 doc.body.appendChild(dialog);
             }
@@ -582,6 +737,7 @@
                 <div class="fr-holo-content"><section class="fr-holo-collection" aria-label="Avatar collection"><div class="fr-holo-scene-heading"><small data-holo-transition>Original Friday scene</small><h3 data-holo-scene-name></h3><p>Your holographic desktop stays alive as you work.</p></div><div class="fr-holo-forms">${scenes.map((scene, index) => `<button data-holo-form="${index}" aria-pressed="false"><span>${String(index + 1).padStart(2, '0')}</span><strong>${esc(scene.name)}</strong></button>`).join('') || '<p>Scene collection is loading. Reopen this panel in a moment.</p>'}</div></section>
                 <aside class="fr-holo-controls"><section><h3>Workspace depth</h3><div class="fr-holo-segment">${MODES.map(mode => `<button data-holo-mode="${mode}" aria-pressed="false">${upper(mode)}</button>`).join('')}</div><p>Depth changes the light and layers around your work. Text and controls stay steady.</p></section>
                 <section><h3>Motion source</h3><div class="fr-holo-sources"><button data-holo-source="off">Off</button><button data-holo-source="preview">Pointer preview</button><button data-holo-source="camera">Enable head tracking</button></div><p>Pointer preview uses no camera. Head tracking requests camera access through Friday’s original tracker.</p><div class="fr-holo-status" role="status" data-holo-status></div><p data-holo-reduced hidden>Reduced motion is on. Moving workspace decorations remain still.</p></section>
+                <section><h3>Head tracking comfort</h3><p>These controls change the avatar’s response. Workspace depth above changes only the surrounding layers.</p><div class="fr-holo-tracking">${TRACKING_DIALS.map(dial => `<label><span>${dial.label}<output data-holo-tracking-value="${dial.key}"></output></span><input type="range" data-holo-tracking="${dial.key}" aria-label="${dial.label}" min="${dial.min}" max="${dial.max}" step="${dial.step}"><small>${dial.help}</small></label>`).join('')}</div><p role="status" data-holo-tracking-status></p></section>
                 <section><h3>Friday’s place in your work</h3><div class="fr-holo-arrangements">${[['companion','Companion','A place beside the work'],['present','Present','A generous holographic stage'],['focus','Focus','More room for the workspace']].map(([value, title, description]) => `<button data-holo-arrangement="${value}" aria-pressed="false"><strong>${title}</strong><small>${description}</small></button>`).join('')}</div><p>Applies to desktop workspaces. Your floating window sizes are kept for Restore.</p></section>${!win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat' ? '<section class="fr-holo-advanced"><button data-holo-details>More scene settings ↗</button><p>Evolution, hand tracking, timelapse and the original scene controls.</p></section>' : ''}</aside></div>`;
             state.open = true; doc.body.dataset.fridayHoloStudio = 'true';
             dialog.showModal(); refreshPanel(); dialog.querySelector('[data-holo-close]')?.focus();
@@ -621,6 +777,7 @@
             doc.removeEventListener('pointermove', onPointer); doc.removeEventListener('pointerleave', leavePointer); doc.removeEventListener('visibilitychange', onVisibility);
             doc.removeEventListener('transitionrun',onChromeTransition,true); doc.removeEventListener('transitionend',onChromeTransition,true);
             win.removeEventListener('resize', updateLayout); win.removeEventListener('friday:surface-changed', updateLayout); win.removeEventListener('friday:chat-dock', updateLayout); win.removeEventListener('friday:display-style', onDisplayStyle); win.removeEventListener('pagehide', destroy); reduced.removeEventListener?.('change', refreshReduced);
+            win.removeEventListener('friday:tracking-settings', refreshTracking);
             tagged.forEach((value, el) => { if (el.getAttribute('data-depth') === 'middle') el.removeAttribute('data-depth'); }); tagged.clear();
             delete doc.body.dataset.fridayHoloArrangement; delete doc.body.dataset.fridayHoloWorking; delete doc.body.dataset.fridayHoloStudio; delete doc.body.dataset.fridaySpatialLayout;
             for (const name of ['content-left','content-right','content-top','content-bottom','avatar-left','avatar-top','avatar-width','avatar-height','avatar-gap']) root.style.removeProperty('--friday-'+name);
@@ -641,9 +798,10 @@
             doc.addEventListener('pointermove', onPointer, { passive: true }); doc.addEventListener('pointerleave', leavePointer); doc.addEventListener('visibilitychange', onVisibility);
             doc.addEventListener('transitionrun',onChromeTransition,true); doc.addEventListener('transitionend',onChromeTransition,true);
             win.addEventListener('resize', updateLayout); win.addEventListener('friday:surface-changed', updateLayout); win.addEventListener('friday:chat-dock', updateLayout); win.addEventListener('friday:display-style', onDisplayStyle); win.addEventListener('pagehide', destroy); reduced.addEventListener?.('change', refreshReduced);
+            win.addEventListener('friday:tracking-settings', refreshTracking);
         }
         if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start, { once: true }); else start();
         return { open, close, setMode, setArrangement, workspaceArea, fitSceneCamera, projectSceneStage, updateAmbientStage, constrainRect: rect => constrainSpatialRect(rect, occupancy.stage ? occupancy.content : null), destroy, get stageRect() { return occupancy.stage ? { ...occupancy.stage } : null; }, get state() { return { ...state, ownsTracking: !!session?.owns, spatial: JSON.parse(JSON.stringify(occupancy)), projectedAvatarBounds: projectedBounds ? {...projectedBounds} : null }; } };
     }
-    return { trackingSession, spatialLayout, stageProjection, projectedSphere, projectedPieces, stageFill, ambientStageUniforms, constrainSpatialRect, fitRadialDistance, mount };
+    return { trackingSession, trackingTuner, TRACKING_DIALS, setStageScenery, prepareStageField, prepareStagePoints, scaleStagePoints, spatialLayout, stageProjection, projectedSphere, projectedPieces, stageFill, ambientStageUniforms, constrainSpatialRect, fitRadialDistance, mount };
 });

@@ -105,7 +105,7 @@ def handle_hand_cursor(inp: dict) -> str:
     sent = push({"type": "hand_cursor", "op": op})
     if not sent.get("delivered"):
         return "I can't move the cursor without the Friday window open."
-    return _say(_result(sent), {"next": "Moved on.", "previous": "Moved back.", "select": "Selected.", "back": "Back."}[op])
+    return _say(_result(sent), "The desktop did not confirm that cursor action. Please check the screen before trying again.")
 
 
 def _tool_big_mode(inp):

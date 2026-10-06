@@ -9328,6 +9328,8 @@ except Exception as _hte:  # never let optional deps break the agent import
 try:
     from agent_friday.services import hand_cursor_tools as _hand_cursor_tools
     _hand_cursor_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    from agent_friday.services import desktop_surface_tools as _desktop_surface_tools
+    _desktop_surface_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
 except Exception as _hcte:  # never let optional deps break the agent import
     print(f"  [HAND CURSOR] registration skipped: {_hcte}")
 
