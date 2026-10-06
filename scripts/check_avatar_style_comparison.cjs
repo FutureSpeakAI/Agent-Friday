@@ -57,4 +57,3 @@ async function style(page,value){
    await browser.close();
  }
 })().catch(e=>{console.error(e);process.exitCode=1});
-
