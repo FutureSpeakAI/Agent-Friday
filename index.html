@@ -62828,6 +62828,9 @@ function App() {
   // acquired — instead of finishing and leaking a hot mic / ghost socket.
   // Bumped by every start AND every stop.
   const voiceGenRef = useRef(0);
+  const crewVoicePendingRef = useRef(null);
+  const crewMainConversationRef = useRef(convId);
+  crewMainConversationRef.current = convId;
   // News Anchor Mode: a text turn queued to fire the moment the live session's
   // socket opens (e.g. "read me the Front Page"). Sent once, then cleared, so a
   // reconnect mid-session doesn't replay it.
@@ -63848,6 +63851,7 @@ function App() {
     // errors). Without this, the final setVoiceStatus('') below wiped every
     // early-failure message and the mic click looked like a silent no-op.
     const _keepStatus = opts && opts.status;
+    crewVoicePendingRef.current = null;
     const v = voiceRef.current;
     v.crewPlayback?.close();
     // 0) This is a DELIBERATE stop: disarm auto-reconnect before anything else
@@ -63961,11 +63965,19 @@ function App() {
   useEffect(() => {
     const command = e => {
       const action = e.detail?.action;
-      if (action === 'start' && window.FridayCrew?.enabled(e.detail.conversationId)) {
+      const cid = e.detail?.conversationId;
+      if (!cid) return;
+      if (action === 'start' && window.FridayCrew?.enabled(cid)) {
         voiceStopRef.current?.();
-        voiceStartRef.current?.({crew:true,conversationId:e.detail.conversationId});
-      } else if (action === 'stop') voiceStopRef.current?.();
-      else if (action === 'quiet') {
+        if (crewMainConversationRef.current !== cid) {
+          // The global mic and transcript must first belong to this window's chat.
+          crewVoicePendingRef.current = cid;
+          openConversation(cid);
+        } else voiceStartRef.current?.({crew:true,conversationId:cid});
+      } else if (action === 'stop') {
+        if (crewVoicePendingRef.current === cid) crewVoicePendingRef.current = null;
+        if (voiceKeepRef.current.wanted && voiceKeepRef.current.crewConversationId === cid) voiceStopRef.current?.();
+      } else if (action === 'quiet' && voiceKeepRef.current.wanted && voiceKeepRef.current.crewConversationId === cid) {
         const v = voiceRef.current;
         try { if (v.ws?.readyState === WebSocket.OPEN) v.ws.send(JSON.stringify({type:'barge'})); } catch (_) {}
         flushPlaybackRef.current?.('Crew quiet / barge');
@@ -63975,7 +63987,10 @@ function App() {
     return () => window.removeEventListener('friday:crew-voice',command);
   }, []);
   useEffect(()=>{
+    const pending = crewVoicePendingRef.current;
+    crewVoicePendingRef.current = null;
     if(voiceKeepRef.current.wanted&&voiceKeepRef.current.crewConversationId&&voiceKeepRef.current.crewConversationId!==convId)voiceStopRef.current?.({status:'Crew voice stopped because the chat changed. Start voice in this room to continue.'});
+    if(pending===convId&&window.FridayCrew?.enabled(convId))voiceStartRef.current?.({crew:true,conversationId:convId});
   },[convId]);
   const toggleVoice = () => {
     if (voiceOn) voicePrivacyOverrideRef.current = false;
