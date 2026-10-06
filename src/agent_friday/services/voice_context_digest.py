@@ -21,6 +21,9 @@ import re
 #: ~3K tokens at four characters a token (the budget the spec sets).
 DIGEST_TOKEN_BUDGET = 3000
 
+#: Public workspace guidance shares this budget; it never enlarges the prompt.
+PUBLIC_GUIDE_MAX_CHARS = 1600
+
 #: Sections that describe text chat's tool surface and procedures. The voice
 #: contract and the voice rules replace them.
 DROPPED_SECTIONS = (
@@ -77,16 +80,46 @@ def digest(context: str, budget_tokens: int = DIGEST_TOKEN_BUDGET) -> str:
     return "\n\n".join(p for _i, p in sorted(chosen))
 
 
+def _public_career_guide() -> str:
+    """Read the compact public guide already shipped for voice, or omit it.
+
+    Full SELF.md may be trimmed before its workspace section. Reserving this
+    short product explanation keeps basic help available to the voice front
+    without giving it the text-chat tool registry or private career records.
+    """
+    try:
+        from agent_friday.core import _load_voice_demo
+        document = _load_voice_demo()
+        marker = "### Career workspace walkthrough"
+        if marker not in document:
+            return ""
+        section = document.split(marker, 1)[1]
+        section = re.split(r"^#{1,3} |^---\s*$", section, maxsplit=1, flags=re.M)[0].strip()
+        if not section:
+            return ""
+        guide = "== CAREER WORKSPACE HELP ==\n" + section
+        return guide if len(guide) <= PUBLIC_GUIDE_MAX_CHARS else ""
+    except Exception:
+        return ""
+
+
 def build(settings=None) -> str:
     """The digest of Friday's stable local context (before the volatile
     marker; the volatile tail rides in each user turn)."""
     from agent_friday.services.model_router import _get_friday_system_prompt
     from agent_friday.services.prompt_cache import VOLATILE_MARKER
+    guide = _public_career_guide()
     try:
         ctx = _get_friday_system_prompt(provider="local", vault_control=None)
-    except Exception as e:   # the front still answers, with less context
-        return f"(context unavailable: {type(e).__name__})"
+    except Exception as e:   # public help remains available without private context
+        ctx = f"(context unavailable: {type(e).__name__})"
     idx = ctx.find(VOLATILE_MARKER)
     if idx >= 0:
         ctx = ctx[:idx]
-    return digest(ctx)
+    if not guide:
+        return digest(ctx)
+    # Round the public block plus its separator up to whole budget units. The
+    # existing digest still puts identity first and drops text-chat tool sections.
+    reserved = (len(guide) + 2 + 3) // 4
+    context = digest(ctx, budget_tokens=max(0, DIGEST_TOKEN_BUDGET - reserved))
+    return "\n\n".join(part for part in (context, guide) if part)

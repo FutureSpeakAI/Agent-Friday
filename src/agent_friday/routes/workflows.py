@@ -896,3 +896,24 @@ def workflows_remove():
     except ValueError as ve:
         return api_error(ve, "Couldn't remove the workflow", 400)
     return jsonify({"status": "ok" if gone else "not_found"}), (200 if gone else 404)
+
+
+@workflows_bp.route('/api/workflows/templates', methods=['GET'])
+def workflows_templates():
+    """Available native starters; listing does not save or start anything."""
+    from agent_friday.services import workflow_templates
+    return jsonify({"status": "ok", "templates": workflow_templates.list_templates()})
+
+
+@workflows_bp.route('/api/workflows/templates/<template_id>/add', methods=['POST'])
+@login_required
+def workflows_template_add(template_id):
+    """Add a starter once as a manually run workflow, preserving saved edits."""
+    from agent_friday.services import workflow_templates
+    try:
+        result = workflow_templates.add_template(template_id)
+        return jsonify(dict(result, status="ok"))
+    except ValueError as exc:
+        return api_error(exc, "Couldn't add the workflow starter", 400)
+    except Exception as exc:
+        return api_error(exc, "Couldn't add the workflow starter")

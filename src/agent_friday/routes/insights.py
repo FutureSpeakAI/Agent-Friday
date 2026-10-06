@@ -91,7 +91,7 @@ def career_tracker():
     from agent_friday.services import career_ops
     wiki_log = WIKI_PROFESSIONAL_DIR / 'application-log.md'
     ops = career_ops.tracker_path()
-    if not wiki_log.is_file() and ops.is_file():
+    if ops.is_file():
         t = career_ops.read_tracker()
         entries = [dict(r, raw=[r.get(k, '') for k in career_ops.FIELDS]) for r in t['rows']]
         return jsonify({'status': 'ok', 'entries': entries, 'total': len(entries),
@@ -112,8 +112,8 @@ def career_tracker():
 @insights_bp.route('/api/career-ops/pipeline')
 def career_pipeline():
     candidates = [
-        WIKI_PROFESSIONAL_DIR / 'job-search.md',
         _career_root() / 'data' / 'pipeline.md',
+        WIKI_PROFESSIONAL_DIR / 'job-search.md',
     ]
     pipe_path = next((p for p in candidates if p.is_file()), None)
     if pipe_path:
@@ -124,18 +124,15 @@ def career_pipeline():
 def career_reports():
     reports = []
     seen = set()
-    # wiki/professional/ is primary — collect all .md files there
-    if WIKI_PROFESSIONAL_DIR.is_dir():
-        for f in sorted(WIKI_PROFESSIONAL_DIR.iterdir(), reverse=True):
-            if f.suffix == '.md':
-                reports.append({'name': f.name, 'size': f.stat().st_size, 'source': 'wiki'})
-                seen.add(f.name)
-    # career-ops/reports/ is fallback — add any files not already in wiki
-    fallback_dir = _career_root() / 'reports'
-    if fallback_dir.is_dir():
-        for f in sorted(fallback_dir.iterdir(), reverse=True):
-            if f.suffix == '.md' and f.name not in seen:
-                reports.append({'name': f.name, 'size': f.stat().st_size, 'source': 'career-ops'})
+    # Native tools save into career-ops; the workspace must show those same
+    # records. Older wiki material remains available when no native file exists.
+    for folder, source in ((_career_root() / 'reports', 'career-ops'),
+                           (WIKI_PROFESSIONAL_DIR, 'wiki')):
+        if folder.is_dir():
+            for f in sorted(folder.iterdir(), reverse=True):
+                if f.is_file() and f.suffix == '.md' and f.name not in seen:
+                    reports.append({'name': f.name, 'size': f.stat().st_size, 'source': source})
+                    seen.add(f.name)
     if reports:
         return jsonify({'status': 'ok', 'reports': reports, 'total': len(reports)})
     return jsonify({'status': 'no_reports', 'reports': [], 'total': 0})
@@ -146,8 +143,8 @@ def career_report(filename):
     if '\\' in filename or '/' in filename or '..' in filename or ':' in filename:
         return jsonify({'status': 'not_found'}), 400
     candidates = [
-        WIKI_PROFESSIONAL_DIR / filename,
         _career_root() / 'reports' / filename,
+        WIKI_PROFESSIONAL_DIR / filename,
     ]
     report_path = next((p for p in candidates if p.is_file()), None)
     if report_path:
