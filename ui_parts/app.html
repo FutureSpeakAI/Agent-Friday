@@ -1075,16 +1075,14 @@ function fridayDesktopArea() {
   const floor = dr && dr.height ? Math.round(dr.top) : vh;
   const area = fridaySnapArea(vw, vh, top, floor, left ? { side: 'left', w: left } : right ? { side: 'right', w: right } : null);
   const classes = document.body && document.body.classList;
-  if (classes && typeof classes.contains === 'function' && classes.contains('friday-experience-desktop') && vw >= 760) {
-    const rail = document.querySelector('.fx-rail');
-    const rr = rail && typeof rail.getBoundingClientRect === 'function' ? rail.getBoundingClientRect() : null;
-    // The rail moves with left-docked chat. Reserve its measured far edge;
-    // before its first layout, use the same desktop gutter after that chat.
-    const edge = rr && rr.width > 0 && rr.height > 0 && Number.isFinite(rr.right) ? Math.ceil(rr.right) + 16 : left + 104;
-    const inset = Math.min(area.w, Math.max(0, edge - area.x));
-    area.x += inset; area.w = Math.max(0, area.w - inset);
+  if (classes && classes.contains('friday-experience-desktop')) {
+    const gutter = vw < 760 ? 8 : 16;
+    area.x += gutter; area.y += 12;
+    area.w = Math.max(1, area.w - gutter * 2);
+    area.h = Math.max(1, area.h - 24);
   }
-  return area;
+  return window.FridayHolographicWorkspace && typeof window.FridayHolographicWorkspace.workspaceArea === 'function'
+    ? window.FridayHolographicWorkspace.workspaceArea(area) : area;
 }
 // One window's snap state. `key` names it for the keys and for Friday
 // ('news', 'chat:<id>'); a slot the owner chose is announced so App can
@@ -1109,6 +1107,7 @@ function useFridaySnap(key, initial) {
     const later = () => setTimeout(fit, 420);
     addEventListener('resize', fit);
     addEventListener('friday:chat-dock', fit);
+    addEventListener('friday:spatial-layout', fit);
     const dock = document.querySelector('.dock');
     let obs = null;
     if (dock && window.MutationObserver) {
@@ -1118,6 +1117,7 @@ function useFridaySnap(key, initial) {
     return () => {
       removeEventListener('resize', fit);
       removeEventListener('friday:chat-dock', fit);
+      removeEventListener('friday:spatial-layout', fit);
       if (obs) obs.disconnect();
     };
   }, []);
@@ -1265,6 +1265,8 @@ function SnapMenu({
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { left: 0, right: 0, bottom: 40 };
   const width = 312;
   const left = Math.max(8, Math.min((window.innerWidth || 1280) - width - 8, r.right - width));
+  const requestedBox={x:left,y:Math.round(r.bottom+6),w:width,h:380};
+  const shownBox=window.FridayHolographicWorkspace?.constrainRect(requestedBox)||requestedBox;
   const zone = (slot, grow, label, pick, on, extra) => /*#__PURE__*/React.createElement("button", {
     key: label,
     type: "button",
@@ -1309,9 +1311,9 @@ function SnapMenu({
     "aria-label": kind === 'tray' ? 'Where the chat goes' : 'Snap layouts',
     "data-testid": "snap-menu",
     style: {
-      left,
-      top: Math.round(r.bottom + 6),
-      width
+      left: shownBox.x,
+      top: shownBox.y,
+      width: shownBox.w, maxHeight: shownBox.h, overflowY: 'auto'
     },
     onMouseEnter,
     onMouseLeave,
@@ -1446,7 +1448,7 @@ window.fridayTM = fridayTM;
 function FridayLockup({size=15,onClick,href,title}){
   const b=window.FRIDAY_BRAND;
   const name=[b.product.toUpperCase(),<span key="tm" className="fr-lockup-tm">{b.mark}</span>];
-  const nameProps={className:'fr-lockup-name'+(href||onClick?'':' fr-lockup-static'),title:title,style:{fontSize:size}};
+  const nameProps={className:'fr-lockup-name'+(href||onClick?'':' fr-lockup-static'),title:title,onClick:onClick,style:{fontSize:size}};
   return(<span className="fr-lockup" data-testid="friday-lockup">
     {href?<a href={href} {...nameProps}>{name}</a>:onClick?<button type="button" onClick={onClick} {...nameProps}>{name}</button>:<span {...nameProps}>{name}</span>}
     <span className="fr-lockup-by" style={{fontSize:Math.round(size*0.85)}}>by</span>
@@ -2145,6 +2147,18 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   const LSK='friday_fwin_'+id;
   // The window grows out of (and folds back into) its own dock icon.
   const fwinRef=useRef(null);
+  const [historyTop, setHistoryTop] = useState(37);
+  React.useLayoutEffect(() => {
+    const bar = fwinRef.current && fwinRef.current.querySelector('.fwin-bar');
+    if (!bar) return;
+    // offsetHeight excludes the temporary scale used by the opening animation.
+    const measure = () => { const height = bar.offsetHeight; if (height > 0) setHistoryTop(height); };
+    measure();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    if (observer) observer.observe(bar);
+    window.addEventListener('resize', measure);
+    return () => { if (observer) observer.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
   const aimAtDock=()=>{const el=fwinRef.current;if(!el)return;const img=document.querySelector('.dock-btn img[src="assets/icons/'+id+'.svg"]');if(img&&el.offsetWidth){const d=img.getBoundingClientRect();el.style.setProperty('--fwin-ox',Math.round(d.left+d.width/2-el.offsetLeft)+'px');el.style.setProperty('--fwin-oy',Math.round(d.top+d.height/2-el.offsetTop)+'px');}};
   React.useLayoutEffect(aimAtDock,[]);
   React.useLayoutEffect(()=>{if(closing)aimAtDock();},[closing]);
@@ -2195,10 +2209,9 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
     const up=()=>{setDragging(false);if(dOff.current.free)dOff.current.free=false;else snapRef.current.dragEnd()};
     addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
   // Resize from any edge or corner; the dragged side moves, the opposite one stays.
-  const startResize=(e,dir)=>{if(snap.slot)return;rStart.current={px:e.clientX,py:e.clientY,x:pos.x,y:pos.y,w:size.w,h:size.h,dir};setResizing(dir);onFocus()};
+  const startResize=(e,dir)=>{if(snap.slot)return;rStart.current={px:e.clientX,py:e.clientY,x:box.x,y:box.y,w:box.w,h:box.h,dir};setResizing(dir);onFocus()};
   useEffect(()=>{if(!resizing)return;fridayResizeCursor(resizing);const mv=e=>{const r=fridayResizeRect(rStart.current,rStart.current.dir||'se',e.clientX,e.clientY,{minW:400,minH:280,maxW:vw()-20,maxH:vh()-50,minY:30,maxRight:vw()-4,maxBottom:vh()-4});setSize({w:Math.round(r.w),h:Math.round(r.h)});setPos({x:Math.round(r.x),y:Math.round(r.y)})};const up=()=>setResizing(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{fridayResizeCursor(null);removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[resizing]);
-  // Persist geometry whenever it settles.
-  useEffect(()=>{try{localStorage.setItem(LSK,JSON.stringify({x:pos.x,y:pos.y,w:size.w,h:size.h,pv:pref?pref.v:undefined}))}catch(_){}},[pos.x,pos.y,size.w,size.h]);
+
   // ── Live customization Friday applied to THIS workspace via the 💬 chat ──
   // The history overlay is local to THIS window rather than App-level, so two
   // open workspaces each get their own. Two arrival paths, because the window
@@ -2212,15 +2225,18 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   // SNAPPED: the window fills a slot of the snap area, edge to edge
   // (unified-shell.md §11): maximised is the whole of it, beside a shown tray.
   // Its own size and place are kept for when it is freed.
-  const snap=useFridaySnap(id,window.__fridayMaxFor===id?'full':null);
+  const snap=useFridaySnap(id,window.__fridayMaxFor===id?'full':saved&&FRIDAY_SNAP_SLOTS[saved.snap]?saved.snap:!saved&&document.body.classList.contains('friday-experience-desktop')?'full':null);
   const snapRef=useRef(snap);snapRef.current=snap;const sizeRef=useRef(size);sizeRef.current=size;
   const maxed=snap.slot==='full';
+  // Remember the arrangement alongside the independent floating geometry.
+  useEffect(()=>{try{localStorage.setItem(LSK,JSON.stringify({x:pos.x,y:pos.y,w:size.w,h:size.h,pv:pref?pref.v:undefined,snap:snap.slot}))}catch(_){}},[pos.x,pos.y,size.w,size.h,snap.slot]);
   const toggleMax=()=>snap.setSlot(maxed?null:'full','owner');
   const menu=useSnapMenuOpener();
   useEffect(()=>{if(window.__fridayMaxFor===id)delete window.__fridayMaxFor;
     const on=e=>{if(e&&e.detail&&e.detail.workspace===id){delete window.__fridayMaxFor;snapRef.current.setSlot(e.detail.max!==false?'full':null)}};
     window.addEventListener('friday:fwin-max',on);return()=>window.removeEventListener('friday:fwin-max',on)},[id]);
-  const box=snap.box||{x:pos.x,y:pos.y,w:size.w,h:size.h};
+  const requestedBox = snap.box || {x:pos.x,y:pos.y,w:size.w,h:size.h};
+  const box = window.FridayHolographicWorkspace?.constrainRect(requestedBox) || requestedBox;
   const[histOpen,setHistOpen]=useState(false);
   // The browser refused the tab (pop-ups blocked): the window stays and says why.
   const[tabBlocked,setTabBlocked]=useState(false);const [improveNote,setImproveNote]=useState('');
@@ -2230,16 +2246,16 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
     window.addEventListener('friday:open-ws-history',onOpen);
     return()=>window.removeEventListener('friday:open-ws-history',onOpen);
   },[id]);
-  return(<div className={'fwin'+(closing?' closing':'')+(maxed?' maxed':'')+(snap.slot?' snapped':'')} data-snap={snap.slot||undefined} ref={fwinRef} style={{left:box.x,top:box.y,width:box.w,height:box.h,zIndex}} onClick={onFocus}>
+  return(<div className={'fwin'+(closing?' closing':'')+(maxed?' maxed':'')+(snap.slot?' snapped':'')} data-snap={snap.slot||undefined} data-friday-workspace={id} ref={fwinRef} style={{left:box.x,top:box.y,width:box.w,height:box.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onDoubleClick={e=>{if(e.target.closest('.fwin-btns'))return;toggleMax()}} onMouseDown={e=>{if(e.target.closest('.fwin-btns')||e.button!==0)return;onFocus();
       // Dragged away, a snapped window is freed at its own size, with the pointer
       // at the same place along its title bar.
       if(snap.slot){const rel=box.w?(e.clientX-box.x)/box.w:0.5;dOff.current={x:Math.round(rel*size.w),y:e.clientY-box.y,free:true,sx:e.clientX,sy:e.clientY}}
-      else dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};
+      else dOff.current={x:e.clientX-box.x,y:e.clientY-box.y};
       setDragging(true)}}>
       <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote}/>{/* Resting on maximise opens the snap layouts (unified-shell.md §11.3). */}<button {...menu.bind} title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} aria-haspopup="menu" data-fwin-max={id} onClick={e=>{e.stopPropagation();toggleMax()}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{menu.open&&<SnapMenu {...menu.menu} anchor={menu.anchor.current} kind="workspace" current={snap.slot} onPick={s=>snap.setSlot(s,'owner')} onChat={f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}/>}{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
     </div>{improveNote&&<div className="fwin-tab-blocked" role="alert" data-ws-improve-note={id} onClick={()=>setImproveNote('')}>{improveNote}</div>}{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
-    {histOpen&&<WorkspaceHistory wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
+    {histOpen&&<WorkspaceHistory top={historyTop} wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();e.preventDefault();startResize(e,'se')}}/>{fridayEdgeHandles(startResize)}
     <SnapPreview box={snap.previewBox} slot={snap.preview}/>
   </div>);
@@ -2286,8 +2302,8 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
   const reset=async()=>{if(!window.confirm(('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?')))return;try{const r=await fetch(`/api/workspace/${wsId}/reset`,{method:'POST'});const d=await r.json();setCust(wsId,d.customization||{});if(d.versions)setVersions(d.versions);flash('Workspace reset to default')}catch(e){flash('Reset failed')}};
   const clearChat=()=>{fetch(`/api/workspace/${wsId}/chat/clear`,{method:'POST'}).then(()=>{setMsgs([]);flash('History cleared')}).catch(()=>{})};
   const STARTERS=['Make this layout more compact','I don’t like the colors — try a warmer accent','Pin a note reminding me what this workspace is for','Add quick-action buttons for my common tasks here'];
-  return(<div style={{position:'fixed',left:pos.x,top:pos.y,width:390,maxWidth:'94vw',height:'min(620px,76vh)',zIndex:130,display:'flex',flexDirection:'column',background:'rgba(10,14,24,0.97)',border:'1px solid rgba(0,212,255,0.28)',borderRadius:14,boxShadow:'0 18px 60px rgba(0,0,0,0.6)',backdropFilter:'blur(14px)',overflow:'hidden'}}>
-    <div onMouseDown={e=>{if(e.target.closest('button'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}} style={{cursor:'grab',padding:'10px 12px',borderBottom:'1px solid rgba(0,212,255,0.18)',display:'flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.05)'}}>
+  return(<div className="friday-workspace-studio" role="dialog" aria-label={label+" customization"} style={{position:'fixed','--friday-shared-x':pos.x+'px','--friday-shared-y':pos.y+'px',left:pos.x,top:pos.y,width:390,maxWidth:'94vw',height:'min(620px,76vh)',zIndex:130,display:'flex',flexDirection:'column',background:'rgba(10,14,24,0.97)',border:'1px solid rgba(0,212,255,0.28)',borderRadius:14,boxShadow:'0 18px 60px rgba(0,0,0,0.6)',backdropFilter:'blur(14px)',overflow:'hidden'}}>
+    <div className="friday-studio-head" onMouseDown={e=>{if(e.target.closest('button'))return;setDragging(true);const box=e.currentTarget.closest('.friday-workspace-studio').getBoundingClientRect();dOff.current={x:e.clientX-box.left,y:e.clientY-box.top}}} style={{cursor:'grab',padding:'10px 12px',borderBottom:'1px solid rgba(0,212,255,0.18)',display:'flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.05)'}}>
       <span style={{fontSize:15}}>💬</span>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.04em'}}>{emoji} {label} · Studio</div>
@@ -2308,7 +2324,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
         </div>
       ))}
     </div>}
-    <div style={{flex:1,overflowY:'auto',padding:'10px 12px'}}>
+    <div className="friday-studio-log" role="log" aria-live="polite" style={{flex:1,overflowY:'auto',padding:'10px 12px'}}>
       {msgs.length===0&&!loading&&<div style={{color:'#8891a8',fontSize:12,lineHeight:1.6}}>
         <div style={{marginBottom:10}}>Tell {fridayName()} what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features — and undo anything.</div>
         {STARTERS.map((s,i)=><div key={i} onClick={()=>send(s)} className="card" style={{cursor:'pointer',padding:'7px 10px',marginBottom:5,fontSize:11.5}}>{s}</div>)}
@@ -2326,7 +2342,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
       <div ref={endRef}/>
     </div>
     
-    <div style={{padding:'8px 10px',borderTop:'1px solid rgba(255,255,255,0.08)',display:'flex',gap:6,alignItems:'flex-end'}}>
+    <div className="friday-studio-composer" style={{padding:'8px 10px',borderTop:'1px solid rgba(255,255,255,0.08)',display:'flex',gap:6,alignItems:'flex-end'}}>
       <textarea ref={inRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>fridayEnterSends(e,send)}
         placeholder={`Ask ${fridayName()} to change ${label}…`} rows={1}
         style={{flex:1,resize:'none',maxHeight:90,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:8,color:'#dde',fontSize:12.5,padding:'7px 9px',fontFamily:'Inter',outline:'none'}}/>
@@ -2347,7 +2363,7 @@ class Safe extends React.Component{
   static getDerivedStateFromError(e){return{err:e||true};}
   componentDidCatch(e,info){try{console.error('[Safe] '+(this.props.name||'component')+' render error:',e,info&&info.componentStack)}catch(_){}}
   render(){
-    if(this.state.err)return(<div style={{padding:20,textAlign:'center'}}><div style={{color:'#ff0080',fontSize:13}}>⚠️ {this.props.name} encountered an error</div><div style={{color:'#8891a8',fontSize:11,marginTop:6,fontFamily:'JetBrains Mono',whiteSpace:'pre-wrap'}}>{String((this.state.err&&this.state.err.message)||this.state.err||'')}</div><button className="btn" style={{marginTop:8}} onClick={()=>this.setState({err:null})}>Retry</button></div>);
+    if(this.state.err)return(<div className="friday-surface-error" role="alert" style={{padding:20,textAlign:'center'}}><div style={{color:'#ff0080',fontSize:13}}>⚠️ {this.props.name} encountered an error</div><div style={{color:'#8891a8',fontSize:11,marginTop:6,fontFamily:'JetBrains Mono',whiteSpace:'pre-wrap'}}>{String((this.state.err&&this.state.err.message)||this.state.err||'')}</div><button className="btn" style={{marginTop:8}} onClick={()=>this.setState({err:null})}>Retry</button></div>);
     return this.props.children;
   }
 }
@@ -2883,8 +2899,11 @@ function PodcastPlayer() {
   const nowSources = (line && line.cites ? line.cites : []).map(c => srcById[c]).filter(Boolean);
   const timeline = podcastSourceTimeline(ep);
   const frame = h('div', {
+    className: 'friday-podcast-player' + (popped ? ' is-popped' : ''),
     role: 'region', 'aria-label': 'Podcast player',
     style: Object.assign({
+      '--friday-shared-x': pos ? pos.x + 'px' : undefined,
+      '--friday-shared-y': pos ? pos.y + 'px' : undefined,
       zIndex: 180,
       background: PODCAST_C.bg, backdropFilter: PODCAST_C.blur, WebkitBackdropFilter: PODCAST_C.blur, border: '1px solid ' + PODCAST_C.line, borderRadius: 12,
       boxShadow: '0 12px 40px rgba(0,0,0,0.5)', color: PODCAST_C.text, fontFamily: PODCAST_C.font, fontSize: PODCAST_C.base, padding: 12,
@@ -3301,7 +3320,7 @@ function CareerWS(){
   const interviewing=entries.filter(e=>(e.status||'').toLowerCase().includes('interview')).length;
   const offered=entries.filter(e=>(e.status||'').toLowerCase().includes('offer')).length;
   const hasData=entries.length>0||reports.length>0||pipeline.length>10;
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-career" data-view={view}>
     {hasData?<FridaySays text={entries.length+' evaluated, '+applied+' applied, '+interviewing+' interviewing, '+reports.length+' reports.'}/>:<FridaySays text="Career-ops ready. Paste a job URL below to evaluate, or scan portals for new opportunities."/>}
     {coStatus&&!coStatus.ready&&<div className="card" style={{marginBottom:12,padding:10}}>
       <div className="card-title">Set up career-ops</div>
@@ -3331,7 +3350,7 @@ function CareerWS(){
       </div>)}
     </div>}
     {view==='overview'&&<div>
-      <div style={{display:'flex',gap:8,marginBottom:12}}>
+      <div className="fr-comp-career-stages" style={{display:'flex',gap:8,marginBottom:12}}>
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20}}>{entries.length}</div><div className="stat-label">evaluated</div></div>
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20,color:'#00d4ff'}}>{applied}</div><div className="stat-label">applied</div></div>
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20,color:'#7b61ff'}}>{interviewing}</div><div className="stat-label">interviewing</div></div>
@@ -6632,7 +6651,7 @@ function FSProjectCard({p,onToast,onChanged}){
     try{await fetch('/api/futurespeak/project/'+encodeURIComponent(p.name),{method:'DELETE'});onToast(p.name+' removed');onChanged&&onChanged()}
     catch(e){onToast('Remove failed')}
   };
-  return(<div className="card" style={{borderColor:ds.c+'33',display:'flex',flexDirection:'column',gap:6,transition:'all .2s',position:'relative'}}
+  return(<div className="fr-comp-site-card card" data-deploy-state={st.deploy_status||'remote'} style={{borderColor:ds.c+'33',display:'flex',flexDirection:'column',gap:6,transition:'all .2s',position:'relative'}}
     onMouseEnter={e=>e.currentTarget.style.borderColor=ds.c+'88'} onMouseLeave={e=>e.currentTarget.style.borderColor=ds.c+'33'}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:6}}>
       <div style={{flex:1,minWidth:0}}>
@@ -6720,7 +6739,7 @@ function FSStudio(){
     setWBusy(false);
   };
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:30}}>Loading portfolio…</div>;
-  return(<div>
+  return(<div className="fr-comp-publications">
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:6}}>
       <div style={{display:'flex',gap:10,fontSize:11,fontFamily:'Orbitron, sans-serif',alignItems:'center'}}>
         <span style={{color:'#00ff80'}}>● {counts.green||0} deployed</span>
@@ -6764,7 +6783,7 @@ function FSStudio(){
         </div>)}
       </div>
     </div>}
-    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(290px,1fr))',gap:8}}>
+    <div className="fr-comp-publication-grid">
       {projects.map((p,i)=><FSProjectCard key={p.name||i} p={p} onToast={showToast} onChanged={load}/>)}
     </div>
     {projects.length===0&&<div className="card" style={{textAlign:'center',padding:20,color:'#999',fontSize:12}}>No projects in portfolio. Click 🔄 Refresh All to discover repos, or ＋ New Project.</div>}
@@ -6793,7 +6812,7 @@ function FuturespeakWS(){
   const maxRev=Math.max(...((rev?.months||[]).map(m=>Math.max(m.projected||0,m.actual||0))),1);
   const STATUS_COLORS={discovery:'#888',qualified:'#00d4ff',proposal:'#f59e0b',executed:'#00ff80',closed:'#00ff80','in-review':'#f59e0b',active:'#00ff80'};
 
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-sites" data-view={view}>
     <FridaySays text={`${window.FRIDAY_BRAND.makerName} · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['sites','overview','pipeline','revenue','legal','website','talent','demos','studio'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v==='sites'?'🚀 sites':v}</button>)}</div>
     
@@ -6805,7 +6824,7 @@ function FuturespeakWS(){
         <div style={{fontSize:13,color:'#bbb'}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance for regulated industries.</div>
         <div style={{marginTop:6,display:'flex',gap:10}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai →</a></div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginBottom:10}}>
+      <div className="fr-comp-grid fr-comp-grid-four" style={{display:'grid',gap:6,marginBottom:10}}>
         <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{pipe?.total||0}</div><div className="stat-label">opportunities</div></div>
         <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#f59e0b'}}>{fmt(pipe?.total_value)}</div><div className="stat-label">pipeline value</div></div>
         <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#00d4ff'}}>{fmt(pipe?.weighted_value)}</div><div className="stat-label">weighted</div></div>
@@ -6907,7 +6926,7 @@ function FuturespeakWS(){
 
     {view==='demos'&&<div>
       <div style={{fontSize:11,color:'#999',marginBottom:8,fontFamily:'JetBrains Mono'}}>{assets?.path}</div>
-      {(!assets||assets.total===0)?<div className="card" style={{textAlign:'center',padding:20,color:'#999',fontSize:12}}>No demo assets yet. Drop files into ~/.friday/futurespeak/demo-assets/</div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+      {(!assets||assets.total===0)?<div className="card" style={{textAlign:'center',padding:20,color:'#999',fontSize:12}}>No demo assets yet. Drop files into ~/.friday/futurespeak/demo-assets/</div>:<div className="fr-comp-grid fr-comp-grid-two" style={{display:'grid',gap:6}}>
         {(assets.assets||[]).filter(a=>a.kind!=='dir'&&a.name!=='README.md').map((a,i)=>{const ICONS={mp4:'🎬',mov:'🎬',pdf:'📄',pptx:'📊',key:'📊',png:'🖼️',jpg:'🖼️',svg:'🎨',md:'📝'};const icon=ICONS[a.ext]||'📎';return(<div key={i} className="card" style={{padding:8}}>
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><span style={{fontSize:18}}>{icon}</span><span style={{fontSize:11,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name}</span></div>
           <div style={{fontSize:11,color:'#999',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
@@ -6937,7 +6956,7 @@ function FuturespeakWS(){
         </div>
       </div>
       <div className="card"><div className="card-title">Brand Anchors</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11,color:'#aaa'}}>
+        <div className="fr-comp-grid fr-comp-grid-two" style={{display:'grid',gap:6,fontSize:11,color:'#aaa'}}>
           <div><strong style={{color:'#00d4ff'}}>Colors</strong><br/>Cyan #00d4ff · Magenta #ff0080 · Amber #f59e0b</div>
           <div><strong style={{color:'#00d4ff'}}>Type</strong><br/>Orbitron (display) · Inter (body) · JetBrains Mono (code)</div>
           <div><strong style={{color:'#00d4ff'}}>Voice</strong><br/>Direct · technical · contrarian · credible</div>
@@ -6953,10 +6972,10 @@ function FamilyWS(){
   const familyCountdown=cd?.countdowns?.[0];
   const hasEvents=cd?.countdowns?.length>0;
   const quickAsk=(q)=>{if(window.fridayQuickChat)window.fridayQuickChat(q);};
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-family">
     <FridaySays text={familyCountdown?`${familyCountdown.label} is ${fridayCountdownWhen(familyCountdown)||'coming up'}.`:'Your family dashboard. Ask me to help set it up.'}/>
-    {hasEvents&&<div style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.emoji||''} {c.label||c.name}{c.why&&<span className="cd-why"> · {c.why}</span>}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif',fontSize:11}}>{fridayCountdownWhen(c)||`${c.days}d`}</span></div>)}</div>}
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+    {hasEvents&&<div className="fr-comp-family-timeline" style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.emoji||''} {c.label||c.name}{c.why&&<span className="cd-why"> · {c.why}</span>}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif',fontSize:11}}>{fridayCountdownWhen(c)||`${c.days}d`}</span></div>)}</div>}
+    <div className="fr-comp-grid fr-comp-grid-two" style={{display:'grid',gap:8,marginBottom:12}}>
       <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add my family members to the wiki.')}>
         <div className="card-title">Family Members</div><div style={{fontSize:11,color:'#888'}}>Click to set up with {fridayName()}</div>
       </button>
@@ -8493,12 +8512,12 @@ function WfEditor({ initial, onCancel, onSaved }) {
 }
 
 function WfCard({ w, onRun, onToggle, onEdit, onDelete, busy }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(w.steps.length > 1);
   const last = w.last_run;
   const st = w.running ? WF_STATUS.running : last ? (WF_STATUS[last.status] || WF_STATUS.finished) : null;
   const paused = w.when && !w.enabled;
   const what = w.description || (w.steps[0] && w.steps[0].prompt) || '';
-  return (<div className="card wfx-card" data-testid="wf-card" style={paused ? { opacity: 0.72 } : null}>
+  return (<div className="card wfx-card" data-running={w.running?'true':'false'} data-testid="wf-card" style={paused ? { opacity: 0.72 } : null}>
     <div className="wfx-row" style={{ alignItems: 'flex-start' }}>
       <div className="wfx-grow">
         <div className="wfx-name">{w.name}</div>
@@ -8650,7 +8669,7 @@ function WorkflowsWS() {
 function SitesWS(){
   // Sites — general-purpose portfolio & deploy manager (wraps FSStudio).
   // Shown to fresh installs in place of the full FutureSpeak business pipeline.
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-sites">
     <FridaySays text="Your sites & projects — portfolio status, deploy state, and one-click scaffolding via Claude Code."/>
     <FSStudio/>
   </div>);
@@ -8874,7 +8893,7 @@ function SystemWS(){
   if(loading)return <div>{focus}<div style={{color:'#bbb',textAlign:'center',padding:40,fontFamily:'JetBrains Mono',fontSize:12}}>Scanning system...</div></div>;
   const disks=(sys?.disk||sys?.disks||[]);
   const procs=(sys?.processes||[]);
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-system">
     {focus}
     {compStats&&<div className="card" style={{marginBottom:10,padding:10}}>
       <div className="card-title">Context Compression (Headroom)</div>
@@ -8971,7 +8990,7 @@ function SystemWS(){
     </div>
     {ctxToast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6,fontFamily:'JetBrains Mono'}}>✓ {ctxToast}</div>}
     <div className="card" style={{marginBottom:8}}>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginBottom:6}}>
+      <div className="fr-comp-grid fr-comp-grid-four" style={{display:'grid',gap:6,marginBottom:6}}>
         <div style={{fontSize:11}}><span style={{color:'#888'}}>Days:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{ctxStats?.days??0}</span></div>
         <div style={{fontSize:11}}><span style={{color:'#888'}}>Entries:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{ctxStats?.total_entries??0}</span></div>
         <div style={{fontSize:11}}><span style={{color:'#888'}}>Size:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{fmtBytes(ctxStats?.total_bytes)}</span></div>
@@ -9013,8 +9032,8 @@ function SystemWS(){
     </div>}
 
     {/* Delete confirmation modal */}
-    {ctxDelOpen&&<div onClick={()=>{setCtxDelOpen(false);setCtxDelConfirm('')}} style={{position:'fixed',inset:0,zIndex:300,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:'min(460px,90vw)',background:'rgba(15,5,15,0.97)',border:'1px solid rgba(255,0,128,0.45)',borderRadius:10,padding:18}}>
+    {ctxDelOpen&&<div className="fr-comp-system-modal" onClick={()=>{setCtxDelOpen(false);setCtxDelConfirm('')}} style={{position:'fixed',inset:0,zIndex:300,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <div className="fr-comp-system-modal-box" onClick={e=>e.stopPropagation()} style={{width:'min(460px,90vw)',background:'rgba(15,5,15,0.97)',border:'1px solid rgba(255,0,128,0.45)',borderRadius:10,padding:18}}>
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#ff0080',letterSpacing:'.1em',marginBottom:8}}>⚠ DELETE CONTEXT LOG RANGE</div>
         <div style={{fontSize:12,color:'#ddd',marginBottom:10,lineHeight:1.5}}>This will permanently delete log files from <strong style={{color:'#ff0080'}}>{ctxFrom||'(beginning)'}</strong> to <strong style={{color:'#ff0080'}}>{ctxTo||'(end)'}</strong>. Type <strong>DELETE</strong> to confirm.</div>
         <input value={ctxDelConfirm} onChange={e=>setCtxDelConfirm(e.target.value)} placeholder="DELETE" autoFocus
@@ -9320,7 +9339,7 @@ function CodeWS(){
   const sources=Array.from(new Set(logs.map(l=>l.source))).slice(0,12);
   const shown=srcFilter?logs.filter(l=>l.source===srcFilter):logs;
   const noPad={padding:'2px 7px'};
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-code" data-view={tab}>
     <div style={{display:'flex',gap:4,marginBottom:12,flexWrap:'wrap',borderBottom:'1px solid rgba(255,255,255,0.06)',paddingBottom:8}}>
       {TABS.map(t=><button key={t.id} className={'btn '+(tab===t.id?'active':'')} style={{fontSize:11,position:'relative'}} onClick={()=>setTab(t.id)}>
         {t.ico} {t.label}
@@ -9832,8 +9851,8 @@ function NewsWS(){
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
 
   // ── Expanded single-briefing reader ──
-  if(articleOpen)return(<div className="news-ws" style={{position:'relative',minHeight:'100%'}}><NewsArticleView a={articleOpen} onClose={()=>setArticleOpen(null)}/></div>);
-  if(selected)return(<div className="news-ws">
+  if(articleOpen)return(<div className="news-ws" data-view={tab} style={{position:'relative',minHeight:'100%'}}><NewsArticleView a={articleOpen} onClose={()=>setArticleOpen(null)}/></div>);
+  if(selected)return(<div className="news-ws news-briefing-reader">
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
       <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:11}}>← Back</button>
       <div style={{display:'flex',gap:4}}>
@@ -9845,12 +9864,12 @@ function NewsWS(){
         {selected.filename&&selected.isHtml!==false&&<button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:11}}>Open in Tab</button>}
       </div>
     </div>
-    <div style={{display:'flex',gap:12}}>
-      <div style={{flex:1,overflowY:'auto'}}>
+    <div className="news-briefing-body" style={{display:'flex',gap:12}}>
+      <div className="news-briefing-document" style={{flex:1,overflowY:'auto'}}>
         {selected.isHtml?<iframe srcDoc={fridayFrameScrollbars(htmlContent)} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" ref={window.fridayAttachFrame} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0e1a'}}/>:
         <FridayDoc text={htmlContent} style={{padding:'4px 8px'}}/>}
       </div>
-      {chatOpen&&<div style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
+      {chatOpen&&<div className="news-briefing-discussion" style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
         <div style={{flex:1,overflowY:'auto',marginBottom:8}}>{chatMsgs.map((m,i)=><div key={i} style={{marginBottom:6,textAlign:m.role==='user'?'right':'left'}}><div style={{display:'inline-block',maxWidth:'90%',padding:'5px 8px',borderRadius:6,fontSize:11,background:m.role==='user'?'rgba(123,97,255,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div></div>)}{chatLoad&&<div style={{fontSize:11,color:'#00d4ff'}}>Thinking...</div>}</div>
         <div style={{display:'flex',gap:4,alignItems:'flex-end'}}><FridayChatInput className="input" style={{flex:1,fontSize:11}} maxHeight={110} value={chatIn} onChange={setChatIn} onSend={sendBriefingChat} placeholder="Ask about this briefing..."/><button className="btn" style={{fontSize:11}} onClick={sendBriefingChat}>Send</button></div>
@@ -10744,7 +10763,7 @@ function MeetingRecIndicator(){
   if(!st||!st.recording)return null;
   const live=st.capturing;
   const stop=async()=>{setStopping(true);try{await fetch('/api/meetings/stop',{method:'POST'});}catch(e){}setStopping(false);meetingsChanged();};
-  return(<div role="status" aria-live="polite" style={{position:'fixed',top:48,left:'50%',transform:'translateX(-50%)',zIndex:10050,display:'flex',alignItems:'center',gap:8,padding:'5px 8px 5px 12px',borderRadius:999,background:'rgba(20,6,8,0.92)',border:'1px solid rgba(239,68,68,0.6)',boxShadow:'0 0 18px rgba(239,68,68,0.35)',fontFamily:'JetBrains Mono',fontSize:12,color:'#fecaca'}}>
+  return(<div className="friday-meeting-indicator" role="status" aria-live="polite" style={{position:'fixed',top:48,left:'50%',transform:'translateX(-50%)',zIndex:10050,display:'flex',alignItems:'center',gap:8,padding:'5px 8px 5px 12px',borderRadius:999,background:'rgba(20,6,8,0.92)',border:'1px solid rgba(239,68,68,0.6)',boxShadow:'0 0 18px rgba(239,68,68,0.35)',fontFamily:'JetBrains Mono',fontSize:12,color:'#fecaca'}}>
     <span aria-hidden="true" style={{width:10,height:10,borderRadius:'50%',background:live?'#ef4444':'#f59e0b',boxShadow:live?'0 0 8px #ef4444':'none',animation:live?'pulse 1.4s ease-in-out infinite':'none'}}></span>
     <span onClick={()=>fridayNavigate({workspace:'calendar',view:'meetings',meeting_id:st.id})} style={{cursor:'pointer'}} title={'Recording “'+(st.title||'meeting')+'” — microphone only. Open Meetings.'}>{live?'REC':'Starting microphone…'} {meetingClock(elapsed)}</span>
     <button onClick={stop} disabled={stopping} aria-label="Stop recording" style={{background:'#ef4444',color:'#fff',border:'none',borderRadius:999,padding:'3px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>{stopping?'Stopping…':'■ Stop'}</button>
@@ -11261,11 +11280,11 @@ function FinanceWS(){
   const unusedPerks=perksList.filter(p=>!p.used);const expiringPerks=perksList.filter(p=>{if(!p.expires)return false;const d=new Date(p.expires);const now=new Date();const diff=(d-now)/(1000*60*60*24);return diff>=0&&diff<=60});
   const totalPerkValue=perksList.reduce((s,p)=>{const m=p.value?.match(/\$(\d+)/);return s+(m?parseInt(m[1]):0)},0);
   const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused credit card perks · $${totalPerkValue} total perk value`;
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-finance" data-view={view}>
     <FridaySays text={insight}/>
     <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].concat(fridayHeldOn('federation')?['wallet']:[]).map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
     {view==='overview'&&<div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+      <div className="fr-comp-grid fr-comp-grid-two" style={{display:'grid',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
         <div className="card"><div className="card-title">Card Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
       </div>
@@ -11311,11 +11330,11 @@ function HealthWS(){
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading health data...</div>;
   const medList=meds?.medications||[];const apptList=appts?.appointments||[];const ins=insurance?.insurance||{};const vehList=vehicles?.vehicles||[];const mechList=vehicles?.mechanics||[];
   const insight=`${medList.length} medications · ${apptList.length} providers · ${vehList.length} vehicles in fleet`;
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-health" data-view={view}>
     <FridaySays text={insight}/>
     <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','medications','appointments','insurance','vehicles'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='overview'&&<div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+      <div className="fr-comp-grid fr-comp-grid-two" style={{display:'grid',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Medications</div><div className="stat">{medList.length}</div><div className="stat-label">active medications</div>{medList.slice(0,3).map((m,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{m.name}{m.dose?' — '+m.dose:''}</div>)}</div>
         <div className="card"><div className="card-title">Appointments</div><div className="stat">{apptList.length}</div><div className="stat-label">providers</div>{apptList.slice(0,3).map((a,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{a.provider}{a.type?' — '+a.type:''}</div>)}</div>
         <div className="card"><div className="card-title">Insurance</div><div style={{fontSize:13,color:'#00d4ff'}}>{ins.provider||'Not configured'}</div><div style={{fontSize:11,color:'#888',marginTop:4}}>{ins.plan||'Add plan details'}</div></div>
@@ -11454,7 +11473,7 @@ function ContactsWS(){
   if(selected){
     const score=detail?.scores?.overall??selected.overall??0.5;const pct=Math.round(score*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
     const dims=['reliability','information_quality','emotional_trust','timeliness','domain_expertise'];
-    return(<div>
+    return(<div className="fr-comp-root fr-comp-people">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDetail(null)}}>← Back</button>
         <div style={{display:'flex',gap:4}}>
@@ -11495,7 +11514,7 @@ function ContactsWS(){
       </>:<div style={{color:'#ff0080',fontSize:11,textAlign:'center',padding:20}}>Could not load contact detail.</div>}
     </div>);
   }
-  return(<div>
+  return(<div className="fr-comp-root fr-comp-people">
     <FridaySays text={contacts.length+' contacts tracked · search, research, and draft outreach.'}/>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
       <input className="input" style={{flex:1}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search contacts..."/>
@@ -11504,7 +11523,7 @@ function ContactsWS(){
     <RelationshipPanel onImported={loadList}/>
     
     {loading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+    <div className="fr-comp-grid fr-comp-grid-two" style={{display:'grid',gap:6}}>
       {filtered.map((c,i)=>{const pct=Math.round((c.overall||0)*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
         return(<div key={i} className="card" style={{cursor:'pointer',padding:8}} onClick={()=>openContact(c)}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -12300,7 +12319,7 @@ function QuickPostModal({payload,onClose}){
     setBusy(false);
   };
   const chipSet=plats.length?plats:Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram'&&contentPlatformShown(p)).map(name=>({name,status:{connected:false}}));
-  return(<div onClick={onClose} style={{position:'fixed',inset:0,zIndex:210,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+  return(<div className="friday-shared-overlay friday-quick-post-overlay" onClick={onClose} style={{position:'fixed',inset:0,zIndex:210,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
     <div onClick={e=>e.stopPropagation()} style={{width:'min(560px,92vw)',maxHeight:'85vh',overflowY:'auto',background:'rgba(10,10,18,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:12,padding:16,boxShadow:'0 12px 40px rgba(0,0,0,0.8)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.08em'}}>📤 QUICK POST{title?(' · '+title.slice(0,40)):''}</div>
@@ -12382,6 +12401,18 @@ function ContentWS(){
 // active stream every `intervalSec` seconds and stashes it on window.fridayCamera
 // so chat sends and the Live-API bridge can pick it up.
 function CameraMode({source,intervalSec,onClose,frameRef,setSendIndicator,facing,onChangeFacing}){
+
+  const cameraNeedsStack = () => {
+    const area = window.FridayHolographicWorkspace?.state?.spatial;
+    return !!(area && area.stage && area.content && area.content.w - 16 < 250);
+  };
+  const [cameraStacked, setCameraStacked] = useState(cameraNeedsStack);
+  React.useLayoutEffect(() => {
+    const fit = () => setCameraStacked(cameraNeedsStack());
+    const events = ['resize', 'friday:spatial-layout', 'friday:chat-dock', 'friday:surface-changed'];
+    events.forEach(name => window.addEventListener(name, fit)); fit();
+    return () => events.forEach(name => window.removeEventListener(name, fit));
+  }, []);
   const screenVideoRef=useRef(null);
   const webcamVideoRef=useRef(null);
   const screenStreamRef=useRef(null);
@@ -12473,9 +12504,9 @@ function CameraMode({source,intervalSec,onClose,frameRef,setSendIndicator,facing
   const showWebcam=source==='webcam'||source==='both';
   const isBoth=source==='both';
 
-  const pip=(refKey,label,err,extraStyle)=>(<div className={`camera-pip ${dragging?'dragging':''}`}
-      style={{left:pos.x+extraStyle.dx,top:pos.y+extraStyle.dy,width:isBoth?120:160,height:isBoth?90:120}}
-      onMouseDown={e=>{setDragging(true);dragOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}}>
+  const pip=(refKey,label,err,extraStyle)=>(<div className={`camera-pip ${dragging?'dragging':''}`} data-friday-camera-view={refKey} data-friday-camera-layout={isBoth?(cameraStacked?'stacked':'row'):'single'}
+      style={{'--friday-shared-x':pos.x+'px','--friday-shared-y':pos.y+'px','--friday-camera-dx':extraStyle.dx+'px','--friday-camera-group-left':isBoth?'130px':'0px','--friday-camera-group-width':isBoth?'250px':'160px','--friday-camera-height':isBoth?'90px':'120px',left:pos.x+extraStyle.dx,top:pos.y+extraStyle.dy,width:isBoth?120:160,height:isBoth?90:120}}
+      onMouseDown={e=>{setDragging(true);const pairOrigin = isBoth&&e.currentTarget.parentElement.querySelector('.camera-pip[data-friday-camera-view="screen"]');const box=(pairOrigin||e.currentTarget).getBoundingClientRect();dragOff.current={x:e.clientX-box.left,y:e.clientY-box.top}}}>
     {refKey==='screen'?<video ref={screenVideoRef} muted playsInline/>:<video ref={webcamVideoRef} muted playsInline/>}
     <span className="cam-label">{label}</span>
     {refKey==='webcam'&&onChangeFacing&&<button aria-label="Flip camera" className="cam-close" style={{right:30,padding:'1px 6px'}} title="Flip camera"
@@ -13996,6 +14027,7 @@ function TraceModalHost() {
   }, [id]);
   if (!id) return null;
   return rtEl("div", {
+    className: "friday-shared-overlay friday-trace-overlay",
     onClick: () => setId(null),
     style: {
       position: 'fixed',
@@ -17715,7 +17747,7 @@ function WorkspaceHistory({wsId,label,onClose,top}){
     // own move, close and 🕒 buttons with it, so the one way out would be the
     // Close button inside — and a modal you can only leave through its own
     // affordance is how you strand someone.
-    <div onClick={e=>e.stopPropagation()} style={{position:'absolute',left:0,right:0,bottom:0,top:top==null?37:top,zIndex:6,background:'rgba(6,10,20,0.96)',backdropFilter:'blur(8px)',display:'flex',flexDirection:'column',padding:'14px 16px',overflowY:'auto'}}>
+    <div className="friday-workspace-history" role="region" aria-label={(label||wsId)+" version history"} onClick={e=>e.stopPropagation()} style={{position:'absolute',left:0,right:0,bottom:0,top:top==null?37:top,zIndex:6,background:'rgba(6,10,20,0.96)',backdropFilter:'blur(8px)',display:'flex',flexDirection:'column',padding:'14px 16px',overflowY:'auto'}}>
       <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
         <span className="card-title">{'History — '+(label||wsId)}</span>
         <span style={{flex:1}}/>
@@ -21020,7 +21052,7 @@ function StandaloneShell({ws,histOpen,onCloseHistory,children}){
     document.title=(item?item.slice(0,80)+' · ':'')+ws.label+' · '+window.FRIDAY_BRAND.name;
   },[ws.id]);
   const maxedTab=(()=>{try{const m=new URLSearchParams(window.location.search).get('max');return!!m&&m!=='0'}catch(e){return false}})();
-  return(<div className={'ws-tab'+(maxedTab?' ws-max':'')} data-standalone={ws.id}>
+  return(<div className={'ws-tab'+(maxedTab?' ws-max':'')} data-standalone={ws.id} data-friday-workspace={ws.id}>
     <main className="ws-tab-body"><WsCustomBody id={ws.id} title={ws.label} emoji={ws.ico}>{children}</WsCustomBody></main>
     {histOpen&&<div className="ws-tab-hist"><WorkspaceHistory wsId={ws.id} label={ws.label} onClose={onCloseHistory} top={0}/></div>}
   </div>);
@@ -21137,6 +21169,13 @@ function App(){
       .catch(() => setChatMsgs([]));
   };
 
+
+  useEffect(() => {
+    document.body.dataset.fridayWorkspace = STANDALONE_WS || (experienceDesktop ? 'desktop' : focusWin || 'desktop');
+    document.body.dataset.fridayHomeVisible = String(experienceEnabled && experienceDesktop);
+    window.dispatchEvent(new CustomEvent('friday:surface-changed', {detail:{workspace:document.body.dataset.fridayWorkspace}}));
+  }, [experienceDesktop, experienceEnabled, focusWin]);
+
   // Workspace Studio: which workspace's contextual chat is open, + the live
   // customization map shared down to every FWin via WsCustomCtx.
   const[wsChat,setWsChat]=useState(null);          // {wsId,label,emoji,seed} | null
@@ -21183,19 +21222,21 @@ function App(){
 
   // A gathered reference prepares a draft in the actual project conversation.
   // It never reads document contents or sends a message on the owner's behalf.
-  const experienceDraft = async (text, projectId) => {
+  const experienceDraft = async (text, projectId, options = {}) => {
     if (!String(text || '').trim()) return;
     const sourceConversation = getConversationId();
     let cid = sourceConversation;
-    if (projectId) {
-      const current = convList.find(c => c.id === cid && c.project === projectId);
-      const existing = current || convList.find(c => c.project === projectId && c.status !== 'archived');
+    const personalContext = options.personal === true && !projectId;
+    if (projectId || personalContext) {
+      const matchesContext = c => c.status !== 'archived' && (personalContext ? !c.project : c.project === projectId);
+      const current = convList.find(c => c.id === cid && matchesContext(c));
+      const existing = current || convList.find(matchesContext);
       if (existing) cid = existing.id;
       else {
-        const response = await apiFetch('/api/conversations', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Working with materials',project:projectId})});
+        const response = await apiFetch('/api/conversations', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:personalContext ? 'New chat' : 'Working with materials',project:projectId || null})});
         const result = await response.json();
-        if (!response.ok || result.status !== 'ok' || !result.conversation) throw new Error(result.error || result.message || 'Could not open the project conversation.');
-        if (result.conversation.project !== projectId) throw new Error('This project is no longer available. Refresh Projects and try again.');
+        if (!response.ok || result.status !== 'ok' || !result.conversation || !result.conversation.id) throw new Error(result.error || result.message || 'Could not open the conversation.');
+        if (personalContext ? !!result.conversation.project : result.conversation.project !== projectId) throw new Error(personalContext ? 'A personal conversation could not be opened. Your draft is still here.' : 'This project is no longer available. Refresh Projects and try again.');
         cid = result.conversation.id;
         await refreshConvs();
       }
@@ -21706,6 +21747,7 @@ function App(){
     return()=>document.removeEventListener('mousedown',h);
   },[modelMenuOpen]);
   const[sceneMenuOpen,setSceneMenuOpen]=useState(false);
+  useEffect(() => { const details = () => setSceneMenuOpen(true); window.addEventListener('friday:scene-details',details); return () => window.removeEventListener('friday:scene-details',details); }, []);
   const sceneMenuRef=useRef(null);
   useEffect(()=>{
     if(!sceneMenuOpen)return;
@@ -22695,14 +22737,8 @@ function App(){
     else{const moodEl=document.getElementById('mood-text');if(moodEl)moodEl.innerText='STATE: '+sysMood;}
   }},1000);return()=>clearInterval(t)},[]);
 
-  // --- Processing energy pulse (drives the holographic scene while thinking) ---
-  // The scene reacts to audio via window._fridayHoloAmplitude, but a TEXT chat or
-  // a background task produces no audio — so without this the scene barely shifts
-  // while Friday works. This rAF loop pushes a pulsing amplitude (and a _fridayBusy
-  // flag the scene uses to stay at full energy) whenever a chat/task/routine is in
-  // flight, so the state change is dramatic and obvious on a demo. It yields to the
-  // voice/TTS analyser (which owns amplitude while Friday is actually speaking) and
-  // decays smoothly back to calm when idle.
+  // Speech amplitude belongs to actual playback. Processing and creating
+  // use the scene's anatomy-specific state channels, never synthetic audio.
   useEffect(()=>{
     let raf,t0=performance.now();
     const loop=()=>{
@@ -22712,11 +22748,8 @@ function App(){
       const busy=!!(sig.chatLoad||sig.taskRunning||sig.routineRunning);
       window._fridayBusy=busy;  // state/color signal only — must NOT drive motion
       if(!speaking&&!micOn){
-        // Design rule: the holographic scene animates ONLY while Friday is
-        // actually speaking (audio playing back). Thinking / executing / running
-        // a task is a COLOR + state shift, never a synthetic motion pulse — so we
-        // never fake an amplitude here. Just decay to rest, busy or not; the
-        // EXECUTING/REASONING *color* is applied separately via the mood system.
+        // Decay the old playback envelope when no voice or microphone owns
+        // it. The mood system supplies processing articulation separately.
         const cur=window._fridayHoloAmplitude||0;
         window._fridayHoloAmplitude=cur>0.02?cur*0.9:0;
       }
@@ -22796,7 +22829,8 @@ function App(){
   // Drag the window by its header.
   const startThreadDrag=(e)=>{
     if(e.target.closest('.thread-close'))return;
-    const sx=e.clientX,sy=e.clientY,ox=threadPos.x,oy=threadPos.y;
+    const box=e.currentTarget.closest('.thread-panel').getBoundingClientRect();
+    const sx=e.clientX,sy=e.clientY,ox=box.left,oy=box.top;
     threadDrag.current={sx,sy,ox,oy};
     const mv=(ev)=>{const dd=threadDrag.current;if(!dd)return;
       const W=400,H=320,M=4;
@@ -22810,21 +22844,8 @@ function App(){
 
   // --- Process Polling (Layer 2→3 integration) ---
   useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();
-        // Demo safety: failed/errored processes must NOT become orbs. They were
-        // spawning alarming magenta "error" orbs that lingered ~30s server-side
-        // (and piled up on repeated API failures). Filtering them out here means
-        // new failures never spawn an orb, and any existing orb whose process
-        // flips to error drops out of pIds below → auto-dismisses within ~2s.
-        /* Which processes still ORBIT. The server owns this now (orb_visible): a
-           completed orb is gone 30s after it finishes, while its record stays
-           explorable far longer — two lifetimes that used to be one, which is why
-           fifteen minutes of green orbs piled up around the avatar.
-
-           Failures are NOT filtered out any more. They used to be dropped here
-           entirely (_BAD_ORB), so a run that failed left nothing in orbit at all —
-           the machine quietly hid its own bad news. They now stay until dismissed
-           and wear a ⚠ so they read differently from work in progress. */
-        const procs=(d.processes||[]).filter(p=>p.orb_visible!==false);const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){const _ico=p.orb_failed?'⚠':(p.icon||'⚡');if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:_ico,model:p.model||null,color:(p.color!=null?p.color:null)});window.fridayUpdateOrb?.(p.id,{progress:(p.progress==null?null:p.progress),status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
+        window.fridaySyncOrbs?.(d.processes || []);
+}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
 
   // B1/B2: rehydrated history keeps model/seat badges and system lines; the
   // server persists `timestamp` while live messages carry `time` — map it so
@@ -22839,11 +22860,25 @@ function App(){
      and "what finished". */
   const[liveProcs,setLiveProcs]=useState([]);
   const[failedProcs,setFailedProcs]=useState([]);
+  const[orbiting,setOrbiting]=useState([]);
+  const[clearingOrbs,setClearingOrbs]=useState(false);
+  const clearOrbs=()=>{
+    setClearingOrbs(true);
+    const ids=[...new Set([...orbiting,...(window.fridayGetOrbs?.()||[])].filter(p=>window.fridayOrbFinished(p)).map(p=>p.id))];
+    ids.forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}});
+    setFailedProcs([]);setOrbiting(o=>o.filter(p=>!window.fridayOrbFinished(p)));
+    apiFetch('/api/orbs/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope:'finished'})})
+      .then(r=>r.json()).then(d=>{[...(d.ids||[]),...(d.orphan_ids||[])].forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}})})
+      .catch(()=>{}).finally(()=>setClearingOrbs(false));
+  };
   useEffect(()=>{let on=true;
     const tick=()=>apiFetch('/api/processes').then(r=>r.json()).then(d=>{
       if(!on)return;
       setLiveProcs((d.processes||[]).filter(p=>p.status==='running'));
       setFailedProcs((d.processes||[]).filter(p=>p.orb_failed&&!p.dismissed));
+      const visible=(d.processes||[]).filter(p=>p.orb_visible&&!p.dismissed);
+      const known=new Set((d.processes||[]).map(p=>p.id));
+      setOrbiting([...visible,...(window.fridayGetOrbs?.()||[]).filter(p=>!known.has(p.id))]);
     }).catch(()=>{});
     tick();const iv=setInterval(tick,1500);return()=>{on=false;clearInterval(iv)}},[]);
   const cancelProc=(id)=>{apiFetch('/api/processes/'+encodeURIComponent(id)+'/cancel',{method:'POST'})
@@ -23027,7 +23062,7 @@ function App(){
   // after everything in the page has had it and before the document does.
   // With no workspace open the scene has them as before.
   const shellOwnsArrows=useRef(false);
-  shellOwnsArrows.current=!!STANDALONE_WS||openWins.size>0;
+  shellOwnsArrows.current = !!STANDALONE_WS || openWins.size > 0 && !(experienceEnabled && experienceDesktop);
   useEffect(()=>{
     const h=e=>{if(shellOwnsArrows.current&&fridaySceneKey(e))e.stopPropagation()};
     document.documentElement.addEventListener('keydown',h);
@@ -23890,6 +23925,20 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const[tabHistOpen,setTabHistOpen]=useState(false);
   const shellMeeting = <MeetingRecIndicator/>;
+  const shellExperienceAvailable = typeof window.FridayExperience === 'function' && new URLSearchParams(window.location.search).get('experience') !== 'classic';
+  const shellNavigate = target => {
+    try { navigateWithDrafts(target); return true; }
+    catch (error) { fridayToast(error.message || 'The page could not open. Your unsent draft is still here.', {error:true}); return false; }
+  };
+  const shellHomeLink = event => {
+    if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault(); shellNavigate(event.currentTarget.href);
+  };
+  const shellDesktopView = view => {
+    if (shellChat || shellTab) return shellNavigate('/?view=' + encodeURIComponent(view));
+    window.dispatchEvent(new CustomEvent('friday:desktop-view', {detail:{view}}));
+    return true;
+  };
   const shellWorkspaceSwitcher = new URLSearchParams(window.location.search).get('experience') !== 'classic' && typeof window.FridayWorkspaceSwitcher === 'function' && React.createElement(window.FridayWorkspaceSwitcher, {
     workspaces: WS.filter(w => !fridayWsHeld(w.id)),
     currentWorkspace: shellTab ? shellTab.id : shellChat || experienceDesktop ? null : focusWin,
@@ -23906,11 +23955,14 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   });
   const shellTopBar = <div className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar" data-shell-kind={shellChat?'chat':shellTab?'tab':'desktop'}>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
-        {shellChat?<FridayLockup size={15} href={'/?conversation='+encodeURIComponent(convId||'')} title="Back to the desktop, with this chat open"/>
-          :shellTab?<FridayLockup size={15} href={'/?workspace='+encodeURIComponent(shellTab.id)} title="Back to the desktop, with this workspace open"/>
-          :<FridayLockup size={15} onClick={()=>toggle('system')} title="Open System workspace"/>}
+        {shellChat?<FridayLockup size={15} href={'/?conversation='+encodeURIComponent(convId||'')} onClick={shellHomeLink} title="Back to the desktop, with this chat open"/>
+          :shellTab?<FridayLockup size={15} href={'/?workspace='+encodeURIComponent(shellTab.id)} onClick={shellHomeLink} title="Back to the desktop, with this workspace open"/>
+          :<FridayLockup size={15} onClick={()=>{if(!shellExperienceAvailable){toggle('system');return;}setExperienceDesktop(true);window.dispatchEvent(new CustomEvent('friday:desktop-view',{detail:{view:'day'}}));}} title={shellExperienceAvailable?"Return to desktop":"Open System workspace"}/>}
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {shellWorkspaceSwitcher}
+        {shellExperienceAvailable&&<button className="fx-shell-entry" onClick={()=>shellDesktopView('projects')}>Projects</button>}
+        {shellExperienceAvailable&&<button className="fx-shell-entry fx-shell-activity" onClick={()=>shellDesktopView('activity')}>Activity</button>}
+        {shellExperienceAvailable&&<button className="fx-shell-entry fx-shell-depth" aria-label="Scene and workspace depth" onClick={()=>window.FridayHolographicWorkspace&&window.FridayHolographicWorkspace.open()}>◈ Depth</button>}
         {/* Scene selector dropdown */}
         {/* Not positioned, on purpose: the menu's containing block is then the
             top bar itself, not this half of it, whose sides clip on a narrow
@@ -23926,7 +23978,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
             {structureName}
             <span style={{fontSize:10,opacity:0.85}} aria-hidden="true">▾</span>
           </button>
-          {sceneMenuOpen&&<div style={{position:'absolute',marginTop:6,width:260,background:'rgba(10,14,26,0.88)',backdropFilter:'blur(20px) saturate(1.3)',WebkitBackdropFilter:'blur(20px) saturate(1.3)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'6px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.5),0 0 40px rgba(0,212,255,0.06)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
+          {sceneMenuOpen&&<div className="friday-shell-menu friday-scene-menu" style={{position:'absolute',marginTop:6,width:260,background:'rgba(10,14,26,0.88)',backdropFilter:'blur(20px) saturate(1.3)',WebkitBackdropFilter:'blur(20px) saturate(1.3)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'6px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.5),0 0 40px rgba(0,212,255,0.06)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
             <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron, sans-serif',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Holographic Scene</div>
             {(structures.length>0?structures:WIZARD_STRUCTURES).map((s,i)=>(
               <button key={i} onClick={()=>{window.fridayVibe?.setStructure(i);fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:i})}).catch(()=>{});setSceneMenuOpen(false)}}
@@ -23960,6 +24012,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           </div>}
         </div>)}
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
+        {!shellChat&&!shellTab&&orbiting.length>0&&<button onClick={clearOrbs} disabled={clearingOrbs}
+          title={orbiting.length+' orb(s) in orbit. Clears everything that has finished or failed; anything still working is left alone.'}
+          aria-label="Clear finished orbs"
+          style={{background:'rgba(245,158,11,0.12)',border:'1px solid rgba(245,158,11,0.45)',borderRadius:10,padding:'3px 9px',marginRight:8,cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'#f59e0b',display:'flex',alignItems:'center',gap:6}}>
+          {'✦ '+orbiting.length}<span style={{opacity:0.75,fontSize:10}}>{clearingOrbs?'clearing...':'clear'}</span>
+        </button>}
         {/* Model selector pill — click to open dropdown with routing */}
         <div ref={modelMenuRef} style={{position:'relative'}}>
           <button onClick={()=>{setModelMenuOpen(o=>!o);setModelMenuRole(null);setLocalAllOpen(false);setSceneMenuOpen(false)}}
@@ -23991,7 +24049,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
             </span>}
             <span style={{fontSize:10,opacity:0.85}} aria-hidden="true">▾</span>
           </button>
-          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(10,14,26,0.9)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'4px 0 0',boxShadow:'0 4px 30px rgba(0,0,0,0.4)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
+          {modelMenuOpen&&<div className="friday-shell-menu friday-model-menu" style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(10,14,26,0.9)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'4px 0 0',boxShadow:'0 4px 30px rgba(0,0,0,0.4)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
             {/* ── 1 · Quick Switch — the current orchestrator + up to 4 available
                  alternatives. Pick one, menu closes. TV remote, not phone book. */}
             {/* Search over the WHOLE catalog, above the shortcuts. The five
@@ -24239,7 +24297,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
         {/* Offline-first badge — appears only when the network monitor reports
             we're offline or degraded; shows whether local inference is up. */}
         {(netState.status==='offline'||netState.status==='degraded')&&
-          <span title={netState.status==='offline'?(netState.ollama_available?'Offline — running on local models (Ollama). Cloud tasks are queued until you reconnect.':'Offline — no local model available; cloud tasks are queued until you reconnect.'):'Network degraded — retrying connection'}
+          <span data-friday-connection-state={netState.status} role="status" title={netState.status==='offline'?(netState.ollama_available?'Offline — running on local models (Ollama). Cloud tasks are queued until you reconnect.':'Offline — no local model available; cloud tasks are queued until you reconnect.'):'Network degraded — retrying connection'}
             style={{display:'inline-flex',alignItems:'center',gap:5,fontFamily:'JetBrains Mono',fontSize:10,fontWeight:700,letterSpacing:'0.07em',padding:'3px 8px',borderRadius:10,background:netState.status==='offline'?'rgba(245,158,11,0.16)':'rgba(245,158,11,0.10)',border:'1px solid rgba(245,158,11,0.5)',color:'#f59e0b',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}>
             <span style={{fontSize:11}}>{netState.status==='offline'?'\u{1F4F4}':'⚠'}</span>
             {netState.status==='offline'?(netState.ollama_available?'OFFLINE · LOCAL':'OFFLINE'):'DEGRADED'}
@@ -24266,7 +24324,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     {!chatOpen&&<button className={'chat-edge-pill'+(chatSide==='left'?' left':'')} data-testid="chat-edge-pill" title="Show chat (Ctrl+Alt+C)" aria-label="Show chat" onClick={()=>showChat(true)}>{chatSide==='left'?'\u203A':'\u2039'}</button>}
   </>;
   const shellTrace = <TraceModalHost/>;
-  const shellActivity = activityOpen&&<div style={{position:'fixed',top:60,right:14,width:activityTab==='traces'?760:400,maxWidth:'calc(100vw - 16px)',maxHeight:'calc(100vh - 120px)',display:'flex',flexDirection:'column',background:'rgba(8,12,20,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:10,zIndex:9500,boxShadow:'0 8px 40px rgba(0,0,0,0.6)'}} onClick={e=>e.stopPropagation()}>
+  const shellActivity = activityOpen&&<div className="friday-shell-activity" style={{position:'fixed',top:60,right:14,width:activityTab==='traces'?760:400,maxWidth:'calc(100vw - 16px)',maxHeight:'calc(100vh - 120px)',display:'flex',flexDirection:'column',background:'rgba(8,12,20,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:10,zIndex:9500,boxShadow:'0 8px 40px rgba(0,0,0,0.6)'}} onClick={e=>e.stopPropagation()}>
       <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:10,color:'#00d4ff',letterSpacing:'0.08em'}}>ACTIVITY LEDGER</span>
         <div role="tablist" style={{display:'inline-flex',gap:2,flexShrink:0}}>
@@ -24513,7 +24571,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
         </div>
       </div>
     </div>;
-  const shellQuickDraft = quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}>
+  const shellQuickDraft = quickDraft&&<div className="friday-quick-draft" ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
         <button aria-label={'Close quick draft'} title={'Close quick draft'} onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
@@ -24537,7 +24595,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   const shellPalette = paletteOpen&&<CommandPalette commands={layoutCommands.concat(landingCommands,barCommands,keysCommands)} onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>;
   const shellQuickPost = <QuickPostHost/>;
   const shellPodcast = <PodcastPlayer/>;
-  const shellTaskModal = taskResultModal&&<div onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+  const shellTaskModal = taskResultModal&&<div className="friday-shared-overlay friday-task-result-overlay" onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
       <div onClick={e=>e.stopPropagation()} style={{width:'min(720px, 90vw)',maxHeight:'85vh',overflowY:'auto',background:'rgba(10,10,18,0.96)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:12,padding:18,boxShadow:'0 12px 40px rgba(0,0,0,0.8)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
           <div>
@@ -24687,7 +24745,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     {shellChatPanel}
 
     {/* Process Orb Stream Window (Layer 3) — floating, draggable, glassmorphic */}
-    {threadOrb&&<div className="thread-panel open" style={{left:threadPos.x,top:threadPos.y}} onClick={e=>e.stopPropagation()}>
+    {threadOrb&&<div className="thread-panel open" style={{'--friday-shared-x':threadPos.x+'px','--friday-shared-y':threadPos.y+'px',left:threadPos.x,top:threadPos.y}} onClick={e=>e.stopPropagation()}>
       <React.Fragment>
         <div className="thread-header" onMouseDown={startThreadDrag} style={{cursor:'grab'}}>
           <div className="thread-header-left">

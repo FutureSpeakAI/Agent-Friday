@@ -7,8 +7,9 @@
     window sizes with the tray on either side.
   * A window snaps from the layout menu on its maximise button, from Ctrl+Alt
     and the arrows, and by dragging toward an edge (a preview shows first,
-    holding steps the size); beside the chat, the window fills the rest
-    exactly and the two resize together.
+    holding steps the size); beside the chat, the window fills the available
+    work region exactly and the two resize together. The spatial desktop
+    reserves a separate avatar stage; classic mode retains its original area.
   * The layout is remembered per workspace and per tab, and survives a reload.
 """
 from __future__ import annotations
@@ -17,7 +18,6 @@ import datetime as _dt
 import functools
 import http.server
 import json
-import math
 import pathlib
 import re
 import shutil
@@ -300,7 +300,7 @@ class _Site:
                        wait_until="domcontentloaded")
         self.page.wait_for_selector('.dock-btn[data-ws="news"]', timeout=60000)
         if not self.classic:
-            self.page.wait_for_selector('.fx-rail', timeout=15000)
+            self.page.wait_for_selector('.fx-shell', timeout=15000)
         self.page.wait_for_timeout(500)
         return self
 
@@ -315,8 +315,19 @@ class _Site:
           const r = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect().toJSON() : null; };
           const w = document.querySelector('.fwin');
           const area = fridayDesktopArea();
+          const cs = getComputedStyle(document.documentElement);
+          const right = parseFloat(cs.getPropertyValue('--fr-chat-dock')) || 0;
+          const left = parseFloat(cs.getPropertyValue('--fr-chat-dock-left')) || 0;
+          const dock = r('.dock:not(.hidden)');
+          const rawArea = fridaySnapArea(innerWidth, innerHeight,
+            parseFloat(cs.getPropertyValue('--fr-topbar-h')) || 36,
+            dock && dock.height ? Math.round(dock.top) : innerHeight,
+            left ? {side:'left',w:left} : right ? {side:'right',w:right} : null);
           return {win: r('.fwin'), snap: w && w.dataset.snap || null, tray: r('.chat-panel.open'),
-                  trayLeft: !!document.querySelector('.chat-panel.open.left'), rail: r('.fx-rail'), area, vw: innerWidth,
+                  trayLeft: !!document.querySelector('.chat-panel.open.left'), rail: r('.fx-rail'), area, rawArea,
+                  topbar: r('[data-testid="friday-top-bar"]'),
+                  arrangement: document.body.dataset.fridayHoloArrangement, vw: innerWidth,
+                  spatial: window.FridayHolographicWorkspace && window.FridayHolographicWorkspace.state.spatial,
                   menu: !!document.querySelector('[data-testid="snap-menu"]'),
                   preview: (document.querySelector('[data-testid="snap-preview"]') || {dataset: {}}).dataset.slot || null};
         }""")
@@ -352,13 +363,33 @@ def _exact(box, want):
 
 
 def _assert_desktop_edge(g, classic=False):
+    assert g["rail"] is None, g
     if classic:
-        assert g["rail"] is None, g
-        assert g["area"]["x"] == 0, g
+        assert g["area"] == g["rawArea"], g
+        assert g["spatial"]["stage"] is None, g
     else:
-        rail = g["rail"]
-        assert rail and rail["width"] > 0 and rail["height"] > 0, g
-        assert g["area"]["x"] == math.ceil(rail["right"]) + 16, g
+        assert g["topbar"] and g["topbar"]["height"] > 0, g
+        base = g["rawArea"]
+        stage, area = g["spatial"]["stage"], g["area"]
+        gutter = 8 if g["vw"] < 760 else 16
+        assert stage and stage["w"] > 0 and stage["h"] > 0, g
+        assert stage["y"] == base["y"] + 12, g
+        if g["spatial"]["layout"] == "compact":
+            assert stage["x"] == area["x"] == gutter, g
+            assert stage["w"] == area["w"] == g["vw"] - 2 * gutter, g
+            assert area["y"] == stage["y"] + stage["h"] + 16, g
+            assert stage["h"] + area["h"] + 16 == base["h"] - 24, g
+        else:
+            assert area["y"] == stage["y"], g
+            assert area["h"] == stage["h"] == base["h"] - 24, g
+            assert area["w"] >= 440, g
+            assert area["w"] + stage["w"] + 16 == base["w"] - 2 * gutter, g
+            if g["tray"] and not g["trayLeft"]:
+                assert stage["x"] == base["x"] + gutter, g
+                assert area["x"] == stage["x"] + stage["w"] + 16, g
+            else:
+                assert area["x"] == base["x"] + gutter, g
+                assert stage["x"] == area["x"] + area["w"] + 16, g
 
 
 @pytest.mark.parametrize("classic", [False, True], ids=["spatial", "classic"])
@@ -385,7 +416,8 @@ def test_beside_the_chat_the_window_fills_the_rest_exactly(site, classic):
     assert g["snap"] == "full", g
     assert round(g["tray"]["width"]) == round(1600 / 3), g
     assert g["win"]["x"] == g["area"]["x"], g
-    assert abs(g["win"]["x"] + g["win"]["width"] - g["tray"]["x"]) < 0.6, ("no gutter", g)
+    _exact(g["win"], {"x": g["area"]["x"], "y": g["area"]["y"], "width": g["area"]["w"], "height": g["area"]["h"]})
+    assert g["win"]["x"] + g["win"]["width"] <= g["tray"]["x"] + 0.6, ("chat and workspace never overlap", g)
     saved = s.saved[-1]["workspace_layouts"]["news"]
     assert saved["window"] == "full" and saved["chat"]["side"] == "right" and abs(saved["chat"]["frac"] - 0.333) < 0.002
     # the two resize together: the tray's edge moves the window's
@@ -401,13 +433,14 @@ def test_beside_the_chat_the_window_fills_the_rest_exactly(site, classic):
     _assert_desktop_edge(g2, classic)
     assert g2["win"]["x"] == g2["area"]["x"], g2
     assert g2["tray"]["width"] > g["tray"]["width"] + 100, (g, g2)
-    assert abs(g2["win"]["x"] + g2["win"]["width"] - g2["tray"]["x"]) < 0.6, ("they moved together", g2)
+    _exact(g2["win"], {"x": g2["area"]["x"], "y": g2["area"]["y"], "width": g2["area"]["w"], "height": g2["area"]["h"]})
+    assert g2["win"]["x"] + g2["win"]["width"] < g["win"]["x"] + g["win"]["width"], ("window follows the enlarged chat", g, g2)
 
 
-def test_left_docked_chat_keeps_the_rail_and_window_separate(site):
+def test_left_docked_chat_keeps_top_navigation_and_window_separate(site):
     s = site().desktop().open_news().menu()
     s.page.click('[data-testid="snap-menu"] [data-snap="full"]')
-    s.page.get_by_role("navigation", name="Desktop").get_by_role("button", name="Chat", exact=True).click()
+    s.page.locator('.top-bar button[aria-label^="Open chat with"]').click()
     s.page.wait_for_selector(".chat-panel.open", timeout=10000)
     s.page.wait_for_timeout(500)
     s.menu('[data-testid="chat-layout"]')
@@ -416,11 +449,10 @@ def test_left_docked_chat_keeps_the_rail_and_window_separate(site):
     g = s.boxes()
     _assert_desktop_edge(g)
     assert g["trayLeft"] and g["tray"]["x"] == 0 and round(g["tray"]["width"]) == 800, g
-    assert g["rail"]["x"] >= g["tray"]["right"], ("the chat leaves the rail visible", g)
-    assert g["win"]["x"] >= g["rail"]["right"] + 16, ("the window leaves the rail visible", g)
+    assert g["win"]["x"] == g["tray"]["right"] + 16, ("window starts after chat and desktop gutter", g)
     assert g["snap"] == "full", g
     a = g["area"]
-    _exact(g["win"], {"x": a["x"], "y": a["y"], "width": g["vw"] - a["x"], "height": a["h"]})
+    _exact(g["win"], {"x": a["x"], "y": a["y"], "width": a["w"], "height": a["h"]})
 
 
 def test_the_keys_step_a_window_through_the_slots(site):

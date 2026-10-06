@@ -713,17 +713,18 @@ button:hover{background:rgba(0,212,255,.22);border-color:rgba(0,212,255,.7);box-
 .scan-line{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(0,212,255,.15),transparent);animation:scan 4s linear infinite;pointer-events:none}
 @keyframes scan{0%{top:0}100%{top:100vh}}
 </style>
+<link rel="stylesheet" href="/static/friday_shared_surfaces.css">
 </head>
-<body>
+<body class="friday-experience-enabled friday-login-surface">
 <div class="scan-line"></div>
 <div class="login-box">
 <h1>{{ product_upper }}</h1>
 <div class="maker">by <b>{{ maker }}</b></div>
-<div class="subtitle">AUTHENTICATION REQUIRED</div>
+<div class="subtitle">Sign in to your Friday</div>
 <form method="POST">
-<div class="field"><input type="email" name="username" placeholder="EMAIL / USERNAME" autofocus autocomplete="username"></div>
-<div class="field"><input type="password" name="password" placeholder="PASSWORD" autocomplete="current-password"></div>
-<button type="submit">AUTHENTICATE</button>
+<div class="field"><label for="friday-login-user">Email</label><input id="friday-login-user" type="email" name="username" placeholder="EMAIL / USERNAME" autofocus autocomplete="username"></div>
+<div class="field"><label for="friday-login-password">Password</label><input id="friday-login-password" type="password" name="password" placeholder="PASSWORD" autocomplete="current-password"></div>
+<button type="submit">Sign in</button>
 </form>
 {{ error }}
 </div>

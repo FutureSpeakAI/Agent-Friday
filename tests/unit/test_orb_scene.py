@@ -5,9 +5,9 @@ stand-in for the DOM, from both scene files.
 - An orb wears its kind's form in its identity hue; the plain sphere is gone.
 - A label is built from text, never parsed as markup.
 - Real progress closes the orbit on Friday; unknown progress never moves it.
-- A finished orb spirals into Friday before the layer lets it go.
-- A failed orb stays, dim and marked, until it is looked at; opening it is
-  looking at it.
+- A finished orb drifts without spinning until five minutes pass or Clear.
+- A failed orb stays dim and marked until its deadline or dismissal; opening
+  its fix acknowledges it.
 - An approval card linked to a helper's task turns its orb amber and says
   it needs you.
 - An orb that drifts over the prompt row or the dock is lifted clear of it.
@@ -35,6 +35,7 @@ MANAGER = re.compile(r"(        class ProcessOrbManager \{.*?\n        \}\n)", r
 HARNESS = r"""
 const THREE = require(THREE_PATH);
 let clock = 0, reduced = false;
+Date.now = () => 1000000 + Math.round(clock * 1000);
 Object.defineProperty(global, 'performance', { value: { now: () => clock * 1000 }, configurable: true });
 const mkEl = () => {
   const el = { style: {}, dataset: {}, children: [], className: '', _text: '', _html: '', isConnected: true, offsetWidth: 80, offsetHeight: 18,
@@ -71,10 +72,10 @@ const out = {};
 const S = id => FridayOrbScene._state(id);
 
 // the form and the label
-mgr.addOrb({ id: 'helper-a', label: '<img src=x onerror=alert(1)>', category: 'default', icon: '✦', task_id: 'ta' });
+mgr.addOrb({ id: 'helper-a', label: '<img src=x onerror=alert(1)>', category: 'default', icon: '✦', task_id: 'ta', model: 'provider/model-a' });
 const oa = mgr.orbs.get('helper-a');
 out.form = { sphereHidden: oa.sphere.visible === false, hasForm: oa.group.children.includes(S('helper-a').form), kind: S('helper-a').kind };
-out.label = { html: oa.labelEl.innerHTML, text: oa.labelEl.textContent, word: oa.labelEl.textContent.includes('teal') };
+out.label = { html: oa.labelEl.innerHTML, text: oa.labelEl.textContent, word: oa.labelEl.textContent.includes('teal'), runner: oa.labelEl.textContent.includes('model-a') };
 
 // progress: real closes in, unknown does not
 mgr.addOrb({ id: 'helper-b', label: 'B', category: 'default', task_id: 'tb' });
@@ -85,17 +86,36 @@ run(8);
 out.progress = { known: +(r0b - mgr.orbs.get('helper-b').oRadius).toFixed(2), unknown: +(r0c - mgr.orbs.get('helper-c').oRadius).toFixed(3),
                  expect: +((r0b - 6.5) * 0.5).toFixed(2) };
 
-// done: the spiral before the layer lets go
-mgr.updateOrb('helper-b', { status: 'completed' }); mgr.removeOrb('helper-b');
-const r1 = Math.hypot(mgr.orbs.get('helper-b').group.position.x, mgr.orbs.get('helper-b').group.position.z);
-run(0.8);
+// Completion keeps the radius, scale and slow orbital drift, but stops self-spin.
+mgr.updateOrb('helper-b', { status: 'completed', progress: 1 });
+const finished = mgr.orbs.get('helper-b'), finishRadius = finished.oRadius,
+      finishSpin = S('helper-b').form.rotation.y, finishAngle = finished.oAngle;
+run(2);
 const mid = mgr.orbs.get('helper-b');
-out.spiral = { notDyingYet: mid && !mid.dying, closer: mid && Math.hypot(mid.group.position.x, mid.group.position.z) < r1 };
-run(1.0); out.spiral.dyingAfter = !mgr.orbs.get('helper-b') || mgr.orbs.get('helper-b').dying;
-run(1.0); out.spiral.goneAfter = !mgr.orbs.get('helper-b');
+out.completed = { stays: !!mid && !mid.dying,
+    radius: !!mid && Math.abs(mid.oRadius - finishRadius) < 1e-9,
+    scale: !!mid && Math.abs(mid.group.scale.x - 1) < 1e-9,
+    spin: !!mid && S('helper-b').form.rotation.y === finishSpin,
+    drift: !!mid && Math.abs(mid.oAngle - finishAngle - 0.24) < 1e-9 };
+clock += 297; mgr.update(0, clock);
+mgr.updateOrb('helper-b', { status: 'completed', progress: 1 });
+out.completed.beforeDeadline = !!mgr.orbs.get('helper-b');
+clock += 1.001; mgr.update(0, clock);
+out.completed.expired = !mgr.orbs.get('helper-b');
+
+// Clear is immediate for both completed and failed orbs, without an exit spin.
+out.cleared = [];
+for (const status of ['completed', 'error']) {
+    mgr.addOrb({ id: 'clear-' + status, label: 'Cleared', category: 'default' });
+    mgr.updateOrb('clear-' + status, { status });
+    const o = mgr.orbs.get('clear-' + status);
+    mgr.removeOrb(o.id);
+    out.cleared.push(!mgr.orbs.has(o.id) && !o.labelEl.isConnected && !mgr.scene.children.includes(o.group));
+    mgr._cleanup(o.id); // isolate the next assertion even against the old exit animation
+}
 
 // failed: stays until looked at
-mgr.updateOrb('helper-c', { status: 'error' }); mgr.removeOrb('helper-c'); run(5);
+mgr.updateOrb('helper-c', { status: 'error' }); run(5);
 const oc = mgr.orbs.get('helper-c'), sc = S('helper-c');
 out.failed = { stays: !!oc && !oc.dying, failRing: !!sc && sc.failRing.visible, said: !!oc && oc.labelEl.textContent.includes('Failed'),
                listed: FridayOrbHands.run({ op: 'list' }).helpers.some(h => h.line.includes('failed')) };
@@ -172,10 +192,18 @@ mgr.updateOrb('back-1', { status: 'completed' }); mgr.removeOrb('back-1'); run(3
 
 // labels never sit on each other: two orbs at the same place on screen
 mgr.addOrb({ id: 'twin-1', label: 'Twin one', category: 'default' }); mgr.addOrb({ id: 'twin-2', label: 'Twin two', category: 'default' });
+// Both occupy the same visible world position: screen coordinates alone do
+// not make an orb visible when its real orbit is behind Friday.
+for (const id of ['twin-1', 'twin-2']) {
+    const o = mgr.orbs.get(id);
+    o.oSpeed = 0; o.oAngle = Math.PI / 2; o.oHeight = 0; o.oRadius = S(id).baseR = 10;
+    o.group.position.set(0, 0, 10);
+}
 run(0.5);
-for (const id of ['twin-1', 'twin-2']) { const o = mgr.orbs.get(id); o.labelEl.style.display = 'block'; FridayOrbScene._state(id).sx = 500; FridayOrbScene._state(id).sy = 300; }
 const lab = FridayOrbScene._labels().filter(l => l.id.startsWith('twin'));
-out.labels = { two: lab.length, apart: lab.length === 2 && Math.abs(lab[0].y - lab[1].y) >= 15 };
+out.labels = { two: lab.length, apart: lab.length === 2 && Math.abs(lab[0].y - lab[1].y) >= 15,
+    front: ['twin-1', 'twin-2'].every(id => !S(id).behind),
+    overlapping: Math.hypot(S('twin-1').sx - S('twin-2').sx, S('twin-1').sy - S('twin-2').sy) < 1e-9 };
 ['twin-1', 'twin-2'].forEach(id => { mgr.updateOrb(id, { status: 'completed' }); mgr.removeOrb(id); }); run(3);
 
 // spread, not bunched: orbs added in a row keep apart, at one speed
@@ -191,9 +219,51 @@ for (let i = 0; i < ang.length; i++) for (let j = i + 1; j < ang.length; j++) {
 out.spread = { minGapDeg: Math.round(minGap * 180 / Math.PI), oneSpeed: new Set(spreadIds.map(id => mgr.orbs.get(id).oSpeed)).size === 1 };
 spreadIds.forEach(id => { mgr.updateOrb(id, { status: 'completed' }); mgr.removeOrb(id); }); run(3);
 
-// the swarm orb
+// The swarm is excluded even when every ordinary helper is in view.
+const ordinary = ['helper-a', 'helper-d', 'helper-p', 'helper-k'];
+ordinary.forEach((id, i) => {
+    const o = mgr.orbs.get(id);
+    o.oSpeed = 0; o.oAngle = Math.PI / 2 + (i - 1.5) * 0.2;
+    o.oHeight = 0; o.oRadius = S(id).baseR = 10;
+    o.group.position.set(Math.cos(o.oAngle) * 10, 0, Math.sin(o.oAngle) * 10);
+});
+run(0.1);
+const normalTargets = FridayOrbHands.run({ op: 'list' }).helpers.length;
 mgr.addOrb({ id: 'helper-swarm', label: '+3 helpers', category: 'default', count: 3 });
-out.swarm = { dressed: !!S('helper-swarm'), target: FridayOrbHands.run({ op: 'list' }).helpers.length };
+out.swarm = { dressed: !!S('helper-swarm'), target: FridayOrbHands.run({ op: 'list' }).helpers.length,
+    normalTargets, front: ordinary.every(id => !S(id).behind) };
+// A reload uses the server end time, not a fresh five-minute timer.
+for (const id of [...mgr.orbs.keys()]) mgr._cleanup(id);
+mgr.addOrb({ id: 'restored', label: 'Restored', category: 'default', name: 'Local helper' });
+mgr.updateOrb('restored', { status: 'completed', ended: Date.now() / 1000 - 299 });
+out.restored = { runner: mgr.orbs.get('restored').labelEl.textContent.includes('Local helper') };
+clock += 1.001; mgr.update(0, clock);
+out.restored.expired = !mgr.orbs.has('restored');
+mgr._cleanup('restored');
+
+// An in-flight response cannot resurrect a cleared ID; a new run can reuse it.
+mgr.addOrb({ id: 'late', label: 'Late', category: 'default' });
+mgr.updateOrb('late', { status: 'completed' }); mgr.removeOrb('late');
+mgr.addOrb({ id: 'late', label: 'Late', category: 'default', started: Date.now() / 1000 - 20 });
+out.latePoll = { hidden: !mgr.orbs.has('late') };
+mgr.addOrb({ id: 'late', label: 'New run', category: 'default', started: Date.now() / 1000 + 1 });
+out.latePoll.newRun = !!mgr.orbs.get('late') && mgr.orbs.get('late').label === 'New run';
+// Every terminal status expires and stops spinning while its status remains intact.
+mgr._cleanup('late');
+out.outcomes = [];
+for (const status of ['completed', 'error', 'failed', 'timeout', 'cancelled', 'interrupted']) {
+    const id = 'outcome-' + status;
+    mgr.addOrb({ id, label: status, category: 'default' });
+    mgr.updateOrb(id, { status, ended: Date.now() / 1000 - 299 });
+    const spin = S(id).form.rotation.y;
+    run(0.1);
+    const o = mgr.orbs.get(id);
+    const state = { status, retained: !!o && o.status === status, still: S(id).form.rotation.y === spin };
+    clock += 1; mgr.update(0, clock);
+    state.expired = !mgr.orbs.has(id);
+    out.outcomes.push(state);
+    mgr._cleanup(id);
+}
 console.log(JSON.stringify(out));
 """
 
@@ -226,7 +296,8 @@ def test_an_orb_wears_its_kinds_form(o):
 
 
 def test_a_label_is_text_never_markup(o):
-    assert "<img" not in o["label"]["html"] and "<img" in o["label"]["text"] and o["label"]["word"] is True
+    assert "<img" not in o["label"]["html"] and "<img" in o["label"]["text"] and o["label"]["word"] is False
+    assert o["label"]["runner"] is True
 
 
 def test_real_progress_closes_the_orbit_and_unknown_does_not(o):
@@ -235,8 +306,22 @@ def test_real_progress_closes_the_orbit_and_unknown_does_not(o):
     assert abs(p["known"] - p["expect"]) < 0.25
 
 
-def test_a_finished_orb_spirals_home_first(o):
-    assert o["spiral"] == {"notDyingYet": True, "closer": True, "dyingAfter": True, "goneAfter": True}
+def test_completion_keeps_a_calm_orbit_for_five_minutes_without_spinning(o):
+    assert o["completed"] == {"stays": True, "radius": True, "scale": True,
+                              "spin": True, "drift": True,
+                              "beforeDeadline": True, "expired": True}
+
+
+def test_clear_removes_completed_and_failed_orbs_without_an_exit_animation(o):
+    assert o["cleared"] == [True, True]
+
+
+def test_reloading_keeps_the_original_deadline_and_shows_the_runner(o):
+    assert o["restored"] == {"runner": True, "expired": True}
+
+
+def test_a_late_poll_cannot_recreate_a_cleared_orb_but_a_new_run_can(o):
+    assert o["latePoll"] == {"hidden": True, "newRun": True}
 
 
 def test_a_failure_stays_until_it_is_looked_at(o):
@@ -284,12 +369,11 @@ def test_an_orb_behind_friday_fades_and_cannot_be_taken(o):
 
 
 def test_labels_never_sit_on_each_other(o):
-    assert o["labels"] == {"two": 2, "apart": True}
+    assert o["labels"] == {"two": 2, "apart": True, "front": True, "overlapping": True}
 
 
 def test_the_swarm_orb_is_left_alone(o):
-    assert o["swarm"]["dressed"] is False
-    assert o["swarm"]["target"] == 4     # helper-a, helper-d, helper-p, helper-k
+    assert o["swarm"] == {"dressed": False, "target": 4, "normalTargets": 4, "front": True}
 
 
 PAGES = [ROOT / "index.html", ROOT / "ui_parts" / "app.html"]
@@ -304,3 +388,10 @@ def test_fridays_mood_never_follows_her_helpers(path):
     assert lines, f"{path.name}: the mood decision is gone"
     for ln in lines:
         assert "taskRunning" not in ln and "fridayGetOrbs" not in ln, ln.strip()
+
+
+def test_every_terminal_outcome_stops_spinning_and_expires_without_changing_status(o):
+    assert o["outcomes"] == [
+        {"status": status, "retained": True, "still": True, "expired": True}
+        for status in ["completed", "error", "failed", "timeout", "cancelled", "interrupted"]
+    ]

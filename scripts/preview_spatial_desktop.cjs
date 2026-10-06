@@ -1,6 +1,7 @@
 /* Serves the actual desktop with synthetic, in-memory records for design review.
  * It never imports the application, proxies a request, or starts a model.
- * Only index.html, static/ and assets/ can be served. Bind loopback only.
+ * Only index.html, static/, assets/ and the synthetic story reader can be served.
+ * Bind loopback only.
  */
 'use strict';
 const http = require('node:http');
@@ -38,6 +39,96 @@ const tasks = [
  {task_id:'design-review',name:'Review the launch direction',description:'Compare the opening against the project brief',now:'Ready for a human review',status:'paused',created_at:now-2400,result:''},
  {task_id:'design-outline',name:'A first outline',description:'Gather the story into a useful structure',status:'completed_unverified',created_at:now-4800,result:'Sample outline prepared for this design preview.'}
 ];
+// Fixture shapes follow the native workspace consumers in ui_parts/app.html.
+// These records are fictional, stay in this process and never imply a connection.
+const isoDay = (offset=0) => { const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+offset);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-'); };
+const today=isoDay();
+const sampleCalendarDay = date => ({date,google_connected:false,annotation:'Sample schedule · Space for focused work, conversations, and a little breathing room.',events:[
+ {id:'sample-focus-'+date,title:'Northstar · Opening direction',start_time:date+'T09:00:00',end_time:date+'T10:30:00',type:'normal',all_day:false,location:'Sample studio'},
+ {id:'sample-review-'+date,title:'Review the launch story',start_time:date+'T11:00:00',end_time:date+'T11:45:00',type:'normal',all_day:false,attendees:['Sample collaborator']},
+ {id:'sample-explore-'+date,title:'Explore the next opportunity',start_time:date+'T14:00:00',end_time:date+'T15:00:00',type:'career',all_day:false},
+ {id:'sample-outside-'+date,title:'An hour outside',start_time:date+'T16:00:00',end_time:date+'T17:00:00',type:'normal',all_day:false}
+],gaps:[{start_time:date+'T12:00:00',end_time:date+'T14:00:00',label:'Open time',minutes:120}]});
+const weekStart=new Date(today+'T12:00:00');weekStart.setDate(weekStart.getDate()-((weekStart.getDay()+6)%7));
+const calendarWeek=Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);const date=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');return {date,weekday:d.toLocaleDateString('en-US',{weekday:'short'}),day:d.getDate(),is_today:date===today,has_career:true,count:sampleCalendarDay(date).events.length,density:'heavy'};});
+const countdowns=[
+ {id:'sample-day-out',kind:'personal',label:'A day by the lake',emoji:'☀️',why:'Room to wander',date:isoDay(3),days:3},
+ {id:'sample-table',kind:'personal',label:'Dinner around one table',emoji:'🍽️',why:'Bring a favorite recipe',date:isoDay(6),days:6},
+ {id:'sample-weekend',kind:'personal',label:'A long weekend away',emoji:'🌿',why:'A change of scenery',date:isoDay(14),days:14}
+];
+const samplePeople=[
+ {name:'Alex Example',aliases:['Northstar · Creative partner'],overall:0.84,evidence_count:12},
+ {name:'Morgan Sample',aliases:['Field notes · Editor'],overall:0.79,evidence_count:8},
+ {name:'Casey Demo',aliases:['Northstar · Product collaborator'],overall:0.88,evidence_count:16},
+ {name:'Jordan Example',aliases:['Community · Workshop host'],overall:0.73,evidence_count:6},
+ {name:'Taylor Sample',aliases:['Field notes · Research partner'],overall:0.81,evidence_count:10},
+ {name:'Riley Demo',aliases:['Studio · Design collaborator'],overall:0.86,evidence_count:14}
+];
+const sampleSites=[
+ {name:'Northstar',description:'A clear home for a fictional creative studio. The opening, selected work, and the story behind it.',category:'company',repo:'sample/northstar',repo_path:'Sample materials/northstar',status:{deploy_status:'green',cloned:true,branch:'main',last_commit_rel:'2 hours ago',last_commit_msg:'Refine the opening and project stories',uncommitted:0,ahead:0,behind:0,has_replit:false}},
+ {name:'Field Notes',description:'An independent sample journal of observations, small experiments, and useful ideas.',category:'personal',repo:'sample/field-notes',repo_path:'Sample materials/field-notes',status:{deploy_status:'yellow',cloned:true,branch:'editorial',last_commit_rel:'yesterday',last_commit_msg:'Introduce the first editorial collection',uncommitted:3,ahead:1,behind:0,has_replit:false}},
+ {name:'The Open Workshop',description:'A fictional gathering place for making things together. Sessions, resources, and room to participate.',category:'client',repo:'sample/open-workshop',repo_path:'Sample materials/open-workshop',status:{deploy_status:'green',cloned:true,branch:'main',last_commit_rel:'3 days ago',last_commit_msg:'Polish session details and registration copy',uncommitted:0,ahead:0,behind:0,has_replit:false}},
+ {name:'Quiet Objects',description:'A sample collection of simple, considered products with space to see their material and detail.',category:'personal',repo:'sample/quiet-objects',repo_path:'Sample materials/quiet-objects',status:{deploy_status:'yellow',cloned:true,branch:'collection',last_commit_rel:'4 days ago',last_commit_msg:'Explore the first collection',uncommitted:2,ahead:0,behind:0,has_replit:false}}
+];
+const careerEntries=[
+ {company:'Northstar Studio · Sample',role:'Design lead',score:'4.6',status:'Interviewing'},
+ {company:'Open Workshop · Sample',role:'Product strategist',score:'4.3',status:'Applied'},
+ {company:'Field Notes · Sample',role:'Editorial director',score:'4.1',status:'Applied'},
+ {company:'Quiet Objects · Sample',role:'Creative technologist',score:'4.5',status:'Offer'},
+ {company:'Common Ground · Sample',role:'Research lead',score:'3.9',status:'Evaluated'}
+];
+const careerReports={'Northstar — design lead.md':'# Northstar · Sample evaluation\n\nA fictional opportunity for reviewing the Career workspace.\n\n## Strengths\nClear ownership of the product story, close collaboration with a small team, and space to make the design system more coherent.\n\n## Conversation to prepare\nWalk through one project from the first uncertainty to a considered release. Explain the decisions, the evidence, and what changed.', 'Open Workshop — product strategy.md':'# Open Workshop · Sample evaluation\n\nThis fictional role connects product direction with hands-on prototyping.\n\n## Next conversation\nAsk how the team decides what to build, how it evaluates experiments, and what success would look like in the first three months.'};
+const sampleNews=[
+ ['room-for-ideas','The most useful tools leave room for the next idea','A fictional design dispatch about quieter interfaces, useful context, and the pleasure of staying in flow.','Design','tech','Sample Design Journal'],
+ ['field-observations','Small observations, better questions','A sample field notebook follows how a team turns everyday friction into a clearer research question.','Science','science','Sample Field Notes'],
+ ['shared-workshop','A workshop designed around participation','A fictional community story explores a space where unfinished work is welcome and learning happens in the open.','Local','local','Sample City Review'],
+ ['material-detail','Why material still matters on a screen','An illustrative essay on light, depth, and surface: when visual detail makes something easier to understand.','Design','tech','Sample Design Journal'],
+ ['slower-editorial','The case for a more deliberate reading rhythm','A fictional editorial on keeping the context around a story, with room for competing views and follow-up questions.','Media','media','Sample Editorial'],
+ ['useful-prototype','A prototype can answer one good question','A sample studio note traces a simple experiment from an uncertain idea to a decision the whole team can review.','Technology','tech','Sample Studio Dispatch']
+].map((a,i)=>({id:'sample-news-'+i,url:'/preview/story/'+a[0],title:a[1],snippet:a[2],category:a[3],color:a[4],source:a[5],published_at:new Date((now-i*3600)*1000).toISOString(),relevance_score:0.9-i*0.03,reading_time:3+i%3,new_since_last:i<2,editorial_note:i===0?'Sample editorial context: the useful question is what this changes for the work in front of you.':undefined}));
+const sampleEdition={id:'sample-morning',date:today,slot:'morning',headline:'A little perspective for the day',generated_central:today+' · Sample edition',stats:{total_considered:sampleNews.length,sources:5},day_in_context:'Your fictional studio review begins at 11. There is an open stretch after lunch for turning the conversation into something concrete.',lead:sampleNews[0],sections:[{title:'Ideas worth exploring',context:'Design, research, and the places they meet',color:'science',articles:sampleNews.slice(1,4)},{title:'A wider view',context:'Context beyond the immediate brief',color:'media',articles:sampleNews.slice(4)}],contrarian_corner:{title:'When less is simply less',note:'This sample counterpoint asks when a quieter interface hides the very context people need. Clarity still requires useful information.',source:'Sample Editorial',color:'media'},competitor_watch:[]};
+const wikiGroups={
+ studio:[['Launch brief','A clear starting point for the Northstar launch.','Audience notes','Visual direction'],['Audience notes','People arrive with a goal. Make the next useful action easy to find.','Launch brief','Research questions'],['Visual direction','Generous space, confident typography, and a deliberate sense of depth.','Material studies','Launch brief'],['Working principles','Start with the work. Keep important context nearby. Give each tool a clear purpose.','Visual direction','Prototype review']],
+ research:[['Research questions','What helps someone find their place and keep their train of thought?','Audience notes','Field observations'],['Field observations','Small interruptions accumulate. Write them down before proposing a larger solution.','Research questions','Prototype review'],['Prototype review','Compare a concrete interaction against the question it was built to answer.','Working principles','Field observations'],['Reading list','A fictional collection of references for the sample studio project.','Research questions','Material studies']],
+ craft:[['Material studies','Compare glass, light, and depth while keeping text stable and readable.','Visual direction','Motion notes'],['Motion notes','Use movement to explain a change in state. Let stillness do the rest.','Material studies','Accessible defaults'],['Accessible defaults','Keep controls predictable. Support keyboards, quiet motion, and compact screens.','Motion notes','Working principles'],['Release checklist','Review the work at a narrow width, with a keyboard, and with reduced motion.','Accessible defaults','Prototype review']]
+};
+const wikiPages={},wikiNodes=[];
+Object.entries(wikiGroups).forEach(([section,rows],community)=>rows.forEach(([title,summary,...links])=>{const file=title.toLowerCase().replaceAll(' ','-')+'.md',p=section+'/'+file;wikiPages[p]='# '+title+'\n\n'+summary+'\n\nThis is a fictional page for the native workspace preview.\n\n## Connected ideas\n'+links.map(l=>'- [['+l+']]').join('\n');wikiNodes.push({id:'page:'+p.slice(0,-3),title,type:'page',section,community,degree:0,description:summary,provenance:{wiki_pages:[p]},created_at:new Date((now-86400*community)*1000).toISOString()});}));
+const wikiRelationships=[];
+Object.entries(wikiGroups).forEach(([section,rows])=>rows.forEach(([title,,...links])=>{const from=wikiNodes.find(n=>n.section===section&&n.title===title);links.forEach(link=>{const to=wikiNodes.find(n=>n.title===link);if(to&&!wikiRelationships.some(r=>r.source===from.id&&r.target===to.id))wikiRelationships.push({source:from.id,target:to.id,type:'links_to',weight:1});});}));
+wikiNodes.forEach(n=>n.degree=wikiRelationships.filter(r=>r.source===n.id||r.target===n.id).length);
+const wikiGraph={entities:wikiNodes,relationships:wikiRelationships,communities:Object.keys(wikiGroups).map((title,community)=>({community,title,size:wikiGroups[title].length}))};
+const sampleWorkflows=[
+ {id:'sample-launch-review',name:'From a brief to a clear direction',description:'A fictional studio workflow that connects the brief, a useful comparison, and a human decision.',enabled:false,when:null,when_text:'When you choose',running:false,asks_first:['share work externally'],steps:[{name:'Read the brief',prompt:'Gather the goal, audience, and decisions that need to be made.'},{name:'Explore the directions',prompt:'Compare three approaches against the same clear criteria.'},{name:'Prepare the review',prompt:'Bring the evidence and open questions into one readable page.'},{name:'Ask for a decision',prompt:'Stop for a human review before sharing or publishing anything.'}],last_run:{at:now-7200,status:'finished',summary:'Sample result: three directions prepared for review. Nothing was sent or published.',steps:[{status:'completed'},{status:'completed'},{status:'completed'},{status:'completed'}]}},
+ {id:'sample-field-notes',name:'Turn field notes into useful questions',description:'Keep the observations, the interpretation, and the next experiment connected.',enabled:false,when:null,when_text:'When you choose',running:false,asks_first:[],steps:[{name:'Collect the observations',prompt:'Read the sample notes and group related moments.'},{name:'Find the uncertainty',prompt:'Separate what was observed from what is still an assumption.'},{name:'Frame an experiment',prompt:'Propose one small way to learn what matters next.'}],last_run:{at:now-86400,status:'finished',summary:'Sample result: one research question and a short prototype brief.',steps:[{status:'completed'},{status:'completed'},{status:'completed'}]}}
+];
+const readOnlyFixtures={
+ '/api/system':{disk:[],processes:[]},
+ '/api/context/stats':{enabled:false,off_record:true,retention_days:0,days:0,first_date:null,last_date:null,total_entries:0,total_bytes:0,avg_entries_per_day:0,log_dir:''},
+ '/api/context/compression-stats':{compression:null},'/api/self-improvement/latest':{report:null},
+ '/api/tasks/retention':{ok:true,retention_days:0,capture_reasoning:false,encrypt_at_rest:false},
+ '/api/actions/receipts':{receipts:[]},
+ '/api/governance/receipts':{since:now-86400,until:now,actions:[],counts:{allow:0,confirm:0,card:0,deny:0},verified:0,not_verified:0,unreadable_lines:0,key_available:false,tasks:[],truncated:false},
+ '/api/calendar/today':sampleCalendarDay(today),'/api/calendar/tomorrow':{...sampleCalendarDay(isoDay(1)),needs_prep:[]},'/api/calendar/week':{days:calendarWeek},'/api/media/calendar':{cards:[]},
+ '/api/meetings':{meetings:[]},'/api/meetings/status':{recording:false,finishing:[],available:false},'/api/countdowns':{countdowns},
+ '/api/contacts':{contacts:samplePeople},'/api/contacts/google-write':{accounts:[]},'/api/relationships/config':{config:{sync_enabled:false,cold_after_days:14},last_sync:null,interactions:0},'/api/relationships/follow-ups':{follow_ups:[]},
+ '/api/finance/portfolio':{accounts:['Sample account · Fictional'],positions:[{ticker:'DEMO-A',shares:24,cost_basis:1800},{ticker:'DEMO-B',shares:40,cost_basis:2400},{ticker:'DEMO-C',shares:18,cost_basis:1620}]},
+ '/api/finance/perks':{perks:[{name:'Sample travel credit',value:'$200',used:false,expires:isoDay(35),notes:'Fictional benefit for this workspace preview.'},{name:'Sample studio membership',value:'$120',used:false,expires:isoDay(120),notes:'Fictional benefit; no account is connected.'},{name:'Sample learning credit',value:'$75',used:true,expires:isoDay(90)}]},
+ '/api/health/medications':{medications:[{name:'Sample medication record',notes:'Fictional record for layout review. No medication, dose, or treatment is prescribed.'}]},
+ '/api/health/appointments':{appointments:[{provider:'Sample care team',type:'Annual visit',frequency:'Sample annual reminder',next:isoDay(18)},{provider:'Sample dental team',type:'Routine visit',frequency:'Sample six-month reminder',next:isoDay(42)}]},
+ '/api/health/insurance':{insurance:{provider:'Sample coverage',plan:'Fictional demonstration plan',policy_number:'SAMPLE-001',group_number:'DEMO',notes:'No insurer or personal account is connected.'}},
+ '/api/health/vehicles':{vehicles:[{name:'Sample touring vehicle',miles:18400,notes:'Fictional maintenance record.',mechanic:'Sample workshop',service_history:[{date:isoDay(-40),description:'Sample routine service'}]}],mechanics:[{name:'Sample workshop',specialty:'Fictional service partner'}]},
+ '/api/career-ops/status':{ready:true,configured:false,path:'',summary:'Fictional career records for design review.',items:[]},'/api/career-ops/tracker':{entries:careerEntries},'/api/career-ops/reports':{reports:Object.entries(careerReports).map(([name,content])=>({name,size:Buffer.byteLength(content)}))},
+ '/api/career-ops/pipeline':{content:'# Sample career pipeline\n\n## In conversation\n- Northstar Studio — design lead\n- Quiet Objects — creative technologist\n\n## Applications prepared\n- Open Workshop — product strategist\n- Field Notes — editorial director\n\nAll organizations and opportunities in this preview are fictional.'},'/api/jobs':{content:'# Sample opportunities\n\nA fictional collection for reviewing the Career workspace.\n\n- Design lead at Northstar Studio\n- Product strategist at Open Workshop\n- Research lead at Common Ground'},'/api/pipeline/jobs':{jobs:careerEntries.map((e,i)=>({job_id:'sample-job-'+i,title:e.role,company:e.company,location:'Sample studio',remote:true,relevance_score:Number(e.score)/5}))},
+ '/api/futurespeak/projects':{projects:sampleSites,by_deploy:{green:2,yellow:2,red:0,remote:0}},'/api/futurespeak/scan':{discovered:[],total:sampleSites.length},
+ '/api/futurespeak/pipeline':{total:2,total_value:24000,weighted_value:15600,opportunities:[{id:'sample-opportunity',name:'Sample studio engagement',status:'proposal',value_usd:16000,probability:0.7,next_action:'Review the fictional discovery outline.',notes:'Sample data only.',tags:['studio','strategy'],contacts:[]},{id:'sample-workshop',name:'Sample workshop series',status:'discovery',value_usd:8000,probability:0.55,next_action:'Shape the fictional first session.',tags:['workshop'],contacts:[]}]},
+ '/api/futurespeak/revenue':{months:[{month:today.slice(0,7),projected:12000,actual:9000}],quarters:[],last_actual_month:9000,ytd_actual:54000,ytd_projected:66000,cash_on_hand:36000,monthly_burn:6000,net_monthly:3000,runway_months:6},'/api/futurespeak/legal':{items:[]},'/api/futurespeak/assets':{assets:[]},
+ '/api/news/front-page/latest':{edition:sampleEdition,editions:[{id:sampleEdition.id,date:today,slot:'morning'}],routines:[]},'/api/news/front-page/sample-morning':{edition:sampleEdition},'/api/news/front-page/weekly/latest':{digest:null,digests:[]},'/api/news/editorial/latest':{editorial:null,editorials:[]},
+ '/api/news/archive/stats':{total:sampleNews.length,sources:5},'/api/news/read-later':{items:[sampleNews[3]]},'/api/news/annotations':{annotations:[],annotated_ids:[]},'/api/news/clusters':{clusters:[]},'/api/sources/preferences':{banned:[],boosted:[]},'/api/briefing/status':{connectors:[]},'/api/briefings':{briefings:[]},
+ '/api/briefing/preferences':{preferences:{section_order:['headlines','technology','science'],sections_enabled:{headlines:true,technology:true,science:true},categories_enabled:{Design:true,Science:true,Local:true,Media:true,Technology:true}},categories:['Design','Science','Local','Media','Technology'].map(name=>({name}))},
+ '/api/wiki/structure':{structure:Object.fromEntries(Object.keys(wikiGroups).map(section=>[section,Object.keys(wikiPages).filter(p=>p.startsWith(section+'/')).map(p=>p.split('/')[1])])),recent:wikiNodes.slice(0,4).map(n=>({path:n.provenance.wiki_pages[0],section:n.section,filename:n.provenance.wiki_pages[0].split('/')[1],modified_iso:new Date(now*1000).toISOString()}))},'/api/wiki/pending':{pending:[]},
+ '/api/knowledge-graph/graph':wikiGraph,'/api/workflows/overview':{workflows:sampleWorkflows,routines:[],pending_approvals:0}
+};
 const customizations = {};
 const histories = {};
 const textById = {1:'# Launch brief\n\nCreate a clear, confident home for a fictional creative studio.\n\n## The opening\nLead with the value of the work, then show a useful example.\n\n## Tone\nDirect, welcoming, and precise.',2:'# Visual direction\n\nUse generous space, strong typography, and a deliberate sense of depth.\n\nKeep the material easy to compare.',3:'# Audience notes\n\nPeople arrive with a goal. Help them find the next useful action.\n\nLeave room to explore without losing their place.'};
@@ -70,6 +161,32 @@ function readBody(req) { return new Promise((resolve,reject)=>{let raw='';req.on
 function api(req,res,u,b) {
  const p=u.pathname, method=req.method;
  if (p.endsWith('/events') || p==='/api/command-stream') {res.writeHead(204);return res.end();}
+ if(method==='GET') {
+  if(Object.hasOwn(readOnlyFixtures,p))return ok(res,readOnlyFixtures[p]);
+  if(/^\/api\/calendar\/day\/\d{4}-\d{2}-\d{2}$/.test(p))return ok(res,sampleCalendarDay(p.slice(-10)));
+  if(p==='/api/news/archive'){
+   const category=u.searchParams.get('category'),offset=Math.max(0,Number(u.searchParams.get('offset'))||0),limit=Math.max(1,Math.min(100,Number(u.searchParams.get('limit'))||40));
+   const items=category?sampleNews.filter(n=>n.category===category):sampleNews;
+   return ok(res,{items:items.slice(offset,offset+limit),total:items.length,has_more:offset+limit<items.length});
+  }
+  if(p==='/api/wiki/page'){
+   const content=wikiPages[u.searchParams.get('path')];
+   return content===undefined?json(res,{status:'error',message:'Sample page not found'},404):ok(res,{content,locked:false});
+  }
+  if(p.startsWith('/api/career-ops/report/')){
+   const content=careerReports[decodeURIComponent(p.slice('/api/career-ops/report/'.length))];
+   return content===undefined?json(res,{status:'error',message:'Sample report not found'},404):ok(res,{content});
+  }
+  if(p.startsWith('/api/relationships/person/')){
+   const name=decodeURIComponent(p.slice('/api/relationships/person/'.length));
+   if(!samplePeople.some(c=>c.name.toLowerCase()===name.toLowerCase()))return json(res,{status:'error',message:'Sample person not found'},404);
+   return ok(res,{timeline:{count:3,last_contact:isoDay(-1),last_heard_from:isoDay(-2),last_wrote_to:isoDay(-1),emails_received:1,emails_sent:1,meetings:1,interactions:[{at:isoDay(-1),kind:'email',direction:'out',subject:'Sample: a clearer opening for the launch'},{at:isoDay(-2),kind:'email',direction:'in',subject:'Sample: notes from the first review'},{at:isoDay(-5),kind:'meeting',title:'Sample: studio direction conversation'}],follow_ups:[]}});
+  }
+  if(/^\/api\/contacts\/[^/]+$/.test(p)){
+   const name=decodeURIComponent(p.slice('/api/contacts/'.length)),person=samplePeople.find(c=>c.name.toLowerCase()===name.toLowerCase());
+   if(person)return ok(res,{contact:{...person,scores:{overall:person.overall,reliability:person.overall,information_quality:0.83,emotional_trust:0.8,timeliness:0.76,domain_expertise:0.88},domains:['Sample studio collaboration'],last_interaction:isoDay(-1),evidence:[{type:'sample',timestamp:isoDay(-1),notes:'Fictional observation for visual review; no evaluation of a real person.'}]},research:'This is a fictional collaborator in the design preview. No personal information or external research is used.'});
+  }
+ }
  if (p==='/api/setup/status') return ok(res,{initialized:true,setup_complete:true});
  if (p==='/api/privacy/cloud-consent') return ok(res,{needs_prompt:false});
  if (p==='/api/settings') { if(method==='POST')Object.assign(settings,b.settings||{});return ok(res,{settings}); }
@@ -90,9 +207,8 @@ function api(req,res,u,b) {
   res.writeHead(200,{'Content-Type':'text/event-stream'});return res.end('data: '+JSON.stringify({delta:reply})+'\n\ndata: '+JSON.stringify({done:true,payload:{response:reply,model:'preview',seat:'local'}})+'\n\n');
  }
  if(p==='/api/work/forecast')return ok(res,{will_pause:false});
- if(p==='/api/calendar/today'){const date=new Date().toISOString().slice(0,10);return ok(res,{date,google_connected:false,annotation:'Sample appointments for this design preview.',events:[{id:'design-meeting',title:'Review the launch',summary:'Review the launch',start_time:date+'T14:00:00',end_time:date+'T14:30:00'},{id:'design-focus',title:'Time to make something',summary:'Time to make something',start_time:date+'T15:00:00',end_time:date+'T16:00:00'}]});}
  if(p==='/api/tasks')return ok(res,{tasks});
- if(p.startsWith('/api/tasks/'))return ok(res,{task:tasks.find(t=>t.task_id===p.split('/')[3])||tasks[0],log:[]});
+ if(method==='GET'&&p.startsWith('/api/tasks/'))return ok(res,{task:tasks.find(t=>t.task_id===p.split('/')[3])||tasks[0],log:[]});
  if(p==='/api/approvals'||p==='/api/approvals/pending')return ok(res,{approvals:[],pending:[]});
  if(p==='/api/health')return ok(res,{connected:true,preview:true,model_ready:false});
  if(p==='/api/workspace/customizations')return ok(res,{customizations});
@@ -136,7 +252,6 @@ function api(req,res,u,b) {
   return u.searchParams.get('text')?ok(res,{text:textById[d.id],binary:false,truncated:false}):bytes(res,Buffer.from(textById[d.id]),'text/plain; charset=utf-8',{'Content-Security-Policy':"sandbox; default-src 'none'"});
  }
  if(p==='/api/privacy/file-grants')return ok(res,{grants:[],suspended:false,held:[],denied:[]});
- if(p==='/api/countdowns')return ok(res,{countdowns:[]});
  if(p==='/api/models'||p.includes('model-catalog'))return ok(res,{models:[],roles:{orchestrator:[],subagent:[],creative:[],voice:[]},providers:[],local:[],cloud:[]});
  if(p==='/api/seat'||p==='/api/compute/status')return ok(res,{seat:null,preview:true});
  if(method!=='GET')return json(res,{status:'error',message:'This action is not simulated in the design preview. No live action was taken.'},409);
@@ -147,6 +262,13 @@ const server=http.createServer(async(req,res)=>{
  try{
   const u=new URL(req.url,'http://127.0.0.1:'+port);
   if(u.pathname.startsWith('/api/'))return api(req,res,u,req.method==='GET'?{}:await readBody(req));
+  if(req.method==='GET'&&u.pathname.startsWith('/preview/story/')){
+   const story=sampleNews.find(n=>n.url===u.pathname);
+   if(!story){res.writeHead(404);return res.end('Sample story not found');}
+   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+   const body=Buffer.from('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>'+esc(story.title)+'</title><style>body{margin:0;background:var(--fr-bg,#070914);color:var(--fr-text,#edf1ff);font:18px/1.7 system-ui,sans-serif}main{max-width:740px;margin:auto;padding:10vh 24px}small{color:var(--fr-label,#aab5c9)}h1{font-size:clamp(32px,5vw,56px);line-height:1.1;letter-spacing:-.035em}a{color:var(--fr-cyan,#00d4ff)}</style></head><body><main><small>Friday design preview · Fictional article</small><h1>'+esc(story.title)+'</h1><p>'+esc(story.snippet)+'</p><p>This local sample reader keeps the native News links usable during design review. No real reporting, external source, or live account is connected.</p><p><a href="/w/news">Return to News</a></p></main></body></html>');
+   return bytes(res,body,'text/html; charset=utf-8',{'Content-Security-Policy':"default-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"});
+  }
   let rel=decodeURIComponent(u.pathname), workspace='';
   if(rel==='/'||rel==='/index.html'||/^\/w\/[a-z0-9_-]+$/.test(rel)){if(rel.startsWith('/w/'))workspace=rel.slice(3);rel='/index.html';}
   if(rel!=='/index.html'&&!rel.startsWith('/static/')&&!rel.startsWith('/assets/')){res.writeHead(404);return res.end('Not found');}

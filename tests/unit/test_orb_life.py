@@ -14,7 +14,7 @@ from both scene files: plain rules, no Three.js and no page.
 - A cancel waits out its undo window before it is sent, and an undo inside
   the window means it is never sent.
 - An orb's orbit closes in on Friday only with real progress; unknown
-  progress never moves it. A finished orb spirals into the core.
+  progress never moves it. Completed orbs stay for at most five minutes.
 - A receipt carries what the server knows (what it did, model, time, cost)
   and a failed one names a fix; sources only when the server sends them.
 - The day's stars sit in the upper band, one fixed place per task.
@@ -100,8 +100,7 @@ out.undo_sent = { mid, after: sent };
 out.prog = [L.progressOf({}), L.progressOf({ progress: 0.5 }), L.progressOf({ step_n: 3, step_total: 4 }), L.progressOf({ progress: 50 }),
             L.progressOf({ progress: null, step_n: 2 })];
 out.radius = [L.orbitRadius(null, 11, 6), L.orbitRadius(0, 11, 6), L.orbitRadius(0.5, 11, 6), L.orbitRadius(1, 11, 6)];
-const sp = []; for (let t = 0; t <= L.SPIRAL_S + 0.2; t += 0.1) sp.push(L.spiralAt(t, 11, 0));
-out.spiral = { mono: sp.every((s, i) => i === 0 || s.r <= sp[i - 1].r + 1e-9), end: sp[sp.length - 1].r, done: sp[sp.length - 1].done, startDone: sp[0].done };
+out.doneVisibleMs = L.DONE_VISIBLE_MS;
 
 // receipts
 out.rc_ok = L.receipt({ task_id: 't1', name: 'Research the moon', status: 'completed', result: 'Found the four phases.', started: 100, ended: 160 },
@@ -204,8 +203,7 @@ def test_a_cancel_waits_out_its_undo_window(o):
 def test_orbits_close_in_only_with_real_progress(o):
     assert o["prog"] == [None, 0.5, 0.75, 0.5, None]
     assert o["radius"] == [11, 11, 8.5, 6]
-    assert o["spiral"]["mono"] is True and o["spiral"]["end"] == 0
-    assert o["spiral"]["done"] is True and o["spiral"]["startDone"] is False
+    assert o["doneVisibleMs"] == 300000
 
 
 def test_a_receipt_says_what_the_server_knows_and_a_failure_names_a_fix(o):

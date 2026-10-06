@@ -61,8 +61,53 @@ footer{position:relative;z-index:3;display:flex;justify-content:center;align-ite
 .err-banner{position:fixed;left:12px;right:12px;top:56px;z-index:20;background:rgba(40,0,20,.95);border:1px solid rgba(255,0,100,.5);border-radius:10px;padding:10px 12px;color:#ffccdd;font-size:11px;letter-spacing:.05em;line-height:1.4;display:none}
 .err-banner.show{display:block}
 </style>
+<style id="friday-brand-tokens">
+/* brand-tokens:begin (generated from src/agent_friday/brand.py) */
+:root {
+    --fr-cyan: #00d4ff;
+    --fr-cyan-soft: rgba(0,212,255,0.12);
+    --fr-violet: #7b61ff;
+    --fr-magenta: #ff00ff;
+    --fr-violet-soft: #a78bfa;
+    --fr-cat-teal: #2dd4bf;
+    --fr-cat-pink: #f472b6;
+    --fr-cat-blue: #60a5fa;
+    --fr-cat-sand: #d6c7a1;
+    --fr-ok: #00ff80;
+    --fr-warn: #f59e0b;
+    --fr-deny: #ff0080;
+    --fr-error: #ef4444;
+    --fr-neutral: #7a8699;
+    --fr-wordmark-amber: #f59e0b;
+    --fr-surface: #0a0e1a;
+    --fr-glass: rgba(10,14,26,0.75);
+    --fr-glass-blur: blur(16px) saturate(1.2);
+    --fr-glass-edge: rgba(255,255,255,0.06);
+    --fr-text: rgba(255,255,255,0.86);
+    --fr-label: rgba(255,255,255,0.78);
+    --fr-dim: rgba(255,255,255,0.46);
+    --fr-faint: rgba(255,255,255,0.3);
+    --fr-font-display: 'Orbitron', sans-serif;
+    --fr-font-body: 'Inter', system-ui, sans-serif;
+    --fr-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --fr-text-2xs: 9px;
+    --fr-text-xs: 10px;
+    --fr-text-sm: 11px;
+    --fr-text-md: 12px;
+    --fr-text-base: 13px;
+    --fr-text-lg: 15px;
+    --fr-text-xl: 18px;
+    --fr-text-2xl: 26px;
+    --fr-track-display: 0.06em;
+    --fr-track-label: 0.15em;
+    --fr-reveal: 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+    --fr-reveal-time: 0.35s;
+}
+/* brand-tokens:end */
+    </style>
+<link rel="stylesheet" href="/static/friday_shared_surfaces.css">
 </head>
-<body>
+<body class="friday-experience-enabled friday-live-surface">
 <div class="bg"></div><div class="scan"></div>
 
 <header>

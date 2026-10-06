@@ -1,0 +1,402 @@
+/* Native shared surfaces. The scene, window placement and workspace interiors
+ * keep their own owners. Inline overrides below replace fixed presentation
+ * values only; visibility, disabled states and action handlers remain native. */
+body.friday-experience-enabled {
+  --fs-line: color-mix(in srgb, var(--fr-text) 13%, transparent);
+  --fs-line-strong: color-mix(in srgb, var(--fr-cyan) 27%, transparent);
+  --fs-muted: color-mix(in srgb, var(--fr-text) 76%, transparent);
+  --fs-panel: color-mix(in srgb, var(--fr-surface) 97%, transparent);
+  --fs-raised: color-mix(in srgb, var(--fr-text) 3%, var(--fr-surface));
+  --fs-shadow: 0 18px 54px color-mix(in srgb, var(--fr-surface) 82%, transparent);
+}
+body.friday-experience-enabled :is(.fa-host, .fa-host *, .chat-sidebar, .chat-sidebar *, .fx-chat-footer, .fx-chat-footer *, .friday-workspace-studio, .friday-workspace-studio *, .friday-workspace-history, .friday-workspace-history *, .sc-root, .sc-root *, .cmd-palette, .cmd-palette *, [data-testid="approval-popup"], [data-testid="approval-popup"] *, .login-box, .login-box *) { box-sizing: border-box; }
+body.friday-experience-enabled :is(.fa-host, .chat-sidebar, .friday-workspace-studio, .friday-workspace-history, .sc-root, .cmd-palette, [data-testid="approval-popup"], .login-box) { color: var(--fr-text); font-family: var(--fr-font-body); }
+body.friday-experience-enabled :is(.fa-host, .chat-sidebar, .friday-workspace-studio, .friday-workspace-history, .sc-root, .cmd-palette, [data-testid="approval-popup"], .login-box) :is(button, input, textarea, select, a, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--fr-cyan); outline-offset: 3px;
+}
+
+/* Conversations read as a transcript, with the user's turns as contained notes. */
+body.friday-experience-enabled [data-chat-head] { flex-wrap: wrap; padding: 10px 14px !important; row-gap: 8px; background: var(--fs-panel); }
+body.friday-experience-enabled [data-chat-head] > button { min-height: 30px; padding: 5px 9px !important; border-radius: 7px !important; font: 12px/1.35 var(--fr-font-body) !important; }
+body.friday-experience-enabled .fx-chat-transcript { padding: 24px clamp(16px, 3vw, 42px) !important; scroll-padding: 24px; overscroll-behavior: contain; }
+body.friday-experience-enabled .fx-chat-transcript > div:has(.fx-chat-bubble) { margin-bottom: 22px !important; }
+body.friday-experience-enabled .fx-chat-transcript > div > div:has(> .fx-chat-bubble) { max-width: min(100%, 78ch) !important; }
+body.friday-experience-enabled .fx-chat-bubble { padding: 14px 16px !important; font: 400 15px/1.75 var(--fr-font-body) !important; border-radius: 12px !important; }
+body.friday-experience-enabled .fx-chat-bubble[data-role="friday"] { background: transparent !important; border-color: transparent; padding-inline: 0 !important; }
+body.friday-experience-enabled .fx-chat-bubble[data-role="user"] { background: color-mix(in srgb, var(--fr-violet) 10%, var(--fr-surface)) !important; border-color: color-mix(in srgb, var(--fr-violet) 30%, transparent); }
+body.friday-experience-enabled .fx-chat-bubble :is(p, li) { font-size: inherit; line-height: 1.75; }
+body.friday-experience-enabled .fx-chat-bubble :is(pre, table) { max-width: 100%; overflow: auto; }
+body.friday-experience-enabled .fx-chat-bubble pre { padding: 14px; border: 1px solid var(--fs-line); border-radius: 9px; font: 12px/1.65 var(--fr-font-mono); background: var(--fs-raised); }
+body.friday-experience-enabled .fx-chat-bubble a { color: var(--fr-cyan); text-underline-offset: 3px; }
+body.friday-experience-enabled .fx-chat-footer { padding: 12px 16px 14px !important; background: var(--fs-panel); border-top-color: var(--fs-line) !important; }
+body.friday-experience-enabled .fx-chat-sources { gap: 8px !important; margin-bottom: 9px !important; }
+body.friday-experience-enabled .fx-chat-composer { padding: 10px !important; border: 1px solid var(--fs-line-strong); border-radius: 14px; background: var(--fs-raised); box-shadow: inset 0 1px var(--fr-glass-edge); }
+body.friday-experience-enabled .fx-chat-composer:focus-within { border-color: var(--fr-cyan); }
+body.friday-experience-enabled .fx-chat-composer .fx-chat-message { min-height: 62px; border: 0; background: transparent; padding: 6px 4px; box-shadow: none; }
+body.friday-experience-enabled .fx-chat-composer .fx-chat-message:focus-visible { outline-offset: 0; }
+body.friday-experience-enabled .fx-chat-composer > button { min-height: 34px; border-radius: 8px; }
+body.friday-experience-enabled .fx-chat-composer .fx-chat-send { min-width: 72px; padding-inline: 16px; }
+body.friday-experience-enabled [data-friday-voice-toggle][data-voice-on="1"] { outline: 1px solid var(--fr-ok); outline-offset: 2px; }
+
+/* This is local conversation navigation, never a permanent desktop rail. */
+body.friday-experience-enabled .chat-sidebar { background: var(--fs-panel); border-right-color: var(--fs-line); }
+body.friday-experience-enabled .chat-sidebar-head { flex-wrap: wrap; padding: 14px 12px 12px; gap: 7px; }
+body.friday-experience-enabled .chat-sidebar-head > button { min-height: 34px; font: 12px/1.35 var(--fr-font-body) !important; }
+body.friday-experience-enabled .chat-sidebar-head > button:first-child { flex-basis: 100% !important; text-align: left; }
+body.friday-experience-enabled .chat-sidebar > input { min-height: 38px; font: 13px var(--fr-font-body) !important; }
+body.friday-experience-enabled .chat-sidebar-scroll { padding: 4px 10px 18px; scrollbar-gutter: stable; }
+body.friday-experience-enabled .friday-conversation-row { margin-block: 3px; }
+body.friday-experience-enabled .friday-conversation-entry { min-height: 58px; padding: 10px !important; border-radius: 9px !important; }
+body.friday-experience-enabled .friday-conversation-entry:hover { background: var(--fr-cyan-soft) !important; }
+body.friday-experience-enabled .friday-conversation-entry > div > div:first-child { font: 500 13px/1.4 var(--fr-font-body) !important; }
+body.friday-experience-enabled .friday-conversation-entry > div > div + div { font: 10px/1.45 var(--fr-font-mono) !important; color: var(--fs-muted) !important; margin-top: 5px !important; }
+body.friday-experience-enabled .friday-conversation-entry > button { min-width: 30px; min-height: 30px; color: var(--fr-label) !important; }
+body.friday-experience-enabled [data-codebase-menu] { padding: 8px !important; border-color: var(--fs-line-strong) !important; background: var(--fs-panel) !important; box-shadow: var(--fs-shadow); }
+
+/* Artifact chrome stays compact so the actual document or app owns the space. */
+body.friday-experience-enabled .fa-host { min-width: 0; min-height: 0; }
+body.friday-experience-enabled .fa-panel { background: var(--fs-panel); border-color: var(--fs-line); }
+body.friday-experience-enabled .fa-head { padding: 12px 14px 10px; background: var(--fs-raised); border-bottom-color: var(--fs-line); }
+body.friday-experience-enabled .fa-title-row { margin-top: 8px; gap: 10px; }
+body.friday-experience-enabled :is(.fa-title, .fa-select) { font: 600 14px/1.4 var(--fr-font-body); }
+body.friday-experience-enabled .fa-select { min-height: 34px; padding: 5px 9px; background: var(--fr-surface); border-color: var(--fs-line-strong); }
+body.friday-experience-enabled .fa-brand { color: var(--fr-cyan); font-family: var(--fr-font-display); font-size: 9px; letter-spacing: .12em; }
+body.friday-experience-enabled .fa-tools { gap: 7px; margin-top: 10px; }
+body.friday-experience-enabled .fa-btn { min-height: 32px; padding: 6px 10px; font: 12px/1.4 var(--fr-font-body); border-radius: 7px; }
+body.friday-experience-enabled .fa-icon { min-width: 30px; min-height: 30px; }
+body.friday-experience-enabled .fa-timeline { gap: 10px; margin-top: 11px; color: var(--fs-muted); font-size: 11px; }
+body.friday-experience-enabled .fa-body { padding: 20px; overscroll-behavior: contain; }
+body.friday-experience-enabled .fa-body.fa-flush { padding: 0; }
+body.friday-experience-enabled .fa-md { max-width: 78ch; margin-inline: auto; font: 14px/1.8 var(--fr-font-body); color: var(--fr-text); }
+body.friday-experience-enabled .fa-md :is(h1, h2, h3) { line-height: 1.3; margin-top: 1.2em; }
+body.friday-experience-enabled .fa-editor { font: 13px/1.65 var(--fr-font-mono); border-color: var(--fs-line-strong); color: var(--fr-text); background: var(--fr-surface); padding: 14px; }
+body.friday-experience-enabled .fa-table { font-size: 13px; }
+body.friday-experience-enabled .fa-table :is(th, td) { padding: 10px 12px; }
+body.friday-experience-enabled .fa-table th { font: 500 11px var(--fr-font-mono); color: var(--fr-label); background: var(--fr-surface); }
+body.friday-experience-enabled .fa-foot { min-height: 32px; padding: 8px 12px; color: var(--fs-muted); font-size: 10px; white-space: normal; flex-wrap: wrap; }
+body.friday-experience-enabled .fa-foot span { overflow: visible; overflow-wrap: anywhere; }
+body.friday-experience-enabled .fa-note { padding: 10px 14px; font-size: 12px; line-height: 1.6; color: var(--fr-warn); background: color-mix(in srgb, var(--fr-warn) 7%, var(--fr-surface)); }
+body.friday-experience-enabled .fa-note.fa-ok { color: var(--fr-ok); background: color-mix(in srgb, var(--fr-ok) 6%, var(--fr-surface)); }
+body.friday-experience-enabled .fa-divider { width: 8px; }
+body.friday-experience-enabled .fa-divider::after { left: 3px; background: var(--fs-line); }
+body.friday-experience-enabled .fa-divider:hover::after { background: var(--fr-cyan); }
+body.friday-experience-enabled .fa-strip { background: var(--fs-panel); }
+body.friday-experience-enabled .fa-strip button { min-height: 36px; font: 12px/1.35 var(--fr-font-body); }
+body.friday-experience-enabled .fa-buildbar { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+body.friday-experience-enabled .fa-plan { padding: 12px 14px !important; border-bottom-color: var(--fs-line) !important; }
+body.friday-experience-enabled .fa-plan[data-plan="awaiting"] { border-left: 2px solid var(--fr-warn); }
+body.friday-experience-enabled .fa-plan[data-plan="approved"] { border-left: 2px solid var(--fr-ok); }
+
+/* Preview, source, changes and runs stay within the native codebase panel. */
+body.friday-experience-enabled [data-codebase-header] { padding: 8px 12px !important; font: 11px/1.5 var(--fr-font-mono) !important; white-space: normal; overflow-wrap: anywhere; }
+body.friday-experience-enabled [data-codebase-view="files"] > .fa-body > div:first-child { width: 170px !important; padding: 12px 8px !important; border-color: var(--fs-line) !important; }
+body.friday-experience-enabled [data-codebase-view="files"] > .fa-body > div:first-child > div { padding: 7px 8px !important; min-height: 30px; font-size: 11px; }
+body.friday-experience-enabled [data-codebase-view="files"] > .fa-body > div + div { padding: 12px !important; }
+body.friday-experience-enabled [data-codebase-view="files"] pre { font: 12px/1.65 var(--fr-font-mono) !important; }
+body.friday-experience-enabled [data-codebase-runs] input.fa-editor { min-height: 40px; height: 40px; max-height: none; padding: 9px 12px !important; }
+body.friday-experience-enabled [data-codebase-run] { border-color: var(--fs-line) !important; border-radius: 9px !important; }
+body.friday-experience-enabled [data-codebase-run] > div { padding: 10px 12px !important; flex-wrap: wrap; }
+body.friday-experience-enabled [data-codebase-run] pre { padding: 12px !important; font: 12px/1.6 var(--fr-font-mono) !important; }
+body.friday-experience-enabled [data-codebase-view="changes"] [data-step] { padding: 14px 0 !important; border-bottom-color: var(--fs-line) !important; }
+
+/* The command surface is a searchable index with a persistent input. */
+body.friday-experience-enabled .cmd-palette { width: min(720px, calc(100vw - 32px)); max-height: min(72dvh, 680px); border-color: var(--fs-line-strong); border-radius: 16px; background: var(--fs-panel); box-shadow: var(--fs-shadow); overflow: auto; }
+body.friday-experience-enabled .cmd-palette-input { position: sticky; top: 0; z-index: 1; min-height: 60px; padding: 18px 22px; color: var(--fr-text); background: var(--fr-surface); font: 16px var(--fr-font-body); border-bottom: 1px solid var(--fs-line); }
+body.friday-experience-enabled .cmd-palette-results { padding: 8px 10px 14px; }
+body.friday-experience-enabled .cmd-palette-section { padding: 14px 12px 7px; color: var(--fs-muted); font: 10px var(--fr-font-mono); letter-spacing: .1em; }
+body.friday-experience-enabled .cmd-palette-item { min-height: 46px; padding: 11px 12px; gap: 12px; border-radius: 9px; font: 14px/1.4 var(--fr-font-body); }
+body.friday-experience-enabled .cmd-palette-item.selected { background: var(--fr-cyan-soft); box-shadow: inset 2px 0 var(--fr-cyan); }
+body.friday-experience-enabled .cmd-palette-item .meta { font-size: 11px; color: var(--fs-muted); white-space: normal; }
+
+/* Decisions retain the actual action, evidence, disabled state and outcome. */
+body.friday-experience-enabled [data-testid="approval-popup"] { width: min(460px, calc(100vw - 32px)) !important; padding: 16px !important; border-radius: 14px; border-color: color-mix(in srgb, var(--fr-warn) 40%, transparent) !important; background: var(--fs-panel); box-shadow: var(--fs-shadow); overscroll-behavior: contain; }
+body.friday-experience-enabled [data-testid="approval-popup"] > .card-title { position: sticky; top: -16px; z-index: 2; gap: 12px; margin: -16px -16px 12px; padding: 16px; background: var(--fs-panel); border-bottom: 1px solid var(--fs-line); font: 500 14px var(--fr-font-display); }
+body.friday-experience-enabled [data-testid="approval-card"] { border: 1px solid var(--fs-line); border-radius: 10px; padding: 16px !important; background: var(--fs-raised); overflow-wrap: anywhere; }
+body.friday-experience-enabled [data-testid="approval-card"] + [data-testid="approval-card"] { margin-top: 12px; }
+body.friday-experience-enabled [data-testid="approval-card"] :is(p, li) { font-size: 13px; line-height: 1.65; }
+body.friday-experience-enabled [data-testid="approval-card"] :is(pre, code) { font-family: var(--fr-font-mono); font-size: 11px; }
+body.friday-experience-enabled [data-testid="approval-card"] pre { max-width: 100%; overflow: auto; }
+body.friday-experience-enabled [data-testid="approval-card"] button { min-height: 34px; padding: 7px 11px !important; font: 12px/1.4 var(--fr-font-body) !important; white-space: normal; }
+body.friday-experience-enabled [data-testid="approval-card"] > div:has(> button) { gap: 8px !important; flex-wrap: wrap; }
+body.friday-experience-enabled [data-testid="approval-popup-pill"] { min-height: 38px; padding: 9px 14px !important; border-radius: 10px; box-shadow: var(--fs-shadow); }
+body.friday-experience-enabled [data-testid="batch-lines"] { max-height: 260px; overflow: auto; padding: 10px; border: 1px solid var(--fs-line); border-radius: 7px; }
+body.friday-experience-enabled .notif-dropdown { background: var(--fs-panel); border-color: var(--fs-line-strong); border-radius: 14px; box-shadow: var(--fs-shadow); }
+body.friday-experience-enabled :is(.notif-row, .notif-group-item) { padding: 13px 15px; border-bottom-color: var(--fs-line); font-size: 13px; line-height: 1.6; }
+body.friday-experience-enabled :is(.notif-section-header, .notif-digest-header, .notif-group-title) { padding: 13px 15px; font: 11px/1.5 var(--fr-font-mono); color: var(--fs-muted); }
+body.friday-experience-enabled .notif-open-btn { min-height: 30px; padding: 5px 9px; font: 12px/1.4 var(--fr-font-body); }
+body.friday-experience-enabled .thread-panel { background: var(--fs-panel); border-color: var(--fs-line-strong); border-radius: 14px; box-shadow: var(--fs-shadow); }
+body.friday-experience-enabled .thread-header { padding: 13px 16px; gap: 10px; }
+body.friday-experience-enabled .thread-body { padding: 16px; font: 12px/1.65 var(--fr-font-mono); }
+body.friday-experience-enabled .thread-step-content { min-width: 0; }
+body.friday-experience-enabled .thread-step-text { font: 13px/1.6 var(--fr-font-body); }
+
+/* Liquid customization uses its real conversation and reversible snapshots. */
+body.friday-experience-enabled .friday-workspace-studio { max-width: calc(100vw - 40px) !important; background: var(--fs-panel) !important; border-color: var(--fs-line-strong) !important; border-radius: 16px !important; box-shadow: var(--fs-shadow) !important; }
+body.friday-experience-enabled .friday-studio-head { padding: 14px 16px !important; gap: 10px !important; border-bottom-color: var(--fs-line) !important; background: var(--fs-raised) !important; flex-shrink: 0; }
+body.friday-experience-enabled .friday-studio-log { padding: 20px !important; font: 14px/1.7 var(--fr-font-body); overscroll-behavior: contain; }
+body.friday-experience-enabled .friday-studio-composer { padding: 14px !important; gap: 10px !important; background: var(--fs-raised); flex-shrink: 0; }
+body.friday-experience-enabled .friday-studio-composer textarea { min-height: 60px; max-height: 150px !important; padding: 11px 12px !important; font: 13px/1.55 var(--fr-font-body) !important; color: var(--fr-text) !important; }
+body.friday-experience-enabled .friday-workspace-studio button { min-height: 30px; border-radius: 7px !important; font-size: 12px !important; }
+body.friday-experience-enabled .friday-workspace-history { padding: 20px !important; color: var(--fr-text); background: var(--fs-panel) !important; overscroll-behavior: contain; }
+body.friday-experience-enabled .friday-workspace-history > div:first-child { position: sticky; top: -20px; z-index: 1; margin: -20px -20px 16px !important; padding: 16px 20px; background: var(--fs-panel); border-bottom: 1px solid var(--fs-line); }
+body.friday-experience-enabled .friday-workspace-history button { min-height: 32px; padding: 7px 11px !important; border-radius: 7px !important; font: 12px/1.4 var(--fr-font-body) !important; }
+body.friday-experience-enabled .friday-workspace-history > div:not(:first-child) { line-height: 1.6; }
+
+/* Setup is a guided conversation alongside the current decision. */
+body.friday-experience-enabled .sc-root { background: var(--fr-surface); color: var(--fr-text); font-family: var(--fr-font-body); }
+body.friday-experience-enabled .sc-head { padding: 18px 28px; gap: 20px; background: var(--fs-panel); border-bottom-color: var(--fs-line); }
+body.friday-experience-enabled .sc-brand { font: 600 14px/1.4 var(--fr-font-display); color: var(--fr-cyan); }
+body.friday-experience-enabled .sc-step { min-height: 34px; display: inline-flex; align-items: center; padding: 7px 11px; border-radius: 8px; font-size: 12px; }
+body.friday-experience-enabled .sc-body { width: 100%; max-width: 1380px; padding: 30px; gap: 36px; }
+body.friday-experience-enabled .sc-chat { flex: 1 1 44%; max-width: 600px; }
+body.friday-experience-enabled .sc-log { padding: 8px 18px 18px 0; overscroll-behavior: contain; }
+body.friday-experience-enabled .sc-msg { font: 14px/1.75 var(--fr-font-body); margin-bottom: 20px; }
+body.friday-experience-enabled .sc-msg.friday { padding-inline: 0; background: transparent; border-color: transparent; }
+body.friday-experience-enabled .sc-msg.user { background: color-mix(in srgb, var(--fr-violet) 10%, var(--fr-surface)); border-color: color-mix(in srgb, var(--fr-violet) 30%, transparent); }
+body.friday-experience-enabled .sc-side { flex: 1.15 1 48%; padding: 0 4px 24px; }
+body.friday-experience-enabled .sc-card { padding: 24px; border-color: var(--fs-line); background: var(--fs-raised); border-radius: 14px; }
+body.friday-experience-enabled .sc-card h2 { font: 600 19px/1.4 var(--fr-font-body); margin-bottom: 12px; color: var(--fr-text); }
+body.friday-experience-enabled .sc-sub { font-size: 13px; line-height: 1.65; color: var(--fs-muted); }
+body.friday-experience-enabled :is(.sc-item, .sc-finding) { padding: 15px; border-color: var(--fs-line); border-radius: 10px; }
+body.friday-experience-enabled .sc-item-head { gap: 12px; }
+body.friday-experience-enabled .sc-item-title { font-size: 14px; }
+body.friday-experience-enabled .sc-item-unlocks { font-size: 12px; line-height: 1.55; }
+body.friday-experience-enabled .sc-field { gap: 8px; }
+body.friday-experience-enabled .sc-input { min-height: 42px; padding: 10px 12px; font: 14px/1.5 var(--fr-font-body); color: var(--fr-text); border-color: var(--fs-line-strong); background: var(--fr-surface); border-radius: 8px; }
+body.friday-experience-enabled .sc-btn { min-height: 38px; padding: 9px 14px; font-size: 13px; }
+body.friday-experience-enabled .sc-chip { min-height: 32px; padding: 6px 10px; font-size: 12px; }
+body.friday-experience-enabled .sc-option { padding: 15px; border-radius: 10px; }
+body.friday-experience-enabled .sc-option-desc { font-size: 12px; line-height: 1.6; }
+body.friday-experience-enabled .sc-form { padding: 12px; background: var(--fs-raised); border: 1px solid var(--fs-line-strong); border-radius: 12px; }
+body.friday-experience-enabled .sc-form .sc-input { min-width: 0; }
+body.friday-experience-enabled .sc-summary-list { line-height: 1.8; }
+body.friday-experience-enabled [data-friday-surface="consent"] { background: var(--fr-surface) !important; padding: clamp(24px, 6vh, 64px) 24px !important; }
+body.friday-experience-enabled [data-friday-surface="consent"] > div { max-width: 720px !important; padding: clamp(20px, 4vw, 40px); border: 1px solid var(--fs-line); border-radius: 16px; background: var(--fs-raised); }
+body.friday-experience-enabled [data-friday-surface="consent"] h1 { font: 600 26px/1.35 var(--fr-font-display) !important; color: var(--fr-text) !important; }
+body.friday-experience-enabled [data-friday-surface="consent"] p { color: var(--fr-label) !important; line-height: 1.8 !important; }
+body.friday-experience-enabled [data-friday-surface="consent"] :is(button, input, [role="radio"]) { min-height: 42px; }
+
+/* Native compact presence retains the live scene above its own controls. */
+body.friday-experience-enabled #condensed-bar { padding: 10px 12px max(10px, env(safe-area-inset-bottom)); gap: 12px; background: color-mix(in srgb, var(--fr-surface) 82%, transparent); border-top: 1px solid var(--fs-line); }
+body.friday-experience-enabled #condensed-bar button { width: 40px; height: 40px; min-width: 40px; border-radius: 12px; }
+body.friday-experience-enabled #condensed-caption { padding: 7px 12px; margin-bottom: 0; font: 12px/1.5 var(--fr-font-body); }
+body.friday-experience-enabled #condensed-approval { background: var(--fs-panel); border-color: color-mix(in srgb, var(--fr-warn) 45%, transparent); padding: 12px; }
+body.friday-experience-enabled #condensed-approval .ca-title { font: 13px/1.5 var(--fr-font-body); }
+body.friday-experience-enabled #condensed-approval .ca-actions button { min-height: 34px; font-size: 12px; }
+body.friday-experience-enabled :is(.camera-pip, .camera-control-panel) { border-color: var(--fs-line-strong); border-radius: 12px; box-shadow: var(--fs-shadow); }
+body.friday-experience-enabled .camera-control-panel { background: var(--fs-panel); padding: 12px; }
+body.friday-experience-enabled .camera-control-panel button { min-height: 32px; }
+body.friday-experience-enabled .camera-privacy-banner { font: 12px/1.55 var(--fr-font-body); padding: 10px 14px; }
+
+/* The standalone Live document opts into this sheet and generated brand tokens. */
+body.friday-experience-enabled.friday-live-surface { color: var(--fr-text); font-family: var(--fr-font-body); background: var(--fr-surface); }
+body.friday-experience-enabled.friday-live-surface header { padding: 18px 22px; border-bottom-color: var(--fs-line); background: var(--fs-panel); }
+body.friday-experience-enabled.friday-live-surface header h1 { font: 600 13px var(--fr-font-display); letter-spacing: .12em; color: var(--fr-cyan); }
+body.friday-experience-enabled.friday-live-surface header .status { font: 11px var(--fr-font-mono); letter-spacing: .08em; }
+body.friday-experience-enabled.friday-live-surface main { gap: 28px; min-height: 0; }
+body.friday-experience-enabled.friday-live-surface .transcript { max-width: min(72ch, 94%); max-height: 24dvh; overflow: auto; font: 15px/1.7 var(--fr-font-body); letter-spacing: 0; color: var(--fr-label); user-select: text; }
+body.friday-experience-enabled.friday-live-surface .transcript.self { color: var(--fr-violet-soft); }
+body.friday-experience-enabled.friday-live-surface footer { gap: 16px; padding: 18px 20px calc(18px + env(safe-area-inset-bottom)); background: var(--fs-panel); border-top-color: var(--fs-line); }
+body.friday-experience-enabled.friday-live-surface footer .btn { min-width: 70px; min-height: 60px; border-radius: 14px; font: 11px var(--fr-font-body); letter-spacing: .06em; }
+body.friday-experience-enabled.friday-live-surface .hint { font: 10px/1.6 var(--fr-font-mono); letter-spacing: .05em; color: var(--fs-muted); }
+body.friday-experience-enabled.friday-live-surface .err-banner { background: var(--fr-surface); border-color: var(--fr-error); color: var(--fr-text); font: 13px/1.6 var(--fr-font-body); }
+
+/* Sign-in changes presentation only; server-side authentication is untouched. */
+body.friday-experience-enabled.friday-login-surface { overflow: auto; padding: 24px; }
+body.friday-experience-enabled.friday-login-surface .login-box { width: min(430px, 100%); padding: 40px clamp(22px, 5vw, 40px); border-radius: 18px; background: var(--fs-panel); box-shadow: var(--fs-shadow); border-color: var(--fs-line-strong); }
+body.friday-experience-enabled.friday-login-surface h1 { font: 600 17px/1.5 var(--fr-font-display); letter-spacing: .07em; }
+body.friday-experience-enabled.friday-login-surface .maker { font-size: 11px; line-height: 1.6; }
+body.friday-experience-enabled.friday-login-surface .subtitle { margin: 26px 0 24px; font: 14px/1.5 var(--fr-font-body); letter-spacing: 0; color: var(--fr-label); }
+body.friday-experience-enabled.friday-login-surface .field { margin-bottom: 18px; }
+body.friday-experience-enabled.friday-login-surface label { display: block; margin-bottom: 8px; font-size: 13px; color: var(--fr-label); }
+body.friday-experience-enabled.friday-login-surface input { min-height: 46px; padding: 12px 14px; font-size: 15px; border-radius: 9px; }
+body.friday-experience-enabled.friday-login-surface input::placeholder { font: 13px var(--fr-font-body); letter-spacing: 0; }
+body.friday-experience-enabled.friday-login-surface button { min-height: 44px; font-size: 14px; border-radius: 9px; }
+body.friday-experience-enabled.friday-login-surface .error { color: var(--fr-deny); font: 13px/1.65 var(--fr-font-body); letter-spacing: 0; text-align: left; padding: 12px; border: 1px solid color-mix(in srgb, var(--fr-deny) 35%, transparent); border-radius: 8px; }
+
+/* Explicit empty and failure surfaces keep recovery actions in their own flow. */
+body.friday-experience-enabled :is(.fa-empty, .cmd-palette-empty, .notif-empty, .friday-surface-error) { padding: 28px; font: 13px/1.75 var(--fr-font-body); color: var(--fs-muted); overflow-wrap: anywhere; }
+body.friday-experience-enabled .friday-surface-error { border: 1px solid color-mix(in srgb, var(--fr-error) 32%, transparent); background: color-mix(in srgb, var(--fr-error) 5%, var(--fr-surface)); border-radius: 12px; }
+body.friday-experience-enabled .friday-surface-error > div:first-child { font: 500 15px/1.6 var(--fr-font-body) !important; color: var(--fr-error) !important; }
+body.friday-experience-enabled .friday-surface-error button { min-height: 36px; margin-top: 16px !important; }
+body.friday-experience-enabled :is(.sc-msgline.bad, .sc-msg.note[role="alert"]) { padding: 12px; border-left: 2px solid var(--fr-error); border-radius: 5px; color: var(--fr-text); background: color-mix(in srgb, var(--fr-error) 7%, var(--fr-surface)); }
+body.friday-experience-enabled [data-friday-connection-state] { padding: 6px 10px !important; font: 11px/1.4 var(--fr-font-mono) !important; text-shadow: none !important; }
+
+@media (max-width: 900px) {
+  body.friday-experience-enabled .sc-head { padding: 16px 20px; }
+  body.friday-experience-enabled .sc-body { flex-direction: column; padding: 20px; gap: 24px; overflow-y: auto; }
+  body.friday-experience-enabled .sc-chat { flex: none; max-width: none; }
+  body.friday-experience-enabled .sc-side { flex: none; overflow: visible; }
+  body.friday-experience-enabled .sc-log { max-height: 38dvh; }
+  body.friday-experience-enabled .sc-card { padding: 20px; }
+}
+@media (max-width: 720px) {
+  /* Keep chat navigation reachable as a compact strip above its transcript. */
+  body.friday-experience-enabled.chrome-chat { --fs-chat-index-height: min(24dvh, 188px); }
+  body.friday-experience-enabled.chrome-chat .chat-sidebar { display: flex; bottom: auto; width: 100%; height: var(--fs-chat-index-height); border-right: 0; border-bottom: 1px solid var(--fs-line); }
+  body.friday-experience-enabled.chrome-chat .chat-sidebar-head { padding: 8px 12px; flex-wrap: nowrap; }
+  body.friday-experience-enabled.chrome-chat .chat-sidebar-head > button:first-child { flex-basis: auto !important; }
+  body.friday-experience-enabled.chrome-chat :is(.chat-panel, .chat-panel.open) { top: calc(var(--fr-topbar-h, 36px) + var(--fs-chat-index-height)) !important; height: calc(100dvh - var(--fr-topbar-h, 36px) - var(--fs-chat-index-height)) !important; }
+  body.friday-experience-enabled .friday-conversation-entry { min-height: 46px; padding-block: 7px !important; }
+  body.friday-experience-enabled .fx-chat-transcript { padding: 16px !important; }
+  body.friday-experience-enabled .fx-chat-transcript > div > div:has(> .fx-chat-bubble) { max-width: 100% !important; }
+  body.friday-experience-enabled .fx-chat-footer { padding: 10px !important; }
+  body.friday-experience-enabled .fx-chat-bubble { font-size: 14px !important; }
+  body.friday-experience-enabled .fa-head { padding: 10px; }
+  body.friday-experience-enabled .fa-body { padding: 14px; }
+  body.friday-experience-enabled .fa-body.fa-flush { padding: 0; }
+  body.friday-experience-enabled [data-codebase-view="files"] > .fa-body { flex-direction: column; }
+  body.friday-experience-enabled [data-codebase-view="files"] > .fa-body > div:first-child { width: auto !important; max-height: 140px; border-right: 0 !important; border-bottom: 1px solid var(--fs-line); flex-shrink: 0; }
+  body.friday-experience-enabled .friday-workspace-studio { max-width: calc(100vw - 40px) !important; }
+  body.friday-experience-enabled .friday-workspace-history { padding: 16px !important; }
+  body.friday-experience-enabled .friday-workspace-history > div:first-child { top: -16px; margin: -16px -16px 14px !important; padding: 14px 16px; }
+  body.friday-experience-enabled .sc-form { flex-wrap: wrap; }
+  body.friday-experience-enabled .sc-form .sc-input { flex-basis: 100%; }
+  body.friday-experience-enabled.friday-live-surface footer { gap: 9px; padding-inline: 12px; }
+  body.friday-experience-enabled.friday-live-surface footer .btn { min-width: 58px; }
+}
+@media (max-height: 620px) {
+  body.friday-experience-enabled .fx-chat-composer .fx-chat-message { min-height: 42px; }
+  body.friday-experience-enabled.friday-live-surface .orb-wrap { width: min(180px, 38vh); height: min(180px, 38vh); }
+  body.friday-experience-enabled.friday-live-surface main { gap: 16px; }
+  body.friday-experience-enabled.friday-live-surface .hint { position: static; transform: none; text-align: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.friday-experience-enabled :is(.cmd-palette, .fx-chat-bubble, .fa-panel, .fa-strip, .sc-root, .ws-typing-dot, .friday-workspace-studio, .friday-workspace-history, .scan-line, .scan, .orb, .orb-ring, .status .dot) { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  body.friday-experience-enabled.friday-live-surface .orb { transform: none !important; }
+}
+@media (forced-colors: active) {
+  body.friday-experience-enabled :is(.fa-panel, .cmd-palette, [data-testid="approval-card"], .friday-workspace-studio, .sc-card, .login-box) { border: 1px solid CanvasText; }
+}
+
+/* The shared scene publishes viewport-edge insets for the remaining work area.
+ * Overlays occupy that rectangle, so neither their veil nor their hit area
+ * covers the avatar. Workspace-local overlays use their own containing block. */
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) {
+  --fs-work-left: var(--friday-content-left, 0px);
+  --fs-work-right: var(--friday-content-right, 0px);
+  --fs-work-top: var(--friday-content-top, 0px);
+  --fs-work-bottom: var(--friday-content-bottom, 0px);
+  --fs-work-width: max(0px, calc(100dvw - var(--fs-work-left) - var(--fs-work-right)));
+  --fs-work-height: max(0px, calc(100dvh - var(--fs-work-top) - var(--fs-work-bottom)));
+  --fs-work-inner-width: max(0px, calc(var(--fs-work-width) - 16px));
+  --fs-work-inner-height: max(0px, calc(var(--fs-work-height) - 16px));
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.cmd-palette-overlay, .keys-sheet-overlay, .friday-shared-overlay) {
+  inset: var(--fs-work-top) var(--fs-work-right) var(--fs-work-bottom) var(--fs-work-left) !important;
+  width: auto !important; height: auto !important; padding: 8px !important; box-sizing: border-box;
+  background: transparent !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  overflow: auto; overscroll-behavior: contain; align-items: center !important; justify-content: center !important;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.cmd-palette, .keys-sheet) {
+  position: relative; inset: auto; transform: none !important; margin: auto; flex-shrink: 1;
+  width: min(720px, 100%); max-width: 100%; max-height: var(--fs-work-inner-height);
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-shared-overlay > div {
+  box-sizing: border-box; min-width: 0; max-width: 100% !important;
+  max-height: var(--fs-work-inner-height) !important; overflow: auto; overscroll-behavior: contain;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.sc-root, [data-friday-surface="consent"]) {
+  inset: var(--fs-work-top) var(--fs-work-right) var(--fs-work-bottom) var(--fs-work-left) !important;
+  width: auto !important; height: auto !important; min-width: 0; min-height: 0; max-height: var(--fs-work-height);
+  padding: 0 !important; overflow: auto; border: 1px solid var(--fs-line); border-radius: 12px;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) [data-friday-surface="consent"] { padding: 16px !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) [data-friday-surface="consent"] > div { box-sizing: border-box; width: 100%; max-width: 100% !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.sc-head, .sc-rail) { flex-wrap: wrap; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .sc-body { box-sizing: border-box; flex-wrap: wrap; gap: 20px; padding: 20px; overflow: auto; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.sc-chat, .sc-side) { min-width: min(320px, 100%); }
+
+/* Fixed utility panels share a safe leading or trailing edge. Native open,
+ * disabled, focus and outside-click behavior is unchanged. */
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.fx-switcher-popover, .notif-dropdown, .ws-tab-drawer, .friday-shell-activity, .friday-quick-draft, .camera-control-panel, [data-testid="approval-popup"], .settings-panel.open) {
+  box-sizing: border-box; left: auto !important; right: calc(var(--fs-work-right) + 8px) !important;
+  top: calc(var(--fs-work-top) + 8px) !important; bottom: auto !important;
+  min-width: 0; max-width: var(--fs-work-inner-width) !important; max-height: var(--fs-work-inner-height) !important;
+  overflow: auto; overscroll-behavior: contain;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .fx-switcher-popover { left: calc(var(--fs-work-left) + 8px) !important; right: auto !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .settings-panel.open { bottom: calc(var(--fs-work-bottom) + 8px) !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.task-tray, .task-tray-pill, .ws-tab-toast, #friday-toast-host) {
+  box-sizing: border-box; left: auto !important; right: calc(var(--fs-work-right) + 8px) !important;
+  bottom: calc(var(--fs-work-bottom) + 8px) !important; max-width: var(--fs-work-inner-width) !important;
+  max-height: var(--fs-work-inner-height) !important; overflow: auto; overscroll-behavior: contain;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.kill-switch, [data-testid="approval-popup-pill"], #camera-status, #call-mode-chip, .friday-meeting-indicator) {
+  box-sizing: border-box; left: auto !important; right: calc(var(--fs-work-right) + 8px) !important;
+  top: calc(var(--fs-work-top) + 8px) !important; max-width: var(--fs-work-inner-width) !important;
+  transform: none !important; white-space: normal; flex-wrap: wrap;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) #friday-stand-down-bar {
+  left: calc(var(--fs-work-left) + 8px) !important; right: calc(var(--fs-work-right) + 8px) !important;
+  top: calc(var(--fs-work-top) + 8px) !important; flex-wrap: wrap;
+}
+/* Scene notices remain readable beside the scene, including when the stage
+ * changes sides or moves above the workspace. They do not veil the avatar. */
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(#state-indicator, #presence-status) {
+  box-sizing: border-box; left: calc(var(--fs-work-left) + 8px) !important; right: auto !important;
+  top: auto !important; bottom: calc(var(--fs-work-bottom) + 8px) !important;
+  max-width: var(--fs-work-inner-width) !important; max-height: var(--fs-work-inner-height) !important;
+  white-space: normal; overflow-wrap: anywhere; overflow: auto; transform: none !important;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) #presence-status { bottom: calc(var(--fs-work-bottom) + 42px) !important; max-height: max(0px, calc(var(--fs-work-inner-height) - 34px)) !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) #camera-indicator { right: calc(var(--fs-work-right) + 8px) !important; bottom: calc(var(--fs-work-bottom) + 8px) !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.friday-orb-notes, #friday-scene-lost) {
+  box-sizing: border-box; left: calc(var(--fs-work-left) + 8px) !important; right: calc(var(--fs-work-right) + 8px) !important;
+  width: auto !important; max-width: var(--fs-work-inner-width) !important; max-height: var(--fs-work-inner-height) !important;
+  transform: none !important; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-orb-notes { top: calc(var(--fs-work-top) + 8px) !important; bottom: auto !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-orb-notes > div { box-sizing: border-box; max-width: 100%; flex-wrap: wrap; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) #friday-scene-lost { top: auto !important; bottom: calc(var(--fs-work-bottom) + 8px) !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .chat-edge-pill {
+  box-sizing: border-box; left: auto !important; right: calc(var(--fs-work-right) + 8px) !important;
+  top: calc(var(--fs-work-top) + var(--fs-work-height) / 2) !important; bottom: auto !important;
+  margin-top: 0 !important; max-height: var(--fs-work-inner-height); transform: translateY(-50%);
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .chat-edge-pill.left { left: calc(var(--fs-work-left) + 8px) !important; right: auto !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .snap-preview { transition: none !important; }
+
+/* Draggable surfaces expose their requested point separately from CSS's fitted
+ * point. Drag origins use the rendered rectangle, so a fitted window never
+ * jumps back to its old viewport position when the owner moves it. */
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-workspace-studio { --fs-float-width: min(390px, var(--fs-work-inner-width)); --fs-float-height: min(620px, 76dvh, var(--fs-work-inner-height)); }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .thread-panel { --fs-float-width: min(400px, var(--fs-work-inner-width)); --fs-float-height: min(320px, var(--fs-work-inner-height)); }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-podcast-player:not(.is-popped) { --fs-float-width: min(400px, var(--fs-work-inner-width)); --fs-float-height: min(560px, 70dvh, var(--fs-work-inner-height)); }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.friday-workspace-studio, .thread-panel, .friday-podcast-player:not(.is-popped)) {
+  box-sizing: border-box; width: var(--fs-float-width) !important; max-width: var(--fs-work-inner-width) !important;
+  max-height: var(--fs-float-height) !important; min-width: 0; min-height: 0; right: auto !important; bottom: auto !important;
+  left: clamp(calc(var(--fs-work-left) + 8px), var(--friday-shared-x, calc(100dvw - var(--fs-work-right) - var(--fs-float-width) - 8px)), calc(100dvw - var(--fs-work-right) - var(--fs-float-width) - 8px)) !important;
+  top: clamp(calc(var(--fs-work-top) + 8px), var(--friday-shared-y, calc(100dvh - var(--fs-work-bottom) - var(--fs-float-height) - 8px)), calc(100dvh - var(--fs-work-bottom) - var(--fs-float-height) - 8px)) !important;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.friday-workspace-studio, .thread-panel) { height: var(--fs-float-height) !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-podcast-player:not(.is-popped) { overflow: auto; overscroll-behavior: contain; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.friday-studio-head, .friday-studio-composer, .thread-header) { flex-wrap: wrap; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-studio-head > span:last-of-type { min-width: 0; overflow-wrap: anywhere; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .camera-pip {
+  box-sizing: border-box;
+  max-width: var(--fs-work-inner-width); max-height: var(--fs-work-inner-height);
+  left: calc(clamp(calc(var(--fs-work-left) + 8px), calc(var(--friday-shared-x, 16px) - var(--friday-camera-group-left, 0px)), calc(100dvw - var(--fs-work-right) - var(--friday-camera-group-width, 160px) - 8px)) + var(--friday-camera-group-left, 0px) + var(--friday-camera-dx, 0px)) !important;
+  top: clamp(calc(var(--fs-work-top) + 8px), var(--friday-shared-y, 60px), calc(100dvh - var(--fs-work-bottom) - var(--friday-camera-height, 120px) - 8px)) !important;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .camera-pip[data-friday-camera-layout="stacked"] {
+  --fs-camera-height: min(90px, max(1px, calc((var(--fs-work-inner-height) - 10px) / 2)));
+  --fs-camera-width: min(120px, var(--fs-work-inner-width));
+  --fs-camera-stack-offset: 0px;
+  width: var(--fs-camera-width) !important; height: var(--fs-camera-height) !important;
+  left: clamp(calc(var(--fs-work-left) + 8px), var(--friday-shared-x, 16px), calc(100dvw - var(--fs-work-right) - var(--fs-camera-width) - 8px)) !important;
+  top: calc(clamp(calc(var(--fs-work-top) + 8px), var(--friday-shared-y, 60px), calc(100dvh - var(--fs-work-bottom) - var(--fs-camera-height) * 2 - 18px)) + var(--fs-camera-stack-offset)) !important;
+}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .camera-pip[data-friday-camera-layout="stacked"][data-friday-camera-view="webcam"] { --fs-camera-stack-offset: calc(var(--fs-camera-height) + 10px); }
+
+/* Geometry changes atomically with the avatar reservation. Only opacity may
+ * animate on a shared floating surface; a travel transform crosses its stage. */
+@keyframes friday-shared-arrive { from { opacity: 0; } to { opacity: 1; } }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .settings-panel { transition: none !important; }
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.cmd-palette-overlay, .cmd-palette, .keys-sheet-overlay, .keys-sheet, .friday-shared-overlay, .fx-switcher-popover, .notif-dropdown, .ws-tab-drawer, .friday-shell-activity, .friday-quick-draft, .camera-control-panel, [data-testid="approval-popup"], .settings-panel.open, .task-tray, .task-tray-pill, .ws-tab-toast, .friday-workspace-studio, .thread-panel, .friday-podcast-player:not(.is-popped), .camera-pip) {
+  animation: friday-shared-arrive 140ms ease-out both !important;
+  transition-property: opacity, border-color, background-color, box-shadow !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.cmd-palette-overlay, .cmd-palette, .keys-sheet-overlay, .keys-sheet, .friday-shared-overlay, .fx-switcher-popover, .notif-dropdown, .ws-tab-drawer, .friday-shell-activity, .friday-quick-draft, .camera-control-panel, [data-testid="approval-popup"], .settings-panel.open, .task-tray, .task-tray-pill, .ws-tab-toast, .friday-workspace-studio, .thread-panel, .friday-podcast-player:not(.is-popped), .camera-pip) { animation: none !important; transition: none !important; }
+}

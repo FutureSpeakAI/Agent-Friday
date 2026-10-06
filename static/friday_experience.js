@@ -82,7 +82,7 @@
       };
     }, []);
     const initial = useRef(readSession());
-    const [view, setView] = useState(() => VIEWS.some(v => v[0] === initial.current.view) ? initial.current.view : 'day');
+    const [view, setView] = useState(() => { const requested = new URLSearchParams(location.search).get('view'); return VIEWS.some(v => v[0] === requested) ? requested : VIEWS.some(v => v[0] === initial.current.view) ? initial.current.view : 'day'; });
     const [selectedProject, setSelectedProject] = useState(initial.current.project || '');
     const [favorites, setFavorites] = useState(Array.isArray(initial.current.favorites) ? initial.current.favorites : ['library', 'media', 'code', 'knowledge']);
     const [lastWorkspace, setLastWorkspace] = useState(initial.current.lastWorkspace || '');
@@ -102,6 +102,16 @@
     const [dayRevision, setDayRevision] = useState(0);
     const [files, setFiles] = useState({ loading: false, error: '', items: [] });
     const [draft, setDraft] = useState('');
+    const [homePrompt, setHomePrompt] = useState('');
+    const [preparing, setPreparing] = useState(false);
+    const homeDrafts = useRef({});
+    const homeDraftContext = useRef(selectedProject || 'session');
+    useEffect(() => { const key=selectedProject || 'session'; if(key!==homeDraftContext.current){homeDrafts.current[homeDraftContext.current]=homePrompt;homeDraftContext.current=key;setHomePrompt(homeDrafts.current[key]||'');} }, [selectedProject]);
+    useEffect(() => {
+      const navigate = e => { const target=e.detail && e.detail.view; if(VIEWS.some(v=>v[0]===target))go(target); };
+      window.addEventListener('friday:desktop-view',navigate);
+      return () => window.removeEventListener('friday:desktop-view',navigate);
+    }, []);
     const projectDrafts = useRef({});
     const navigationRevision = useRef(0);
     const discussionPending = useRef(false);
@@ -238,13 +248,13 @@
       } catch (e) { if (alive.current) setError(e.message); }
       finally { if (alive.current) setBusy(false); }
     }
-    async function discuss(text) {
+    async function discuss(text, options) {
       if (discussionPending.current) throw new Error('A discussion is already being prepared.');
       setError('');
       if (!p.onDraftChat) { setDraft(text); setNotice('Discussion prepared below. Copy it into the conversation you choose.'); return; }
       discussionPending.current = true;
       try {
-        await p.onDraftChat(text, project && view === 'projects' ? project.id : materialProject && materialProject.id || null);
+        await p.onDraftChat(text, project && view === 'projects' ? project.id : materialProject && materialProject.id || null, options);
         if (alive.current) setNotice('Discussion prepared in chat. Review it before sending.');
       } catch (e) {
         const failure = e instanceof Error ? e : new Error('The discussion could not be prepared in chat.');
@@ -314,20 +324,34 @@
       return h(React.Fragment, null, h('header', { className: 'fx-main-header' }, h('div', { className: 'fx-eyebrow' }, eyebrow), h('div', { className: 'fx-title-row' }, h('h1', null, heading), h('div', { className: 'fx-header-actions' }, actions, action('Shape this view', openShape, { className: 'fx-action-secondary', 'aria-expanded': !!(shapeDraft && shapeDraft.view === view) }))), subtitle && h('p', { className: 'fx-subtitle' }, subtitle)), shapeControls());
     }
     function dayView() {
-      const resume = recentChats[0];
-      const last = workspaces.find(w => w.id === lastWorkspace);
-      const dateLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-      return h(React.Fragment, null,
-        title(dateLabel, 'Your day, in view.', 'Pick up a thought. Make room for the next one.'),
-        h('div', { className: 'fx-day-summary' }, action(icon('chat'), p.onShowChat, { className: 'fx-day-ask-icon', 'aria-label': 'Open conversation' }), h('div', null, h('strong', null, 'What would you like to do?'), h('p', { className: 'fx-meta' }, 'Talk, make something, or explore your work.')), action('Ask', p.onShowChat, { className: 'fx-action-secondary' })),
-        section('Continue', resume ? h('div', { className: 'fx-card' }, chatRow(resume), project && action('Open ' + project.name, () => chooseProject(project.id), { className: 'fx-action-secondary' })) : empty('A fresh place to start', 'Your conversations and projects will appear here.', action('Start a conversation', () => newChat(null), { disabled: busy })), action('Projects', () => go('projects'), { className: 'fx-action-secondary' })),
-        approvals.length > 0 && h('button', { type: 'button', className: 'fx-attention-card', onClick: () => { go('activity'); setActivityTab('needs'); } }, h('span', { className: 'fx-chip', 'data-state': 'waiting_approval' }, approvals.length + ' need' + (approvals.length === 1 ? 's' : '') + ' you'), h('strong', null, approvals[0].title || 'Review a decision'), h('span', { className: 'fx-meta' }, 'See the details before you decide'), icon('arrow')),
-        section('Today', day.loading ? h('p', { className: 'fx-meta', role: 'status' }, 'Reading your calendar…') : day.error ? h('div', { className: 'fx-error' }, h('p', null, day.error), action('Try again', () => setDayRevision(n => n + 1))) : h(React.Fragment, null,
-          day.connected === false && h('p', { className: 'fx-meta' }, 'Google Calendar is not connected. Only events available on this machine are shown.'),
-          day.events.length ? h('div', { className: 'fx-agenda' }, day.events.slice(0, 4).map((e, i) => h('button', { type: 'button', key: e.id || i, className: 'fx-row-button', onClick: () => openWorkspace({ workspace: 'calendar', date: day.date }) }, h('span', { className: 'fx-row-copy' }, h('strong', null, e.summary || e.title || 'Calendar event'), h('span', { className: 'fx-meta' }, eventTime(e)))))) : h('p', { className: 'fx-meta' }, day.connected === false ? 'No local events to show.' : 'No events returned for today.')),
-          action('Calendar', () => openWorkspace('calendar'), { className: 'fx-action-secondary' })),
-        currentTasks.length > 0 && section('In motion', h('div', { className: 'fx-task-list' }, currentTasks.slice(0, 2).map(taskRow)), action('Activity', () => go('activity'), { className: 'fx-action-secondary' })),
-        last && action('Return to ' + last.label, () => openWorkspace(last.id), { className: 'fx-return-workspace' }));
+      const resume=recentChats[0];
+      async function prepare(e) {
+        e.preventDefault(); if(preparing || !homePrompt.trim())return;
+        const submitted=homePrompt,context=selectedProject||'session';setPreparing(true);setError('');
+        try { await discuss(submitted,{personal:!materialProject});if(homeDraftContext.current===context)setHomePrompt(value=>value===submitted?'':value);delete homeDrafts.current[context]; }
+        catch(_) {} finally { if(alive.current)setPreparing(false); }
+      }
+      return h(React.Fragment,null,
+        h('div',{className:'fx-home-top'},h('section',{className:'fx-home-greeting'},
+          h('div',{className:'fx-eyebrow'},'Your space. Your work. Your '+agentName+'.'),
+          h('h1',null,'What shall we make today?'),
+          h('p',{className:'fx-subtitle'},'A clear desktop, with everything ready when you need it.'),
+          project ? action('Resume '+project.name+' →',()=>chooseProject(project.id)) : action('Start a project →',()=>{go('projects');beginProjectForm(null);})),
+        h('aside',{className:'fx-home-day'},h('div',{className:'fx-section-heading'},h('span',{className:'fx-eyebrow'},'My day'),h('span',{className:'fx-meta'},new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}))),
+          day.loading ? h('p',{className:'fx-meta',role:'status'},'Reading your calendar…') : day.error ? h('div',{className:'fx-error'},h('p',null,day.error),action('Try again',()=>setDayRevision(n=>n+1))) : day.events.length ? day.events.slice(0,2).map((e,i)=>h('button',{className:'fx-row-button',type:'button',key:e.id||i,onClick:()=>openWorkspace({workspace:'calendar',date:day.date})},h('span',{className:'fx-row-copy'},h('strong',null,e.summary||e.title||'Calendar event'),h('span',{className:'fx-meta'},eventTime(e))))) : h('p',{className:'fx-meta'},day.connected===false?'No local calendar events. Connect a calendar to bring your day here.':'Your calendar has room today.'),
+          approvals.length ? action(approvals.length+' decision'+(approvals.length===1?'':'s')+' need'+(approvals.length===1?'s':'')+' you →',()=>{go('activity');setActivityTab('needs');},{className:'fx-attention-action'}) : action('Open calendar →',()=>openWorkspace('calendar'),{className:'fx-action-secondary'}))),
+        h('div',{className:'fx-home-scene-tools'},h('span',{className:'fx-eyebrow'},'A living desktop'),h('span',{className:'fx-meta'},'Your holographic companion, always here.'),action('Explore avatars & depth ↗',()=>window.FridayHolographicWorkspace?.open(),{className:'fx-action-secondary'})),
+        h('div',{className:'fx-home-bottom'},h('form',{className:'fx-home-composer',onSubmit:prepare},
+          h('textarea',{value:homePrompt,onChange:e=>setHomePrompt(e.target.value),placeholder:'Ask, make, or pick up where you left off…','aria-label':'Ask '+agentName,rows:3,disabled:preparing}),
+          h('div',{className:'fx-home-composer-footer'},h('div',{className:'fx-home-context'},
+            h('select',{'aria-label':'Conversation project',value:materialProject?.id||'',disabled:preparing,onChange:e=>setSelectedProject(e.target.value)},h('option',{value:''},'Personal context'),projects.map(x=>h('option',{value:x.id,key:x.id},x.name))),
+            action('+ Materials',()=>go('explore'),{className:'fx-action-secondary'})),
+            h('button',{className:'fx-action',type:'submit',disabled:preparing||!homePrompt.trim()},preparing?'Preparing…':'Continue →')),
+          h('small',{className:'fx-meta'},'Opens your draft in the conversation, ready to review.')),
+        h('section',{className:'fx-home-resume'},h('div',{className:'fx-section-heading'},h('span',{className:'fx-eyebrow'},'Continue working'),action('All projects',()=>go('projects'),{className:'fx-action-secondary'})),
+          resume?chatRow(resume):h('p',{className:'fx-meta'},'Your conversations will appear here.'),
+          project&&action(project.name+' →',()=>chooseProject(project.id),{className:'fx-row-button'}),
+          currentTasks.length>0&&h('div',{className:'fx-home-current'},taskRow(currentTasks[0])))));
     }
     function formView() {
       return h('form', { className: 'fx-form', onSubmit: saveProject }, h('h2', null, projectForm.id ? 'Edit project' : 'A place for your next idea'),
@@ -393,8 +417,7 @@
     }
     const count = approvals.length;
     return h('div', { className: 'fx-shell', 'data-view': view, 'data-desktop-visible': visible ? 'true' : 'false' },
-      h('nav', { className: 'fx-rail', 'aria-label': 'Desktop' }, h('div', { className: 'fx-rail-primary' }, VIEWS.map(v => h('button', { type: 'button', className: 'fx-nav-button', key: v[0], 'aria-current': view === v[0] && visible ? 'page' : undefined, onClick: () => go(v[0]), title: v[1] }, icon(v[0]), h('span', null, v[1]), v[0] === 'activity' && count > 0 && h('span', { className: 'fx-nav-badge', 'aria-label': count + ' decisions waiting' }, count)))),
-        h('div', { className: 'fx-rail-bottom' }, [['search', 'Search', p.onOpenSearch], ['chat', 'Chat', p.onShowChat], ['settings', 'Settings', p.onOpenSettings]].map(x => h('button', { className: 'fx-nav-button', type: 'button', key: x[0], onClick: x[2], title: x[1] }, icon(x[0]), h('span', null, x[1]))))),
+      visible && view!=='day' && h('nav',{className:'fx-desktop-views','aria-label':'Desktop views'},VIEWS.map(v=>h('button',{type:'button',key:v[0],'aria-current':view===v[0]?'page':undefined,onClick:()=>go(v[0])},v[1],v[0]==='activity'&&count>0?h('span',{className:'fx-count'},count):null))),
       !visible && window.FridayMaterials && window.FridayMaterials.SelectionBar && ReactDOM.createPortal(h(window.FridayMaterials.SelectionBar, {
         key: materialProject ? materialProject.id : 'session',
         projectId: materialProject ? materialProject.id : 'session',

@@ -366,7 +366,9 @@
     const target = event && event.target;
     if (target && target.closest && target.closest('.fx-switcher-popover, .fm-selection')) return false;
     const node = ref.current;
-    return !!(node && node.isConnected && !node.closest('[hidden], [inert]') && node.getClientRects().length);
+    if (document.hidden || !node || !node.isConnected || node.closest('[hidden], [inert], [data-fr-overlay-occluded="true"]') || !node.getClientRects().length) return false;
+    const visibility = getComputedStyle(node).visibility;
+    return visibility !== 'hidden' && visibility !== 'collapse';
   }
   function Card({ c, selected, onOpen, onSelect, noThumb, onQuick, multi, onMulti }) {
     const where = c.published_at ? h('div', { className: 'md-meta' }, h('span', null, 'at'), h('span', null, c.published_at))
@@ -374,7 +376,7 @@
     const d = c.details || {};
     const made = d.model ? d.model : (c.maker || '').replace(' · this PC', '');
     return h('button', {
-      className: 'md-card' + (multi ? ' multi' : ''), role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id,
+      className: 'md-card' + (multi ? ' multi' : ''), role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id, 'data-kind': c.kind,
       onClick: e => { selectMaterial(c); if ((e.ctrlKey || e.metaKey || e.shiftKey) && onMulti) { e.preventDefault(); onMulti(c, e.shiftKey); return; } onSelect && onSelect(c); }, onDoubleClick: () => onOpen && onOpen(c),
       onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); selectMaterial(c); onOpen && onOpen(c); } if (e.key === 'x' && onMulti) { e.preventDefault(); onMulti(c, false); } }
     },
@@ -509,9 +511,60 @@
     const [page, setPage] = useState(0);
     const mediaRef = useRef(null);
     const keyboardRoot = useRef(null);
+    const playbackSuspended = useRef(false);
     // Quick look can be opened by a thumbnail or an external source reference.
     useEffect(() => { if (c && shortcutsVisible(keyboardRoot)) selectMaterial(c); }, [c && c.id]);
-    useEffect(() => { setFull(null); setPage(0); if (c && (c.kind === 'draft' || c.kind === 'article' || c.kind === 'doc' || AV_KINDS[c.kind])) json('/api/media/' + encodeURIComponent(c.id) + (q ? '?q=' + encodeURIComponent(q) : '')).then(d => { if (d.status === 'ok') { setFull(d); const at = c.at != null ? c.at : d.hit_t; if (at != null && mediaRef.current) { mediaRef.current.currentTime = at; mediaRef.current.play && mediaRef.current.play().catch(() => {}); } } }).catch(() => {}); }, [c && c.id, q]);
+    useEffect(() => {
+      let cancelled = false;
+      setFull(null); setPage(0);
+      if (c && (c.kind === 'draft' || c.kind === 'article' || c.kind === 'doc' || AV_KINDS[c.kind])) {
+        json('/api/media/' + encodeURIComponent(c.id) + (q ? '?q=' + encodeURIComponent(q) : '')).then(d => {
+          if (cancelled || d.status !== 'ok') return;
+          setFull(d);
+          const at = c.at != null ? c.at : d.hit_t;
+          const media = mediaRef.current;
+          if (at != null && media) {
+            media.currentTime = at;
+            if (!playbackSuspended.current && shortcutsVisible(keyboardRoot)) media.play().catch(() => {});
+          }
+        }).catch(() => {});
+      }
+      return () => { cancelled = true; };
+    }, [c && c.id, q]);
+    useEffect(() => {
+      const media = mediaRef.current;
+      const root = keyboardRoot.current;
+      if (!media || !root) return;
+      playbackSuspended.current = false;
+      // A retained preview keeps its seek position, but cannot play behind another workspace.
+      const pauseWhenHidden = () => {
+        if (shortcutsVisible(keyboardRoot)) return;
+        playbackSuspended.current = true;
+        media.pause();
+      };
+      const onPlay = () => {
+        if (shortcutsVisible(keyboardRoot)) playbackSuspended.current = false;
+        else pauseWhenHidden();
+      };
+      const observer = new MutationObserver(pauseWhenHidden);
+      for (let node = root; node; node = node.parentElement) {
+        observer.observe(node, { attributes: true, attributeFilter: ['hidden', 'inert', 'class', 'style', 'data-fr-overlay-occluded'] });
+      }
+      media.addEventListener('play', onPlay);
+      document.addEventListener('visibilitychange', pauseWhenHidden);
+      window.addEventListener('resize', pauseWhenHidden);
+      window.addEventListener('friday:spatial-layout', pauseWhenHidden);
+      pauseWhenHidden();
+      if (!playbackSuspended.current) media.play().catch(() => {});
+      return () => {
+        observer.disconnect();
+        media.removeEventListener('play', onPlay);
+        document.removeEventListener('visibilitychange', pauseWhenHidden);
+        window.removeEventListener('resize', pauseWhenHidden);
+        window.removeEventListener('friday:spatial-layout', pauseWhenHidden);
+        media.pause();
+      };
+    }, [c && c.id, c && c.file_url]);
     useEffect(() => {
       const onKey = e => {
         if (!c || !shortcutsVisible(keyboardRoot, e)) return;
@@ -529,8 +582,8 @@
     const d = c.details || {};
     let stage;
     const tx = full && full.transcript;
-    if (c.kind === 'video' && c.file_url) stage = h('div', { className: 'audio', style: { width: 'min(1100px,100%)', height: '100%' } }, h('video', { key: c.id, ref: mediaRef, src: c.file_url, controls: true, autoPlay: true, poster: c.thumb || undefined, style: { maxHeight: tx ? '55vh' : '100%' } }), h(Transcript, { tx, mediaRef }));
-    else if (AV_KINDS[c.kind] && c.file_url) stage = h('div', { className: 'audio' }, c.thumb ? h('img', { src: c.thumb, alt: '', style: { maxHeight: 160 } }) : null, h(Wave, { peaks: full && full.peaks, height: 72 }), h('audio', { key: c.id, ref: mediaRef, src: c.file_url, controls: true, autoPlay: true }), h(Transcript, { tx, mediaRef }));
+    if (c.kind === 'video' && c.file_url) stage = h('div', { className: 'audio', style: { width: 'min(1100px,100%)', height: '100%' } }, h('video', { key: c.id, ref: mediaRef, src: c.file_url, controls: true, poster: c.thumb || undefined, style: { maxHeight: tx ? '55vh' : '100%' } }), h(Transcript, { tx, mediaRef }));
+    else if (AV_KINDS[c.kind] && c.file_url) stage = h('div', { className: 'audio' }, c.thumb ? h('img', { src: c.thumb, alt: '', style: { maxHeight: 160 } }) : null, h(Wave, { peaks: full && full.peaks, height: 72 }), h('audio', { key: c.id, ref: mediaRef, src: c.file_url, controls: true }), h(Transcript, { tx, mediaRef }));
     else if (c.kind === 'page' && c.file_url) stage = h('iframe', { key: c.id, src: c.file_url, sandbox: '', title: c.title });
     else if (c.renders && c.renders.length) stage = h('img', { key: c.id + page, src: c.renders[Math.min(page, c.renders.length - 1)], alt: '' });
     else if ((c.kind === 'image' || c.kind === 'imageset' || c.kind === 'chart') && c.file_url) stage = h('img', { key: c.id, src: c.file_url, alt: c.title });
@@ -622,7 +675,8 @@
     }, [cards, sel, selCard, onOpen, onAction, setSel, ql]);
     const counts = state.counts || {};
     const railBtn = (key, label, n, patch) => h('button', { key, 'aria-current': current === key ? 'true' : undefined, onClick: () => pick(patch) }, label, n != null ? h('span', { className: 'n' }, n) : null);
-    return h('div', { ref: keyboardRoot, className: 'md-lib' },
+    const filterMenu = h('details', { className: 'md-filter-menu' },
+      h('summary', { className: 'btn' }, 'Browse & filter'),
       h('aside', { className: 'md-rail', 'aria-label': 'Library' },
         h('div', { className: 'md-label' }, 'Default views'),
         h('div', { className: 'md-group' }, DEFAULT_VIEWS.map(v => railBtn('view:' + v[0], v[1], counts[v[0]], { view: v[0] }))),
@@ -649,9 +703,11 @@
         h('div', { className: 'md-group' },
           h('button', { 'aria-current': panel === 'tidy' ? 'true' : undefined, onClick: () => setPanel(panel === 'tidy' ? null : 'tidy'), title: 'Near-duplicate renders and stale drafts, offered as one card' }, 'Tidy up\u2026'),
           h('button', { 'aria-current': panel === 'trash' ? 'true' : undefined, onClick: () => setPanel(panel === 'trash' ? null : 'trash'), title: 'What was removed; everything here can be restored' }, 'Trash')),
-        h('div', { className: 'md-rail-note' }, 'Not here: the News editions and their shows (in News); your wiki (in Knowledge). Search finds them and links across.')),
+        h('div', { className: 'md-rail-note' }, 'Not here: the News editions and their shows (in News); your wiki (in Knowledge). Search finds them and links across.')));
+    return h('div', { ref: keyboardRoot, className: 'md-lib md-lighttable' },
       h('section', { className: 'md-main', 'aria-label': 'Cards' },
         h('div', { className: 'md-toolbar' },
+          filterMenu,
           h('input', { ref: searchRef, type: 'search', placeholder: 'Search titles, text, sources, transcripts…  /', 'aria-label': 'Search', value: filters.q || '', onChange: e => setFilters(Object.assign({}, filters, { q: e.target.value })) }),
           h('span', { className: 'md-spacer' }),
           h('select', { 'aria-label': 'Sort', value: filters.sort || 'next', onChange: e => setFilters(Object.assign({}, filters, { sort: e.target.value })) },
@@ -777,7 +833,7 @@
     else if (view === 'board') body = h(window.MediaBoard || Placeholder, { onOpen: openCard, onAction });
     else if (view === 'calendar') body = h(window.MediaCalendar || Placeholder, { onOpen: openCard, onAction });
     else body = h(Library, { filters, setFilters, sel, setSel, onOpen: openCard, onAction });
-    return h('div', { className: 'md-root ws-fill' }, head, body);
+    return h('div', { className: 'md-root ws-fill', 'data-view': card ? 'card' : view }, head, body);
   }
   function Placeholder() { return h('div', { className: 'md-empty' }, 'This view is on its way.'); }
 

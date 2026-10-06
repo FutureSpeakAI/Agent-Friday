@@ -357,6 +357,11 @@
   }
 
   // ── menus and dialogs ───────────────────────────────────────────────────
+  function overlayVisible(node) {
+    if (document.hidden || !node || !node.isConnected || node.closest('[hidden], [inert], [data-fr-overlay-occluded="true"]') || !node.getClientRects().length) return false;
+    const visibility = getComputedStyle(node).visibility;
+    return visibility !== 'hidden' && visibility !== 'collapse';
+  }
   // One small menu for the right-click menu, labels, lanes and snooze.
   // items: {label, ico, hint, onClick, off, checked, title} | {head} | {sep} | {input}
   function Menu({ menu, onClose }) {
@@ -366,11 +371,11 @@
       const el = ref.current; if (!el) return;
       const r = el.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
       setPos({ left: Math.max(6, Math.min(menu.x, W - r.width - 8)), top: Math.max(6, Math.min(menu.y, H - r.height - 8)) });
-      const off = e => { if (!el.contains(e.target)) onClose(); };
-      const key = e => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-      setTimeout(() => document.addEventListener('mousedown', off), 0);
+      const off = e => { if (overlayVisible(el) && !el.contains(e.target)) onClose(); };
+      const key = e => { if (e.key === 'Escape' && overlayVisible(el)) { e.stopPropagation(); onClose(); } };
+      const timer = setTimeout(() => document.addEventListener('mousedown', off), 0);
       document.addEventListener('keydown', key, true);
-      return () => { document.removeEventListener('mousedown', off); document.removeEventListener('keydown', key, true); };
+      return () => { clearTimeout(timer); document.removeEventListener('mousedown', off); document.removeEventListener('keydown', key, true); };
     }, [menu]);
     return h('div', { ref, className: 'fm-menu', role: 'menu', 'aria-label': menu.title || 'Menu', style: pos, onContextMenu: e => e.preventDefault() },
       menu.items.map((it, k) => it.sep ? h('div', { key: k, className: 'sp' })
@@ -382,12 +387,13 @@
   }
 
   function Dialog({ title, children, onClose }) {
+    const ref = useRef(null);
     useEffect(() => {
-      const key = e => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+      const key = e => { if (e.key === 'Escape' && overlayVisible(ref.current)) { e.stopPropagation(); onClose(); } };
       document.addEventListener('keydown', key, true);
       return () => document.removeEventListener('keydown', key, true);
-    }, []);
-    return h('div', { className: 'fm-dialog', onMouseDown: e => { if (e.target === e.currentTarget) onClose(); } },
+    }, [onClose]);
+    return h('div', { ref, className: 'fm-dialog', onMouseDown: e => { if (e.target === e.currentTarget) onClose(); } },
       h('div', { role: 'dialog', 'aria-label': title }, h('h4', null, title), children));
   }
 

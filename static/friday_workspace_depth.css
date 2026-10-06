@@ -8,7 +8,7 @@
     --friday-depth-presence: 0;
 }
 
-:where([data-depth]):not(:is(button, input, select, textarea, a, [role="button"], [contenteditable="true"])) {
+:where([data-depth]:not(:is(button, input, select, textarea, a, [role="button"], [contenteditable="true"]))) {
     position: relative;
     isolation: isolate;
     --friday-plane-depth: 10px;
@@ -24,9 +24,9 @@
     z-index: -1;
     pointer-events: none;
     border-radius: inherit;
-    border: 1px solid rgba(0, 212, 255, 0.16);
-    background: radial-gradient(ellipse at var(--friday-light-x) var(--friday-light-y), rgba(0, 212, 255, 0.075), transparent 65%);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), inset 0 1px rgba(255, 255, 255, 0.035);
+    border: 1px solid color-mix(in srgb, var(--fr-cyan, #00d4ff) 16%, transparent);
+    background: radial-gradient(ellipse at var(--friday-light-x) var(--friday-light-y), color-mix(in srgb, var(--fr-cyan, #00d4ff) 7.5%, transparent), transparent 65%);
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--fr-bg, #000) 14%, transparent), inset 0 1px color-mix(in srgb, var(--fr-text, #fff) 3.5%, transparent);
     opacity: var(--friday-depth-presence);
     transform: translate3d(
         calc(var(--friday-depth-x) * clamp(0, var(--friday-plane-gain), 1)),
