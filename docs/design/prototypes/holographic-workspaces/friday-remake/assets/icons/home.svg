@@ -1,0 +1,22 @@
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <linearGradient id="hg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="40%" stop-color="#7b61ff"/>
+      <stop offset="100%" stop-color="#ff00ff"/>
+    </linearGradient>
+    <linearGradient id="hg2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00ffcc"/>
+      <stop offset="50%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#7b61ff"/>
+    </linearGradient>
+    <filter id="gl">
+      <feGaussianBlur stdDeviation="0.7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <path stroke="url(#hg)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" filter="url(#gl)" d="M16 4L3 15h4v12h7v-8h4v8h7V15h4L16 4z"/>
+  <line x1="13" y1="24" x2="13" y2="19" stroke="url(#hg2)" stroke-width="1" opacity="0.5"/>
+  <line x1="19" y1="24" x2="19" y2="19" stroke="url(#hg2)" stroke-width="1" opacity="0.5"/>
+  <rect x="13" y="17" width="6" height="3" stroke="url(#hg2)" stroke-width="0.8" fill="none" opacity="0.4"/>
+</svg>
