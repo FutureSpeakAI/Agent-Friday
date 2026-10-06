@@ -380,6 +380,26 @@ _VOICE_LIVE_TOOLS = [
      "Enter build mode in the current chat (its panel becomes the Build panel for one of the project's codebases) "
      "or leave it ('build mode', 'build mode with the rent tracker', 'leave build mode').",
      {"on": ("boolean", "true to enter, false to leave."), "codebase": ("string", "Which codebase, if named.")}, []),
+    ("list_crew",
+     "List this chat's invited Crew agents. Use their stable IDs with ask_crew. "
+     "If the room is disabled, ask the user to open Crew and invite an agent.", {}, []),
+    ("ask_crew",
+     "Ask one invited Crew agent to work. It uses its saved model, permissions and voice. "
+     "Returns a task ID when accepted. It runs in the background and reports "
+     "in this chat; do not impersonate it or claim it has answered before its result arrives.",
+     {"agent": ("string", "The invited agent's stable ID or unambiguous name."),
+      "request": ("string", "The user's complete request to that agent.")}, ["agent", "request"]),
+    ("propose_crew_agent",
+     "Open an unsaved Crew profile draft for the user to review. "
+     "Nothing is assigned until the user reviews and saves the draft there. Never claim it was created.",
+     {"name": ("string", "Agent name."),
+      "role": ("string", "Responsibility."),
+      "persona": ("string", "Working style."),
+      "provider": ("string", "Reasoning provider ID."),
+      "model": ("string", "Reasoning model ID."),
+      "voice_provider": ("string", "Speech provider ID."),
+      "voice_model": ("string", "Speech model ID."),
+      "voice_id": ("string", "Voice ID.")}, ["name", "role"]),
     ("delegate_to_friday",
      "Hand ANY request to the full Friday agent, with every tool it has in chat "
      "(email drafting, files, the wiki, browsing, research, workflows, anything the "
@@ -1535,6 +1555,28 @@ def _voice_tool_run(name, args, send_client, session=None):
         return _execute_tool(tool, a, handler=fn, session_ctx=_voice_ctx(session))
 
     try:
+        if name in ("list_crew", "ask_crew"):
+            from agent_friday.services import crew_runtime
+            cid = session.get("conversation_id") if isinstance(session, dict) else None
+
+            def _crew_call(a):
+                if name == "list_crew":
+                    return crew_runtime.roster_text(cid)
+                result = crew_runtime.ask(cid, a.get("agent"), a.get("request"))
+                return json.dumps({"status": "accepted", **result})
+
+            return _governed(name, _crew_call, args)
+        if name == "propose_crew_agent":
+            def _crew_draft(a):
+                draft = {k: str(a[k])[:4000] for k in ("name", "role", "persona", "provider", "model")
+                         if a.get(k)}
+                draft["voice"] = {k: str(a["voice_" + k])[:200]
+                                  for k in ("provider", "model", "id") if a.get("voice_" + k)}
+                if "id" in draft["voice"]:
+                    draft["voice"]["voice_id"] = draft["voice"].pop("id")
+                send_client({"type": "crew_profile_draft", "draft": draft})
+                return "Draft sent to the Crew editor. The user must review and save it before it exists."
+            return _governed(name, _crew_draft, args)
         if name == "ask_friday":
             try:
                 send_client({"type": "status", "text": "asking local model"})
@@ -2778,5 +2820,3 @@ def _spawn_voice_distill_unchecked(turn_log):
         prompt=prompt,
         description='Looking for anything wiki-worthy in the voice session…',
     )
-
-

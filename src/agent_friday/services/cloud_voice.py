@@ -36,6 +36,7 @@ NO KEYS IN THIS FILE. Keys resolve through the existing mechanism
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -291,6 +292,7 @@ class CloudVoiceResult:
     priced: bool
     durable: bool
     notes: list = field(default_factory=list)
+    voice_id: str = ""
 
 
 # -- Keys --------------------------------------------------------------------
@@ -667,7 +669,8 @@ def gate_synthesis_input(text: str, provider: str) -> str:
 
 def synthesize(text: str, *, provider: str | None = None,
                settings: dict | None = None,
-               session_ctx=None) -> CloudVoiceResult:
+               session_ctx=None, model: str | None = None,
+               voice_id: str | None = None) -> CloudVoiceResult:
     """Synthesize `text` with the user's selected cloud provider.
 
     Raises :class:`CloudVoiceUnavailable` rather than falling back. The caller
@@ -688,6 +691,17 @@ def synthesize(text: str, *, provider: str | None = None,
         raise CloudVoiceUnavailable(
             "%r is not a known cloud voice provider" % name,
             code="cloud_voice_unknown_provider", requested=str(name))
+    # A Crew profile binds an exact voice/model. Invalid explicit choices
+    # never fall through to the user's unrelated default voice.
+    if model is not None and model not in PROVIDERS[name]["models"]:
+        raise CloudVoiceUnavailable(
+            "the selected voice model is not supported by this provider",
+            code="cloud_voice_unknown_model", requested=name)
+    if voice_id is not None and (not isinstance(voice_id, str)
+                                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", voice_id)):
+        raise CloudVoiceUnavailable(
+            "the selected voice identifier is invalid",
+            code="cloud_voice_invalid_voice", requested=name)
     if not ga_established(name):
         raise CloudVoiceUnavailable(
             "%s cannot be used: %s" % (
@@ -730,8 +744,8 @@ def synthesize(text: str, *, provider: str | None = None,
     # THE GATE. Before any byte leaves. Raises on withhold.
     text = gate_synthesis_input(text, name)
 
-    model = selected_model(name, s)
-    voice = selected_voice(name, s)
+    model = model if model is not None else selected_model(name, s)
+    voice = voice_id if voice_id is not None else selected_voice(name, s)
     started = time.time()
     if name == "elevenlabs":
         audio, mime = _synth_elevenlabs(text, key, model, voice)
@@ -747,7 +761,7 @@ def synthesize(text: str, *, provider: str | None = None,
             "Inworld audio is for playback only - Friday will not archive it. "
             "See Q3 in the cloud voice spec.")
     return CloudVoiceResult(
-        audio=audio, mime=mime, provider=name, model=model,
+        audio=audio, mime=mime, provider=name, model=model, voice_id=voice,
         chars=len(text), duration_ms=elapsed_ms, cost_usd=cost,
         priced=(metered_id == model), durable=audio_is_durable(name),
         notes=notes)

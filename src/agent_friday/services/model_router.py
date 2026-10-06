@@ -1546,6 +1546,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
     # The pinned model of a scheduled cloud run (see _call_claude). The legacy
     # single slot pointed at OpenRouter is OpenRouter for this purpose.
     from agent_friday.services.local_only_guard import apply_pin, pinned_model
+    _crew_binding = (session_ctx or {}).get("crew_binding")
+    if _crew_binding:
+        if (_crew_binding.get("model") != model or _crew_binding.get("provider") != provider):
+            raise RuntimeError("The Crew agent's selected provider and model cannot be substituted.")
+        fallback_models = None
     if pinned_model():
         _pin_provider = provider
         if not _pin_provider:
@@ -1554,6 +1559,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             _pin_provider = 'openrouter' if 'openrouter.ai' in _legacy_url else 'openai'
         model = apply_pin(_pin_provider, model)
         fallback_models = None      # no server-side hop to another model
+    if _crew_binding and model != _crew_binding.get("model"):
+        raise RuntimeError("This run's model pin conflicts with the Crew agent's selected model.")
     import requests
     # Lazy for the same reason as in _call_ollama: defined in the upper layer.
     from agent_friday.services.agent import _oai_agentic_loop
@@ -1574,6 +1581,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             except Exception:
                 prov = None
 
+    if _crew_binding and prov is None:
+        raise RuntimeError("The Crew agent's selected provider is no longer registered.")
     features = {}
     local_bypass = False
     timeout_s = 180
@@ -2167,6 +2176,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # Attribute cost to the model the provider ACTUALLY served (an
             # OpenRouter fallback may answer with a different model than asked).
             served = resp.get('model')
+            if _crew_binding and served and served != model:
+                raise RuntimeError("The selected provider returned a different model; Crew did not accept the substituted response.")
             if served:
                 _last_served['id'] = served
             if served and served != model and isinstance(resp, dict):

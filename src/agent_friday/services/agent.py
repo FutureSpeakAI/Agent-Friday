@@ -149,6 +149,52 @@ def _pilot_outcome(session_ctx, outcome):
 
 
 
+def _generate_crew_agent(messages, *, system, max_tokens, temperature,
+                         session_ctx, pii_lookup, orb_label, orb_category,
+                         orb_icon, tools, on_route):
+    """A Crew turn uses its explicit cloud binding or fails without substitution."""
+    from agent_friday.services import crew_access
+    from agent_friday.services.provider_registry import get_provider_registry
+    from agent_friday.services.local_only_guard import refuse_if_active, apply_pin
+    from agent_friday.routing.provider_descriptors import classification_of, adapter_of
+    profile = crew_access.validate_dispatch(session_ctx.get("crew_agent_id"),
+        session_ctx.get("project_id"), session_ctx.get("crew_revision"))
+    binding = {"provider": profile["provider"], "model": profile["model"]}
+    if session_ctx.get("crew_binding") != binding:
+        raise RuntimeError("The Crew reasoning binding changed; start a new turn.")
+    settings = _load_settings()
+    if str((settings.get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+        raise RuntimeError("Local-only mode is on. Cloud Crew is unavailable; no offline substitution was made.")
+    provider, model = binding["provider"], binding["model"]
+    refuse_if_active(provider, model)
+    if apply_pin(provider, model) != model:
+        raise RuntimeError("This run's model pin conflicts with the Crew agent's selected model.")
+    descriptor = get_provider_registry().get_provider(provider)
+    if not descriptor or not descriptor.get("enabled", True) or classification_of(descriptor) != "cloud":
+        raise RuntimeError("The selected Crew cloud provider is unavailable.")
+    adapter = adapter_of(descriptor)
+    if adapter not in ("anthropic", "openai-compatible"):
+        raise RuntimeError("The selected Crew reasoning provider is unsupported.")
+    requested = set(profile["allowed_tools"])
+    # An explicit empty list remains empty; the profile is the upper bound.
+    schemas = [t for t in (CLAUDE_TOOLS if tools is None else tools)
+               if t.get("name") in requested]
+    if on_route:
+        on_route({"provider": provider, "provider_name": provider, "model": model,
+                  "reason": "Crew agent's explicit binding"})
+    if adapter == "anthropic":
+        if provider != "anthropic":
+            raise RuntimeError("Crew's native Anthropic adapter requires the Anthropic provider binding.")
+        return _call_claude_agent(messages, system=system, model=model,
+            max_tokens=max_tokens, temperature=temperature, pii_lookup=pii_lookup,
+            session_ctx=session_ctx, orb_label=orb_label, orb_category=orb_category,
+            orb_icon=orb_icon, workspace="crew", tools=schemas)
+    return _call_openai(messages, system=system, model=model, max_tokens=max_tokens,
+        temperature=temperature, pii_lookup=pii_lookup, session_ctx=session_ctx,
+        orb_label=orb_label, orb_icon=orb_icon, tools=schemas, provider=provider,
+        fallback_models=None)
+
+
 def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
@@ -181,15 +227,9 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
 
     Returns (text, tool_trace) — uniform across all three primitives.
 
-    tools: optional override for the OpenAI-compatible leg only (_via_openai)
-        — a subset of CLAUDE_TOOLS for a caller that knows its own job is
-        narrow (a liveness-check heartbeat needs calendar/inbox reads, not
-        image generation, code execution, or computer control). None (the
-        default) keeps today's behavior: the full registry. The Claude-native
-        and Ollama legs (_via_claude / _via_ollama) are NOT narrowed here —
-        they're fallback-only for a scheduled task, so a rare full-registry
-        fallback call costs far less than paying the full registry's ~13k
-        tokens on EVERY call of the primary leg.
+    tools: optional override for every provider leg. None uses the workspace
+        registry; an empty list grants no tools. A provider fallback never
+        widens a caller's explicit tool subset.
     system_builder: optional `callable(provider_name) -> str | None`. Callers
     typically predict a SINGLE provider up front (`_predict_route_provider`)
     to decide how much vault TIER content the system prompt may carry, then
@@ -223,6 +263,12 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             _DS.set(on_text_delta)
             return _generate_agent(messages, **_kw)
         return _cv.copy_context().run(_with_sink)
+
+    if (session_ctx or {}).get("crew_agent_id"):
+        return _generate_crew_agent(messages, system=system, max_tokens=max_tokens,
+            temperature=temperature, session_ctx=session_ctx, pii_lookup=pii_lookup,
+            orb_label=orb_label, orb_category=orb_category, orb_icon=orb_icon,
+            tools=tools, on_route=on_route)
 
     # Demo mode: no provider configured (no keys + no local Ollama) → return a
     # labelled placeholder instead of exhausting every primitive and raising
@@ -356,6 +402,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             max_tokens=max_tokens, temperature=temperature,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             orb_label=orb_label, orb_category=orb_category, orb_icon=orb_icon,
+            tools=tools,
         )
 
     def _via_openai(use_model):
@@ -365,7 +412,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         return _call_openai(
             _cloud_messages(), system=_system_for('openai'), model=use_model,
             max_tokens=max_tokens, temperature=temperature,
-            orb_label=orb_label, tools=(tools or tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))),
+            orb_label=orb_label, tools=(tools if tools is not None else tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             provider=routed_provider_name if use_model else None,
         )
@@ -392,8 +439,8 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # most expensive schemas, so on the catalogue path there is almost
         # nothing left for it to drop, which is the point.
         from agent_friday.services import tool_catalogue as _TCat
-        if _TCat.enabled() and CLAUDE_TOOLS:
-            _turn_tools = tools or tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
+        _turn_tools = tools if tools is not None else tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
+        if _TCat.enabled() and _turn_tools:
             _open = _TCat.opening_set(
                 _turn_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
             try:
@@ -422,14 +469,14 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             # Hand over the prompt and transcript so the seat can COUNT the
             # request (prompt and tools) instead of taking chars/4 on faith.
             _fitted, _fit_note = fit_tools_to_seat(
-                use_model, CLAUDE_TOOLS, prompt_cost=_prompt_cost,
+                use_model, _turn_tools, prompt_cost=_prompt_cost,
                 system=_sys_out, messages=messages)
             # Once only — see the twin of this line in
             # `model_router._call_openai` for what repeated appends cost.
             if _fit_note and "\n[SEAT] " not in (_sys_out or ""):
                 _sys_out = (_sys_out or "") + "\n[SEAT] " + _fit_note
         except Exception:
-            _fitted = CLAUDE_TOOLS
+            _fitted = _turn_tools
         return _call_ollama(
             messages, system=_sys_out, model=use_model,
             max_tokens=max_tokens, temperature=temperature,
@@ -591,6 +638,13 @@ def _generate_agent(*args, **kwargs):
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
 
 CLAUDE_TOOLS = [
+    {"name": "list_crew", "description": "List the named agents invited to this conversation's active Crew room, their roles and selected models. Does not start any work.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "ask_crew", "description": "Ask one invited Crew agent to work on a specific request in this conversation. Returns a real background task ID. The agent's own permissions and selected model apply. Do not claim its result until the task has returned.",
+     "input_schema": {"type": "object", "properties": {
+         "agent": {"type": "string", "description": "An invited agent's exact name or ID from list_crew"},
+         "request": {"type": "string", "description": "The specific work to delegate"}},
+         "required": ["agent", "request"]}},
     {"name": "search_web", "description": "Search the web for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki — AND for the small factual gaps inside a task you are already doing. If the user asks you to add a business's phone number and you have its name and address, that is a lookup: search for it, confirm it against the business's own site or a second source, and cite where it came from. Do not ask the user for a detail they would reasonably expect you to find, and never invent one. Backends, tried in order: Firecrawl (preferred; needs FIRECRAWL_API_KEY), Brave (BRAVE_API_KEY), then a DuckDuckGo scrape that is often blocked by an anti-bot challenge. Firecrawl IS part of this tool — never say it is not wired up; if a search fails, report the backend's own error and what would enable Firecrawl.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
@@ -1037,6 +1091,22 @@ def _redacted_once(p, text: str) -> str:
             _REDACTED_CACHE.pop(next(iter(_REDACTED_CACHE)))
         _REDACTED_CACHE[key] = hit
     return hit
+
+
+def _tool_list_crew(_inp):
+    from agent_friday.services import crew_runtime
+    cid = _CURRENT_CONVERSATION.get()
+    if not cid:
+        return "No conversation is active for this Crew request."
+    return crew_runtime.roster_text(cid)
+
+
+def _tool_ask_crew(inp):
+    from agent_friday.services import crew_runtime
+    cid = _CURRENT_CONVERSATION.get()
+    if not cid:
+        return "No conversation is active for this Crew request."
+    return crew_runtime.ask(cid, inp.get("agent"), inp.get("request"))
 
 
 def _tool_read_file(inp):
@@ -4346,9 +4416,9 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # task (distill-to-wiki, deep research) never hard-fails with
         # "ANTHROPIC_API_KEY is not set" on a local/OpenAI setup.
         _tools_override = None
-        if tools:
+        if tools is not None:
             _tools_override = [t for t in CLAUDE_TOOLS
-                               if t.get('name') in tools] or None
+                               if t.get('name') in tools]
         # Unattended: a scheduled or background run keeps a tighter round cap
         # than an interactive turn, because nobody is watching it.
         from agent_friday.services import turn_budget as _tbud
@@ -4844,7 +4914,7 @@ def _post_task_result_to_conversation(task_id, name, status, result_text):
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
-                runner=None, pin_to_seat=False):
+                runner=None, pin_to_seat=False, crew_context=None):
     """Spawn a background task.
 
     pin_to_seat: run every leg on `model` (a local seat) and nowhere else; a
@@ -4895,6 +4965,26 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         — a caller that asked for a safety scope must never silently get an
         unscoped dispatch instead); raises RuntimeError in that case.
     """
+    if crew_context is not None:
+        if not isinstance(crew_context, dict) or runner is None:
+            raise ValueError("Crew work requires its bound context and scoped runner")
+        from agent_friday.services.crew_access import validate_dispatch
+        profile = validate_dispatch(crew_context.get("agent_id"), crew_context.get("project_id"),
+                                    crew_context.get("revision"))
+        # Run restrictions are thread-local, so admission checks them before
+        # this caller can hand work to a fresh worker thread.
+        from agent_friday.services.local_only_guard import refuse_if_active, apply_pin, CloudRefused
+        from agent_friday.user_errors import UserFacingPermissionError
+        if str((_load_settings().get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+            raise UserFacingPermissionError("Local-only mode is on. Cloud Crew is unavailable.", status=403)
+        try:
+            refuse_if_active(profile["provider"], profile["model"])
+            pinned = apply_pin(profile["provider"], profile["model"])
+        except CloudRefused as exc:
+            raise UserFacingPermissionError("This run's cloud restrictions do not permit this Crew agent.", status=403) from exc
+        if pinned != profile["model"]:
+            raise UserFacingPermissionError("This run's model pin conflicts with this Crew agent's selected model.", status=403)
+        crew_context = json.loads(json.dumps(crew_context))
     task_id = str(uuid.uuid4())
     if scope:
         try:
@@ -4927,6 +5017,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.
             'conversation_id': conversation_id,
+            'crew_context': crew_context,
+            'crew_tool_calls': 0,
             # Started off the record: shown live, never copied to disk
             # (services/off_record, ops/forensics-snapshot.py).
             'off_record': _off_record_active(),
@@ -5582,7 +5674,15 @@ def _runner_task_worker(task_id, runner, resumed=False):
     research) leaves a record from start to end, with the reason when it ends
     before any model call."""
     from agent_friday.services import reasoning_trace as _rt
-    with _rt.scope("task", "Runner task " + str(task_id)):
+    import contextlib
+    from agent_friday.services.local_only_guard import cloud_pinned, local_only
+    with TASKS_LOCK:
+        rec = TASKS.get(task_id) or {}
+        pin = rec.get("cloud_pin")
+        local = None if pin else _task_local_only_label(task_id, rec)
+    restriction = (cloud_pinned(pin.get("model"), pin.get("label")) if pin else
+                   local_only(local) if local else contextlib.nullcontext())
+    with _rt.scope("task", "Runner task " + str(task_id)), restriction:
         return _runner_task_worker_untraced(task_id, runner, resumed=resumed)
 
 
@@ -6384,6 +6484,8 @@ def tools_for_workspace(workspace=None, base=None, conversation_id=None):
 
 
 CLAUDE_TOOL_HANDLERS = {
+    "list_crew": _tool_list_crew,
+    "ask_crew": _tool_ask_crew,
     "search_web": _tool_search_web,
     "browse_web": _tool_browse_web,
     "read_file": _tool_read_file,
@@ -6810,6 +6912,9 @@ CLAUDE_TOOL_HANDLERS.update({
 # Ring 2 NETWORK — external calls, agent spawn; requires authenticated session
 # Ring 3 FULL   — OS-level control (mouse, keyboard, screen); requires CC permission
 TOOL_RINGS: dict[str, int] = {
+    "list_crew": 0,
+    "ask_crew": 2,
+    "propose_crew_agent": 1,
     # Ring 0 — READ (local reads, no mutation, always allowed)
     "read_file":            0,
     "search_files":         0,   # read-only enumeration; no new reach over read_file
@@ -10565,9 +10670,7 @@ def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
                 action_description=f"{name} {tool_input!r}",
                 description=("Raised because the chat confirmation for this exact "
                              "action was asked and not resolved. Decide it here."),
-                force_gate=True, payload={"tool": name, "input": tool_input,
-                                         "conversation_id": (session_ctx or {}).get(
-                                             "conversation_id") or ""},
+                force_gate=True, payload=_approval_tool_payload(name, tool_input, session_ctx),
                 requested_by="confirmation_gate",
             )
             _e["approval_id"] = rec.get("approval_id")
@@ -10615,6 +10718,79 @@ def _taint_input(ctx):
         return inp
 
 
+_CREW_CARD_FIELDS = ("task_id", "crew_agent_id", "crew_revision", "project_id", "crew_started")
+
+
+def _approval_tool_payload(name, tool_input, session_ctx):
+    """Keep a deferred action bound to the Crew authority that requested it."""
+    sc = session_ctx or {}
+    payload = {"tool": name, "input": tool_input,
+               "conversation_id": sc.get("conversation_id") or ""}
+    with TASKS_LOCK:
+        binding = (TASKS.get(sc.get("task_id")) or {}).get("crew_context")
+        if binding or sc.get("crew_agent_id"):
+            if (not isinstance(binding, dict)
+                    or binding.get("agent_id") != sc.get("crew_agent_id")
+                    or binding.get("revision") != sc.get("crew_revision")
+                    or binding.get("project_id") != sc.get("project_id")):
+                raise RuntimeError("The Crew action's original task identity cannot be verified.")
+            payload["crew_context"] = {key: sc.get(key) for key in _CREW_CARD_FIELDS}
+    return payload
+
+
+def _hook_crew_access(ctx):
+    """Revalidate a bound Crew identity before normal governance and execution."""
+    sc = ctx.session_ctx or {}
+    if sc.get("approved_card"):
+        # Approval execution has a fresh session. Recover scope only from the
+        # stored card, never from model arguments or an arbitrary session claim.
+        from agent_friday.services import approvals
+        record = approvals.get_approval(sc["approved_card"])
+        saved = ((record or {}).get("payload") or {}).get("crew_context")
+        if saved is not None:
+            if (not isinstance(saved, dict) or set(saved) != set(_CREW_CARD_FIELDS)
+                    or any(key in sc and sc[key] != value for key, value in saved.items())):
+                raise RuntimeError("The approved Crew action's original context cannot be verified.")
+            sc = ctx.session_ctx = {**sc, **saved}
+    task_id = sc.get("task_id")
+    with TASKS_LOCK:
+        task = TASKS.get(task_id) or {}
+        binding = task.get("crew_context")
+        if not binding and not sc.get("crew_agent_id"):
+            return _hooks.ALLOW
+        allowed, reason = False, "Crew task identity could not be verified."
+        if (isinstance(binding, dict)
+                and binding.get("agent_id") == sc.get("crew_agent_id")
+                and binding.get("revision") == sc.get("crew_revision")
+                and binding.get("project_id") == sc.get("project_id")):
+            try:
+                from agent_friday.services import crew_access
+                profile = crew_access.validate_dispatch(sc["crew_agent_id"], sc.get("project_id"), sc["crew_revision"])
+                started = sc.get("crew_started")
+                used = task.get("crew_tool_calls", 0)
+                if task.get("status") in ("cancelled", "interrupted", "failed") or _journal().stop_requested(task_id):
+                    reason = "This Crew task was stopped. Start a fresh Crew turn."
+                elif (not isinstance(started, (float, int))
+                      or not 0 <= _time.monotonic() - started <= profile["time_budget_s"]
+                      or (isinstance(task.get("created"), (float, int))
+                          and not 0 <= _time.time() - task["created"] <= profile["time_budget_s"])):
+                    reason = "This Crew task's time budget has expired."
+                elif used >= profile["max_steps"]:
+                    reason = "This Crew task has used its allowed tool steps."
+                else:
+                    task["crew_tool_calls"] = used + 1
+                    allowed, reason = crew_access.authorize_tool(sc["crew_agent_id"], ctx.tool_name,
+                        ctx.input, sc.get("project_id"), sc["crew_revision"])
+            except Exception:
+                allowed, reason = False, "Crew permissions could not be verified. Start a new turn after checking the agent settings."
+    from agent_friday.governance import action_gate
+    action_gate._receipt({"kind": "crew_scope", "tool": ctx.tool_name,
+        "policy": "CrewProfile", "decision": "allow" if allowed else "deny",
+        "reason": reason, "agent_id": sc.get("crew_agent_id"),
+        "revision": sc.get("crew_revision"), "task_id": task_id})
+    return _hooks.ALLOW if allowed else _hooks.DENY("[CREW DENY] " + reason)
+
+
 def _hook_governance(ctx):
     """THE per-action governance check. Pre, priority 1, critical.
 
@@ -10631,6 +10807,9 @@ def _hook_governance(ctx):
     Critical, so it cannot be switched off in settings and an exception in it
     denies the call.
     """
+    crew = _hook_crew_access(ctx)
+    if crew.action == "deny":
+        return crew
     refused = _hook_credential_refusal(ctx)
     if refused.action == "deny":
         return refused
@@ -10814,9 +10993,7 @@ def _taint_card(ctx, decision, key):
                     # it an approval decided in the System workspace completes
                     # in silence, which is how five events that never existed
                     # went unnoticed for four turns.
-                    payload={"tool": name, "input": inp,
-                             "conversation_id": (ctx.session_ctx or {}).get(
-                                 "conversation_id") or ""},
+                    payload=_approval_tool_payload(name, inp, ctx.session_ctx),
                     # WHAT THIS ACTION IS, from the gate that just classified
                     # it, instead of a substring scan over the card's text.
                     # Five identical create_calendar_event cards came out
@@ -12071,7 +12248,7 @@ def _call_claude_agent(*args, **kwargs):
         _LOOP_PROVIDER.reset(_tok)
 
 
-def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None):
+def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None, tools=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -12080,12 +12257,18 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     """
     # A scheduled job allowed onto the cloud runs on the model the owner chose
     # for it (services/local_only_guard.cloud_pinned).
-    from agent_friday.services.local_only_guard import apply_pin
+    from agent_friday.services.local_only_guard import apply_pin, refuse_if_active
+    refuse_if_active("anthropic", str(model or ""))
     model = apply_pin("anthropic", model)
+    _crew = (session_ctx or {}).get("crew_binding")
+    if _crew and (_crew.get("provider") != "anthropic" or _crew.get("model") != model):
+        raise RuntimeError("The Crew agent's selected Anthropic binding cannot be substituted.")
     client = get_anthropic_client()
     # A codebase under a guest key runs on that key and nothing else (§4.7).
     client, _guest = _guest_client_for_turn(client, session_ctx)
     if client is None:
+        if _crew:
+            raise RuntimeError("The selected Anthropic provider has no available key. No other provider was tried.")
         # One key is enough: with only an OpenRouter key, the same Claude
         # model runs the same tool loop through OpenRouter
         # (services/one_key.py). `_call_openai` gates, seals and meters it.
@@ -12095,7 +12278,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
         if _alt:
             return _call_openai(
                 messages, system=system, model=_alt, max_tokens=max_tokens,
-                orb_label=orb_label, orb_icon=orb_icon, tools=tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id")),
+                orb_label=orb_label, orb_icon=orb_icon, tools=(tools if tools is not None else tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))),
                 pii_lookup=pii_lookup, session_ctx=session_ctx,
                 provider=_one_key.OPENROUTER)
         raise RuntimeError(
@@ -12258,9 +12441,13 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     # tool called without its schema still runs and its schema arrives for
     # the next round (see services/tool_catalogue.py).
     from agent_friday.services import tool_catalogue as _TC
-    _all_tools = tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
+    _all_tools = list(tools if tools is not None else tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id")))
+    if _crew:
+        from agent_friday.services.crew_access import validate_dispatch
+        _profile = validate_dispatch(session_ctx.get("crew_agent_id"), session_ctx.get("project_id"), session_ctx.get("crew_revision"))
+        _all_tools = [t for t in _all_tools if t.get("name") in _profile["allowed_tools"]]
     _sent_tools = (_TC.opening_set(_all_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
-                   if _TC.enabled() and _all_tools else list(_all_tools))
+                   if not _crew and _TC.enabled() and _all_tools else list(_all_tools))
     # SENSITIVE (the request every cloud turn sends). A loaded tool must not
     # change the `tools` array mid-task: models that check replayed thinking
     # reject or drop it, and the cached prefix is re-billed. Where the model
@@ -12268,7 +12455,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     # first request (non-resident ones deferred) and a load is surfaced by an
     # appended tool_addition message (services/tool_catalogue.py).
     _opening_names = [_TC._name_of(t) for t in _sent_tools]
-    _tool_changes = bool(_TC.enabled() and _all_tools
+    _tool_changes = bool(not _crew and _TC.enabled() and _all_tools
                          and _TC.tool_changes_supported(model or ANTHROPIC_MODEL_DEFAULT))
     _declared_tools = _TC.declared_tools(_all_tools, _sent_tools) if _tool_changes else None
     if not _tool_changes and any(_TC.is_tool_change(m) for m in convo):

@@ -26,6 +26,9 @@ DELEGATE = "delegate_to_friday"
 
 #: (utterance, expected tool | None | DELEGATE, required args that must appear)
 CASES = [
+    ("Who is invited to this Crew conversation?", "list_crew", ()),
+    ("Ask Mira to review the evidence.", "ask_crew", ("agent", "request")),
+    ("Draft a new Crew agent named Mira to review evidence.", "propose_crew_agent", ("name", "role")),
     ("What's on my calendar this afternoon?", "query_calendar", ()),
     ("Am I free at three tomorrow?", "query_calendar", ()),
     ("Any urgent emails?", "check_email", ()),

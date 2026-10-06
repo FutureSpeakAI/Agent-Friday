@@ -3600,6 +3600,7 @@ window.addEventListener('DOMContentLoaded',function(){
         @media (max-width: 700px) { .kw-view { padding: 6px 9px; } }
     </style>
 <link rel="stylesheet" href="/static/friday_experience.css"/>
+<link rel="stylesheet" href="/static/friday_crew.css"/>
 <link rel="stylesheet" href="/static/friday_workspace_depth.css"/>
 <link rel="stylesheet" href="/static/friday_holographic_workspace.css"/>
 <link rel="stylesheet" href="/static/friday_workspace_compositions.css"/>
@@ -3754,6 +3755,8 @@ window.addEventListener('DOMContentLoaded',function(){
 <script src="/static/friday_holographic_workspace.js"></script>
 <script src="/static/friday_workspace_compositions.js"></script>
 <script src="/static/friday_experience.js"></script>
+<script src="/static/friday_crew_playback.js"></script>
+<script src="/static/friday_crew.js"></script>
 <script src="/static/friday_responsive_topbar.js"></script>
 <script src="/static/friday_display_style.js"></script>
     <script src="/static/friday_workspace_switcher.js"></script>
@@ -15211,7 +15214,7 @@ function ChatSurface(props) {
     pickerOpen: convPickerOpen, setPickerOpen: setConvPickerOpen,
     onOpenConversation: openConversation, onBindSeat: bindConvSeat,
     onRefresh: refreshConvs,
-  })), /*#__PURE__*/React.createElement("div", {
+  })), window.FridayCrewEntry && React.createElement(window.FridayCrewEntry,{conversationId:convId,apiFetch,onMessages:setChatMsgs}), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
@@ -15427,7 +15430,7 @@ function ChatSurface(props) {
       fontSize: 12,
       marginTop: 30
     }
-  }, ("Talk to " + fridayName() + ". Type, speak, or drop a file.")), chatMsgs.map((m, i) => m.role === 'system'
+  }, ("Talk to " + fridayName() + ". Type, speak, or drop a file.")), (window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m, i) => m.role === 'system'
   /* B2: system lines — seat changes and other transparency notices.
      Amber, centered, unmistakably NOT Friday speaking. Never sent to
      the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
@@ -15539,7 +15542,7 @@ function ChatSurface(props) {
       color: '#888',
       marginTop: 1
     }
-  }, m.role === 'user' ? 'You' : fridayName(), " \xB7 ", m.time || '', m.via === 'voice' && /*#__PURE__*/React.createElement("span", {
+  }, ['crew_result','crew_speech'].includes(m.meta?.kind) && window.FridayCrewByline ? React.createElement(window.FridayCrewByline,{meta:m.meta}) : (m.role === 'user' ? 'You' : fridayName()), " \xB7 ", m.time || '', m.via === 'voice' && /*#__PURE__*/React.createElement("span", {
     style: {
       marginLeft: 6,
       padding: '1px 5px',
@@ -16349,7 +16352,8 @@ function ConversationWindow({
           model: (m.meta || {}).model,
           seat: (m.meta || {}).seat,
           kind: (m.meta || {}).kind,
-          trace_id: (m.meta || {}).trace_id
+          trace_id: (m.meta || {}).trace_id,
+          meta: m.meta, id: m.id
         })));
       })
       .catch(() => setMsgs([]));
@@ -16414,7 +16418,8 @@ function ConversationWindow({
         model: (m.meta || {}).model,
         seat: (m.meta || {}).seat,
         kind: (m.meta || {}).kind,
-        trace_id: (m.meta || {}).trace_id
+        trace_id: (m.meta || {}).trace_id,
+        meta: m.meta, id: m.id
       })));
     }).catch(() => {});
   const talk = () => {
@@ -61397,6 +61402,7 @@ function App() {
           seat: (m.meta || {}).seat,
           kind: (m.meta || {}).kind,
           trace_id: (m.meta || {}).trace_id,
+          meta: m.meta, id: m.id,
         })));
       }).catch(() => { if (chatEpoch.current === epoch) setChatMsgs([]); });
     apiFetch('/api/conversations/' + encodeURIComponent(cid))
@@ -61459,6 +61465,7 @@ function App() {
             seat: (m.meta || {}).seat,
             kind: (m.meta || {}).kind,
             trace_id: (m.meta || {}).trace_id,
+          meta: m.meta, id: m.id,
           })));
         }).catch(() => {});
     };
@@ -61477,7 +61484,8 @@ function App() {
       try {
         const _v = voiceRef.current;
         if (_v && _v.ws && _v.ws.readyState === WebSocket.OPEN) {
-          _v.ws.send(JSON.stringify({ type: 'conversation', id: convId }));
+          if (_v.crewPlayback) voiceStopRef.current?.({status:'Crew voice stopped because the chat changed. Start voice in this room to continue.'});
+          else _v.ws.send(JSON.stringify({ type: 'conversation', id: convId }));
         }
       } catch (_) {}
     }
@@ -62425,6 +62433,7 @@ function App() {
     window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: FLUSH called from: ' + (caller || 'unknown') + ' (stopping ' + _stopped + ' active sources)');
     window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: playbackCancelled set TRUE by: ' + (caller || 'unknown'));
     v.playbackCancelled = true;
+    v.crewPlayback?.quiet();
     // Worklet path: empty the ring buffer instantly so interrupted/old-turn audio
     // stops, and clear the speaking flag (+ its drain hangover) so the mic reopens.
     if (v.playerNode) {
@@ -62486,7 +62495,9 @@ function App() {
   };
   voiceStartRef.current = async opts => {
     const _isReconnect = !!(opts && opts.reconnect);
-    if (voiceOn && !_isReconnect) return;
+    if (!_isReconnect) voiceKeepRef.current.crewConversationId = opts?.crew ? opts.conversationId : (window.FridayCrew?.enabled(convIdRef.current) ? convIdRef.current : null);
+    const _crewCid = voiceKeepRef.current.crewConversationId;
+    if (voiceOn && !_isReconnect && !opts?.crew) return;
     voiceKeepRef.current.wanted = true;
     if (!_isReconnect) {
       voiceKeepRef.current.attempts = 0;
@@ -62506,7 +62517,7 @@ function App() {
     // Mic samples per frame sent. Gemini Live keeps 4096 (~171 ms at 24 kHz).
     // The local voice judges talk-over on the server from these frames, so
     // it sends 2048 (~85 ms): two frames confirm a barge (~171 ms).
-    const MIC_FRAMES = (agentSettings.voice_engine || 'local') === 'gemini' ? 4096 : 2048;
+    const MIC_FRAMES = _crewCid || (agentSettings.voice_engine || 'local') === 'gemini' ? 4096 : 2048;
     const v = voiceRef.current;
     const f2pcm = (float32, outRate, inRate) => {
       const ratio = inRate / outRate;
@@ -62586,6 +62597,7 @@ function App() {
           // spurious server-side VAD interrupt.
           v.playerNode.port.onmessage = e => {
             const t = e.data && e.data.type;
+            if(v.crewPlayback?.worklet(e.data) || v.crewPlayback)return;
             if (t === 'active') {
               v.fridaySpeaking = true;
               _wsSpeak(true);
@@ -62849,7 +62861,8 @@ function App() {
     // Same audio plumbing + message contract on both, so only the URL changes.
     let _wsUrl = '/ws/voice-local',
       _engine = 'local';
-    try {
+    if (_crewCid) { _wsUrl='/ws/live'; _engine='gemini'; }
+    else try {
       const _si = await apiFetch('/api/voice/session-info').then(r => r.json());
       if (_si && _si.ws_url) {
         _wsUrl = _si.ws_url;
@@ -62875,6 +62888,7 @@ function App() {
       } catch (_) {}
       return;
     }
+    if (_crewCid && (!v.usePlayerWorklet || !window.FridayCrewPlayback)) { voiceStopRef.current?.({status:'Crew voice needs the shared audio player. Reload and try again.'}); return; }
     v.engine = _engine;
     // Pass the ephemeral UI session token so the WS handler can auth non-loopback
     // connections without requiring a full cookie-based session.
@@ -62888,10 +62902,24 @@ function App() {
     // than the thread currently on screen.
     const _qs = [];
     if (_ftok) _qs.push('t=' + encodeURIComponent(_ftok));
-    if (convIdRef.current) _qs.push('conversation_id=' + encodeURIComponent(convIdRef.current));
+    if (_crewCid || convIdRef.current) _qs.push('conversation_id=' + encodeURIComponent(_crewCid || convIdRef.current));
+    if (_crewCid) _qs.push('crew=1');
     if (voicePrivacyOverrideRef.current) _qs.push('privacy_layer3_override=1');
     const ws = new WebSocket(proto + '//' + location.host + _wsUrl + (_qs.length ? '?' + _qs.join('&') : ''));
     v.ws = ws;
+    if (_crewCid) {
+      v.crewPlayback = new window.FridayCrewPlayback.Coordinator({
+        port:v.playerNode.port, audioContext:v.audioCtx,
+        send:message=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(message));},
+        onState:state=>{
+          v.fridaySpeaking=!!v.crewPlayback?.active?.started&&!v.crewPlayback.active.terminal; _wsSpeak(v.fridaySpeaking);
+          window.FridayCrew?.state(state);
+          setVoiceStatus((state.label?state.label+' · ':'')+state.status);
+          if(v.fridaySpeaking){try{window._fridayStopFpAudio?.();}catch(_){}}
+        },
+        onError:message=>setVoiceStatus('Crew voice: '+message)
+      });
+    }
     let wsOpened = false;
     setVoiceStatus('connecting…');
     ws.onopen = () => {
@@ -62973,6 +63001,7 @@ function App() {
       }, 1000);
     };
     ws.onmessage = ev => {
+      if(voiceRef.current.ws!==ws || _stale())return;
       let m;
       try {
         m = JSON.parse(ev.data);
@@ -62985,6 +63014,9 @@ function App() {
         K.sawHb = true;
         return;
       }
+      if(m.type==='crew_profile_draft'){window.FridayCrew?.propose(m.draft);return;}
+      if(v.crewPlayback?.receive(m))return;
+      if(v.crewPlayback && ['audio','interrupted','turn_end','tts_pause','tts_resume'].includes(m.type))return;
       // Feed one base64 PCM chunk to the active playback path (worklet ring or
       // legacy BufferSource). Shared by the live 'audio' branch and the
       // tts_resume replay of chunks HELD during an action pause.
@@ -63137,7 +63169,7 @@ function App() {
           });
           // Strip personality/mood/reasoning scaffolding — only the spoken words
           // belong in the transcript. Skip the bubble entirely if nothing remains.
-          if (m.agent_text) {
+          if (m.agent_text && !v.crewPlayback) {
             const clean = sanitizeVoiceTranscript(m.agent_text);
             if (clean) next.push({
               role: 'friday',
@@ -63276,6 +63308,7 @@ function App() {
       }
       // Stop mic tracks so Chrome clears the recording indicator
       const v2 = voiceRef.current;
+      v2.crewPlayback?.close();
       try {
         v2.silenceTimer && clearTimeout(v2.silenceTimer);
       } catch (_) {}
@@ -63389,6 +63422,7 @@ function App() {
     // early-failure message and the mic click looked like a silent no-op.
     const _keepStatus = opts && opts.status;
     const v = voiceRef.current;
+    v.crewPlayback?.close();
     // 0) This is a DELIBERATE stop: disarm auto-reconnect before anything else
     //    so the onclose that follows doesn't resurrect the session.
     const K = voiceKeepRef.current;
@@ -63497,6 +63531,25 @@ function App() {
     setVoiceOn(false);
     setVoiceStatus(_keepStatus || '');
   };
+  useEffect(() => {
+    const command = e => {
+      const action = e.detail?.action;
+      if (action === 'start' && window.FridayCrew?.enabled(e.detail.conversationId)) {
+        voiceStopRef.current?.();
+        voiceStartRef.current?.({crew:true,conversationId:e.detail.conversationId});
+      } else if (action === 'stop') voiceStopRef.current?.();
+      else if (action === 'quiet') {
+        const v = voiceRef.current;
+        try { if (v.ws?.readyState === WebSocket.OPEN) v.ws.send(JSON.stringify({type:'barge'})); } catch (_) {}
+        flushPlaybackRef.current?.('Crew quiet / barge');
+      }
+    };
+    window.addEventListener('friday:crew-voice',command);
+    return () => window.removeEventListener('friday:crew-voice',command);
+  }, []);
+  useEffect(()=>{
+    if(voiceKeepRef.current.wanted&&voiceKeepRef.current.crewConversationId&&voiceKeepRef.current.crewConversationId!==convId)voiceStopRef.current?.({status:'Crew voice stopped because the chat changed. Start voice in this room to continue.'});
+  },[convId]);
   const toggleVoice = () => {
     if (voiceOn) voicePrivacyOverrideRef.current = false;
     voiceOn ? voiceStopRef.current?.() : voiceStartRef.current?.();

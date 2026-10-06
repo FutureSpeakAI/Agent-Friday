@@ -62,20 +62,52 @@ class FridayPCMPlayer extends AudioWorkletProcessor {
     this.fadeLen = Math.max(1, Math.round(sampleRate * 0.004));
     this.fadeLeft = 0;
     this.last = 0;
+    this.crew = null;
     this.port.onmessage = (e) => {
       const m = e.data;
-      if (m.type === 'samples') {
+      if (m.type === 'crew_begin') {
+        // Tagged speech is bounded, sealed, and acknowledged after consumption.
+        // It must never take the legacy anti-wrap path that drops old samples.
+        if (this.size < this.srcRate * 302) {
+          this.size = Math.ceil(this.srcRate * 302);
+          this.ring = new Float32Array(this.size);
+          this.maxLag = this.size - Math.round(this.srcRate * 2);
+        }
+        this.writeIdx = 0; this.readIdx = 0; this.priming = true;
+        this.crew = {id:m.utterance_id,epoch:m.epoch,sealed:false,started:false,reported:0};
+      } else if (m.type === 'crew_end') {
+        if (!this._crewMatches(m)) return;
+        if (m.total_samples !== this.writeIdx) { this._crewEvent('failed', 'Speech sample count does not match.'); this.crew = null; this.readIdx = this.writeIdx; return; }
+        this.crew.sealed = true;
+      } else if (m.type === 'samples') {
+        if (this.crew ? !this._crewMatches(m) || this.crew.sealed : !!m.utterance_id) return;
         const f = m.data;
+        if (this.crew && (this.writeIdx + f.length > this.srcRate * 300 || this._avail() + f.length >= this.size)) {
+          this._crewEvent('failed', 'Speech buffer limit reached.'); this.crew = null; this.readIdx = this.writeIdx; return;
+        }
         for (let i = 0; i < f.length; i++) { this.ring[this.writeIdx % this.size] = f[i]; this.writeIdx++; }
         // Overflow guard: keep the producer at most maxLag ahead of the reader.
         const lag = this.writeIdx - Math.floor(this.readIdx);
         if (lag > this.maxLag) this.readIdx = this.writeIdx - this.maxLag;
       } else if (m.type === 'flush') {
+        this.crew = null;
         this.readIdx = this.writeIdx;            // drop everything pending
         this.priming = true;                      // re-cushion before next audio
         this.fadeLeft = this.fadeLen;             // ramp the tail out, do not clip it
       }
     };
+  }
+  _crewMatches(m){ return this.crew && m.utterance_id === this.crew.id && m.epoch === this.crew.epoch; }
+  _crewEvent(type, message){
+    if (!this.crew) return;
+    this.port.postMessage({type:'crew_'+type,utterance_id:this.crew.id,epoch:this.crew.epoch,played_samples:Math.min(this.writeIdx,Math.floor(this.readIdx)),message});
+  }
+  _crewProgress(){
+    if (!this.crew) return;
+    const played = Math.min(this.writeIdx,Math.floor(this.readIdx));
+    if (played > 0 && !this.crew.started) { this.crew.started = true; this._crewEvent('started'); }
+    if (played - this.crew.reported >= this.srcRate / 4) { this.crew.reported = played; this._crewEvent('progress'); }
+    if (this.crew.sealed && played >= this.writeIdx && !this.fadeLeft) { this._crewEvent('finished'); this.crew = null; }
   }
   _avail(){ return this.writeIdx - Math.floor(this.readIdx); }     // src samples ahead of read
   process(inputs, outputs) {
@@ -87,21 +119,22 @@ class FridayPCMPlayer extends AudioWorkletProcessor {
       // Finish any fade first. The underrun branch below sets priming, so
       // without this the very next render quantum would slam the ramp to zero
       // and put back the click the ramp exists to remove.
-      if (this._avail() < this.prefill) {
+      if (this._avail() < this.prefill && !(this.crew && this.crew.sealed && this._avail() > 0)) {
         for (let i = 0; i < out.length; i++) {
           if (this.fadeLeft > 0) { this.fadeLeft--; out[i] = this.last * (this.fadeLeft / this.fadeLen); }
           else { out[i] = 0; this.last = 0; }
         }
+        this._crewProgress();
         return true;
       }
       this.priming = false;
     }
     for (let i = 0; i < out.length; i++) {
       const base = Math.floor(this.readIdx);
-      if (base + 1 < this.writeIdx) {
+      if (base + 1 < this.writeIdx || (this.crew && this.crew.sealed && base < this.writeIdx)) {
         const frac = this.readIdx - base;
         const s0 = this.ring[base % this.size];
-        const s1 = this.ring[(base + 1) % this.size];
+        const s1 = this.ring[Math.min(base + 1,this.writeIdx - 1) % this.size];
         out[i] = s0 * (1 - frac) + s1 * frac;
         this.readIdx += this.step;
         this.last = out[i];
@@ -116,6 +149,7 @@ class FridayPCMPlayer extends AudioWorkletProcessor {
       }
     }
     const playing = !this.priming && (Math.floor(this.readIdx) + 1) < this.writeIdx;
+    this._crewProgress();
     if (playing !== this.lastPlaying) { this.lastPlaying = playing; this.port.postMessage({ type: playing ? 'active' : 'drained' }); }
     return true;
   }
