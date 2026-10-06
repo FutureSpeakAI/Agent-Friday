@@ -47,6 +47,27 @@
     return (edge.direction === 'backward' ? !fromSelection : fromSelection) ? '→ ' : '← ';
   }
 
+  // Match Knowledge's colored spheres and quiet filaments without starting a
+  // second WebGL scene beside the chat. Positions are display coordinates.
+  const GRAPH_KINDS = {
+    file: { label: 'Files', color: 'var(--fr-cyan)' },
+    symbol: { label: 'Symbols', color: 'var(--fr-violet-soft)' },
+    class: { label: 'Types', color: 'var(--fr-cat-teal)' },
+    document: { label: 'Docs', color: 'var(--fr-warn)' },
+    other: { label: 'Other', color: 'var(--fr-cat-pink)' }
+  };
+  function graphKind(node) {
+    if (['function', 'method', 'symbol'].includes(node.type)) return 'symbol';
+    if (['class', 'interface', 'type'].includes(node.type)) return 'class';
+    return Object.prototype.hasOwnProperty.call(GRAPH_KINDS, node.type) ? node.type : 'other';
+  }
+  const GRAPH_STARS = (() => {
+    let seed = 7429;
+    const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+    return Array.from({ length: 48 }, () => [8 + random() * 404, 8 + random() * 299, .4 + random() * .5, .09 + random() * .17]);
+  })();
+  let graphSequence = 0;
+
   const CSS = `
 .fra-atlas{flex:1;min-height:0;overflow:auto;padding:14px;color:var(--fr-text);font:var(--fr-text-base)/1.55 var(--fr-font-body);container-type:inline-size}
 .fra-atlas *{box-sizing:border-box}
@@ -85,14 +106,25 @@
 .fra-node-head{justify-content:space-between;align-items:flex-start}
 .fra-node-head>div{flex:1;min-width:0}
 .fra-copy{font-size:var(--fr-text-md);color:var(--fr-label);margin:8px 0;overflow-wrap:anywhere;white-space:pre-line}
-.fra-graph{display:block;width:100%;height:auto;max-height:270px;margin:4px 0}
-.fra-graph line{stroke:var(--fr-violet-soft);stroke-width:1.2;opacity:.45}
-.fra-graph circle{fill:var(--fr-surface);stroke:var(--fr-violet-soft);stroke-width:1.5}
-.fra-graph [data-selected=true] circle{fill:var(--fr-cyan-soft);stroke:var(--fr-cyan);stroke-width:2}
-.fra-graph [role=button]{cursor:pointer}
-.fra-graph [role=button]:hover circle{stroke:var(--fr-cyan);stroke-width:2.5}
-.fra-graph text{fill:var(--fr-label);font:12px var(--fr-font-mono);pointer-events:none}
+.fra-galaxy{margin:12px 0 8px;border:1px solid var(--fr-glass-edge);border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--fr-surface) 45%,black)}
+.fra-galaxy-head{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:9px 11px 0;color:var(--fr-dim);font:var(--fr-text-2xs) var(--fr-font-mono)}
+.fra-galaxy-head strong{color:var(--fr-label);font-weight:500;letter-spacing:.08em;text-transform:uppercase}
+.fra-graph{display:block;width:100%;height:auto;max-height:320px}
+.fra-graph .fra-filament{stroke-width:1;opacity:.4;vector-effect:non-scaling-stroke}
+.fra-graph .fra-star{fill:var(--fr-cyan);pointer-events:none}
+.fra-graph .fra-hit{fill:transparent;stroke:none}
+.fra-graph .fra-orb{stroke:color-mix(in srgb,currentColor 28%,var(--fr-surface));stroke-width:1.2}
+.fra-graph .fra-orb-glow{opacity:.35;pointer-events:none}
+.fra-graph .fra-focus-ring{fill:none;stroke:var(--fr-label);stroke-width:1;opacity:0}
+.fra-graph [data-selected=true] .fra-focus-ring{opacity:.9;stroke:var(--fr-cyan)}
+.fra-graph [data-selected=true] .fra-orb-glow{opacity:.75}
+.fra-graph [role=button]{cursor:pointer;outline:none}
+.fra-graph [role=button]:hover .fra-focus-ring,.fra-graph [role=button]:focus-visible .fra-focus-ring{opacity:1;stroke:var(--fr-text);stroke-width:2}
+.fra-graph text{fill:var(--fr-label);font:12px var(--fr-font-mono);pointer-events:none;paint-order:stroke;stroke:var(--fr-surface);stroke-width:3;stroke-linejoin:round}
 .fra-graph [data-selected=true] text{fill:var(--fr-cyan)}
+.fra-graph-key{display:flex;gap:7px 12px;flex-wrap:wrap;padding:0 11px 10px;color:var(--fr-dim);font:var(--fr-text-2xs) var(--fr-font-mono)}
+.fra-graph-key span{display:inline-flex;gap:5px;align-items:center}
+.fra-graph-key i{width:5px;height:5px;border-radius:50%;background:var(--node-color);box-shadow:0 0 6px var(--node-color)}
 .fra-links{display:flex;flex-direction:column;gap:5px}
 .fra-link{display:block;width:100%;border:0;background:transparent;color:var(--fr-cyan);text-align:left;padding:4px 0;font-size:var(--fr-text-md);overflow-wrap:anywhere}
 .fra-relation{color:var(--fr-dim);font-size:var(--fr-text-xs);margin-right:7px}
@@ -107,20 +139,55 @@
 `;
 
   function Graph({ atlas, selectedId, onSelect }) {
+    const instance = useRef(null);
+    if (!instance.current) instance.current = 'fra-galaxy-' + (++graphSequence);
+    const uid = instance.current;
     const graph = neighborhood(atlas, selectedId);
     if (graph.nodes.length < 2) return h('p', { className: 'fra-count' }, 'No mapped connections for this selection.');
-    const positions = new Map([[selectedId, [210, 128]]]);
-    graph.nodes.slice(1).forEach((node, i) => positions.set(node.id, [i % 2 ? 345 : 75, 35 + Math.floor(i / 2) * 88]));
+    const slots = [[89, 71, .85], [330, 104, 1.1], [83, 222, 1], [327, 237, .8], [223, 43, .7], [211, 270, .9]];
+    const positions = new Map([[selectedId, [210, 157, 1.15]]]);
+    graph.nodes.slice(1).forEach((node, i) => positions.set(node.id, slots[i]));
+    const nodeIndex = new Map(graph.nodes.map((node, i) => [node.id, i]));
+    const colorOf = node => GRAPH_KINDS[graphKind(node)].color;
+    // Several relationship kinds can join the same two sources. One visual
+    // filament is enough; the relationship list retains their directions.
+    const pairs = new Set();
+    const filaments = graph.edges.filter(edge => {
+      if (edge.source === edge.target) return false;
+      const pair = JSON.stringify([edge.source, edge.target].sort());
+      if (pairs.has(pair)) return false;
+      pairs.add(pair); return true;
+    });
     return h(React.Fragment, null,
-      h('svg', { className: 'fra-graph', viewBox: '0 0 420 260', role: 'group', 'aria-label': 'Connections around the selected item' },
-        graph.edges.map((edge, i) => { const a = positions.get(edge.source), b = positions.get(edge.target);
-          return h('line', { key: i, x1: a[0], y1: a[1], x2: b[0], y2: b[1] }); }),
-        graph.nodes.map(node => { const p = positions.get(node.id), name = String(node.name || node.id);
-          return h('g', { key: node.id, transform: 'translate(' + p.join(',') + ')', role: 'button', tabIndex: 0,
+      h('div', { className: 'fra-galaxy' },
+      h('div', { className: 'fra-galaxy-head' }, h('strong', null, 'Source constellation'), h('span', null, graph.nodes.length + ' items in view')),
+      h('svg', { className: 'fra-graph', viewBox: '0 0 420 315', role: 'group', 'aria-label': 'Connections around the selected item' },
+        h('defs', null,
+          h('radialGradient', { id: uid + '-haze' }, h('stop', { stopColor: 'var(--fr-violet)', stopOpacity: .13 }), h('stop', { offset: 1, stopColor: 'var(--fr-violet)', stopOpacity: 0 })),
+          graph.nodes.map((node, i) => h(React.Fragment, { key: node.id },
+            h('radialGradient', { id: uid + '-orb-' + i, cx: '.34', cy: '.28', r: '.72' },
+              h('stop', { stopColor: 'var(--fr-text)' }), h('stop', { offset: .22, stopColor: colorOf(node) }),
+              h('stop', { offset: .65, stopColor: colorOf(node) }), h('stop', { offset: 1, stopColor: 'var(--fr-surface)' })),
+            h('radialGradient', { id: uid + '-halo-' + i }, h('stop', { stopColor: colorOf(node), stopOpacity: .65 }), h('stop', { offset: 1, stopColor: colorOf(node), stopOpacity: 0 })))),
+          filaments.map((edge, i) => { const a = positions.get(edge.source), b = positions.get(edge.target);
+            return h('linearGradient', { key: i, id: uid + '-edge-' + i, gradientUnits: 'userSpaceOnUse', x1: a[0], y1: a[1], x2: b[0], y2: b[1] },
+              h('stop', { stopColor: colorOf(graph.nodes[nodeIndex.get(edge.source)]) }), h('stop', { offset: 1, stopColor: colorOf(graph.nodes[nodeIndex.get(edge.target)]) })); })),
+        h('ellipse', { cx: 208, cy: 149, rx: 190, ry: 125, fill: 'url(#' + uid + '-haze)', 'aria-hidden': true }),
+        GRAPH_STARS.map((star, i) => h('circle', { key: 'star-' + i, className: 'fra-star', cx: star[0], cy: star[1], r: star[2], opacity: star[3], 'aria-hidden': true })),
+        filaments.map((edge, i) => { const a = positions.get(edge.source), b = positions.get(edge.target);
+          return h('line', { key: i, className: 'fra-filament', stroke: 'url(#' + uid + '-edge-' + i + ')', x1: a[0], y1: a[1], x2: b[0], y2: b[1], 'aria-hidden': true }); }),
+        graph.nodes.map((node, i) => { const p = positions.get(node.id), name = String(node.name || node.id), radius = 12 * p[2];
+          return h('g', { key: node.id, transform: 'translate(' + p.slice(0, 2).join(',') + ')', role: 'button', tabIndex: 0,
+            style: { color: colorOf(node) },
             'aria-label': 'Select ' + name, 'aria-pressed': node.id === selectedId, 'data-selected': node.id === selectedId,
             onClick: () => onSelect(node.id), onKeyDown: event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(node.id); } } },
-            h('title', null, name), h('circle', { r: node.id === selectedId ? 19 : 12 }),
-            h('text', { y: 32, textAnchor: 'middle' }, name.length > 18 ? name.slice(0, 16) + '…' : name)); })),
+            h('title', null, name), h('circle', { className: 'fra-hit', r: 24 }),
+            h('circle', { className: 'fra-orb-glow', r: radius * 2.5, fill: 'url(#' + uid + '-halo-' + i + ')' }),
+            h('circle', { className: 'fra-orb', r: radius, fill: 'url(#' + uid + '-orb-' + i + ')' }),
+            h('circle', { className: 'fra-focus-ring', r: radius + 5 }),
+            h('text', { y: radius + 20, textAnchor: 'middle' }, name.length > 18 ? name.slice(0, 16) + '…' : name)); })),
+      h('div', { className: 'fra-graph-key', 'aria-label': 'Graph color key' }, [...new Set(graph.nodes.map(graphKind))].map(kind =>
+        h('span', { key: kind }, h('i', { style: { '--node-color': GRAPH_KINDS[kind].color }, 'aria-hidden': true }), GRAPH_KINDS[kind].label)))),
       h('p', { className: 'fra-count' }, graph.total > 6 ? 'Showing 6 of ' + graph.total + ' connected items.' : 'Select a connection to follow it.'));
   }
 

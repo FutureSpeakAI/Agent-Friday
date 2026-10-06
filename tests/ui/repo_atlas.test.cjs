@@ -87,6 +87,34 @@ test('relationship arrows honor imported forward, backward, and bidirectional li
   assert.equal(edgeArrow(edge, 'beta'), '↔ ');
 });
 
+test('the galaxy neighborhood retains keyboard selection and isolates SVG paint references', async () => {
+  const atlas = graph('alpha');
+  atlas.nodes.push({ id: 'function:parse', name: 'parse', type: 'function' });
+  atlas.edges.push({ source: 'file:alpha', target: 'function:parse', type: 'contains' });
+  atlas.edges.push(...Array.from({ length: 6000 }, () => ({ source: 'function:parse', target: 'file:alpha', type: 'references', direction: 'backward' })));
+  const app = harness(() => Promise.resolve(response({ atlas })));
+  app.render(); app.effects(); await settle();
+  const graphElement = flatten(app.render()).find(n => typeof n.type === 'function' && n.type.name === 'Graph');
+  const rendered = graphElement.type(graphElement.props), parts = flatten(rendered);
+  const ids = new Set(parts.filter(n => n.props.id).map(n => n.props.id));
+  const paint = parts.flatMap(n => [n.props.fill, n.props.stroke]).filter(v => typeof v === 'string' && v.startsWith('url(#'));
+  assert.ok(paint.length >= 5);
+  assert.ok(paint.every(value => ids.has(value.slice(5, -1))));
+  assert.equal(parts.filter(n => n.props.className === 'fra-orb').length, 2);
+  assert.equal(parts.filter(n => n.props.className === 'fra-filament').length, 1);
+  const selectable = parts.filter(n => n.props.role === 'button');
+  assert.ok(selectable.every(n => /^translate\([\d.]+,[\d.]+\)$/.test(n.props.transform)));
+  assert.ok(selectable.every(n => n.props.tabIndex === 0));
+  const next = flatten(graphElement.type(graphElement.props));
+  assert.ok(next.filter(n => n.props.id).every(n => !ids.has(n.props.id)), 'simultaneous chat graphs own different paint IDs');
+  let prevented = false;
+  selectable.find(n => n.props['aria-label'] === 'Select parse').props.onKeyDown({ key: ' ', preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.match(text(app.render()), /"selection"|parse/);
+  assert.equal(flatten(app.render()).find(n => n.type === 'h3').children[0], 'parse');
+  app.unmount();
+});
+
 test('chat actions carry references, await completion, and prevent duplicate sends', async () => {
   const pending = deferred(), calls = [], requests = [];
   const app = harness(url => { requests.push(url); return Promise.resolve(response({ status: 'ok', atlas: graph('alpha') })); });

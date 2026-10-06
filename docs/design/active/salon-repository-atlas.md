@@ -20,7 +20,10 @@ through the normal governed coding workflow before studying its local folder.
 Open **Understand** in any codebase. The map builds on first open. Search for a
 file or symbol, follow its relationships, open its source, or move through the
 guided tour. **Explore**, **Learn** and **Adapt** ask in the codebase's own chat;
-the selected node id is resolved again by the tool. Adaptation starts with an
+the selected node id is resolved again by the tool. The neighborhood follows the
+Knowledge workspace's visual theme with shaded colored nodes, quiet filaments
+and a dark starfield; each visible pair shares one filament while relationship
+details retain their directions. Adaptation starts with an
 explanation and a plan through the salon's existing plan workflow.
 
 The local scanner reads files only. Python definitions and imports use the
