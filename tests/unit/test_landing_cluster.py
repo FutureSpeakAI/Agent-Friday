@@ -435,7 +435,8 @@ def test_the_cluster_fades_away_and_a_key_brings_it_back(browser_page):
     page.clock.fast_forward(31_000)
     page.wait_for_function("document.querySelector('[data-testid=\"landing-cluster\"]').dataset.landing === 'hidden'",
                            timeout=10000)
-    page.wait_for_timeout(700)                   # the fade itself runs in real time
+    page.wait_for_function("getComputedStyle(document.querySelector('[data-testid=\"landing-cluster\"]')).visibility === 'hidden'",
+                           timeout=10000)
     c = _cluster(page)
     assert c["inert"] and c["hidden"] == "true" and c["visibility"] == "hidden"
     assert any(line == "[landing] hidden: nothing needs you here" for line in logs), logs[-5:]
@@ -467,7 +468,8 @@ def test_the_key_gives_the_field_the_cursor_when_the_cluster_shows(browser_page)
     page.clock.fast_forward(31_000)
     page.wait_for_function("document.querySelector('[data-testid=\"landing-cluster\"]').dataset.landing === 'hidden'",
                            timeout=10000)
-    page.wait_for_timeout(700)
+    page.wait_for_function("getComputedStyle(document.querySelector('[data-testid=\"landing-cluster\"]')).visibility === 'hidden'",
+                           timeout=10000)
     page.clock.pause_at(page.evaluate("Date.now()") + 1)
     try:
         page.keyboard.press("Control+/")
