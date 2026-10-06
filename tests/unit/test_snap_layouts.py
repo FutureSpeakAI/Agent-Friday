@@ -54,7 +54,10 @@ def test_the_windows_and_the_tray_use_it(rel):
     text = _read(rel)
     fwin = text[text.index("function FWin("):]
     fwin = fwin[:fwin.index("\n}\n")]
-    assert "useFridaySnap(id" in fwin and "SnapPreview" in fwin and "SnapMenu" in fwin, rel
+    assert "useFridaySnap(id" in fwin and "SnapPreview" in fwin and "WsTools" in fwin, rel
+    tools = text[text.index("function WsTools("):]
+    tools = tools[:tools.index("\n}\n")]
+    assert "SnapMenu" in tools and "arrange.onPick" in tools and "arrange.onToggle" in tools, rel
     assert "fridaySnapMagnet(fridayDesktopArea()" in fwin, rel
     assert re.search(r"--fr-chat-dock-left'", text) and "fridayLayoutOf(layoutTab" in text, rel
     assert 'data-testid": "chat-layout"' in text or 'data-testid="chat-layout"' in text, rel
@@ -333,7 +336,10 @@ class _Site:
         }""")
 
     def menu(self, selector='[data-fwin-max="news"]'):
-        self.page.hover(selector)
+        if selector.startswith('[data-fwin-max='):
+            self.page.click(selector)
+        else:
+            self.page.hover(selector)
         self.page.wait_for_selector('[data-testid="snap-menu"]', timeout=5000)
         return self
 
@@ -370,7 +376,14 @@ def _assert_desktop_edge(g, classic=False):
     else:
         assert g["topbar"] and g["topbar"]["height"] > 0, g
         base = g["rawArea"]
-        stage, area = g["spatial"]["stage"], g["area"]
+        stage, area = g["spatial"]["stageFrame"], g["area"]
+        avatar, caption = g["spatial"]["stage"], g["spatial"]["caption"]
+        # The reserved scene frame includes a separate, readable state caption.
+        assert avatar["x"] == stage["x"] and avatar["w"] == stage["w"], g
+        assert avatar["y"] == stage["y"] and avatar["h"] > 0, g
+        assert avatar["y"] + avatar["h"] <= caption["y"], g
+        assert caption["x"] >= stage["x"] and caption["x"] + caption["w"] <= stage["x"] + stage["w"], g
+        assert caption["y"] + caption["h"] <= stage["y"] + stage["h"], g
         gutter = 8 if g["vw"] < 760 else 16
         assert stage and stage["w"] > 0 and stage["h"] > 0, g
         assert stage["y"] == base["y"] + 12, g

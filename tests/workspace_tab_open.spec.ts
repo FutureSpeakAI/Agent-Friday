@@ -1,7 +1,7 @@
 /**
- * "Open in its own tab" is one click: the workspace closes in the desktop, its
- * own tab opens on it (where the window was), and the browser switches to that
- * tab, with nothing more asked of the person.
+ * Choosing "Open in its own tab" from More closes the desktop workspace, opens
+ * its own tab where the window was, and switches the browser to that tab,
+ * with nothing more asked of the person.
  *
  * WHICH TAB IS IN FRONT IS ASKED OF WINDOWS. Playwright reports every page it
  * drives as visible and focused, so nothing inside a page can prove a switch.
@@ -127,13 +127,22 @@ async function desktop(named?: string): Promise<Page> {
 }
 
 async function openWindow(page: Page, id: string) {
-  const win = page.locator(`.fwin:has([data-ws-tab="${id}"])`);
+  const win = page.locator(`.fwin[data-friday-workspace="${id}"]`);
   // Opening a window is not what is under test, and the dock magnifies under
   // the pointer (a neighbour can slide over the target mid-click).
   if (!(await win.count())) await page.locator(`.dock-btn[data-ws="${id}"]`).evaluate(el => (el as HTMLElement).click());
   await expect(win).toHaveCount(1);
   await page.waitForTimeout(600);
   return win;
+}
+
+/** Open the real menu first; the final click retains the gesture needed for
+ *  window.open, and the action's body portal is outside the desktop window. */
+async function ownTabAction(page: Page, id: string) {
+  await page.locator(`.fwin[data-friday-workspace="${id}"] [data-ws-more="${id}"]`).click();
+  const action = page.locator(`[data-ws-tab="${id}"]`);
+  await expect(action).toBeVisible();
+  return action;
 }
 
 /** The workspace the first test moved into a tab (whichever has enough in it
@@ -145,7 +154,7 @@ const scrollRange = (win: ReturnType<Page['locator']>) => win.locator('.fwin-bod
   return sc ? sc.scrollHeight - sc.clientHeight : 0;
 });
 
-test('one click: the tab opens where the window was, the window folds away, the tab is in front', async () => {
+test('choosing the menu action opens the tab where the window was, folds the window away, and brings the tab to the front', async () => {
   const page = await desktop();
   await closeOthers(page);
   // a workspace with enough in it to scroll: what that is depends on the home under test
@@ -160,20 +169,21 @@ test('one click: the tab opens where the window was, the window folds away, the 
       moved = { id, title: label + ' · Agent Friday™' };
       break;
     }
-    await w.locator('.fwin-btns button').last().click();        // close it and try the next
-    await expect(page.locator(`.fwin:has([data-ws-tab="${id}"])`)).toHaveCount(0);
+    await w.locator('.ws-tool-close').click();        // close it and try the next
+    await expect(w).toHaveCount(0);
   }
   expect(win, 'no workspace had enough in it to scroll').not.toBeNull();
   const id = moved.id;
   // somewhere down the window, so there is a place to carry across
   await win!.locator('.fwin-body').evaluate(el => { const sc = (window as any).fridayMainScroller(el); sc.scrollTop = Math.round((sc.scrollHeight - sc.clientHeight) * 0.4); });
+  const ownTab = await ownTabAction(page, id);
   const asked = ctx.waitForEvent('request', r => r.resourceType() === 'document' && r.url().includes('/w/' + id));
-  const [tab] = await Promise.all([ctx.waitForEvent('page'), win!.locator(`[data-ws-tab="${id}"]`).click()]);
+  const [tab] = await Promise.all([ctx.waitForEvent('page'), ownTab.click()]);
   await tab.waitForURL(u => u.pathname === '/w/' + id, { timeout: 30000 });
   const url = new URL((await asked).url());          // what the tab was opened with
   expect(url.origin).toBe(new URL(BASE).origin);         // no named address proven here
   // the desktop window is gone (folded into its dock icon)
-  await expect(page.locator(`.fwin:has([data-ws-tab="${id}"])`)).toHaveCount(0);
+  await expect(win!).toHaveCount(0);
   await tab.waitForSelector(`[data-standalone="${id}"] .ws-tab-body > *`, { timeout: 60000 });
   await expectFront(profile, moved.title);
   // the carried scroll position was used, then dropped from the address
@@ -188,13 +198,14 @@ test('asking again finds the same tab: no copy, and it comes back to the front',
   await expectFront(profile, await page.title());
   const before = ctx.pages().length;
   const win = await openWindow(page, moved.id);
+  const ownTab = await ownTabAction(page, moved.id);
   let opened = false;
   ctx.once('page', () => { opened = true; });
-  await win.locator(`[data-ws-tab="${moved.id}"]`).click();
+  await ownTab.click();
   await page.waitForTimeout(1500);
   expect(opened).toBe(false);
   expect(ctx.pages().length).toBe(before);
-  await expect(page.locator(`.fwin:has([data-ws-tab="${moved.id}"])`)).toHaveCount(0);
+  await expect(win).toHaveCount(0);
   await expectFront(profile, moved.title);
 });
 
@@ -203,16 +214,16 @@ test('a blocked tab keeps the window open and says how to allow it', async () =>
   await closeOthers(page);
   await page.evaluate(() => { (window as any).open = () => null; });
   const win = await openWindow(page, 'calendar');
-  await win.locator('[data-ws-tab="calendar"]').click();
+  await (await ownTabAction(page, 'calendar')).click();
   await page.waitForTimeout(800);
-  await expect(page.locator('.fwin:has([data-ws-tab="calendar"])')).toHaveCount(1);
+  await expect(win).toHaveCount(1);
   const hint = win.locator('.fwin-tab-blocked');
   await expect(hint).toBeVisible();
   await expect(hint).toContainText('Allow pop-ups for ' + new URL(BASE).host);
   expect(ctx.pages().length).toBe(1);
   await hint.locator('button').click();
   await expect(hint).toHaveCount(0);
-  await expect(page.locator('.fwin:has([data-ws-tab="calendar"])')).toHaveCount(1);
+  await expect(win).toHaveCount(1);
 });
 
 test('middle-click and Ctrl+click on the dock open a background tab and change nothing here', async () => {
@@ -223,32 +234,34 @@ test('middle-click and Ctrl+click on the dock open a background tab and change n
   await bg.waitForURL(/\/w\/code/, { timeout: 30000 });
   await page.waitForTimeout(800);
   await expectFront(profile, title);
-  await expect(page.locator('.fwin:has([data-ws-tab="code"])')).toHaveCount(0);
+  await expect(page.locator('.fwin[data-friday-workspace="code"]')).toHaveCount(0);
   await page.keyboard.down('Control');
-  const [bg2] = await Promise.all([ctx.waitForEvent('page'), dockClick(page, 'wiki')]);
+  const [bg2] = await Promise.all([ctx.waitForEvent('page'), dockClick(page, 'knowledge')]);
   await page.keyboard.up('Control');
-  await bg2.waitForURL(/\/w\/wiki/, { timeout: 30000 });
+  await bg2.waitForURL(/\/w\/knowledge/, { timeout: 30000 });
   await page.waitForTimeout(800);
   await expectFront(profile, title);
-  await expect(page.locator('.fwin:has([data-ws-tab="wiki"])')).toHaveCount(0);
+  await expect(page.locator('.fwin[data-friday-workspace="knowledge"]')).toHaveCount(0);
 });
 
 test('on localhost, the tab opens on Friday\'s own proven address', async () => {
   const page = await desktop(NAMED);
   await closeOthers(page);
   const win = await openWindow(page, 'news');
-  const [tab] = await Promise.all([ctx.waitForEvent('page'), win.locator('[data-ws-tab="news"]').click()]);
+  const ownTab = await ownTabAction(page, 'news');
+  const [tab] = await Promise.all([ctx.waitForEvent('page'), ownTab.click()]);
   await tab.waitForURL(u => u.toString().startsWith(NAMED + '/w/news'), { timeout: 30000 });
   // served through Friday's own TLS listener on the test port
   await tab.waitForSelector('[data-standalone="news"] .ws-tab-body > *', { timeout: 90000 });
-  await expect(page.locator('.fwin:has([data-ws-tab="news"])')).toHaveCount(0);
+  await expect(win).toHaveCount(0);
   await expectFront(profile, 'News · Agent Friday™');
   // the tab on the named address is still found by name from localhost
   await page.bringToFront();
   const before = ctx.pages().length;
   const again = await openWindow(page, 'news');
-  await again.locator('[data-ws-tab="news"]').click();
+  await (await ownTabAction(page, 'news')).click();
   await page.waitForTimeout(1500);
+  await expect(again).toHaveCount(0);
   expect(ctx.pages().length).toBe(before);
   await expectFront(profile, 'News · Agent Friday™');
 });

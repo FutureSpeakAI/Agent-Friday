@@ -66,6 +66,10 @@ async function inspect(page, name) {
     for(const [width,height] of [[1600,1000],[1280,720],[1069,932],[768,1024],[700,850],[390,844],[320,568],[568,320]]){
       gate();await page.setViewportSize({width,height});
       await expect(page.locator('.friday-responsive-topbar')).toHaveAttribute('data-ready','true');
+      await expect.poll(()=>page.evaluate(()=>{
+        const bar=document.querySelector('.top-bar'),r=bar.getBoundingClientRect();
+        return [...bar.querySelectorAll('.friday-topbar-cell[data-overflow="false"],.friday-topbar-more')].filter(e=>e.getClientRects().length&&!e.closest('[hidden],[inert]')).every(e=>{const b=e.getBoundingClientRect();return b.left>=r.left-1&&b.right<=r.right+1&&b.bottom<=r.bottom+1;});
+      }),{message:'Measured header packing settles after a viewport change'}).toBeTruthy();
       await expect.poll(()=>page.evaluate(()=>{const s=FridayHolographicWorkspace.state;return s.projectedAvatarBounds?.inside && s.spatial.stageFrame.y>=document.querySelector('.top-bar').getBoundingClientRect().bottom;})).toBeTruthy();
       await expect.poll(()=>page.evaluate(()=>{const s=FridayHolographicWorkspace.state,b=s.projectedAvatarBounds,a=s.spatial.stage;return b?Math.max(b.w/a.w,b.h/a.h):0;}),{message:'Avatar grows into its resized stage'}).toBeGreaterThan(.75);
       await inspect(page,'home-'+width+'x'+height);
@@ -112,7 +116,8 @@ async function inspect(page, name) {
     await page.setViewportSize({width:320,height:568});
     await page.goto(new URL('/w/library',url).href);
     await page.getByRole('button',{name:'More Friday controls',exact:true}).click();
-    await page.getByRole('button',{name:'Workspace chat for Library',exact:true}).click();
+    await page.getByRole('button',{name:'Customize Library',exact:true}).click();
+    await page.getByRole('menuitem',{name:'Workspace chat for Library',exact:true}).click();
     await expect(page.getByRole('dialog',{name:'Friday controls',exact:true})).toBeHidden();
     await expect(page.getByRole('dialog',{name:'Library customization',exact:true})).toBeVisible();
     const studioBox=await page.getByRole('dialog',{name:'Library customization',exact:true}).boundingBox();
@@ -120,7 +125,8 @@ async function inspect(page, name) {
     if(output)await page.screenshot({path:path.join(output,'standalone-customize.png'),animations:'disabled'});
     await page.goto(new URL('/w/library',url).href);
     await page.getByRole('button',{name:'More Friday controls',exact:true}).click();
-    await page.getByRole('button',{name:'Version history for Library',exact:true}).click();
+    await page.getByRole('button',{name:'More tools for Library',exact:true}).click();
+    await page.getByRole('menuitem',{name:'Version history for Library',exact:true}).click();
     await expect(page.getByRole('dialog',{name:'Friday controls',exact:true})).toBeHidden();
     await expect(page.locator('.ws-tab-hist')).toBeVisible();
     if(output)await page.screenshot({path:path.join(output,'standalone-history.png'),animations:'disabled'});

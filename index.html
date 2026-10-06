@@ -3605,6 +3605,7 @@ window.addEventListener('DOMContentLoaded',function(){
 <link rel="stylesheet" href="/static/friday_shared_surfaces.css"/>
 <link rel="stylesheet" href="/static/friday_native_shell.css"/>
 <link rel="stylesheet" href="/static/friday_responsive_topbar.css"/>
+<link rel="stylesheet" href="/static/friday_workspace_tools.css"/>
 </head>
 
 <body>
@@ -12694,6 +12695,7 @@ function useSnapMenuOpener() {
   };
 }
 function SnapMenu({
+  id, windowTitle, workspaceId, maxed, onToggle,
   anchor,
   kind,
   current,
@@ -12710,10 +12712,10 @@ function SnapMenu({
   const ref = useRef(null);
   useEffect(() => {
     const away = e => {
-      if (ref.current && !ref.current.contains(e.target) && !(anchor && anchor.contains && anchor.contains(e.target))) onClose();
+      if (ref.current && !ref.current.contains(e.target) && !(anchor && anchor.contains && anchor.contains(e.target))) onClose(false);
     };
     const esc = e => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {e.preventDefault();e.stopPropagation();onClose(true);}
     };
     document.addEventListener('mousedown', away, true);
     document.addEventListener('keydown', esc);
@@ -12722,6 +12724,7 @@ function SnapMenu({
       document.removeEventListener('keydown', esc);
     };
   }, []);
+  useEffect(()=>{if(onToggle)ref.current?.querySelector('button')?.focus()},[]);
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { left: 0, right: 0, bottom: 40 };
   const width = 312;
   const left = Math.max(8, Math.min((window.innerWidth || 1280) - width - 8, r.right - width));
@@ -12738,10 +12741,11 @@ function SnapMenu({
     onClick: e => {
       e.stopPropagation();
       pick();
-      onClose();
+      onClose(false);
     }
   });
   const rows = [];
+  if (onToggle) rows.push(React.createElement("button", {key:"size", type:"button", role:"menuitem", className:"ws-arrange-size", "aria-label":(maxed?"Restore ":"Maximize ")+windowTitle, "data-fwin-togglemax":workspaceId, onClick:e=>{e.stopPropagation();onToggle();onClose(false)}}, maxed?"Restore window size":"Maximize workspace"));
   if (kind !== 'tray') {
     rows.push( /*#__PURE__*/React.createElement("div", { key: "t1", className: "snap-menu-title" }, "Snap"));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r1", className: "snap-menu-row" }, FRIDAY_SNAP_LAYOUTS.map((zones, i) => /*#__PURE__*/React.createElement("div", { key: i, className: "snap-tile" }, zones.map(([slot, grow]) => zone(slot, grow, FRIDAY_SNAP_NAMES[slot], () => onPick(slot), current === slot))))));
@@ -12761,12 +12765,13 @@ function SnapMenu({
     if (onHide) rows.push( /*#__PURE__*/React.createElement("button", { key: "hide", type: "button", className: "btn snap-menu-hide", onClick: e => {
         e.stopPropagation();
         onHide();
-        onClose();
+        onClose(false);
       } }, "Hide chat"));
   }
   return ReactDOM.createPortal( /*#__PURE__*/React.createElement("div", {
     ref: ref,
-    className: "snap-menu",
+    id: id,
+    className: "snap-menu"+(onToggle?" ws-arrange-menu":""),
     role: "menu",
     "aria-label": kind === 'tray' ? 'Where the chat goes' : 'Snap layouts',
     "data-testid": "snap-menu",
@@ -13594,69 +13599,324 @@ function WsIcon({
 // versions), the mark that Friday has customized it, and its body with that
 // customization applied. A desktop window draws the tools in its title bar; a
 // workspace tab draws them in the top bar, beside the workspace's name.
+function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+// A workspace's controls share one hierarchy in desktop windows and tabs.
+function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+function WsPickaxe() {
+  return /*#__PURE__*/React.createElement("svg", {
+    className: "ws-pickaxe",
+    viewBox: "0 0 20 20",
+    "aria-hidden": "true",
+    shapeRendering: "crispEdges"
+  }, /*#__PURE__*/React.createElement("path", {
+    fill: "var(--fr-cyan)",
+    d: "M3 2h9v2h3v3h2v5h-2V8h-3V6H8V4H3z"
+  }), /*#__PURE__*/React.createElement("path", {
+    fill: "var(--fr-violet)",
+    d: "M3 2h9v1H3zm9 2h3v1h-3zm3 3h2v1h-2z"
+  }), /*#__PURE__*/React.createElement("path", {
+    fill: "var(--fr-text)",
+    d: "M9 7h3v3h-2v2H8v2H6v2H4v2H1v-3h2v-2h2v-2h2V9h2z"
+  }), /*#__PURE__*/React.createElement("path", {
+    fill: "var(--fr-surface)",
+    d: "M10 8h1v2h-1v2H8v2H6v2H4v2H2v-1h2v-2h2v-2h2v-2h2z"
+  }));
+}
+function WsToolMenu({
+  id,
+  label,
+  anchor,
+  onClose,
+  children,
+  arrangeTucked
+}) {
+  const ref = useRef(null);
+  const [box, setBox] = useState(null);
+  React.useLayoutEffect(() => {
+    const place = () => {
+      const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : {
+        right: window.innerWidth - 12,
+        bottom: 48
+      };
+      const h = Math.min(ref.current?.scrollHeight || 310, window.innerHeight - 24);
+      const w = Math.min(310, window.innerWidth - 24);
+      const requested = {
+        x: Math.max(12, Math.min(window.innerWidth - w - 12, r.right - w)),
+        y: Math.max(12, Math.min(window.innerHeight - h - 12, r.bottom + 7)),
+        w,
+        h
+      };
+      const next = window.FridayHolographicWorkspace?.constrainRect(requested) || requested;
+      setBox(previous => previous && Object.keys(next).every(k => Math.abs(previous[k] - next[k]) < .5) ? previous : next);
+    };
+    place();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(place) : null;
+    if (ref.current) ro?.observe(ref.current);
+    window.addEventListener('resize', place);
+    window.addEventListener('friday:spatial-layout', place);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', place);
+      window.removeEventListener('friday:spatial-layout', place);
+    };
+  }, [anchor]);
+  useEffect(() => {
+    const element = ref.current;
+    const visibleTargets = () => Array.from(element?.querySelectorAll('button:not([disabled]),a[href]') || []).filter(target => target.getClientRects().length && getComputedStyle(target).visibility !== 'hidden');
+    const first = visibleTargets()[0];
+    if (box) first?.focus();
+    const away = e => {
+      if (!element?.contains(e.target) && !anchor?.contains?.(e.target)) onClose(false);
+    };
+    const key = e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onClose(true);
+        return;
+      }
+      if (!element?.contains(e.target)) return;
+      const targets = visibleTargets();
+      const index = targets.indexOf(document.activeElement);
+      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? targets.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + targets.length) % targets.length;
+        targets[next]?.focus();
+      } else if (e.key === 'Tab') {
+        onClose(false);
+      }
+    };
+    document.addEventListener('pointerdown', away, true);
+    document.addEventListener('keydown', key, true);
+    return () => {
+      document.removeEventListener('pointerdown', away, true);
+      document.removeEventListener('keydown', key, true);
+    };
+  }, [anchor, onClose, !!box]);
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
+    ref: ref,
+    id: id,
+    className: "ws-tools-menu",
+    "data-arrange-tucked": arrangeTucked ? 'true' : 'false',
+    role: "menu",
+    "aria-label": label,
+    style: {
+      left: box?.x || 0,
+      top: box?.y || 0,
+      width: box?.w || 310,
+      maxHeight: box?.h || 'calc(100vh - 24px)',
+      visibility: box ? 'visible' : 'hidden'
+    },
+    onMouseDown: e => e.stopPropagation(),
+    onDoubleClick: e => e.stopPropagation()
+  }, children), document.body);
+}
 function WsTools({
   id,
   title,
   emoji,
   histOpen,
   onHistory,
-  onImproveNote
+  onImproveNote,
+  arrange,
+  onOpenTab,
+  onClose
 }) {
-  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    title: `Chat with ${fridayName()} about ${title} \u2014 tweak the layout, add features, undo changes`,
-    "aria-label": `Workspace chat for ${title}`,
+  const [open, setOpen] = useState(null);
+  const root = useRef(null),
+    customize = useRef(null),
+    more = useRef(null),
+    arrangeButton = useRef(null),
+    opener = useRef(null);
+  const bundle = !!WS_BY_ID[fridayWorkspaceId(id)]?.bundle;
+  const uid = 'ws-tools-' + String(id).replace(/[^a-z0-9_-]/gi, '-') + (onClose ? '-window' : '-tab');
+  const close = React.useCallback((restore = true) => {
+    setOpen(null);
+    if (restore) requestAnimationFrame(() => opener.current?.isConnected && opener.current.focus());
+  }, []);
+  useEffect(() => {
+    const other = e => {
+      if (e.detail?.owner !== uid) setOpen(null);
+    };
+    window.addEventListener('friday:workspace-tools-open', other);
+    return () => window.removeEventListener('friday:workspace-tools-open', other);
+  }, [uid]);
+  const show = (kind, element, toggle = true) => {
+    opener.current = element;
+    window.dispatchEvent(new CustomEvent('friday:workspace-tools-open', {
+      detail: {
+        owner: uid
+      }
+    }));
+    setOpen(current => toggle && current === kind ? null : kind);
+  };
+  const act = callback => {
+    close(false);
+    callback?.();
+    window.dispatchEvent(new CustomEvent('friday:workspace-tool-action', {
+      detail: {
+        workspace: id
+      }
+    }));
+  };
+  const openSource = () => {
+    if (!bundle || !window.fridayImproveWorkspace) return;
+    act(() => window.fridayImproveWorkspace(id, title).then(msg => {
+      if (onImproveNote) onImproveNote(msg || '');else if (msg && window.fridayToast) window.fridayToast(msg);
+    }));
+  };
+  const trigger = (kind, label, element) => ({
+    type: 'button',
+    'aria-label': label,
+    'aria-haspopup': 'menu',
+    'aria-expanded': open === kind,
+    'aria-controls': uid + '-' + kind,
     onClick: e => {
       e.stopPropagation();
-      window.fridayOpenWorkspaceChat && window.fridayOpenWorkspaceChat(id, title, emoji);
+      show(kind, e.currentTarget);
     },
-    style: {
-      fontSize: 12
-    }
-  }, "\uD83D\uDCAC"), /*#__PURE__*/React.createElement("button", {
-    title: `Talk to ${fridayName()} about ${title}`,
-    "aria-label": `Start voice for ${title}`,
+    onKeyDown: e => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopPropagation();
+        show(kind, e.currentTarget, false);
+      }
+    },
+    ref: element
+  });
+  return /*#__PURE__*/React.createElement("span", {
+    className: "ws-tools",
+    "data-workspace": id,
+    ref: root
+  }, /*#__PURE__*/React.createElement("button", _extends({}, trigger('customize', 'Customize ' + title, customize), {
+    className: "ws-tool-customize",
+    "data-ws-customize": id,
+    title: 'Customize ' + title
+  }), /*#__PURE__*/React.createElement(WsPickaxe, null), /*#__PURE__*/React.createElement("span", {
+    className: "ws-tool-label"
+  }, "Customize")), arrange && /*#__PURE__*/React.createElement("button", _extends({}, trigger('arrange', 'Arrange ' + title, arrangeButton), {
+    className: "ws-tool-arrange",
+    "data-fwin-max": id,
+    title: 'Arrange ' + title
+  }), /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 20 20",
+    width: "18",
+    height: "18",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.4",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("rect", {
+    x: "2.5",
+    y: "3.5",
+    width: "15",
+    height: "13",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M11.5 4v12"
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "ws-tool-label"
+  }, "Arrange")), /*#__PURE__*/React.createElement("button", _extends({}, trigger('more', 'More tools for ' + title, more), {
+    className: "ws-tool-more",
+    "data-ws-more": id,
+    title: 'More tools for ' + title
+  }), /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 20 20",
+    width: "18",
+    height: "18",
+    fill: "currentColor",
+    "aria-hidden": "true"
+  }, [4, 10, 16].map(cx => /*#__PURE__*/React.createElement("circle", {
+    key: cx,
+    cx: cx,
+    cy: "10",
+    r: "1.5"
+  })))), onClose && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ws-tool-close",
+    "aria-label": 'Close ' + title,
+    title: 'Close ' + title,
     onClick: e => {
       e.stopPropagation();
-      window.fridayStartWorkspaceVoice && window.fridayStartWorkspaceVoice(id);
-    },
-    style: {
-      fontSize: 12
+      onClose();
     }
-  }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("button", {
-    /* The 40 snapshots workspace_studio keeps, reachable without asking
-       Friday out loud. Beside \uD83D\uDCAC because that is where the changes it
-       lists come from. */
-    title: `Earlier versions of ${title} \u2014 review and roll back`,
-    "aria-label": `Version history for ${title}`,
-    "aria-pressed": !!histOpen,
-    onClick: e => {
-      e.stopPropagation();
-      onHistory();
-    },
-    style: {
-      fontSize: 12,
-      color: histOpen ? '#00d4ff' : undefined
-    }
-  }, "\uD83D\uDD52"), /*#__PURE__*/React.createElement("button", {
-    /* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens
-       its codebase chat in the salon; a native one is told plainly that
-       improving it means Friday's own source, which is not built
-       (static/friday_bundles.js). The answer goes to the window's own line
-       when it has one (FWin), else to a toast (the tab's bar). */
-    title: `Improve ${title} in the salon`,
-    "aria-label": `Improve ${title}`,
+  }, "\xD7"), open === 'customize' && /*#__PURE__*/React.createElement(WsToolMenu, {
+    id: uid + '-customize',
+    label: 'Customize ' + title,
+    anchor: opener.current,
+    onClose: close
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ws-tools-menu-heading"
+  }, /*#__PURE__*/React.createElement(WsPickaxe, null), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Vibe Coding Salon"), /*#__PURE__*/React.createElement("span", null, "Choose what you want to shape"))), /*#__PURE__*/React.createElement("button", {
+    role: "menuitem",
+    "aria-label": 'Workspace chat for ' + title,
+    onClick: () => act(() => window.fridayOpenWorkspaceChat?.(id, title, emoji))
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ws-menu-icon"
+  }, "\u25C8"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("strong", null, "Customize workspace"), /*#__PURE__*/React.createElement("small", null, title, " \xB7 layout, styling and quick actions"))), /*#__PURE__*/React.createElement("button", {
+    role: "menuitem",
+    "aria-label": 'Improve ' + title,
     "data-ws-improve": id,
-    onClick: e => {
-      e.stopPropagation();
-      if (!window.fridayImproveWorkspace) return;
-      window.fridayImproveWorkspace(id, title).then(msg => {
-        if (onImproveNote) onImproveNote(msg || '');else if (msg && window.fridayToast) window.fridayToast(msg);
-      });
-    },
-    style: {
-      fontSize: 12
+    disabled: !bundle,
+    onClick: openSource
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ws-menu-icon"
+  }, "\u2318"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("strong", null, "Open codebase Salon"), /*#__PURE__*/React.createElement("small", null, bundle ? 'Edit the code behind this workspace' : 'Built-in source editing is not available yet'))), /*#__PURE__*/React.createElement("p", {
+    className: "ws-tools-menu-note"
+  }, "Workspace changes keep earlier versions. Codebase changes have their own review.")), open === 'more' && /*#__PURE__*/React.createElement(WsToolMenu, {
+    id: uid + '-more',
+    label: 'More tools for ' + title,
+    anchor: opener.current,
+    onClose: close,
+    arrangeTucked: !!arrange && !arrangeButton.current?.getClientRects().length
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ws-tools-menu-heading"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, title), /*#__PURE__*/React.createElement("span", null, "Workspace tools"))), arrange && /*#__PURE__*/React.createElement("button", {
+    role: "menuitem",
+    className: "ws-more-arrange",
+    "aria-label": 'Arrange ' + title,
+    onClick: () => {
+      opener.current = more.current;
+      setOpen('arrange');
     }
-  }, "\uD83D\uDEE0\uFE0F"));
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ws-menu-icon"
+  }, "\u25A5"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("strong", null, "Arrange window"), /*#__PURE__*/React.createElement("small", null, "Size, snap and place beside chat"))), /*#__PURE__*/React.createElement("button", {
+    role: "menuitem",
+    "aria-label": 'Start voice for ' + title,
+    onClick: () => act(() => window.fridayStartWorkspaceVoice?.(id))
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ws-menu-icon"
+  }, "\u25C9"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("strong", null, "Talk to ", fridayName()), /*#__PURE__*/React.createElement("small", null, "Voice conversation about this workspace"))), /*#__PURE__*/React.createElement("button", {
+    role: "menuitem",
+    "aria-label": 'Version history for ' + title,
+    "aria-pressed": !!histOpen,
+    onClick: () => act(onHistory)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ws-menu-icon"
+  }, "\u21B6"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("strong", null, "Version history"), /*#__PURE__*/React.createElement("small", null, "Review changes and restore an earlier version"))), onOpenTab && id !== 'settings' && /*#__PURE__*/React.createElement("button", {
+    role: "menuitem",
+    "aria-label": 'Open ' + title + ' in its own tab',
+    "data-ws-tab": id,
+    onClick: () => act(onOpenTab)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ws-menu-icon"
+  }, "\u2197"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("strong", null, "Open in its own tab"), /*#__PURE__*/React.createElement("small", null, "Continue with more room")))), open === 'arrange' && arrange && /*#__PURE__*/React.createElement(SnapMenu, {
+    id: uid + '-arrange',
+    anchor: opener.current,
+    kind: "workspace",
+    current: arrange.current,
+    onPick: slot => act(() => arrange.onPick(slot)),
+    onChat: fraction => act(() => arrange.onChat(fraction)),
+    onClose: close,
+    windowTitle: title,
+    workspaceId: id,
+    maxed: arrange.maxed,
+    onToggle: () => act(arrange.onToggle)
+  }));
 }
 function WsCustomizedMark({
   id
@@ -13667,13 +13927,9 @@ function WsCustomizedMark({
   const cust = map[id] || {};
   if (!Object.keys(cust).length) return null;
   return /*#__PURE__*/React.createElement("span", {
-    title: (fridayName() + " has customized this workspace \u2014 open \uD83D\uDCAC to tweak or revert"),
-    style: {
-      marginLeft: 6,
-      fontSize: 10,
-      opacity: .85
-    }
-  }, "\uD83D\uDEE0\uFE0F");
+    className: "ws-customized-mark",
+    title: fridayName() + " has customized this workspace — open Customize to tweak or revert"
+  }, /*#__PURE__*/React.createElement(WsPickaxe, null));
 }
 function WsCustomBody({
   id,
@@ -13789,19 +14045,23 @@ function FWin({
     const bar = fwinRef.current && fwinRef.current.querySelector('.fwin-bar');
     if (!bar) return;
     // offsetHeight excludes the temporary scale used by the opening animation.
-    const measure = () => { const height = bar.offsetHeight; if (height > 0) setHistoryTop(height); };
+    const measure = () => {
+      const height = bar.offsetHeight;
+      if (height > 0) setHistoryTop(height);
+    };
     measure();
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
     if (observer) observer.observe(bar);
     window.addEventListener('resize', measure);
-    return () => { if (observer) observer.disconnect(); window.removeEventListener('resize', measure); };
+    return () => {
+      if (observer) observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
   }, []);
   const aimAtDock = () => {
     const el = fwinRef.current;
     if (!el) return;
-    const img = document.querySelector('.dock-btn img[src="assets/icons/' + ((WS_BY_ID[id] || {}).icon || id) + '.svg"]');
-    // offsetLeft/Top: the window's own position, unaffected by the scale
-    // the opening animation is applying at this moment.
+    const img = document.querySelector('.dock-btn img[src="assets/icons/' + id + '.svg"]');
     if (img && el.offsetWidth) {
       const d = img.getBoundingClientRect();
       el.style.setProperty('--fwin-ox', Math.round(d.left + d.width / 2 - el.offsetLeft) + 'px');
@@ -13843,7 +14103,12 @@ function FWin({
       const area = fridayDesktopArea();
       const w = Math.max(1, Math.min(pref.w, area.w - 20));
       const h = Math.max(1, Math.min(pref.h, area.h - 20));
-      return {w,h,x:Math.round(area.x + (area.w - w) / 2),y:Math.round(area.y + Math.min(24, (area.h - h) / 2))};
+      return {
+        w,
+        h,
+        x: Math.round(area.x + (area.w - w) / 2),
+        y: Math.round(area.y + Math.min(24, (area.h - h) / 2))
+      };
     }
     const dock = document.querySelector('.dock:not(.hidden)');
     const dr = dock && dock.getBoundingClientRect();
@@ -13902,7 +14167,8 @@ function FWin({
   useEffect(() => {
     if (!dragging) return;
     const mv = e => {
-      const o = dOff.current, sn = snapRef.current;
+      const o = dOff.current,
+        sn = snapRef.current;
       if (o.free) {
         if (Math.abs(e.clientX - o.sx) + Math.abs(e.clientY - o.sy) < 6) return;
         o.free = false;
@@ -13915,7 +14181,10 @@ function FWin({
         w: sizeRef.current.w,
         h: sizeRef.current.h
       });
-      setPos({ x: p.x, y: p.y });
+      setPos({
+        x: p.x,
+        y: p.y
+      });
     };
     const up = () => {
       setDragging(false);
@@ -13928,11 +14197,18 @@ function FWin({
       removeEventListener('mouseup', up);
     };
   }, [dragging]);
-  // Resize from any edge or corner (fridayEdgeHandles); the dragged side
-  // moves and the opposite one stays where it is.
+  // Resize from any edge or corner; the dragged side moves, the opposite one stays.
   const startResize = (e, dir) => {
     if (snap.slot) return;
-    rStart.current = { px: e.clientX, py: e.clientY, x: box.x, y: box.y, w: box.w, h: box.h, dir };
+    rStart.current = {
+      px: e.clientX,
+      py: e.clientY,
+      x: box.x,
+      y: box.y,
+      w: box.w,
+      h: box.h,
+      dir
+    };
     setResizing(dir);
     onFocus();
   };
@@ -13941,11 +14217,22 @@ function FWin({
     fridayResizeCursor(resizing);
     const mv = e => {
       const r = fridayResizeRect(rStart.current, rStart.current.dir || 'se', e.clientX, e.clientY, {
-        minW: 400, minH: 280, maxW: vw() - 20, maxH: vh() - 50, minY: 30,
-        maxRight: vw() - 4, maxBottom: vh() - 4
+        minW: 400,
+        minH: 280,
+        maxW: vw() - 20,
+        maxH: vh() - 50,
+        minY: 30,
+        maxRight: vw() - 4,
+        maxBottom: vh() - 4
       });
-      setSize({ w: Math.round(r.w), h: Math.round(r.h) });
-      setPos({ x: Math.round(r.x), y: Math.round(r.y) });
+      setSize({
+        w: Math.round(r.w),
+        h: Math.round(r.h)
+      });
+      setPos({
+        x: Math.round(r.x),
+        y: Math.round(r.y)
+      });
     };
     const up = () => setResizing(false);
     addEventListener('mousemove', mv);
@@ -13957,28 +14244,39 @@ function FWin({
     };
   }, [resizing]);
 
+  // ── Live customization Friday applied to THIS workspace via the 💬 chat ──
   // The history overlay is local to THIS window rather than App-level, so two
-  // open workspaces each get their own and closing one does not close the other.
-  // Settings → Appearance & 3D opens a workspace WITH its history showing by setting the
-  // one-shot flag below, rather than carrying a second copy of the panel that
-  // could drift from this one.
+  // open workspaces each get their own. Two arrival paths, because the window
+  // may or may not already exist: a flag read on mount covers "Settings opened
+  // this workspace just now", an event covers "the window was already open, so
+  // nothing is going to mount." Both clear the flag, or it would sit there and
+  // fire on some unrelated open later.
   // MAXIMIZED: the window fills the desktop between the top bar and the dock
-  // (the ⤢ button, a double-click on the title bar, or Friday opening one
-  // item with max). Its own size and place are kept for when it is restored.
-  // A flag covers a window mounted by that open; the event, one already open.
+  // (the ⤢ button, a double-click on the title bar, or Friday opening one item
+  // with max); its own size and place are kept for when it is restored.
   // SNAPPED: the window fills a slot of the snap area, edge to edge
   // (unified-shell.md §11): maximised is the whole of it, beside a shown tray.
   // Its own size and place are kept for when it is freed.
-  const snap = useFridaySnap(id, window.__fridayMaxFor===id?'full':saved&&FRIDAY_SNAP_SLOTS[saved.snap]?saved.snap:!saved&&document.body.classList.contains('friday-experience-desktop')?'full':null);
+  const snap = useFridaySnap(id, window.__fridayMaxFor === id ? 'full' : saved && FRIDAY_SNAP_SLOTS[saved.snap] ? saved.snap : !saved && document.body.classList.contains('friday-experience-desktop') ? 'full' : null);
   const snapRef = useRef(snap);
   snapRef.current = snap;
   const sizeRef = useRef(size);
   sizeRef.current = size;
   const maxed = snap.slot === 'full';
   // Remember the arrangement alongside the independent floating geometry.
-  useEffect(()=>{try{localStorage.setItem(LSK,JSON.stringify({x:pos.x,y:pos.y,w:size.w,h:size.h,pv:pref?pref.v:undefined,snap:snap.slot}))}catch(_){}},[pos.x,pos.y,size.w,size.h,snap.slot]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LSK, JSON.stringify({
+        x: pos.x,
+        y: pos.y,
+        w: size.w,
+        h: size.h,
+        pv: pref ? pref.v : undefined,
+        snap: snap.slot
+      }));
+    } catch (_) {}
+  }, [pos.x, pos.y, size.w, size.h, snap.slot]);
   const toggleMax = () => snap.setSlot(maxed ? null : 'full', 'owner');
-  const menu = useSnapMenuOpener();
   useEffect(() => {
     if (window.__fridayMaxFor === id) delete window.__fridayMaxFor;
     const on = e => {
@@ -13990,18 +14288,17 @@ function FWin({
     window.addEventListener('friday:fwin-max', on);
     return () => window.removeEventListener('friday:fwin-max', on);
   }, [id]);
-  const requestedBox = snap.box || {x:pos.x,y:pos.y,w:size.w,h:size.h};
+  const requestedBox = snap.box || {
+    x: pos.x,
+    y: pos.y,
+    w: size.w,
+    h: size.h
+  };
   const box = window.FridayHolographicWorkspace?.constrainRect(requestedBox) || requestedBox;
   const [histOpen, setHistOpen] = useState(false);
-  // The browser refused the tab (pop-ups blocked for this site): the window
-  // stays, with a line under its title bar saying how to allow it.
+  // The browser refused the tab (pop-ups blocked): the window stays and says why.
   const [tabBlocked, setTabBlocked] = useState(false);
   const [improveNote, setImproveNote] = useState('');
-  // Two arrival paths, because the window may or may not already exist. A flag
-  // read on mount covers "Settings opened this workspace just now"; an event
-  // covers "the window was already open, so nothing is going to mount." Both
-  // clear the flag, or it would sit there and fire on some unrelated open
-  // later — a one-shot that is not actually one-shot is worse than neither.
   useEffect(() => {
     if (window.__fridayOpenHistoryFor === id) {
       delete window.__fridayOpenHistoryFor;
@@ -14018,8 +14315,8 @@ function FWin({
   }, [id]);
   return /*#__PURE__*/React.createElement("div", {
     className: 'fwin' + (closing ? ' closing' : '') + (maxed ? ' maxed' : '') + (snap.slot ? ' snapped' : ''),
-    'data-friday-workspace': id,
     "data-snap": snap.slot || undefined,
+    "data-friday-workspace": id,
     ref: fwinRef,
     style: {
       left: box.x,
@@ -14038,14 +14335,21 @@ function FWin({
     onMouseDown: e => {
       if (e.target.closest('.fwin-btns') || e.button !== 0) return;
       onFocus();
+      // Dragged away, a snapped window is freed at its own size, with the pointer
+      // at the same place along its title bar.
       if (snap.slot) {
-        // Dragged away, a snapped window is freed at its own size, with the
-        // pointer at the same place along its title bar.
         const rel = box.w ? (e.clientX - box.x) / box.w : 0.5;
-        dOff.current = { x: Math.round(rel * size.w), y: e.clientY - box.y, free: true, sx: e.clientX, sy: e.clientY };
-      } else {
-        dOff.current = { x: e.clientX - box.x, y: e.clientY - box.y };
-      }
+        dOff.current = {
+          x: Math.round(rel * size.w),
+          y: e.clientY - box.y,
+          free: true,
+          sx: e.clientX,
+          sy: e.clientY
+        };
+      } else dOff.current = {
+        x: e.clientX - box.x,
+        y: e.clientY - box.y
+      };
       setDragging(true);
     }
   }, /*#__PURE__*/React.createElement("span", {
@@ -14053,7 +14357,9 @@ function FWin({
   }, /*#__PURE__*/React.createElement(WsIcon, {
     ws: id,
     glyph: emoji
-  }), title, /*#__PURE__*/React.createElement(ConnectorDot, {
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "fwin-title-text"
+  }, title), /*#__PURE__*/React.createElement(ConnectorDot, {
     wsId: id
   }), /*#__PURE__*/React.createElement(WsCustomizedMark, {
     id: id
@@ -14065,42 +14371,20 @@ function FWin({
     emoji: emoji,
     histOpen: histOpen,
     onHistory: () => setHistOpen(v => !v),
-    onImproveNote: setImproveNote
-  }), /*#__PURE__*/React.createElement("button", Object.assign({}, menu.bind, {
-    // Resting here opens the snap layouts (unified-shell.md §11.3).
-    title: maxed ? `Restore ${title} to its own size` : `Maximize ${title}`,
-    "aria-label": maxed ? `Restore ${title}` : `Maximize ${title}`,
-    "aria-pressed": maxed,
-    "aria-haspopup": "menu",
-    "data-fwin-max": id,
-    onClick: e => {
-      e.stopPropagation();
-      toggleMax();
+    onImproveNote: setImproveNote,
+    arrange: {
+      maxed,
+      current: snap.slot,
+      onToggle: toggleMax,
+      onPick: s => snap.setSlot(s, 'owner'),
+      onChat: f => window.dispatchEvent(new CustomEvent('friday:beside-chat', {
+        detail: {
+          workspace: id,
+          frac: f
+        }
+      }))
     },
-    style: {
-      fontSize: 12
-    }
-  }), maxed ? "\u2921" : "\u2922"), menu.open && /*#__PURE__*/React.createElement(SnapMenu, Object.assign({}, menu.menu, {
-    anchor: menu.anchor.current,
-    kind: 'workspace',
-    current: snap.slot,
-    onPick: s => snap.setSlot(s, 'owner'),
-    onChat: f => window.dispatchEvent(new CustomEvent('friday:beside-chat', { detail: { workspace: id, frac: f } }))
-  })), /*#__PURE__*/React.createElement("button", {
-    /* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id>, the workspace
-       alone, full-tab (see StandaloneShell). Not shown for Settings, which
-       lives in the desktop. */
-    title: `Open ${title} in its own tab`,
-    "aria-label": `Open ${title} in its own tab`,
-    "data-ws-tab": id,
-    hidden: id === 'settings',
-    /* ONE CLICK MOVES IT. The tab opens (or the workspace's existing tab comes
-       forward) inside this click, carrying the window's place -- thread,
-       folder, how far down -- and only once the browser has actually given
-       us the tab does this window fold back into its dock icon. If the
-       browser blocks it, nothing closes: the window stays and says why. */
-    onClick: e => {
-      e.stopPropagation();
+    onOpenTab: () => {
       const body = fwinRef.current && fwinRef.current.querySelector('.fwin-body');
       const tab = fridayOpenWorkspaceTab(id, fridayCollectTabState(id, body));
       if (!tab) {
@@ -14110,12 +14394,8 @@ function FWin({
       setTabBlocked(false);
       onClose();
     },
-    style: {
-      fontSize: 12
-    }
-  }, "\u2197"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close ' + title, title: 'Close ' + title, 
-    onClick: onClose
-  }, "\xD7"))), improveNote && /*#__PURE__*/React.createElement("div", {
+    onClose: onClose
+  }))), improveNote && /*#__PURE__*/React.createElement("div", {
     className: "fwin-tab-blocked",
     role: "alert",
     "data-ws-improve-note": id,
@@ -14123,7 +14403,7 @@ function FWin({
   }, improveNote), tabBlocked && /*#__PURE__*/React.createElement("div", {
     className: "fwin-tab-blocked",
     role: "alert"
-  }, /*#__PURE__*/React.createElement("span", null, "The browser blocked the new tab. Allow pop-ups for ", /*#__PURE__*/React.createElement("b", null, window.location.host), " (the blocked pop-up icon at the right end of the address bar), then click \u2197 again. This window stays open until then."), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, "The browser blocked the new tab. Allow pop-ups for ", /*#__PURE__*/React.createElement("b", null, window.location.host), " (the blocked pop-up icon at the right end of the address bar), then choose Open in its own tab again. This window stays open until then."), /*#__PURE__*/React.createElement("button", {
     title: "Dismiss",
     "aria-label": "Dismiss the pop-up notice",
     onClick: e => {
@@ -14154,7 +14434,6 @@ function FWin({
     slot: snap.preview
   }));
 }
-
 // ═══ WORKSPACE STUDIO CHAT ═══
 // Contextual chat scoped to ONE workspace (opened by the 💬 button on its
 // window). Friday knows which workspace you're in, so you can give feedback,

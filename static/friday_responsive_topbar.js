@@ -217,11 +217,19 @@
           closeRef.current(cell.contains(document.activeElement));
         });
       };
+      const workspaceAction = event => {
+        const workspace = event.detail?.workspace;
+        if (!workspace || !Array.from(panel.current.querySelectorAll('.ws-tools[data-workspace]')).some(tools => tools.dataset.workspace === workspace)) return;
+        // A workspace tool's popup is a body portal. Its native action owns the
+        // new destination; dismiss the enclosing overflow without stealing focus.
+        queueMicrotask(() => { if (openRef.current) closeRef.current(false); });
+      };
       document.addEventListener('pointerdown', outside, true);
       document.addEventListener('keydown', key, true);
+      window.addEventListener('friday:workspace-tool-action', workspaceAction);
       panel.current.addEventListener('click', contextAction, true);
       const currentPanel = panel.current;
-      return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); currentPanel.removeEventListener('click', contextAction, true); };
+      return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); window.removeEventListener('friday:workspace-tool-action', workspaceAction); currentPanel.removeEventListener('click', contextAction, true); };
     }, [open]);
 
     const nativeCell = item => {

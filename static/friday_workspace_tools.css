@@ -1,0 +1,45 @@
+/* Shared workspace tools keep context primary and secondary actions reachable. */
+.fwin {container-type:inline-size;container-name:friday-window}
+.fwin-bar {gap:12px}
+.fwin-title {display:flex;align-items:center;min-width:0;flex:1;overflow:hidden}
+.fwin-title-text {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fwin-title>.ws-icon,.fwin-title>.ws-customized-mark {flex-shrink:0}
+.fwin-btns {display:flex;flex-shrink:0}
+.ws-tools {display:inline-flex;align-items:center;gap:5px;flex-shrink:0}
+.ws-tools>button,.ws-tab-name .ws-tab-tools .ws-tools>button {display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:32px;min-height:32px;padding:5px 9px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--fr-text);font:500 12px/1.2 var(--fr-font-body);cursor:pointer;white-space:nowrap}
+.ws-tools>button:hover,.ws-tools>button[aria-expanded=true],.ws-tab-name .ws-tab-tools .ws-tools>button:hover {background:color-mix(in srgb,var(--fr-text) 7%,transparent);border-color:var(--fr-glass-edge)}
+.ws-tools>button:focus-visible,.ws-tools-menu button:focus-visible,.ws-arrange-menu button:focus-visible {outline:2px solid var(--fr-cyan);outline-offset:2px}
+.ws-tools>button.ws-tool-customize {color:var(--fr-cyan);background:color-mix(in srgb,var(--fr-cyan) 7%,transparent);border-color:color-mix(in srgb,var(--fr-cyan) 16%,transparent)}
+.ws-tools>button.ws-tool-more,.ws-tools>button.ws-tool-close {padding:5px}
+.ws-tools>button.ws-tool-close {font-size:21px;font-weight:300;margin-left:2px}
+.ws-pickaxe {width:20px;height:20px;flex-shrink:0;filter:drop-shadow(0 1px 3px color-mix(in srgb,var(--fr-cyan) 25%,transparent))}
+.ws-customized-mark {display:inline-flex;margin-left:4px;opacity:.8}
+.ws-customized-mark .ws-pickaxe {width:13px;height:13px}
+.ws-tools-menu {position:fixed;z-index:9990;box-sizing:border-box;padding:7px;overflow:auto;overscroll-behavior:contain;background:color-mix(in srgb,var(--fr-surface) 97%,transparent);border:1px solid color-mix(in srgb,var(--fr-cyan) 24%,transparent);border-radius:14px;box-shadow:0 18px 56px color-mix(in srgb,var(--fr-surface) 80%,transparent);backdrop-filter:blur(20px);color:var(--fr-text);font:12px/1.45 var(--fr-font-body)}
+.ws-tools-menu-heading {display:flex;align-items:center;gap:9px;padding:9px 10px 11px;border-bottom:1px solid var(--fr-glass-edge);margin-bottom:5px}
+.ws-tools-menu-heading strong {display:block;font:500 13px/1.5 var(--fr-font-display);color:var(--fr-text)}
+.ws-tools-menu-heading span {display:block;font-size:10px;opacity:.63;margin-top:1px}
+.ws-tools-menu>button {display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;text-align:left;border:1px solid transparent;border-radius:9px;background:none;color:var(--fr-text);padding:10px;font:inherit;cursor:pointer}
+.ws-tools-menu>button:hover:not(:disabled),.ws-tools-menu>button:focus-visible {background:color-mix(in srgb,var(--fr-cyan) 7%,transparent);border-color:color-mix(in srgb,var(--fr-cyan) 14%,transparent)}
+.ws-tools-menu>button>span:last-child {min-width:0}
+.ws-tools-menu>button strong {display:block;font-size:12px;font-weight:500}
+.ws-tools-menu>button small {display:block;font-size:10px;line-height:1.45;opacity:.65;margin-top:3px;white-space:normal}
+.ws-tools-menu>button:disabled {opacity:.48;cursor:default}
+.ws-menu-icon {display:inline-flex;align-items:center;justify-content:center;width:24px;flex-shrink:0;font-size:20px;color:var(--fr-cyan)}
+.ws-tools-menu-note {padding:8px 10px 3px;margin:6px 0 0;border-top:1px solid var(--fr-glass-edge);font-size:10px;opacity:.6}
+.ws-tools-menu>button.ws-more-arrange {display:none}
+.ws-arrange-menu {box-sizing:border-box;z-index:9990}
+.ws-arrange-size {display:block;width:100%;margin:0 0 14px;padding:10px;border:1px solid color-mix(in srgb,var(--fr-cyan) 20%,transparent);border-radius:8px;background:color-mix(in srgb,var(--fr-cyan) 8%,transparent);color:var(--fr-text);font:500 12px var(--fr-font-body);cursor:pointer;text-align:left}
+@container friday-window (max-width:600px) {
+  .ws-tools .ws-tool-label {display:none}
+  .ws-tools>button {padding:5px;min-width:32px}
+}
+@container friday-window (max-width:380px) {
+  .ws-tools>.ws-tool-arrange {display:none}
+}
+@media(max-width:600px) {
+  .ws-tab-tools .ws-tool-label {display:none}
+}
+/* Menus are body portals; the owning toolbar marks whether Arrange was tucked. */
+.ws-tools-menu[data-arrange-tucked=true]>button.ws-more-arrange {display:flex}
+

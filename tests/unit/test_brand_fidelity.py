@@ -321,14 +321,17 @@ def test_a_tab_carries_the_workspace_tools_its_customization_and_the_rocket(brow
         page.goto(base + "/w/news", wait_until="domcontentloaded")
         page.wait_for_selector('[data-testid="ws-tab-tools"] button', timeout=60000)
         tools = page.locator('[data-testid="ws-tab-tools"] button')
-        # The salon's "Improve this workspace" comes last, after the history.
+        # The shared frame exposes intent first; secondary tools live in More.
         assert [tools.nth(i).get_attribute("aria-label") for i in range(tools.count())] == [
-            "Workspace chat for News", "Start voice for News", "Version history for News", "Improve News"]
+            "Customize News", "More tools for News"]
         page.wait_for_selector('.ws-tab .ws-custom-root[data-ws="news"] >> text=Do the thing', timeout=15000)
         assert page.locator('[data-testid="ws-tab-name"] [title^="Friday has customized"]').count() == 1
-        tools.nth(2).click()
+        page.get_by_role("button", name="More tools for News", exact=True).click()
+        page.get_by_role("menuitem", name="Version history for News", exact=True).click()
         page.wait_for_selector(".ws-tab-hist >> text=History", timeout=10000)
-        assert tools.nth(2).get_attribute("aria-pressed") == "true"
+        page.get_by_role("button", name="More tools for News", exact=True).click()
+        assert page.get_by_role("menuitem", name="Version history for News", exact=True).get_attribute("aria-pressed") == "true"
+        page.keyboard.press("Escape")
         icons = page.evaluate("Array.from(document.querySelectorAll('link[rel~=\"icon\"]'))"
                               ".map(l => l.getAttribute('href'))")
         assert icons and all(h.startswith("/static/") for h in icons), icons

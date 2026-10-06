@@ -1234,6 +1234,7 @@ function useSnapMenuOpener() {
   };
 }
 function SnapMenu({
+  id, windowTitle, workspaceId, maxed, onToggle,
   anchor,
   kind,
   current,
@@ -1250,10 +1251,10 @@ function SnapMenu({
   const ref = useRef(null);
   useEffect(() => {
     const away = e => {
-      if (ref.current && !ref.current.contains(e.target) && !(anchor && anchor.contains && anchor.contains(e.target))) onClose();
+      if (ref.current && !ref.current.contains(e.target) && !(anchor && anchor.contains && anchor.contains(e.target))) onClose(false);
     };
     const esc = e => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {e.preventDefault();e.stopPropagation();onClose(true);}
     };
     document.addEventListener('mousedown', away, true);
     document.addEventListener('keydown', esc);
@@ -1262,6 +1263,7 @@ function SnapMenu({
       document.removeEventListener('keydown', esc);
     };
   }, []);
+  useEffect(()=>{if(onToggle)ref.current?.querySelector('button')?.focus()},[]);
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { left: 0, right: 0, bottom: 40 };
   const width = 312;
   const left = Math.max(8, Math.min((window.innerWidth || 1280) - width - 8, r.right - width));
@@ -1278,10 +1280,11 @@ function SnapMenu({
     onClick: e => {
       e.stopPropagation();
       pick();
-      onClose();
+      onClose(false);
     }
   });
   const rows = [];
+  if (onToggle) rows.push(React.createElement("button", {key:"size", type:"button", role:"menuitem", className:"ws-arrange-size", "aria-label":(maxed?"Restore ":"Maximize ")+windowTitle, "data-fwin-togglemax":workspaceId, onClick:e=>{e.stopPropagation();onToggle();onClose(false)}}, maxed?"Restore window size":"Maximize workspace"));
   if (kind !== 'tray') {
     rows.push( /*#__PURE__*/React.createElement("div", { key: "t1", className: "snap-menu-title" }, "Snap"));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r1", className: "snap-menu-row" }, FRIDAY_SNAP_LAYOUTS.map((zones, i) => /*#__PURE__*/React.createElement("div", { key: i, className: "snap-tile" }, zones.map(([slot, grow]) => zone(slot, grow, FRIDAY_SNAP_NAMES[slot], () => onPick(slot), current === slot))))));
@@ -1301,12 +1304,13 @@ function SnapMenu({
     if (onHide) rows.push( /*#__PURE__*/React.createElement("button", { key: "hide", type: "button", className: "btn snap-menu-hide", onClick: e => {
         e.stopPropagation();
         onHide();
-        onClose();
+        onClose(false);
       } }, "Hide chat"));
   }
   return ReactDOM.createPortal( /*#__PURE__*/React.createElement("div", {
     ref: ref,
-    className: "snap-menu",
+    id: id,
+    className: "snap-menu"+(onToggle?" ws-arrange-menu":""),
     role: "menu",
     "aria-label": kind === 'tray' ? 'Where the chat goes' : 'Snap layouts',
     "data-testid": "snap-menu",
@@ -2105,21 +2109,94 @@ function WsIcon({ws,glyph}){
 // versions), the mark that Friday has customized it, and its body with that
 // customization applied. A desktop window draws the tools in its title bar; a
 // workspace tab draws them in the top bar, beside the workspace's name.
-function WsTools({id,title,emoji,histOpen,onHistory,onImproveNote}){
-  return(<>
-    <button title={`Chat with ${fridayName()} about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji)}} style={{fontSize:12}}>💬</button>
-    <button title={`Talk to ${fridayName()} about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button>
-    {/* The 40 snapshots workspace_studio keeps, reachable without asking Friday out loud. */}
-    <button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} aria-pressed={!!histOpen} onClick={e=>{e.stopPropagation();onHistory()}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>
-    {/* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens its codebase chat in the salon; a native one is told plainly that improving it means Friday's own source, which is not built (static/friday_bundles.js). The answer goes to the window's own line when it has one (FWin), else to a toast (the tab's bar). */}
-    <button title={`Improve ${title} in the salon`} aria-label={`Improve ${title}`} data-ws-improve={id} onClick={e=>{e.stopPropagation();if(!window.fridayImproveWorkspace)return;window.fridayImproveWorkspace(id,title).then(msg=>{if(onImproveNote)onImproveNote(msg||'');else if(msg&&window.fridayToast)window.fridayToast(msg)})}} style={{fontSize:12}}>🛠️</button>
-  </>);
+// A workspace's controls share one hierarchy in desktop windows and tabs.
+function WsPickaxe(){
+  return(<svg className="ws-pickaxe" viewBox="0 0 20 20" aria-hidden="true" shapeRendering="crispEdges"><path fill="var(--fr-cyan)" d="M3 2h9v2h3v3h2v5h-2V8h-3V6H8V4H3z"/><path fill="var(--fr-violet)" d="M3 2h9v1H3zm9 2h3v1h-3zm3 3h2v1h-2z"/><path fill="var(--fr-text)" d="M9 7h3v3h-2v2H8v2H6v2H4v2H1v-3h2v-2h2v-2h2V9h2z"/><path fill="var(--fr-surface)" d="M10 8h1v2h-1v2H8v2H6v2H4v2H2v-1h2v-2h2v-2h2v-2h2z"/></svg>);
 }
+function WsToolMenu({id,label,anchor,onClose,children,arrangeTucked}){
+  const ref=useRef(null);
+  const[box,setBox]=useState(null);
+  React.useLayoutEffect(()=>{
+    const place=()=>{
+      const r=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():{right:window.innerWidth-12,bottom:48};
+      const h=Math.min(ref.current?.scrollHeight||310,window.innerHeight-24);
+      const w=Math.min(310,window.innerWidth-24);
+      const requested={x:Math.max(12,Math.min(window.innerWidth-w-12,r.right-w)),y:Math.max(12,Math.min(window.innerHeight-h-12,r.bottom+7)),w,h};
+      const next=window.FridayHolographicWorkspace?.constrainRect(requested)||requested;
+      setBox(previous=>previous&&Object.keys(next).every(k=>Math.abs(previous[k]-next[k])<.5)?previous:next);
+    };
+    place();
+    const ro=typeof ResizeObserver==='function'?new ResizeObserver(place):null;
+    if(ref.current)ro?.observe(ref.current);
+    window.addEventListener('resize',place);window.addEventListener('friday:spatial-layout',place);
+    return()=>{ro?.disconnect();window.removeEventListener('resize',place);window.removeEventListener('friday:spatial-layout',place)};
+  },[anchor]);
+  useEffect(()=>{
+    const element=ref.current;
+    const visibleTargets=()=>Array.from(element?.querySelectorAll('button:not([disabled]),a[href]')||[]).filter(target=>target.getClientRects().length&&getComputedStyle(target).visibility!=='hidden');
+    const first=visibleTargets()[0];
+    if(box)first?.focus();
+    const away=e=>{if(!element?.contains(e.target)&&!anchor?.contains?.(e.target))onClose(false)};
+    const key=e=>{
+      if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();onClose(true);return}
+      if(!element?.contains(e.target))return;
+      const targets=visibleTargets();
+      const index=targets.indexOf(document.activeElement);
+      if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){
+        e.preventDefault();e.stopPropagation();
+        const next=e.key==='Home'?0:e.key==='End'?targets.length-1:(index+(e.key==='ArrowDown'?1:-1)+targets.length)%targets.length;
+        targets[next]?.focus();
+      }else if(e.key==='Tab'){onClose(false)}
+    };
+    document.addEventListener('pointerdown',away,true);document.addEventListener('keydown',key,true);
+    return()=>{document.removeEventListener('pointerdown',away,true);document.removeEventListener('keydown',key,true)};
+  },[anchor,onClose,!!box]);
+  return ReactDOM.createPortal(<div ref={ref} id={id} className="ws-tools-menu" data-arrange-tucked={arrangeTucked?'true':'false'} role="menu" aria-label={label} style={{left:box?.x||0,top:box?.y||0,width:box?.w||310,maxHeight:box?.h||'calc(100vh - 24px)',visibility:box?'visible':'hidden'}} onMouseDown={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}>
+    {children}
+  </div>,document.body);
+}
+function WsTools({id,title,emoji,histOpen,onHistory,onImproveNote,arrange,onOpenTab,onClose}){
+  const[open,setOpen]=useState(null);
+  const root=useRef(null),customize=useRef(null),more=useRef(null),arrangeButton=useRef(null),opener=useRef(null);
+  const bundle=!!WS_BY_ID[fridayWorkspaceId(id)]?.bundle;
+  const uid='ws-tools-'+String(id).replace(/[^a-z0-9_-]/gi,'-')+(onClose?'-window':'-tab');
+  const close=React.useCallback((restore=true)=>{setOpen(null);if(restore)requestAnimationFrame(()=>opener.current?.isConnected&&opener.current.focus())},[]);
+  useEffect(()=>{const other=e=>{if(e.detail?.owner!==uid)setOpen(null)};window.addEventListener('friday:workspace-tools-open',other);return()=>window.removeEventListener('friday:workspace-tools-open',other)},[uid]);
+  const show=(kind,element,toggle=true)=>{opener.current=element;window.dispatchEvent(new CustomEvent('friday:workspace-tools-open',{detail:{owner:uid}}));setOpen(current=>toggle&&current===kind?null:kind)};
+  const act=(callback)=>{close(false);callback?.();window.dispatchEvent(new CustomEvent('friday:workspace-tool-action',{detail:{workspace:id}}))};
+  const openSource=()=>{
+    if(!bundle||!window.fridayImproveWorkspace)return;
+    act(()=>window.fridayImproveWorkspace(id,title).then(msg=>{if(onImproveNote)onImproveNote(msg||'');else if(msg&&window.fridayToast)window.fridayToast(msg)}));
+  };
+  const trigger=(kind,label,element)=>({type:'button','aria-label':label,'aria-haspopup':'menu','aria-expanded':open===kind,'aria-controls':uid+'-'+kind,onClick:e=>{e.stopPropagation();show(kind,e.currentTarget)},onKeyDown:e=>{if(e.key==='ArrowDown'){e.preventDefault();e.stopPropagation();show(kind,e.currentTarget,false)}},ref:element});
+  return(<span className="ws-tools" data-workspace={id} ref={root}>
+    <button {...trigger('customize','Customize '+title,customize)} className="ws-tool-customize" data-ws-customize={id} title={'Customize '+title}><WsPickaxe/><span className="ws-tool-label">Customize</span></button>
+    {arrange&&<button {...trigger('arrange','Arrange '+title,arrangeButton)} className="ws-tool-arrange" data-fwin-max={id} title={'Arrange '+title}><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M11.5 4v12"/></svg><span className="ws-tool-label">Arrange</span></button>}
+    <button {...trigger('more','More tools for '+title,more)} className="ws-tool-more" data-ws-more={id} title={'More tools for '+title}><svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" aria-hidden="true">{[4,10,16].map(cx=><circle key={cx} cx={cx} cy="10" r="1.5"/>)}</svg></button>
+    {onClose&&<button type="button" className="ws-tool-close" aria-label={'Close '+title} title={'Close '+title} onClick={e=>{e.stopPropagation();onClose()}}>×</button>}
+    {open==='customize'&&<WsToolMenu id={uid+'-customize'} label={'Customize '+title} anchor={opener.current} onClose={close}>
+      <div className="ws-tools-menu-heading"><WsPickaxe/><div><strong>Vibe Coding Salon</strong><span>Choose what you want to shape</span></div></div>
+      <button role="menuitem" aria-label={'Workspace chat for '+title} onClick={()=>act(()=>window.fridayOpenWorkspaceChat?.(id,title,emoji))}><span className="ws-menu-icon">◈</span><span><strong>Customize workspace</strong><small>{title} · layout, styling and quick actions</small></span></button>
+      <button role="menuitem" aria-label={'Improve '+title} data-ws-improve={id} disabled={!bundle} onClick={openSource}><span className="ws-menu-icon">⌘</span><span><strong>Open codebase Salon</strong><small>{bundle?'Edit the code behind this workspace':'Built-in source editing is not available yet'}</small></span></button>
+      <p className="ws-tools-menu-note">Workspace changes keep earlier versions. Codebase changes have their own review.</p>
+    </WsToolMenu>}
+    {open==='more'&&<WsToolMenu id={uid+'-more'} label={'More tools for '+title} anchor={opener.current} onClose={close} arrangeTucked={!!arrange&&!arrangeButton.current?.getClientRects().length}>
+      <div className="ws-tools-menu-heading"><div><strong>{title}</strong><span>Workspace tools</span></div></div>
+      {arrange&&<button role="menuitem" className="ws-more-arrange" aria-label={'Arrange '+title} onClick={()=>{opener.current=more.current;setOpen('arrange')}}><span className="ws-menu-icon">▥</span><span><strong>Arrange window</strong><small>Size, snap and place beside chat</small></span></button>}
+      <button role="menuitem" aria-label={'Start voice for '+title} onClick={()=>act(()=>window.fridayStartWorkspaceVoice?.(id))}><span className="ws-menu-icon">◉</span><span><strong>Talk to {fridayName()}</strong><small>Voice conversation about this workspace</small></span></button>
+      <button role="menuitem" aria-label={'Version history for '+title} aria-pressed={!!histOpen} onClick={()=>act(onHistory)}><span className="ws-menu-icon">↶</span><span><strong>Version history</strong><small>Review changes and restore an earlier version</small></span></button>
+      {onOpenTab&&id!=='settings'&&<button role="menuitem" aria-label={'Open '+title+' in its own tab'} data-ws-tab={id} onClick={()=>act(onOpenTab)}><span className="ws-menu-icon">↗</span><span><strong>Open in its own tab</strong><small>Continue with more room</small></span></button>}
+    </WsToolMenu>}
+    {open==='arrange'&&arrange&&<SnapMenu id={uid+'-arrange'} anchor={opener.current} kind="workspace" current={arrange.current} onPick={slot=>act(()=>arrange.onPick(slot))} onChat={fraction=>act(()=>arrange.onChat(fraction))} onClose={close} windowTitle={title} workspaceId={id} maxed={arrange.maxed} onToggle={()=>act(arrange.onToggle)}/>}
+  </span>);
+}
+
+
 function WsCustomizedMark({id}){
   const {map}=useContext(WsCustomCtx);
   const cust=map[id]||{};
   if(!Object.keys(cust).length)return null;
-  return(<span title={(fridayName() + " has customized this workspace — open 💬 to tweak or revert")} style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>);
+  return(<span className="ws-customized-mark" title={fridayName()+" has customized this workspace — open Customize to tweak or revert"}><WsPickaxe/></span>);
 }
 function WsCustomBody({id,title,emoji,children}){
   // Live customization Friday applied to THIS workspace via the 💬 chat.
@@ -2231,7 +2308,6 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   // Remember the arrangement alongside the independent floating geometry.
   useEffect(()=>{try{localStorage.setItem(LSK,JSON.stringify({x:pos.x,y:pos.y,w:size.w,h:size.h,pv:pref?pref.v:undefined,snap:snap.slot}))}catch(_){}},[pos.x,pos.y,size.w,size.h,snap.slot]);
   const toggleMax=()=>snap.setSlot(maxed?null:'full','owner');
-  const menu=useSnapMenuOpener();
   useEffect(()=>{if(window.__fridayMaxFor===id)delete window.__fridayMaxFor;
     const on=e=>{if(e&&e.detail&&e.detail.workspace===id){delete window.__fridayMaxFor;snapRef.current.setSlot(e.detail.max!==false?'full':null)}};
     window.addEventListener('friday:fwin-max',on);return()=>window.removeEventListener('friday:fwin-max',on)},[id]);
@@ -2253,8 +2329,8 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
       if(snap.slot){const rel=box.w?(e.clientX-box.x)/box.w:0.5;dOff.current={x:Math.round(rel*size.w),y:e.clientY-box.y,free:true,sx:e.clientX,sy:e.clientY}}
       else dOff.current={x:e.clientX-box.x,y:e.clientY-box.y};
       setDragging(true)}}>
-      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote}/>{/* Resting on maximise opens the snap layouts (unified-shell.md §11.3). */}<button {...menu.bind} title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} aria-haspopup="menu" data-fwin-max={id} onClick={e=>{e.stopPropagation();toggleMax()}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{menu.open&&<SnapMenu {...menu.menu} anchor={menu.anchor.current} kind="workspace" current={snap.slot} onPick={s=>snap.setSlot(s,'owner')} onChat={f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}/>}{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
-    </div>{improveNote&&<div className="fwin-tab-blocked" role="alert" data-ws-improve-note={id} onClick={()=>setImproveNote('')}>{improveNote}</div>}{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
+      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/><span className="fwin-title-text">{title}</span><ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote} arrange={{maxed,current:snap.slot,onToggle:toggleMax,onPick:s=>snap.setSlot(s,'owner'),onChat:f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}} onOpenTab={()=>{const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} onClose={onClose}/></div>
+    </div>{improveNote&&<div className="fwin-tab-blocked" role="alert" data-ws-improve-note={id} onClick={()=>setImproveNote('')}>{improveNote}</div>}{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then choose Open in its own tab again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
     {histOpen&&<WorkspaceHistory top={historyTop} wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();e.preventDefault();startResize(e,'se')}}/>{fridayEdgeHandles(startResize)}
     <SnapPreview box={snap.previewBox} slot={snap.preview}/>

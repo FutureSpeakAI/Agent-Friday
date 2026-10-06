@@ -117,7 +117,7 @@ test('workspace windows resize from the left and top edges too', async ({ page }
   await boot(page);
   await page.evaluate(() => localStorage.removeItem('friday_fwin_news'));
   await page.locator('.dock-btn[data-ws="news"]').dispatchEvent('click', { bubbles: true });
-  const win = page.locator('.fwin').filter({ has: page.locator('[data-ws-tab="news"]') });
+  const win = page.locator('.fwin[data-friday-workspace="news"]');
   await win.waitFor({ timeout: 20000 });
   await page.waitForTimeout(600);
   expect(await win.locator('.win-edge').count()).toBe(8);
