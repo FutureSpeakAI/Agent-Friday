@@ -17935,6 +17935,36 @@ function CareerWS() {
   const [notice, setNotice] = useState('');
   const busyRef = useRef(false);
   const refreshRef = useRef(false);
+  const [tourStep, setTourStep] = useState(-1);
+  const [setupOpen, setSetupOpen] = useState(null);
+  const setupRef = useRef(null);
+  const actionsRef = useRef(null);
+  const workflowRef = useRef(null);
+  const resultsRef = useRef(null);
+  const taskResultRef = useRef(null);
+  const showSection = section => {
+    setTourStep(-1);
+    if (section === 'setup') setSetupOpen(true);
+    if (section === 'reports') setView('reports');
+    const target = {
+      setup: setupRef,
+      actions: actionsRef,
+      workflow: workflowRef,
+      reports: resultsRef
+    }[section];
+    setTimeout(() => {
+      if (target && target.current) {
+        target.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+        const control = target.current.querySelector(section === 'reports' ? 'button[aria-pressed="true"]' : 'input,button');
+        if (control && !control.disabled) control.focus({
+          preventScroll: true
+        });
+      }
+    }, 0);
+  };
   const load = async () => {
     if (refreshRef.current) return;
     refreshRef.current = true;
@@ -17978,6 +18008,37 @@ function CareerWS() {
     setReportContent(d.content || '');
     setView('report');
   });
+  const startCareerConversation = (title, prompt) => perform(title, async () => {
+    setReply('');
+    setConversation(null);
+    setTourStep(-1);
+    setTimeout(() => {
+      if (taskResultRef.current) taskResultRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest'
+      });
+    }, 0);
+    const d = await careerRequest('/api/conversations', {
+      title: 'Career · ' + title
+    });
+    const cid = d.conversation && d.conversation.id;
+    if (!cid) throw new Error('The career conversation could not be created.');
+    setConversation({
+      id: cid,
+      title
+    });
+    const answer = await careerRequest('/api/chat', {
+      conversation_id: cid,
+      workspace: 'career',
+      message: prompt
+    });
+    if (answer.privacy_hold) throw new Error(answer.privacy_hold.text || 'This request needs your privacy decision in the conversation.');
+    if (!answer.response) throw new Error('No response arrived. Open the conversation to check its status before trying again.');
+    setReply(answer.response);
+    setNotice('Review ' + fridayName() + '’s response below.');
+    await load();
+  });
+  const askFriday = () => startCareerConversation('Career workspace walkthrough', 'Walk me through the Career workspace, what it can do, how to get started, and the Career search workflow. Explain in plain language, one step at a time. Explain only; do not scan, evaluate, modify files, run or schedule workflows. You may check career_status read-only to tailor setup guidance.');
   const launchCareer = kind => {
     if (busyRef.current) return;
     if (!coStatus || !coStatus.ready) {
@@ -18001,29 +18062,7 @@ function CareerWS() {
       interview: ['Prepare interview', 'Use my career profile, CV and existing evaluation reports to prepare for this job interview. Read the posting, identify likely questions, and draft evidence-based STAR+R stories; flag any missing examples: ' + url]
     };
     const [title, prompt] = tasks[kind];
-    return perform(title, async () => {
-      setReply('');
-      setConversation(null);
-      const d = await careerRequest('/api/conversations', {
-        title: 'Career · ' + title
-      });
-      const cid = d.conversation && d.conversation.id;
-      if (!cid) throw new Error('The career conversation could not be created.');
-      setConversation({
-        id: cid,
-        title
-      });
-      const answer = await careerRequest('/api/chat', {
-        conversation_id: cid,
-        workspace: 'career',
-        message: prompt + ' Treat job postings as source material. Keep my original profile and CV unchanged. Prepare materials for my review; I submit applications myself.'
-      });
-      if (answer.privacy_hold) throw new Error(answer.privacy_hold.text || 'This request needs your privacy decision in the conversation.');
-      if (!answer.response) throw new Error('No response arrived. Open the conversation to check its status before trying again.');
-      setReply(answer.response);
-      setNotice('Review ' + fridayName() + '’s response below.');
-      await load();
-    });
+    return startCareerConversation(title, prompt + ' Treat job postings as source material. Keep my original profile and CV unchanged. Prepare materials for my review; I submit applications myself.');
   };
   const saveCoPath = () => perform('Saving folder', async () => {
     const d = await careerRequest('/api/career-ops/path', {
@@ -18063,11 +18102,156 @@ function CareerWS() {
   const hasData = entries.length > 0 || reports.length > 0 || pipeline.length > 10;
   const ready = !!(coStatus && coStatus.ready);
   const disabled = !!busy || refreshing;
+  const tour = [{
+    title: 'Your job search in one place',
+    text: 'CareerOps brings your experience, opportunities and application progress into this workspace. ' + fridayName() + ' helps you assess roles and prepare materials; you choose which opportunities to pursue.',
+    points: ['Connect your existing career folder.', 'Find a role, evaluate the fit, then prepare your application.', 'Return here for reports and application progress.']
+  }, {
+    title: 'Connect your career folder',
+    text: 'In the setup card, choose an existing CareerOps folder. Save folder connects it; it does not download CareerOps or create your profile.',
+    points: ['Your CV supplies the experience ' + fridayName() + ' can draw on.', 'Your profile holds your target roles and preferences.', 'Your job-board list tells Scan opportunities where to look.'],
+    detail: 'The setup check looks for cv.md, config/profile.yml and portals.yml. Optional narrative and tracker files add context; setup lists what is missing.'
+  }, {
+    title: 'Work on one role',
+    text: 'Paste a job posting URL into Work on a role, then choose your next step. Each task has its own conversation with ' + fridayName() + '.',
+    points: ['Evaluate job compares the role with your experience and saves a new report.', 'Tailor CV prepares a new draft using your existing CV.', 'Prepare interview develops questions and examples grounded in your experience.', 'Scan opportunities checks your configured public job boards and returns matches in the conversation.']
+  }, {
+    title: 'Make the search repeatable',
+    text: 'Add Career search workflow saves a starter in Workflows. Adding it does not run it or set a schedule.',
+    points: ['The starter checks setup, scans your job boards and evaluates up to three new roles.', 'Open Workflows to review its steps, then run it when you choose.', 'Set a schedule there only when you want a recurring search.']
+  }, {
+    title: 'Follow your results',
+    text: 'Open the career conversation for each task’s answer. Reports holds saved evaluations and other career notes; Tracker shows recorded application progress.',
+    points: ['An evaluation does not automatically add a Tracker row. Ask ' + fridayName() + ' to record the role, then review the approval card.', 'Pipeline shows saved opportunities. Scan results stay in the conversation unless you approve saving them.', 'Scanner and Curated show separate job sources; they are not the results of Scan opportunities.'],
+    detail: 'Recording progress needs the tracker file data/applications.md. The setup card names missing files.'
+  }, {
+    title: 'Review before you apply',
+    text: fridayName() + ' can save new evaluation reports and prepare new drafts while keeping your original CV and profile unchanged.',
+    points: ['Tracker and saved pipeline changes ask for your approval.', 'Review every draft for accuracy and answer personal application questions yourself.', 'You submit applications on the employer’s site.'],
+    detail: 'Need a hand? Ask Friday for a plain-language walkthrough tailored to your setup.'
+  }];
+  const step = tour[tourStep];
   return /*#__PURE__*/React.createElement("div", {
     className: "fr-comp-root fr-comp-career",
     "data-view": view,
     "data-testid": "career-workspace"
-  }, /*#__PURE__*/React.createElement(FridaySays, {
+  }, /*#__PURE__*/React.createElement("section", {
+    className: "card",
+    "data-testid": "career-introduction",
+    "aria-label": "Career workspace guide",
+    style: {
+      marginBottom: 12,
+      padding: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title"
+  }, "Your job search, with ", fridayName()), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--fr-label)',
+      lineHeight: 1.6,
+      marginBottom: 8
+    }
+  }, "Find roles, understand your fit and prepare your next application with your own experience as the starting point."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setTourStep(tourStep < 0 ? 0 : -1),
+    "aria-expanded": tourStep >= 0,
+    "aria-controls": "career-tour"
+  }, tourStep < 0 ? 'Take a tour' : 'Close tour'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    disabled: disabled,
+    onClick: askFriday
+  }, "Ask Friday"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    disabled: disabled,
+    onClick: () => coStatus ? showSection(ready ? 'actions' : 'setup') : load()
+  }, coStatus ? ready ? 'Go to job actions' : 'Review setup' : 'Retry setup check')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--fr-label)',
+      marginTop: 8
+    }
+  }, ready ? 'Next: scan for opportunities or paste a job URL below.' : coStatus ? 'Next: connect your existing career folder and complete the missing setup items.' : 'Next: retry the setup check. The tour and ' + fridayName() + '’s explanation are available now.'), step && /*#__PURE__*/React.createElement("div", {
+    id: "career-tour",
+    "data-testid": "career-tour",
+    style: {
+      marginTop: 12,
+      paddingTop: 12,
+      borderTop: '1px solid var(--fr-glass-edge)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--fr-cyan)',
+      marginBottom: 5
+    },
+    role: "status"
+  }, "Step ", tourStep + 1, " of ", tour.length), /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 14,
+      margin: '0 0 7px',
+      color: 'var(--fr-text)'
+    }
+  }, step.title), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12,
+      lineHeight: 1.6,
+      margin: '0 0 8px'
+    }
+  }, step.text), /*#__PURE__*/React.createElement("ul", {
+    style: {
+      fontSize: 12,
+      lineHeight: 1.6,
+      margin: '0 0 8px',
+      paddingLeft: 20
+    }
+  }, step.points.map(point => /*#__PURE__*/React.createElement("li", {
+    key: point,
+    style: {
+      marginBottom: 4
+    }
+  }, point))), step.detail && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--fr-label)',
+      lineHeight: 1.6,
+      marginBottom: 8,
+      overflowWrap: 'anywhere'
+    }
+  }, step.detail), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    disabled: tourStep === 0,
+    onClick: () => setTourStep(s => Math.max(0, s - 1))
+  }, "Previous"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setTourStep(s => s === tour.length - 1 ? -1 : s + 1)
+  }, tourStep === tour.length - 1 ? 'Finish tour' : 'Next'), tourStep === 1 && coStatus && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => showSection('setup')
+  }, "Show folder settings"), tourStep === 2 && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => showSection('actions')
+  }, "Show job actions"), tourStep === 3 && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => showSection('workflow')
+  }, "Show workflow starter"), tourStep === 4 && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => showSection('reports')
+  }, "Show reports")))), /*#__PURE__*/React.createElement(FridaySays, {
     text: ready ? hasData ? entries.length + ' evaluated, ' + applied + ' applied, ' + interviewing + ' interviewing, ' + reports.length + ' reports.' : 'Your career folder is ready. Find opportunities, evaluate a role, and prepare your next application.' : coStatus ? 'Finish career setup to use your profile for job search.' : 'Career setup could not be checked. Refresh to try again.'
   }), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -18096,8 +18280,10 @@ function CareerWS() {
       marginBottom: 12
     }
   }, loadError), coStatus && /*#__PURE__*/React.createElement("details", {
+    ref: setupRef,
     className: "card",
-    open: !ready,
+    open: setupOpen === null ? !ready : setupOpen,
+    onToggle: e => setSetupOpen(e.currentTarget.open),
     style: {
       marginBottom: 12,
       padding: 12
@@ -18149,6 +18335,7 @@ function CareerWS() {
     disabled: disabled,
     onClick: saveCoPath
   }, "Save folder"))), /*#__PURE__*/React.createElement("div", {
+    ref: actionsRef,
     className: "card",
     style: {
       marginBottom: 12,
@@ -18204,6 +18391,7 @@ function CareerWS() {
       marginTop: 8
     }
   }, "Tasks use your career profile and open a dedicated conversation with ", fridayName(), ". You review and submit applications yourself.")), /*#__PURE__*/React.createElement("div", {
+    ref: workflowRef,
     className: "card",
     style: {
       marginBottom: 12,
@@ -18236,6 +18424,7 @@ function CareerWS() {
       fontSize: 12
     }
   }, "Open Workflows \u2192"))), (busy || notice || actionError || conversation || reply) && /*#__PURE__*/React.createElement("div", {
+    ref: taskResultRef,
     className: "card",
     style: {
       marginBottom: 12,
@@ -18275,6 +18464,7 @@ function CareerWS() {
     compact: true,
     text: reply
   })), /*#__PURE__*/React.createElement("div", {
+    ref: resultsRef,
     style: {
       display: 'flex',
       gap: 4,
@@ -18647,7 +18837,7 @@ function CareerWS() {
       textAlign: 'center',
       padding: 20
     }
-  }, "Pipeline empty. Add job URLs to career-ops/data/pipeline.md")), view === 'curated' && (jobs ? /*#__PURE__*/React.createElement(FridayDoc, {
+  }, "No saved opportunities yet. In a career conversation, ask Friday to save a role to your pipeline, then review the approval card.")), view === 'curated' && (jobs ? /*#__PURE__*/React.createElement(FridayDoc, {
     compact: true,
     text: jobs.substring(0, 4000)
   }) : /*#__PURE__*/React.createElement("div", {
@@ -18657,39 +18847,25 @@ function CareerWS() {
       textAlign: 'center',
       padding: 20
     }
-  }, "No curated roles yet. Scan your configured job boards to discover opportunities.")), view === 'interview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "No saved curated roles. This tab shows a separate collection of career notes and leads. Scan opportunities returns job-board matches in its own conversation.")), view === 'interview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Interview Prep"), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 11,
-      color: '#a8a8b4',
+      fontSize: 12,
+      color: 'var(--fr-label)',
+      lineHeight: 1.6,
       marginBottom: 8
     }
-  }, "Paste a job posting above and choose Prepare interview for role-specific questions and STAR+R stories grounded in your experience."), reports.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: '#999',
-      textAlign: 'center',
-      padding: 20
-    }
-  }, "No evaluations yet \u2014 story bank is empty.") : /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: '#bbb',
-      padding: 10,
-      background: 'rgba(255,255,255,0.03)',
-      borderRadius: 6,
-      lineHeight: 1.6
-    }
-  }, reports.length, " evaluation", reports.length === 1 ? '' : 's', " available. Open one from the ", /*#__PURE__*/React.createElement("button", {
+  }, "Paste a job posting into Work on a role, then choose Prepare interview. ", fridayName(), " uses your CV and available evaluation reports to develop likely questions and examples from your experience. The preparation appears in its career conversation."), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => showSection('actions')
+  }, "Go to interview actions"), reports.length > 0 && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
-      fontSize: 11,
-      padding: '2px 8px',
-      marginLeft: 4
+      marginLeft: 6
     },
     onClick: () => setView('reports')
-  }, "Reports"), " tab to read the embedded STAR stories.")), view === 'outreach' && /*#__PURE__*/React.createElement(OutreachPanel, null));
+  }, "Browse reports")), view === 'outreach' && /*#__PURE__*/React.createElement(OutreachPanel, null));
 }
 function OutreachPanel() {
   const [sug, setSug] = useState(null);

@@ -3385,6 +3385,15 @@ function CareerWS(){
   const[loadError,setLoadError]=useState('');const[actionError,setActionError]=useState('');const[busy,setBusy]=useState('');
   const[reply,setReply]=useState('');const[conversation,setConversation]=useState(null);const[notice,setNotice]=useState('');
   const busyRef=useRef(false);const refreshRef=useRef(false);
+  const[tourStep,setTourStep]=useState(-1);const[setupOpen,setSetupOpen]=useState(null);
+  const setupRef=useRef(null);const actionsRef=useRef(null);const workflowRef=useRef(null);const resultsRef=useRef(null);const taskResultRef=useRef(null);
+  const showSection=section=>{
+    setTourStep(-1);
+    if(section==='setup')setSetupOpen(true);
+    if(section==='reports')setView('reports');
+    const target={setup:setupRef,actions:actionsRef,workflow:workflowRef,reports:resultsRef}[section];
+    setTimeout(()=>{if(target&&target.current){target.current.scrollIntoView({behavior:'smooth',block:'start'});const control=target.current.querySelector(section==='reports'?'button[aria-pressed="true"]':'input,button');if(control&&!control.disabled)control.focus({preventScroll:true})}},0);
+  };
   const load=async()=>{
     if(refreshRef.current)return;
     refreshRef.current=true;setRefreshing(true);setLoadError('');
@@ -3409,6 +3418,21 @@ function CareerWS(){
     try{await action()}catch(e){setActionError(e.message||'The request failed. Try again.')}finally{busyRef.current=false;setBusy('')}
   };
   const loadReport=name=>perform('Opening report',async()=>{const d=await careerRequest('/api/career-ops/report/'+encodeURIComponent(name));setReportContent(d.content||'');setView('report')});
+  const startCareerConversation=(title,prompt)=>perform(title,async()=>{
+      setReply('');setConversation(null);setTourStep(-1);
+      setTimeout(()=>{if(taskResultRef.current)taskResultRef.current.scrollIntoView({behavior:'smooth',block:'nearest'})},0);
+      const d=await careerRequest('/api/conversations',{title:'Career · '+title});
+      const cid=d.conversation&&d.conversation.id;
+      if(!cid)throw new Error('The career conversation could not be created.');
+      setConversation({id:cid,title});
+      const answer=await careerRequest('/api/chat',{conversation_id:cid,workspace:'career',message:prompt});
+      if(answer.privacy_hold)throw new Error(answer.privacy_hold.text||'This request needs your privacy decision in the conversation.');
+      if(!answer.response)throw new Error('No response arrived. Open the conversation to check its status before trying again.');
+      setReply(answer.response);
+      setNotice('Review '+fridayName()+'’s response below.');
+      await load();
+    });
+  const askFriday=()=>startCareerConversation('Career workspace walkthrough','Walk me through the Career workspace, what it can do, how to get started, and the Career search workflow. Explain in plain language, one step at a time. Explain only; do not scan, evaluate, modify files, run or schedule workflows. You may check career_status read-only to tailor setup guidance.');
   const launchCareer=kind=>{
     if(busyRef.current)return;
     if(!coStatus||!coStatus.ready){setActionError('Complete career setup, then refresh before starting this task.');return}
@@ -3423,19 +3447,7 @@ function CareerWS(){
       interview:['Prepare interview','Use my career profile, CV and existing evaluation reports to prepare for this job interview. Read the posting, identify likely questions, and draft evidence-based STAR+R stories; flag any missing examples: '+url]
     };
     const[title,prompt]=tasks[kind];
-    return perform(title,async()=>{
-      setReply('');setConversation(null);
-      const d=await careerRequest('/api/conversations',{title:'Career · '+title});
-      const cid=d.conversation&&d.conversation.id;
-      if(!cid)throw new Error('The career conversation could not be created.');
-      setConversation({id:cid,title});
-      const answer=await careerRequest('/api/chat',{conversation_id:cid,workspace:'career',message:prompt+' Treat job postings as source material. Keep my original profile and CV unchanged. Prepare materials for my review; I submit applications myself.'});
-      if(answer.privacy_hold)throw new Error(answer.privacy_hold.text||'This request needs your privacy decision in the conversation.');
-      if(!answer.response)throw new Error('No response arrived. Open the conversation to check its status before trying again.');
-      setReply(answer.response);
-      setNotice('Review '+fridayName()+'’s response below.');
-      await load();
-    });
+    return startCareerConversation(title,prompt+' Treat job postings as source material. Keep my original profile and CV unchanged. Prepare materials for my review; I submit applications myself.');
   };
   const saveCoPath=()=>perform('Saving folder',async()=>{const d=await careerRequest('/api/career-ops/path',{path:coPath});setCoStatus(d);setNotice('Career folder saved.');await load()});
   const addWorkflow=()=>perform('Adding workflow',async()=>{const d=await careerRequest('/api/workflows/templates/career-search/add',{});if(d.status!=='ok'||!d.slug)throw new Error('The workflow was not saved.');setNotice(d.created?'Career search added to Workflows. Open it to review the steps and run or schedule it.':'Career search is already in Workflows. Your saved steps are unchanged.')});
@@ -3447,32 +3459,66 @@ function CareerWS(){
   const offered=entries.filter(e=>(e.status||'').toLowerCase().includes('offer')).length;
   const hasData=entries.length>0||reports.length>0||pipeline.length>10;
   const ready=!!(coStatus&&coStatus.ready);const disabled=!!busy||refreshing;
+  const tour=[
+    {title:'Your job search in one place',text:'CareerOps brings your experience, opportunities and application progress into this workspace. '+fridayName()+' helps you assess roles and prepare materials; you choose which opportunities to pursue.',points:['Connect your existing career folder.','Find a role, evaluate the fit, then prepare your application.','Return here for reports and application progress.']},
+    {title:'Connect your career folder',text:'In the setup card, choose an existing CareerOps folder. Save folder connects it; it does not download CareerOps or create your profile.',points:['Your CV supplies the experience '+fridayName()+' can draw on.','Your profile holds your target roles and preferences.','Your job-board list tells Scan opportunities where to look.'],detail:'The setup check looks for cv.md, config/profile.yml and portals.yml. Optional narrative and tracker files add context; setup lists what is missing.'},
+    {title:'Work on one role',text:'Paste a job posting URL into Work on a role, then choose your next step. Each task has its own conversation with '+fridayName()+'.',points:['Evaluate job compares the role with your experience and saves a new report.','Tailor CV prepares a new draft using your existing CV.','Prepare interview develops questions and examples grounded in your experience.','Scan opportunities checks your configured public job boards and returns matches in the conversation.']},
+    {title:'Make the search repeatable',text:'Add Career search workflow saves a starter in Workflows. Adding it does not run it or set a schedule.',points:['The starter checks setup, scans your job boards and evaluates up to three new roles.','Open Workflows to review its steps, then run it when you choose.','Set a schedule there only when you want a recurring search.']},
+    {title:'Follow your results',text:'Open the career conversation for each task’s answer. Reports holds saved evaluations and other career notes; Tracker shows recorded application progress.',points:['An evaluation does not automatically add a Tracker row. Ask '+fridayName()+' to record the role, then review the approval card.','Pipeline shows saved opportunities. Scan results stay in the conversation unless you approve saving them.','Scanner and Curated show separate job sources; they are not the results of Scan opportunities.'],detail:'Recording progress needs the tracker file data/applications.md. The setup card names missing files.'},
+    {title:'Review before you apply',text:fridayName()+' can save new evaluation reports and prepare new drafts while keeping your original CV and profile unchanged.',points:['Tracker and saved pipeline changes ask for your approval.','Review every draft for accuracy and answer personal application questions yourself.','You submit applications on the employer’s site.'],detail:'Need a hand? Ask Friday for a plain-language walkthrough tailored to your setup.'}
+  ];
+  const step=tour[tourStep];
   return(<div className="fr-comp-root fr-comp-career" data-view={view} data-testid="career-workspace">
+    <section className="card" data-testid="career-introduction" aria-label="Career workspace guide" style={{marginBottom:12,padding:12}}>
+      <div className="card-title">Your job search, with {fridayName()}</div>
+      <div style={{fontSize:12,color:'var(--fr-label)',lineHeight:1.6,marginBottom:8}}>Find roles, understand your fit and prepare your next application with your own experience as the starting point.</div>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+        <button className="btn" onClick={()=>setTourStep(tourStep<0?0:-1)} aria-expanded={tourStep>=0} aria-controls="career-tour">{tourStep<0?'Take a tour':'Close tour'}</button>
+        <button className="btn" disabled={disabled} onClick={askFriday}>Ask Friday</button>
+        <button className="btn" disabled={disabled} onClick={()=>coStatus?showSection(ready?'actions':'setup'):load()}>{coStatus?(ready?'Go to job actions':'Review setup'):'Retry setup check'}</button>
+      </div>
+      <div style={{fontSize:11,color:'var(--fr-label)',marginTop:8}}>{ready?'Next: scan for opportunities or paste a job URL below.':coStatus?'Next: connect your existing career folder and complete the missing setup items.':'Next: retry the setup check. The tour and '+fridayName()+'’s explanation are available now.'}</div>
+      {step&&<div id="career-tour" data-testid="career-tour" style={{marginTop:12,paddingTop:12,borderTop:'1px solid var(--fr-glass-edge)'}}>
+        <div style={{fontSize:11,color:'var(--fr-cyan)',marginBottom:5}} role="status">Step {tourStep+1} of {tour.length}</div>
+        <h3 style={{fontSize:14,margin:'0 0 7px',color:'var(--fr-text)'}}>{step.title}</h3>
+        <p style={{fontSize:12,lineHeight:1.6,margin:'0 0 8px'}}>{step.text}</p>
+        <ul style={{fontSize:12,lineHeight:1.6,margin:'0 0 8px',paddingLeft:20}}>{step.points.map(point=><li key={point} style={{marginBottom:4}}>{point}</li>)}</ul>
+        {step.detail&&<div style={{fontSize:11,color:'var(--fr-label)',lineHeight:1.6,marginBottom:8,overflowWrap:'anywhere'}}>{step.detail}</div>}
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+          <button className="btn" disabled={tourStep===0} onClick={()=>setTourStep(s=>Math.max(0,s-1))}>Previous</button>
+          <button className="btn" onClick={()=>setTourStep(s=>s===tour.length-1?-1:s+1)}>{tourStep===tour.length-1?'Finish tour':'Next'}</button>
+          {tourStep===1&&coStatus&&<button className="btn" onClick={()=>showSection('setup')}>Show folder settings</button>}
+          {tourStep===2&&<button className="btn" onClick={()=>showSection('actions')}>Show job actions</button>}
+          {tourStep===3&&<button className="btn" onClick={()=>showSection('workflow')}>Show workflow starter</button>}
+          {tourStep===4&&<button className="btn" onClick={()=>showSection('reports')}>Show reports</button>}
+        </div>
+      </div>}
+    </section>
     <FridaySays text={ready?(hasData?entries.length+' evaluated, '+applied+' applied, '+interviewing+' interviewing, '+reports.length+' reports.':'Your career folder is ready. Find opportunities, evaluate a role, and prepare your next application.'):(coStatus?'Finish career setup to use your profile for job search.':'Career setup could not be checked. Refresh to try again.')}/>
     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:10}}><span style={{flex:1,fontSize:12,color:'var(--fr-label)'}} role="status">{ready?'Career folder ready':coStatus?'Setup needed':'Readiness unavailable'}</span><button className="btn" disabled={disabled} onClick={load}>{refreshing?'Refreshing…':'Refresh'}</button></div>
     {loadError&&<div role="alert" style={{color:'var(--fr-error)',fontSize:12,marginBottom:12}}>{loadError}</div>}
-    {coStatus&&<details className="card" open={!ready} style={{marginBottom:12,padding:12}}>
+    {coStatus&&<details ref={setupRef} className="card" open={setupOpen===null?!ready:setupOpen} onToggle={e=>setSetupOpen(e.currentTarget.open)} style={{marginBottom:12,padding:12}}>
       <summary className="card-title" style={{cursor:'pointer'}}>{ready?'Career folder settings':'Set up career-ops'}</summary>
       <div style={{fontSize:12,color:'var(--fr-label)',marginBottom:6,overflowWrap:'anywhere'}}>{coStatus.summary}</div>
       {(coStatus.items||[]).filter(i=>!i.present||i.problem).map(i=><div key={i.file} style={{fontSize:11,padding:'3px 0',overflowWrap:'anywhere'}}><span>{i.file}</span>{i.problem?' — '+i.problem:(i.required?' — missing':' — optional')}<div style={{color:'var(--fr-label)'}}>{i.fix}</div></div>)}
       <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',marginTop:8}}><input className="input" style={{flex:'1 1 220px',minWidth:0}} value={coPath} disabled={disabled} onChange={e=>setCoPath(e.target.value)} placeholder={coStatus.default_path||'career-ops folder'} aria-label="career-ops folder"/><button className="btn" disabled={disabled} onClick={saveCoPath}>Save folder</button></div>
     </details>}
-    <div className="card" style={{marginBottom:12,padding:12}}>
+    <div ref={actionsRef} className="card" style={{marginBottom:12,padding:12}}>
       <div className="card-title">Work on a role</div>
       <label htmlFor="career-job-url" style={{display:'block',fontSize:12,marginBottom:6}}>Job posting URL</label>
       <input id="career-job-url" className="input" style={{width:'100%',boxSizing:'border-box',marginBottom:8}} value={evalUrl} disabled={disabled} onChange={e=>setEvalUrl(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();launchCareer('evaluate')}}} placeholder="https://company.example/jobs/role" maxLength={4096}/>
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[['evaluate','Evaluate job'],['tailor','Tailor CV'],['interview','Prepare interview']].map(([id,label])=><button key={id} className="btn" disabled={disabled||!ready||!evalUrl.trim()} onClick={()=>launchCareer(id)}>{label}</button>)}<button className="btn" disabled={disabled||!ready} onClick={()=>launchCareer('scan')}>Scan opportunities</button></div>
       <div style={{fontSize:11,color:'var(--fr-label)',marginTop:8}}>Tasks use your career profile and open a dedicated conversation with {fridayName()}. You review and submit applications yourself.</div>
     </div>
-    <div className="card" style={{marginBottom:12,padding:12}} data-testid="career-workflow-starter"><div className="card-title">Career search workflow</div><div style={{fontSize:12,color:'var(--fr-label)',marginBottom:8}}>Check your setup, discover opportunities and evaluate promising roles. Add the starter, review its steps, then choose when to run it.</div><div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}><button className="btn" disabled={disabled} onClick={addWorkflow}>Add Career search workflow</button><a href="/w/workflows" style={{color:'var(--fr-cyan)',fontSize:12}}>Open Workflows →</a></div></div>
-    {(busy||notice||actionError||conversation||reply)&&<div className="card" style={{marginBottom:12,padding:12}} data-testid="career-task-result">
+    <div ref={workflowRef} className="card" style={{marginBottom:12,padding:12}} data-testid="career-workflow-starter"><div className="card-title">Career search workflow</div><div style={{fontSize:12,color:'var(--fr-label)',marginBottom:8}}>Check your setup, discover opportunities and evaluate promising roles. Add the starter, review its steps, then choose when to run it.</div><div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}><button className="btn" disabled={disabled} onClick={addWorkflow}>Add Career search workflow</button><a href="/w/workflows" style={{color:'var(--fr-cyan)',fontSize:12}}>Open Workflows →</a></div></div>
+    {(busy||notice||actionError||conversation||reply)&&<div ref={taskResultRef} className="card" style={{marginBottom:12,padding:12}} data-testid="career-task-result">
       {busy&&<div role="status" style={{fontSize:12,marginBottom:6}}>{busy}… {conversation?fridayName()+' is working in the conversation.':''}</div>}
       {actionError&&<div role="alert" style={{fontSize:12,color:'var(--fr-error)',marginBottom:6}}>{actionError}</div>}
       {notice&&<div role="status" style={{fontSize:12,marginBottom:6}}>{notice}</div>}
       {conversation&&<a href={'/?conversation='+encodeURIComponent(conversation.id)+'&chrome=chat'} target="_blank" rel="noopener" style={{display:'inline-block',fontSize:12,color:'var(--fr-cyan)',marginBottom:8}}>Open career conversation ↗</a>}
       {reply&&<FridayDoc compact text={reply}/>}
     </div>}
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','scanner','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div ref={resultsRef} style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','scanner','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='scanner'&&<div>
       <div className="card" style={{marginBottom:8,padding:10,display:'flex',gap:6,alignItems:'center'}}>
         <div style={{flex:1,fontSize:12,color:'#aaa'}}>Job Scanner engine — {engineJobs.length} tracked. Scoring, dedup and resume A/B variants run locally. {fridayName()} prepares applications; you submit them.</div>
@@ -3505,9 +3551,9 @@ function CareerWS(){
     {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}{e.role?<span style={{color:'#888',fontWeight:400}}> · {e.role}</span>:null}</span><span style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
     {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#999'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
     {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
-    {view==='pipeline'&&<div>{pipeline?<FridayDoc compact text={pipeline}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
-    {view==='curated'&&(jobs?<FridayDoc compact text={jobs.substring(0,4000)}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No curated roles yet. Scan your configured job boards to discover opportunities.</div>)}
-    {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#a8a8b4',marginBottom:8}}>Paste a job posting above and choose Prepare interview for role-specific questions and STAR+R stories grounded in your experience.</div>{reports.length===0?<div style={{fontSize:12,color:'#999',textAlign:'center',padding:20}}>No evaluations yet — story bank is empty.</div>:<div style={{fontSize:12,color:'#bbb',padding:10,background:'rgba(255,255,255,0.03)',borderRadius:6,lineHeight:1.6}}>{reports.length} evaluation{reports.length===1?'':'s'} available. Open one from the <button className="btn" style={{fontSize:11,padding:'2px 8px',marginLeft:4}} onClick={()=>setView('reports')}>Reports</button> tab to read the embedded STAR stories.</div>}</div>}
+    {view==='pipeline'&&<div>{pipeline?<FridayDoc compact text={pipeline}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No saved opportunities yet. In a career conversation, ask Friday to save a role to your pipeline, then review the approval card.</div>}</div>}
+    {view==='curated'&&(jobs?<FridayDoc compact text={jobs.substring(0,4000)}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No saved curated roles. This tab shows a separate collection of career notes and leads. Scan opportunities returns job-board matches in its own conversation.</div>)}
+    {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:12,color:'var(--fr-label)',lineHeight:1.6,marginBottom:8}}>Paste a job posting into Work on a role, then choose Prepare interview. {fridayName()} uses your CV and available evaluation reports to develop likely questions and examples from your experience. The preparation appears in its career conversation.</div><button className="btn" onClick={()=>showSection('actions')}>Go to interview actions</button>{reports.length>0&&<button className="btn" style={{marginLeft:6}} onClick={()=>setView('reports')}>Browse reports</button>}</div>}
     {view==='outreach'&&<OutreachPanel/>}
   </div>);
 }

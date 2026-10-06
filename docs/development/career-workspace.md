@@ -2,6 +2,13 @@
 
 Status: implemented. Career uses Friday's native conversation tools and the local career-ops file format.
 
+For the user walkthrough, see [Career](../user-guide/career.md).
+The packaged `SELF.md` and public `VOICE_DEMO.md` give Friday the same explanation
+in chat and voice, including before setup. The fast voice context reserves room
+for the compact public guide inside its existing digest budget; it does not read
+private career files to assemble help. The UI's local tour reveals controls and
+Ask Friday opens an explanation-only conversation.
+
 ## Set up
 
 Open Career and choose the folder containing your career-ops project. The default is `~/Projects/career-ops`. The setup panel checks for your CV (`cv.md`), profile (`config/profile.yml`), and job-board configuration (`portals.yml`); it also identifies example profile values. Add your own career history and targets before starting a task, then refresh.

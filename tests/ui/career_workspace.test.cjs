@@ -126,3 +126,82 @@ test('an empty career funnel has no progress, and populated stages use their act
   const populated=mount({request:url=>url==='/api/career-ops/tracker'?response({entries:rows}):null});await flush();
   assert.deepEqual(fills(populated),['100%','50%','50%','0%']);
 });
+
+test('the local Career tour works before setup and never starts work',async()=>{
+  const ui=mount({ready:false});await flush();
+  assert.equal(ui.button('Ask Friday').props.disabled,false);
+  assert.ok(ui.button('Review setup'));
+  const requests=ui.calls.length;
+  ui.button('Take a tour').props.onClick();
+  const headings=['Your job search in one place','Connect your career folder','Work on one role','Make the search repeatable','Follow your results','Review before you apply'];
+  for(let i=0;i<headings.length;i++){
+    const tour=ui.all().find(n=>n.props['data-testid']==='career-tour');
+    assert.ok(tour);assert.match(JSON.stringify(tour),new RegExp(headings[i]));
+    if(i===1)assert.match(JSON.stringify(tour),/existing CareerOps folder/);
+    if(i===3)assert.match(JSON.stringify(tour),/Adding it does not run it or set a schedule/);
+    if(i===4){assert.match(JSON.stringify(tour),/does not automatically add a Tracker row/);assert.match(JSON.stringify(tour),/career conversation/)}
+    ui.button(i===headings.length-1?'Finish tour':'Next').props.onClick();
+  }
+  assert.equal(ui.all().some(n=>n.props['data-testid']==='career-tour'),false);
+  assert.equal(ui.calls.length,requests,'tour navigation makes no API request');
+  assert.equal(ui.button('Scan opportunities').props.disabled,true);
+});
+
+test('tour context controls reveal setup even after readiness and leave task state untouched',async()=>{
+  const ui=mount();await flush();const requests=ui.calls.length;
+  assert.ok(ui.button('Go to job actions'));
+  assert.equal(ui.all().find(n=>n.type==='details').props.open,false);
+  ui.button('Take a tour').props.onClick();ui.button('Next').props.onClick();
+  ui.button('Show folder settings').props.onClick();
+  assert.equal(ui.all().find(n=>n.type==='details').props.open,true);
+  assert.equal(ui.all().some(n=>n.props['data-testid']==='career-tour'),false);
+  assert.equal(ui.calls.length,requests);
+});
+
+test('Ask Friday explains Career before setup, awaits the reply and guards duplicate clicks',async()=>{
+  const chat=deferred();const ui=mount({ready:false,request:url=>url==='/api/chat'?chat.promise:null});await flush();
+  const ask=ui.button('Ask Friday');const action=ask.props.onClick();ask.props.onClick();await flush();
+  assert.equal(ui.calls.filter(c=>c.url==='/api/conversations').length,1);
+  const requests=ui.calls.filter(c=>c.url==='/api/chat');assert.equal(requests.length,1);
+  assert.equal(requests[0].body.workspace,'career');assert.equal(requests[0].body.conversation_id,'career-test');
+  assert.match(requests[0].body.message,/Walk me through the Career workspace/);
+  assert.match(requests[0].body.message,/Explain only; do not scan, evaluate, modify files, run or schedule workflows/);
+  assert.doesNotMatch(requests[0].body.message,/Prepare materials for my review/);
+  assert.equal(ui.button('Ask Friday').props.disabled,true);
+  assert.doesNotMatch(JSON.stringify(ui.render()),/Review Friday’s response/);
+  chat.resolve(response({response:'Start by connecting your existing career folder.'}));await action;await flush();
+  assert.match(JSON.stringify(ui.render()),/Start by connecting your existing career folder/);
+  assert.equal(ui.button('Ask Friday').props.disabled,false);
+  assert.equal(ui.button('Scan opportunities').props.disabled,true);
+  assert.equal(ui.calls.some(c=>c.url.includes('/templates/')||c.url.includes('/run')||c.url.includes('/schedules')),false);
+});
+
+test('guidance remains reachable when setup cannot be checked and chat errors are recoverable',async()=>{
+  const ui=mount({failStatus:true,request:url=>url==='/api/chat'?response({error:'Explanation unavailable'},false):null});await flush();
+  assert.ok(ui.button('Take a tour'));assert.ok(ui.button('Retry setup check'));
+  assert.equal(ui.button('Ask Friday').props.disabled,false);
+  await ui.button('Ask Friday').props.onClick();await flush();
+  assert.ok(ui.all().find(n=>n.props.role==='alert'&&n.children.includes('Explanation unavailable')));
+  assert.ok(ui.all().find(n=>n.type==='a'&&n.props.href.includes('conversation=career-test')));
+  assert.equal(ui.button('Ask Friday').props.disabled,false);
+});
+
+test('empty Pipeline and Curated explain their actual next steps',async()=>{
+  const ui=mount();await flush();
+  ui.button('pipeline').props.onClick();
+  assert.match(JSON.stringify(ui.render()),/ask Friday to save a role to your pipeline, then review the approval card/);
+  assert.doesNotMatch(JSON.stringify(ui.render()),/Add job URLs to career-ops/);
+  ui.button('curated').props.onClick();
+  assert.match(JSON.stringify(ui.render()),/separate collection of career notes and leads/);
+  assert.match(JSON.stringify(ui.render()),/job-board matches in its own conversation/);
+});
+
+test('Review setup reopens a user-collapsed setup card before readiness',async()=>{
+  const ui=mount({ready:false});await flush();
+  const details=()=>ui.all().find(n=>n.type==='details');
+  assert.equal(details().props.open,true);
+  details().props.onToggle({currentTarget:{open:false}});
+  assert.equal(details().props.open,false);
+  ui.button('Review setup').props.onClick();
+  assert.equal(details().props.open,true);
+});
