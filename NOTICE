@@ -39,6 +39,12 @@ in THIRD_PARTY_LICENSES.md:
   graphrag-workbench (artifact contract, force-layout design)
     Copyright (c) 2026 Lyon Industries (Christopher Lyon). MIT License.
 
+Career evaluation guidance and compatibility rules in services/career_ops.py
+are adapted from career-ops (https://github.com/career-ops-hq/career-ops),
+commit 24745c5f8a6b2ee56d7c25176d05c4dfe97c5b3b.
+  Copyright (c) 2026 Santiago Fernández de Valderrama. MIT License.
+  The full notice is reproduced in THIRD_PARTY_LICENSES.md.
+
 Fonts under static/fonts/g/, each under the SIL Open Font License 1.1, whose
 text is in static/fonts/ (OFL-<family>.txt). The .woff2 files are the ones
 Google Fonts serves for the page's font request (fonts.gstatic.com), unmodified:

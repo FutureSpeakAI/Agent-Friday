@@ -83,6 +83,15 @@ named in NOTICE. A source file that carries such material says so in its
 header ("ported from", "vendored from", "port of"); tests/unit/test_source_credits.py
 fails when a marker has no entry here.
 
+### career-ops (github.com/career-ops-hq/career-ops)
+License: MIT | Copyright (c) 2026 Santiago Fernández de Valderrama
+
+Adapted into `services/career_ops.py`: evidence-grounded evaluation guidance,
+location-filter precedence, public Ashby and Lever board compatibility,
+and application lifecycle vocabulary. The reference is upstream commit
+`24745c5f8a6b2ee56d7c25176d05c4dfe97c5b3b`. Friday runs its own models and
+tools; it does not install or execute upstream code for these adaptations.
+
 ### obsidian-wiki (github.com/Ar9av/obsidian-wiki)
 License: MIT | Copyright (c) 2026 Ar9av
 
