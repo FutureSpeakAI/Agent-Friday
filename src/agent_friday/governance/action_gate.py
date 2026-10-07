@@ -306,6 +306,8 @@ INTERNAL_TOOLS = frozenset({
     # select never fires a guarded action.
     "big_mode",
     "hand_cursor",
+    # Declarative local UI only: no executable card actions or codebase writes.
+    "home_cards", "customize_workspace",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but

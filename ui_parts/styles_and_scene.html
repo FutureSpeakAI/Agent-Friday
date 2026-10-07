@@ -1220,7 +1220,7 @@
             window.addEventListener('keydown', e => { if (e.key === 'Escape') abort(); }, true);
             window.addEventListener('click', e => {
                 // The click that ends a press on an orb is the orb's, not the page's.
-                if (performance.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); return; }
+                if (performance.now() < swallowUntil && onScene(e.target)) { e.stopPropagation(); e.preventDefault(); return; }
                 // A synthetic click (hand-tracking dwell) on the bare scene opens the orb under it.
                 if (e.detail !== 0 || !onScene(e.target)) return;
                 const o = src ? hit(e.clientX, e.clientY) : null;
@@ -1353,7 +1353,7 @@
                     return { ok: true, opened: 'approval' };
                 }
                 window.dispatchEvent(new CustomEvent('fridayOrbClicked', { detail: { id: o.id, label: o.label, category: o.category,
-                    icon: o.icon, progress: o.progress, status: o.status, steps: o.steps, sx: o.sx, sy: o.sy } }));
+                    icon: o.icon, progress: o.progress, status: o.status, steps: o.steps, task_id: o.task_id, trace_id: o.trace_id, model: o.model, sx: o.sx, sy: o.sy } }));
                 return { ok: true, opened: 'thread' };
             }
             function status(o, via) {
@@ -1713,7 +1713,7 @@
                             out.push({ id: o.id, task_id: s.row.task_id || null, trace_id: s.row.trace_id || null, kind: s.kind, hue: s.hue,
                                        label: o.label, status: s.failed ? 'failed' : (s.row.status || o.status), step_n: s.row.step_n,
                                        step_total: s.row.step_total, approval_id: s.approval, started: o.createdAt, pausable: !!s.row.pausable,
-                                       category: o.category, icon: o.icon, progress: o.progress, steps: o.steps, sx: s.sx, sy: s.sy, sr: 26 });
+                                       category: o.category, icon: o.icon, model: o.model, progress: o.progress, steps: o.steps, sx: s.sx, sy: s.sy, sr: 26 });
                         });
                         return out;
                     },
@@ -2249,7 +2249,7 @@
                 const my = ev.clientY - rect.top;
                 let bestDist = 50, hit = null;
                 for (const [id, o] of this.orbs) {
-                    if (o.dying) continue;
+                    if (o.dying || o.__s?.behind) continue;
                     const p3 = o.group.position.clone().project(this.camera);
                     if (p3.z >= 1) continue;
                     const sx = (p3.x*0.5+0.5)*window.innerWidth;
@@ -2258,8 +2258,11 @@
                     if (d < bestDist) { bestDist = d; hit = o; }
                 }
                 if (hit) {
-                    window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id:hit.id,label:hit.label,category:hit.category,icon:hit.icon,progress:hit.progress,status:hit.status,steps:hit.steps,sx:ev.clientX,sy:ev.clientY}}));
+                    if (typeof FridayOrbHands !== 'undefined' && hit.__s) return FridayOrbHands.act('open', [hit.id], 'hand')[0] || {ok:false,reason:'gone'};
+                    window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id:hit.id,label:hit.label,category:hit.category,icon:hit.icon,progress:hit.progress,status:hit.status,steps:hit.steps,task_id:hit.task_id,trace_id:hit.trace_id,model:hit.model,sx:ev.clientX,sy:ev.clientY}}));
+                    return {ok:true,opened:'thread'};
                 }
+                return {ok:false,reason:'gone'};
             }
             _cleanup(id) {
                 const o = this.orbs.get(id); if (!o) return;
@@ -4259,7 +4262,7 @@
             }
 
             const VS = `attribute vec3 aDir; attribute vec4 aR; attribute vec4 aW; attribute float aCl;
-                uniform vec4 uMix; uniform float uPhase; uniform float uWaveK; uniform float uRipple; uniform float uCollapse; uniform float uSize;
+                uniform vec4 uMix; uniform float uPhase; uniform float uWaveK; uniform float uRipple; uniform float uCollapse; uniform float uSize; uniform float uFridayStagePointFloor;
                 uniform vec4 uD[${CL}]; uniform vec4 uG[${CL}];
                 uniform vec3 uCore; uniform vec3 uMid; uniform vec3 uEdge;
                 varying vec3 vC; varying float vA;
@@ -4275,7 +4278,7 @@
                     vC = col * G.a + G.rgb;
                     vA = clamp(w * 0.75 * (0.75 + 0.25 * rip) * mix(1.0, 1.35, uCollapse), 0.0, 0.85);
                     vec4 mv = modelViewMatrix * vec4(p, 1.0);
-                    gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)) * mix(1.0, 0.8, uCollapse), 1.2, 3.2);
+                    gl_PointSize = max(uFridayStagePointFloor, clamp(uSize * (300.0 / max(1.0, -mv.z)) * mix(1.0, 0.8, uCollapse), 1.2, 3.2));
                     gl_Position = projectionMatrix * mv;
                 }`;
             const FS = `uniform float uOpacity; varying vec3 vC; varying float vA;
@@ -4335,11 +4338,11 @@
                 for (let k = 0; k < CL; k++) { uD.push(new THREE.Vector4(0, 0, 0, 1)); uG.push(new THREE.Vector4(0, 0, 0, 1)); }
                 mat = own(new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false,
                     uniforms: { uMix: { value: new THREE.Vector4(...REST) }, uPhase: { value: 0 }, uWaveK: { value: 10 }, uRipple: { value: 0 },
-                        uCollapse: { value: 0 }, uSize: { value: 0.22 }, uD: { value: uD }, uG: { value: uG },
+                        uCollapse: { value: 0 }, uSize: { value: 0.22 }, uFridayStagePointFloor: { value: 0 }, uD: { value: uD }, uG: { value: uG },
                         uCore: { value: new THREE.Color() }, uMid: { value: new THREE.Color() }, uEdge: { value: new THREE.Color() },
                         uOpacity: { value: 1 } } }), 1);
                 pts = new THREE.Points(g, mat);
-                pts.frustumCulled = false;
+                pts.frustumCulled = false; pts.userData.fridayStagePointFloor = 2.4;
                 group.add(pts);
                 mix = REST.slice(); clock = 0; ripple = 0; collapse = 0; voice = 0; phase = 0; cycleT = 0; cycleK = 2; think = 0;
                 // Layers: bands of latitude; blocks: neighbouring clusters, up to four.
@@ -5723,6 +5726,8 @@
             const gGrid = new THREE.Group();
             const oceanGeo = new THREE.PlaneGeometry(100, 100, 80, 80); oceanGeo.rotateX(-Math.PI / 2);
             gridOcean = new THREE.Points(oceanGeo, new THREE.PointsMaterial({ size: 0.35, map: glowTexture, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+            gridOcean.userData.fridayStageField = true;
+            gridOcean.userData.fridayStagePointFloor = 5;
             gridOcean.material.userData = { baseOpacity: 0.5, isAccent: true }; gridOcean.userData.baseY = new Float32Array(oceanGeo.attributes.position.count);
             for(let i=0; i<oceanGeo.attributes.position.count; i++) gridOcean.userData.baseY[i] = oceanGeo.attributes.position.getY(i);
             gGrid.add(gridOcean); structures['GRID'] = gGrid;
@@ -5746,6 +5751,7 @@
             const mGeom = new THREE.BufferGeometry(); mGeom.setAttribute('position', new THREE.Float32BufferAttribute(mPts, 3)); mGeom.setAttribute('color', new THREE.Float32BufferAttribute(mCols, 3));
             mandelbrotSystem = new THREE.Points(mGeom, new THREE.PointsMaterial({ size: 0.25, map: glowTexture, vertexColors: true, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
             mandelbrotSystem.userData.data = mData; gMandel.add(mandelbrotSystem);
+            mandelbrotSystem.userData.fridayStagePointFloor = 5;
             structures['MANDELBROT'] = gMandel;
 
             // 7. ASTROLABE
@@ -5864,6 +5870,9 @@
                 mesh.userData = { speed: 1.0 + Math.random()*3.0 };
                 gEden.add(mesh); edenDebris.push(mesh);
             }
+            // The corridor is scenery, not the character's visible extent.
+            // Classic keeps its immersive world; a reserved stage frames the boss.
+            gEden.children.forEach(child => { if (child !== edenLady) child.userData.fridayStageScenery = true; });
             structures['EDEN'] = gEden;
 
             // 14. WORMHOLE: the Einstein-Rosen Bridge (FridayWormhole).
@@ -6075,6 +6084,7 @@
             // --- CINEMATIC TRUE-3D CAMERA PARALLAX ---
             if(camera) {
                 if (targetStructure === 'DOME') { targetCamPos.set(0, -6 + Math.sin(elapsed*0.2)*2, 18); targetCamLook.set(0, 5, 0); } 
+                else if (targetStructure === 'GRID' && window.FridayHolographicWorkspace?.stageRect) { targetCamPos.set(0, 22, 28); targetCamLook.set(0, 0, 0); }
                 else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(elapsed*0.2)*1, 15 - 10 * (1 - Math.abs((elapsed * 0.2) % 2 - 1))); targetCamLook.set(0, 1, 0); } 
                 else if (targetStructure === 'CABLES' || targetStructure === 'ASTROLABE') { targetCamPos.set(Math.sin(elapsed*0.1)*12, Math.cos(elapsed*0.1)*12, 15 + Math.sin(elapsed*0.2)*5); targetCamLook.set(0, 0, 0); } 
                 else if (targetStructure === 'MANDELBROT') { targetCamPos.set(Math.sin(elapsed*0.2)*14, 8 + Math.sin(elapsed*0.3)*3, Math.cos(elapsed*0.2)*14); targetCamLook.set(0, 0, 0); } 

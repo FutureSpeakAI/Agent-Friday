@@ -130,7 +130,9 @@ def vault_rule(vault_open: bool, local_model_ready: bool) -> str:
             "questions about them, their family, friends, people they know, their "
             "plans or anything in their own life, answer from what you were given "
             "above and call search_wiki for more"
-            + (", and ask_friday for their local model's memory" if local_model_ready else "")
+            + (", and ask_friday for their local model's memory" if local_model_ready else
+               ". The local context relay has not passed its current readiness "
+               "check; you may call ask_friday and report its actual result")
             + ". What you read still passes Friday's privacy gate: only say "
             "something is private when a tool result says it was withheld, and then "
             "say exactly that. Never tell them you cannot reach their notes.\n"
@@ -141,9 +143,9 @@ def vault_rule(vault_open: bool, local_model_ready: bool) -> str:
         + ("call ask_friday: their own local model answers with their full "
            "context, and its answer passes the privacy gate. "
            if local_model_ready else
-           "say plainly that their vault is kept on this machine and their local "
-           "model is not running right now, so it cannot be read in this cloud "
-           "session. ")
+           "the local context relay has not passed its current readiness check. "
+           "You may call ask_friday for a local answer; its result passes the "
+           "privacy gate. Report the actual result or refusal without guessing. ")
         + "search_wiki can still find notes that are not private. Only call "
         "something private when this setting or a tool result withholds it.\n"
     )

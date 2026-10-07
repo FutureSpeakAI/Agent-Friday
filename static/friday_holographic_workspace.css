@@ -42,6 +42,13 @@ body[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .fr
 .fr-holo-arrangements button { display: flex; justify-content: space-between; align-items: center; gap: 10px; text-align: left; }
 .fr-holo-arrangements strong { font-size: 12px; font-weight: 500; }
 .fr-holo-arrangements small { font-size: 11px; color: var(--fr-label); }
+.fr-holo-tracking { display: grid; gap: 18px; margin-top: 18px; }
+.fr-holo-tracking label { display: grid; gap: 7px; }
+.fr-holo-tracking label > span { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.fr-holo-tracking output { font-family: var(--fr-font-mono); color: var(--fr-cyan); }
+.fr-holo-tracking input { width: 100%; min-width: 0; margin: 0; accent-color: var(--fr-cyan); }
+.fr-holo-tracking input:focus-visible { outline: 2px solid var(--fr-cyan); outline-offset: 4px; }
+.fr-holo-tracking small { color: var(--fr-label); font-size: 11px; line-height: 1.5; }
 @media (min-width: 1250px) {
     .fr-holo-header, .fr-holo-collection, .fr-holo-controls { padding-left: 22px; padding-right: 22px; }
 }

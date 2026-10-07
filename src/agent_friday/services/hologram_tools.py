@@ -106,7 +106,7 @@ def current() -> dict:
 
 
 def persist(tracking: dict) -> None:
-    """Store the whole tracking object: the settings merge replaces it whole."""
+    """Merge touched tracking dials without replacing sibling preferences."""
     from agent_friday.core import _save_settings
     _save_settings({"tracking": tracking})
 
@@ -208,8 +208,11 @@ def handle(inp: dict) -> str:
     if not changed:
         return ("hologram_window error: set needs at least one of "
                 + ", ".join(DIALS) + " (numbers; relative=true adds to the current value)")
-    persist(tracking)
-    sent = push({"type": "tracking", "tracking": tracking})
+    # Other controls may have saved a sibling dial after this read. Persist
+    # and push only the fields this spoken request actually changed.
+    patch = {key: tracking[key] for key in changed}
+    persist(patch)
+    sent = push({"type": "tracking", "tracking": patch})
     said = ", ".join("%s is now %s" % (SPOKEN[k], say_number(tracking[k])) for k in changed)
     said = said[0].upper() + said[1:] + "."
     return said if sent.get("delivered") else said + " " + _not_on_screen(sent)

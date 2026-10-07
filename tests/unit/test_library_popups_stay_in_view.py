@@ -80,11 +80,12 @@ def page():
 def test_the_add_popup_is_wholly_inside_the_window(page, w, hgt):
     page.set_viewport_size({"width": w, "height": hgt})
     add = page.locator("button[aria-haspopup=dialog]:has-text('Add')").first
+    dlg = page.get_by_role("dialog", name="Add to your Library", exact=True)
     if add.get_attribute("aria-expanded") == "true":
-        add.click()
+        dlg.get_by_role("button", name="Cancel", exact=True).click()
+        dlg.wait_for(state="hidden")
     add.scroll_into_view_if_needed()
     add.click()
-    dlg = page.locator("[role=dialog][aria-label='Add to your Library']")
     dlg.wait_for(state="visible", timeout=5000)
     page.wait_for_timeout(150)
     r = page.evaluate("""() => { const e = document.querySelector("[role=dialog][aria-label='Add to your Library']");
@@ -94,5 +95,17 @@ def test_the_add_popup_is_wholly_inside_the_window(page, w, hgt):
     assert r["l"] >= 0 and r["t"] >= 0 and r["r"] <= r["vw"] and r["b"] <= r["vh"], (
         "at %dx%d the popup spans %r inside a %dx%d window" % (w, hgt, r, r["vw"], r["vh"]))
     # Its choices are on screen to be read and pressed.
-    assert page.locator("[role=dialog][aria-label='Add to your Library'] button:has-text('Cancel')").is_visible()
+    for label in ("Documents", "Downloads", "Desktop", "Cancel"):
+        # Trial clicks retain the real hit/scrollability check without adding
+        # a folder to the Library. A CSS-visible but covered choice must fail.
+        dlg.get_by_role("button", name=label, exact=True).click(trial=True)
+    dlg.get_by_role("button", name="Cancel", exact=True).click()
+    dlg.wait_for(state="hidden")
+    assert add.get_attribute("aria-expanded") == "false"
+    # The fitted popup may legitimately cover its trigger. Cancel is the
+    # explicit close action, and the original trigger must work again after it.
     add.click()
+    dlg.wait_for(state="visible")
+    page.keyboard.press("Escape")
+    dlg.wait_for(state="hidden")
+    assert add.get_attribute("aria-expanded") == "false"

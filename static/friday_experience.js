@@ -62,6 +62,84 @@
   function empty(title, text, button) { return h('div', { className: 'fx-empty' }, h('strong', null, title), text && h('p', null, text), button); }
   function section(title, content, more) { return h('section', { className: 'fx-section' }, h('div', { className: 'fx-section-heading' }, h('h2', null, title), more), content); }
 
+  function HomeCards({ api, active, onNavigate, workspaces }) {
+    const [cards, setCards] = useState([]);
+    const [selected, setSelected] = useState('');
+    const [expanded, setExpanded] = useState(false);
+    const [failure, setFailure] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [removed, setRemoved] = useState(null);
+    const [revision, setRevision] = useState(0);
+    const operation = useRef(false);
+    const generation = useRef(0);
+    const heading = useRef(null), opener = useRef(null);
+    useEffect(() => {
+      if (!active) return undefined;
+      let stopped = false, pending = false, queued = false;
+      const controller = new AbortController();
+      const refresh = async () => {
+        if (stopped || operation.current || document.hidden) return;
+        if (pending) { queued = true; return; }
+        pending = true;
+        const started = generation.current;
+        try {
+          const response = await api('/api/desktop/cards', { cache: 'no-store', signal: controller.signal });
+          const data = await response.json();
+          if (!response.ok || data.status !== 'ok' || !Array.isArray(data.cards)) throw new Error(data.message || 'Home cards could not be read.');
+          if (!stopped && started === generation.current) { setCards(data.cards); setFailure(''); }
+        } catch (error) { if (!stopped && started === generation.current) setFailure(error.message || 'Home cards could not be read.'); }
+        finally { pending = false; if (queued && !stopped) { queued = false; refresh(); } }
+      };
+      refresh();
+      const timer = setInterval(refresh, 30000);
+      window.addEventListener('friday:desktop-cards-changed', refresh);
+      window.addEventListener('focus', refresh);
+      document.addEventListener('visibilitychange', refresh);
+      return () => {
+        stopped = true; controller.abort(); clearInterval(timer);
+        window.removeEventListener('friday:desktop-cards-changed', refresh);
+        window.removeEventListener('focus', refresh);
+        document.removeEventListener('visibilitychange', refresh);
+      };
+    }, [active, revision]);
+    const index = Math.max(0, cards.findIndex(card => card.id === selected));
+    const card = cards[index];
+    useEffect(() => { if (expanded) heading.current?.focus(); }, [expanded, card && card.id]);
+    async function mutate(method, path, body) {
+      if (operation.current) return;
+      generation.current += 1;
+      operation.current = true; setBusy(true); setFailure('');
+      try {
+        const response = await api(path, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+        const data = await response.json();
+        if (!response.ok || data.status !== 'ok') throw new Error(data.message || 'The Home card could not be changed.');
+        if (method === 'DELETE') {
+          setRemoved(body || card); setCards(rows => rows.filter(row => row.id !== card.id)); setSelected('');
+        } else setRemoved(null);
+        setRevision(n => n + 1);
+      } catch (error) { setFailure(error.message || 'The Home card could not be changed.'); }
+      finally { operation.current = false; setBusy(false); }
+    }
+    const close = () => { setExpanded(false); requestAnimationFrame(() => opener.current?.focus()); };
+    if (!cards.length && !failure && !removed) return null;
+    return h('section', { className: 'fx-home-card-deck', 'data-expanded': expanded ? 'true' : 'false', 'aria-label': 'Home cards', onKeyDown: e => { if (expanded && e.key === 'Escape') { e.stopPropagation(); close(); } } },
+      h('div', { className: 'fx-home-card-heading' }, h('span', { className: 'fx-eyebrow' }, 'From ' + (window.fridayName ? window.fridayName() : 'your assistant')),
+        h('span', { className: 'fx-meta', 'aria-live': 'polite' }, card ? (index + 1) + ' of ' + cards.length : 'Home cards'),
+        expanded && action('Back to Home', close, { className: 'fx-action-secondary' })),
+      failure && h('div', { className: 'fx-home-card-error', role: 'alert' }, failure, action('Retry', () => setRevision(n => n + 1), { className: 'fx-action-secondary', disabled: busy })),
+      removed && h('div', { className: 'fx-home-card-undo', role: 'status' }, 'Card dismissed.', action('Undo dismiss', () => { const { id, title, body, priority, actions } = removed; mutate('POST', '/api/desktop/cards', { id, title, body, priority, actions }); }, { className: 'fx-action-secondary', disabled: busy })),
+      card && h(React.Fragment, null,
+        h('div', { className: 'fx-home-card-content', tabIndex: expanded ? 0 : undefined },
+          h('h2', { ref: heading, tabIndex: -1, className: 'fx-home-card-title' }, card.title),
+          h('p', { className: 'fx-home-card-body' }, card.body)),
+        h('div', { className: 'fx-home-card-actions' }, (card.actions || []).map((item, i) => action(item.label, () => onNavigate(item.workspace), { key: i, disabled: !workspaces.some(ws => ws.id === item.workspace), title: workspaces.some(ws => ws.id === item.workspace) ? undefined : 'This workspace is not available' }))),
+        h('div', { className: 'fx-home-card-footer' },
+          !expanded && action('Read card', () => setExpanded(true), { ref: opener, className: 'fx-action-secondary', 'aria-label': 'Read card: ' + card.title }),
+          cards.length > 1 && action('Previous', () => setSelected(cards[(index + cards.length - 1) % cards.length].id), { className: 'fx-action-secondary', disabled: busy, 'aria-label': 'Previous Home card' }),
+          cards.length > 1 && action('Next', () => setSelected(cards[(index + 1) % cards.length].id), { className: 'fx-action-secondary', disabled: busy, 'aria-label': 'Next Home card' }),
+          expanded && action('Dismiss', () => mutate('DELETE', '/api/desktop/cards/' + encodeURIComponent(card.id)), { className: 'fx-action-secondary', disabled: busy, 'aria-label': 'Dismiss card: ' + card.title }))));
+  }
+
   function FridayExperience(props) {
     const p = props;
     useEffect(() => {
@@ -340,6 +418,7 @@
         h('aside',{className:'fx-home-day'},h('div',{className:'fx-section-heading'},h('span',{className:'fx-eyebrow'},'My day'),h('span',{className:'fx-meta'},new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}))),
           day.loading ? h('p',{className:'fx-meta',role:'status'},'Reading your calendar…') : day.error ? h('div',{className:'fx-error'},h('p',null,day.error),action('Try again',()=>setDayRevision(n=>n+1))) : day.events.length ? day.events.slice(0,2).map((e,i)=>h('button',{className:'fx-row-button',type:'button',key:e.id||i,onClick:()=>openWorkspace({workspace:'calendar',date:day.date})},h('span',{className:'fx-row-copy'},h('strong',null,e.summary||e.title||'Calendar event'),h('span',{className:'fx-meta'},eventTime(e))))) : h('p',{className:'fx-meta'},day.connected===false?'No local calendar events. Connect a calendar to bring your day here.':'Your calendar has room today.'),
           approvals.length ? action(approvals.length+' decision'+(approvals.length===1?'':'s')+' need'+(approvals.length===1?'s':'')+' you →',()=>{go('activity');setActivityTab('needs');},{className:'fx-attention-action'}) : action('Open calendar →',()=>openWorkspace('calendar'),{className:'fx-action-secondary'}))),
+        h(HomeCards, { api, active: visible && p.enabled !== false, onNavigate: openWorkspace, workspaces }),
         h('div',{className:'fx-home-scene-tools'},h('span',{className:'fx-eyebrow'},'A living desktop'),h('span',{className:'fx-meta'},'Your holographic companion, always here.'),action('Explore avatars & depth ↗',()=>window.FridayHolographicWorkspace?.open(),{className:'fx-action-secondary'})),
         h('div',{className:'fx-home-bottom'},h('form',{className:'fx-home-composer',onSubmit:prepare},
           h('textarea',{value:homePrompt,onChange:e=>setHomePrompt(e.target.value),placeholder:'Ask, make, or pick up where you left off…','aria-label':'Ask '+agentName,rows:3,disabled:preparing}),

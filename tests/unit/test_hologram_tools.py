@@ -18,7 +18,7 @@ def store(monkeypatch):
         return dict(state["tracking"])
 
     def persist(t):
-        state["tracking"] = dict(t)
+        state["tracking"].update(t)
 
     def push(action):
         state["pushed"].append(action)
@@ -59,14 +59,14 @@ def test_the_defaults_name_every_dial_the_tool_can_set():
     assert ht.DIALS["zoom_in_max"][1] <= 2.5
 
 
-def test_set_persists_the_whole_tracking_object_then_pushes_it_live(store):
+def test_set_persists_only_changed_dials_then_pushes_them_live(store):
     out = ht.handle({"action": "set", "zoom_in_max": 2.2, "depth_strength": 1.5})
     assert store["tracking"]["zoom_in_max"] == 2.2
     assert store["tracking"]["depth_strength"] == 1.5
-    # The settings merge replaces `tracking` whole, so the untouched dials
-    # must travel with the change or they would be lost.
+    # Settings merges fields: untouched dials stay in the store rather than
+    # travelling in a stale snapshot that could replace a concurrent UI edit.
     assert store["tracking"]["hand_gain"] == ht._defaults()["hand_gain"]
-    assert store["pushed"] == [{"type": "tracking", "tracking": store["tracking"]}]
+    assert store["pushed"] == [{"type": "tracking", "tracking": {"zoom_in_max": 2.2, "depth_strength": 1.5}}]
     assert "two point two" in out and "one point five" in out
     assert "zoom_in_max" not in out                     # words, not key names
 

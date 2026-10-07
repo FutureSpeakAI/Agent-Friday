@@ -294,9 +294,8 @@ _VOICE_LIVE_TOOLS = [
      "(who, what, where), without teasing.",
      {}, []),
     ("search_web",
-     "Search the open web in real time for information that is NOT in the news "
-     "feed — background, definitions, people, companies, or events the feed "
-     "doesn't cover. Returns ranked snippets with URLs.",
+     "Search the live web for information beyond the news feed. Covers background, "
+     "definitions, people, companies and other events; returns ranked snippets with URLs.",
      {"query": ("string", "What to search for.")}, ["query"]),
     ("open_url",
      "Open a URL in the user's browser when they ask for it. Only ever open a URL "
@@ -343,7 +342,7 @@ _VOICE_LIVE_TOOLS = [
      "card is approved. If the result is refused, say why in one line.",
      {}, []),
     ("codebase_seat",
-     "Change which model the current codebase chat uses: 'use Opus for this one' means which='heavy' "
+     "Change the current codebase chat's small or heavy model. For example, 'use Opus for this one' means which='heavy' "
      "and model='Opus 5.5'; 'use the local model for small edits' means which='small', model='local'. "
      "Speak the result's say line as is; it is the user's choice and needs no approval.",
      {"which": ("string", "'small' or 'heavy'."), "model": ("string", "The model as the user said it, or 'local'.")},
@@ -357,7 +356,7 @@ _VOICE_LIVE_TOOLS = [
      "Answer 'how much has this cost?' for the current codebase chat from the meter. Speak the result's "
      "say line as is; never estimate.", {}, []),
     ("codebase_engine",
-     "Change which engine edits the current codebase: 'use Claude's agent for this codebase' means "
+     "Choose Friday or Claude's agent to edit the current codebase. For example, 'use Claude's agent for this codebase' means "
      "engine='claude_agent'; 'let Friday edit it' means engine='friday'. Speak the result's say line as is, "
      "including the disclosure that Claude's agent runs as a process on this PC.",
      {"engine": ("string", "'friday' or 'claude_agent'.")}, ["engine"]),
@@ -377,14 +376,13 @@ _VOICE_LIVE_TOOLS = [
      "Show the preview beside the current chat ('show me the preview'): the codebase's page or the chat's artifacts.",
      {}, []),
     ("build_mode",
-     "Enter build mode in the current chat (its panel becomes the Build panel for one of the project's codebases) "
-     "or leave it ('build mode', 'build mode with the rent tracker', 'leave build mode').",
+     "Enter or leave the current chat's codebase Build panel. Examples: 'build mode', "
+     "'build mode with the rent tracker', 'leave build mode'.",
      {"on": ("boolean", "true to enter, false to leave."), "codebase": ("string", "Which codebase, if named.")}, []),
     ("delegate_to_friday",
-     "Hand ANY request to the full Friday agent, with every tool it has in chat "
-     "(email drafting, files, the wiki, browsing, research, workflows, anything the "
-     "fast tools here do not cover), running on the right model for this "
-     "conversation. It runs in the background: say one short sentence that you're "
+     "Delegate any request to Friday's full chat agent on this conversation's model. "
+     "It has every chat tool: email drafting, files, wiki, browsing, research and workflows. "
+     "It runs in the background: say one short sentence that you're "
      "on it, keep the conversation going, and when it finishes the real outcome is "
      "handed back to you to tell the user. Outward actions it takes still raise "
      "approval cards, exactly as in chat. Use it whenever a request needs more "
@@ -409,10 +407,9 @@ _VOICE_LIVE_TOOLS = [
      "decide; if they decline, carry on without it.",
      {"question": ("string", "The question for their local model, in full.")}, ["question"]),
     ("navigate_to",
-     "Open ONE specific thing on the user's Friday desktop, on screen: an email "
-     "thread, the mail a Gmail search finds, a file, a wiki page or graph node, a "
-     "news story, a Studio creation, a Settings tab, a calendar day or meeting, a "
-     "contact, a content post, or a workspace section. Pass the user's own words "
+     "Open one specific item, search result or workspace section on the user's desktop. "
+     "Kinds include email, mail search, file, wiki page, graph node, news, creation, "
+     "Settings tab, calendar day or meeting, contact and content post. Pass the user's own words "
      "as `query` ('the Harbor Legal email', 'my budget spreadsheet', 'model "
      "settings') with the `kind` you think they mean. Prefer this over "
      "navigate_workspace whenever they name a THING rather than a whole "
@@ -435,18 +432,16 @@ _VOICE_LIVE_TOOLS = [
       "max": ("boolean", "On the desktop: fill the desktop with its window.")},
      ["kind"]),
     ("check_situation",
-     "What is happening on this machine right now: which workspaces are open, CPU, "
-     "RAM, GPU memory and disk, which models are loaded or serving, running turns, "
-     "tasks and scheduled jobs, and today's spend. Use it for any question about "
+     "Report open workspaces, machine load, models, active turns, tasks, jobs and today's spend. "
+     "Load includes CPU, RAM, GPU memory and disk. Use it for any question about "
      "current activity or load ('what are you working on', 'is the GPU busy', 'what "
      "did today cost'). Keep `detail` at brief for speech and read back only what they "
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
     ("set_chat_tray",
-     "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or "
-     "the right in a third, a half or two thirds of the screen ('put chat on the right "
-     "third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on "
+     "Show, hide, resize or dock chat on either side, with the workspace taking the remaining width. "
+     "Examples: 'show chat', 'hide chat', 'put chat on the right third'. Hidden, it leaves a slim pill on "
      "its edge and the workspace takes the full width. Their own screen, so no approval is needed. CHAT_OK: say what changed "
      "in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
      {"visible": ("boolean", "true to show the chat, false to hide it."),
@@ -461,9 +456,8 @@ _VOICE_LIVE_TOOLS = [
      "it will do now. The countdowns are not in the result: do not guess them.",
      {"mode": ("string", "smart, always or never; empty to show it now.")}, []),
     ("set_workspace_layout",
-     "Show a workspace fullscreen with the chat tray docked beside it ('make this "
-     "fullscreen with chat'), or back to normal, or, with fullscreen_chat false and a "
-     "position, in part of the screen ('put News on the left two thirds'). It is their "
+     "Set a workspace to fullscreen with docked chat, normal size, or a named screen position. "
+     "Use fullscreen_chat false with position for 'put News on the left two thirds'. It is their "
      "own screen, so no "
      "approval is needed, and the choice is remembered for that workspace. Leave "
      "workspace empty for the one in front. LAYOUT_OK means the screen did it: say "
@@ -597,10 +591,8 @@ _VOICE_LIVE_TOOLS = [
      {"request_id": ("string", "The id from ask_local_for_context."),
       "instruction": ("string", "Their instruction, in their words.")}, ["request_id", "instruction"]),
     ("spawn_task",
-     "Start a long-running background task (a 'workflow') that keeps working "
-     "while the conversation continues — deep research, multi-step analysis, "
-     "drafting a long brief, or anything that takes more than about ten "
-     "seconds. THIS IS THE ONLY WAY to do work in voice that outlives the "
+     "Start background work lasting beyond this voice turn, such as research, analysis or a long draft. "
+     "Use for work taking more than about ten seconds. THIS IS THE ONLY WAY to do work in voice that outlives the "
      "current turn: if the user asks you to research, investigate, analyse, "
      "compile, monitor, or write something substantial, call this tool rather "
      "than describing what you are about to do. Progress appears in the user's "
@@ -813,6 +805,10 @@ _VOICE_SHARED_TOOLS = (
     # "select", "back". select never fires a guarded action.
     "big_mode",
     "hand_cursor",
+    "home_cards",
+    "customize_workspace",
+    "revert_workspace",
+    "list_workspace_history",
 )
 
 
@@ -1078,9 +1074,9 @@ def _build_voice_live_tools(types, behavior=None):
 def _json_schema_to_genai(types, schema, type_map, tool=""):
     """Render one JSON-Schema object as a google.genai Schema.
 
-    Deliberately narrow: object / string / integer / number / boolean / array
-    of those, plus `enum` and `description`. Anything richer raises, and the
-    caller drops the tool rather than declaring a lossy version of it.
+    Explicit nested objects, arrays and nullable scalar/array fields keep their
+    structure. Free-form objects and heterogeneous unions are refused rather
+    than flattened into a shape the handler cannot understand.
     """
     if (schema or {}).get("type") not in (None, "object"):
         raise ValueError("top-level schema must be an object")
@@ -1098,8 +1094,19 @@ def _json_schema_leaf(types, spec, type_map, pname, tool=""):
     spec = spec or {}
     jtype = spec.get("type") or "string"
     kwargs = {}
+    if isinstance(jtype, list):
+        concrete = [kind for kind in jtype if kind != "null"]
+        if "null" not in jtype or len(concrete) != 1:
+            raise ValueError("unsupported union on property %r" % pname)
+        jtype = concrete[0]
+        kwargs["nullable"] = True
     if spec.get("description"):
         kwargs["description"] = spec["description"]
+    for original, rendered in (("minimum", "minimum"), ("maximum", "maximum"),
+                               ("minItems", "min_items"), ("maxItems", "max_items"),
+                               ("minLength", "min_length"), ("maxLength", "max_length")):
+        if original in spec:
+            kwargs[rendered] = spec[original]
     if spec.get("enum"):
         # The Live API refuses the WHOLE setup over one empty enum value --
         # "enum[0]: cannot be empty", close code 1007 -- so a tool that means
@@ -1107,7 +1114,7 @@ def _json_schema_leaf(types, spec, type_map, pname, tool=""):
         # other tool with it. The handlers already read a missing value as ""
         # (inp.get(...) or ""), so dropping it costs nothing; an enum left
         # empty is dropped too, which leaves a plain string.
-        vals = [str(v) for v in spec["enum"]]
+        vals = [str(v) for v in spec["enum"] if v is not None]
         kept = [v for v in vals if v != ""]
         if len(kept) != len(vals):
             _log.warning("voice live tools: %s.%s declared an empty-string "
@@ -1122,17 +1129,21 @@ def _json_schema_leaf(types, spec, type_map, pname, tool=""):
                                     pname + "[]", tool),
             **kwargs)
     if jtype == "object":
-        # Structured nested objects keep their real contract on Live, including
-        # objects inside arrays. Free-form maps still have no faithful schema.
-        nested = spec.get("properties")
-        if not isinstance(nested, dict) or not nested:
+        properties = spec.get("properties")
+        if not isinstance(properties, dict) or not properties:
             raise ValueError("free-form object property %r is not supported" % pname)
-        return types.Schema(
-            type=types.Type.OBJECT,
-            properties={key: _json_schema_leaf(types, value, type_map,
-                                              pname + "." + key, tool)
-                        for key, value in nested.items()},
-            required=list(spec.get("required") or []) or None, **kwargs)
+        if "additionalProperties" in spec:
+            if spec["additionalProperties"] is not False:
+                raise ValueError("free-form additional properties on %r" % pname)
+            # Live's typed Schema omits additionalProperties, even when the SDK
+            # accepts it. Closed-object restrictions remain in the shared JSON
+            # schema and handlers; sending this field rejects the entire setup.
+        return types.Schema(type=types.Type.OBJECT,
+                            properties={key: _json_schema_leaf(types, value, type_map,
+                                        pname + "." + key, tool)
+                                        for key, value in properties.items()},
+                            required=list(spec.get("required") or []) or None,
+                            **kwargs)
     if jtype not in type_map:
         raise ValueError("unsupported type %r on property %r" % (jtype, pname))
     return types.Schema(type=type_map[jtype], **kwargs)

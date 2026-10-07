@@ -111,12 +111,17 @@ def read_selection(settings: dict | None = None) -> dict:
     mode = str(s.get("voice_engine") or "local").strip().lower()
     if mode == "auto":            # auto is a synonym for local
         mode = "local"
+    from agent_friday.services.voice_front import selected_model
+    mind = {"engine": "seat", "reply_cap": _reply_cap(s),
+            "target": "brain" if mode == "gemini" else "local_voice"}
+    if mind["target"] == "local_voice":
+        mind["front_model"] = selected_model(s)
     return {
         "mode": mode,
         "ear": {"engine": "faster-whisper",
                 "model": str(s.get("local_voice_asr_model") or "auto"),
                 "device_policy": _policy(s.get("voice_ear_gpu"))},
-        "mind": {"engine": "seat", "reply_cap": _reply_cap(s)},
+        "mind": mind,
         "mouth": {"engine": str(s.get("local_voice_tts_engine") or "piper").strip().lower(),
                   "voice": (str(s.get("local_voice_kokoro_voice") or "af_heart")
                             if str(s.get("local_voice_tts_engine") or "piper").lower() == "kokoro"
@@ -127,12 +132,12 @@ def read_selection(settings: dict | None = None) -> dict:
 
 
 def _reply_cap(s: dict) -> int:
-    try:
-        n = int(s.get("voice_max_tokens") or 0)
-    except Exception:
-        n = 0
-    # The same default as routes/voice._VOICE_REPLY_TOKENS_DEFAULT.
-    return 400 if n <= 0 else max(64, min(n, 2048))
+    # Proof identity and context accounting use the same explicit/default
+    # limits as real voice turns. Temporary call preferences cannot change
+    # the readiness record for these saved settings.
+    from agent_friday.services.voice_delivery import reply_budget, using_preferences
+    with using_preferences({}):
+        return reply_budget(s or {})
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -236,14 +241,14 @@ def _run_mind(selection: dict, progress) -> dict:
     Returns ``{"seat", "base", "window", "tools", "prompt_tokens",
     "timings", "content"}``. Raises ProofRefused when there is no seat.
 
-    With a voice front installed (local voice spec P1) the proof runs against
-    the FRONT, which is what answers the session's turns, with the voice tool
-    contract: the brain's 40-50K-token contract is what made this proof take
-    175-199 s.
+    Local voice proves its installed front with the voice tool contract.
+    Gemini's local-context relay proves the brain that ask_friday uses.
+    The captured selection fixes the target for the duration of the proof.
     """
     from agent_friday.services import voice_front as _vf
-    _front = _vf.selected_model(_settings())
-    if _vf.installed(_front):
+    selection = selection if selection.get("target") else read_selection()["mind"]
+    _front = selection.get("front_model")
+    if selection["target"] == "local_voice" and _vf.installed(_front):
         return _run_front_mind(_front, progress)
     from agent_friday.services import local_seats
     seat = local_seats.resolve("brain")
@@ -496,6 +501,7 @@ class VoiceManifest:
         self.ttl_s = int(ttl_s)
         self.mode = "local"
         self.stages = {k: _blank_stage() for k in STAGES}
+        self._mind_selection_revision = 0
         self._proving = False
         self._runtime: dict = {}   # proven engine handles (Phase 1 workers)
         self._listeners: list = []
@@ -511,6 +517,15 @@ class VoiceManifest:
             for k in STAGES:
                 st = self.stages[k]
                 if st["selected"] != sel[k]:
+                    if k == "mind":
+                        # A proof of another voice target cannot describe the
+                        # new selection, including while its runner is active.
+                        self._mind_selection_revision += 1
+                        fresh = _blank_stage(sel[k])
+                        if st["selected"]:
+                            fresh["reason"] = "selection changed since the last proof"
+                        self.stages[k] = fresh
+                        continue
                     # A changed selection invalidates the proof: what was
                     # proven is no longer what is selected.
                     if st["proof"]["state"] == "proven":
@@ -576,32 +591,43 @@ class VoiceManifest:
         """Run ONE stage's proof synchronously. Returns the stage dict."""
         if stage not in STAGES:
             raise ValueError(stage)
-        self._begin(stage)
-        prog = lambda m: self._set_progress(stage, m)  # noqa: E731
-        sel = dict(self.stages[stage]["selected"])
+        with self._lock:
+            self._begin(stage)
+            sel = dict(self.stages[stage]["selected"])
+            mind_revision = self._mind_selection_revision
+        def prog(message):
+            with self._lock:
+                if stage != "mind" or mind_revision == self._mind_selection_revision:
+                    self._set_progress(stage, message)
         t0 = time.perf_counter()
+
+        def refuse_current(code, message, action=None):
+            with self._lock:
+                if stage != "mind" or mind_revision == self._mind_selection_revision:
+                    self._refuse(stage, code, message, action)
+
         try:
             if stage == "ear":
                 self._prove_ear(sel, prog, t0)
             elif stage == "mouth":
                 self._prove_mouth(sel, prog, t0)
             else:
-                self._prove_mind(sel, prog, t0)
+                self._prove_mind(sel, prog, t0, mind_revision)
         except ProofRefused as e:
-            self._refuse(stage, e.code, e.message, e.action)
+            refuse_current(e.code, e.message, e.action)
         except Exception as e:  # noqa: BLE001
             log.warning("voice %s proof failed: %s: %s", stage, type(e).__name__, e)
             # An admission refusal (voice_workers.GpuRefused under policy
             # `required`) carries its own taxonomy code and sentence.
             code = getattr(e, "code", None)
             if code and getattr(e, "message", None):
-                self._refuse(stage, str(code), str(e.message),
+                refuse_current(str(code), str(e.message),
                              {"label": "Set GPU to 'if free'", "kind": "settings"}
                              if code == "local_voice_gpu_refused" else
                              {"label": "Prove again", "kind": "retry"})
             else:
                 msg, act = plain_language_refusal(e, self._noun(stage))
-                self._refuse(stage, "voice_stage_unproven", msg, act)
+                refuse_current("voice_stage_unproven", msg, act)
         self._notify()
         return self.snapshot_stage(stage)
 
@@ -658,7 +684,7 @@ class VoiceManifest:
                        f"{seconds:.1f} s of audio from a {len(PROOF_LINE.split())}-word line",
                        reason)
 
-    def _prove_mind(self, sel, prog, t0):
+    def _prove_mind(self, sel, prog, t0, selection_revision):
         out = ENGINE_RUNNERS["mind"](sel, prog)
         ms = (time.perf_counter() - t0) * 1000.0
         contract = out.get("contract") or {}
@@ -667,18 +693,20 @@ class VoiceManifest:
                      "window": contract.get("window"),
                      "contract": contract,
                      "prefill_tokens": (out.get("timings") or {}).get("prompt_n"),
-                     "cloud_relay": self.mode == "gemini"}
-        if not contract.get("fits", True):
-            self._refuse("mind", "voice_contract_does_not_fit",
-                         "The local model's window can't hold Friday's tools "
-                         "alongside this conversation. " + contract.get("reason", ""),
-                         {"label": "Raise seat context", "kind": "settings"})
-            with self._lock:
+                     "cloud_relay": sel.get("target") == "brain"}
+        with self._lock:
+            if selection_revision != self._mind_selection_revision:
+                return
+            if not contract.get("fits", True):
+                self._refuse("mind", "voice_contract_does_not_fit",
+                             "The local model's window can't hold Friday's tools "
+                             "alongside this conversation. " + contract.get("reason", ""),
+                             {"label": "Raise seat context", "kind": "settings"})
                 self.stages["mind"]["effective"] = effective
-            return
-        self._prove_ok("mind", effective, ms,
-                       f"{len(contract.get('tools') or [])} tools; replied "
-                       f"{out.get('content')!r}")
+                return
+            self._prove_ok("mind", effective, ms,
+                           f"{len(contract.get('tools') or [])} tools; replied "
+                           f"{out.get('content')!r}")
 
     def prove_all(self, stages=STAGES) -> dict:
         """Prove every stage, ear first (§5.4). Single-flight: a second caller
@@ -775,7 +803,7 @@ class VoiceManifest:
         mind_eff = stages["mind"].get("effective") or {}
         contract = dict(mind_eff.get("contract") or {})
         if self.mode == "gemini":
-            contract = self.cloud_contract(contract)
+            contract = self.cloud_contract(contract if stages["mind"]["ready"] else {})
         # Phase 1: a GPU row shows its idle-unload countdown while its worker
         # is resident, and the admission/eviction notices ride along so the
         # card and the HUD can show them once (§3.2 rule 4, §7).
@@ -809,13 +837,16 @@ class VoiceManifest:
             names = list(_voice_tool_names())
         except Exception:
             names = []
+        relay_ready = bool(local_contract.get("knowledge_graph") and
+                           local_contract.get("memory"))
         return {"tools": names, "native_tools": len(names),
                 "ask_friday": "ask_friday" in names,
                 "knowledge_graph": bool(local_contract.get("knowledge_graph")) and "ask_friday" in names,
                 "memory": bool(local_contract.get("memory")) and "ask_friday" in names,
                 "fits": True, "window": None,
-                "line": (f"{len(names) - 1} native tools + ask_friday → your context "
-                         "is reached through Friday's local model"
+                "line": (f"{len(names) - 1} native tools + ask_friday; "
+                         + ("your context is reached through Friday's local model"
+                            if relay_ready else "local context depends on the relay result")
                          if "ask_friday" in names else
                          f"{len(names)} native tools; no path to your context")}
 
@@ -828,7 +859,8 @@ class VoiceManifest:
 
         vault_open (model_routing.vault_local_only is false): the user's notes
         reach the cloud session through its own prompt and the search_wiki
-        tool, so an unready local model closes only the ask_friday path.
+        tool. An unproven relay may still be attempted through ask_friday;
+        its actual result, not an absent readiness proof, establishes reach.
         """
         s = {k: self.snapshot_stage(k) for k in STAGES}
 
@@ -857,16 +889,17 @@ class VoiceManifest:
                         "graph are answered by their local model through the "
                         "`ask_friday` tool.")
             elif vault_open:
-                tail = ("Friday's local model is not running right now, so "
-                        "`ask_friday` is unavailable; the user's vault is open to "
-                        "this session, so their notes reach you through this "
-                        "prompt and the `search_wiki` tool.")
+                tail = ("The local context relay has not passed its current "
+                        "readiness check. You may call `ask_friday` and report "
+                        "its actual result or refusal. The user's vault is "
+                        "open to this session, so their notes reach you through "
+                        "this prompt and the `search_wiki` tool.")
             else:
-                tail = ("Friday's local model is NOT available right now and the "
-                        "user keeps their vault local-only, so you have no path to "
-                        "their private vault content, memory or knowledge graph "
-                        "(`search_wiki` still finds notes that are not private); "
-                        "say so plainly if asked.")
+                tail = ("The local context relay has not passed its current "
+                        "readiness check. The user keeps their vault local-only. "
+                        "You may call `ask_friday` for a local answer that passes "
+                        "the privacy gate; report its actual result or refusal. "
+                        "`search_wiki` still finds notes that are not private.")
             return ("You are Gemini Live; the microphone audio is sent to Google. "
                     + tail)
 

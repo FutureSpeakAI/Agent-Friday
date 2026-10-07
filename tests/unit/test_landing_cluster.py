@@ -223,7 +223,9 @@ def test_the_cluster_is_on_the_desktop_and_the_judge_fades_it(rel):
 def test_the_page_reports_the_cluster_and_answers_show_my_day(rel):
     text = _read(rel)
     assert "landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined" in text, rel
-    assert "answer({ opened: true, matched: null, landing: { show: !!l.show, reason: l.reason || '' } })" in text, rel
+    assert "document.querySelector('.fx-main[data-view=\"day\"]')" in text, rel
+    assert "const shown=simple?document.body.dataset.fridayHomeVisible==='true'&&!!home&&home.getBoundingClientRect().height>0:!!l.show;" in text, rel
+    assert "answer({ opened: shown, matched: null, landing: { show: shown, reason: simple?'Simple Home':l.reason || '' } })" in text, rel
     assert re.search(r"a\.type ?=== ?'landing'", text) and "new CustomEvent('friday:landing'" in text, rel
 
 
@@ -330,6 +332,17 @@ def test_show_my_day_says_plainly_when_no_page_can_show_it(pages):
     assert agent._tool_show_my_day({}) == "DAY_NOT_SHOWN — no Friday desktop page is open to show it on."
 
 
+def test_mode_reply_distinguishes_classic_preference_from_visible_simple_home(pages, monkeypatch):
+    monkeypatch.setattr(agent, "LANDING_ACK_S", 5.0)
+    q = desktop_bus.subscribe("desk", "desktop")
+    desktop_bus.report_state("desk", {"kind": "desktop", "focused": True})
+    _, thread = _answering(q, {"opened": True, "landing": {"show": True, "reason": "Simple Home"}})
+    out = agent._tool_show_my_day({"mode": "never"})
+    thread.join(5)
+    assert "Classic's start screen" in out and "Simple Home" in out
+    assert "It is showing now" not in out
+
+
 def test_a_mode_is_kept_and_sent(pages, monkeypatch):
     from agent_friday.core import _load_settings
     monkeypatch.setattr(agent, "LANDING_ACK_S", 5.0)
@@ -341,7 +354,7 @@ def test_a_mode_is_kept_and_sent(pages, monkeypatch):
     seen, t = _answering(q, {"opened": True, "landing": {"show": True, "reason": "set to always show"}})
     out = agent._tool_show_my_day({"mode": "always"})
     t.join(5)
-    assert out == ("DAY_MODE:always — the start screen shows your day whenever no workspace is "
+    assert out == ("DAY_MODE:always — Classic's start screen shows your day whenever no workspace is "
                    "open. It is showing now."), out
     assert seen[0]["actions"] == [{"type": "landing", "summon": False, "via": "friday", "mode": "always"}]
     assert agent._tool_show_my_day({"mode": "sometimes"}).startswith("DAY_FAIL")

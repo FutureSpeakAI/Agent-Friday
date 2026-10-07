@@ -187,7 +187,8 @@ def test_the_page_opens_the_quick_look_for_a_play_target():
     from pathlib import Path
     js = (Path(__file__).resolve().parents[2] / "static" / "media_ws.js").read_text(encoding="utf-8")
     assert "if (t.card && t.play) {" in js and "'friday:media-quicklook'" in js
-    assert "mediaRef.current.currentTime = at" in js, "the player starts where the words were said"
+    assert "const media = mediaRef.current;" in js and "media.currentTime = at;" in js, "the player starts where the words were said"
+    assert "if (!playbackSuspended.current && shortcutsVisible(keyboardRoot)) media.play()" in js, "a hidden retained player cannot autoplay"
 
 
 def test_navigate_to_knows_a_card(home):

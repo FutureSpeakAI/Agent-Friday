@@ -718,7 +718,7 @@ function fridayRunActions(actions){
             const got=TK.calibrate(w);
             a.result={calibrated:got||null};
             if(got){apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({settings:{tracking:TK.get()}})}).catch(()=>{});}
+              body:JSON.stringify({settings:{tracking:{neutral_face_width:got}}})}).catch(()=>{});}
           }else if(a.op==='reset'){
             a.result={tracking:TK.reset()};
           }else if(a.tracking&&typeof a.tracking==='object'){
@@ -2356,27 +2356,40 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
   const {setCust}=useContext(WsCustomCtx);
   const endRef=useRef(null);const inRef=useRef(null);const seededRef=useRef(false);
   const flash=t=>{setToast(t);};
+  const operation=useRef(0), busy=useRef(false), alive=useRef(true);
+  useEffect(()=>()=>{alive.current=false;operation.current++},[]);
+  const begin=()=>{if(busy.current)return false;busy.current=true;operation.current++;setLoading(true);return true};
+  const finish=()=>{busy.current=false;if(alive.current)setLoading(false)};
   useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:Math.max(0,Math.min(e.clientX-dOff.current.x,(window.innerWidth||1280)-120)),y:Math.max(28,Math.min(e.clientY-dOff.current.y,(window.innerHeight||800)-80))});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
-  const load=()=>fetch(`/api/workspace/${wsId}/chat`).then(r=>r.json()).then(d=>{setMsgs(d.chat||[]);setVersions(d.versions||[]);if(d.customization!==undefined)setCust(wsId,d.customization)}).catch(()=>{});
+  const readReply=async r=>{const d=await r.json();if(!r.ok||!d||d.status!=='ok')throw new Error(d.message||d.error||'The workspace request failed.');return d};
+  const load=()=>{const ticket=++operation.current;fetch('/api/workspace/'+wsId+'/chat').then(readReply).then(d=>{if(!alive.current||ticket!==operation.current)return;setMsgs(d.chat||[]);setVersions(d.versions||[]);if(d.customization!==undefined)setCust(wsId,d.customization)}).catch(()=>{if(alive.current&&ticket===operation.current)flash('Could not load workspace history.')})};
   useEffect(()=>{load()},[wsId]);
   useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[msgs.length,loading]);
-  const send=async(override)=>{const m=(override||input).trim();if(!m||loading)return;setInput('');
+  const send=async(override)=>{const m=(override||input).trim();if(!m||!begin())return;setInput('');
     setMsgs(p=>[...p,{role:'user',text:m,time:new Date().toISOString()}]);setLoading(true);
     try{
       const r=await fetch(`/api/workspace/${wsId}/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m,label})});
-      const d=await r.json();
+      const d=await readReply(r);
+      if(!alive.current)return;
       setMsgs(p=>[...p,{role:'friday',text:d.response||'[no response]',applied:d.applied,revert_to:d.revert_to,change:d.change,time:new Date().toISOString()}]);
       if(d.customization!==undefined)setCust(wsId,d.customization);
       if(d.versions)setVersions(d.versions);
       if(d.applied)flash('✨ Applied: '+(d.change||'change'));
-    }catch(e){setMsgs(p=>[...p,{role:'friday',text:'[Connection error]'}])}
-    setLoading(false);inRef.current?.focus();
+    }catch(e){if(!alive.current)return;setInput(current=>current||m);setMsgs(p=>[...p,{role:'friday',text:'Could not apply that request. Your draft is ready to retry.'}]);flash(e.message||'Workspace request failed')}
+    finish();inRef.current?.focus();
   };
   // Auto-send a seed prompt (e.g. clicked quick-action) exactly once.
   useEffect(()=>{if(seedPrompt&&!seededRef.current){seededRef.current=true;send(seedPrompt)}},[seedPrompt]);
-  const revert=async(vid)=>{try{const r=await fetch(`/api/workspace/${wsId}/revert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version_id:vid})});const d=await r.json();if(d.status!=='ok'){flash('Revert failed');return}if(d.customization!==undefined)setCust(wsId,d.customization);if(d.versions)setVersions(d.versions);flash('↩ Reverted')}catch(e){flash('Revert failed')}};
-  const reset=async()=>{if(!window.confirm(('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?')))return;try{const r=await fetch(`/api/workspace/${wsId}/reset`,{method:'POST'});const d=await r.json();setCust(wsId,d.customization||{});if(d.versions)setVersions(d.versions);flash('Workspace reset to default')}catch(e){flash('Reset failed')}};
-  const clearChat=()=>{fetch(`/api/workspace/${wsId}/chat/clear`,{method:'POST'}).then(()=>{setMsgs([]);flash('History cleared')}).catch(()=>{})};
+  const change=async(path,options,onSaved,failure)=>{
+    if(!begin())return;
+    try{const d=await fetch('/api/workspace/'+wsId+'/'+path,options).then(readReply);if(alive.current)onSaved(d)}
+    catch(e){if(alive.current)flash(failure)}
+    finally{finish()}
+  };
+  const applyReply=d=>{if(d.customization!==undefined)setCust(wsId,d.customization);if(d.versions)setVersions(d.versions)};
+  const revert=vid=>change('revert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version_id:vid})},d=>{applyReply(d);flash('↩ Reverted')},'Revert failed');
+  const reset=()=>{if(busy.current||!window.confirm('Reset ALL of '+fridayName()+'’s changes to this workspace back to default?'))return;return change('reset',{method:'POST'},d=>{applyReply(d);flash('Workspace reset to default')},'Reset failed')};
+  const clearChat=()=>change('chat/clear',{method:'POST'},()=>{setMsgs([]);flash('History cleared')},'Could not clear history.');
   const STARTERS=['Make this layout more compact','I don’t like the colors — try a warmer accent','Pin a note reminding me what this workspace is for','Add quick-action buttons for my common tasks here'];
   return(<div className="friday-workspace-studio" role="dialog" aria-label={label+" customization"} style={{position:'fixed','--friday-shared-x':pos.x+'px','--friday-shared-y':pos.y+'px',left:pos.x,top:pos.y,width:390,maxWidth:'94vw',height:'min(620px,76vh)',zIndex:130,display:'flex',flexDirection:'column',background:'rgba(10,14,24,0.97)',border:'1px solid rgba(0,212,255,0.28)',borderRadius:14,boxShadow:'0 18px 60px rgba(0,0,0,0.6)',backdropFilter:'blur(14px)',overflow:'hidden'}}>
     <div className="friday-studio-head" onMouseDown={e=>{if(e.target.closest('button'))return;setDragging(true);const box=e.currentTarget.closest('.friday-workspace-studio').getBoundingClientRect();dOff.current={x:e.clientX-box.left,y:e.clientY-box.top}}} style={{cursor:'grab',padding:'10px 12px',borderBottom:'1px solid rgba(0,212,255,0.18)',display:'flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.05)'}}>
@@ -2385,7 +2398,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.04em'}}>{emoji} {label} · Studio</div>
         <div style={{fontSize:10,color:'#8891a8'}}>Shape this workspace by talking to {fridayName()}</div>
       </div>
-      <button onClick={()=>setShowVer(v=>!v)} title="Version history" style={{background:'none',border:'1px solid rgba(255,255,255,0.14)',borderRadius:6,color:'#aab',cursor:'pointer',fontSize:11,padding:'2px 7px'}}>🕘 {versions.length}</button>
+      <button onClick={()=>setShowVer(v=>!v)} aria-label="Version history" title="Version history" style={{background:'none',border:'1px solid rgba(255,255,255,0.14)',borderRadius:6,color:'#aab',cursor:'pointer',fontSize:11,padding:'2px 7px'}}>🕘 {versions.length}</button>
       <button aria-label="Close" onClick={onClose} title="Close" style={{background:'none',border:'none',color:'#9aa',cursor:'pointer',fontSize:18,lineHeight:1}}>×</button>
     </div>
     {showVer&&<div style={{maxHeight:160,overflowY:'auto',borderBottom:'1px solid rgba(255,255,255,0.08)',padding:'6px 10px',background:'rgba(0,0,0,0.25)'}}>
@@ -2403,7 +2416,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
     <div className="friday-studio-log" role="log" aria-live="polite" style={{flex:1,overflowY:'auto',padding:'10px 12px'}}>
       {msgs.length===0&&!loading&&<div style={{color:'#8891a8',fontSize:12,lineHeight:1.6}}>
         <div style={{marginBottom:10}}>Tell {fridayName()} what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features — and undo anything.</div>
-        {STARTERS.map((s,i)=><div key={i} onClick={()=>send(s)} className="card" style={{cursor:'pointer',padding:'7px 10px',marginBottom:5,fontSize:11.5}}>{s}</div>)}
+        {STARTERS.map((s,i)=><button type="button" key={i} onClick={()=>send(s)} className="card" style={{display:'block',width:'100%',textAlign:'left',color:'inherit',cursor:'pointer',padding:'7px 10px',marginBottom:5,fontSize:11.5}}>{s}</button>)}
       </div>}
       {msgs.map((m,i)=>(<div key={i} style={{marginBottom:10,display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
         <div style={{maxWidth:'90%',padding:'7px 11px',borderRadius:10,fontSize:12.5,lineHeight:1.5,background:m.role==='user'?'rgba(0,212,255,0.12)':'rgba(255,255,255,0.05)',border:m.role==='user'?'1px solid rgba(0,212,255,0.22)':'1px solid rgba(255,255,255,0.07)',color:'#dde'}}>
@@ -3465,7 +3478,7 @@ function CareerWS(){
     {title:'Work on one role',text:'Paste a job posting URL into Work on a role, then choose your next step. Each task has its own conversation with '+fridayName()+'.',points:['Evaluate job compares the role with your experience and saves a new report.','Tailor CV prepares a new draft using your existing CV.','Prepare interview develops questions and examples grounded in your experience.','Scan opportunities checks your configured public job boards and returns matches in the conversation.']},
     {title:'Make the search repeatable',text:'Add Career search workflow saves a starter in Workflows. Adding it does not run it or set a schedule.',points:['The starter checks setup, scans your job boards and evaluates up to three new roles.','Open Workflows to review its steps, then run it when you choose.','Set a schedule there only when you want a recurring search.']},
     {title:'Follow your results',text:'Open the career conversation for each task’s answer. Reports holds saved evaluations and other career notes; Tracker shows recorded application progress.',points:['An evaluation does not automatically add a Tracker row. Ask '+fridayName()+' to record the role, then review the approval card.','Pipeline shows saved opportunities. Scan results stay in the conversation unless you approve saving them.','Scanner and Curated show separate job sources; they are not the results of Scan opportunities.'],detail:'Recording progress needs the tracker file data/applications.md. The setup card names missing files.'},
-    {title:'Review before you apply',text:fridayName()+' can save new evaluation reports and prepare new drafts while keeping your original CV and profile unchanged.',points:['Tracker and saved pipeline changes ask for your approval.','Review every draft for accuracy and answer personal application questions yourself.','You submit applications on the employer’s site.'],detail:'Need a hand? Ask Friday for a plain-language walkthrough tailored to your setup.'}
+    {title:'Review before you apply',text:fridayName()+' can save new evaluation reports and prepare new drafts while keeping your original CV and profile unchanged.',points:['Tracker and saved pipeline changes ask for your approval.','Review every draft for accuracy and answer personal application questions yourself.','You submit applications on the employer’s site.'],detail:'Need a hand? Ask '+fridayName()+' for a plain-language walkthrough tailored to your setup.'}
   ];
   const step=tour[tourStep];
   return(<div className="fr-comp-root fr-comp-career" data-view={view} data-testid="career-workspace">
@@ -3474,7 +3487,7 @@ function CareerWS(){
       <div style={{fontSize:12,color:'var(--fr-label)',lineHeight:1.6,marginBottom:8}}>Find roles, understand your fit and prepare your next application with your own experience as the starting point.</div>
       <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
         <button className="btn" onClick={()=>setTourStep(tourStep<0?0:-1)} aria-expanded={tourStep>=0} aria-controls="career-tour">{tourStep<0?'Take a tour':'Close tour'}</button>
-        <button className="btn" disabled={disabled} onClick={askFriday}>Ask Friday</button>
+        <button className="btn" disabled={disabled} onClick={askFriday}>Ask {fridayName()}</button>
         <button className="btn" disabled={disabled} onClick={()=>coStatus?showSection(ready?'actions':'setup'):load()}>{coStatus?(ready?'Go to job actions':'Review setup'):'Retry setup check'}</button>
       </div>
       <div style={{fontSize:11,color:'var(--fr-label)',marginTop:8}}>{ready?'Next: scan for opportunities or paste a job URL below.':coStatus?'Next: connect your existing career folder and complete the missing setup items.':'Next: retry the setup check. The tour and '+fridayName()+'’s explanation are available now.'}</div>
@@ -3551,7 +3564,7 @@ function CareerWS(){
     {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}{e.role?<span style={{color:'#888',fontWeight:400}}> · {e.role}</span>:null}</span><span style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
     {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#999'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
     {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
-    {view==='pipeline'&&<div>{pipeline?<FridayDoc compact text={pipeline}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No saved opportunities yet. In a career conversation, ask Friday to save a role to your pipeline, then review the approval card.</div>}</div>}
+    {view==='pipeline'&&<div>{pipeline?<FridayDoc compact text={pipeline}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No saved opportunities yet. In a career conversation, ask {fridayName()} to save a role to your pipeline, then review the approval card.</div>}</div>}
     {view==='curated'&&(jobs?<FridayDoc compact text={jobs.substring(0,4000)}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No saved curated roles. This tab shows a separate collection of career notes and leads. Scan opportunities returns job-board matches in its own conversation.</div>)}
     {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:12,color:'var(--fr-label)',lineHeight:1.6,marginBottom:8}}>Paste a job posting into Work on a role, then choose Prepare interview. {fridayName()} uses your CV and available evaluation reports to develop likely questions and examples from your experience. The preparation appears in its career conversation.</div><button className="btn" onClick={()=>showSection('actions')}>Go to interview actions</button>{reports.length>0&&<button className="btn" style={{marginLeft:6}} onClick={()=>setView('reports')}>Browse reports</button>}</div>}
     {view==='outreach'&&<OutreachPanel/>}
@@ -13861,6 +13874,15 @@ function ReasoningTrace({
 /* A trace by id (or by task id), live from the store when it is there and
    fetched from GET /api/traces/<id> when it is not. A task with no trace
    id is looked up in the store, then in the ledger by task. */
+function rtTraceSubtree(tree, id) {
+  const pending=tree?[tree]:[],seen=new Set();
+  while(pending.length){
+    const node=pending.pop();if(!node||typeof node!=='object'||seen.has(node))continue;
+    if(node.trace_id===id)return node;seen.add(node);
+    if(Array.isArray(node.children))pending.push(...node.children);
+  }
+  return null;
+}
 function TraceView({
   traceId,
   taskId,
@@ -13869,7 +13891,8 @@ function TraceView({
   hot,
   wholeTree,
   focusId,
-  pending
+  pending,
+  exactSubtree
 }) {
   const store = window.fridayTraceStore;
   const sub = useTraceStore(s => {
@@ -13931,8 +13954,10 @@ function TraceView({
     maxHeight: maxHeight,
     focusId: focusId || traceId
   });
-  if (tree && tree.tree) return rtEl(ReasoningTrace, {
-    trace: tree.tree,
+  const archived = tree?.tree && (exactSubtree ? rtTraceSubtree(tree.tree, wantId) : tree.tree);
+  if (tree?.tree && exactSubtree && !archived) return rtMuted(emptyText || 'The requested reasoning thread is not in this record.');
+  if (archived) return rtEl(ReasoningTrace, {
+    trace: archived,
     getChildren: x => x.children || [],
     labels: tree.labels || store.labels(),
     maxHeight: maxHeight,
@@ -13956,6 +13981,67 @@ function TraceView({
     color: '#f87171'
   });
   return rtMuted(emptyText || 'no reasoning captured for this task');
+}
+
+// Process details use the existing trace store: source labels, redaction and
+// live/archived records stay identical to the task and conversation viewers.
+function fridayProcessSteps(steps) {
+  return (Array.isArray(steps) ? steps : []).filter(step => step != null).map(step => {
+    if (typeof step !== 'object') return {text: String(step)};
+    const text = step.text || (step.type === 'tool'
+      ? ['Tool: ' + (step.name || 'unnamed'), step.status, step.duration_ms != null ? step.duration_ms + 'ms' : ''].filter(Boolean).join(' · ')
+      : (step.name || step.type || 'Activity') + (step.steps ? ' · step ' + (step.step || 0) + ' of ' + step.steps : ''));
+    return {...step, text: String(text), detail: typeof step.detail === 'string' ? step.detail : '',
+      timestamp: step.timestamp || (Number.isFinite(step.ts) ? new Date(step.ts * 1000).toLocaleTimeString() : '')};
+  });
+}
+function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose}) {
+  const traceId = meta?.trace_id || orb.trace_id || null;
+  const taskId = meta?.linked_task_id || orb.task_id || null;
+  const status = meta?.status || orb.status || 'running';
+  const running = /^(running|queued|paused|awaiting_approval)$/.test(status);
+  const hasActivity = !!(log?.length || steps.length || meta?.result);
+  const [area,setArea] = useState(()=>fridayDesktopArea());
+  useEffect(()=>{
+    const fit=()=>setArea(fridayDesktopArea());
+    const events=['resize','friday:chat-dock','friday:spatial-layout','friday:display-style'];
+    events.forEach(name=>window.addEventListener(name,fit));
+    const dock=document.querySelector('.dock');
+    const observer=window.ResizeObserver&&dock?new ResizeObserver(fit):null;
+    if(observer)observer.observe(dock);fit();
+    return()=>{events.forEach(name=>window.removeEventListener(name,fit));observer?.disconnect();};
+  },[]);
+  const width=Math.min(400,Math.max(1,area.w-16)),height=Math.min(320,Math.max(1,area.h-16));
+  const x=Math.max(area.x+8,Math.min(position.x,area.x+area.w-width-8));
+  const y=Math.max(area.y+8,Math.min(position.y,area.y+area.h-height-8));
+  const [activityExpanded,setActivityExpanded] = useState(!traceId&&!taskId);
+  React.useLayoutEffect(()=>{
+    setActivityExpanded(!traceId&&!taskId);
+    if(bodyRef.current)bodyRef.current.scrollTop=0;
+  },[orb.viewRevision]);
+  return rtEl('div', {className:'thread-panel open', role:'region', 'aria-label':'Process: ' + (orb.label || 'Process'),
+    style:{'--friday-shared-x':position.x+'px','--friday-shared-y':position.y+'px',width,height,left:x,top:y}, onClick:e=>e.stopPropagation()},
+    rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
+      rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
+      rtEl('span',{className:'thread-status-badge '+(/^(complete|completed|completed_unverified|done)$/.test(status)?'completed':/^(failed|error|timeout)$/.test(status)?'error':running?'running':status)},status),
+      rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
+      (meta?.model||orb.model)&&rtEl('div',{style:{flexBasis:'100%',fontSize:10,overflowWrap:'anywhere',color:'var(--fr-cyan)'}},meta?.model||orb.model,meta?.elapsed!=null?' · '+meta.elapsed+'s':'')),
+    rtEl('div',{className:'thread-body',ref:bodyRef,style:{color:'var(--fr-text)'}},
+      readState==='loading'&&rtEl('div',{role:'status',className:'thread-log-line'},'Loading process activity…'),
+      readState==='error'&&rtEl('div',{role:'status',className:'thread-log-line'},'Could not refresh this process. Retrying; any earlier activity remains below.'),
+      readState==='missing'&&rtEl('div',{role:'status',className:'thread-log-line'},'This process is no longer available. Any recorded reasoning is shown below.'),
+      rtEl('section',{'aria-label':'Reasoning thread'},
+        rtEl('div',{className:'thread-result-label'},'REASONING'),
+        traceId||taskId ? rtEl(TraceView,{key:orb.id+':'+(traceId||'')+':'+(taskId||''),traceId,taskId,hot:true,maxHeight:220,pending:running,exactSubtree:true,
+          emptyText:'No reasoning was recorded for this process.'}) : rtMuted(readState==='loading'?'Looking for a linked reasoning thread…':'No reasoning trace is linked to this process.')),
+      rtEl('details',{open:activityExpanded,style:{marginTop:10}},rtEl('summary',{style:{cursor:'pointer',fontSize:11},onClick:e=>{e.preventDefault();setActivityExpanded(value=>!value);}},'Activity and result'),
+        Array.isArray(log)&&log.map((line,i)=>rtEl('div',{key:'log'+i,className:'thread-log-line'},String(line))),
+        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending')}),
+          rtEl('div',{className:'thread-step-content'},rtEl('div',{className:'thread-step-text'},step.text),
+            step.detail&&rtEl('details',null,rtEl('summary',null,'Details'),rtEl('div',{className:'thread-log-line'},step.detail)),
+            step.timestamp&&rtEl('div',{className:'thread-step-time'},step.timestamp)))),
+        meta?.result&&rtEl('div',{className:'thread-result'},rtEl('div',{className:'thread-result-label'},'RESULT'),rtEl('div',{className:'thread-result-body'},String(meta.result))),
+        !hasActivity&&readState==='ready'&&rtMuted(running?'No activity has been reported yet.':'No activity was recorded for this process.'))));
 }
 
 /* "💭 reasoning" expander for a task card or a running-process row. */
@@ -17758,24 +17844,28 @@ function TrackingPanel({
 }) {
   const TK = typeof window !== 'undefined' ? window.FridayTracking : null;
   const defaults = TK ? TK.DEFAULTS : {};
-  const [cfg, setCfg] = useState(() => Object.assign({}, defaults, s && s.tracking || {}));
+  const [cfg, setCfg] = useState(() => Object.assign({}, defaults, TK ? TK.get() : s && s.tracking || {}));
   const [calib, setCalib] = useState(null);
 
-  // Push to the engine on mount so a reload matches what is stored.
+  // The engine owns the live dials, including voice and Scene & depth edits.
+  // A kept-mounted panel must not restore an older settings snapshot.
   useEffect(() => {
-    if (TK) TK.apply(cfg);
+    const sync = () => { if (TK) setCfg(TK.get()); };
+    window.addEventListener('friday:tracking-settings', sync);
+    sync();
+    return () => window.removeEventListener('friday:tracking-settings', sync);
   }, []);
   const live = patch => {
-    const next = Object.assign({}, cfg, patch);
+    const next = Object.assign({}, TK ? TK.get() : cfg, patch);
     setCfg(next);
     if (TK) TK.apply(next); // immediate, before any save round-trip
   };
   const commit = patch => {
-    const next = Object.assign({}, cfg, patch);
+    const next = Object.assign({}, TK ? TK.get() : cfg, patch);
     setCfg(next);
     if (TK) TK.apply(next);
     save({
-      tracking: next
+      tracking: patch
     });
   };
   const sl = (key, label, desc, min, max, step, fmt) => /*#__PURE__*/React.createElement(TrackingSlider, {
@@ -21419,7 +21509,7 @@ function useFridayConversationDrafts(initialId) {
   const getConversationId = React.useCallback(() => drafts.current.id, []);
   const navigateWithDrafts = React.useCallback(target => {
     const url = new URL(target, window.location.href), d = drafts.current;
-    if (url.origin !== window.location.origin) throw new Error('Workspaces open within this Friday window.');
+    if (url.origin !== window.location.origin) throw new Error('Workspaces open within this '+FRIDAY_BRAND.name+' window.');
     if (d.id) url.searchParams.set('conversation', d.id);
     d.byId.set(d.id, d.text);
     const entries = [...d.byId.entries()].filter(e => e[1]);
@@ -23110,67 +23200,76 @@ function App(){
     tick();const iv=setInterval(tick,4000);
     return()=>{active=false;clearInterval(iv)};
   },[activityOpen,activityKind,activityTab]);
-  const[threadSteps,setThreadSteps]=useState([]);
-  const[taskLog,setTaskLog]=useState(null);   // null = no task-backed log (use steps); [] = task with empty log
-  const[taskMeta,setTaskMeta]=useState(null); // {status,result,evaluation,verified}
-  const[threadPos,setThreadPos]=useState({x:0,y:0});
-  const threadBodyRef=useRef(null);
-  const threadDrag=useRef(null);
-  useEffect(()=>{
-    const onOrbClick=(e)=>{
-      const d=e.detail;
-      // Open the window near the orb, clamped inside the viewport (window ≈ 400×320).
+  const [threadSteps, setThreadSteps] = useState([]);
+  const [taskLog, setTaskLog] = useState(null);
+  const [taskMeta, setTaskMeta] = useState(null);
+  const [threadReadState, setThreadReadState] = useState('loading');
+  const [threadPos, setThreadPos] = useState({x:0,y:0});
+  const threadBodyRef = useRef(null), threadDrag = useRef(null);
+  const threadRequest = useRef(0), threadSelected = useRef(null);
+  const closeThread = () => { ++threadRequest.current; threadSelected.current=null; setThreadOrb(null); };
+  useEffect(() => {
+    const onOrbClick = e => {
+      const d=e.detail; if(!d||!d.id)return;
+      const viewRevision=++threadRequest.current; threadSelected.current=d.id;
       const W=400,H=320,M=12;
       const x=Math.max(M,Math.min((window.innerWidth||1280)-W-M,(d.sx||window.innerWidth/2)-W/2));
       const y=Math.max(M,Math.min((window.innerHeight||800)-H-M,(d.sy||120)+20));
-      setThreadPos({x,y});
-      setThreadOrb(d);
-      setThreadSteps(window._fridayThreads?.[d.id]||d.steps||[]);
-      setTaskLog(null);setTaskMeta(null);
+      setThreadPos({x,y}); setThreadOrb({...d,viewRevision});
+      setThreadSteps(fridayProcessSteps(window._fridayThreads?.[d.id]||d.steps));
+      setTaskLog(null); setTaskMeta(null); setThreadReadState('loading');
     };
-    const onThreadUpdate=(e)=>{const d=e.detail;setThreadOrb(prev=>{if(prev&&prev.id===d.orbId){setThreadSteps([...(d.steps||[])]);return prev}return prev})};
+    const onThreadUpdate=e=>{const d=e.detail;if(d&&threadSelected.current===d.orbId)setThreadSteps(fridayProcessSteps(d.steps));};
     window.addEventListener('fridayOrbClicked',onOrbClick);window.addEventListener('fridayThreadUpdate',onThreadUpdate);
-    return()=>{window.removeEventListener('fridayOrbClicked',onOrbClick);window.removeEventListener('fridayThreadUpdate',onThreadUpdate)};
+    return()=>{window.removeEventListener('fridayOrbClicked',onOrbClick);window.removeEventListener('fridayThreadUpdate',onThreadUpdate);};
   },[]);
-  // Live poll of the task endpoint while the window is open. Real-time log +
-  // result come straight from the running subagent. 404 → process-only orb,
-  // keep taskLog null so the reasoning-steps fallback renders instead.
-  useEffect(()=>{
-    if(!threadOrb)return;let active=true;
+  // Each selection owns one request at a time. An old response cannot paint a
+  // different orb, even when the new click happens before effect cleanup.
+  useEffect(() => {
+    if(!threadOrb)return;
+    let active=true,timer=null;const controller=new AbortController();
+    const current=()=>active&&threadRequest.current===threadOrb.viewRevision;
     const tick=async()=>{
       try{
-        const r=await fetch('/api/tasks/'+encodeURIComponent(threadOrb.id));
-        if(!active)return;
-        if(r.status===404){setTaskLog(null);return;}
-        if(!r.ok)return;
-        const t=await r.json();if(!active)return;
+        let r=await apiFetch('/api/tasks/'+encodeURIComponent(threadOrb.id),{signal:controller.signal});
+        if(!current())return;
+        if(r.status===404&&threadOrb.task_id&&threadOrb.task_id!==threadOrb.id){
+          r=await apiFetch('/api/tasks/'+encodeURIComponent(threadOrb.task_id),{signal:controller.signal});
+          if(!current())return;
+        }
+        if(r.status===404){setThreadReadState('missing');return;}
+        if(!r.ok)throw new Error('Process read failed');
+        const t=await r.json();if(!current())return;
+        if(!t||typeof t!=='object'||Array.isArray(t)||typeof t.task_id!=='string')throw new Error('Invalid process response');
         setTaskLog(Array.isArray(t.log)?t.log:[]);
-        setTaskMeta({status:t.status,result:t.result,evaluation:t.evaluation,verified:t.verified,elapsed:t.elapsed,model:t.model,linked_task_id:t.linked_task_id});
-        if(t.status&&t.status!==threadOrb.status)setThreadOrb(p=>p&&p.id===threadOrb.id?{...p,status:t.status}:p);
-      }catch(_){ }
+        if(Array.isArray(t.steps))setThreadSteps(fridayProcessSteps(t.steps));
+        setTaskMeta({status:t.status,result:t.result,evaluation:t.evaluation,verified:t.verified,elapsed:t.elapsed,model:t.model,
+          trace_id:t.trace_id||threadOrb.trace_id,linked_task_id:t.linked_task_id||(!t.process?t.task_id:null)||threadOrb.task_id});
+        setThreadReadState('ready');
+      }catch(error){if(current()&&error.name!=='AbortError')setThreadReadState('error');}
+      finally{if(current())timer=setTimeout(tick,1500);}
     };
-    tick();const iv=setInterval(tick,1500);
-    return()=>{active=false;clearInterval(iv)};
-  },[threadOrb&&threadOrb.id]);
-  // Auto-scroll the body as new log/step content streams in.
-  useEffect(()=>{if(threadBodyRef.current)threadBodyRef.current.scrollTop=threadBodyRef.current.scrollHeight},[threadSteps,taskLog,taskMeta]);
+    tick();return()=>{active=false;controller.abort();clearTimeout(timer);};
+  },[threadOrb&&threadOrb.id,threadOrb&&threadOrb.viewRevision]);
+  // The trace viewer owns stream following; process refreshes preserve the
+  // outer reading position while the owner reads a record.
   // ESC closes the window (it no longer auto-closes on outside click, since a
   // draggable floating window shouldn't vanish when you interact elsewhere).
-  useEffect(()=>{if(!threadOrb)return;const h=(e)=>{if(e.key==='Escape')setThreadOrb(null)};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h)},[threadOrb]);
+  useEffect(()=>{if(!threadOrb)return;const h=(e)=>{if(e.key==='Escape')closeThread()};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h)},[threadOrb]);
   // Drag the window by its header.
-  const startThreadDrag=(e)=>{
+  const startThreadDrag = e => {
     if(e.target.closest('.thread-close'))return;
     const box=e.currentTarget.closest('.thread-panel').getBoundingClientRect();
-    const sx=e.clientX,sy=e.clientY,ox=box.left,oy=box.top;
-    threadDrag.current={sx,sy,ox,oy};
-    const mv=(ev)=>{const dd=threadDrag.current;if(!dd)return;
-      const W=400,H=320,M=4;
-      const nx=Math.max(M,Math.min((window.innerWidth||1280)-W-M,dd.ox+(ev.clientX-dd.sx)));
-      const ny=Math.max(M,Math.min((window.innerHeight||800)-H-M,dd.oy+(ev.clientY-dd.sy)));
-      setThreadPos({x:nx,y:ny});};
-    const up=()=>{threadDrag.current=null;window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up)};
-    window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);
-    e.preventDefault();
+    threadDrag.current={sx:e.clientX,sy:e.clientY,ox:box.left,oy:box.top,w:box.width,h:box.height};
+    const move=event=>{
+      const drag=threadDrag.current;if(!drag)return;
+      const area=fridayDesktopArea();
+      const x=Math.max(area.x+8,Math.min(area.x+area.w-drag.w-8,drag.ox+event.clientX-drag.sx));
+      const y=Math.max(area.y+8,Math.min(area.y+area.h-drag.h-8,drag.oy+event.clientY-drag.sy));
+      setThreadPos({x,y});
+    };
+    const end=()=>{threadDrag.current=null;window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',end);};
+    window.addEventListener('mousemove',move);window.addEventListener('mouseup',end);e.preventDefault();
   };
 
   // --- Process Polling (Layer 2→3 integration) ---
@@ -23649,7 +23748,10 @@ function App(){
         // show_my_day: answer with what the cluster did, once the page has judged.
         setTimeout(() => {
           const l = deskRef.current.landing || {};
-          answer({ opened: true, matched: null, landing: { show: !!l.show, reason: l.reason || '' } });
+          const simple=document.body.dataset.fridayDisplayStyle==='simple';
+          const home=document.querySelector('.fx-main[data-view="day"]');
+          const shown=simple?document.body.dataset.fridayHomeVisible==='true'&&!!home&&home.getBoundingClientRect().height>0:!!l.show;
+          answer({ opened: shown, matched: null, landing: { show: shown, reason: simple?'Simple Home':l.reason || '' } });
         }, 250);
         return;
       }
@@ -23695,6 +23797,8 @@ function App(){
         try { m = JSON.parse(e.data); } catch (_) { return; }
         if (!m) return;
         if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
+        else if (m.type === 'desktop_cards_changed') window.dispatchEvent(new Event('friday:desktop-cards-changed'));
+        else if (m.type === 'workspace_customizations_changed') window.dispatchEvent(new Event('friday:ws-custom-changed'));
       };
     };
     connect();
@@ -23788,7 +23892,14 @@ function App(){
   useEffect(()=>{window.fridayOpenWorkspaceChat=(wsId,label,emoji,seed)=>{if(!wsId)return;openWs(wsId);setWsChat({wsId,label:label||wsId,emoji:emoji||'',seed:seed||'',key:Date.now()})};return()=>{if(window.fridayOpenWorkspaceChat)delete window.fridayOpenWorkspaceChat}},[]);
   // Load every workspace's saved customization once, so applied changes are live
   // on first paint without opening each chat.
-  useEffect(()=>{fetch('/api/workspace/customizations').then(r=>r.json()).then(d=>{if(d&&d.customizations)setWsCustMap(d.customizations)}).catch(()=>{})},[]);
+  useEffect(()=>{
+    let stopped=false, sequence=0;
+    const refresh=()=>{const request=++sequence;fetch('/api/workspace/customizations').then(r=>{if(!r.ok)throw new Error('load failed');return r.json()}).then(d=>{if(!stopped&&request===sequence&&d.status==='ok'&&d.customizations)setWsCustMap(d.customizations)}).catch(()=>{})};
+    refresh();
+    window.addEventListener('friday:ws-custom-changed',refresh);
+    window.addEventListener('focus',refresh);
+    return()=>{stopped=true;window.removeEventListener('friday:ws-custom-changed',refresh);window.removeEventListener('focus',refresh)};
+  },[]);
   // Global voice bridge — lets any child component (e.g. NewsWS "Listen to
   // Front Page") drive the live session that lives here in App without
   // prop-drilling. startAnchor() drops a source card into the chat, opens the
@@ -24183,7 +24294,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
         setAgentSettings(a => Object.assign({}, a, { landing_mode: d.mode }));
         landingSees.current = Object.assign({}, landingSees.current, { mode: d.mode });
       }
-      if (d.summon) st.summonedAt = Date.now();
+      if (d.summon) { st.summonedAt = Date.now(); setExperienceDesktop(true); window.dispatchEvent(new CustomEvent('friday:desktop-view',{detail:{view:'day'}})); if(d.focus)requestAnimationFrame(()=>document.querySelector('.fx-home-composer textarea')?.focus()); }
       judge();
       // The key asked for the cursor. Shown already, the field takes it now;
       // hidden, the cluster is a render away from showing, and the effect
@@ -25078,50 +25189,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     {shellChatPanel}
 
     {/* Process Orb Stream Window (Layer 3) — floating, draggable, glassmorphic */}
-    {threadOrb&&<div className="thread-panel open" style={{'--friday-shared-x':threadPos.x+'px','--friday-shared-y':threadPos.y+'px',left:threadPos.x,top:threadPos.y}} onClick={e=>e.stopPropagation()}>
-      <React.Fragment>
-        <div className="thread-header" onMouseDown={startThreadDrag} style={{cursor:'grab'}}>
-          <div className="thread-header-left">
-            <span className="thread-icon">{threadOrb.icon||'⚡'}</span>
-            <span className="thread-name">{threadOrb.label||'Process'}</span>
-          </div>
-          {/* B3: the exact model driving this process + its correlation id. */}
-          {(taskMeta&&taskMeta.model||threadOrb.model)&&<span title={'Model running this process'+(taskMeta&&taskMeta.linked_task_id?' · task '+taskMeta.linked_task_id:'')} style={{fontSize:8,fontFamily:'JetBrains Mono',color:'#00d4ff',border:'1px solid rgba(0,212,255,0.3)',borderRadius:3,padding:'0 4px',marginRight:6,whiteSpace:'nowrap',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis'}}>{(taskMeta&&taskMeta.model)||threadOrb.model}</span>}
-          <span className={`thread-status-badge ${threadOrb.status||'running'}`}>{threadOrb.status||'RUNNING'}</span>
-          <span className="thread-elapsed">{taskMeta&&taskMeta.elapsed!=null?taskMeta.elapsed+'s':''}</span>
-          <button aria-label={'Close this process panel'} title={'Close this process panel'} className="thread-close" onClick={()=>setThreadOrb(null)}>✕</button>
-        </div>
-        <div className="thread-body" ref={threadBodyRef}>
-          {/* Real-time activity log from the task endpoint (preferred). */}
-          {Array.isArray(taskLog)&&taskLog.length>0&&taskLog.map((line,i)=>
-            <div key={'log'+i} className="thread-log-line">{String(line)}</div>)}
-          {/* Reasoning steps (fallback / supplement for process-backed orbs). */}
-          {threadSteps.map((step,i)=><div key={'st'+i} className="thread-step">
-            <div className={`thread-dot ${step.status||'pending'}`}/>
-            <div className="thread-step-content">
-              <div className="thread-step-text">{step.text||''}</div>
-              {step.detail&&<div className={`thread-step-detail ${step._expanded?'expanded':''}`}
-                style={{cursor:'pointer'}}
-                onClick={()=>{const ns=[...threadSteps];ns[i]={...ns[i],_expanded:!ns[i]._expanded};setThreadSteps(ns)}}>
-                {step._expanded?'▾ ':'▸ '}{step.detail}
-              </div>}
-              {step.timestamp&&<div className="thread-step-time">{step.timestamp}</div>}
-            </div>
-          </div>)}
-          {/* Final result once the task finishes. */}
-          {taskMeta&&taskMeta.result&&(taskMeta.status==='complete'||taskMeta.status==='completed_unverified'||taskMeta.status==='failed'||taskMeta.status==='timeout')&&
-            <div className="thread-result">
-              <div className="thread-result-label">RESULT</div>
-              <div className="thread-result-body">{taskMeta.result}</div>
-            </div>}
-          {/* Empty state — only when there is genuinely nothing to show yet. */}
-          {(!taskLog||taskLog.length===0)&&threadSteps.length===0&&!(taskMeta&&taskMeta.result)&&
-            <div style={{textAlign:'center',color:'#666',fontSize:11,padding:20,fontFamily:'JetBrains Mono'}}>
-              {threadOrb.model?('⚙ '+threadOrb.model+' — '):''}waiting for activity…
-            </div>}
-        </div>
-      </React.Fragment>
-    </div>}
+    {threadOrb&&<ProcessOrbThread orb={threadOrb} meta={taskMeta} log={taskLog} steps={threadSteps} readState={threadReadState} position={threadPos} bodyRef={threadBodyRef} onDrag={startThreadDrag} onClose={closeThread}/>}
 
     {/* ── B4: Activity Ledger panel — filterable stream of model invocations,
         subagent spawns, and tool calls (seat, model, duration, tokens). ── */}

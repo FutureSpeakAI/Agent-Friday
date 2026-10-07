@@ -61,14 +61,13 @@ def test_cloud_reach_reads_the_real_table_by_default(monkeypatch):
 
 
 def test_cloud_reach_relay_is_not_reach_when_the_local_mind_is_unproven(monkeypatch):
-    """§3.1: a relay to a model that is not there is not reach. The reach
-    line must not claim full context via the local model in the same payload
-    whose manifest says the local model is unavailable."""
+    """§3.1: an unproven relay does not claim verified full context, but a
+    missing readiness proof does not establish that the model is absent."""
     monkeypatch.setattr(rv, "_local_mind_proven", lambda: False)
     r = rv._voice_context_reach("gemini", ["query_calendar", "ask_friday"])
     assert r["full_context"] is False and r["via_local"] is False
     assert r["knowledge_graph"] is False and r["memory"] is False
-    assert "not proven" in r["line"] and "local model" in r["notice"]
+    assert "readiness check" in r["line"] and "actual result" in r["notice"]
     # An explicit answer from the caller wins over the manifest.
     r = rv._voice_context_reach("gemini", ["query_calendar", "ask_friday"],
                                 local_mind_ready=True)

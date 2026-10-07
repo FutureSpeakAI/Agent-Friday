@@ -4028,8 +4028,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 const sw = fin(cfg.screen_width_cm, 0, 300, 0);
                 const scr = (window.screen && window.screen.width) || window.innerWidth;
                 const perPx = (sw > 0 && scr > 0) ? sw / scr : CM_PER_CSS_PX;
-                const stage = window.FridayHolographicWorkspace && window.FridayHolographicWorkspace.stageRect;
-                return Math.max(1, (stage ? stage.w : window.innerWidth) * perPx);
+                // Layout can reserve a smaller picture without changing the
+                // physical screen or multiplying the user's head sensitivity.
+                return Math.max(1, window.innerWidth * perPx);
             }
             // The eye's offset across the glass, in world units: the head's
             // offset in centimetres at the glass's own scale, so a head 10 cm
@@ -4039,8 +4040,10 @@ window.addEventListener('DOMContentLoaded',function(){
                 const lat = lateralGain();
                 const realCm = viewingCm() / ((isFinite(zoom) && zoom > 0) ? zoom : 1);
                 const perCm = (2 * g.w) / viewportCm();
+                const pictureHeightCm = viewportCm() * window.innerHeight / Math.max(1, window.innerWidth);
+                const perCmY = (2 * g.h) / Math.max(1, pictureHeightCm);
                 const ex = fin(hx, -1, 1, 0) * WEBCAM_TAN_X * realCm * perCm * lat;
-                const ey = -fin(hy, -1, 1, 0) * WEBCAM_TAN_Y * realCm * perCm * lat;
+                const ey = -fin(hy, -1, 1, 0) * WEBCAM_TAN_Y * realCm * perCmY * lat;
                 // No further out than one and a half glass widths: past that
                 // the glass is seen so edge-on that the picture is a sliver.
                 return { x: Math.max(-1.5 * g.w, Math.min(1.5 * g.w, ex)),
@@ -4172,6 +4175,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 const k = dockDepthK();
                 document.documentElement.style.setProperty('--dock-k', k.toFixed(3));
                 if (!k) resetDockVars();
+                if (window.dispatchEvent && typeof CustomEvent === 'function') {
+                    window.dispatchEvent(new CustomEvent('friday:tracking-settings', { detail: Object.assign({}, cfg) }));
+                }
             }
             function reset() {
                 apply(Object.assign({}, DEFAULTS));
@@ -5763,7 +5769,7 @@ window.addEventListener('DOMContentLoaded',function(){
             window.addEventListener('keydown', e => { if (e.key === 'Escape') abort(); }, true);
             window.addEventListener('click', e => {
                 // The click that ends a press on an orb is the orb's, not the page's.
-                if (performance.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); return; }
+                if (performance.now() < swallowUntil && onScene(e.target)) { e.stopPropagation(); e.preventDefault(); return; }
                 // A synthetic click (hand-tracking dwell) on the bare scene opens the orb under it.
                 if (e.detail !== 0 || !onScene(e.target)) return;
                 const o = src ? hit(e.clientX, e.clientY) : null;
@@ -5896,7 +5902,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     return { ok: true, opened: 'approval' };
                 }
                 window.dispatchEvent(new CustomEvent('fridayOrbClicked', { detail: { id: o.id, label: o.label, category: o.category,
-                    icon: o.icon, progress: o.progress, status: o.status, steps: o.steps, sx: o.sx, sy: o.sy } }));
+                    icon: o.icon, progress: o.progress, status: o.status, steps: o.steps, task_id: o.task_id, trace_id: o.trace_id, model: o.model, sx: o.sx, sy: o.sy } }));
                 return { ok: true, opened: 'thread' };
             }
             function status(o, via) {
@@ -6256,7 +6262,7 @@ window.addEventListener('DOMContentLoaded',function(){
                             out.push({ id: o.id, task_id: s.row.task_id || null, trace_id: s.row.trace_id || null, kind: s.kind, hue: s.hue,
                                        label: o.label, status: s.failed ? 'failed' : (s.row.status || o.status), step_n: s.row.step_n,
                                        step_total: s.row.step_total, approval_id: s.approval, started: o.createdAt, pausable: !!s.row.pausable,
-                                       category: o.category, icon: o.icon, progress: o.progress, steps: o.steps, sx: s.sx, sy: s.sy, sr: 26 });
+                                       category: o.category, icon: o.icon, model: o.model, progress: o.progress, steps: o.steps, sx: s.sx, sy: s.sy, sr: 26 });
                         });
                         return out;
                     },
@@ -6860,7 +6866,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 const my = ev.clientY - rect.top;
                 let bestDist = 50, hit = null;
                 for (const [id, o] of this.orbs) {
-                    if (o.dying) continue;
+                    if (o.dying || o.__s?.behind) continue;
                     const p3 = o.group.position.clone().project(this.camera);
                     if (p3.z >= 1) continue;
                     const sx = (p3.x*0.5+0.5)*window.innerWidth;
@@ -6869,8 +6875,11 @@ window.addEventListener('DOMContentLoaded',function(){
                     if (d < bestDist) { bestDist = d; hit = o; }
                 }
                 if (hit) {
-                    window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id:hit.id,label:hit.label,category:hit.category,icon:hit.icon,progress:hit.progress,status:hit.status,steps:hit.steps,sx:ev.clientX,sy:ev.clientY}}));
+                    if (typeof FridayOrbHands !== 'undefined' && hit.__s) return FridayOrbHands.act('open', [hit.id], 'hand')[0] || {ok:false,reason:'gone'};
+                    window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id:hit.id,label:hit.label,category:hit.category,icon:hit.icon,progress:hit.progress,status:hit.status,steps:hit.steps,task_id:hit.task_id,trace_id:hit.trace_id,model:hit.model,sx:ev.clientX,sy:ev.clientY}}));
+                    return {ok:true,opened:'thread'};
                 }
+                return {ok:false,reason:'gone'};
             }
             _cleanup(id) {
                 const o = this.orbs.get(id); if (!o) return;
@@ -8871,7 +8880,7 @@ window.addEventListener('DOMContentLoaded',function(){
             }
 
             const VS = `attribute vec3 aDir; attribute vec4 aR; attribute vec4 aW; attribute float aCl;
-                uniform vec4 uMix; uniform float uPhase; uniform float uWaveK; uniform float uRipple; uniform float uCollapse; uniform float uSize;
+                uniform vec4 uMix; uniform float uPhase; uniform float uWaveK; uniform float uRipple; uniform float uCollapse; uniform float uSize; uniform float uFridayStagePointFloor;
                 uniform vec4 uD[${CL}]; uniform vec4 uG[${CL}];
                 uniform vec3 uCore; uniform vec3 uMid; uniform vec3 uEdge;
                 varying vec3 vC; varying float vA;
@@ -8887,7 +8896,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     vC = col * G.a + G.rgb;
                     vA = clamp(w * 0.75 * (0.75 + 0.25 * rip) * mix(1.0, 1.35, uCollapse), 0.0, 0.85);
                     vec4 mv = modelViewMatrix * vec4(p, 1.0);
-                    gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)) * mix(1.0, 0.8, uCollapse), 1.2, 3.2);
+                    gl_PointSize = max(uFridayStagePointFloor, clamp(uSize * (300.0 / max(1.0, -mv.z)) * mix(1.0, 0.8, uCollapse), 1.2, 3.2));
                     gl_Position = projectionMatrix * mv;
                 }`;
             const FS = `uniform float uOpacity; varying vec3 vC; varying float vA;
@@ -8947,11 +8956,11 @@ window.addEventListener('DOMContentLoaded',function(){
                 for (let k = 0; k < CL; k++) { uD.push(new THREE.Vector4(0, 0, 0, 1)); uG.push(new THREE.Vector4(0, 0, 0, 1)); }
                 mat = own(new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false,
                     uniforms: { uMix: { value: new THREE.Vector4(...REST) }, uPhase: { value: 0 }, uWaveK: { value: 10 }, uRipple: { value: 0 },
-                        uCollapse: { value: 0 }, uSize: { value: 0.22 }, uD: { value: uD }, uG: { value: uG },
+                        uCollapse: { value: 0 }, uSize: { value: 0.22 }, uFridayStagePointFloor: { value: 0 }, uD: { value: uD }, uG: { value: uG },
                         uCore: { value: new THREE.Color() }, uMid: { value: new THREE.Color() }, uEdge: { value: new THREE.Color() },
                         uOpacity: { value: 1 } } }), 1);
                 pts = new THREE.Points(g, mat);
-                pts.frustumCulled = false;
+                pts.frustumCulled = false; pts.userData.fridayStagePointFloor = 2.4;
                 group.add(pts);
                 mix = REST.slice(); clock = 0; ripple = 0; collapse = 0; voice = 0; phase = 0; cycleT = 0; cycleK = 2; think = 0;
                 // Layers: bands of latitude; blocks: neighbouring clusters, up to four.
@@ -10376,6 +10385,8 @@ window.addEventListener('DOMContentLoaded',function(){
             const gGrid = new THREE.Group();
             const oceanGeo = new THREE.PlaneGeometry(100, 100, 80, 80); oceanGeo.rotateX(-Math.PI / 2);
             gridOcean = new THREE.Points(oceanGeo, new THREE.PointsMaterial({ size: 0.35, map: glowTexture, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+            gridOcean.userData.fridayStageField = true;
+            gridOcean.userData.fridayStagePointFloor = 5;
             gridOcean.material.userData = { baseOpacity: 0.5, isAccent: true }; gridOcean.userData.baseY = new Float32Array(oceanGeo.attributes.position.count);
             for(let i=0; i<oceanGeo.attributes.position.count; i++) gridOcean.userData.baseY[i] = oceanGeo.attributes.position.getY(i);
             gGrid.add(gridOcean); structures['GRID'] = gGrid;
@@ -10399,6 +10410,7 @@ window.addEventListener('DOMContentLoaded',function(){
             const mGeom = new THREE.BufferGeometry(); mGeom.setAttribute('position', new THREE.Float32BufferAttribute(mPts, 3)); mGeom.setAttribute('color', new THREE.Float32BufferAttribute(mCols, 3));
             mandelbrotSystem = new THREE.Points(mGeom, new THREE.PointsMaterial({ size: 0.25, map: glowTexture, vertexColors: true, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
             mandelbrotSystem.userData.data = mData; gMandel.add(mandelbrotSystem);
+            mandelbrotSystem.userData.fridayStagePointFloor = 5;
             structures['MANDELBROT'] = gMandel;
 
             // 7. ASTROLABE
@@ -10517,6 +10529,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 mesh.userData = { speed: 1.0 + Math.random()*3.0 };
                 gEden.add(mesh); edenDebris.push(mesh);
             }
+            // The corridor is scenery, not the character's visible extent.
+            // Classic keeps its immersive world; a reserved stage frames the boss.
+            gEden.children.forEach(child => { if (child !== edenLady) child.userData.fridayStageScenery = true; });
             structures['EDEN'] = gEden;
 
             // 14. WORMHOLE: the Einstein-Rosen Bridge (FridayWormhole).
@@ -10769,6 +10784,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 const windowMode = isHologramMode || !!TK.head.debug;
                 const ct = windowMode ? 0 : elapsed;
                 if (targetStructure === 'DOME') { targetCamPos.set(0, -6 + Math.sin(ct*0.2)*2, 18); targetCamLook.set(0, 5, 0); }
+                else if (targetStructure === 'GRID' && window.FridayHolographicWorkspace?.stageRect) { targetCamPos.set(0, 22, 28); targetCamLook.set(0, 0, 0); }
                 else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(ct*0.2)*1, 15 - 10 * (1 - Math.abs((ct * 0.2) % 2 - 1))); targetCamLook.set(0, 1, 0); }
                 else if (targetStructure === 'CABLES' || targetStructure === 'ASTROLABE') { targetCamPos.set(Math.sin(ct*0.1)*12, Math.cos(ct*0.1)*12, 15 + Math.sin(ct*0.2)*5); targetCamLook.set(0, 0, 0); }
                 else if (targetStructure === 'MANDELBROT') { targetCamPos.set(Math.sin(ct*0.2)*14, 8 + Math.sin(ct*0.3)*3, Math.cos(ct*0.2)*14); targetCamLook.set(0, 0, 0); }
@@ -11290,7 +11306,7 @@ window.fridayOrbTargets = function() {
     const m = (typeof processOrbManager !== 'undefined' && processOrbManager) ? processOrbManager : null;
     if (!m || !m._projected) return [];
     const out = [];
-    for (const [id, p] of m._projected) { const o = m.orbs.get(id); if (p.onScreen && o && !o.dying) out.push({ id, sx: p.sx, sy: p.sy, label: o.label }); }
+    for (const [id, p] of m._projected) { const o = m.orbs.get(id); if (p.onScreen && o && !o.dying && !o.__s?.behind) out.push({ id, sx: p.sx, sy: p.sy, label: o.label }); }
     return out;
 };
 window.fridayOrbPointer = function(x, y) {
@@ -11304,7 +11320,7 @@ window.fridayOrbPointer = function(x, y) {
 };
 window.fridayOrbClickAt = function(x, y) {
     const m = (typeof processOrbManager !== 'undefined' && processOrbManager) ? processOrbManager : null;
-    if (m && typeof m._onClick === 'function') m._onClick({ clientX: x, clientY: y });
+    return m && typeof m._onClick === 'function' ? m._onClick({ clientX: x, clientY: y }) : {ok:false,reason:'unavailable'};
 };
 window.fridayGetOrbs = function() {
     if (typeof processOrbManager !== 'undefined' && processOrbManager) return processOrbManager.getOrbs();
@@ -12162,7 +12178,7 @@ function fridayRunActions(actions) {
               apiFetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ settings: { tracking: TK.get() } })
+                body: JSON.stringify({ settings: { tracking: { neutral_face_width: got } } })
               }).catch(() => {});
             }
           } else if (a.op === 'reset') {
@@ -14475,6 +14491,24 @@ function WorkspaceChat({
   const flash = t => {
     setToast(t);
   };
+  const operation = useRef(0),
+    busy = useRef(false),
+    alive = useRef(true);
+  useEffect(() => () => {
+    alive.current = false;
+    operation.current++;
+  }, []);
+  const begin = () => {
+    if (busy.current) return false;
+    busy.current = true;
+    operation.current++;
+    setLoading(true);
+    return true;
+  };
+  const finish = () => {
+    busy.current = false;
+    if (alive.current) setLoading(false);
+  };
   useEffect(() => {
     if (!dragging) return;
     const mv = e => setPos({
@@ -14489,11 +14523,22 @@ function WorkspaceChat({
       removeEventListener('mouseup', up);
     };
   }, [dragging]);
-  const load = () => fetch(`/api/workspace/${wsId}/chat`).then(r => r.json()).then(d => {
-    setMsgs(d.chat || []);
-    setVersions(d.versions || []);
-    if (d.customization !== undefined) setCust(wsId, d.customization);
-  }).catch(() => {});
+  const readReply = async r => {
+    const d = await r.json();
+    if (!r.ok || !d || d.status !== 'ok') throw new Error(d.message || d.error || 'The workspace request failed.');
+    return d;
+  };
+  const load = () => {
+    const ticket = ++operation.current;
+    fetch('/api/workspace/' + wsId + '/chat').then(readReply).then(d => {
+      if (!alive.current || ticket !== operation.current) return;
+      setMsgs(d.chat || []);
+      setVersions(d.versions || []);
+      if (d.customization !== undefined) setCust(wsId, d.customization);
+    }).catch(() => {
+      if (alive.current && ticket === operation.current) flash('Could not load workspace history.');
+    });
+  };
   useEffect(() => {
     load();
   }, [wsId]);
@@ -14504,7 +14549,7 @@ function WorkspaceChat({
   }, [msgs.length, loading]);
   const send = async override => {
     const m = (override || input).trim();
-    if (!m || loading) return;
+    if (!m || !begin()) return;
     setInput('');
     setMsgs(p => [...p, {
       role: 'user',
@@ -14523,7 +14568,8 @@ function WorkspaceChat({
           label
         })
       });
-      const d = await r.json();
+      const d = await readReply(r);
+      if (!alive.current) return;
       setMsgs(p => [...p, {
         role: 'friday',
         text: d.response || '[no response]',
@@ -14536,12 +14582,15 @@ function WorkspaceChat({
       if (d.versions) setVersions(d.versions);
       if (d.applied) flash('✨ Applied: ' + (d.change || 'change'));
     } catch (e) {
+      if (!alive.current) return;
+      setInput(current => current || m);
       setMsgs(p => [...p, {
         role: 'friday',
-        text: '[Connection error]'
+        text: 'Could not apply that request. Your draft is ready to retry.'
       }]);
+      flash(e.message || 'Workspace request failed');
     }
-    setLoading(false);
+    finish();
     inRef.current?.focus();
   };
   // Auto-send a seed prompt (e.g. clicked quick-action) exactly once.
@@ -14551,54 +14600,53 @@ function WorkspaceChat({
       send(seedPrompt);
     }
   }, [seedPrompt]);
-  const revert = async vid => {
+  const change = async (path, options, onSaved, failure) => {
+    if (!begin()) return;
     try {
-      const r = await fetch(`/api/workspace/${wsId}/revert`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          version_id: vid
-        })
-      });
-      const d = await r.json();
-      if (d.status !== 'ok') {
-        flash('Revert failed');
-        return;
-      }
-      if (d.customization !== undefined) setCust(wsId, d.customization);
-      if (d.versions) setVersions(d.versions);
-      flash('↩ Reverted');
+      const d = await fetch('/api/workspace/' + wsId + '/' + path, options).then(readReply);
+      if (alive.current) onSaved(d);
     } catch (e) {
-      flash('Revert failed');
+      if (alive.current) flash(failure);
+    } finally {
+      finish();
     }
   };
-  const reset = async () => {
-    if (!window.confirm(('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?'))) return;
-    try {
-      const r = await fetch(`/api/workspace/${wsId}/reset`, {
-        method: 'POST'
-      });
-      const d = await r.json();
-      setCust(wsId, d.customization || {});
-      if (d.versions) setVersions(d.versions);
-      flash('Workspace reset to default');
-    } catch (e) {
-      flash('Reset failed');
-    }
+  const applyReply = d => {
+    if (d.customization !== undefined) setCust(wsId, d.customization);
+    if (d.versions) setVersions(d.versions);
   };
-  const clearChat = () => {
-    fetch(`/api/workspace/${wsId}/chat/clear`, {
+  const revert = vid => change('revert', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      version_id: vid
+    })
+  }, d => {
+    applyReply(d);
+    flash('↩ Reverted');
+  }, 'Revert failed');
+  const reset = () => {
+    if (busy.current || !window.confirm('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?')) return;
+    return change('reset', {
       method: 'POST'
-    }).then(() => {
-      setMsgs([]);
-      flash('History cleared');
-    }).catch(() => {});
+    }, d => {
+      applyReply(d);
+      flash('Workspace reset to default');
+    }, 'Reset failed');
   };
+  const clearChat = () => change('chat/clear', {
+    method: 'POST'
+  }, () => {
+    setMsgs([]);
+    flash('History cleared');
+  }, 'Could not clear history.');
   const STARTERS = ['Make this layout more compact', 'I don’t like the colors — try a warmer accent', 'Pin a note reminding me what this workspace is for', 'Add quick-action buttons for my common tasks here'];
   return /*#__PURE__*/React.createElement("div", {
-    className: "friday-workspace-studio", role: "dialog", "aria-label": label + " customization",
+    className: "friday-workspace-studio",
+    role: "dialog",
+    "aria-label": label + " customization",
     style: {
       position: 'fixed',
       '--friday-shared-x': pos.x + 'px',
@@ -14659,8 +14707,9 @@ function WorkspaceChat({
       fontSize: 10,
       color: '#8891a8'
     }
-  }, ("Shape this workspace by talking to " + fridayName()))), /*#__PURE__*/React.createElement("button", {
+  }, "Shape this workspace by talking to ", fridayName())), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowVer(v => !v),
+    "aria-label": "Version history",
     title: "Version history",
     style: {
       background: 'none',
@@ -14671,7 +14720,8 @@ function WorkspaceChat({
       fontSize: 11,
       padding: '2px 7px'
     }
-  }, "\uD83D\uDD58 ", versions.length), /*#__PURE__*/React.createElement("button", { "aria-label": "Close", 
+  }, "\uD83D\uDD58 ", versions.length), /*#__PURE__*/React.createElement("button", {
+    "aria-label": "Close",
     onClick: onClose,
     title: "Close",
     style: {
@@ -14752,7 +14802,9 @@ function WorkspaceChat({
       flexShrink: 0
     }
   }, "\u21A9 revert")))), /*#__PURE__*/React.createElement("div", {
-    className: "friday-studio-log", role: "log", "aria-live": "polite",
+    className: "friday-studio-log",
+    role: "log",
+    "aria-live": "polite",
     style: {
       flex: 1,
       overflowY: 'auto',
@@ -14768,11 +14820,16 @@ function WorkspaceChat({
     style: {
       marginBottom: 10
     }
-  }, ("Tell " + fridayName() + " what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features \u2014 and undo anything.")), STARTERS.map((s, i) => /*#__PURE__*/React.createElement("div", {
+  }, "Tell ", fridayName(), " what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features \u2014 and undo anything."), STARTERS.map((s, i) => /*#__PURE__*/React.createElement("button", {
+    type: "button",
     key: i,
     onClick: () => send(s),
     className: "card",
     style: {
+      display: 'block',
+      width: '100%',
+      textAlign: 'left',
+      color: 'inherit',
       cursor: 'pointer',
       padding: '7px 10px',
       marginBottom: 5,
@@ -14853,7 +14910,7 @@ function WorkspaceChat({
       marginLeft: 4,
       color: '#8891a8'
     }
-  }, (fridayName() + " is working\u2026"))), /*#__PURE__*/React.createElement("div", {
+  }, fridayName(), " is working\u2026")), /*#__PURE__*/React.createElement("div", {
     ref: endRef
   })), /*#__PURE__*/React.createElement("div", {
     className: "friday-studio-composer",
@@ -18130,7 +18187,7 @@ function CareerWS() {
     title: 'Review before you apply',
     text: fridayName() + ' can save new evaluation reports and prepare new drafts while keeping your original CV and profile unchanged.',
     points: ['Tracker and saved pipeline changes ask for your approval.', 'Review every draft for accuracy and answer personal application questions yourself.', 'You submit applications on the employer’s site.'],
-    detail: 'Need a hand? Ask Friday for a plain-language walkthrough tailored to your setup.'
+    detail: 'Need a hand? Ask ' + fridayName() + ' for a plain-language walkthrough tailored to your setup.'
   }];
   const step = tour[tourStep];
   return /*#__PURE__*/React.createElement("div", {
@@ -18170,7 +18227,7 @@ function CareerWS() {
     className: "btn",
     disabled: disabled,
     onClick: askFriday
-  }, "Ask Friday"), /*#__PURE__*/React.createElement("button", {
+  }, "Ask " + fridayName()), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     disabled: disabled,
     onClick: () => coStatus ? showSection(ready ? 'actions' : 'setup') : load()
@@ -18839,7 +18896,7 @@ function CareerWS() {
       textAlign: 'center',
       padding: 20
     }
-  }, "No saved opportunities yet. In a career conversation, ask Friday to save a role to your pipeline, then review the approval card.")), view === 'curated' && (jobs ? /*#__PURE__*/React.createElement(FridayDoc, {
+  }, "No saved opportunities yet. In a career conversation, ask " + fridayName() + " to save a role to your pipeline, then review the approval card.")), view === 'curated' && (jobs ? /*#__PURE__*/React.createElement(FridayDoc, {
     compact: true,
     text: jobs.substring(0, 4000)
   }) : /*#__PURE__*/React.createElement("div", {
@@ -46461,6 +46518,15 @@ function ReasoningTrace({
 /* A trace by id (or by task id), live from the store when it is there and
    fetched from GET /api/traces/<id> when it is not. A task with no trace
    id is looked up in the store, then in the ledger by task. */
+function rtTraceSubtree(tree, id) {
+  const pending=tree?[tree]:[],seen=new Set();
+  while(pending.length){
+    const node=pending.pop();if(!node||typeof node!=='object'||seen.has(node))continue;
+    if(node.trace_id===id)return node;seen.add(node);
+    if(Array.isArray(node.children))pending.push(...node.children);
+  }
+  return null;
+}
 function TraceView({
   traceId,
   taskId,
@@ -46469,7 +46535,8 @@ function TraceView({
   hot,
   wholeTree,
   focusId,
-  pending
+  pending,
+  exactSubtree
 }) {
   const store = window.fridayTraceStore;
   const sub = useTraceStore(s => {
@@ -46531,8 +46598,10 @@ function TraceView({
     maxHeight: maxHeight,
     focusId: focusId || traceId
   });
-  if (tree && tree.tree) return rtEl(ReasoningTrace, {
-    trace: tree.tree,
+  const archived = tree?.tree && (exactSubtree ? rtTraceSubtree(tree.tree, wantId) : tree.tree);
+  if (tree?.tree && exactSubtree && !archived) return rtMuted(emptyText || 'The requested reasoning thread is not in this record.');
+  if (archived) return rtEl(ReasoningTrace, {
+    trace: archived,
     getChildren: x => x.children || [],
     labels: tree.labels || store.labels(),
     maxHeight: maxHeight,
@@ -46556,6 +46625,67 @@ function TraceView({
     color: '#f87171'
   });
   return rtMuted(emptyText || 'no reasoning captured for this task');
+}
+
+// Process details use the existing trace store: source labels, redaction and
+// live/archived records stay identical to the task and conversation viewers.
+function fridayProcessSteps(steps) {
+  return (Array.isArray(steps) ? steps : []).filter(step => step != null).map(step => {
+    if (typeof step !== 'object') return {text: String(step)};
+    const text = step.text || (step.type === 'tool'
+      ? ['Tool: ' + (step.name || 'unnamed'), step.status, step.duration_ms != null ? step.duration_ms + 'ms' : ''].filter(Boolean).join(' · ')
+      : (step.name || step.type || 'Activity') + (step.steps ? ' · step ' + (step.step || 0) + ' of ' + step.steps : ''));
+    return {...step, text: String(text), detail: typeof step.detail === 'string' ? step.detail : '',
+      timestamp: step.timestamp || (Number.isFinite(step.ts) ? new Date(step.ts * 1000).toLocaleTimeString() : '')};
+  });
+}
+function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose}) {
+  const traceId = meta?.trace_id || orb.trace_id || null;
+  const taskId = meta?.linked_task_id || orb.task_id || null;
+  const status = meta?.status || orb.status || 'running';
+  const running = /^(running|queued|paused|awaiting_approval)$/.test(status);
+  const hasActivity = !!(log?.length || steps.length || meta?.result);
+  const [area,setArea] = useState(()=>fridayDesktopArea());
+  useEffect(()=>{
+    const fit=()=>setArea(fridayDesktopArea());
+    const events=['resize','friday:chat-dock','friday:spatial-layout','friday:display-style'];
+    events.forEach(name=>window.addEventListener(name,fit));
+    const dock=document.querySelector('.dock');
+    const observer=window.ResizeObserver&&dock?new ResizeObserver(fit):null;
+    if(observer)observer.observe(dock);fit();
+    return()=>{events.forEach(name=>window.removeEventListener(name,fit));observer?.disconnect();};
+  },[]);
+  const width=Math.min(400,Math.max(1,area.w-16)),height=Math.min(320,Math.max(1,area.h-16));
+  const x=Math.max(area.x+8,Math.min(position.x,area.x+area.w-width-8));
+  const y=Math.max(area.y+8,Math.min(position.y,area.y+area.h-height-8));
+  const [activityExpanded,setActivityExpanded] = useState(!traceId&&!taskId);
+  React.useLayoutEffect(()=>{
+    setActivityExpanded(!traceId&&!taskId);
+    if(bodyRef.current)bodyRef.current.scrollTop=0;
+  },[orb.viewRevision]);
+  return rtEl('div', {className:'thread-panel open', role:'region', 'aria-label':'Process: ' + (orb.label || 'Process'),
+    style:{'--friday-shared-x':position.x+'px','--friday-shared-y':position.y+'px',width,height,left:x,top:y}, onClick:e=>e.stopPropagation()},
+    rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
+      rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
+      rtEl('span',{className:'thread-status-badge '+(/^(complete|completed|completed_unverified|done)$/.test(status)?'completed':/^(failed|error|timeout)$/.test(status)?'error':running?'running':status)},status),
+      rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
+      (meta?.model||orb.model)&&rtEl('div',{style:{flexBasis:'100%',fontSize:10,overflowWrap:'anywhere',color:'var(--fr-cyan)'}},meta?.model||orb.model,meta?.elapsed!=null?' · '+meta.elapsed+'s':'')),
+    rtEl('div',{className:'thread-body',ref:bodyRef,style:{color:'var(--fr-text)'}},
+      readState==='loading'&&rtEl('div',{role:'status',className:'thread-log-line'},'Loading process activity…'),
+      readState==='error'&&rtEl('div',{role:'status',className:'thread-log-line'},'Could not refresh this process. Retrying; any earlier activity remains below.'),
+      readState==='missing'&&rtEl('div',{role:'status',className:'thread-log-line'},'This process is no longer available. Any recorded reasoning is shown below.'),
+      rtEl('section',{'aria-label':'Reasoning thread'},
+        rtEl('div',{className:'thread-result-label'},'REASONING'),
+        traceId||taskId ? rtEl(TraceView,{key:orb.id+':'+(traceId||'')+':'+(taskId||''),traceId,taskId,hot:true,maxHeight:220,pending:running,exactSubtree:true,
+          emptyText:'No reasoning was recorded for this process.'}) : rtMuted(readState==='loading'?'Looking for a linked reasoning thread…':'No reasoning trace is linked to this process.')),
+      rtEl('details',{open:activityExpanded,style:{marginTop:10}},rtEl('summary',{style:{cursor:'pointer',fontSize:11},onClick:e=>{e.preventDefault();setActivityExpanded(value=>!value);}},'Activity and result'),
+        Array.isArray(log)&&log.map((line,i)=>rtEl('div',{key:'log'+i,className:'thread-log-line'},String(line))),
+        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending')}),
+          rtEl('div',{className:'thread-step-content'},rtEl('div',{className:'thread-step-text'},step.text),
+            step.detail&&rtEl('details',null,rtEl('summary',null,'Details'),rtEl('div',{className:'thread-log-line'},step.detail)),
+            step.timestamp&&rtEl('div',{className:'thread-step-time'},step.timestamp)))),
+        meta?.result&&rtEl('div',{className:'thread-result'},rtEl('div',{className:'thread-result-label'},'RESULT'),rtEl('div',{className:'thread-result-body'},String(meta.result))),
+        !hasActivity&&readState==='ready'&&rtMuted(running?'No activity has been reported yet.':'No activity was recorded for this process.'))));
 }
 
 /* "💭 reasoning" expander for a task card or a running-process row. */
@@ -56379,24 +56509,28 @@ function TrackingPanel({
 }) {
   const TK = typeof window !== 'undefined' ? window.FridayTracking : null;
   const defaults = TK ? TK.DEFAULTS : {};
-  const [cfg, setCfg] = useState(() => Object.assign({}, defaults, s && s.tracking || {}));
+  const [cfg, setCfg] = useState(() => Object.assign({}, defaults, TK ? TK.get() : s && s.tracking || {}));
   const [calib, setCalib] = useState(null);
 
-  // Push to the engine on mount so a reload matches what is stored.
+  // The engine owns the live dials, including voice and Scene & depth edits.
+  // A kept-mounted panel must not restore an older settings snapshot.
   useEffect(() => {
-    if (TK) TK.apply(cfg);
+    const sync = () => { if (TK) setCfg(TK.get()); };
+    window.addEventListener('friday:tracking-settings', sync);
+    sync();
+    return () => window.removeEventListener('friday:tracking-settings', sync);
   }, []);
   const live = patch => {
-    const next = Object.assign({}, cfg, patch);
+    const next = Object.assign({}, TK ? TK.get() : cfg, patch);
     setCfg(next);
     if (TK) TK.apply(next); // immediate, before any save round-trip
   };
   const commit = patch => {
-    const next = Object.assign({}, cfg, patch);
+    const next = Object.assign({}, TK ? TK.get() : cfg, patch);
     setCfg(next);
     if (TK) TK.apply(next);
     save({
-      tracking: next
+      tracking: patch
     });
   };
   const sl = (key, label, desc, min, max, step, fmt) => /*#__PURE__*/React.createElement(TrackingSlider, {
@@ -61933,7 +62067,7 @@ function useFridayConversationDrafts(initialId) {
   const getConversationId = React.useCallback(() => drafts.current.id, []);
   const navigateWithDrafts = React.useCallback(target => {
     const url = new URL(target, window.location.href), d = drafts.current;
-    if (url.origin !== window.location.origin) throw new Error('Workspaces open within this Friday window.');
+    if (url.origin !== window.location.origin) throw new Error('Workspaces open within this '+FRIDAY_BRAND.name+' window.');
     if (d.id) url.searchParams.set('conversation', d.id);
     d.byId.set(d.id, d.text);
     const entries = [...d.byId.entries()].filter(e => e[1]);
@@ -64581,138 +64715,82 @@ function App() {
     };
   }, [activityOpen, activityKind, activityTab]);
   const [threadSteps, setThreadSteps] = useState([]);
-  const [taskLog, setTaskLog] = useState(null); // null = no task-backed log (use steps); [] = task with empty log
-  const [taskMeta, setTaskMeta] = useState(null); // {status,result,evaluation,verified}
-  const [threadPos, setThreadPos] = useState({
-    x: 0,
-    y: 0
-  });
-  const threadBodyRef = useRef(null);
-  const threadDrag = useRef(null);
+  const [taskLog, setTaskLog] = useState(null);
+  const [taskMeta, setTaskMeta] = useState(null);
+  const [threadReadState, setThreadReadState] = useState('loading');
+  const [threadPos, setThreadPos] = useState({x:0,y:0});
+  const threadBodyRef = useRef(null), threadDrag = useRef(null);
+  const threadRequest = useRef(0), threadSelected = useRef(null);
+  const closeThread = () => { ++threadRequest.current; threadSelected.current=null; setThreadOrb(null); };
   useEffect(() => {
     const onOrbClick = e => {
-      const d = e.detail;
-      // Open the window near the orb, clamped inside the viewport (window ≈ 400×320).
-      const W = 400,
-        H = 320,
-        M = 12;
-      const x = Math.max(M, Math.min((window.innerWidth || 1280) - W - M, (d.sx || window.innerWidth / 2) - W / 2));
-      const y = Math.max(M, Math.min((window.innerHeight || 800) - H - M, (d.sy || 120) + 20));
-      setThreadPos({
-        x,
-        y
-      });
-      setThreadOrb(d);
-      setThreadSteps(window._fridayThreads?.[d.id] || d.steps || []);
-      setTaskLog(null);
-      setTaskMeta(null);
+      const d=e.detail; if(!d||!d.id)return;
+      const viewRevision=++threadRequest.current; threadSelected.current=d.id;
+      const W=400,H=320,M=12;
+      const x=Math.max(M,Math.min((window.innerWidth||1280)-W-M,(d.sx||window.innerWidth/2)-W/2));
+      const y=Math.max(M,Math.min((window.innerHeight||800)-H-M,(d.sy||120)+20));
+      setThreadPos({x,y}); setThreadOrb({...d,viewRevision});
+      setThreadSteps(fridayProcessSteps(window._fridayThreads?.[d.id]||d.steps));
+      setTaskLog(null); setTaskMeta(null); setThreadReadState('loading');
     };
-    const onThreadUpdate = e => {
-      const d = e.detail;
-      setThreadOrb(prev => {
-        if (prev && prev.id === d.orbId) {
-          setThreadSteps([...(d.steps || [])]);
-          return prev;
-        }
-        return prev;
-      });
-    };
-    window.addEventListener('fridayOrbClicked', onOrbClick);
-    window.addEventListener('fridayThreadUpdate', onThreadUpdate);
-    return () => {
-      window.removeEventListener('fridayOrbClicked', onOrbClick);
-      window.removeEventListener('fridayThreadUpdate', onThreadUpdate);
-    };
-  }, []);
-  // Live poll of the task endpoint while the window is open. Real-time log +
-  // result come straight from the running subagent. 404 → process-only orb,
-  // keep taskLog null so the reasoning-steps fallback renders instead.
+    const onThreadUpdate=e=>{const d=e.detail;if(d&&threadSelected.current===d.orbId)setThreadSteps(fridayProcessSteps(d.steps));};
+    window.addEventListener('fridayOrbClicked',onOrbClick);window.addEventListener('fridayThreadUpdate',onThreadUpdate);
+    return()=>{window.removeEventListener('fridayOrbClicked',onOrbClick);window.removeEventListener('fridayThreadUpdate',onThreadUpdate);};
+  },[]);
+  // Each selection owns one request at a time. An old response cannot paint a
+  // different orb, even when the new click happens before effect cleanup.
   useEffect(() => {
-    if (!threadOrb) return;
-    let active = true;
-    const tick = async () => {
-      try {
-        const r = await fetch('/api/tasks/' + encodeURIComponent(threadOrb.id));
-        if (!active) return;
-        if (r.status === 404) {
-          setTaskLog(null);
-          return;
+    if(!threadOrb)return;
+    let active=true,timer=null;const controller=new AbortController();
+    const current=()=>active&&threadRequest.current===threadOrb.viewRevision;
+    const tick=async()=>{
+      try{
+        let r=await apiFetch('/api/tasks/'+encodeURIComponent(threadOrb.id),{signal:controller.signal});
+        if(!current())return;
+        if(r.status===404&&threadOrb.task_id&&threadOrb.task_id!==threadOrb.id){
+          r=await apiFetch('/api/tasks/'+encodeURIComponent(threadOrb.task_id),{signal:controller.signal});
+          if(!current())return;
         }
-        if (!r.ok) return;
-        const t = await r.json();
-        if (!active) return;
-        setTaskLog(Array.isArray(t.log) ? t.log : []);
-        setTaskMeta({
-          status: t.status,
-          result: t.result,
-          evaluation: t.evaluation,
-          verified: t.verified,
-          elapsed: t.elapsed,
-          model: t.model,
-          linked_task_id: t.linked_task_id
-        });
-        if (t.status && t.status !== threadOrb.status) setThreadOrb(p => p && p.id === threadOrb.id ? {
-          ...p,
-          status: t.status
-        } : p);
-      } catch (_) {}
+        if(r.status===404){setThreadReadState('missing');return;}
+        if(!r.ok)throw new Error('Process read failed');
+        const t=await r.json();if(!current())return;
+        if(!t||typeof t!=='object'||Array.isArray(t)||typeof t.task_id!=='string')throw new Error('Invalid process response');
+        setTaskLog(Array.isArray(t.log)?t.log:[]);
+        if(Array.isArray(t.steps))setThreadSteps(fridayProcessSteps(t.steps));
+        setTaskMeta({status:t.status,result:t.result,evaluation:t.evaluation,verified:t.verified,elapsed:t.elapsed,model:t.model,
+          trace_id:t.trace_id||threadOrb.trace_id,linked_task_id:t.linked_task_id||(!t.process?t.task_id:null)||threadOrb.task_id});
+        setThreadReadState('ready');
+      }catch(error){if(current()&&error.name!=='AbortError')setThreadReadState('error');}
+      finally{if(current())timer=setTimeout(tick,1500);}
     };
-    tick();
-    const iv = setInterval(tick, 1500);
-    return () => {
-      active = false;
-      clearInterval(iv);
-    };
-  }, [threadOrb && threadOrb.id]);
-  // Auto-scroll the body as new log/step content streams in.
-  useEffect(() => {
-    if (threadBodyRef.current) threadBodyRef.current.scrollTop = threadBodyRef.current.scrollHeight;
-  }, [threadSteps, taskLog, taskMeta]);
+    tick();return()=>{active=false;controller.abort();clearTimeout(timer);};
+  },[threadOrb&&threadOrb.id,threadOrb&&threadOrb.viewRevision]);
+  // The trace viewer owns stream following; process refreshes preserve the
+  // outer reading position while the owner reads a record.
   // ESC closes the window (it no longer auto-closes on outside click, since a
   // draggable floating window shouldn't vanish when you interact elsewhere).
   useEffect(() => {
     if (!threadOrb) return;
     const h = e => {
-      if (e.key === 'Escape') setThreadOrb(null);
+      if (e.key === 'Escape') closeThread();
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [threadOrb]);
   // Drag the window by its header.
   const startThreadDrag = e => {
-    if (e.target.closest('.thread-close')) return;
-    const box = e.currentTarget.closest('.thread-panel').getBoundingClientRect();
-    const sx = e.clientX,
-      sy = e.clientY,
-      ox = box.left,
-      oy = box.top;
-    threadDrag.current = {
-      sx,
-      sy,
-      ox,
-      oy
+    if(e.target.closest('.thread-close'))return;
+    const box=e.currentTarget.closest('.thread-panel').getBoundingClientRect();
+    threadDrag.current={sx:e.clientX,sy:e.clientY,ox:box.left,oy:box.top,w:box.width,h:box.height};
+    const move=event=>{
+      const drag=threadDrag.current;if(!drag)return;
+      const area=fridayDesktopArea();
+      const x=Math.max(area.x+8,Math.min(area.x+area.w-drag.w-8,drag.ox+event.clientX-drag.sx));
+      const y=Math.max(area.y+8,Math.min(area.y+area.h-drag.h-8,drag.oy+event.clientY-drag.sy));
+      setThreadPos({x,y});
     };
-    const mv = ev => {
-      const dd = threadDrag.current;
-      if (!dd) return;
-      const W = 400,
-        H = 320,
-        M = 4;
-      const nx = Math.max(M, Math.min((window.innerWidth || 1280) - W - M, dd.ox + (ev.clientX - dd.sx)));
-      const ny = Math.max(M, Math.min((window.innerHeight || 800) - H - M, dd.oy + (ev.clientY - dd.sy)));
-      setThreadPos({
-        x: nx,
-        y: ny
-      });
-    };
-    const up = () => {
-      threadDrag.current = null;
-      window.removeEventListener('mousemove', mv);
-      window.removeEventListener('mouseup', up);
-    };
-    window.addEventListener('mousemove', mv);
-    window.addEventListener('mouseup', up);
-    e.preventDefault();
+    const end=()=>{threadDrag.current=null;window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',end);};
+    window.addEventListener('mousemove',move);window.addEventListener('mouseup',end);e.preventDefault();
   };
 
   // --- Process Polling (Layer 2→3 integration) ---
@@ -65568,7 +65646,10 @@ function App() {
         // show_my_day: answer with what the cluster did, once the page has judged.
         setTimeout(() => {
           const l = deskRef.current.landing || {};
-          answer({ opened: true, matched: null, landing: { show: !!l.show, reason: l.reason || '' } });
+          const simple=document.body.dataset.fridayDisplayStyle==='simple';
+          const home=document.querySelector('.fx-main[data-view="day"]');
+          const shown=simple?document.body.dataset.fridayHomeVisible==='true'&&!!home&&home.getBoundingClientRect().height>0:!!l.show;
+          answer({ opened: shown, matched: null, landing: { show: shown, reason: simple?'Simple Home':l.reason || '' } });
         }, 250);
         return;
       }
@@ -65614,6 +65695,8 @@ function App() {
         try { m = JSON.parse(e.data); } catch (_) { return; }
         if (!m) return;
         if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
+        else if (m.type === 'desktop_cards_changed') window.dispatchEvent(new Event('friday:desktop-cards-changed'));
+        else if (m.type === 'workspace_customizations_changed') window.dispatchEvent(new Event('friday:ws-custom-changed'));
       };
     };
     connect();
@@ -65756,12 +65839,14 @@ function App() {
   }, []);
   // Load every workspace's saved customization once, so applied changes are live
   // on first paint without opening each chat.
-  useEffect(() => {
-    fetch('/api/workspace/customizations').then(r => r.json()).then(d => {
-      if (d && d.customizations) setWsCustMap(d.customizations);
-    }).catch(() => {});
-  }, []);
-  // Global voice bridge — lets any child component (e.g. NewsWS "Listen to
+  useEffect(()=>{
+    let stopped=false, sequence=0;
+    const refresh=()=>{const request=++sequence;fetch('/api/workspace/customizations').then(r=>{if(!r.ok)throw new Error('load failed');return r.json()}).then(d=>{if(!stopped&&request===sequence&&d.status==='ok'&&d.customizations)setWsCustMap(d.customizations)}).catch(()=>{})};
+    refresh();
+    window.addEventListener('friday:ws-custom-changed',refresh);
+    window.addEventListener('focus',refresh);
+    return()=>{stopped=true;window.removeEventListener('friday:ws-custom-changed',refresh);window.removeEventListener('focus',refresh)};
+  },[]);  // Global voice bridge — lets any child component (e.g. NewsWS "Listen to
   // Front Page") drive the live session that lives here in App without
   // prop-drilling. startAnchor() drops a source card into the chat, opens the
   // chat panel, then either fires the briefing script immediately (session
@@ -66611,7 +66696,7 @@ function App() {
         setAgentSettings(a => Object.assign({}, a, { landing_mode: d.mode }));
         landingSees.current = Object.assign({}, landingSees.current, { mode: d.mode });
       }
-      if (d.summon) st.summonedAt = Date.now();
+      if (d.summon) { st.summonedAt = Date.now(); setExperienceDesktop(true); window.dispatchEvent(new CustomEvent('friday:desktop-view',{detail:{view:'day'}})); if(d.focus)requestAnimationFrame(()=>document.querySelector('.fx-home-composer textarea')?.focus()); }
       judge();
       // The key asked for the cursor. Shown already, the field takes it now;
       // hidden, the cluster is a render away from showing, and the effect
@@ -68769,93 +68854,7 @@ function App() {
         apiFetch: apiFetch,
       })
     : null,
-  shellChatPanel, threadOrb && /*#__PURE__*/React.createElement("div", {
-    className: "thread-panel open",
-    style: {
-      "--friday-shared-x": threadPos.x + "px", "--friday-shared-y": threadPos.y + "px",
-      left: threadPos.x,
-      top: threadPos.y
-    },
-    onClick: e => e.stopPropagation()
-  }, /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "thread-header",
-    onMouseDown: startThreadDrag,
-    style: {
-      cursor: 'grab'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thread-header-left"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "thread-icon"
-  }, threadOrb.icon || '⚡'), /*#__PURE__*/React.createElement("span", {
-    className: "thread-name"
-  }, threadOrb.label || 'Process')), (taskMeta && taskMeta.model || threadOrb.model) && /*#__PURE__*/React.createElement("span", {
-    title: 'Model running this process' + (taskMeta && taskMeta.linked_task_id ? ' · task ' + taskMeta.linked_task_id : ''),
-    style: {
-      fontSize: 8,
-      fontFamily: 'JetBrains Mono',
-      color: '#00d4ff',
-      border: '1px solid rgba(0,212,255,0.3)',
-      borderRadius: 3,
-      padding: '0 4px',
-      marginRight: 6,
-      whiteSpace: 'nowrap',
-      maxWidth: 110,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    }
-  }, taskMeta && taskMeta.model || threadOrb.model), /*#__PURE__*/React.createElement("span", {
-    className: `thread-status-badge ${threadOrb.status || 'running'}`
-  }, threadOrb.status || 'RUNNING'), /*#__PURE__*/React.createElement("span", {
-    className: "thread-elapsed"
-  }, taskMeta && taskMeta.elapsed != null ? taskMeta.elapsed + 's' : ''), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close this process panel', title: 'Close this process panel', 
-    className: "thread-close",
-    onClick: () => setThreadOrb(null)
-  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
-    className: "thread-body",
-    ref: threadBodyRef
-  }, Array.isArray(taskLog) && taskLog.length > 0 && taskLog.map((line, i) => /*#__PURE__*/React.createElement("div", {
-    key: 'log' + i,
-    className: "thread-log-line"
-  }, String(line))), threadSteps.map((step, i) => /*#__PURE__*/React.createElement("div", {
-    key: 'st' + i,
-    className: "thread-step"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `thread-dot ${step.status || 'pending'}`
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "thread-step-content"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thread-step-text"
-  }, step.text || ''), step.detail && /*#__PURE__*/React.createElement("div", {
-    className: `thread-step-detail ${step._expanded ? 'expanded' : ''}`,
-    style: {
-      cursor: 'pointer'
-    },
-    onClick: () => {
-      const ns = [...threadSteps];
-      ns[i] = {
-        ...ns[i],
-        _expanded: !ns[i]._expanded
-      };
-      setThreadSteps(ns);
-    }
-  }, step._expanded ? '▾ ' : '▸ ', step.detail), step.timestamp && /*#__PURE__*/React.createElement("div", {
-    className: "thread-step-time"
-  }, step.timestamp)))), taskMeta && taskMeta.result && (taskMeta.status === 'complete' || taskMeta.status === 'completed_unverified' || taskMeta.status === 'failed' || taskMeta.status === 'timeout') && /*#__PURE__*/React.createElement("div", {
-    className: "thread-result"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thread-result-label"
-  }, "RESULT"), /*#__PURE__*/React.createElement("div", {
-    className: "thread-result-body"
-  }, taskMeta.result)), (!taskLog || taskLog.length === 0) && threadSteps.length === 0 && !(taskMeta && taskMeta.result) && /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: 'center',
-      color: '#666',
-      fontSize: 11,
-      padding: 20,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, threadOrb.model ? '⚙ ' + threadOrb.model + ' — ' : '', "waiting for activity\u2026")))), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
+  shellChatPanel, threadOrb && React.createElement(ProcessOrbThread,{orb:threadOrb,meta:taskMeta,log:taskLog,steps:threadSteps,readState:threadReadState,position:threadPos,bodyRef:threadBodyRef,onDrag:startThreadDrag,onClose:closeThread}), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
     className: `dock ${dockHidden ? 'hidden' : ''}`
   }, dockShape.groups.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: g.name + ':' + gi

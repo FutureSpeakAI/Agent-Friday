@@ -35,11 +35,6 @@ body.friday-experience-enabled :where(button, a, input, select, textarea, summar
   outline-offset: 3px;
 }
 
-body.friday-experience-enabled :where(.fx-shell, .fwin-body, .chat-panel, .chat-win, .ws-tab-body, .cmd-palette) {
-  scrollbar-width: thin;
-  scrollbar-color: var(--fx-line-strong) transparent;
-}
-
 /* Day occupies one quiet column. The transparent shell leaves the actual
  * avatar and world unobscured, and takes no pointer outside its surfaces. */
 .fx-shell[hidden] { display: none !important; }
@@ -460,7 +455,7 @@ body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-s
 body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-switcher-trigger > svg { flex: 0 0 12px; transition: transform 140ms ease; }
 body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-switcher-trigger:is(:hover, [aria-expanded="true"]) { color: var(--fr-cyan); background: var(--fr-cyan-soft); border-color: color-mix(in srgb, var(--fr-cyan) 30%, transparent); }
 body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-switcher-trigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
-body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-switcher-popover { max-width: min(360px, calc(100vw - 24px)); padding: 12px; border: 1px solid var(--fx-line-strong); border-radius: 14px; background: var(--fx-panel); color: var(--fr-text); box-shadow: var(--fx-shadow); backdrop-filter: var(--fr-glass-blur); -webkit-backdrop-filter: var(--fr-glass-blur); font: 400 14px/1.5 var(--fr-font-body); overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--fx-line-strong) transparent; }
+body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-switcher-popover { max-width: min(360px, calc(100vw - 24px)); padding: 12px; border: 1px solid var(--fx-line-strong); border-radius: 14px; background: var(--fx-panel); color: var(--fr-text); box-shadow: var(--fx-shadow); backdrop-filter: var(--fr-glass-blur); -webkit-backdrop-filter: var(--fr-glass-blur); font: 400 14px/1.5 var(--fr-font-body); overscroll-behavior: contain; }
 body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-switcher-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 2px 10px 6px; }
 body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-switcher-heading strong { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
 body:is(.friday-experience-enabled, [data-friday-display-style="classic"]) .fx-switcher-close { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--fx-muted); font: 400 22px/1 var(--fr-font-body); cursor: pointer; }

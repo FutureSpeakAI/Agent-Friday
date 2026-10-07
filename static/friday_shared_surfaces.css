@@ -339,7 +339,7 @@ body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spat
   border-top: 1px solid color-mix(in srgb, var(--fr-cyan) 20%, transparent);
   border-radius: 0 0 10px 10px; background: color-mix(in srgb, var(--fr-surface) 74%, transparent);
   backdrop-filter: var(--fr-glass-blur); pointer-events: auto; text-align: center;
-  scrollbar-width: thin; overscroll-behavior: contain;
+  overscroll-behavior: contain;
 }
 .friday-avatar-caption :is(#state-indicator, #presence-status) {
   position: static !important; inset: auto !important; flex: none; box-sizing: border-box;

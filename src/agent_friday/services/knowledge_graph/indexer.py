@@ -539,8 +539,10 @@ def _llm(messages, system: Optional[str], sensitivity: int, mode: str,
         # Calling the local primitive directly, the same pattern the voice
         # path uses, is the only way the pin is real.
         from agent_friday.services.model_router import _call_ollama
-        text, _trace = _call_ollama(messages, system=system, model=model,
-                                    max_tokens=4096, orb_label=orb_label)
+        from agent_friday.services import reasoning_trace as rt
+        with rt.scope("background", str(orb_label or "Knowledge indexing")):
+            text, _trace = _call_ollama(messages, system=system, model=model,
+                                        max_tokens=4096, orb_label=orb_label)
         return text
     from agent_friday.services.model_router import _generate_text
     return _generate_text(messages, system=system, model=model,

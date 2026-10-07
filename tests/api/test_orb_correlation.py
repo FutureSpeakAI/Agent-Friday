@@ -133,8 +133,9 @@ def test_orb_tool_trace_none_orb_is_noop():
 
 # ── /api/tasks/<orb-pid> thread-view enrichment ───────────────────────────────
 
-def test_get_task_orb_pid_includes_model_log_steps(client):
+def test_get_task_orb_pid_includes_model_log_steps(client, monkeypatch):
     pid = "agent-testorb1"
+    monkeypatch.setattr(core, "_current_trace_id", lambda: "tr_example_process")
     core.process_register(pid, name="Friday", label="Reasoning…",
                           category="monitoring", icon="🛰",
                           model="claude-sonnet-5", task_id=None)
@@ -146,20 +147,23 @@ def test_get_task_orb_pid_includes_model_log_steps(client):
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["model"] == "claude-sonnet-5"
+    assert data["trace_id"] == "tr_example_process"
     assert any("search_web" in line for line in data["log"])
     assert data["steps"][0]["duration_ms"] == 150
     assert data["process"] is True
 
 
-def test_get_task_orb_pid_follows_task_link_with_model(client):
+def test_get_task_orb_pid_follows_task_link_with_model(client, monkeypatch):
     """Orb linked to a real TASKS entry → linked task returned, enriched with
     the orb's model + orb_id so the thread panel knows who served the loop."""
     from agent_friday.services.agent import TASKS, TASKS_LOCK
     tid = "t-link-test"
+    monkeypatch.setattr(core, "_current_trace_id", lambda: "tr_example_child")
     with TASKS_LOCK:
         TASKS[tid] = {"task_id": tid, "name": "bg", "status": "running",
                       "created": 1.0, "started": 1.0, "ended": None,
-                      "log": ["Spawning agent: bg"], "result": ""}
+                      "log": ["Spawning agent: bg"], "result": "",
+                      "trace_id": "tr_example_task_root"}
     try:
         pid = "agent-testorb2"
         core.process_register(pid, name="Friday", label="x",
@@ -169,6 +173,7 @@ def test_get_task_orb_pid_follows_task_link_with_model(client):
         assert data["task_id"] == tid
         assert data["model"] == "gemma4:latest"
         assert data["orb_id"] == pid
+        assert data["trace_id"] == "tr_example_task_root"
         assert data["log"] == ["Spawning agent: bg"]
     finally:
         with TASKS_LOCK:

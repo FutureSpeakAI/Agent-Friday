@@ -32,14 +32,16 @@ def test_an_open_vault_is_used_not_refused():
         assert "Never tell them you cannot reach their notes" in r
         assert "local-only" not in r
     assert "ask_friday" in vp.vault_rule(True, True)
-    assert "ask_friday" not in vp.vault_rule(True, False)
+    assert "ask_friday" in vp.vault_rule(True, False)
+    assert "actual result" in vp.vault_rule(True, False)
 
 
 def test_a_locked_vault_is_explained_not_ignored():
     r = vp.vault_rule(vault_open=False, local_model_ready=True)
     assert "local-only" in r and "ask_friday" in r
     r = vp.vault_rule(vault_open=False, local_model_ready=False)
-    assert "local-only" in r and "not running" in r and "ask_friday" not in r
+    assert "local-only" in r and "readiness check" in r and "ask_friday" in r
+    assert "not running" not in r and "privacy gate" in r
 
 
 def _manifest_with_mind(ready):
@@ -56,7 +58,8 @@ def test_the_self_description_follows_the_vault_setting():
     opened = unready.describe_for_model(vault_open=True)
     assert "no path to" not in opened and "search_wiki" in opened and "open" in opened
     locked = unready.describe_for_model(vault_open=False)
-    assert "local-only" in locked and "no path to their private vault" in locked
+    assert "local-only" in locked and "privacy gate" in locked
+    assert "readiness check" in locked and "actual result or refusal" in locked
     # Default (every other caller) is the protective reading.
     assert unready.describe_for_model() == locked
 
@@ -191,11 +194,12 @@ def test_the_hud_notice_follows_the_vault_setting():
     names = ["query_calendar", "check_email", "search_wiki", "ask_friday"]
     opened = rv._voice_context_reach("gemini", names, local_mind_ready=False, vault_open=True)
     assert opened["vault_open"] is True and opened["memory"] is False
-    assert "your vault is open" in opened["notice"] and "your notes" in opened["notice"]
+    assert "your vault is open" in opened["notice"].lower() and "your notes" in opened["notice"]
     assert "notes, memory and knowledge graph are out of reach" not in opened["line"]
     locked = rv._voice_context_reach("gemini", names, local_mind_ready=False, vault_open=False)
-    assert "cannot reach your knowledge graph or memory" in locked["notice"]
-    assert "notes, memory and knowledge graph are out of" in locked["line"]
+    assert "readiness check" in locked["notice"]
+    assert "actual result" in locked["notice"] and "local-only" in locked["notice"]
+    assert "out of reach" not in locked["line"]
 
 
 def test_the_hud_reads_the_real_setting_when_not_told(monkeypatch):
