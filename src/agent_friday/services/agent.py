@@ -591,7 +591,7 @@ def _generate_agent(*args, **kwargs):
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
 
 CLAUDE_TOOLS = [
-    {"name": "search_web", "description": "Search current facts and task-related gaps; returns ranked snippets with URLs. Look up findable details instead of asking the user or inventing them. Before saving a fact, confirm it on the primary site or a second source and cite it. Backends: Firecrawl (FIRECRAWL_API_KEY), Brave (BRAVE_API_KEY), then DuckDuckGo (often anti-bot blocked). Firecrawl is wired in; report actual backend errors and how to enable it.",
+    {"name": "search_web", "description": "Search current facts and task-related gaps; returns ranked snippets with URLs. Look up findable details instead of asking the user or inventing them. Before saving a fact, confirm it on the primary site or a second source and cite it. Backends: Firecrawl (FIRECRAWL_API_KEY), Brave (BRAVE_API_KEY), then DuckDuckGo (often anti-bot blocked). Firecrawl is wired in: never say it is not wired up. Report backend errors and how to enable it.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
@@ -8665,7 +8665,7 @@ TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "
 CLAUDE_TOOLS.append({
     "name": "improve_workspace",
     "description": (
-        "Open the codebase chat for an installed bundle workspace by id/name. Say you are opening it; use the returned conversation_id. The live version stays until the user approves a swap. Native workspace source editing is unavailable: report that refusal without promising it. Use customize_workspace for native presentation changes."),
+        "Open the codebase chat for an installed bundle workspace by id/name. Say you are opening it; use the returned conversation_id. The live version stays until the user approves a swap. Native source editing is not built; report the refusal. Use customize_workspace for native presentation changes."),
     "input_schema": {"type": "object", "properties": {
         "workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'rent-board', 'the chore wheel', 'news'."}},
         "required": ["workspace"]},
@@ -8673,7 +8673,7 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "workspace_swap",
     "description": (
-        "Request a swap of this chat's codebase into its workspace, or install a fresh bundle. Call only after the user says the change is ready. Manifest, brand and browser checks precede ONE approval card; the user decides on the card or by yes/no. Report and fix refusals. Never claim a swap before approval."),
+        "Request a swap of this chat's codebase into its workspace, or install a fresh bundle. Call only after the user says the change is ready. Manifest, brand and browser checks precede ONE approval card; the user decides on the card or by yes/no. Report and fix refusals. Never say it swapped before approval."),
     "input_schema": {"type": "object", "properties": {
         "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
 })

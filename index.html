@@ -18187,7 +18187,7 @@ function CareerWS() {
     title: 'Review before you apply',
     text: fridayName() + ' can save new evaluation reports and prepare new drafts while keeping your original CV and profile unchanged.',
     points: ['Tracker and saved pipeline changes ask for your approval.', 'Review every draft for accuracy and answer personal application questions yourself.', 'You submit applications on the employer’s site.'],
-    detail: 'Need a hand? Ask Friday for a plain-language walkthrough tailored to your setup.'
+    detail: 'Need a hand? Ask ' + fridayName() + ' for a plain-language walkthrough tailored to your setup.'
   }];
   const step = tour[tourStep];
   return /*#__PURE__*/React.createElement("div", {
@@ -18227,7 +18227,7 @@ function CareerWS() {
     className: "btn",
     disabled: disabled,
     onClick: askFriday
-  }, "Ask Friday"), /*#__PURE__*/React.createElement("button", {
+  }, "Ask " + fridayName()), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     disabled: disabled,
     onClick: () => coStatus ? showSection(ready ? 'actions' : 'setup') : load()
@@ -18896,7 +18896,7 @@ function CareerWS() {
       textAlign: 'center',
       padding: 20
     }
-  }, "No saved opportunities yet. In a career conversation, ask Friday to save a role to your pipeline, then review the approval card.")), view === 'curated' && (jobs ? /*#__PURE__*/React.createElement(FridayDoc, {
+  }, "No saved opportunities yet. In a career conversation, ask " + fridayName() + " to save a role to your pipeline, then review the approval card.")), view === 'curated' && (jobs ? /*#__PURE__*/React.createElement(FridayDoc, {
     compact: true,
     text: jobs.substring(0, 4000)
   }) : /*#__PURE__*/React.createElement("div", {
