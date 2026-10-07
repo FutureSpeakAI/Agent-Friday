@@ -368,7 +368,8 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
                     requested_by: str = "system",
                     interest_model: Optional[dict] = None,
                     action_class: Optional[str] = None,
-                    force_gate: bool = False) -> Dict[str, Any]:
+                    force_gate: bool = False,
+                    _before_publish: Optional[Callable[[], None]] = None) -> Dict[str, Any]:
     """Create (or return the existing) approval card for this exact
     (subject_type, subject_id, kind). Idempotent: a second call with the same
     triple returns the FIRST card verbatim rather than re-classifying (an
@@ -385,8 +386,14 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     it off that status. This is not a Q3 gate a human can wave through; it
     mirrors dissent_gate's own "Law-1 is a floor" invariant.
     """
+    # A trusted caller can invalidate a delayed review before it becomes a
+    # durable card or notification. The callback is never stored in a card.
+    if _before_publish is not None:
+        _before_publish()
     existing = find_for_subject(subject_type, subject_id, kind)
     if existing is not None:
+        if _before_publish is not None:
+            _before_publish()
         return existing
 
     action_text = action_description or title
@@ -402,7 +409,11 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     if action_class and _cls is None:
         _log.warning("approval: ignoring unknown action_class %r", action_class)
     policy = classify(action_text, action_class=_cls)
+    if _before_publish is not None:
+        _before_publish()
     dissent = _safe_check_dissent(action_text, interest_model)
+    if _before_publish is not None:
+        _before_publish()
     law1_blocked = bool(dissent.get("law1_blocked"))
     # Where the action's details came from (services/taint.py), when a tool
     # call raised this card. A card whose recipient, link or account number
@@ -446,9 +457,15 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
             record["off_record"] = True
     except Exception:
         pass
+    if _before_publish is not None:
+        _before_publish()
     _upsert(record)
     if record["status"] == "pending":
+        if _before_publish is not None:
+            _before_publish()
         _notify_pending(record)
+        if _before_publish is not None:
+            _before_publish()
         _feed("card_pending", record)
     return record
 

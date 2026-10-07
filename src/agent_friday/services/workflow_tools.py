@@ -20,6 +20,8 @@ CAPABILITY_INDEX = (
     "For reusable work, workflow_action manages the same Workflows "
     "definitions, routines and runs as the desktop. Inspect before changing an "
     "existing workflow. Keep work in its originating conversation and project. "
+    "Use site_action for repositories, builds, previews and reviewed publication; "
+    "domain_action handles named registrar accounts, DNS and renewal reviews. "
     "Use read_skill for a matched skill's complete procedure before following "
     "it; the skill index is not the procedure. Started, verified and delivered "
     "are different outcomes: report only evidence returned by tools.\n"
@@ -126,6 +128,9 @@ def discover_capabilities(inp):
                   "availability": "registered; prerequisites not yet checked" if spec else "not registered"}
         if spec:
             result["instructions"] = spec
+        if spec and name in ("site_action", "domain_action"):
+            from agent_friday.services.sites_tools import SITE_GUIDE, DOMAIN_GUIDE
+            result["guide"] = SITE_GUIDE if name == "site_action" else DOMAIN_GUIDE
         if name == "workflow_action" and spec:
             result["guide"] = _WORKFLOW_GUIDE
             if _private_discovery_allowed():

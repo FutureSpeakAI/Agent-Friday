@@ -160,6 +160,8 @@ OUTWARD_TOOLS = frozenset({
     # raises the card with the files, scan and licence check; the card's
     # decision hook publishes on approval (SELF_GATED below).
     "publish_artifact",
+    # Builds, publishing and registrar changes raise their own exact cards.
+    "site_action", "domain_action",
     # A command, or Claude's agent, run as a process on this PC inside a
     # codebase's folder (services/codebase_tasks). Both reach past the browser
     # frame, and the agent reaches the provider's API, so both are outward.
@@ -173,6 +175,7 @@ OUTWARD_TOOLS = frozenset({
 #: action itself (draft_email only queues; gmail_send sends on approval).
 SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         "career_update_tracker", "publish_artifact", "workspace_swap",
+                        "site_action", "domain_action",
                         # Friday's browser (services/browser_session.py): when
                         # classified outward, the handler submits or fills
                         # only on an approved card for exactly what the page
@@ -227,6 +230,9 @@ INTERNAL_TOOLS = frozenset({
     # Voice's hand-over to the full agent: a background task like spawn_task,
     # whose own actions come back through this checkpoint one by one.
     "delegate_to_friday",
+    # Crew dispatch binds a saved profile; its individual actions return here.
+    # Profile proposals open an unsaved editor and grant no capabilities.
+    "list_crew", "ask_crew", "propose_crew_agent",
     # Sharing local context with the cloud voice model has its own gate: the
     # payload card (services/local_context), decided once, by the owner.
     "ask_local_for_context", "answer_share_request", "revise_share_request",

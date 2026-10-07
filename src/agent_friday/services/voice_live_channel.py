@@ -19,6 +19,7 @@ import threading
 _log = logging.getLogger("friday.voice_channel")
 _LOCK = threading.Lock()
 _CHANNELS: dict = {}
+_CREW_CHANNELS: dict = {}
 
 
 def register(conversation_id, deliver_fn) -> None:
@@ -55,4 +56,43 @@ def deliver(conversation_id, text: str, *, kind: str = "result") -> bool:
         return True
     except Exception as e:  # noqa: BLE001
         _log.warning("voice channel delivery failed: %s", type(e).__name__)
+        return False
+
+
+def register_crew(conversation_id, deliver_fn) -> None:
+    """Register structured reports separately from Friday's plain-text relay."""
+    if conversation_id and deliver_fn is not None:
+        with _LOCK:
+            _CREW_CHANNELS[str(conversation_id)] = deliver_fn
+
+
+def unregister_crew(conversation_id, deliver_fn=None) -> None:
+    with _LOCK:
+        cur = _CREW_CHANNELS.get(str(conversation_id))
+        if deliver_fn is None or cur is deliver_fn:
+            _CREW_CHANNELS.pop(str(conversation_id), None)
+
+
+def deliver_crew(conversation_id, profile, text, *, task_id=None, off_record=None,
+                 off_record_generation=None) -> bool:
+    """Queue a trusted worker result in its open Crew call; never impersonate Friday.
+
+    False means that the result remains in its conversation's written history.
+    The registered room rechecks membership and profile revision before speech.
+    """
+    if not conversation_id or not isinstance(profile, dict) or not str(text or "").strip():
+        return False
+    with _LOCK:
+        fn = _CREW_CHANNELS.get(str(conversation_id))
+    if fn is None:
+        return False
+    try:
+        kwargs = {"task_id": task_id}
+        if off_record is not None:
+            kwargs["off_record"] = off_record
+        if off_record_generation is not None:
+            kwargs["off_record_generation"] = off_record_generation
+        return bool(fn(profile, str(text), **kwargs))
+    except Exception as exc:
+        _log.warning("Crew voice delivery failed: %s", type(exc).__name__)
         return False

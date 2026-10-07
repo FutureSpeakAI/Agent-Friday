@@ -129,7 +129,7 @@ ROUTE_MODULES = [
     'actions', 'activity', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
     'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code', 'compute',
     'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_routes', 'desktop',
-    'costs', 'creations', 'creative_pipeline', 'defederation', 'documents', 'dreaming', 'ext_security', 'federation',
+    'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'documents', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'insights',
     'intelligence', 'jobs', 'knowledge_graph', 'learning', 'library', 'liveness', 'local_address', 'media', 'meetings', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',

@@ -335,7 +335,7 @@ def _stored_secret(name: str) -> Optional[str]:
         from agent_friday.services import credential_store as _cs
         get = getattr(_cs, "get_provider_key", None)
         if callable(get):
-            return get("publish_" + name) or None
+            return get("publish_" + name) or get("publish:" + name) or None
     except Exception:
         return None
     return None
@@ -348,9 +348,11 @@ def adapter_connected(adapter: str) -> bool:
 def _store_secret(name: str, value: Optional[str]) -> None:
     from agent_friday.services import credential_store as _cs
     if value is None:
+        _cs.delete_provider_key("publish_" + name)
         _cs.delete_provider_key("publish:" + name)
     else:
-        _cs.set_provider_key("publish:" + name, value)
+        _cs.set_provider_key("publish_" + name, value)
+        _cs.delete_provider_key("publish:" + name)
 
 
 def connect_adapter(adapter: str, token: str, *, account_id: str = "", project: str = "",
@@ -395,6 +397,8 @@ def publish_remote(adapter: str, bundle) -> str:
     if not conn:
         raise RuntimeError("%s is not connected; connect the account in Settings first"
                            % _pa.LABELS.get(adapter, adapter))
+    from agent_friday.services import site_hosting
+    site_hosting.require_artifact_target(adapter, conn)
     return _pa.publish(adapter, bundle, conn)
 
 
@@ -404,4 +408,6 @@ def unpublish_remote(entry: dict) -> None:
     conn = connection(adapter)
     if not conn:
         raise RuntimeError("%s is not connected" % _pa.LABELS.get(adapter, adapter))
+    from agent_friday.services import site_hosting
+    site_hosting.require_artifact_target(adapter, conn)
     _pa.unpublish(adapter, str(entry.get("slug") or ""), conn)

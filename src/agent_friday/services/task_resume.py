@@ -259,6 +259,13 @@ def clear(task_id) -> None:
 def resumability(task_id) -> Dict[str, Any]:
     """The transcript checkpoint's verdict, or -- when that cannot be used --
     the task ledger's."""
+    state = _journal().read_state(task_id)
+    if state and state.get("crew_context") is not None:
+        return {"resumable": False, "reason": "Crew work cannot use a generic task resume. Start a fresh Crew turn in its conversation.",
+                "iteration": 0, "pending_tool": None, "needs_confirmation": False, "attempts": 0}
+    if state is None and _journal().blob_exists(task_id, "state.json"):
+        return {"resumable": False, "reason": "The original task's authority cannot be read. Start a fresh turn instead.",
+                "iteration": 0, "pending_tool": None, "needs_confirmation": False, "attempts": 0}
     verdict = _checkpoint_resumability(task_id)
     if verdict.get("resumable"):
         return verdict

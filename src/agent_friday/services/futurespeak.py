@@ -139,9 +139,9 @@ def _fs_has_replit(repo_path):
 
 
 def _fs_repo_status(repo_path):
-    """Compute live git/deploy status for a local clone.
+    """Compute local Git status; this does not verify a hosted deployment.
 
-    deploy_status: green = clean & in sync · yellow = uncommitted or ahead ·
+    Legacy deploy_status is only a Git indicator: green = locally clean · yellow = uncommitted or ahead ·
     red = git error · remote = no local clone (handled by the caller).
     """
     status = {
@@ -149,6 +149,7 @@ def _fs_repo_status(repo_path):
         "last_commit_msg": None, "last_commit_rel": None,
         "uncommitted": 0, "ahead": 0, "behind": 0, "dirty": False,
         "has_replit": _fs_has_replit(repo_path), "deploy_status": "green",
+        "status_source": "git", "deployment_verified": False,
         "error": None,
     }
     branch = _git(repo_path, 'rev-parse', '--abbrev-ref', 'HEAD')
@@ -194,10 +195,11 @@ def _fs_project_view(proj):
         out['repo_path'] = str(repo_path)
         out['status'] = _fs_repo_status(repo_path)
     else:
-        # Live on Replit but not cloned here — surface as a remote-only card.
+        # A saved remote reference does not establish deployment health.
         out['repo_path'] = None
         out['status'] = {
             "cloned": False, "deploy_status": "remote",
+            "status_source": "saved_reference", "deployment_verified": False,
             "has_replit": False, "branch": None, "uncommitted": 0,
             "ahead": 0, "behind": 0, "dirty": False,
             "last_commit_date": None, "last_commit_msg": None,

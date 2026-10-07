@@ -82,3 +82,31 @@ def test_run_actions_opens_http_and_refuses_script_urls(path, tmp_path):
     assert out["last_source_http"] == ["http://example.org/story"]
     for name in ("javascript", "javascript_case", "data", "file", "last_source_js"):
         assert out[name] == [], (name, out[name])
+
+
+@pytest.mark.parametrize("path", FILES)
+def test_preview_navigation_ticket_stays_out_of_logs_and_cross_page_urls(path, tmp_path):
+    src = open(path, encoding="utf-8").read()
+    script = """
+const logs = [], delivered = [];
+const console = {info: (...args) => logs.push(args)};
+const window = {__FRIDAY_STANDALONE__: 'code', location: {href: ''},
+                fridayOpenWorkspace: target => delivered.push(target)};
+const fridayResolveTarget = value => value;
+""" + _function(src, "fridayNavigate") + "\n" + _function(src, "fridayRunActions") + """
+const ticket = 'n' + 'a'.repeat(48);
+const target = {type: 'navigate', workspace: 'futurespeak', site_id: 'site-example',
+                preview_build_id: 'build-example', preview_request_id: ticket};
+fridayRunActions([target]);
+fridayNavigate(target);
+process.stdout.write(JSON.stringify({logs, delivered, href: window.location.href, ticket}));
+"""
+    file = tmp_path / "preview-nav.js"
+    file.write_text(script, encoding="utf-8")
+    run = subprocess.run(["node", str(file)], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result["delivered"][0]["preview_request_id"] == result["ticket"]
+    assert result["ticket"] not in json.dumps(result["logs"])
+    assert result["ticket"] not in result["href"] and "preview_request_id" not in result["href"]
+    assert "site_id=site-example" in result["href"] and "preview_build_id=build-example" in result["href"]

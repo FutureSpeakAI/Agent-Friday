@@ -279,15 +279,36 @@ def test_the_scene_takes_its_style_from_evolution(path):
         assert text.count(anchor) == 1, f"{path.name}: {anchor!r} x{text.count(anchor)}"
 
 
-@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
-def test_typing_and_being_talked_over_reach_the_avatar(path):
-    text = path.read_text(encoding="utf-8")
-    # Talked over: the server's interrupt and Escape yield; stopping voice does not.
+def _assert_playback_yield_wiring(text):
+    # Interrupt, Escape and Crew quiet yield; stopping the voice session does not.
     callers = re.findall(r"flushPlaybackRef\.current\?\.\('([^']*)'", text)
     yields = sorted(c for c in callers if re.search(r"interrupted|barge", c, re.I))
-    assert yields == ["Escape barge-in", "WS interrupted message"], callers
+    assert yields == ["Crew quiet / barge", "Escape barge-in", "WS interrupted message"], callers
     flush = text[re.search(r"flushPlaybackRef\.current\s*=\s*\(?caller\)?\s*=>", text).end():][:4000]
     assert re.search(r"/interrupted\|barge/i\.test\(caller\s*\|\|\s*''\)\)\s*\{\s*try\s*\{\s*"
                      r"window\.fridayAvatar\s*&&\s*window\.fridayAvatar\.yielded\(\)", flush)
+
+
+@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
+def test_typing_and_being_talked_over_reach_the_avatar(path):
+    text = path.read_text(encoding="utf-8")
+    _assert_playback_yield_wiring(text)
     # Typing to Friday: every change in the chat input.
     assert len(re.findall(r"onChange\(e\.target\.value\);.{0,200}?window\.fridayAvatar\.typed\(\)", text, re.S)) == 1
+
+
+@pytest.mark.parametrize("caller", ["Crew quiet / barge", "Escape barge-in", "WS interrupted message"])
+def test_yield_guard_rejects_each_disconnected_interrupt_path(caller):
+    text = (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")
+    changed = text.replace("flushPlaybackRef.current?.('" + caller + "'", "disconnectedPlayback?.('" + caller + "'")
+    assert changed != text
+    with pytest.raises(AssertionError):
+        _assert_playback_yield_wiring(changed)
+
+
+def test_yield_guard_rejects_missing_avatar_signal():
+    text = (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")
+    changed = text.replace("window.fridayAvatar.yielded()", "void 0")
+    assert changed != text
+    with pytest.raises(AssertionError):
+        _assert_playback_yield_wiring(changed)

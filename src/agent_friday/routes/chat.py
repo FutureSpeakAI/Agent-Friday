@@ -743,6 +743,8 @@ def _traced_turn(fn):
     """
     @wraps(fn)
     def _inner(*args, **kwargs):
+        from agent_friday.services import crew_runtime as _crew_runtime
+        _crew_origin = _crew_runtime.HOST_ORIGIN.get() or _crew_runtime.capture_host_origin()
         _note_owner_turn()
         from agent_friday.services import reasoning_trace as _rt
         data = request.get_json(silent=True) or {}
@@ -757,8 +759,12 @@ def _traced_turn(fn):
             # The turn is Friday's own: every presence frame it sends says so
             # (services/presence.py). A helper it spawns runs as its own id.
             from agent_friday.services import presence as _presence
-            with _rt.activate(tid), _presence.acting_as(_presence.FRIDAY):
-                rv = fn(*args, **kwargs)
+            _crew_token = _crew_runtime.HOST_ORIGIN.set(_crew_origin)
+            try:
+                with _rt.activate(tid), _presence.acting_as(_presence.FRIDAY):
+                    rv = fn(*args, **kwargs)
+            finally:
+                _crew_runtime.HOST_ORIGIN.reset(_crew_token)
             status = "complete"
             if tid:
                 rv, reply_text = _attach_trace(rv, tid)
@@ -835,6 +841,8 @@ def chat_stream():
     import queue as _queue
     from flask import copy_current_request_context
     from agent_friday.services import model_router as _mr
+    from agent_friday.services import crew_runtime as _crew_runtime
+    _crew_origin = _crew_runtime.capture_host_origin()
 
     SEP = chr(10) + chr(10)
     q = _queue.Queue()
@@ -863,6 +871,7 @@ def chat_stream():
             tool_token = _mr.TOOL_SINK.set(lambda ev: q.put(("tool", ev)))
         except Exception:
             tool_token = None
+        _crew_token = _crew_runtime.HOST_ORIGIN.set(_crew_origin)
         try:
             rv = chat()
             body = rv[0] if isinstance(rv, tuple) else rv
@@ -878,6 +887,7 @@ def chat_stream():
             except Exception:
                 pass
         finally:
+            _crew_runtime.HOST_ORIGIN.reset(_crew_token)
             _PILOT_OFF_RECORD.reset(_pilot_privacy_token)
             try:
                 _mr.DELTA_SINK.reset(token)

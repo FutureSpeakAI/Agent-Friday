@@ -141,6 +141,22 @@ def test_a_secret_shaped_string_refuses_the_publish():
     assert s["ok"] is False and any("secret" in r for r in s["refusals"])
 
 
+@pytest.mark.parametrize("filename", ["app.js", "app.mjs", "APP.MJS", "APP.JS", "index.htm", "INDEX.HTML",
+                                     "source.map", "app.webmanifest", "feed.xml", "_headers", "_redirects", "CNAME"])
+def test_every_static_text_format_scans_for_secrets(filename):
+    content = b"sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"  # pragma: allowlist secret
+    bundle = pw.Bundle({filename: content}, "Synthetic app", "sample", "site", "sample", CID, 1)
+    result = pw.scan(bundle)
+    assert result["ok"] is False and result["secrets"] > 0
+    assert content.decode() not in json.dumps(result)
+
+
+@pytest.mark.parametrize("filename", ["app.js", "app.mjs", "APP.MJS", "source.map", "app.webmanifest", "feed.xml"])
+def test_clean_static_text_formats_still_scan_successfully(filename):
+    bundle = pw.Bundle({filename: b"export const title = 'Sample';"}, "Synthetic app", "sample", "site", "sample", CID, 1)
+    assert pw.scan(bundle)["ok"] is True
+
+
 def test_a_tracking_script_refuses_the_publish():
     # The tag manager's host and script name are assembled from fragments: no
     # analytics endpoint appears as a literal anywhere in the tree.

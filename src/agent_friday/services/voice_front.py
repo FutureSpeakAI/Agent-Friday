@@ -281,7 +281,8 @@ class FrontSeat:
 
     def run_turn(self, system: str, messages: list, contract: dict, *,
                  on_delta=None, run_tool=None, max_tokens: int = 400,
-                 temperature=None, timings=None, allow_continuation=False) -> str:
+                 temperature=None, timings=None, allow_continuation=False,
+                 admit_tool=None) -> str:
         """One spoken turn: stream text, run validated tool calls through
         ``run_tool(name, args) -> result``, and loop until the model answers
         (at most ``MAX_TOOL_ROUNDS`` tool rounds). The caller's turn cancel
@@ -323,10 +324,15 @@ class FrontSeat:
                 timings.update(out.get("timings") or {})
             ch = (out.get("choices") or [{}])[0]
             msg = ch.get("message") or {}
+            calls = msg.get("tool_calls") or []
+            if admit_tool is not None:
+                for call in calls:
+                    refusal = admit_tool(str(((call or {}).get("function") or {}).get("name") or ""))
+                    if refusal:
+                        return refusal
             text = msg.get("content") or ""
             if text.strip():
                 spoken.append(text.strip())
-            calls = msg.get("tool_calls") or []
             if (not calls and ch.get("finish_reason") == "length" and allow_continuation
                     and not continued and rnd < MAX_TOOL_ROUNDS and not turn_cancelled()):
                 continued = True
@@ -338,6 +344,10 @@ class FrontSeat:
             convo.append({"role": "assistant", "content": text,
                           "tool_calls": calls})
             for c in calls:
+                if admit_tool is not None:
+                    refusal = admit_tool(str(((c or {}).get("function") or {}).get("name") or ""))
+                    if refusal:
+                        return refusal
                 name, args, why = validate_tool_call(c, contract)
                 if why is not None:
                     result = f"ERROR: that call was not run: {why}."
@@ -348,6 +358,10 @@ class FrontSeat:
                         result = run_tool(name, args)
                     except Exception as e:   # the executor never raises; belt only
                         result = f"ERROR: {type(e).__name__}"
+                if admit_tool is not None:
+                    refusal = admit_tool(name)
+                    if refusal:
+                        return refusal
                 if not isinstance(result, str):
                     result = json.dumps(result, ensure_ascii=False, default=str)
                 convo.append({"role": "tool", "tool_call_id": c.get("id") or name,

@@ -530,7 +530,7 @@ function fridayNavigate(target){
   const here=window.__FRIDAY_STANDALONE__;
   if(here&&here!=='settings'&&target.workspace!==here&&target.workspace!=='settings'){
     const q=new URLSearchParams();
-    Object.keys(target).forEach(k=>{if(k!=='workspace'&&target[k]!=null&&target[k]!=='')q.set(k,target[k])});
+    Object.keys(target).forEach(k=>{if(k!=='workspace'&&k!=='preview_request_id'&&target[k]!=null&&target[k]!=='')q.set(k,target[k])});
     window.location.href='/w/'+encodeURIComponent(target.workspace)+(q.toString()?'?'+q:'');
     return;
   }
@@ -647,7 +647,7 @@ function fridayStructureIndex(text) {
 }
 function fridayRunActions(actions){
   if(!Array.isArray(actions)||!actions.length)return;
-  try{console.info('[friday] running %s action(s):',actions.length,actions);}catch(_){}
+  try{console.info('[friday] running %s action(s):',actions.length,actions.map(a=>{if(!a||typeof a!=='object')return a;const safe={...a};delete safe.preview_request_id;return safe;}));}catch(_){}
   for(const a of actions){
     if(!a||typeof a!=='object')continue;
     try{
@@ -1932,6 +1932,7 @@ function ChatSurface({mode,convId,traySide,trayFrac,onTrayPlace,agentSettings,au
   return(<FridayChatShell convId={convId} mode={mode} traySide={traySide} trayFrac={trayFrac} onTrayPlace={onTrayPlace} chatBusy={chatLoad} onCodebaseAsk={message=>sendChat(message,{preserveDraft:true})}>
       <div data-chat-head="" style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',rowGap:6,padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
+        {window.FridayCrewEntry&&React.createElement(window.FridayCrewEntry,{conversationId:convId,apiFetch,onMessages:setChatMsgs})}
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <button onClick={()=>{setChatMsgs([]);fetch('/api/chat/clear',{method:'POST'}).catch(()=>{})}} title="Start a new conversation (pinned messages preserved)" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
           {/* Where the tray goes: an edge and a size (unified-shell.md §11.3). */}
@@ -1967,7 +1968,7 @@ function ChatSurface({mode,convId,traySide,trayFrac,onTrayPlace,agentSettings,au
           }}
           onCancel={()=>{const m=pausePending.message;setChatIn(m);setPausePending(null);
             setChatMsgs(p=>{const i=p.map(x=>x.role==='user'&&x.text===m).lastIndexOf(true);return i<0?p:p.filter((_,j)=>j!==i)})}}/>}
-        {chatMsgs.map((m,i)=>m.role==='system'
+        {(window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m,i)=>m.role==='system'
           /* B2: system lines — seat changes and other transparency notices.
              Amber, centered, unmistakably NOT Friday speaking. Never sent to
              the model (server excludes role:system from context replay). */
@@ -1990,7 +1991,7 @@ function ChatSurface({mode,convId,traySide,trayFrac,onTrayPlace,agentSettings,au
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
             onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner_action:'routing_mode',settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
-            {m.role==='user'?'You':fridayName()} · {m.time||''}
+            {['crew_result','crew_speech'].includes(m.meta?.kind)&&window.FridayCrewByline?React.createElement(window.FridayCrewByline,{meta:m.meta}):(m.role==='user'?'You':fridayName())} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
             {/* B1: model badge — exact id + seat class on every assistant
                message, amber for local seats, cyan for cloud. Persisted
@@ -3389,6 +3390,9 @@ async function careerRequest(url, body) {
   const d = await r.json();
   if (!r.ok || d.error || d.status === 'error' || d.status === 'failed') throw new Error(d.error || d.message || ('Request failed ('+r.status+')'));
   return d;
+}
+function CrewWS({active=true}) {
+  return window.FridayCrewWorkspace ? React.createElement(window.FridayCrewWorkspace,{apiFetch,active}) : React.createElement('p',{role:'alert'},'Crew did not load. Reload this workspace to try again.');
 }
 function CareerWS(){
   const[tracker,setTracker]=useState(null);const[reports,setReports]=useState([]);const[pipeline,setPipeline]=useState('');
@@ -6813,13 +6817,13 @@ function KnowledgePages({
 }
 // ═══ FUTURESPEAK STUDIO — portfolio project / deployment cockpit ═══
 // Project-management layer over the Dev Studio vibe-coding backend. Each
-// deployed site gets an interactive card with live git/deploy status, an
-// "Open in Replit" jump, scoped Quick Edit, and a one-click Apply+Deploy flow.
+// saved entry shows its local Git status and repository editing controls, an
+// optional hosting link and a scoped Quick Edit. Git status is not publication evidence.
 const FS_DEPLOY_META={
-  green:{c:'#00ff80',label:'DEPLOYED'},
-  yellow:{c:'#f59e0b',label:'UNCOMMITTED'},
-  red:{c:'#ff0080',label:'ERROR'},
-  remote:{c:'#00d4ff',label:'REPLIT-ONLY'},
+  green:{c:'#00ff80',label:'CLEAN CHECKOUT'},
+  yellow:{c:'#f59e0b',label:'LOCAL CHANGES'},
+  red:{c:'#ff0080',label:'GIT ERROR'},
+  remote:{c:'#00d4ff',label:'NO LOCAL COPY'},
 };
 const FS_CAT_META={
   company:{c:'#00d4ff',ico:'🚀'},
@@ -6840,7 +6844,7 @@ function FSProjectCard({p,onToast,onChanged}){
     if(!instr.trim())return;setBusy(true);
     try{const r=await fetch('/api/futurespeak/project/'+encodeURIComponent(p.name)+'/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task:instr,deploy})});
       const d=await r.json();
-      if(d.status==='ok'){onToast((deploy?'Deploy':'Quick Edit')+' queued for '+p.name+' — approve its card to start');setInstr('');setEditing(false);setDeploy(false)}
+      if(d.status==='ok'){onToast((deploy?'Source push':'Quick Edit')+' queued for '+p.name+' — approve its card to start');setInstr('');setEditing(false);setDeploy(false)}
       else onToast(d.message||'Launch failed')}
     catch(e){onToast('Launch failed')}
     setBusy(false);
@@ -6876,7 +6880,7 @@ function FSProjectCard({p,onToast,onChanged}){
         <span style={{color:st.ahead>0?'#00d4ff':'#888'}}>↑ {st.ahead} ahead</span>
         {st.has_replit&&<span style={{color:'#00ff80'}}>⚡ replit</span>}
       </div>
-    </div>:<div style={{fontSize:11,color:'#00d4ff',fontFamily:'JetBrains Mono',background:'rgba(0,212,255,0.06)',borderRadius:4,padding:'5px 7px'}}>Live on Replit · not cloned locally</div>}
+    </div>:<div style={{fontSize:11,color:'#00d4ff',fontFamily:'JetBrains Mono',background:'rgba(0,212,255,0.06)',borderRadius:4,padding:'5px 7px'}}>Local repository not linked. Publication not checked.</div>}
     <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
       {p.url&&<a className="btn" style={{fontSize:11,textDecoration:'none'}} href={p.url} target="_blank" rel="noopener">🌐 View Site</a>}
       {p.replit_url&&<button className="btn" style={{fontSize:11}} onClick={()=>window.open(p.replit_url,'_blank','noopener')}>⚡ Open in Replit</button>}
@@ -6887,11 +6891,11 @@ function FSProjectCard({p,onToast,onChanged}){
       <textarea className="input" style={{width:'100%',height:54,resize:'vertical',fontSize:11}} value={instr} onChange={e=>setInstr(e.target.value)} placeholder={'Describe the change to '+p.name+'… (e.g. "update the hero headline")'}/>
       <div style={{display:'flex',gap:6,alignItems:'center',marginTop:5,flexWrap:'wrap'}}>
         <label style={{fontSize:11,color:'#aaa',display:'flex',alignItems:'center',gap:4,cursor:'pointer'}}>
-          <input type="checkbox" checked={deploy} onChange={e=>setDeploy(e.target.checked)}/> commit &amp; deploy
+          <input type="checkbox" checked={deploy} onChange={e=>setDeploy(e.target.checked)}/> commit &amp; push (publication not verified)
         </label>
-        <button className="btn" style={{fontSize:11,fontWeight:600}} disabled={busy||!instr.trim()} onClick={runEdit}>{busy?'Launching…':(deploy?'🚀 Apply, Commit & Deploy':'💻 Apply in Claude Code')}</button>
+        <button className="btn" style={{fontSize:11,fontWeight:600}} disabled={busy||!instr.trim()} onClick={runEdit}>{busy?'Launching…':(deploy?'🚀 Apply & push':'💻 Apply in Claude Code')}</button>
       </div>
-      <div style={{fontSize:11,color:'#666',marginTop:4}}>Opens a scoped Claude Code terminal in {p.repo}. {deploy?'Pushes to GitHub → Replit auto-deploys.':'Diff stays local until you commit.'}</div>
+      <div style={{fontSize:11,color:'#666',marginTop:4}}>Opens a scoped Claude Code terminal in {p.repo}. {deploy?'Commits and pushes source. Publication is not verified.':'Diff stays local until you commit.'}</div>
     </div>}
     {expanded&&<div style={{borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:6,fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>
       <div>repo: {p.repo||'—'}</div>
@@ -6941,10 +6945,10 @@ function FSStudio(){
   return(<div className="fr-comp-publications">
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:6}}>
       <div style={{display:'flex',gap:10,fontSize:11,fontFamily:'Orbitron, sans-serif',alignItems:'center'}}>
-        <span style={{color:'#00ff80'}}>● {counts.green||0} deployed</span>
+        <span style={{color:'#00ff80'}}>● {counts.green||0} clean checkouts</span>
         <span style={{color:'#f59e0b'}}>● {counts.yellow||0} uncommitted</span>
         {(counts.red||0)>0&&<span style={{color:'#ff0080'}}>● {counts.red} error</span>}
-        <span style={{color:'#00d4ff'}}>● {counts.remote||0} replit-only</span>
+        <span style={{color:'#00d4ff'}}>● {counts.remote||0} without a local copy</span>
       </div>
       <div style={{display:'flex',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={refreshAll} disabled={scanning}>{scanning?'Scanning…':'🔄 Refresh All'}</button>
@@ -6989,6 +6993,8 @@ function FSStudio(){
   </div>);
 }
 function FuturespeakWS(){
+  const [sitesTarget,setSitesTarget]=useState(null);
+  useNavTarget('futurespeak',t=>{setSitesTarget({...t});setView('sites');});
   const[view,setView]=useState('sites');
   const[pipe,setPipe]=useState(null);const[rev,setRev]=useState(null);const[legal,setLegal]=useState(null);const[assets,setAssets]=useState(null);
   const[loading,setLoading]=useState(true);const setToast = useFridayToast();const[drafting,setDrafting]=useState(null);const[draft,setDraft]=useState('');
@@ -7016,7 +7022,7 @@ function FuturespeakWS(){
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['sites','overview','pipeline','revenue','legal','website','talent','demos','studio'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v==='sites'?'🚀 sites':v}</button>)}</div>
     
 
-    {view==='sites'&&<FSStudio/>}
+    {view==='sites'&&<SitesWS request={sitesTarget} embedded={true} onRequestConsumed={()=>setSitesTarget(null)}/>}
 
     {view==='overview'&&<div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">{window.FRIDAY_BRAND.makerName}</div>
@@ -7110,7 +7116,7 @@ function FuturespeakWS(){
           <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://futurespeak.ai" target="_blank" rel="noopener">🌐 Visit</a>
         </div>
       </div>
-      <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#a8a8b4'}}>Connect your sites to track deploy status. Use Claude Code for deploy actions.</div></div>
+      <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#a8a8b4'}}>Use Sites to review builds, publications and domain status.</div></div>
     </div>}
 
 
@@ -8971,14 +8977,20 @@ function WorkflowsWS() {
 }
 
 
-function SitesWS(){
-  // Sites — general-purpose portfolio & deploy manager (wraps FSStudio).
-  // Shown to fresh installs in place of the full FutureSpeak business pipeline.
-  return(<div className="fr-comp-root fr-comp-sites">
-    <FridaySays text="Your sites & projects — portfolio status, deploy state, and one-click scaffolding via Claude Code."/>
-    <FSStudio/>
-  </div>);
+function SitesWS({request, embedded = false, onRequestConsumed} = {}) {
+  const [target, setTarget] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return {site_id: q.get('site_id') || q.get('site') || '', account_id: q.get('account_id') || '', domain: q.get('domain') || ''};
+  });
+  const [accepted, setAccepted] = useState({});
+  useNavTarget('futurespeak', next => {if (!embedded) setTarget({...next});});
+  useEffect(() => {if (request) {setTarget(request); if (onRequestConsumed) onRequestConsumed();}}, [request]);
+  useTabState('futurespeak', () => ({site_id: null, account_id: null, domain: null, domain_ref: null, preview_build_id: null, ...accepted}));
+  return React.createElement('div', {className: 'fr-comp-root fr-comp-sites'}, window.FridaySitesWorkspace
+    ? React.createElement(window.FridaySitesWorkspace, {target, onAccepted: setAccepted, legacy: React.createElement(FSStudio)})
+    : React.createElement('p', {role: 'alert'}, 'The Sites interface could not load. Refresh the page to try again.'));
 }
+fridayDeclareNav('futurespeak', {keys: ['site_id', 'account_id', 'domain', 'preview_build_id']});
 // ═══ TASK RECORDS (retention is the user's setting; 0 keeps everything) ═══
 // ─── What Friday did: the morning receipt. Read-only; every row is a signed
 // checkpoint receipt from /api/governance/receipts, checked server-side. ───
@@ -21586,7 +21598,7 @@ function App(){
     if (!cid) return;
     setConvId(cid);
     apiFetch('/api/conversations/' + encodeURIComponent(cid) + '/messages')
-      .then(r => r.json()).then(d => setChatMsgs((d.messages || []).map(m => ({role:m.role,text:m.text || '',time:m.ts?new Date(m.ts*1000).toLocaleTimeString():''}))))
+      .then(r => r.json()).then(d => setChatMsgs((d.messages || []).map(m => ({...m,role:m.role,text:m.text || '',time:m.ts?new Date(m.ts*1000).toLocaleTimeString():''}))))
       .catch(() => setChatMsgs([]));
   };
 
@@ -22314,6 +22326,9 @@ function App(){
   // acquired — instead of finishing and leaking a hot mic / ghost socket.
   // Bumped by every start AND every stop.
   const voiceGenRef=useRef(0);
+  const crewVoicePendingRef = useRef(null);
+  const crewMainConversationRef = useRef(convId);
+  crewMainConversationRef.current = convId;
   // News Anchor Mode: a text turn queued to fire the moment the live session's
   // socket opens (e.g. "read me the Front Page"). Sent once, then cleared, so a
   // reconnect mid-session doesn't replay it.
@@ -22341,6 +22356,7 @@ function App(){
     window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: FLUSH called from: '+(caller||'unknown')+' (stopping '+_stopped+' active sources)');
     window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: playbackCancelled set TRUE by: '+(caller||'unknown'));
     v.playbackCancelled=true;
+    v.crewPlayback?.quiet();
     // Worklet path: empty the ring buffer instantly so interrupted/old-turn audio
     // stops, and clear the speaking flag (+ its drain hangover) so the mic reopens.
     if(v.playerNode){try{v.playerNode.port.postMessage({type:'flush'})}catch(_){}}
@@ -22364,7 +22380,9 @@ function App(){
   };
   voiceStartRef.current=async(opts)=>{
     const _isReconnect=!!(opts&&opts.reconnect);
-    if(voiceOn&&!_isReconnect)return;
+    if(!_isReconnect)voiceKeepRef.current.crewConversationId=opts?.crew?opts.conversationId:(window.FridayCrew?.enabled(convId)?convId:null);
+    const _crewCid=voiceKeepRef.current.crewConversationId;
+    if(voiceOn&&!_isReconnect&&!opts?.crew)return;
     voiceKeepRef.current.wanted=true;
     if(!_isReconnect){voiceKeepRef.current.attempts=0;voiceKeepRef.current.fatalTs=0;}
     const _vgen=++voiceGenRef.current;
@@ -22373,7 +22391,7 @@ function App(){
     // Mic samples per frame sent. Gemini Live keeps 4096 (~171 ms at 24 kHz).
     // The local voice judges talk-over on the server from these frames, so
     // it sends 2048 (~85 ms): two frames confirm a barge (~171 ms).
-    const MIC_FRAMES=(agentSettings.voice_engine||'local')==='gemini'?4096:2048;
+    const MIC_FRAMES=_crewCid||(agentSettings.voice_engine||'local')==='gemini'?4096:2048;
     const v=voiceRef.current;
     const f2pcm=(float32,outRate,inRate)=>{const ratio=inRate/outRate;const outLen=Math.floor(float32.length/ratio);const out=new Int16Array(outLen);for(let i=0;i<outLen;i++){const src=i*ratio,i0=Math.floor(src),i1=Math.min(i0+1,float32.length-1),f=src-i0;const s=Math.max(-1,Math.min(1,float32[i0]*(1-f)+float32[i1]*f));out[i]=s<0?s*0x8000:s*0x7FFF}return out};
     const i16ToB64=(int16)=>{const bytes=new Uint8Array(int16.buffer);let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin)};
@@ -22412,6 +22430,7 @@ function App(){
           // spurious server-side VAD interrupt.
           v.playerNode.port.onmessage=(e)=>{
             const t=e.data&&e.data.type;
+            if(v.crewPlayback?.worklet(e.data)||v.crewPlayback)return;
             if(t==='active'){v.fridaySpeaking=true;_wsSpeak(true);if(v._drainT){clearTimeout(v._drainT);v._drainT=null}}
             else if(t==='drained'){if(v._drainT)clearTimeout(v._drainT);v._drainT=setTimeout(()=>{v.fridaySpeaking=false;v._drainT=null;_wsSpeak(false)},250)}
           };
@@ -22579,7 +22598,8 @@ function App(){
     // (/ws/voice-local) is the default; cloud Gemini Live (/ws/live) is opt-in.
     // Same audio plumbing + message contract on both, so only the URL changes.
     let _wsUrl='/ws/voice-local',_engine='local';
-    try{
+    if(_crewCid){_wsUrl='/ws/live';_engine='gemini';}
+    else try{
       const _si=await apiFetch('/api/voice/session-info').then(r=>r.json());
       if(_si&&_si.ws_url){_wsUrl=_si.ws_url;_engine=_si.engine||'local';}
       if(_si&&_si.engine==='demo'){try{voiceStopRef.current?.({status:'⚠ Voice unavailable — install local voice (Settings → Voice → Setup Wizard) or add a Gemini key.'})}catch(_){}return;}
@@ -22591,12 +22611,29 @@ function App(){
       try{v.audioCtx&&v.audioCtx.close()}catch(_){}
       return;
     }
+    if(_crewCid&&(!v.usePlayerWorklet||!window.FridayCrewPlayback)){voiceStopRef.current?.({status:'Crew voice needs the shared audio player. Reload and try again.'});return;}
     v.engine=_engine;
     // Pass the ephemeral UI session token so the WS handler can auth non-loopback
     // connections without requiring a full cookie-based session.
     const _ftok=window.__FRIDAY_API_TOKEN||'';
-    const ws=new WebSocket(proto+'//'+location.host+_wsUrl+(_ftok?'?t='+encodeURIComponent(_ftok):''));
+    const _qs=[];if(_ftok)_qs.push('t='+encodeURIComponent(_ftok));
+    if(_crewCid||convId)_qs.push('conversation_id='+encodeURIComponent(_crewCid||convId));
+    if(_crewCid)_qs.push('crew=1');
+    const ws=new WebSocket(proto+'//'+location.host+_wsUrl+(_qs.length?'?'+_qs.join('&'):''));
     v.ws=ws;
+    if (_crewCid) {
+      v.crewPlayback = new window.FridayCrewPlayback.Coordinator({
+        port:v.playerNode.port, audioContext:v.audioCtx,
+        send:message=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(message));},
+        onState:state=>{
+          v.fridaySpeaking=!!v.crewPlayback?.active?.started&&!v.crewPlayback.active.terminal; _wsSpeak(v.fridaySpeaking);
+          window.FridayCrew?.state(state);
+          setVoiceStatus((state.label?state.label+' · ':'')+state.status);
+          if(v.fridaySpeaking){try{window._fridayStopFpAudio?.();}catch(_){}}
+        },
+        onError:message=>setVoiceStatus('Crew voice: '+message)
+      });
+    }
     let wsOpened=false;
     setVoiceStatus('connecting…');
     ws.onopen=()=>{
@@ -22648,9 +22685,13 @@ function App(){
       },1000);
     };
     ws.onmessage=ev=>{
+      if(voiceRef.current.ws!==ws||_stale())return;
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       const K=voiceKeepRef.current;K.lastMsgTs=Date.now();
       if(m.type==='hb'){K.sawHb=true;return;}
+      if(m.type==='crew_profile_draft'){window.FridayCrew?.propose(m.draft);return;}
+      if(v.crewPlayback?.receive(m))return;
+      if(v.crewPlayback&&['audio','interrupted','turn_end','tts_pause','tts_resume'].includes(m.type))return;
       // Feed one base64 PCM chunk to the active playback path (worklet ring or
       // legacy BufferSource). Shared by the live 'audio' branch and the
       // tts_resume replay of chunks HELD during an action pause.
@@ -22770,7 +22811,7 @@ function App(){
           if(m.user_text)next.push({role:'user',text:m.user_text,time:stamp,via:'voice'});
           // Strip personality/mood/reasoning scaffolding — only the spoken words
           // belong in the transcript. Skip the bubble entirely if nothing remains.
-          if(m.agent_text){const clean=sanitizeVoiceTranscript(m.agent_text);if(clean)next.push({role:'friday',text:clean,time:stamp,via:'voice'});}
+          if(m.agent_text&&!v.crewPlayback){const clean=sanitizeVoiceTranscript(m.agent_text);if(clean)next.push({role:'friday',text:clean,time:stamp,via:'voice'});}
           return next;
         });
       }else if(m.type==='turn_end'){
@@ -22836,6 +22877,7 @@ function App(){
       if(voiceRef.current.ws!==ws){window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: stale onclose ignored (socket superseded)');return;}
       // Stop mic tracks so Chrome clears the recording indicator
       const v2=voiceRef.current;
+      v2.crewPlayback?.close();
       try{v2.silenceTimer&&clearTimeout(v2.silenceTimer)}catch(_){}
       try{v2.silenceTimer2&&clearTimeout(v2.silenceTimer2)}catch(_){}
       try{v2.cancelResetTimer&&clearTimeout(v2.cancelResetTimer)}catch(_){}
@@ -22892,7 +22934,9 @@ function App(){
     // errors). Without this, the final setVoiceStatus('') below wiped every
     // early-failure message and the mic click looked like a silent no-op.
     const _keepStatus=opts&&opts.status;
+    crewVoicePendingRef.current = null;
     const v=voiceRef.current;
+    v.crewPlayback?.close();
     // 0) This is a DELIBERATE stop: disarm auto-reconnect before anything else
     //    so the onclose that follows doesn't resurrect the session.
     const K=voiceKeepRef.current;
@@ -22940,6 +22984,36 @@ function App(){
     setMicLevel(0);
     setVoiceOn(false);setVoiceStatus(_keepStatus||'');
   };
+  useEffect(() => {
+    const command = e => {
+      const action = e.detail?.action;
+      const cid = e.detail?.conversationId;
+      if (!cid) return;
+      if (action === 'start' && window.FridayCrew?.enabled(cid)) {
+        voiceStopRef.current?.();
+        if (crewMainConversationRef.current !== cid) {
+          // The global mic and transcript must first belong to this window's chat.
+          crewVoicePendingRef.current = cid;
+          openConversation(cid);
+        } else voiceStartRef.current?.({crew:true,conversationId:cid});
+      } else if (action === 'stop') {
+        if (crewVoicePendingRef.current === cid) crewVoicePendingRef.current = null;
+        if (voiceKeepRef.current.wanted && voiceKeepRef.current.crewConversationId === cid) voiceStopRef.current?.();
+      } else if (action === 'quiet' && voiceKeepRef.current.wanted && voiceKeepRef.current.crewConversationId === cid) {
+        const v = voiceRef.current;
+        try { if (v.ws?.readyState === WebSocket.OPEN) v.ws.send(JSON.stringify({type:'barge'})); } catch (_) {}
+        flushPlaybackRef.current?.('Crew quiet / barge');
+      }
+    };
+    window.addEventListener('friday:crew-voice',command);
+    return () => window.removeEventListener('friday:crew-voice',command);
+  }, []);
+  useEffect(()=>{
+    const pending = crewVoicePendingRef.current;
+    crewVoicePendingRef.current = null;
+    if(voiceKeepRef.current.wanted&&voiceKeepRef.current.crewConversationId&&voiceKeepRef.current.crewConversationId!==convId)voiceStopRef.current?.({status:'Crew voice stopped because the chat changed. Start voice in this room to continue.'});
+    if(pending===convId&&window.FridayCrew?.enabled(convId))voiceStartRef.current?.({crew:true,conversationId:convId});
+  },[convId]);
   const toggleVoice=()=>{voiceOn?voiceStopRef.current?.():voiceStartRef.current?.()};
   useEffect(()=>()=>{voiceStopRef.current?.()},[]);
   // Barge-in hotkey: Escape while Friday is speaking interrupts her. Flush
@@ -24024,7 +24098,7 @@ function App(){
   const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces,agentSettings.held_features]);
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
-  const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,library:window.LibraryWS?<window.LibraryWS/>:<div style={{color:'#888',fontSize:12,padding:20}}>The Library did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
+  const wsMap={crew:<CrewWS active={STANDALONE_WS==='crew'||(!experienceDesktop&&focusWin==='crew')}/>,career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,library:window.LibraryWS?<window.LibraryWS/>:<div style={{color:'#888',fontSize:12,padding:20}}>The Library did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   // A bundle workspace (installed from the salon) has no React component of its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
 const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id].bundle)?<window.FridayBundleFrame wsId={id}/>:<div>Coming soon</div>;
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});

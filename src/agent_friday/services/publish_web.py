@@ -430,7 +430,9 @@ def scan(bundle: Bundle) -> dict:
     No value is echoed back: the report counts and names kinds."""
     texts = []
     for p, b in bundle.files.items():
-        if p.endswith((".html", ".md", ".csv", ".svg", ".diff", ".txt", ".json", ".js", ".css")):
+        if (p.lower().endswith((".html", ".htm", ".md", ".csv", ".svg", ".diff", ".txt", ".json", ".js",
+                               ".mjs", ".css", ".xml", ".map", ".webmanifest"))
+                or p.rsplit("/", 1)[-1].lower() in {"cname", "_headers", "_redirects", ".nojekyll"}):
             texts.append(b.decode("utf-8", "replace"))
     text = "\n".join(texts)
     refusals, warnings = [], []
@@ -461,7 +463,7 @@ def scan(bundle: Bundle) -> dict:
     if trackers:
         refusals.append("tracking/analytics host named: " + ", ".join(trackers))
     external = []
-    html_text = "\n".join(b.decode("utf-8", "replace") for p, b in bundle.files.items() if p.endswith(".html"))
+    html_text = "\n".join(b.decode("utf-8", "replace") for p, b in bundle.files.items() if p.lower().endswith((".html", ".htm")))
     for url in collect_imports(html_text):
         host = _host_of(url)
         if host and host != _host_of(PACKAGE_HOST) and host not in external:
@@ -734,8 +736,10 @@ def unpublish(slug: str) -> bool:
             try:
                 from agent_friday.services import publish_hosting as _ph
                 _ph.unpublish_remote(entry)
-            except Exception as e:
-                _log.warning("remote take-down of %s failed: %s", slug, e)
+            except Exception:
+                # Remote timeouts can be ambiguous. Keep the local receipt and
+                # mirror so a failed request cannot be presented as taken down.
+                raise ValueError("Remote take-down was not confirmed. The saved publication remains listed; check the host before retrying.") from None
         _write_index([i for i in items if i.get("slug") != slug])
     return True
 

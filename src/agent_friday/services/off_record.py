@@ -24,6 +24,8 @@ import time
 _LOCK = threading.Lock()
 #: conversation id -> this session's off-record messages (never written).
 _MEMORY: dict = {}
+#: Incremented whenever private memory ends; late work cannot enter a new session.
+_GENERATION = 0
 #: Stores that declined a write while off-record, with a count (no content).
 SKIPPED: dict = {}
 #: Stores that keep their own off-record memory register a callable here and
@@ -66,15 +68,40 @@ def skip(store: str, settings: dict | None = None) -> bool:
     return True
 
 
-def remember(cid: str, message: dict) -> dict:
+def _remember_locked(cid: str, message: dict) -> dict:
     message = dict(message or {})
     message.setdefault("ts", time.time())
     meta = dict(message.get("meta") or {})
     meta["off_record"] = True
     message["meta"] = meta
-    with _LOCK:
-        _MEMORY.setdefault(str(cid), []).append(message)
+    _MEMORY.setdefault(str(cid), []).append(message)
     return message
+
+
+def remember(cid: str, message: dict) -> dict:
+    with _LOCK:
+        return _remember_locked(cid, message)
+
+
+def generation() -> int:
+    """Identify the current private-memory lifetime without reading settings."""
+    with _LOCK:
+        return _GENERATION
+
+
+def remember_if_active(cid: str, message: dict, *, generation: int) -> dict | None:
+    """Keep delayed private output only in the private session that created it."""
+    with _LOCK:
+        if type(generation) is not int or generation != _GENERATION:
+            return None
+    # Settings resolution stays outside the memory lock. The generation check
+    # below and end()'s clear share the lock, so an intervening end wins.
+    if not active():
+        return None
+    with _LOCK:
+        if generation != _GENERATION:
+            return None
+        return _remember_locked(cid, message)
 
 
 def recalled(cid: str) -> list:
@@ -90,7 +117,9 @@ def on_end(fn) -> None:
 
 def end() -> None:
     """Off-record is over: drop everything this session kept in memory."""
+    global _GENERATION
     with _LOCK:
+        _GENERATION += 1
         _MEMORY.clear()
     for fn in list(_END_HOOKS):
         try:
