@@ -2505,7 +2505,7 @@
       try {
         eng = createEngine(mountRef.current, {
           onHover: (it, p) => setHover(it && p ? { it, x: p.x, y: p.y } : null),
-          onPick: (i, activate) => pick(i, activate),
+          onPick: (i, activate, mods) => pick(i, activate, mods),
           onStep: d => { const e = engRef.current; const j = e.step(selRef.current, d); if (j >= 0) choose(j, true); },
           onInteract: () => { if (boxRef.current && document.activeElement !== searchRef.current) boxRef.current.focus({ preventScroll: true }); }
         });
@@ -2694,12 +2694,60 @@
     const rootRef = useRef(''); rootRef.current = root;
     const selItem = sel >= 0 ? items[sel] : null;
     window.__files3dShowing = { root, path, file: selItem && !selItem.dir ? selItem.name : '' };
-    function pick(i, activate) {
+    // ── See & Touch: the tiles in this folder, the ticked ones and the held ones ──
+    // The marked tiles are refs "file:<root>:<path>" in the shared reducer, so the owner's ctrl/shift picks and
+    // Friday's ticks are one set, and organize_files(selection="screen") reads exactly this.
+    const FS = window.fridayStage;
+    const [ss, setSs] = useState(() => FS ? FS.emptySelection() : null);
+    const ssRef = useRef(ss);
+    const lastPickRef = useRef(-1);
+    const fref = it => 'file:' + rootRef.current + ':' + it.rel;
+    const commitSel = evt => {
+      const r = FS.reduceSelection(ssRef.current, evt, itemsRef.current.map(fref));
+      if (r.changed) { ssRef.current = r.state; setSs(r.state); FS.touch(); }
+      return r;
+    };
+    function pick(i, activate, mods) {
       if (i < 0) { setSel(-1); engRef.current && engRef.current.select(-1); setPreview(null); return; }
       const it = itemsRef.current[i];
+      if (FS && mods && !activate && it && (mods.add || mods.range)) {
+        // ctrl/cmd toggles one tile; shift marks the run from the last one picked
+        if (mods.range && lastPickRef.current >= 0) {
+          const lo = Math.min(lastPickRef.current, i), hi = Math.max(lastPickRef.current, i);
+          const run = itemsRef.current.slice(lo, hi + 1).map(fref);
+          commitSel({ type: 'owner_set', refs: Array.from(new Set(ssRef.current.refs.concat(run))) });
+        } else commitSel({ type: 'toggle', ref: fref(it) });
+        lastPickRef.current = i;
+        return;
+      }
+      lastPickRef.current = i;
+      if (FS && !activate && ssRef.current && ssRef.current.refs.length) commitSel({ type: 'owner_nav' });   // a plain click picks one tile
       if (activate && it && it.dir) { setPath(it.rel); return; }
       choose(i, true);
     }
+    // the engine draws the marks and the amber "waiting for you"
+    const heldWas = useRef([]);
+    useEffect(() => {
+      const e = engRef.current;
+      if (!e || !ss) return;
+      const idx = r => itemsRef.current.findIndex(x => fref(x) === r);
+      e.setMarked(ss.refs.map(idx).filter(i => i >= 0));
+      const now = Object.keys(ss.held);
+      heldWas.current.filter(r => now.indexOf(r) < 0).forEach(r => { const i = idx(r); if (i >= 0) e.setHeld(i, !!pendingRef.current.has(itemsRef.current[i].rel)); });
+      now.forEach(r => { const i = idx(r); if (i >= 0) e.setHeld(i, true); });
+      heldWas.current = now;
+    }, [ss, items]);
+    const stageCfg = useRef(null);
+    stageCfg.current = {
+      loaded: () => items.length,
+      items: () => items.slice(0, 120).map((it, i) => ({ ref: fref(it), n: i + 1,
+        facets: { kind: it.dir ? 'folder' : String(it.ext || '').replace('.', ''), ext: it.ext || '', dir: !!it.dir }, title: it.name || '', who: '' })),
+      getSel: () => ssRef.current, setSel: next => { ssRef.current = next; setSs(next); },
+      open: () => { const s = sel >= 0 ? items[sel] : null; return s ? fref(s) : null; },
+      rowsGone: () => { scan(rootRef.current, pathRef.current); }
+    };
+    useEffect(() => FS ? FS.register('files', FS.makeAdapter('files', () => stageCfg.current)) : undefined, []);
+    useEffect(() => { if (FS) FS.touch(); }, [items, sel, ss]);
 
     const say = (text, extra) => { setToast(Object.assign({ text }, extra)); setTimeout(() => setToast(t => t && t.text === text ? null : t), extra && extra.sticky ? 20000 : 5000); };
     const idxOf = rel => itemsRef.current.findIndex(x => x.rel === rel);

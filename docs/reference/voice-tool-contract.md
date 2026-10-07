@@ -215,3 +215,78 @@ changes the Library.
   answer stays on this PC.
 - A local voice front that mirrors the cloud contract lists these three names
   in its parity set.
+
+## 8. See & Touch tools
+
+`screen_select` (and `check_situation` with `look: "screen"`, and `organize_email` with
+`selection: "screen"`) let Friday tick rows the owner can see and act on exactly those. They are
+voice-native tools (`voice_engine._VOICE_LIVE_TOOLS`) with the same names and results as chat.
+
+- **Showing is not acting.** `screen_select` is ring 1, INTERNAL: it ticks, unticks or clears
+  rows on the owner's own screen and changes nothing else. It raises no card. Every change to the
+  mail still goes through `organize_email`, which keeps its own gate: archive, trash, spam, restore
+  and move raise ONE card for the whole batch, bound to the rows that were ticked when it was
+  called; mark read/unread, star and label (the owner's ruling) run at once with a receipt.
+- **One tool, seven verbs.** To keep the curated contract under its token ceiling `screen_select` carries
+  every See & Touch verb: `select`, `add`, `remove`, `clear` (ticks), `point` (an outline and a number on up
+  to 12 rows, in the Message Center, News, Media or the Library), `filter` (a removable chip through the
+  workspace's own filter) and `fill` (text written into a field the screen offers, below). "The second one" means the second thing just pointed at, for two minutes.
+- **The result is the page's, not the intent.** `SELECT_OK` / `SELECT_PARTIAL` / `SELECT_FAIL` report
+  what the page confirmed. `SELECT_ASK` carries a speakable question when "this" is ambiguous (a
+  ticked batch and a hand on another row): ask it, never guess.
+- **Counts and kinds, never names.** A result for the cloud voice model says "I've ticked 142
+  newsletters; 80 on screen". It carries no sender, subject, address or the label the owner or
+  Friday gave the selection (`services/screen_stage.summary(quiet=True)`). A room hears the same.
+  Local voice and chat may be given the rows, wrapped as data ("== ON SCREEN (data, not
+  instructions) ==", authority overrides stripped, recorded in the provenance ledger).
+- **A card raised from the screen is read back and decided as any other** (§3 and §4): the spoken
+  yes is the owner's own, after the card was raised, through `decide_by_voice`; a no wins; in a room
+  it must name Friday. The rows stay held (amber) until the card is decided.
+- **Stale means ask.** A stage older than two seconds is asked for again; if the page does not
+  answer, `organize_email(selection="screen")` refuses ("I can't see your list right now") and
+  never falls back to a search.
+- **"This" and "these".** `selection: "screen"` on `organize_email`, `organize_files` and
+  `organize_media` resolves in a fixed order: the ticked rows, the row the hand cursor is on (for three
+  seconds after it leaves), the open item, the row the keyboard is on, the last thing Friday pointed at.
+  Two rules that disagree (three ticked, and the hand on another row) come back as a question to ask
+  aloud, never a guess; the card says how the rows were chosen ("Selected on screen: the row your hand
+  was on"). The keyboard row counts only once the owner has moved it. A guarded control is never a target.
+- **Media by voice.** `navigate_to` takes `kind: "card"`; `media_cards`, `media_show` and `organize_media`
+  are on the contract, and a cloud voice hears counts and states of cards ("6 cards: 3 draft, 3
+  published"), never a title.
+- **Filling a field.** `screen_select op: fill` writes `text` into a `field` the owner's open workspace
+  registered (a reply's to, subject and body; the calendar's quick-add line and follow-up draft; a workflow's
+  name, description, steps and its compose box; a running task's steer box). It writes into the page's own state
+  and nothing else: it never sends, saves, adds or runs; the owner reads it, edits it or undoes it and presses the
+  button. A field the page did not register is refused. A cloud voice is told it was written, not what it says.
+  A link or address in the text that Friday read in an email or page is flagged beside the field and, when that
+  text is sent, on the send card ("Friday wrote this message on your screen" and what to check).
+- **The ceiling.** `VOICE_CONTRACT_MAX_TOKENS` is 10000, up from 9000 (which had 359 tokens spare): the
+  See & Touch tools and the Media parity take about 700 of the 1,000 added. That is about 11% more cold
+  prefill on the local front; bench it with `scripts/bench_voice_turn.py` before the next speed pass.
+
+- **Stopping work.** `task_control` (voice-native, ring 1, no card) stops a running workflow or task after the
+  step it is on (`op: stop`, target by workflow name, task words or id, or none when only one thing runs) or
+  tells a running task something (`op: steer`). Stopping only ends work and undoes nothing; a steer's words are
+  checked for where they came from like any instruction. Two things running and no target comes back as a
+  question to ask aloud. A cloud voice hears "it will stop after the step it is on", never the task's name. A
+  workflow run also narrates itself to a live call in counts ("Step 2 of 5 has started."), never a step's name.
+- **Settings by sentence.** `set_setting(path, value)` (voice-native, ring 1) sets one Settings row by its
+  path (`settings.models.chat_model`, `settings.display.start_screen`, `settings.accessibility.big_mode`,
+  `settings.hologram.window.<dial>`, `settings.calls.stand_back`, `settings.podcasts.format.<show>`,
+  `settings.display.workspace_layout.<workspace>`), or undoes the last change to a row (`op: undo`, 30
+  days). It never writes on the call: it says SETTING_NEEDS_YES with the old and new value and what it
+  means, raises ONE card, and applies only on the owner's own yes (a conditional yes revises the card).
+  The seven tools that used to write a setting on the model's word (`switch_model`,
+  `set_workspace_layout`, `show_my_day` with a mode, `big_mode`, `hologram_window` set and reset,
+  `call_mode` set_mode, `podcast_format`) hold their write the same way. Showing something (the start
+  screen's cluster), reading a status, calibrating and standing back for a call now are not settings and
+  run at once. Values are settings, never the owner's content, so the cloud voice hears them.
+- **More lists.** `screen_select` works in the Calendar (chat: `match.when` today, tomorrow, this_week, later,
+  past; voice: by number or "this"), Workflows (`status`), People, Career (`stage`), Trust (`level`), System approvals
+  (`kind`) and the chat list (`project`, `pinned`): point at rows, and tick in the Calendar and the chat list. A cloud voice hears counts and
+  kinds ("2 events marked"), never a title. Health, Finance and Family rows have no titles at all, so only counts exist.
+  `navigate_to(calendar, id: "event:<id>")` opens that event's day with the event outlined, and the page confirms it.
+  `organize_calendar` (voice-native, `selection: "screen"`) moves ticked events by `days` and `minutes`, keeping their
+  length, on ONE card listing each old and new time (even for one event: it reaches Google); nothing moves before the
+  owner's own yes, guests are not notified, and Undo puts each event back. A cloud voice hears counts, never a title.

@@ -516,6 +516,22 @@ function useConnByWs(){
 // link, a chat or voice command, or a habit (Ctrl+K "wiki") that names the old
 // id lands on the workspace that now holds it, on the view the old id showed.
 const WS_ALIASES={wiki:{workspace:'knowledge',view:'pages'},draft:{workspace:'media',view:'board'},content:{workspace:'media',view:'board'},studio:{workspace:'media',view:'library'}};
+// A list row's identity for the stage (static/workspace_stages.js): spread onto the row's props.
+// kind:id is the ref (the id is URL-encoded), title and facets are what the workspace may publish.
+function fridayRow(kind, id, title, facets) {
+  const o = { 'data-fr-ref': kind + ':' + encodeURIComponent(String(id == null ? '' : id)).slice(0, 150) };
+  if (title) o['data-fr-title'] = String(title).slice(0, 120);
+  if (facets) { try { o['data-fr-facets'] = JSON.stringify(facets); } catch (e) { /* none */ } }
+  return o;
+}
+// When an event is, in words a stage may publish: today, tomorrow, this_week, later or past.
+function fridayWhen(iso) {
+  const t = new Date(iso);
+  if (isNaN(t)) return '';
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const days = Math.floor((t - d0) / 86400000);
+  return days < 0 ? 'past' : days === 0 ? 'today' : days === 1 ? 'tomorrow' : days < 7 ? 'this_week' : 'later';
+}
 function fridayWorkspaceId(id){const a=WS_ALIASES[id];return a?a.workspace:id}
 function fridayResolveTarget(t){
   if(!t||!t.workspace||!WS_ALIASES[t.workspace])return t;
@@ -3561,7 +3577,7 @@ function CareerWS(){
       {reports.length>0&&<div className="card"><div className="card-title">Recent Evaluations</div>{reports.slice(0,5).map((r,i)=><div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11,cursor:'pointer',color:'#aaa'}} onClick={()=>loadReport(r.name)}>{r.name}</div>)}</div>}
       {!hasData&&<div className="card" style={{textAlign:'center',padding:20}}><div style={{fontSize:16,marginBottom:8}}>Get Started</div><div style={{fontSize:12,color:'#888',marginBottom:12}}>Paste a job URL above to evaluate your first role.</div><div style={{fontSize:11,color:'#999'}}>Evaluate against your own experience, tailor a CV, and track each application.</div></div>}
     </div>}
-    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}{e.role?<span style={{color:'#888',fontWeight:400}}> · {e.role}</span>:null}</span><span style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
+    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} {...fridayRow('job',(e.company||'')+'|'+(e.role||'')+'|'+i,(e.company||'')+' · '+(e.role||''),{kind:'entry',stage:String(e.status||'').toLowerCase().slice(0,20)})} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}{e.role?<span style={{color:'#888',fontWeight:400}}> · {e.role}</span>:null}</span><span style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
     {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#999'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
     {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
     {view==='pipeline'&&<div>{pipeline?<FridayDoc compact text={pipeline}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No saved opportunities yet. In a career conversation, ask {fridayName()} to save a role to your pipeline, then review the approval card.</div>}</div>}
@@ -6850,7 +6866,7 @@ function FSProjectCard({p,onToast,onChanged}){
     try{await fetch('/api/futurespeak/project/'+encodeURIComponent(p.name),{method:'DELETE'});onToast(p.name+' removed');onChanged&&onChanged()}
     catch(e){onToast('Remove failed')}
   };
-  return(<div className="fr-comp-site-card card" data-deploy-state={st.deploy_status||'remote'} style={{borderColor:ds.c+'33',display:'flex',flexDirection:'column',gap:6,transition:'all .2s',position:'relative'}}
+  return(<div {...fridayRow('site',p.name,p.name,{kind:'project',status:String(st.deploy_status||'').slice(0,20)})} className="fr-comp-site-card card" data-deploy-state={st.deploy_status||'remote'} style={{borderColor:ds.c+'33',display:'flex',flexDirection:'column',gap:6,transition:'all .2s',position:'relative'}}
     onMouseEnter={e=>e.currentTarget.style.borderColor=ds.c+'88'} onMouseLeave={e=>e.currentTarget.style.borderColor=ds.c+'33'}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:6}}>
       <div style={{flex:1,minWidth:0}}>
@@ -7173,7 +7189,7 @@ function FamilyWS(){
   const quickAsk=(q)=>{if(window.fridayQuickChat)window.fridayQuickChat(q);};
   return(<div className="fr-comp-root fr-comp-family">
     <FridaySays text={familyCountdown?`${familyCountdown.label} is ${fridayCountdownWhen(familyCountdown)||'coming up'}.`:'Your family dashboard. Ask me to help set it up.'}/>
-    {hasEvents&&<div className="fr-comp-family-timeline" style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.emoji||''} {c.label||c.name}{c.why&&<span className="cd-why"> · {c.why}</span>}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif',fontSize:11}}>{fridayCountdownWhen(c)||`${c.days}d`}</span></div>)}</div>}
+    {hasEvents&&<div className="fr-comp-family-timeline" style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} {...fridayRow('fam','cd-'+i,'',{kind:'countdown'})} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.emoji||''} {c.label||c.name}{c.why&&<span className="cd-why"> · {c.why}</span>}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif',fontSize:11}}>{fridayCountdownWhen(c)||`${c.days}d`}</span></div>)}</div>}
     <div className="fr-comp-grid fr-comp-grid-two" style={{display:'grid',gap:8,marginBottom:12}}>
       <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add my family members to the wiki.')}>
         <div className="card-title">Family Members</div><div style={{fontSize:11,color:'#888'}}>Click to set up with {fridayName()}</div>
@@ -8452,7 +8468,7 @@ function TrustWS(){
     {people.map((p,i)=>{
       const overall=p&&p.scores&&typeof p.scores.overall==='number'?p.scores.overall:0.5;
       const pct=Math.round(overall*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
-      return(<div key={i} className="card" style={{marginBottom:6,cursor:'pointer'}} onClick={()=>setExpanded(expanded===i?null:i)}>
+      return(<div key={i} {...fridayRow('trust',p.name||p.Name||i,p.name||p.Name,{kind:'person',level:pct>70?'high':pct>40?'mid':'low'})} className="card" style={{marginBottom:6,cursor:'pointer'}} onClick={()=>setExpanded(expanded===i?null:i)}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:11,color:'#999',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
@@ -8637,6 +8653,24 @@ function WfEditor({ initial, onCancel, onSaved }) {
   const [ui, setUi] = useState(wfWhenToUi(initial.when));
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  // See & Touch: the editor's name, description and each step's text are fields Friday may write into.
+  // Nothing is saved by a fill: only Save does that.
+  const wfRef = useRef(null); wfRef.current = { name, desc, steps };
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => {
+    const FS = window.fridayStage;
+    if (!FS) return undefined;
+    const bump = () => setFillTick(n => n + 1);
+    const un = [
+      FS.registerField('workflows', { key: 'name', label: 'Name', read: () => wfRef.current.name, write: t => { setName(String(t).replace(/\s+/g, ' ').trim()); bump(); } }),
+      FS.registerField('workflows', { key: 'description', label: 'What it is for', read: () => wfRef.current.desc, write: t => { setDesc(String(t).replace(/\s+/g, ' ').trim()); bump(); } })
+    ];
+    for (let i = 0; i < steps.length; i++) {
+      un.push(FS.registerField('workflows', { key: 'step.' + (i + 1) + '.prompt', label: 'Step ' + (i + 1), read: () => (wfRef.current.steps[i] || {}).prompt || '',
+        write: t => { setSteps(cur => cur.map((s, j) => j === i ? Object.assign({}, s, { prompt: String(t) }) : s)); bump(); } }));
+    }
+    return () => un.forEach(f => f());
+  }, [steps.length]);
   const setU = (k, v) => setUi(Object.assign({}, ui, { [k]: v }));
   const setS = (i, k, v) => { const n = steps.slice(); n[i] = Object.assign({}, n[i], { [k]: v }); setSteps(n); };
   const move = (i, d) => { const n = steps.slice(); const t = n[i]; n[i] = n[i + d]; n[i + d] = t; setSteps(n); };
@@ -8656,6 +8690,7 @@ function WfEditor({ initial, onCancel, onSaved }) {
   const ask = initial.asks_first || [];
   return (<div className="card wfx-card" style={{ borderColor: 'rgba(0,212,255,.35)' }} data-testid="wf-editor">
     <div className="card-title" style={{ marginBottom: 10 }}>{isNew ? 'Check the draft, then save' : 'Edit workflow'}</div>
+    {window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['name', 'description'].concat(steps.map((_, i) => 'step.' + (i + 1) + '.prompt')), fridayName(), () => setFillTick(n => n + 1)) : null}
     {initial.source === 'simple' && isNew && <div className="wfx-quiet" style={{ marginBottom: 10 }}>{fridayName()} couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below.</div>}
     <label className="wfx-lbl" htmlFor="wf-name">Name</label>
     <input id="wf-name" className="wfx-in" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Council agenda watch" />
@@ -8710,13 +8745,13 @@ function WfEditor({ initial, onCancel, onSaved }) {
   </div>);
 }
 
-function WfCard({ w, onRun, onToggle, onEdit, onDelete, busy }) {
+function WfCard({ w, onRun, onStop, onToggle, onEdit, onDelete, busy }) {
   const [open, setOpen] = useState(w.steps.length > 1);
   const last = w.last_run;
   const st = w.running ? WF_STATUS.running : last ? (WF_STATUS[last.status] || WF_STATUS.finished) : null;
   const paused = w.when && !w.enabled;
   const what = w.description || (w.steps[0] && w.steps[0].prompt) || '';
-  return (<div className="card wfx-card" data-running={w.running?'true':'false'} data-testid="wf-card" style={paused ? { opacity: 0.72 } : null}>
+  return (<div className="card wfx-card" data-running={w.running?'true':'false'} data-testid="wf-card" {...fridayRow('wf',w.slug||w.id,w.name,{status:w.running?'running':(w.last_run&&w.last_run.status)||'idle',scheduled:!!w.when,steps:(w.steps||[]).length})} style={paused ? { opacity: 0.72 } : null}>
     <div className="wfx-row" style={{ alignItems: 'flex-start' }}>
       <div className="wfx-grow">
         <div className="wfx-name">{w.name}</div>
@@ -8740,6 +8775,7 @@ function WfCard({ w, onRun, onToggle, onEdit, onDelete, busy }) {
     </div>}
     <div className="wfx-row" style={{ marginTop: 10 }}>
       <button type="button" className="btn wfx-go" disabled={busy || w.running} onClick={() => onRun(w)}>{busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'}</button>
+      {w.running && !w.schedule_id && onStop ? <button type="button" className="btn" data-testid="wf-stop" title="Stop after the step it is on" onClick={() => onStop(w)}>{'\u25A0 Stop'}</button> : null}
       <button type="button" className="btn" onClick={() => onEdit(w)}>Edit</button>
       <button type="button" className="wfx-link" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? 'Hide details' : 'Details'}</button>
       <span className="wfx-grow" />
@@ -8756,6 +8792,10 @@ function WorkflowsWS() {
   const [error, setError] = useState('');
   const [ask, setAsk] = useState('');
   const [composing, setComposing] = useState(false);
+  // See & Touch: the box that describes a workflow is a field Friday may write into; Draft it is the owner's.
+  const askRef = useRef(ask); askRef.current = ask;
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => window.fridayStage ? window.fridayStage.registerField('workflows', { key: 'compose', label: 'Describe it', read: () => askRef.current, write: t => { setAsk(String(t)); setFillTick(n => n + 1); } }) : undefined, []);
   const [drafting, setDrafting] = useState(false);
   const [draftErr, setDraftErr] = useState('');
   const [editing, setEditing] = useState(null);
@@ -8801,6 +8841,11 @@ function WorkflowsWS() {
     finally { templatePending.current = false; setAddingTemplate(false); }
   };
   const saved = (d, name) => { setEditing(null); setAsk(''); setComposing(false); load(); fridayToast('Saved “' + name + '”.'); };
+  // B5: a running workflow can be stopped: the step that is running finishes, the next never starts.
+  const stop = w => {
+    wfPost('/api/workflows/chains/' + encodeURIComponent(w.slug) + '/stop').then(() => { fridayToast('Stopping \u201c' + w.name + '\u201d after the step it is on.'); })
+      .catch(e => fridayToast(e.message)).then(() => { setTimeout(load, 1200); });
+  };
   const run = w => {
     setBusy(w.id);
     const url = w.schedule_id ? '/api/schedules/' + w.schedule_id + '/run-now' : '/api/workflows/chains/' + encodeURIComponent(w.slug) + '/run';
@@ -8832,6 +8877,7 @@ function WorkflowsWS() {
 
     {!editing && <div className="card wfx-card" style={{ borderColor: 'rgba(0,212,255,.3)', marginBottom: 8 }}>
       <label htmlFor="wf-ask" className="card-title" style={{ display: 'block', marginBottom: 6 }}>New workflow — say what, and when</label>
+      {window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['compose'], fridayName(), () => setFillTick(n => n + 1)) : null}
       <div className="wfx-row" style={{ alignItems: 'flex-end' }}>
         <textarea id="wf-ask" className="wfx-in wfx-ask wfx-grow" rows={composing ? 3 : 1}
           style={{ minHeight: composing ? 72 : 38, height: composing ? undefined : 38, resize: composing ? 'vertical' : 'none', overflow: composing ? 'auto' : 'hidden', whiteSpace: composing ? undefined : 'nowrap' }}
@@ -8863,7 +8909,7 @@ function WorkflowsWS() {
 
     <div className="wfx-h">Your workflows{wfs.length ? ' (' + wfs.length + ')' : ''}</div>
     {!wfs.length && <div className="wfx-quiet" style={{ padding: '14px 2px' }}>Nothing yet. Describe one above — for example, a daily check of a website you watch, or a weekly roundup of your notes.</div>}
-    {wfs.map(w => <WfCard key={w.id} w={w} busy={busy === w.id} onRun={run} onToggle={toggle} onDelete={remove}
+    {wfs.map(w => <WfCard key={w.id} w={w} busy={busy === w.id} onRun={run} onStop={stop} onToggle={toggle} onDelete={remove}
       onEdit={x => {
         setEditing(Object.assign({}, x, { when_note: '' }));
         setTimeout(() => { const el = document.querySelector('[data-testid="wf-editor"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
@@ -9871,6 +9917,49 @@ function NewsWS(){
     finally{setFeedLoading(false);setFeedMore(false);feedBusyRef.current=false;}
   };
   loadFeedRef.current=loadFeed;
+  // See & Touch: the stories on screen and the two filters Friday may set (category, sort). A filter
+  // she sets shows as a chip marked "by" her; a different value is the owner's.
+  const stageFS = window.fridayStage;
+  const fridayNewsFilters = useRef({});
+  const newsStageCfg = useRef(null);
+  const newsBy = (key, val) => String(fridayNewsFilters.current[key]) === String(val) ? 'friday' : 'owner';
+  const newsFilters = () => {
+    const f = [];
+    if (streamCat !== 'All') f.push({ key: 'category', value: streamCat, label: 'Category: ' + streamCat, by: newsBy('category', streamCat) });
+    if (sortBy !== 'relevance') f.push({ key: 'sort', value: sortBy, label: 'Sort: ' + sortBy, by: newsBy('sort', sortBy) });
+    return f;
+  };
+  newsStageCfg.current = {
+    filters: newsFilters,
+    loaded: () => feed.length,
+    total: () => feedTotal,
+    items: () => tab !== 'feed' ? [] : feed.slice(0, 120).map((it, i) => ({
+      ref: 'news:' + (it.id || i), n: i + 1,
+      facets: { category: it.category || '', source: it.source || '', age_h: it.ts ? Math.round((Date.now() / 1000 - it.ts) / 360) / 10 : null, saved: !!(it.url && savedUrls[it.url]) },
+      title: it.title || '', who: it.source || '' })),
+    setFilter: (key, value) => {
+      if (key === 'category') {
+        const want = String(value).toLowerCase();
+        const hit = NEWS_STREAM_CATS.find(c => c.toLowerCase() === want) || NEWS_STREAM_CATS.find(c => c.toLowerCase().indexOf(want) >= 0);
+        if (!hit) return false;
+        fridayNewsFilters.current.category = hit; setStreamCat(hit); setTab('feed');
+        return true;
+      }
+      if (key === 'sort') {
+        if (['relevance', 'time', 'source'].indexOf(value) < 0) return false;
+        fridayNewsFilters.current.sort = value; setSortBy(value); setTab('feed');
+        return true;
+      }
+      return false;
+    },
+    removeFilter: key => {
+      if (key === 'category') { delete fridayNewsFilters.current.category; setStreamCat('All'); return true; }
+      if (key === 'sort') { delete fridayNewsFilters.current.sort; setSortBy('relevance'); return true; }
+      return false;
+    }
+  };
+  useEffect(() => stageFS ? stageFS.register('news', stageFS.makeAdapter('news', () => newsStageCfg.current)) : undefined, []);
+  useEffect(() => { if (stageFS) stageFS.touch(); }, [feed, streamCat, sortBy, tab]);
   const loadArchStats=()=>fetch('/api/news/archive/stats').then(r=>r.json()).then(d=>setArchStats(d)).catch(()=>{});
   const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
   const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
@@ -10178,6 +10267,7 @@ function NewsWS(){
     {/* ── FEED TAB (archive stream · infinite scroll · category + sort) ── */}
     {tab==='feed'&&<div style={{position:'relative'}}>
       <div ref={feedTopRef}></div>
+      {stageFS?stageFS.chipsRow(React.createElement,newsFilters(),key=>{newsStageCfg.current.removeFilter(key);stageFS.touch();},fridayName()):null}
       <div className="stream-bar">
         <div className="stream-tabs">
           {NEWS_STREAM_CATS.map(c=>{const n=c==='All'?(archStats&&archStats.total||0):(archStats&&archStats.by_category&&archStats.by_category[c]||0);return <button key={c} className={'stream-tab'+(streamCat===c?' active':'')} onClick={()=>setStreamCat(c)}>{c}{n>0?(' '+n):''}</button>})}
@@ -10217,7 +10307,7 @@ function NewsWS(){
          </div>)}
        </div>}
        <div className="news-masonry">
-         {streamItems.map((it,i)=><div key={it.id||i} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
+         {streamItems.map((it,i)=><div key={it.id||i} data-fr-ref={'news:'+(it.id||i)} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
            <div className="news-cardtop">
              <span className="cat-chip">{it.category}</span>
              {cardActions(it)}
@@ -10818,7 +10908,7 @@ const CAL_START_HOUR=6, CAL_END_HOUR=24, CAL_HOUR_PX=52;
 function calY(iso){const d=new Date(iso);if(isNaN(d))return 0;const h=d.getHours()+d.getMinutes()/60;return Math.max(0,(h-CAL_START_HOUR)*CAL_HOUR_PX);}
 function calFmtTime(iso){const d=new Date(iso);if(isNaN(d))return'';return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
 
-fridayDeclareNav('calendar',{keys:['date','view','meeting_id'],sections:[{id:'meetings',label:'Meetings',key:'view'}]});
+fridayDeclareNav('calendar',{keys:['date','view','meeting_id','event'],sections:[{id:'meetings',label:'Meetings',key:'view'}]});
 function CalendarWS(){
   const[today,setToday]=useState(null);const[loading,setLoading]=useState(true);
   const[week,setWeek]=useState([]);const[sel,setSel]=useState(null);// selected date iso (null=today)
@@ -10830,8 +10920,21 @@ function CalendarWS(){
   const setToast = useFridayToast();
   const tlRef=useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
-  useTabState('calendar',()=>({date:sel||''})); // what its own tab opens on
-  useNavTarget('calendar',t=>{if(!t.date)return;setSel(t.date);loadDay(t.date);});
+  const [shownEvent,setShownEvent]=useState('');
+  useTabState('calendar',()=>({date:sel||'',event:shownEvent})); // what its own tab opens on
+  useNavTarget('calendar',t=>{
+    setShownEvent('');
+    if (t.event) {
+      // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
+      if (t.date) { setSel(t.date); loadDay(t.date); }
+      const ref = 'event:' + encodeURIComponent(String(t.event));
+      [400, 900, 1800].forEach(ms => setTimeout(() => {
+        const FS = window.fridayStage;
+        if (FS && document.querySelector('[data-fr-ref="' + ref.replace(/"/g, '') + '"]')) { FS.point([ref], { badges: 'none', id: 'nav' }); setShownEvent(String(t.event)); }
+      }, ms));
+      return;
+    }
+    if(!t.date)return;setSel(t.date);loadDay(t.date);});
 
   const loadToday=()=>fetch('/api/calendar/today').then(r=>r.json()).then(d=>{setToday(d);setLoading(false)}).catch(()=>setLoading(false));
   const loadWeek=()=>fetch('/api/calendar/week').then(r=>r.json()).then(d=>setWeek(d.days||[])).catch(()=>{});
@@ -10924,7 +11027,7 @@ function CalendarWS(){
 
       {/* Events */}
       {timedAll.map(e=>{const top=calY(e.start_time);const end=calY(e.end_time)||top+CAL_HOUR_PX;const ht=Math.max(34,end-top);const open=prepFor===e.id;return(
-        <div key={e.id} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
+        <div key={e.id} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:false,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
           <div className="cal-ev-title">{e.title}</div>
           <div className="cal-ev-meta">
             <span>{calFmtTime(e.start_time)}{e.end_time?(' – '+calFmtTime(e.end_time)):''}</span>
@@ -11517,13 +11620,13 @@ function FinanceWS(){
     </div>}
     {view==='portfolio'&&<div>
       <div className="card-title">Portfolio Positions</div>
-      {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron, sans-serif',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#a8a8b4'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
+      {positions.map((p,i)=><div key={i} {...fridayRow('fin','pos-'+i,'',{kind:'position'})} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron, sans-serif',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#a8a8b4'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
       <div style={{fontSize:11,color:'#999',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
       <div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
     </div>}
     {view==='perks'&&<div>
       <div className="card-title">Credit Card Perks</div>
-      {perksList.map((p,i)=>{const expiring=p.expires&&((new Date(p.expires)-new Date())/(1000*60*60*24))<60;return <div key={i} className="card" style={{marginBottom:6,borderColor:p.used?'rgba(255,255,255,0.02)':expiring?'rgba(245,158,11,0.2)':'rgba(0,255,128,0.1)'}}>
+      {perksList.map((p,i)=>{const expiring=p.expires&&((new Date(p.expires)-new Date())/(1000*60*60*24))<60;return <div key={i} {...fridayRow('fin','perk-'+i,'',{kind:'perk'})} className="card" style={{marginBottom:6,borderColor:p.used?'rgba(255,255,255,0.02)':expiring?'rgba(245,158,11,0.2)':'rgba(0,255,128,0.1)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:11,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:11,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
         {p.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:3}}>{p.notes}</div>}
         {p.expires&&<div style={{fontSize:11,color:'#999',marginTop:2}}>Expires: {p.expires}</div>}
@@ -11567,12 +11670,12 @@ function HealthWS(){
     </div>}
     {view==='medications'&&<div>
       <div className="card-title">Medications</div>
-      {medList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{m.name}</div>{m.dose&&<div style={{fontSize:11,color:'#00d4ff',marginTop:2}}>Dose: {m.dose}</div>}{m.frequency&&<div style={{fontSize:11,color:'#888'}}>Frequency: {m.frequency}</div>}{m.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{m.notes}</div>}</div>)}
+      {medList.map((m,i)=><div key={i} {...fridayRow('health','med-'+i,'',{kind:'medication'})} className="card" style={{marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{m.name}</div>{m.dose&&<div style={{fontSize:11,color:'#00d4ff',marginTop:2}}>Dose: {m.dose}</div>}{m.frequency&&<div style={{fontSize:11,color:'#888'}}>Frequency: {m.frequency}</div>}{m.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{m.notes}</div>}</div>)}
       <div style={{fontSize:11,color:'#888',marginTop:8}}>Edit ~/.friday/health/medications.json to update</div>
     </div>}
     {view==='appointments'&&<div>
       <div className="card-title">Appointments & Providers</div>
-      {apptList.map((a,i)=><div key={i} className="card" style={{marginBottom:6}}>
+      {apptList.map((a,i)=><div key={i} {...fridayRow('health','appt-'+i,'',{kind:'appointment'})} className="card" style={{marginBottom:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>{a.provider}</div>{a.type&&<div style={{fontSize:11,color:'#00d4ff'}}>{a.type}</div>}</div>{a.email&&<button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.email)}>Copy Email</button>}</div>
         {a.frequency&&<div style={{fontSize:11,color:'#888',marginTop:2}}>Frequency: {a.frequency}</div>}
         {a.next&&<div style={{fontSize:11,color:'#f59e0b',marginTop:2}}>Next: {a.next}</div>}
@@ -11590,7 +11693,7 @@ function HealthWS(){
     </div>}
     {view==='vehicles'&&<div>
       <div className="card-title">Fleet Health</div>
-      {vehList.map((v,i)=><div key={i} className="card" style={{marginBottom:8}}>
+      {vehList.map((v,i)=><div key={i} {...fridayRow('health','veh-'+i,'',{kind:'vehicle'})} className="card" style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{fontWeight:600,fontSize:13}}>{['🔵','🔴','🚐'][i]||'🚗'} {v.name}</div>{v.miles&&<span className="badge-cyan" style={{fontSize:11}}>{v.miles} mi</span>}</div>
         {v.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4}}>{v.notes}</div>}
         {v.mechanic&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>🔧 {v.mechanic}</div>}
@@ -11749,7 +11852,7 @@ function ContactsWS(){
     {loading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
     <div className="fr-comp-grid fr-comp-grid-two" style={{display:'grid',gap:6}}>
       {filtered.map((c,i)=>{const pct=Math.round((c.overall||0)*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
-        return(<div key={i} className="card" style={{cursor:'pointer',padding:8}} onClick={()=>openContact(c)}>
+        return(<div key={i} {...fridayRow('person',c.name||i,c.name,{kind:'person'})} className="card" style={{cursor:'pointer',padding:8}} onClick={()=>openContact(c)}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:600,fontSize:12,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.name}</div>
@@ -14961,10 +15064,16 @@ function TaskTimeline({taskId,live,fallback}){
 }
 function TaskControls({task,onChanged}){
   const[steer,setSteer]=useState('');const[busy,setBusy]=useState('');
+  // See & Touch: the steer box of a running task is a field Friday may write into; Steer is the owner's.
+  const steerRef = useRef(steer); steerRef.current = steer;
+  const [fillTick, setFillTick] = useState(0);
+  const steerRunning = (task.status || 'running') === 'running' || (task.status || 'running') === 'queued';
+  useEffect(() => (window.fridayStage && steerRunning) ? window.fridayStage.registerField('system', { key: 'steer.' + task.task_id, label: 'Steer', read: () => steerRef.current, write: t => { setSteer(String(t)); setFillTick(n => n + 1); } }) : undefined, [steerRunning, task.task_id]);
   const status=task.status||'running';const running=status==='running'||status==='queued';
   const post=async(path,body)=>{setBusy(path);try{await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})}catch(e){}setBusy('');if(onChanged)onChanged();};
   return(<div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:6,alignItems:'center'}}>
     {running&&<>
+      {window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'system', ['steer.'+task.task_id], fridayName(), () => setFillTick(n => n + 1)) : null}
       <input value={steer} onChange={e=>setSteer(e.target.value)} placeholder="Steer: tell it something without stopping it" onClick={e=>e.stopPropagation()}
         style={{flex:1,minWidth:140,fontSize:11,padding:'2px 6px',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',color:'#fff',borderRadius:4}}/>
       <button className="task-card-btn" disabled={!steer.trim()||!!busy} onClick={e=>{e.stopPropagation();const m=steer.trim();setSteer('');post('/api/agent/steer',{task_id:task.task_id,message:m})}}>Steer</button>
@@ -16016,6 +16125,7 @@ function useSettings(){
   // the controls read flat keys, so unwrap `settings` (personality is top-level).
   const load=()=>{apiFetch('/api/settings').then(r=>r.json()).then(d=>{if(d&&d.status!=='error')fridaySetOffRecord(fridayOffRecordFrom(d.settings));if(d&&d.status!=='error')setS({...(d.settings||{}),personality:d.personality})}).catch(()=>{})};
   useEffect(load,[]);
+  useEffect(()=>{window.addEventListener('friday:settings-changed',load);return()=>window.removeEventListener('friday:settings-changed',load)},[]);
   const save=async(patch)=>{
     try{
       // POST expects {settings:{...}, personality?:string} — personality has its
@@ -16048,9 +16158,11 @@ function useSettings(){
 function StRow({
   label,
   children,
-  desc
+  desc,
+  settingKey
 }) {
   return /*#__PURE__*/React.createElement("div", {
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 16
     }
@@ -16070,7 +16182,9 @@ function StRow({
       lineHeight: 1.5,
       fontFamily: 'var(--st-font)'
     }
-  }, desc), children);
+  }, desc), children, settingKey && window.FridaySettingRows ? /*#__PURE__*/React.createElement(window.FridaySettingRows.Provenance, {
+    path: settingKey
+  }) : null);
 }
 // A real button with role="switch", so it is reachable and operable from the
 // keyboard and announced as on/off.
@@ -16143,10 +16257,12 @@ function StToggle({
 function StSection({
   title,
   desc,
-  children
+  children,
+  settingKey
 }) {
   return /*#__PURE__*/React.createElement("section", {
     "data-st-section": typeof title === 'string' ? title : undefined,
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 30
     }
@@ -16186,11 +16302,13 @@ function StSlider({
   step,
   fmt,
   onLive,
-  onCommit
+  onCommit,
+  settingKey
 }) {
   const v = typeof value === 'number' && !isNaN(value) ? value : min;
   const done = e => onCommit && onCommit(parseFloat(e.target.value));
   return /*#__PURE__*/React.createElement("div", {
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 14
     }
@@ -17712,6 +17830,7 @@ function CallModePanel({
     d: (fridayName() + ' keeps going through calls. "I\'m on a call" still works by voice or from the chip.')
   }];
   return /*#__PURE__*/React.createElement(StSection, {
+    settingKey: "settings.calls.stand_back",
     title: "Calls",
     desc: ("A video call needs the camera, the mic and most of this computer's memory: the same things " + fridayName() + "'s local brain and 3D scene use.")
   }, /*#__PURE__*/React.createElement("div", {
@@ -17776,6 +17895,7 @@ function TrackingPanel({
     });
   };
   const sl = (key, label, desc, min, max, step, fmt) => /*#__PURE__*/React.createElement(TrackingSlider, {
+    settingKey: 'settings.hologram.window.' + key,
     label: label,
     desc: desc,
     value: cfg[key],
@@ -17872,6 +17992,7 @@ function TrackingPanel({
     }
   }, "Large targets, fewer things per screen, and the primary actions as big cards, for driving the app by hand. Automatic turns it on with hand tracking and off with it. Anything that sends, deletes or spends needs a held pinch or a spoken yes while it is on; approval cards are unchanged."), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
+    "data-st-key": "settings.accessibility.big_mode",
     "aria-label": "Big mode",
     style: {
       display: 'flex',
@@ -20478,14 +20599,23 @@ function SettingsWS() {
   // A notification's target ({workspace:'settings', tab}) lands on that tab;
   // 'phone' opens Accounts & Keys scrolled to the Phone section.
   const [shownSection, setShownSection] = useState('');
+  const [shownRow, setShownRow] = useState('');
   useTabState('settings', () => ({
     tab,
-    section: shownSection
+    section: shownSection,
+    row: shownRow
   }));
   useNavTarget('settings', t => {
     if (!t || !t.tab && !t.section) return;
     if (t.tab) setTab(settingsTabId(t.tab));
     setShownSection('');
+    setShownRow('');
+    // A row with a stable path: outlined once the tab has drawn it, and again while its panels load.
+    if (t.row) {
+      [250, 700, 1500, 2600].forEach(ms => setTimeout(() => {
+        if (window.FridaySettingRows && window.FridaySettingRows.highlight(t.row)) setShownRow(t.row);
+      }, ms));
+    }
     // A section: once the tab has drawn it, and again while its panels load
     // and grow above it, until the person scrolls, clicks or types.
     if (t.section) {
@@ -20684,6 +20814,7 @@ function SettingsTabAppearance({
     title: "Start screen",
     desc: "When your day shows over the scene: the countdowns, the chat field, the mic and Start my day."
   }, /*#__PURE__*/React.createElement(StRow, {
+    settingKey: "settings.display.start_screen",
     label: "Show my day",
     desc: "Smart shows it when it is useful (back at your desk, the start of the day, something coming up within the hour, the pointer resting on it) and fades it while you work or talk. Never shows it only when you ask. Either way Ctrl+/ reaches the chat field and Ctrl+Shift+Space the mic."
   }, /*#__PURE__*/React.createElement("div", {
@@ -21250,7 +21381,7 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   // sandboxed preview (static/friday_publish.js).
   if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return <window.FridayWorkspaceSwapCard a={a} busy={busy} onDecide={onDecide}/>;
   if (a && a.kind === 'publish_web' && window.FridayPublishCard) return <window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>;
-  return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id}>
+  return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id} {...fridayRow('card',a.approval_id,a.title,{kind:String(a.kind||'').slice(0,30),status:'pending'})}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
     {a.action_description && <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}
     {fridayIsBatchCard(a) && <ul data-testid="batch-lines" style={{ fontSize: 11, color: '#b8c7dc', margin: '6px 0 0', padding: '0 0 0 16px', maxHeight: 220, overflowY: 'auto' }}>{(a.payload.lines || []).map((line, i) => <li key={i}>{line}</li>)}</ul>}
@@ -23569,7 +23700,12 @@ function App(){
         },
         focused_window: focused,
         chat: { open: kind === 'chat' || !!d.chatOpen },
-        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined
+        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined,
+        // What the workspace in front shows (rows, ticks, filters), for the server's memory only: null
+        // when it has no stage, which clears the last one (static/friday_stage.js).
+        stage: (() => {
+          try { const sid = kind === 'chat' ? 'chat' : f ? fridayWorkspaceId(f) : null; return sid && window.fridayStage ? window.fridayStage.snapshot(sid) : null; } catch (e) { return null; }
+        })()
       };
     };
     const post = (url, body, extra) => apiFetch(url, Object.assign({
@@ -23625,6 +23761,13 @@ function App(){
         }).catch(() => {});
         soon(400);
       };
+      // See & Touch: tick, clear, hold and "what do you show" are the workspace's own to answer, and
+      // some wait for a list to load, so they answer when the page has actually done them.
+      const stageAct = acts.find(a => a && window.fridayStage && window.fridayStage.handles(a.type));
+      if (stageAct) {
+        window.fridayStage.run(stageAct).then(r => answer(Object.assign({ opened: true, matched: null, result: r.result }, r.stage ? { stage: r.stage } : {})));
+        return;
+      }
       try {
         fridayRunActions(acts);
       } catch (e) {
@@ -23686,6 +23829,9 @@ function App(){
         if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
         else if (m.type === 'desktop_cards_changed') window.dispatchEvent(new Event('friday:desktop-cards-changed'));
         else if (m.type === 'workspace_customizations_changed') window.dispatchEvent(new Event('friday:ws-custom-changed'));
+        else if (m.type === 'settings_changed') {
+          try { window.dispatchEvent(new CustomEvent('friday:settings-changed', { detail: m })); } catch (_) {}
+        }
       };
     };
     connect();
@@ -24253,7 +24399,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   const shellConv=shellChat?(convList.find(c=>c.id===convId)||null):null;
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const[tabHistOpen,setTabHistOpen]=useState(false);
-  const shellMeeting = <MeetingRecIndicator/>;
+  const shellMeeting = <><MeetingRecIndicator/>{window.FridayStepPanel?<window.FridayStepPanel/>:null}</>;
   const shellExperienceAvailable = typeof window.FridayExperience === 'function' && displayStyle === 'simple';
   const shellNavigate = target => {
     try { navigateWithDrafts(target); return true; }

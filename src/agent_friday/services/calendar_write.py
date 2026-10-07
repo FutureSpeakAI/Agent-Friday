@@ -432,6 +432,29 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
             "start": start, "end": end}
 
 
+def get_event(event_id: str, *, account_id=None) -> dict:
+    """One event as the planner needs it: its title, when it starts and ends, its time zone, whether it is an
+    all-day entry and how many guests it has. Reads only."""
+    ready, why = write_ready()
+    if not ready:
+        return {"error": why, "needs_reconnect": True}
+    aid, acct_err = resolve_write_account(account_id)
+    if acct_err:
+        return {"error": acct_err, "needs_account": True}
+    svc, err = _service(aid)
+    if svc is None:
+        return {"error": err}
+    try:
+        ev = svc.events().get(calendarId="primary", eventId=event_id).execute()
+    except Exception as e:
+        return {"error": "could not read event %s: %s" % (event_id, e)}
+    st, en = ev.get("start") or {}, ev.get("end") or {}
+    return {"ok": True, "id": ev.get("id") or event_id, "title": ev.get("summary") or "(no title)",
+            "start": st.get("dateTime") or "", "end": en.get("dateTime") or "",
+            "tz": st.get("timeZone") or "", "all_day": not st.get("dateTime"),
+            "guests": len(ev.get("attendees") or []), "account_id": aid}
+
+
 def update_event(event_id: str, *, title=None, start=None, end=None,
                  location=None, description=None,
                  allow_clearing: bool = False, account_id=None) -> dict:

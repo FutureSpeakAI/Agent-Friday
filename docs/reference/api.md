@@ -33,7 +33,6 @@ Main chat endpoint. Sends a message through the full intelligence pipeline (cont
 {
   "message": "What's on my calendar today?",
   "workspace": "garden:project-name",
-  "workspaceContext": null,
   "includeVision": false,
   "voice_mode": false,
   "cite_sources": false,
@@ -1053,3 +1052,14 @@ Static file serving.
 
 ### `GET /favicon.ico`
 Favicon.
+
+### Stopping a workflow run
+
+- `POST /api/workflows/chains/<name>/stop` — ends the run after the step it is on and starts no other. 200 `{ "stopped": true }`; 409 `{ "status": "not_running" }`; 404 for an unknown chain. Needs no approval: it only ends work.
+- `GET /api/steps/active` — `{ "list": { "id", "title", "steps": [ { "n", "text", "state" } ] } | null }`: the step list of the run in progress. States: waiting, doing, done, held, skipped, stopped, failed. Held in memory only.
+- `POST /api/steps/<id>/stop` — the same stop, by list id. `{ "ok", "text" }`.
+
+### Settings changes Friday proposed
+
+- `GET /api/settings/changes?path=<row path>&limit=<n>` — recent changes to Settings rows made through a card, newest first: `{ id, path, label, old, new, by, at, undone, undoable }`. The values kept for Undo stay server-side.
+- `POST /api/settings/changes/<id>/undo` — the owner's Undo (30 days; only the newest change of a row, so it never overwrites a later choice). 200 `{ ok, text }`; 409 when refused.

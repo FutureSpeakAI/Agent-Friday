@@ -89,7 +89,8 @@ def test_a_creation_is_found_by_its_words(monkeypatch, tmp_path):
     monkeypatch.setattr(core, "CREATIONS_DIR", tmp_path)
     monkeypatch.setattr(core, "DAILY_CREATIONS_DIR", tmp_path / "none")
     r = dt.resolve("creation", query="the moon over the harbor picture")
-    assert r["ok"] and r["target"] == {"workspace": "studio", "creation": "moon-over-the-harbor.png"}
+    assert r["ok"] and r["target"] == {"workspace": "library", "view": "pc", "root": "creations", "path": "",
+                                      "file": "moon-over-the-harbor.png"}
 
 
 def test_a_news_story_is_found_by_its_headline(monkeypatch):

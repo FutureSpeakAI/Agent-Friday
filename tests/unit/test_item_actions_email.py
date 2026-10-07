@@ -134,10 +134,10 @@ def test_a_move_makes_the_label_when_it_is_missing(gmail):
 
 
 def test_unlabel_with_no_such_label_fails_honestly(gmail):
+    # unlabel is one of the changes the owner ruled need no card (EMAIL_NO_CARD): it runs at
+    # once, and with no such label it reports the failure rather than inventing a success.
     out = ia.propose_email("unlabel", query="from:shop.example", label="Nope")
-    ap.decide(out["approval_id"], "approve")
-    rec = ia.wait_for(out["approval_id"], 10)
-    assert rec["status"] == "failed"
+    assert out["status"] == "failed", out
     assert not [c for c in gmail.calls if c[0] in ("modify", "create_label")]
 
 

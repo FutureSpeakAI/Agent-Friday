@@ -21,9 +21,10 @@ def test_components_are_defined_once_in_both_files():
 def test_the_indicator_is_mounted_beside_the_top_bar():
     # One element, drawn just before the one top bar by the desktop and by a
     # workspace tab (App draws the same shell in both).
-    assert INDEX.count("const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);") == 1
+    # The step panel (static/step_panel.js) rides in the same slot, so the pair is one fragment.
+    assert INDEX.count("const shellMeeting = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(MeetingRecIndicator, null), window.FridayStepPanel ?") == 1
     assert INDEX.count("shellMeeting, shellTopBar,") == 2
-    assert APP.count("const shellMeeting = <MeetingRecIndicator/>;") == 1
+    assert APP.count("const shellMeeting = <><MeetingRecIndicator/>{window.FridayStepPanel?<window.FridayStepPanel/>:null}</>;") == 1
     assert len(re.findall(r"\{shellMeeting\}\s*\{shellTopBar\}", APP)) == 2
 
 

@@ -1537,6 +1537,27 @@ def _check_seat_installed(new_settings):
     return None
 
 
+@core_bp.route('/api/settings/changes', methods=['GET'])
+def api_setting_changes():
+    """Who last changed a Settings row and when (the provenance line), newest first. The values it
+    snapshotted for Undo stay server-side."""
+    from agent_friday.services import setting_proposals
+    try:
+        limit = max(1, min(50, int(request.args.get('limit') or 20)))
+    except (TypeError, ValueError):
+        limit = 20
+    return jsonify({"status": "ok", "changes": setting_proposals.changes(
+        str(request.args.get('path') or '').strip(), limit)})
+
+
+@core_bp.route('/api/settings/changes/<change_id>/undo', methods=['POST'])
+def api_setting_change_undo(change_id):
+    """The owner's own Undo of a Friday-proposed change (30 days; only the newest change of a row)."""
+    from agent_friday.services import setting_proposals
+    res = setting_proposals.undo(change_id=change_id)
+    return jsonify({"status": "ok" if res["ok"] else "refused", **res}), (200 if res["ok"] else 409)
+
+
 @core_bp.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     """GET: return current agent settings + personality.

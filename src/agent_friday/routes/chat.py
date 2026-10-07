@@ -984,7 +984,6 @@ def chat():
         core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
-        workspace_context = data.get('workspaceContext', None)
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
         try:
@@ -1651,7 +1650,7 @@ def chat():
                 _last_user_msg['content'] = _last_user_text
             vc = _get_vault_control() if _vault_local_only() else None
             sp, src = _build_context_prompt(
-                message, workspace, workspace_context, vision_description,
+                message, workspace, vision_description,
                 provider=provider, vault_control=vc,
                 vault_fallback=_vault_cloud_fallback(),
                 **({"pilot": _pilot} if _pilot is not None else {}),
@@ -1733,6 +1732,8 @@ def chat():
             try:
                 from agent_friday.services.situation import pinned_block
                 tail = tail + pinned_block(_conversation_id)
+                from agent_friday.services.screen_stage import chat_tail
+                tail = tail + chat_tail(_conversation_id)
             except Exception:
                 pass
             lookup = {}
@@ -2729,7 +2730,7 @@ def chat_history():
 @_privacy_hold_turn
 def chat_send():
     """Send a message, save to persistent history, return Friday's response.
-    Accepts context-aware payload: {message, workspace, workspaceContext, includeVision, screenshot}.
+    Accepts context-aware payload: {message, workspace, includeVision, screenshot}.
     Text reasoning is Claude; vision (screenshot description) stays on Gemini.
     """
     _pilot = None
@@ -2751,7 +2752,6 @@ def chat_send():
         core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
-        workspace_context = data.get('workspaceContext', None)
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
         try:
@@ -2836,7 +2836,7 @@ def chat_send():
 
         def _sys_for(provider_name):
             prompt, sources = _build_context_prompt(
-                message, workspace, workspace_context, vision_description,
+                message, workspace, vision_description,
                 provider=provider_name,
                 vault_control=(_get_vault_control() if _vault_local_only() else None),
                 vault_fallback=_vault_cloud_fallback(),
@@ -2864,6 +2864,8 @@ def chat_send():
             try:
                 from agent_friday.services.situation import pinned_block
                 prompt = prompt + pinned_block(_conversation_id)
+                from agent_friday.services.screen_stage import chat_tail
+                prompt = prompt + chat_tail(_conversation_id)
             except Exception:
                 pass
             try:

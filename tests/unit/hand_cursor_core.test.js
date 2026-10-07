@@ -160,6 +160,14 @@ test('guard: a container can force it on or off, and a danger class forces it on
   assert.strictEqual(core.classifyGuard('Clear', { danger: true }), true);
 });
 
+test('a pinch on a tick row ticks it, and a pinch held for 700 ms opens it', () => {
+  assert.strictEqual(core.pinchIntent(120), 'tick');
+  assert.strictEqual(core.pinchIntent(699), 'tick');
+  assert.strictEqual(core.pinchIntent(700), 'open');
+  assert.strictEqual(core.pinchIntent(1500), 'open');
+  assert.strictEqual(core.pinchIntent(500, 400), 'open');
+});
+
 const failed = results.filter(r => r[0] === 'FAIL');
 for (const [s, n] of results) console.log(s + ' ' + n);
 console.log(results.length - failed.length + ' passed, ' + failed.length + ' failed');

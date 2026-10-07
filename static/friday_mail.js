@@ -35,8 +35,18 @@
   const fridayName = () => (typeof W.fridayName === 'function' ? W.fridayName() : 'Friday');
   const FRIDAY_BRAND = W.FRIDAY_BRAND || { name: 'Agent Friday™' };
   if (window.FridayMailPanel) return;
+  // The page layer loads first; without it the older inbox view stays as the fallback.
+  if (!window.fridayStage) { console.warn('[friday_mail] friday_stage.js did not load first; the Gmail-grade inbox is off'); return; }
   const h = React.createElement;
-  const { useState, useEffect, useRef, useCallback } = React;
+  const { useState, useEffect, useRef, useCallback, useMemo } = React;
+  const FS = window.fridayStage;
+  // One id for one conversation, the same pair Friday's tools take (services/screen_stage.mail_ref).
+  const refOf = m => 'mail:' + (m.account_id || '') + ':' + (m.thread_id || m.gmail_id || m.id);
+  const domainOf = m => { const x = /@([A-Za-z0-9.-]+)/.exec(m.sender_email || ''); return x ? x[1].toLowerCase() : ''; };
+  // What a card Friday raised, or a change it made, did to the list when it finished.
+  const LEAVES = ['archive', 'trash', 'spam', 'restore', 'not_spam', 'inbox', 'move'];
+  const HELD_NOUN = { archive: 'Archived', trash: 'Moved to Trash', spam: 'Reported as spam', restore: 'Taken out of Trash', not_spam: 'Marked not spam',
+    inbox: 'Moved to Inbox', move: 'Moved', read: 'Marked read', unread: 'Marked unread', star: 'Starred', unstar: 'Unstarred', label: 'Labelled', unlabel: 'Unlabelled' };
 
   const api = (url, opts) => {
     const tok = window.__FRIDAY_API_TOKEN || '';
@@ -146,7 +156,26 @@
       .fm-row:hover { background:rgba(0,212,255,0.05); }
       .fm-row.focus { box-shadow: inset 3px 0 0 #00d4ff; background:rgba(0,212,255,0.07); }
       .fm-row.open { background:rgba(123,97,255,0.12); }
-      .fm-row.sel { background:rgba(123,97,255,0.16); }
+      /* One selection, one look (HIG 4.4): the same ground and left edge whoever ticked. The ground is
+         drawn on ::before so a sweep can fade it in with opacity alone. */
+      .fm-row { isolation:isolate; }
+      .fm-row.sel::before, .fm-row.held::before { content:''; position:absolute; inset:0; z-index:-1; pointer-events:none;
+        background:var(--fr-cyan-soft); box-shadow:inset 2px 0 0 var(--fr-cyan); }
+      .fm-row.held::before { box-shadow:inset 2px 0 0 var(--fr-warn); }
+      @keyframes fr-tick-in { from { opacity:0; transform:scale(.8); } to { opacity:1; transform:scale(1); } }
+      @keyframes fr-ground-in { from { opacity:0; } to { opacity:1; } }
+      /* Friday's sweep: opacity and scale only, staggered top to bottom so all of it ends inside 350 ms
+         (--fr-reveal); reduced motion is a 120 ms fade, never nothing. */
+      .fm-row.sel.fr-sweep input[type=checkbox] { animation:fr-tick-in 140ms ease-out both; animation-delay:var(--fr-d, 0ms); }
+      .fm-row.sel.fr-sweep::before { animation:fr-ground-in 140ms ease-out both; animation-delay:var(--fr-d, 0ms); }
+      @media (prefers-reduced-motion: reduce) {
+        .fm-row.sel.fr-sweep input[type=checkbox], .fm-row.sel.fr-sweep::before { animation:fr-ground-in 120ms linear both; animation-delay:0ms; }
+      }
+      .fm-selchip { display:inline-flex; align-items:center; gap:6px; padding:2px 4px 2px 10px; border-radius:999px; border:1px solid var(--fr-cyan); background:var(--fr-cyan-soft); font-size:11px; color:#e6f9ff; white-space:nowrap; }
+      .fm-selchip button { background:none; border:0; color:inherit; cursor:pointer; padding:0 6px; font-size:12px; line-height:1; border-radius:999px; }
+      .fm-selchip button:hover { background:var(--fr-cyan-soft); }
+      .fm-selchip .held { color:var(--fr-warn); }
+      .fm-sr { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip:rect(0 0 0 0); border:0; white-space:nowrap; }
       .fm-row.busy { opacity:.55; pointer-events:none; }
       .fm-row.unread .fm-from, .fm-row.unread .fm-subj { font-weight:700; color:#fff; }
       .fm-row.await .fm-from::after { content:'↩'; color:#7df0b0; margin-left:5px; font-weight:400; }
@@ -183,7 +212,7 @@
       .fm-att:hover { border-color:#00d4ff; }
       .fm-btn { font-size:11px; padding:5px 10px; min-height:28px; }
       .fm-btn.danger { border-color:rgba(239,68,68,0.6); color:#ffb4b4; }
-      .fm-bulk { display:flex; gap:6px; align-items:center; padding:6px 10px; border-radius:8px; background:rgba(123,97,255,0.12); border:1px solid rgba(123,97,255,0.4); font-size:12px; flex-wrap:wrap; }
+      .fm-bulk { display:flex; gap:6px; align-items:center; padding:6px 10px; border-radius:8px; background:var(--fr-cyan-soft); border:1px solid var(--fr-cyan); font-size:12px; flex-wrap:wrap; }
       .fm-menu { position:fixed; z-index:90; min-width:220px; max-width:320px; max-height:70vh; overflow:auto; background:#0a1020; border:1px solid rgba(0,212,255,0.4); border-radius:10px; padding:5px; box-shadow:0 14px 40px rgba(0,0,0,.6); font-size:12px; }
       .fm-menu .it { display:flex; gap:9px; align-items:center; padding:7px 10px; border-radius:6px; cursor:pointer; color:#dbe6f5; }
       .fm-menu .it:hover, .fm-menu .it.hi { background:rgba(0,212,255,0.14); }
@@ -458,6 +487,36 @@
     const [sendAt, setSendAt] = useState('');       // datetime-local, '' = as soon as approved
     const [drafting, setDrafting] = useState(false);
     const ed = useRef(null), fileRef = useRef(null);
+    // ── See & Touch: the fields Friday may write into. She never sends: only the owner's Send does. ──
+    const toRef = useRef(to), subjectRef = useRef(subject);
+    toRef.current = to; subjectRef.current = subject;
+    const [fillTick, setFillTick] = useState(0);
+    const rerender = () => setFillTick(n => n + 1);
+    const kind = init.mode && init.mode !== 'new' ? 'reply' : 'compose';
+    // what the owner typed: everything above the signature and the quoted original
+    const anchorOf = el => { const stop = el.querySelector('.fm-sig, .fm-quote'); return stop ? Array.from(el.childNodes).find(n => n === stop || (n.contains && n.contains(stop))) || null : null; };
+    const typedText = () => {
+      const el = ed.current; if (!el) return '';
+      const stop = anchorOf(el); let out = '';
+      for (const n of Array.from(el.childNodes)) { if (n === stop) break; out += n.nodeType === 3 ? n.textContent : (n.nodeName === 'BR' ? '\n' : (n.innerText || '')); }
+      return out.replace(/\n+$/, '');
+    };
+    const writeTyped = text => {
+      const el = ed.current; if (!el) throw new Error('no editor');
+      const stop = anchorOf(el); const frag = document.createDocumentFragment();
+      String(text).split('\n').forEach((line, i, a) => { frag.appendChild(document.createTextNode(line)); if (i < a.length - 1) frag.appendChild(document.createElement('br')); });
+      for (const n of Array.from(el.childNodes)) { if (n === stop) break; n.remove(); }
+      el.insertBefore(frag, stop);
+      rerender();
+    };
+    useEffect(() => {
+      const un = [
+        FS.registerField('messages', { key: kind + '.to', label: 'To', read: () => toRef.current, write: t => { setTo(t); rerender(); } }),
+        FS.registerField('messages', { key: kind + '.subject', label: 'Subject', read: () => subjectRef.current, write: t => { setSubject(String(t).replace(/\s+/g, ' ').trim()); rerender(); } }),
+        FS.registerField('messages', { key: kind + '.body', label: kind === 'reply' ? 'Reply' : 'Message', read: typedText, write: writeTyped })
+      ];
+      return () => un.forEach(f => f());
+    }, []);
     useEffect(() => {
       if (ed.current && init.html != null) ed.current.innerHTML = init.html;
       // replies and forwards start typing above the quoted original
@@ -567,9 +626,12 @@
           (canSend.length ? canSend : accounts).map(a => h('option', { key: a.id, value: a.id }, (a.label || '') + (a.email ? ' <' + a.email + '>' : '') + (canSend.find(c => c.id === a.id) ? '' : ' (read-only)'))))),
       h('div', { className: 'fm-field' }, h('label', null, 'To'), h(AddrInput, { value: to, onChange: setTo, autoFocus: !to }),
         !showCc && h('button', { className: 'fm-tool', onClick: () => setShowCc(true) }, 'Cc')),
+      FS.fillChip(h, 'messages', kind + '.to', fridayName(), rerender),
       showCc && h('div', { className: 'fm-field' }, h('label', null, 'Cc'), h(AddrInput, { value: cc, onChange: setCc })),
       showCc && h('div', { className: 'fm-field' }, h('label', null, 'Bcc'), h(AddrInput, { value: bcc, onChange: setBcc })),
       h('div', { className: 'fm-field' }, h('label', null, 'Subject'), h('input', { value: subject, onChange: e => setSubject(e.target.value) })),
+      FS.fillChip(h, 'messages', kind + '.subject', fridayName(), rerender),
+      FS.fillChip(h, 'messages', kind + '.body', fridayName(), rerender),
       h('div', { ref: ed, className: 'fm-editor', contentEditable: true, suppressContentEditableWarning: true, role: 'textbox', 'aria-multiline': true, 'aria-label': 'Message body', autoFocus: !!to }),
       (atts.length > 0 || fwd.length > 0) && h('div', { className: 'fm-atts', style: { padding: '0 12px 6px' } },
         atts.map((a, i) => h('span', { key: a.sha256, className: 'fm-att' }, '📎 ' + a.filename + ' · ' + Math.max(1, Math.round(a.size / 1024)) + ' KB',
@@ -637,7 +699,25 @@
     const [qInput, setQInput] = useState('');
     const [query, setQuery] = useState('');
     const [unreadOnly, setUnreadOnly] = useState(false);
-    const [sel, setSel] = useState(() => new Set());
+    // The ticks are refs (mail:<account>:<thread>), so Friday can tick rows the list does not show; the
+    // reducer in friday_stage.js says who ticked them. A pending card holds its rows until it is decided.
+    const [ss, setSs] = useState(() => FS.emptySelection());
+    const ssRef = useRef(ss);
+    const knownRef = useRef([]);
+    const revealing = useRef(false);
+    const revealRef = useRef(null);
+    const fridayFilters = useRef({});          // filter key -> the value Friday set; a different value is the owner's
+    const focusTouched = useRef(false);        // the keyboard row counts as "this" only once the owner has moved it
+    const [sweepAt, setSweepAt] = useState(0);
+    const [announce, setAnnounce] = useState('');
+    const sel = useMemo(() => new Set(ss.refs), [ss]);
+    const commitSel = evt => {
+      const r = FS.reduceSelection(ssRef.current, evt, knownRef.current);
+      if (r.changed) { ssRef.current = r.state; setSs(r.state); FS.touch(); }
+      return r;
+    };
+    const clearSel = () => commitSel({ type: 'clear' });
+    const setSelCards = cards => commitSel({ type: 'owner_set', refs: cards.map(refOf) });
     const [focus, setFocus] = useState(0);
     const [open, setOpen] = useState(null);           // {card, loading, res}
     const [showImages, setShowImages] = useState(false);
@@ -663,7 +743,7 @@
     const boxRef = useRef(null), searchRef = useRef(null), listRef = useRef(null), starRef = useRef(0);
 
     const say = (text, undo, err) => { setToast({ text, undo, err, t: Date.now() }); };
-    useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(x => x === toast ? null : x), toast.undo ? 8000 : 4500); return () => clearTimeout(t); }, [toast]);
+    useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(x => x === toast ? null : x), toast.undo && toast.undo.receipt ? 30000 : toast.undo ? 8000 : 4500); return () => clearTimeout(t); }, [toast]);
     // the folders go down the side when there is room for them
     useEffect(() => {
       const el = boxRef.current; if (!el || !window.ResizeObserver) return;
@@ -686,7 +766,7 @@
       api(url).then(r => r.json()).then(done).catch(e => done({ status: 'error', search_failed: true, error: ("Couldn't reach " + fridayName() + ": ") + e }));
       if (!q && !f) api('/api/messages/stats').then(r => r.json()).then(d => { setStats(d); if (d.actionable != null) window._fridayMsgActionable = d.actionable; }).catch(() => {});
     }, []);
-    useEffect(() => { load(query, folder); setSel(new Set()); setFocus(0); }, [query, folder]);
+    useEffect(() => { load(query, folder); if (!revealing.current) commitSel({ type: 'owner_nav' }); setFocus(0); focusTouched.current = false; }, [query, folder]);
     useEffect(() => { const iv = setInterval(() => { if (!query && !folder && document.visibilityState !== 'hidden') load('', ''); }, 60000); return () => clearInterval(iv); }, [query, folder]);
     useEffect(() => {
       api('/api/google/accounts').then(r => r.json()).then(d => setAccounts((d.accounts || []).filter(hasGmail))).catch(() => {});
@@ -732,7 +812,8 @@
     useEffect(() => {
       if (!data || selectFor.current == null || (data.query || '') !== selectFor.current) return;
       selectFor.current = null;
-      setSel(new Set((data.messages || []).map(m => m.id)));
+      commitSel({ type: 'select', mode: 'replace', refs: (data.messages || []).map(refOf), id: 'sel_search', label: 'Search results' });
+      setSweepAt(Date.now());
     }, [data]);
     useEffect(() => { if (!open) setMaxRead(false); }, [open]);
 
@@ -824,7 +905,7 @@
             (refused ? ' · ' + refused + ' not changed: ' + Object.values(refusedMap)[0] : '');
           say(msg, ids.length ? undo : null, refused > 0);
         }
-        setSel(new Set());
+        clearSel();
       }).catch(() => { setBusyIds(s => { const n = new Set(s); asked.forEach(i => n.delete(i)); return n; }); say(('Could not reach ' + fridayName() + '. Nothing changed.'), null, true); });
     };
     const moveLane = (cards, newLane) => {
@@ -839,7 +920,7 @@
         const undo = { before, cards: moved.map(c => Object.assign({}, c)), label: 'move' };
         undoStack.current.push(undo);
         say('Moved to ' + laneLabel(newLane) + (moved.length > 1 ? ' · ' + moved.length + ' conversations' : '') + (' (' + fridayName() + ' learns from it)') + (moved.length < cards.length ? ' · ' + (cards.length - moved.length) + ' could not be moved' : ''), undo);
-        setSel(new Set());
+        clearSel();
       });
     };
     // Gmail labels, by name: each account has its own, so the same name is
@@ -864,7 +945,7 @@
         const u = { label: 'label', gmailMulti: done.map(r => ({ account_id: r.aid, changed: r.changed })), cards: done.reduce((a, r) => a.concat(r.cards), []), labelPatch: { id: done.map(r => r.lab.id), on } };
         undoStack.current.push(u);
         say((on ? 'Labelled “' : 'Removed “') + name + '”' + (on ? '' : ' label') + ' in Gmail' + (bad.length ? ' · ' + bad.map(b => b.err).join('; ') : ''), u, !!bad.length);
-        setSel(new Set());
+        clearSel();
       });
     };
     const newLabel = cards => {
@@ -883,6 +964,14 @@
       u = u || undoStack.current.pop();
       if (!u) { say('Nothing to undo.'); return; }
       undoStack.current = undoStack.current.filter(x => x !== u);
+      if (u.receipt) {
+        // the owner's own Undo on a receipt of something Friday changed: it puts it back at once
+        post('/api/actions/receipts/' + encodeURIComponent(u.receipt) + '/undo', {}).then(({ ok }) => {
+          if (ok) load(query, folder);
+          setToast(null); say(ok ? 'Put back.' : 'Undo failed.', null, !ok);
+        });
+        return;
+      }
       if (u.gmailMulti) {
         Promise.all(u.gmailMulti.map(g => post('/api/mail/modify/undo', g))).then(rs => {
           const ok = rs.every(r => r.ok && r.j.status === 'ok');
@@ -1019,9 +1108,9 @@
       setOriginal(o => { const n = Object.assign({}, o); if (n[k]) delete n[k]; else n[k] = true; store.set('fm_show_original', n); return n; });
     };
 
-    const selected = () => shown.filter(m => sel.has(m.id));
+    const selected = () => shown.filter(m => sel.has(refOf(m)));
     const targets = () => { const s = selected(); return s.length ? s : open ? [open.card] : shown[focus] ? [shown[focus]] : []; };
-    const toggleSel = (m, e) => { setSel(s => { const n = new Set(s); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n; }); if (e) e.stopPropagation(); };
+    const toggleSel = (m, e) => { commitSel({ type: 'toggle', ref: refOf(m) }); if (e) e.stopPropagation(); };
     const inTrash = folder === 'trash', inSpam = folder === 'spam';
 
     // ── menus ──
@@ -1062,7 +1151,7 @@
     };
     const contextMenu = (m, e) => {
       e.preventDefault();
-      const cards = sel.has(m.id) ? selected() : [m];
+      const cards = sel.has(refOf(m)) ? selected() : [m];
       const one = cards.length === 1;
       setMenu({ x: e.clientX, y: e.clientY, title: 'Message actions', items: [
         one && { label: 'Open', ico: '↗', hint: 'o', onClick: () => openThread(m) },
@@ -1090,15 +1179,15 @@
       if (starRef.current && Date.now() - starRef.current < 1500) {
         starRef.current = 0;
         const pick = { a: () => shown, n: () => [], r: () => shown.filter(m => !m.unread), u: () => shown.filter(m => m.unread), s: () => shown.filter(m => m.flagged) }[k];
-        if (pick) { e.preventDefault(); setSel(new Set(pick().map(m => m.id))); return; }
+        if (pick) { e.preventDefault(); setSelCards(pick()); return; }
       }
       const handled = {
-        j: () => { setFocus(f => Math.min(shown.length - 1, f + 1)); },
-        k: () => { setFocus(f => Math.max(0, f - 1)); },
-        ArrowDown: () => { setFocus(f => Math.min(shown.length - 1, f + 1)); },
-        ArrowUp: () => { setFocus(f => Math.max(0, f - 1)); },
+        j: () => { focusTouched.current = true; setFocus(f => Math.min(shown.length - 1, f + 1)); },
+        k: () => { focusTouched.current = true; setFocus(f => Math.max(0, f - 1)); },
+        ArrowDown: () => { focusTouched.current = true; setFocus(f => Math.min(shown.length - 1, f + 1)); },
+        ArrowUp: () => { focusTouched.current = true; setFocus(f => Math.max(0, f - 1)); },
         o: () => openThread(cur), Enter: () => openThread(cur),
-        u: () => setOpen(null), Escape: () => { if (help) setHelp(false); else if (preview) setPreview(null); else if (layout !== 'wide' && sideOpen === true) setSideOpen(null); else if (sel.size) setSel(new Set()); else setOpen(null); },
+        u: () => setOpen(null), Escape: () => { if (help) setHelp(false); else if (preview) setPreview(null); else if (layout !== 'wide' && sideOpen === true) setSideOpen(null); else if (sel.size) clearSel(); else setOpen(null); },
         x: () => cur && toggleSel(cur),
         '*': () => { starRef.current = Date.now(); say('Select: a all · n none · r read · u unread · s starred'); },
         e: () => act(targets(), inTrash ? 'untrash' : 'archive'), y: () => act(targets(), 'archive'),
@@ -1137,19 +1226,158 @@
       setQInput(next); setQuery(next.trim());
     };
 
+    // ── See & Touch: what the page shows Friday, and what Friday asks it to tick ──
+    knownRef.current = shown.map(refOf);
+    const sweepOn = sweepAt > 0;
+    const sweepDelay = {};
+    if (sweepOn) { const ticked = shown.filter(m => sel.has(refOf(m))); const d = FS.sweepDelays(ticked.length); ticked.forEach((m, k) => { sweepDelay[refOf(m)] = d[k]; }); }
+    useEffect(() => { if (!sweepAt) return; const t = setTimeout(() => setSweepAt(0), 520); return () => clearTimeout(t); }, [sweepAt]);
+    const byOf = (key, val) => (fridayFilters.current[key] !== undefined && String(fridayFilters.current[key]) === String(val)) ? 'friday' : 'owner';
+    const currentFilters = () => {
+      const f = [];
+      if (lane !== 'all') f.push({ key: 'lane', value: lane, label: laneLabel(lane), by: byOf('lane', lane) });
+      if (folder) f.push({ key: 'folder', value: folder, label: folderName(folder), by: byOf('folder', folder) });
+      if (query) f.push({ key: 'q', value: query, label: 'Search: ' + query, by: byOf('q', query) });
+      if (unreadOnly) f.push({ key: 'unread', value: '1', label: 'Unread only', by: byOf('unread', '1') });
+      if (acct !== 'all') f.push({ key: 'account', value: acct, label: 'One account', by: byOf('account', acct) });
+      return f;
+    };
+    // a spoken filter goes through the same state the chips above the list use; false = not a filter here
+    const setFilter = (key, value) => {
+      fridayFilters.current[key] = value;
+      if (key === 'lane') { if (!LANES[value]) return false; setLane(value); return true; }
+      if (key === 'unread') { setUnreadOnly(value === '1'); return true; }
+      if (key === 'q') { revealing.current = false; setOpen(null); setQInput(value); setQuery(value); return true; }
+      if (key === 'folder') { if (value && !FOLDERS.some(x => x[0] === value) && !/^(label|category):/.test(value)) return false; pickFolder(value); return true; }
+      if (key === 'account') { if (value !== 'all' && !accounts.some(x => x.id === value)) return false; setAcct(value || 'all'); return true; }
+      return false;
+    };
+    const removeFilter = key => {
+      delete fridayFilters.current[key];
+      if (key === 'lane') setLane('all');
+      else if (key === 'unread') setUnreadOnly(false);
+      else if (key === 'q') { setQInput(''); setQuery(''); }
+      else if (key === 'folder') pickFolder('');
+      else if (key === 'account') setAcct('all');
+      else return false;
+      return true;
+    };
+    const stageRev = useRef({ json: '', rev: 0 });
+    const buildStage = () => {
+      // read the latest selection, not the last render's: a command's own answer is built before React repaints
+      const cur = ssRef.current;
+      const beyond = Math.max(0, cur.refs.length - cur.refs.filter(r => knownRef.current.indexOf(r) >= 0).length);
+      const filters = currentFilters();
+      const st = {
+        workspace: 'messages',
+        items: shown.slice(0, FS.MAX_ROWS).map((m, i) => ({ ref: refOf(m), n: i + 1,
+          facets: { lane: m.lane || '', category: m.category || '', unread: !!m.unread, bulk: !!m.is_bulk, from_domain: domainOf(m),
+            age_h: typeof m.age_hours === 'number' ? m.age_hours : null, awaiting: !!m.awaiting_reply, starred: !!m.flagged },
+          title: m.subject || '', who: m.sender || m.sender_email || '' })),
+        loaded: all.length, total_hint: (data && data.total) || all.length,
+        selection: { id: cur.id, refs: cur.refs, count: cur.refs.length, label: cur.label, source: cur.source, beyond_loaded: beyond },
+        filters, focus: focusTouched.current && shown[focus] ? refOf(shown[focus]) : null, open: open ? refOf(open.card) : null,
+        cursor: FS.cursorNow(shown.slice(0, FS.MAX_ROWS).map(refOf)), fields: FS.fieldList('messages'),
+        held: Object.keys(cur.held).length ? [{ card_id: 'pending', refs_count: Object.keys(cur.held).length }] : []
+      };
+      const json = JSON.stringify(st);
+      if (json !== stageRev.current.json) stageRev.current = { json, rev: stageRev.current.rev + 1 };
+      return Object.assign({ rev: stageRev.current.rev }, st);
+    };
+    // What the page was asked to do. Resolves with what it actually did (the server reports that, never the intent).
+    const pendingSelect = useRef(null);
+    const finishSelect = cmd => {
+      const sl = cmd.selection || {};
+      const r = commitSel({ type: 'select', mode: sl.mode || 'replace', refs: sl.refs || [], id: sl.id, label: sl.label });
+      revealing.current = false;
+      if ((sl.mode || 'replace') !== 'remove') { setSweepAt(Date.now()); setAnnounce(r.count + ' conversations selected by ' + fridayName() + '.'); }
+      return { ok: true, applied: r.applied, missing: r.missing, accepted: r.accepted, count: r.count, rev: stageRev.current.rev };
+    };
+    const heldDone = a => {
+      const refs = a.refs || [];
+      const rows = (data && data.messages || []).filter(m => refs.indexOf(refOf(m)) >= 0);
+      const away = LEAVES.indexOf(a.action) >= 0;
+      if (away) drop(rows.map(m => m.id));
+      commitSel({ type: 'held', state: 'done', refs, card_id: a.card_id });
+      const n = refs.length;
+      say((HELD_NOUN[a.action] || 'Done') + ' · ' + n + ' conversation' + (n === 1 ? '' : 's'), a.receipt_id ? { receipt: a.receipt_id } : null);
+      if (!away) load(query, folder);
+    };
+    const runStage = a => new Promise(resolve => {
+      if (a.type === 'stage_request') { resolve({ ok: true, rev: stageRev.current.rev }); return; }
+      if (a.type === 'point') { const r = FS.point(a.refs || [], { root: listRef.current, badges: a.badges, id: a.id }); FS.touch(200); resolve(r); return; }
+      if (a.type === 'chips') {
+        const bad = [];
+        (a.set || []).forEach(f => { if (!setFilter(f.key, f.value)) bad.push({ key: f.key, reason: 'not a filter here' }); });
+        (a.remove || []).forEach(k => { if (!removeFilter(k)) bad.push({ key: k, reason: 'not a filter here' }); });
+        // let the list repaint, then say what is on
+        setTimeout(() => resolve({ ok: bad.length === 0, rejected: bad, filters: stageApi.current.stage().filters, reason: bad.length ? 'that filter is not available here' : undefined }), 80);
+        return;
+      }
+      if (a.type === 'clear_selection') { clearSel(); resolve({ ok: true, applied: 0, missing: 0, accepted: 0, count: 0, rev: stageRev.current.rev }); return; }
+      if (a.type === 'held') {
+        if (a.state === 'done') heldDone(a); else commitSel({ type: 'held', state: a.state, refs: a.refs || [], card_id: a.card_id });
+        resolve({ ok: true });
+        return;
+      }
+      if (a.type !== 'select') { resolve({ ok: false, reason: 'unknown command' }); return; }
+      const rv = a.reveal || {};
+      const already = (!rv.query || ((data && (data.query || '')) === rv.query && !folder)) && (!rv.lane || lane === rv.lane);
+      if ((rv.query || rv.lane) && already) { resolve(finishSelect(a)); return; }
+      if (rv.query || rv.lane) {
+        // show the rows first, then tick them: Friday's own reveal does not clear its own ticks
+        revealing.current = true; revealRef.current = rv;
+        if (rv.query) fridayFilters.current.q = rv.query;
+        if (rv.lane) fridayFilters.current.lane = rv.lane;
+        const timer = setTimeout(() => { if (pendingSelect.current) { pendingSelect.current = null; revealing.current = false; resolve({ ok: false, reason: 'the list did not load' }); } }, 5000);
+        pendingSelect.current = { rv, cmd: a, done: r => { clearTimeout(timer); resolve(r); } };
+        setOpen(null);
+        if (rv.query) { selectFor.current = null; setLane('all'); setFolder(''); setQInput(rv.query); setQuery(rv.query); } else if (rv.lane) setLane(rv.lane);
+        return;
+      }
+      resolve(finishSelect(a));
+    });
+    useEffect(() => {
+      const p = pendingSelect.current;
+      if (!p || !data) return;
+      if (p.rv.query != null && (data.query || '') !== p.rv.query) return;
+      if (p.rv.lane != null && lane !== p.rv.lane) return;
+      pendingSelect.current = null;
+      p.done(finishSelect(p.cmd));
+    }, [data, lane]);
+    const stageApi = useRef(null);
+    stageApi.current = { stage: buildStage, run: runStage };
+    useEffect(() => FS.register('messages', { stage: () => stageApi.current.stage(), run: a => stageApi.current.run(a) }), []);
+    useEffect(() => { FS.touch(); }, [ss, shown.length, query, folder, lane, unreadOnly, acct, focus, open && open.card.id]);
+    // a card that was pending when the page loaded still holds its rows (they were held before the reload)
+    useEffect(() => {
+      api('/api/approvals?status=pending&kind=governed_action').then(r => r.json()).then(d => {
+        ((d && d.approvals) || []).forEach(ap => {
+          const pl = ap.payload || {};
+          if (pl.handler === 'item_batch' && pl.domain === 'email' && (pl.refs || []).length) commitSel({ type: 'held', state: 'held', refs: pl.refs, card_id: ap.approval_id });
+        });
+      }).catch(() => {});
+    }, []);
+    const clearTicks = () => { revealing.current = false; revealRef.current = null; clearSel(); };
+
     const Row = (m, i) => {
+      const rf = refOf(m);
       const L = LANES[m.lane] || [m.lane, '•'];
       const labs = (m.labels || []).map(id => labelName(m.account_id, id)).filter(Boolean).slice(0, 3);
       const stop = f => e => { e.stopPropagation(); f(e); };
       const btn = (ico, title, f, cls) => h('button', { className: 'fm-act' + (cls ? ' ' + cls : ''), title, 'aria-label': title, onClick: stop(f), onMouseDown: e => e.stopPropagation() }, ico);
       return h('div', {
         key: (m.account_id || '') + ':' + m.id, 'data-id': m.id,
-        className: 'fm-row' + (m.unread ? ' unread' : '') + (i === focus ? ' focus' : '') + (open && open.card.id === m.id ? ' open' : '') + (sel.has(m.id) ? ' sel' : '') + (busyIds.has(m.id) ? ' busy' : '') + (m.awaiting_reply && !folder ? ' await' : ''),
-        onClick: e => { setFocus(i); if (e.shiftKey || e.ctrlKey || e.metaKey) toggleSel(m, e); else openThread(m); },
+        'data-fr-ref': rf, 'data-thread-id': m.thread_id || m.gmail_id || m.id, 'data-account': m.account_id || '',
+        // the hand cursor: a quick pinch ticks the row, a pinch held for 700 ms opens it
+        'data-fr-target': '', 'data-fr-pinch': 'tick', 'data-fr-guarded': 'off',
+        style: sweepOn && sel.has(rf) ? { '--fr-d': (sweepDelay[rf] || 0) + 'ms' } : undefined,
+        className: 'fm-row' + (m.unread ? ' unread' : '') + (i === focus ? ' focus' : '') + (open && open.card.id === m.id ? ' open' : '') + (sel.has(rf) ? ' sel' : '') + (ss.held[rf] ? ' held' : '') + (sweepOn && sel.has(rf) ? ' fr-sweep' : '') + (busyIds.has(m.id) ? ' busy' : '') + (m.awaiting_reply && !folder ? ' await' : ''),
+        onClick: e => { focusTouched.current = true; setFocus(i); if (e.shiftKey || e.ctrlKey || e.metaKey) toggleSel(m, e); else openThread(m); },
         onContextMenu: e => { setFocus(i); contextMenu(m, e); },
-        role: 'row', 'aria-selected': sel.has(m.id), title: m.awaiting_reply && !folder ? 'Waiting for your reply' : undefined
+        role: 'row', 'aria-selected': sel.has(rf), title: m.awaiting_reply && !folder ? 'Waiting for your reply' : undefined
       },
-        h('input', { type: 'checkbox', checked: sel.has(m.id), onClick: e => toggleSel(m, e), onChange: () => {}, 'aria-label': 'Select conversation' }),
+        h('input', { type: 'checkbox', 'data-fr-tick': '', checked: sel.has(rf), onClick: e => toggleSel(m, e), onChange: () => {}, 'aria-label': 'Select conversation' }),
         h('span', { className: 'fm-dot', style: { background: m.account_color || '#7c8aa5' }, title: m.account_label }),
         h('div', { className: 'fm-from' }, (m.flagged ? '⭐ ' : '') + (m.important ? '❗' : '') + (m.sender || m.sender_email), m.thread_count > 1 && h('span', { className: 'fm-count', style: { marginLeft: 6, opacity: 0.8 }, title: m.thread_count + ' messages in this conversation' }, m.thread_count)),
         h('div', { className: 'fm-line' },
@@ -1166,8 +1394,8 @@
     };
 
     const T = open && open.res;
-    const allChecked = shown.length > 0 && shown.every(m => sel.has(m.id));
-    const someChecked = shown.some(m => sel.has(m.id));
+    const allChecked = shown.length > 0 && shown.every(m => sel.has(refOf(m)));
+    const someChecked = shown.some(m => sel.has(refOf(m)));
     const headRef = useRef(null);
     useEffect(() => { if (headRef.current) headRef.current.indeterminate = someChecked && !allChecked; }, [someChecked, allChecked]);
     const bulk = selected();
@@ -1193,6 +1421,7 @@
       // search chips
       h('div', { className: 'fm-bar', role: 'group', 'aria-label': 'Search chips' },
         SEARCH_CHIPS.map(([tok, lbl]) => h('span', { key: tok, className: 'fm-chip sm' + (searchToks.includes(tok) ? ' on' : ''), role: 'switch', 'aria-checked': searchToks.includes(tok), onClick: () => toggleChip(tok), title: tok }, lbl))),
+      FS.chipsRow(h, currentFilters(), key => { removeFilter(key); FS.touch(); }, fridayName()),
       // row 2: lanes (Friday's triage) or Gmail's categories (Inbox)
       !query && !folder && h('div', { className: 'fm-bar' },
         Object.keys(LANES).map(id => h('span', { key: id, className: 'fm-chip' + (lane === id ? ' on' : ''), onClick: () => setLane(id) },
@@ -1214,7 +1443,8 @@
       inTrash && h('div', { className: 'fm-banner info' }, ('🗑 Gmail’s Trash. Gmail deletes what is here for good after 30 days. Restore (e or #) puts a conversation back in the inbox. ' + fridayName() + ' never empties the Trash.')),
       inSpam && h('div', { className: 'fm-banner info' }, '⚠ Gmail’s Spam. “Not spam” (!) moves a conversation back to the inbox.'),
       // bulk bar
-      sel.size > 0 && h('div', { className: 'fm-bulk', role: 'toolbar', 'aria-label': 'Selected conversations' }, sel.size + ' selected',
+      sel.size > 0 && h('div', { className: 'fm-bulk', role: 'toolbar', 'aria-label': 'Selected conversations' },
+        sel.size + ' selected' + (bulk.length < sel.size ? ' (' + (sel.size - bulk.length) + ' not shown)' : '') + (ss.source === 'friday' ? ' · ' + fridayName() + ' selected' : ''),
         inTrash ? h('button', { className: 'btn fm-btn', onClick: () => act(bulk, 'untrash') }, '↩ Restore') : h('button', { className: 'btn fm-btn', onClick: () => act(bulk, 'archive') }, '🗄 Archive'),
         !inTrash && h('button', { className: 'btn fm-btn danger', onClick: () => act(bulk, 'trash') }, '🗑 Delete'),
         h('button', { className: 'btn fm-btn', onClick: () => act(bulk, inSpam ? 'notspam' : 'spam') }, inSpam ? '✅ Not spam' : '⚠ Spam'),
@@ -1225,8 +1455,8 @@
         h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); labelMenu(bulk, { x: r.left, y: r.bottom + 2 }); } }, '🏷 Label ▾'),
         h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); laneMenu(bulk, { x: r.left, y: r.bottom + 2 }); } }, '🗂 Lane ▾'),
         h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom + 2, title: 'More', items: moreItems(bulk) }); } }, '⋯ More'),
-        h('button', { className: 'btn fm-btn', onClick: () => setSel(new Set(shown.map(m => m.id))) }, 'Select all ' + shown.length),
-        h('button', { className: 'btn fm-btn', onClick: () => setSel(new Set()) }, 'Clear')),
+        h('button', { className: 'btn fm-btn', onClick: () => setSelCards(shown) }, 'Select all ' + shown.length),
+        h('button', { className: 'btn fm-btn', onClick: clearTicks }, 'Clear')),
       // folders, list, thread
       h('div', { className: 'fm-main' },
         showSide && h('nav', { className: 'fm-side', 'aria-label': 'Folders and labels' },
@@ -1237,9 +1467,13 @@
           sideLabels.map(n => h('button', { key: n, className: folder === 'label:' + n ? 'on' : '', onClick: () => pickFolder('label:' + n) }, h('span', null, '🏷'), n))),
         h('div', { className: 'fm-listwrap' },
           h('div', { className: 'fm-listhead' },
-            h('input', { ref: headRef, type: 'checkbox', checked: allChecked, onChange: () => setSel(allChecked ? new Set() : new Set(shown.map(m => m.id))), 'aria-label': 'Select all shown', title: 'Select all shown (* a)' }),
+            h('input', { ref: headRef, type: 'checkbox', checked: allChecked, onChange: () => { if (allChecked) clearTicks(); else setSelCards(shown); }, 'aria-label': 'Select all shown', title: 'Select all shown (* a)' }),
             h('span', { style: { fontWeight: 700, color: '#dbe6f5' } }, folderName(folder)),
             h('span', null, shown.length + (shown.length === 1 ? ' conversation' : ' conversations')),
+            ss.refs.length > 0 && ss.source !== '' && h('span', { className: 'fm-selchip', 'data-testid': 'fm-selchip' }, FS.chipText(ss, fridayName()),
+              Object.keys(ss.held).length > 0 && h('span', { className: 'held' }, '· Waiting for your OK'),
+              h('button', { onClick: clearTicks, title: 'Clear the selection', 'aria-label': 'Clear the selection' }, '×')),
+            h('span', { className: 'fm-sr', 'aria-live': 'polite', role: 'status' }, announce),
             h('span', { style: { marginLeft: 'auto' } }, 'Right-click a row for everything')),
           h('div', { className: 'fm-list', ref: listRef, role: 'grid', 'aria-label': 'Messages' },
             failed ? h('div', { style: { padding: 20, color: '#ff9a9a', fontSize: 12 } }, 'No list: the read failed (see above).')

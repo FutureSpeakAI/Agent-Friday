@@ -423,7 +423,7 @@ _VOICE_LIVE_TOOLS = [
      "results; the screen shows them.",
      {"kind": ("string", "One of: workspace, email, mail_search, file, wiki_page, "
                          "graph_node, news_article, creation, settings, calendar, "
-                         "contact, content_post."),
+                         "contact, content_post, card."),
       "query": ("string", "Their words for the thing; for mail_search, the Gmail search."),
       "id": ("string", "An exact id, if you already have one."),
       "workspace": ("string", "For kind=workspace: which workspace."),
@@ -438,7 +438,29 @@ _VOICE_LIVE_TOOLS = [
      "did today cost'). Keep `detail` at brief for speech and read back only what they "
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
+      "look": ("string", "screen: what their list shows, as counts."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
+    ("screen_select",
+     "Show the user's open list what you mean: tick, untick or clear rows (op select, "
+     "add, remove, clear), outline and number up to 12 (op point), set a filter "
+     "chip (op filter, key, value; an empty value clears it), or write text into a "
+     "field they can see (op fill, field, text). Shows only: no mail "
+     "changes, nothing sent or saved, no approval. SELECT_OK or POINT_OK: say the count and kind, never a "
+     "name. SELECT_ASK or POINT_ASK: ask it. FAIL: say why. To act on ticks, call "
+     "organize_email with selection screen.",
+     {"op": ("string", "select, add, remove, clear, point, filter or fill."),
+      "workspace": ("string", "messages, news, media, library, files, calendar, chat..."),
+      "scope": ("string", "screen or all."),
+      "category": ("string", "newsletters, promotions, unread, a status..."),
+      "from": ("string", "Sender domain."),
+      "query": ("string", "A Gmail search."),
+      "ordinals": ("array", "Numbers on screen."),
+      "deictic": ("string", "this or these."),
+      "key": ("string", "Filter: lane, unread, q, folder, category, sort, status, kind, project."),
+      "value": ("string", "Filter value; empty clears."),
+      "field": ("string", "Fill: the field's key on screen."),
+      "text": ("string", "Fill: what to write.")},
+     ["op"]),
     ("set_chat_tray",
      "Show, hide, resize or dock chat on either side, with the workspace taking the remaining width. "
      "Examples: 'show chat', 'hide chat', 'put chat on the right third'. Hidden, it leaves a slim pill on "
@@ -451,15 +473,15 @@ _VOICE_LIVE_TOOLS = [
      "Show the start screen's cluster now ('show my day'): their countdowns, the "
      "chat field, the mic and Start my day. With mode, set when it shows on its own "
      "('always show my day' is always): smart (when useful; the default), always, or "
-     "never (only when asked). Their own screen, so no approval is needed. DAY_SHOWN: "
+     "never (only when asked). Showing it needs no approval; a mode waits for their own yes (SETTING_NEEDS_YES: say what would change). DAY_SHOWN: "
      "say so in a few words. DAY_NOT_SHOWN: say why in plain words. DAY_MODE: say what "
      "it will do now. The countdowns are not in the result: do not guess them.",
      {"mode": ("string", "smart, always or never; empty to show it now.")}, []),
     ("set_workspace_layout",
      "Set a workspace to fullscreen with docked chat, normal size, or a named screen position. "
      "Use fullscreen_chat false with position for 'put News on the left two thirds'. It is their "
-     "own screen, so no "
-     "approval is needed, and the choice is remembered for that workspace. Leave "
+     "own screen, but the choice is a setting, so "
+     "it waits for their own yes (SETTING_NEEDS_YES: say what would change) and is then remembered for that workspace. Leave "
      "workspace empty for the one in front. LAYOUT_OK means the screen did it: say "
      "so in a few words. LAYOUT_SAVED means it is remembered and applies when that "
      "workspace is open: say that, not that it changed. On LAYOUT_FAIL, ask which "
@@ -474,8 +496,10 @@ _VOICE_LIVE_TOOLS = [
     # account, file or page Friday found (voice-tool-contract.md §5).
     ("organize_email",
      "Archive, label, move, star, mark read or unread, Trash, restore or report "
-     "spam on the user's Gmail: all the mail a Gmail search finds (from:, "
-     "subject:, older_than:1y, is:unread, label:). Nothing changes yet: it raises "
+     "spam on the user's Gmail: the rows ticked on their screen (selection "
+     "screen) or all the mail a Gmail search finds (from:, "
+     "subject:, older_than:1y, is:unread, label:). Read, unread, star and label "
+     "happen at once. Anything else changes nothing yet: it raises "
      "ONE approval card for the whole batch and returns one sentence to read "
      "back. Say it, then the three ways out: yes, no, or change it (a narrower "
      "search: call again with replaces set to the card_id). The conversations "
@@ -488,6 +512,7 @@ _VOICE_LIVE_TOOLS = [
                            "label, unlabel, move, trash, restore, spam, not_spam."),
       "query": ("string", "The Gmail search, e.g. from:linkedin.com older_than:1m."),
       "thread_ids": ("array", "Conversation ids from search_email, instead of a query."),
+      "selection": ("string", "screen: what is ticked now."),
       "label": ("string", "For label, unlabel and move."),
       "account": ("string", "Only this account."),
       "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
@@ -506,6 +531,7 @@ _VOICE_LIVE_TOOLS = [
       "to": ("string", "Destination folder (move), or the folder to make (new_folder)."),
       "new_name": ("string", "For rename."),
       "moves": ("array", "To sort into several folders at once: 'file => folder' each."),
+      "selection": ("string", "screen: the files ticked or open on their screen."),
       "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
       "why": ("string", "One short line for the card.")},
      ["action"]),
@@ -762,8 +788,17 @@ _VOICE_SHARED_TOOLS = (
     "make_podcast",
     "podcast_list",
     "media_show",
+    "media_cards",
     "media_play",
     "media_turn",
+    # "Stop": a running workflow or task ends after the step it is on; "tell it to..." steers one.
+    "task_control",
+    # A setting by its path, as a diff the owner says yes to (settings by sentence).
+    "set_setting",
+    # Favourite, tag or move Media cards (one at once, two or more on one card): the same tool
+    # the screen uses, so what she does is what the cards' history shows.
+    "organize_media",
+    "organize_calendar",
     "podcast_play",
     "podcast_source",
     "podcast_format",
@@ -861,8 +896,12 @@ def _voice_tool_names():
 
 #: Ceiling on the rendered voice tool contract (local voice spec §2, P1). The
 #: front model prefills it on every cold start; the 124-tool registry (~22.8K
-#: tokens) is what put local voice at a 63-199 s first token.
-VOICE_CONTRACT_MAX_TOKENS = 9000
+#: tokens) is what put local voice at a 63-199 s first token. It stood at 9000
+#: with 359 tokens spare; the See & Touch tools (screen_select, organize_media,
+#: media_cards, the selection parameters) take about 1,000 more, so it is 10000.
+#: That is about 11% more cold prefill on the local front: bench it with
+#: scripts/bench_voice_turn.py before the next speed pass.
+VOICE_CONTRACT_MAX_TOKENS = 10000
 
 #: Never declared to any voice engine, curated or full (voice_engine
 #: decision: shell execution from a speech recogniser is its own risk class;
@@ -1669,7 +1708,7 @@ def _voice_tool_run(name, args, send_client, session=None):
             finally:
                 _ag._CURRENT_CONVERSATION.reset(_tok)
         if name in ("organize_email", "organize_files", "organize_wiki",
-                    "undo_action", "answer_card"):
+                    "undo_action", "answer_card", "screen_select"):
             # An approved batch runs in the background and reports to the
             # conversation that asked, which this call's session names.
             from agent_friday.services import agent as _ag

@@ -147,9 +147,9 @@ def test_a_spoken_mail_request_hands_the_cloud_no_names(gmail):
     assert out.startswith("CARD_RAISED"), out
     assert not [w for w in PRIVATE_MAIL if w in out], out
     assert "3 conversations" in out and "on your screen" in out and "one account" in out
-    typed = agent._execute_tool("organize_email", {"action": "star", "query": "from:billing"},
+    typed = agent._execute_tool("organize_email", {"action": "trash", "query": "from:billing"},
                                 session_ctx=agent.prepare_confirmation_ctx(
-                                    "s-typed", "star the billing mail", {"authenticated": True}))
+                                    "s-typed", "trash the billing mail", {"authenticated": True}))
     assert "Quarterly invoice" in typed and "Home" in typed, "chat keeps the names"
 
 
@@ -189,8 +189,8 @@ def test_change_it_withdraws_the_card_it_replaces(gmail):
     assert old["status"] == "denied" and old["decided_by"] == "friday:withdrawn"
     assert ap.get_approval(second["approval_id"])["status"] == "pending"
     assert any("withdrawn" in n for n in second["notes"])
-    elsewhere = ia.propose_email("star", query="is:unread", conversation_id="c-other")
-    ia.propose_email("unread", query="from:billing", conversation_id="c1",
+    elsewhere = ia.propose_email("trash", query="is:unread", conversation_id="c-other")
+    ia.propose_email("spam", query="from:billing", conversation_id="c1",
                      replaces=elsewhere["approval_id"])
     assert ap.get_approval(elsewhere["approval_id"])["status"] == "pending", (
         "a card from another conversation is not this request's to withdraw")

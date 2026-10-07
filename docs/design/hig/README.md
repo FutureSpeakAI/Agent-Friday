@@ -188,6 +188,44 @@ confirmation that names the thing.
   ground. Focus is the ring.
 - Keys: ↑ ↓ or j k move, Enter opens, Esc backs out, Space previews where a preview exists,
   x selects, Shift-click ranges. The same keys in every list.
+- **Friday's selection.** When Friday ticks rows (See & Touch), they are the same ticks: the same
+  checkbox, the same ground and left edge. There is no second visual language. The chip in the
+  list head says who selected, in words (`✓ Newsletters · 142 · Friday selected`, with "(edited)"
+  once you change it) and carries a × to clear it; it is announced politely to screen readers.
+  Rows held for a card that waits for your OK take a 2px `--fr-warn` left edge, the colour's own
+  meaning ("needs you"), with a "Waiting for your OK" tag on the chip and no pulsing. Declined, the
+  edge returns to cyan and the ticks stay; approved, the rows leave with `--fr-reveal` and an Undo.
+  Friday's sweep fades the ticks in top to bottom, opacity and scale only, ending inside 350 ms
+  however long the list; reduced motion is a 120 ms fade, never nothing.
+- **Pointing.** When Friday points ("which of these are from my editor?") the rows take the reticle's
+  Locked outline (a 2px `--fr-cyan` ring that fades in once) and a numbered badge, an 18px ring holding a
+  numeral in `--fr-font-mono`, so "open number two" works. At most 12 are badged; the rest are counted.
+  Nothing strobes: the colour changes once, the outlines go on the owner's next input or after 12 s, and
+  reduced motion shortens the fade, never removes it.
+- **Fill in place.** When Friday writes into a field (a reply, a quick-add line, a workflow's steps) the text
+  lands in the field and a chip beside it says "Friday wrote this · Subject" with an Undo, and what in it came
+  from something she read ("Check: ..."); the chip goes the moment the owner edits the text. A fill never
+  presses the field's button: Send, Add, Save and Run stay the owner's.
+- **Step lists.** A workflow Friday runs shows a short panel: each step with a glyph and a word for its state
+  (waiting, doing, done, needs you, skipped, stopped, failed), never colour alone, one change at a time. `--fr-warn`
+  marks only "needs you". Stop (also Esc, except while typing or over a dialog) ends the step that is running after
+  its step and starts no other; a finished list goes away after nine seconds.
+- **Every list has a stage.** Calendar events, Workflows, People, Career, Trust, Sites, System approvals and the
+  Chat Hub's conversations carry `data-fr-ref="<kind>:<id>"` on each row (`fridayRow` in the page; the ref's id is
+  URL-encoded), so Friday can see the list, point at rows (the numbered Locked outline) and, in the Calendar and the
+  chat list, tick them (Ctrl/Cmd-click, a pinch, or Friday); ticks show, they never act. Health, Finance and Family
+  are counts-only: a row is a kind and a position, with no title, name, figure or date, whatever the page sends
+  (`PRIVATE_WORKSPACES`). A new list opts in by marking its rows and adding itself to `static/workspace_stages.js`
+  and `STAGE_FACETS`.
+- **Filters Friday sets are chips.** A spoken filter ("only unread, only this week") is applied through the
+  workspace's own filter and also shown as a removable chip marked "by Friday"; nothing is filtered
+  invisibly. A filter the owner changes afterwards stops being marked.
+- **A pinch on a row** (hand cursor) ticks it; a pinch held for 700 ms opens it. A row opts in with
+  `data-fr-pinch="tick"` and names its checkbox `data-fr-tick`; a row that opens on a double click (a
+  Media card, a Library document) says so with `data-fr-open-event="dblclick"`. The row the reticle is on
+  is what "this" means to Friday for three seconds after it leaves; a guarded control never is.
+- **Held rows are the same everywhere:** a 2px `--fr-warn` left edge on a row (`data-fr-held`), amber on
+  a Media card's border, and the engine's amber glow on a Files tile, until the card is decided.
 - A row's actions appear on hover and focus at the right, and in the row's context menu.
 - Counts are right-aligned in `--fr-font-mono` so columns of numbers line up.
 
@@ -272,6 +310,15 @@ tool `set_setting(path, value)` (per the voice tool contract: declared, governed
 ring, says SETTING_SET or SETTING_NEEDS_YES with the diff) sets exactly one row, and the
 page shows the same diff the search box shows. A conditional spoken yes never applies a
 change; it becomes a revised diff.
+
+*Status.* `set_setting` and the diff-and-Yes are built (`services/setting_proposals.py`) for the rows
+that have a tool today: the chat model, a workspace's layout, the start screen's mode, big mode, the
+hologram window's dials, the call mode and who hosts a show. Every tool that changes one of them holds
+the change for the owner's Yes; the owner's own control on the page is unchanged. A row that has a
+path carries `data-st-key`; "take me to big mode" lands on it outlined (the reticle's Locked look, 2 px
+`--fr-cyan`, cleared on the next input or after 12 s), and a row Friday changed shows "Friday, by a
+proposal you accepted · time · Undo" for thirty days. "If" and "unless" count as conditions in a
+spoken yes ("yes if it is cheaper" revises the card; it does not approve it).
 
 ### 6.5 Approvals and cards
 

@@ -104,6 +104,29 @@ def _sentence(c: Dict[str, Any]) -> str:
     return f"{c['title']}: {word}, {st}{held}{where}."
 
 
+def _cloud_voice() -> bool:
+    """True when this call's result goes to the cloud voice model, which is never handed a private
+    name (docs/reference/voice-tool-contract.md section 5)."""
+    try:
+        from agent_friday.services.agent import _cloud_voice as cv
+        return bool(cv())
+    except Exception:
+        return False
+
+
+def _counts_only(total: int, cards: List[Dict[str, Any]], **extra: Any) -> Dict[str, Any]:
+    """What a cloud voice model hears of a list of cards: how many, of what kind and state. No title."""
+    kinds: Dict[str, int] = {}
+    states: Dict[str, int] = {}
+    for c in cards:
+        kinds[str(c.get("kind"))] = kinds.get(str(c.get("kind")), 0) + 1
+        states[str(c.get("status"))] = states.get(str(c.get("status")), 0) + 1
+    parts = ["%d %s" % (n, k) for k, n in sorted(states.items())]
+    say = "%d card%s%s. The titles are on their screen." % (total, "" if total == 1 else "s",
+                                                           (": " + ", ".join(parts)) if parts else "")
+    return dict(extra, count=total, kinds=kinds, statuses=states, say=say)
+
+
 def _list(cards: List[Dict[str, Any]], limit: int = 8) -> str:
     if not cards:
         return "Nothing there."
@@ -146,6 +169,8 @@ def _tool_media_show(inp: Dict[str, Any]) -> str:
         shown = "shown"
     except Exception:
         shown = "no_desktop"
+    if _cloud_voice():
+        return json.dumps(_counts_only(res["total"], res["cards"], status=shown))
     return json.dumps({"status": shown, "count": res["total"], "cards": [
         {"id": c["id"], "title": c["title"], "kind": c["kind"], "status": c["status"], "held": c["held"], "published_at": c.get("published_at")} for c in res["cards"][:20]
     ], "say": _list(res["cards"])})
@@ -158,6 +183,8 @@ def _tool_media_cards(inp: Dict[str, Any]) -> str:
     since, until = _window(inp)
     res = mi.query(view=view, q=q, kind=kind, limit=int(inp.get("limit") or 10), since=since, until=until,
                    sort="newest" if (since or until) else "next")
+    if _cloud_voice():
+        return json.dumps(_counts_only(res["total"], res["cards"]))
     return json.dumps({"count": res["total"], "cards": [
         {"id": c["id"], "title": c["title"], "kind": c["kind"], "status": c["status"], "when": c.get("when"), "published_at": c.get("published_at"), "sources": c.get("sources")} for c in res["cards"]
     ], "say": _list(res["cards"])})

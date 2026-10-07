@@ -774,7 +774,35 @@ CLAUDE_TOOLS = [
     {"name": "check_situation", "description": "Read live activity/load: focused/open workspaces, CPU/RAM/GPU/disk, serving or loaded models, chat turns, tasks, scheduled/background jobs, queue, stand-down and today's spend. pin=true adds a live summary to later turns in this conversation; pin=false stops it.",
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
+         "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
+    {"name": "set_setting", "description": "Change one Settings row by its path, or undo its last change (op=undo, 30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string"}}, "required": ["path"]}},
+    {"name": "task_control", "description": "Stop or steer work Friday is doing in the background. op=stop ends a running workflow or task after the step it is on: the step that is running finishes, the next never starts, nothing already done is undone. With no target it stops the steps shown on the user's screen. op=steer sends a running task a message without stopping it. target: a workflow name, a task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what actually happened.",
+     "input_schema": {"type": "object", "properties": {
+         "op": {"type": "string", "enum": ["stop", "steer"]},
+         "target": {"type": "string", "description": "A workflow name, a task id or words from a task's name; empty for what is on their screen."},
+         "message": {"type": "string", "description": "For op=steer: what to tell the task."}},
+         "required": ["op"]}},
+    {"name": "screen_select", "description": "Show the user's open list what you mean. op select/add/remove/clear ticks rows in the Message Center so they see the checks appear; op point outlines and numbers up to 12 rows in the Message Center, News, Media or the Library (the second one = the second thing you just pointed at); op=filter sets a filter chip through the workspace's own filter (key and value; an empty value removes it); op=fill writes text into a field the screen offers (a reply, a quick-add line, a workflow's steps) so the user reads it and sends or saves it themselves. Shows only: changes no mail and needs no approval. scope=screen picks among the rows shown; scope=all searches the whole inbox. match: category (newsletters, promotions, unread, a news category, a status or project...), lane, unread, from, older_than (days), ordinals, status, kind, project, folder, query (a Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / POINT_OK / FILTER_OK report what the page confirmed. To act on the ticks, call organize_email with selection=screen.",
+     "input_schema": {"type": "object", "properties": {
+         "workspace": {"type": "string", "description": "messages, news, media or library; default the one in front."},
+         "op": {"type": "string", "enum": ["select", "add", "remove", "clear", "point", "filter", "fill"]},
+         "field": {"type": "string", "description": "For op=fill: the field's key as the screen lists it (reply.body, compose.subject, quickadd, name, step.1.prompt, steer.<task>...)."},
+         "text": {"type": "string", "description": "For op=fill: what to write. It is written into the field; nothing is sent or saved."},
+         "mode": {"type": "string", "enum": ["replace", "insert"], "description": "For op=fill: replace what is there, or add after it."},
+         "key": {"type": "string", "description": "For op=filter: lane, unread, q, folder, account (mail); category, sort (news); status, kind, project, q (media); folder (library)."},
+         "value": {"type": "string", "description": "For op=filter: the value; empty removes the chip."},
+         "scope": {"type": "string", "enum": ["screen", "all"]},
+         "match": {"type": "object", "properties": {
+             "category": {"type": "string"}, "lane": {"type": "string"}, "unread": {"type": "boolean"},
+             "from": {"type": "string"}, "older_than": {"type": "number"},
+             "ordinals": {"type": "array", "items": {"type": "integer"}},
+             "status": {"type": "string"}, "kind": {"type": "string"}, "project": {"type": "string"},
+             "folder": {"type": "string"}, "query": {"type": "string"},
+             "deictic": {"type": "string", "enum": ["this", "these"]}}},
+         "label": {"type": "string", "description": "Short name for the selection chip, e.g. Newsletters."}},
+         "required": ["op"]}},
     {"name": "set_chat_tray", "description": "Show/hide chat or dock it left/right in a third, half or two thirds of the screen; the workspace uses the rest. Hidden chat leaves an edge pill. No approval for this screen change. CHAT_OK: briefly report the change. CHAT_NOT_APPLIED: explain no Friday page was available.",
      "input_schema": {"type": "object", "properties": {
          "visible": {"type": "boolean", "description": "true to show the chat, false to hide it."},
@@ -783,12 +811,12 @@ CLAUDE_TOOLS = [
          "size": {"type": "string", "enum": ["third", "half", "two_thirds"],
                   "description": "How much of the screen's width the tray takes."}},
          "required": []}},
-    {"name": "show_my_day", "description": "Show Simple Home or Classic's start cluster (countdowns, chat, mic, Start my day). mode controls Classic automatic display: smart when useful (default), always, never except on request. No approval. DAY_SHOWN confirms visibility; DAY_NOT_SHOWN gives the reason; DAY_MODE confirms the preference. Countdown content is not returned: never invent it.",
+    {"name": "show_my_day", "description": "Show Simple Home or Classic's start cluster (countdowns, chat, mic, Start my day). mode controls Classic automatic display: smart when useful (default), always, never except on request. Showing needs no approval; a mode is a setting, so it comes back SETTING_NEEDS_YES and waits for the owner's own yes: say what would change and that you are waiting. DAY_SHOWN confirms visibility; DAY_NOT_SHOWN gives the reason; DAY_MODE confirms the preference. Countdown content is not returned: never invent it.",
      "input_schema": {"type": "object", "properties": {
          "mode": {"type": "string", "enum": ["smart", "always", "never"],
                   "description": "Omit to show Home now; set to change Classic automatic display."}},
          "required": []}},
-    {"name": "set_workspace_layout", "description": "Set a workspace fullscreen beside chat, restore its normal layout, or with fullscreen_chat=false place it in a screen half/third/two thirds. Omit workspace for the focused one. No approval; the choice is remembered. LAYOUT_OK confirms the screen applied it; LAYOUT_SAVED applies on next open.",
+    {"name": "set_workspace_layout", "description": "Set a workspace fullscreen beside chat, restore its normal layout, or with fullscreen_chat=false place it in a screen half/third/two thirds. Omit workspace for the focused one. A layout is a setting: it comes back SETTING_NEEDS_YES and waits for the owner's own yes (say what would change), then it is remembered. LAYOUT_OK confirms the screen applied it; LAYOUT_SAVED applies on next open.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id or name; empty for the one in front."},
          "fullscreen_chat": {"type": "boolean", "description": "true: fullscreen with the chat beside it; false: the normal layout, or the position given."},
@@ -796,11 +824,12 @@ CLAUDE_TOOLS = [
                                                   "right_third", "left_two_thirds", "right_two_thirds"],
                       "description": "With fullscreen_chat false: the part of the screen the window takes."}},
       "required": ["fullscreen_chat"]}},
-    {"name": "organize_email", "description": "Archive, label, move, star, mark read or unread, Trash, restore or report spam on the user's Gmail. Pick the mail with a Gmail search in query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or thread_ids from search_email. Nothing changes yet: it raises ONE approval card for the whole batch and returns a readback; say it to the user in one sentence and ask: yes, no, or change it (call again with replaces=the card_id). They approve on the card, or by saying yes (then call answer_card). Every change can be undone (undo_action).",
+    {"name": "organize_email", "description": "Archive, label, move, star, mark read or unread, Trash, restore or report spam on the user's Gmail. Pick the mail with selection=screen (the conversations ticked on their screen, exactly), a Gmail search in query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or thread_ids (the ref of each search_email hit). Mark read/unread, star/unstar and label/unlabel happen at once (receipt_id; undo_action puts it back). Anything else changes nothing yet: it raises ONE approval card for the whole batch and returns a readback; say it to the user in one sentence and ask: yes, no, or change it (call again with replaces=the card_id). They approve on the card, or by saying yes (then call answer_card). Every change can be undone (undo_action).",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["archive", "inbox", "read", "unread", "star", "unstar", "label", "unlabel", "move", "trash", "restore", "spam", "not_spam"]},
          "query": {"type": "string", "description": "A Gmail search, e.g. from:linkedin.com older_than:1m"},
          "thread_ids": {"type": "array", "items": {"type": "string"}, "description": "Conversation ids (account:thread) instead of a query."},
+         "selection": {"type": "string", "enum": ["screen"], "description": "screen: exactly the conversations ticked on the user's screen now, instead of query or thread_ids."},
          "label": {"type": "string", "description": "For label, unlabel and move."},
          "account": {"type": "string", "description": "Only this account (label or address)."},
          "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
@@ -813,6 +842,18 @@ CLAUDE_TOOLS = [
          "to": {"type": "string", "description": "Destination folder (move), or the folder to make (new_folder)."},
          "new_name": {"type": "string", "description": "For rename."},
          "moves": {"type": "array", "items": {"type": "string"}, "description": "To sort into several folders in one card: 'file => folder' each."},
+         "selection": {"type": "string", "enum": ["screen"], "description": "screen: the files ticked, open or pointed at on the user's screen, instead of items."},
+         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
+         "why": {"type": "string", "description": "One short line for the card."}},
+      "required": ["action"]}},
+    {"name": "organize_calendar", "description": "Move calendar events later or earlier by whole days and minutes, keeping their length. ONE card lists each old and new time; nothing moves before the user's own yes. selection screen takes the ticked or pointed-at events. Guests are not notified; undoable. update_calendar_event edits one event's title or place.",
+     "input_schema": {"type": "object", "properties": {"selection": {"type": "string"}, "events": {"type": "array", "items": {"type": "string"}}, "days": {"type": "integer"}, "minutes": {"type": "integer"}}}},
+    {"name": "organize_media", "description": "Favourite, unfavourite, tag, untag or move to a project the user's Media cards. One card changes now; two or more wait for ONE approval card (read it back, then answer_card). Pick the cards with selection=screen (ticked, open or pointed at on their screen) or by id in cards. undo_action puts a change back.",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["favourite", "unfavourite", "tag", "untag", "project"]},
+         "cards": {"type": "array", "items": {"type": "string"}, "description": "Card ids (the id of a Media card)."},
+         "selection": {"type": "string", "enum": ["screen"], "description": "screen: the cards ticked, open or pointed at on the user's screen."},
+         "value": {"type": "string", "description": "The tag, or the project name (empty for none)."},
          "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
          "why": {"type": "string", "description": "One short line for the card."}},
       "required": ["action"]}},
@@ -1807,7 +1848,9 @@ def _tool_search_email(inp):
                                "note": _google_note(summary, "Gmail")})
         accounts_status = _summarize_multi_account_errors(result)
         cards = result.get("messages") or []
+        from agent_friday.services.screen_stage import card_ref as _card_ref
         hits = [{
+            "ref": _card_ref(c),
             "from": c.get("sender") or "",
             "subject": c.get("subject") or "",
             "snippet": (c.get("snippet") or "")[:160],
@@ -3123,6 +3166,8 @@ def _tool_check_situation(inp):
     """Tool handler: the live situation, from state the server already holds
     (services/situation), optionally pinned into this conversation's turns."""
     inp = inp or {}
+    if inp.get('look') == 'screen':
+        return _screen_look()
     from agent_friday.services import situation
     note = ''
     if inp.get('pin') is not None:
@@ -3182,6 +3227,17 @@ def _tool_set_workspace_layout(inp):
     if ws == "settings":
         return "LAYOUT_FAIL: Settings opens as a panel; it has no fullscreen layout."
     layouts = dict((_load_settings() or {}).get("workspace_layouts") or {})
+    from agent_friday.services import setting_proposals as _sp
+
+    def _words(v):
+        return ("fullscreen with the chat beside it" if v == "fullscreen_chat" else
+                "docked %s" % LAYOUT_POSITIONS.get((v or {}).get("window"), "") if isinstance(v, dict) else "its normal layout")
+    _new = "fullscreen_chat" if on else ({"window": position} if position else None)
+    _held = _sp.hold("set_workspace_layout", inp, old=_words(layouts.get(ws)), new=_words(_new),
+                     label="the layout of %s" % workspace_registry.label(ws),
+                     consequence="It applies whenever that workspace is open.")
+    if _held:
+        return _held
     if on:
         layouts[ws] = "fullscreen_chat"
     elif position:
@@ -3271,8 +3327,8 @@ _LANDING_MODE_WORDS = {
 def _tool_show_my_day(inp):
     """Tool handler: the start screen's cluster (the owner's countdowns, the
     chat field, the mic and Start my day) now, or how it decides to show
-    (settings.landing_mode: smart, always or never). The owner's own screen,
-    so no approval is needed.
+    (settings.landing_mode: smart, always or never). Showing it needs no
+    approval; a mode is a setting and waits for the owner's yes.
 
     With no mode it asks the desktop page to show the cluster and reports what
     the page said: DAY_SHOWN, or DAY_NOT_SHOWN with the page's reason (a
@@ -3286,6 +3342,12 @@ def _tool_show_my_day(inp):
     if mode and mode not in LANDING_MODES:
         return "DAY_FAIL: the start screen's mode is smart, always or never."
     if mode:
+        from agent_friday.core import _load_settings
+        from agent_friday.services import setting_proposals as _sp
+        _held = _sp.hold("show_my_day", inp, old=(_load_settings() or {}).get("landing_mode") or "smart", new=mode,
+                         consequence="The start screen %s." % _LANDING_MODE_WORDS[mode])
+        if _held:
+            return _held
         _save_settings({"landing_mode": mode})
     action = {"type": "landing", "summon": not mode, "via": "friday"}
     if mode:
@@ -3360,23 +3422,441 @@ def _voice_room() -> bool:
 
 
 def _tool_organize_email(inp):
-    """Tool handler: one approval card for a batch of Gmail changes."""
+    """Tool handler: one approval card for a batch of Gmail changes (mark read, star and label
+    run at once). `selection="screen"` takes the conversations ticked on the owner's screen,
+    exactly as the page last reported them."""
     from agent_friday.services import item_actions as _ia
+    from agent_friday.services import screen_stage as _ss
     inp = inp or {}
-    return _organize_call(_ia.propose_email, inp.get("action") or "", query=inp.get("query") or "",
-                          thread_ids=inp.get("thread_ids") or None, account=inp.get("account") or "",
+    extra = {}
+    thread_ids, query = inp.get("thread_ids") or None, inp.get("query") or ""
+    if str(inp.get("selection") or "").strip().lower() == "screen":
+        refs, st, rule, err = _screen_target("messages")
+        if err:
+            return err
+        refs = [r for r in refs if _ss.split_mail_ref(r)]
+        if not refs:
+            return "NOT DONE: nothing on their screen is a conversation."
+        thread_ids = ["%s:%s" % _ss.split_mail_ref(r) for r in refs]
+        query = ""
+        sel = st.get("selection") or {}
+        extra = {"refs": refs, "selection_id": sel.get("id") or "" if sel.get("refs") else "",
+                 "stage_rev": st.get("rev") or 0, "rule": rule}
+    return _organize_call(_ia.propose_email, inp.get("action") or "", query=query,
+                          thread_ids=thread_ids, account=inp.get("account") or "",
                           label=inp.get("label") or "", why=inp.get("why") or "",
-                          replaces=inp.get("replaces") or "", room_mode=_voice_room())
+                          replaces=inp.get("replaces") or "", room_mode=_voice_room(), **extra)
+
+
+# -- See & Touch: what is on the owner's screen (services/screen_stage) --------
+
+#: How the rows a tool acted on were chosen, in the owner's words; the card says it.
+_RULE_WORDS = {"selection": "the rows you ticked", "cursor": "the row your hand was on", "open": "the one you have open",
+               "focus": "the row you were on", "pointed": "the ones I just pointed at"}
+
+
+def _screen_target(workspace: str):
+    """(refs, stage, rule words, error) for "these" / "this" in `workspace`: the ticked rows, then the row
+    the hand cursor is on, then the open one, the one the keyboard is on, the last pointed set. Two rules
+    that disagree become a question, never a guess; an old stage with no answer from the page refuses
+    (nothing falls back to a search)."""
+    from agent_friday.services import desktop_bus, screen_stage as _ss
+    st = _fresh_screen_stage(workspace)
+    if st is None:
+        return [], None, "", ("NOT DONE: I can't see your list right now, so I won't guess what you mean. "
+                              "Ask them to tick the rows, or name them.")
+    d = _ss.resolve_deictic(st, "these", desktop_bus.pointed(workspace))
+    if d["ask"]:
+        return [], st, "", "NOT DONE: " + d["ask"]
+    if not d["refs"]:
+        return [], st, "", "NOT DONE: nothing is ticked, open or pointed at on their screen."
+    return d["refs"][:_ss.MAX_REFS], st, _RULE_WORDS.get(d["rule"], ""), ""
+
+
+
+#: How long a page gets to answer a `stage?` request.
+STAGE_ASK_S = 3.0
+#: How long a tick command may take to be confirmed by the page.
+SELECT_ACK_S = 6.0
+
+
+def _fresh_screen_stage(workspace=None):
+    """The stage a page reported within screen_stage.FRESH_S, else one it is asked for now
+    (the ack carries it). None when no page answers: nothing then acts on a guess."""
+    from agent_friday.services import desktop_bus, screen_stage
+    st = desktop_bus.stage(workspace, max_age=screen_stage.FRESH_S)
+    if st is not None:
+        return st
+    got = desktop_bus.send([{"type": "stage_request", "workspace": workspace or ""}], timeout=STAGE_ASK_S)
+    if not (got.get("delivered") and got.get("acked")):
+        return None
+    return desktop_bus.stage(workspace, max_age=screen_stage.FRESH_S)
+
+
+def _screen_look() -> str:
+    """check_situation(look="screen"): the stage in words. Cloud voice and a room hear counts
+    and categories only; chat and local voice also get the rows, wrapped as data."""
+    from agent_friday.services import desktop_bus, screen_stage
+    st = _fresh_screen_stage(None)
+    if st is None:
+        st = desktop_bus.stage(None)
+    if st is None:
+        return "I can't see your screen right now: no Friday page has shown me a list."
+    quiet = _cloud_voice() or _voice_room()
+    text = screen_stage.summary(st, quiet=quiet)
+    if not quiet:
+        text += screen_stage.on_screen_block(st)
+    screen_stage.log_counts("look", st.get("workspace") or "", len(st.get("items") or []))
+    return text
+
+
+def _mail_select_all(match: dict):
+    """(refs, reveal, capped, error) for a whole-inbox selection: a Gmail search the owner's
+    words made, or a kind of mail the facet table knows, judged on the cards the list itself
+    is built from. Never a model reading titles."""
+    from agent_friday.services import item_actions as _ia
+    from agent_friday.services import message_triage, screen_stage as _ss
+    q = str(match.get("query") or "").strip()
+    if q:
+        try:
+            sel = _ia.select_email(query=q)
+        except _ia.Refused as e:
+            return [], None, False, str(e.user_message)
+        refs = [_ss.mail_ref(a, t) for a, tids in sel["accounts"].items() for t in tids]
+        return refs[:_ss.MAX_REFS], {"query": q}, bool(sel.get("truncated")) or len(refs) > _ss.MAX_REFS, ""
+    cat = match.get("category")
+    if cat and not _ss.category_known("messages", cat):
+        return [], None, False, ("I don't have %r as a kind of mail. Give a Gmail search in match.query "
+                                 "(from:, subject:, older_than:...) instead." % str(cat)[:40])
+    result = message_triage.collect(limit_per_account=100)
+    cards = [c for c in (result.get("messages") or [])
+             if not (c.get("archived") or c.get("trashed") or c.get("spam") or c.get("muted"))]
+    items = [{"ref": _ss.card_ref(c), "n": i + 1, "facets": _ss.card_facets(c)} for i, c in enumerate(cards)]
+    res = _ss.resolve({"workspace": "messages", "items": items}, match)
+    reveal = {"lane": str(match["lane"]).lower()} if match.get("lane") else None
+    capped = len(res["refs"]) >= _ss.MAX_REFS
+    return res["refs"], reveal, capped, ""
+
+
+#: The lists that can show Friday's ticks.
+_TICKABLE = ("messages", "media", "library", "files", "calendar", "chat")
+
+#: The keys of a request that name what to match, flat (voice) or nested in `match` (chat).
+_MATCH_KEYS = ("when", "stage", "level", "scheduled", "pinned", "archived", "category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic",
+               "status", "kind", "project", "folder", "source", "privacy")
+
+
+def _flat_match(inp) -> dict:
+    match = dict(inp.get("match")) if isinstance(inp.get("match"), dict) else {}
+    for k in _MATCH_KEYS:
+        # the voice declaration is flat: the same keys at the top level
+        if inp.get(k) not in (None, "", []) and k not in match:
+            match[k] = inp[k]
+    return match
+
+
+def _screen_workspace(inp, default="messages") -> str:
+    """The workspace a See & Touch call is about: the one it names, else the one whose list the
+    owner has in front, else the Message Center."""
+    from agent_friday.services import desktop_bus
+    ws = str(inp.get("workspace") or "").strip().lower()
+    if ws:
+        return ws
+    st = desktop_bus.stage(None)
+    return (st or {}).get("workspace") or default
+
+
+def _screen_filter(ws: str, inp, match: dict) -> str:
+    """screen_select op=filter: set or remove one filter chip through the workspace's own filter."""
+    from agent_friday.services import desktop_bus, screen_stage as _ss
+    key = inp.get("key") if inp.get("key") not in (None, "") else match.get("key")
+    value = inp.get("value") if inp.get("value") is not None else match.get("value")
+    req = _ss.filter_request(ws, key, value)
+    if not req["ok"]:
+        return "FILTER_FAIL: " + req["error"] + "."
+    if req["value"]:
+        action = {"type": "chips", "workspace": ws, "set": [{"key": req["key"], "value": req["value"]}], "remove": []}
+    else:
+        action = {"type": "chips", "workspace": ws, "set": [], "remove": [req["key"]]}
+    sent = desktop_bus.send([action], timeout=SELECT_ACK_S)
+    if not sent.get("delivered"):
+        return "FILTER_FAIL: %s." % sent.get("reason")
+    res = (sent.get("ack") or {}).get("result") or {}
+    if not sent.get("acked") or not res.get("ok"):
+        return "FILTER_FAIL: %s" % (res.get("reason") or "the page did not confirm it, so I can't say the list is filtered.")
+    _ss.log_counts("filter", ws, len(res.get("filters") or []), "remove" if not req["value"] else "set")
+    quiet = _cloud_voice() or _voice_room()
+    n = len(res.get("filters") or [])
+    if quiet:
+        return "FILTER_OK I've %s the %s filter; %d on." % ("cleared" if not req["value"] else "set", req["key"], n)
+    names = "; ".join("%s%s" % (f.get("label") or f.get("key"), " (by Friday)" if f.get("by") == "friday" else "")
+                      for f in (res.get("filters") or []))
+    return "FILTER_OK %s%s" % ("removed %s" % req["key"] if not req["value"] else "filter set",
+                               (" - now: " + names) if names else " - no filters on")
+
+
+def _screen_fill(ws: str, inp) -> str:
+    """screen_select op=fill: write text into a field the owner's open workspace registered for it. It never
+    sends, saves or creates anything: only the owner's own button does. A field the page did not register is
+    refused; text that carries a link or address Friday read in something outside is flagged on the screen and
+    on the send card that follows."""
+    from agent_friday.services import desktop_bus, screen_stage as _ss, taint as _taint
+    field = str(inp.get("field") or "").strip()
+    text = inp.get("text")
+    mode = "insert" if str(inp.get("mode") or "").lower() == "insert" else "replace"
+    if not field or not isinstance(text, str) or not text.strip():
+        return "FILL_FAIL: say which field, and what to write in it."
+    if len(text) > _ss.FILL_MAX:
+        return "FILL_FAIL: that is longer than %d characters; write it in parts." % _ss.FILL_MAX
+    st = _fresh_screen_stage(ws)
+    if st is None:
+        return "FILL_FAIL: I can't see that screen right now."
+    fields = {f["key"]: f for f in st.get("fields") or []}
+    if field not in fields:
+        have = ", ".join("%s (%s)" % (k, f.get("label") or k) for k, f in list(fields.items())[:8])
+        return "FILL_FAIL: %s is not a field I can write in here.%s" % (
+            field[:40], (" I can write in: " + have + ".") if have else " There is nothing open that I can write in.")
+    flags = []
+    try:
+        cid = _CURRENT_CONVERSATION.get()
+        dec = _taint.evaluate("conversation:%s" % cid if cid else "default", "screen_select", {"text": text})
+        flags = [f.text for f in dec.warn][:4]
+    except Exception:
+        flags = []
+    sent = desktop_bus.send([{"type": "fill", "workspace": ws, "field": field, "text": text, "mode": mode, "flags": flags}],
+                            timeout=SELECT_ACK_S)
+    if not sent.get("delivered"):
+        return "FILL_FAIL: %s." % sent.get("reason")
+    res = (sent.get("ack") or {}).get("result") or {}
+    if not sent.get("acked") or not res.get("ok"):
+        return "FILL_FAIL: %s" % (res.get("reason") or "the page did not confirm it, so I can't say anything was written.")
+    _ss.remember_fill(field, text, flags)
+    _ss.log_counts("fill", ws, 1, mode)
+    label = (fields[field].get("label") or field)
+    if _cloud_voice() or _voice_room():
+        return "FILL_OK I've written it in. They read it, change it or undo it, and send it themselves."
+    note = (" Part of it uses something I read (%s): they were told to check it." % "; ".join(flags)) if flags else ""
+    return ("FILL_OK written into %s. Nothing is sent: they can read it, edit it or undo it, and press Send themselves."
+            % label) + note
+
+
+def _screen_point(ws: str, inp, match: dict) -> str:
+    """screen_select op=point: outline and number rows on the owner's screen. Shows only: nothing
+    changes and no card is raised. What was pointed at is remembered for two minutes ("the second
+    one")."""
+    import uuid as _uuid
+    from agent_friday.services import desktop_bus, screen_stage as _ss
+    badges = "none" if str(inp.get("badges") or "").lower() == "none" else "numbers"
+    if ws not in _ss.NOUNS:
+        return "POINT_FAIL: I can point at rows in %s so far." % ", ".join(sorted(_ss.NOUNS))
+    st = _fresh_screen_stage(ws)
+    if st is None:
+        return "POINT_FAIL: I can't see your list right now."
+    pointed = desktop_bus.pointed(ws)
+    rule = "facets"
+    if inp.get("refs"):
+        known = {it["ref"] for it in st.get("items") or []}
+        refs = [r for r in inp["refs"] if r in known]
+    elif match.get("deictic"):
+        d = _ss.resolve_deictic(st, str(match["deictic"]), pointed)
+        if d["ask"]:
+            return "POINT_ASK: " + d["ask"]
+        refs, rule = d["refs"], d["rule"]
+    else:
+        r = _ss.resolve(st, match, pointed)
+        if r["unknown"]:
+            return "POINT_FAIL: I don't have %r as a kind of item here." % r["unknown"][0]
+        refs, rule = r["refs"], r["rule"]
+    if not refs:
+        return "POINT_FAIL: nothing on that list matches."
+    plan = _ss.point_plan(refs)
+    pid = "pt_" + _uuid.uuid4().hex[:6]
+    sent = desktop_bus.send([{"type": "point", "workspace": ws, "id": pid, "refs": plan["badged"],
+                              "badges": badges}], timeout=SELECT_ACK_S)
+    if not sent.get("delivered"):
+        return "POINT_FAIL: %s." % sent.get("reason")
+    res = (sent.get("ack") or {}).get("result") or {}
+    if not sent.get("acked") or not res.get("ok"):
+        return "POINT_FAIL: the page did not confirm it, so I can't say anything is marked."
+    shown = int(res.get("count") or 0)
+    if shown == 0:
+        return "POINT_FAIL: none of those is on screen to mark."
+    desktop_bus.set_pointed(ws, plan["badged"][:shown] if shown else [], pid)
+    _ss.log_counts("point", ws, shown, rule)
+    noun = _ss.NOUNS.get(ws, "items")
+    more = plan["more"]
+    if _cloud_voice() or _voice_room():
+        return "POINT_OK I've marked %d %s%s." % (shown, noun, (" and %d more are not marked" % more) if more else "")
+    return "POINT_OK %d marked%s%s" % (shown, " (numbered 1-%d)" % shown if badges == "numbers" and shown else "",
+                                       (" and %d more not marked" % more) if more else "")
+
+
+def _tool_screen_select(inp):
+    """Tool handler: tick, untick or clear conversations on the owner's screen. Shows only:
+    no mail changes and no card. The result reports what the page confirmed, never the intent."""
+    import uuid as _uuid
+    from agent_friday.services import desktop_bus, screen_stage as _ss
+    inp = inp or {}
+    op = str(inp.get("op") or "select").strip().lower()
+    # ticks are the Message Center's until another list can show them; pointing and filters go to
+    # the list the owner has in front
+    ws = str(inp.get("workspace") or "").strip().lower() or _screen_workspace(inp)
+    if op in ("select", "add", "remove", "clear") and ws not in _TICKABLE and not inp.get("workspace"):
+        ws = "messages"
+    scope = str(inp.get("scope") or "screen").strip().lower()
+    match = _flat_match(inp)
+    if op == "filter":
+        return _screen_filter(ws, inp, match)
+    if op == "point":
+        return _screen_point(ws, inp, match)
+    if op == "fill":
+        return _screen_fill(ws, inp)
+    if ws not in _TICKABLE:
+        return "SELECT_FAIL: I can show ticks in the Message Center, Media, the Library, Files, the Calendar and the chat list so far."
+    if ws != "messages" and scope == "all":
+        return "SELECT_FAIL: only the Message Center can search the whole list; use scope screen here."
+    if op not in ("select", "add", "remove", "clear") or scope not in ("screen", "all"):
+        return "SELECT_FAIL: op is select, add, remove, clear or filter; scope is screen or all."
+    quiet = _cloud_voice() or _voice_room()
+    word = str(match.get("category") or "").strip()
+    name = (word if word and _ss.category_known(ws, word) else _ss.NOUNS.get(ws, "items")) if quiet else (
+        str(inp.get("label") or word or "Selected").strip()[:40])
+
+    if op == "clear":
+        sent = desktop_bus.send([{"type": "clear_selection", "workspace": ws}], timeout=SELECT_ACK_S)
+        res = (sent.get("ack") or {}).get("result") or {}
+        _ss.log_counts("clear", ws, 0)
+        if sent.get("delivered") and sent.get("acked") and res.get("ok"):
+            return "SELECT_OK: the ticks are cleared."
+        return "SELECT_FAIL: %s" % (sent.get("reason") or "the page did not confirm it")
+
+    st = _fresh_screen_stage(ws)
+    if st is None:
+        try:
+            from agent_friday.services.desktop_targets import open_on_desktop
+            open_on_desktop("workspace", workspace=ws, name_items=False)
+        except Exception:
+            pass
+        st = _fresh_screen_stage(ws)
+    if st is None and scope == "screen":
+        return "SELECT_FAIL: I can't see your list right now."
+
+    reveal = None
+    rule = "facets"
+    capped = False
+    if scope == "all":
+        refs, reveal, capped, err = _mail_select_all(match)
+        if err:
+            return "SELECT_FAIL: " + err
+    elif match.get("deictic"):
+        d = _ss.resolve_deictic(st, str(match["deictic"]), None)
+        if d["ask"]:
+            return "SELECT_ASK: " + d["ask"]
+        refs, rule = d["refs"], d["rule"]
+    else:
+        r = _ss.resolve(st, match, desktop_bus.pointed(ws))
+        if r["unknown"]:
+            return ("SELECT_FAIL: I don't have %r as a kind of mail. Use scope=all with a Gmail "
+                    "search in match.query." % r["unknown"][0]) if ws == "messages" else (
+                "SELECT_FAIL: I don't have %r as a kind of item here." % r["unknown"][0])
+        refs, rule = r["refs"], r["rule"]
+    if not refs:
+        return "SELECT_FAIL: nothing on that list matches."
+    requested = len(refs)
+    sel_id = "sel_" + _uuid.uuid4().hex[:6]
+    sent = desktop_bus.send([{"type": "select", "workspace": ws, "reveal": reveal,
+                              "selection": {"id": sel_id, "refs": refs, "label": name[:40],
+                                            "mode": "replace" if op == "select" else op}}],
+                            timeout=SELECT_ACK_S)
+    if not sent.get("delivered"):
+        return "SELECT_FAIL: %s." % sent.get("reason")
+    res = (sent.get("ack") or {}).get("result") or {}
+    if not sent.get("acked") or not res.get("ok"):
+        return "SELECT_FAIL: the page did not confirm the ticks, so I can't say anything is selected."
+    applied, missing = int(res.get("applied") or 0), int(res.get("missing") or 0)
+    accepted = int(res.get("accepted", applied + missing))
+    total = int(res.get("count", applied + missing))
+    _ss.log_counts(op, ws, total, rule)
+    shown = "%d shown%s" % (applied, (", %d more below the list" % missing) if missing else "")
+    partial = accepted < requested or capped
+    verb = {"select": "selected", "add": "added", "remove": "unticked"}[op]
+    if quiet:
+        text = "I've %s %d %s; %d on screen." % ("ticked" if op != "remove" else "unticked", accepted, name, applied)
+        if capped:
+            text += " That is the most I can hold at once (%d)." % _ss.MAX_REFS
+        return ("SELECT_PARTIAL " if partial else "SELECT_OK ") + text
+    text = "%d %s (%s) - %s" % (total if op != "remove" else accepted, verb, shown, name)
+    if capped:
+        text += ". The most I can hold at once is %d; narrow it to cover the rest." % _ss.MAX_REFS
+    elif accepted < requested:
+        text += ". %d could not be shown by the page." % (requested - accepted)
+    return ("SELECT_PARTIAL " if partial else "SELECT_OK ") + text
 
 
 def _tool_organize_files(inp):
     """Tool handler: one local file change now, or a batch on one card."""
     from agent_friday.services import item_actions as _ia
     inp = inp or {}
-    return _organize_call(_ia.organize_files, inp.get("action") or "", items=inp.get("items") or None,
+    items, extra = inp.get("items") or None, {}
+    if str(inp.get("selection") or "").strip().lower() == "screen":
+        refs, st, rule, err = _screen_target("files")
+        if err:
+            return err
+        refs = [r for r in refs if str(r).startswith("file:") and str(r).count(":") >= 2]
+        if not refs:
+            return "NOT DONE: nothing on their screen is a file."
+        items = [r.split(":", 1)[1] for r in refs]          # "documents:Taxes/w2.pdf", the form file_ref takes
+        sel = st.get("selection") or {}
+        extra = {"refs": refs, "selection_id": sel.get("id") or "" if sel.get("refs") else "",
+                 "stage_rev": st.get("rev") or 0, "rule": rule}
+    return _organize_call(_ia.organize_files, inp.get("action") or "", items=items,
                           to=inp.get("to") or "", new_name=inp.get("new_name") or "",
                           moves=inp.get("moves") or None, why=inp.get("why") or "",
-                          replaces=inp.get("replaces") or "")
+                          replaces=inp.get("replaces") or "", **extra)
+
+
+def _tool_organize_media(inp):
+    """Tool handler: favourite, tag or move Media cards: one at once, two or more on one card.
+    `selection="screen"` takes the cards ticked (or pointed at, or open) on the owner's screen."""
+    from agent_friday.services import item_actions as _ia
+    inp = inp or {}
+    cards, extra = inp.get("cards") or None, {}
+    if str(inp.get("selection") or "").strip().lower() == "screen":
+        refs, st, rule, err = _screen_target("media")
+        if err:
+            return err
+        refs = [r for r in refs if str(r).startswith("media:")]
+        if not refs:
+            return "NOT DONE: nothing on their screen is a Media card."
+        cards = refs
+        sel = st.get("selection") or {}
+        extra = {"refs": refs, "selection_id": sel.get("id") or "" if sel.get("refs") else "",
+                 "stage_rev": st.get("rev") or 0, "rule": rule}
+    return _organize_call(_ia.organize_media, inp.get("action") or "", cards=cards, value=inp.get("value") or "",
+                          why=inp.get("why") or "", replaces=inp.get("replaces") or "", **extra)
+
+
+def _tool_organize_calendar(inp):
+    """Tool handler: move calendar events by days and minutes, on ONE card. `selection="screen"` takes the events
+    ticked (or pointed at, or open) on the owner's screen."""
+    from agent_friday.services import item_actions as _ia
+    inp = inp or {}
+    events, extra = inp.get("events") or None, {}
+    if str(inp.get("selection") or "").strip().lower() == "screen":
+        refs, st, rule, err = _screen_target("calendar")
+        if err:
+            return err
+        refs = [r for r in refs if str(r).startswith("event:")]
+        if not refs:
+            return "NOT DONE: nothing on their screen is a calendar event."
+        events = refs
+        sel = st.get("selection") or {}
+        extra = {"refs": refs, "selection_id": sel.get("id") or "" if sel.get("refs") else "",
+                 "stage_rev": st.get("rev") or 0, "rule": rule}
+    return _organize_call(_ia.organize_calendar, inp.get("action") or "shift", events=events,
+                          days=inp.get("days") or 0, minutes=inp.get("minutes") or 0,
+                          account=inp.get("account") or "", why=inp.get("why") or "",
+                          replaces=inp.get("replaces") or "", **extra)
 
 
 def _tool_organize_wiki(inp):
@@ -3479,6 +3959,15 @@ def _tool_switch_model(inp):
                 "Local models installed: %s" % (want, ", ".join(locals_) or "none"))
 
     mid, label, prov = hit
+    # A seat change is a setting: shown as a diff and held for the owner's Yes (B6, settings by sentence).
+    from agent_friday.services import setting_proposals as _sp
+    _cur_seat = (((_load_settings() or {}).get('capability_routing') or {}).get('reasoning') or {}).get('model') or ''
+    _is_local = any(i[0] == mid and i[2] for i in ids)
+    _held = _sp.hold("switch_model", inp, old=_cur_seat or "not set", new=label, consequence=(
+        "It runs on this PC and costs nothing per message." if _is_local else
+        "Your messages go to %s's cloud, which can cost money." % (prov or "a cloud provider")))
+    if _held:
+        return _held
     try:
         cur = _load_settings() or {}
         routing = dict(cur.get('capability_routing') or {})
@@ -4252,6 +4741,15 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
     # resolves its task from this thread-local; the heartbeat proves the
     # thread is alive while it runs. Both are undone in the finally.
     _tj = _journal()
+    if _tj.stop_requested(task_id):
+        # stopped while it waited for a seat: it never starts
+        _tj.consume_stop(task_id)
+        _task_set(task_id, status='cancelled', ended=_time.time(),
+                  result='[Stopped at your request before it started.]')
+        _task_log(task_id, 'Stopped at your request before it started.')
+        _report_task_completion(task_id, name, 'cancelled', '[Stopped at your request before it started.]')
+        _chain_sync(task_id)
+        return
     _tj.push_task(task_id)
     _heartbeat = _tj.Heartbeat(task_id).start()
     _task_set(task_id, status='running', started=_time.time())
@@ -4429,6 +4927,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
             _task_set(task_id, status='cancelled', ended=_time.time(),
                       result=(reply or '[Stopped at your request.]'))
             _report_task_completion(task_id, name, 'cancelled', reply or '[Stopped at your request.]')
+            _chain_sync(task_id)
             return
         # Tool lines are written by _task_log_tool AS EACH CALL HAPPENS now,
         # so replaying the trace here would print every tool twice. What the
@@ -5125,6 +5624,60 @@ def delete_workflow_chain(name):
     return False
 
 
+#: Chains the owner asked to stop: slug -> {"at", "by"}. The run that is going finishes the step that is running and
+#: starts no other (B5: there was no way to stop a workflow).
+_CHAIN_STOP: dict = {}
+#: What the last stop did, for the run's record: slug -> {"after_step", "at"}. Cleared when the chain is run again.
+_CHAIN_STOPPED: dict = {}
+
+
+def stop_workflow_chain(name, by="you"):
+    """Stop a running workflow: the step that is running finishes (it is asked to stop at its next checkpoint),
+    the next never starts, and the run's record says `stopped`. {"ok", "slug", "stopping", "after_step"} or
+    {"ok": False, "reason"}. Stopping only ever ends work, so it needs no approval."""
+    chain = load_workflow_chain(name)
+    if not chain:
+        return {"ok": False, "reason": "there is no workflow called %r" % str(name)[:60]}
+    slug = chain.get('slug') or _chain_slug(name)
+    st = chain_run_status(slug) or {}
+    running = [s for s in st.get('steps') or [] if s.get('status') in ('queued', 'running')]
+    if not running:
+        return {"ok": False, "reason": "it is not running"}
+    from agent_friday.services import task_journal as _tjm
+    _CHAIN_STOP[slug] = {"at": _time.time(), "by": by}
+    stopping = []
+    for s in running:
+        tid = s.get('task_id')
+        if not tid:
+            continue
+        try:
+            _tjm.request_stop(tid)
+            _tjm.steer("stop after this step", source="user", task_id=tid)
+        except Exception:
+            pass
+        with TASKS_LOCK:
+            queued = (TASKS.get(tid) or {}).get('status') == 'queued'
+        if queued:
+            # still waiting for a seat: it never starts
+            _task_set(tid, status='cancelled', ended=_time.time(),
+                      result='[Stopped at your request before it started.]')
+        stopping.append(tid)
+    _CHAIN_STOPPED[slug] = {"after_step": running[-1].get('index', 0), "at": _time.time()}
+    return {"ok": True, "slug": slug, "stopping": stopping, "after_step": running[-1].get('index', 0)}
+
+
+def _chain_sync(task_id):
+    """Tell the step list (services/step_lists) that a chain task changed. Never raises."""
+    try:
+        with TASKS_LOCK:
+            t = dict(TASKS.get(task_id) or {})
+        if t.get('chain'):
+            from agent_friday.services import step_lists
+            step_lists.sync_workflow(t['chain'], conversation_id=t.get('conversation_id') or '')
+    except Exception:
+        pass
+
+
 def run_workflow_chain(name, conversation_id=None):
     """Kick off a stored chain at step 0. Returns the first task_id (or None).
 
@@ -5141,7 +5694,10 @@ def run_workflow_chain(name, conversation_id=None):
         return None
     slug = chain.get('slug') or _chain_slug(name)
     first = steps[0]
-    return _spawn_task(
+    # a new run is not the one that was stopped
+    _CHAIN_STOP.pop(slug, None)
+    _CHAIN_STOPPED.pop(slug, None)
+    tid = _spawn_task(
         name=first.get('name') or f"{chain.get('name')} · Step 1",
         prompt=first['prompt'],
         description=f"Chain '{chain.get('name')}' · step 1/{len(steps)}",
@@ -5149,6 +5705,12 @@ def run_workflow_chain(name, conversation_id=None):
         model=first.get('seat') or chain.get('seat'),
         conversation_id=conversation_id,
     )
+    try:
+        from agent_friday.services import step_lists
+        step_lists.begin_workflow(slug, title=chain.get('name') or slug, conversation_id=conversation_id or '')
+    except Exception:
+        pass
+    return tid
 
 
 def chain_run_status(name):
@@ -5181,6 +5743,8 @@ def chain_run_status(name):
             return 'completed'
         if st in ('queued', 'running', 'failed'):
             return st
+        if st in ('cancelled', 'stopped'):
+            return 'stopped'
         return st
     out_steps = []
     for i, s in enumerate(steps):
@@ -5211,8 +5775,21 @@ def chain_run_status(name):
     running = any(s['status'] in ('queued', 'running') for s in out_steps)
     failed = any(s['status'] == 'failed' for s in out_steps)
     done = all(s['status'] == 'completed' for s in out_steps) if out_steps else False
+    # Stopped by the owner: a step that was stopped, or a stop that landed between steps. What never started
+    # is skipped, and the reason says who stopped it.
+    _rec = _CHAIN_STOPPED.get(slug)
+    stopped = any(s['status'] == 'stopped' for s in out_steps) or bool(
+        _rec and latest and not running and not done and (latest[0].get('created') or 0) <= _rec['at'])
+    if stopped:
+        for s in out_steps:
+            if s['status'] == 'pending':
+                s['status'] = 'skipped'
+                s['reason'] = 'stopped by you'
+            elif s['status'] == 'stopped':
+                s['reason'] = s.get('reason') or 'stopped by you'
     return {'name': chain.get('name'), 'slug': slug,
             'state': 'running' if running else
+                     'stopped' if stopped else
                      'failed' if failed else
                      'completed' if done else 'idle',
             'steps': out_steps}
@@ -5253,6 +5830,89 @@ def _tool_run_workflow(inp):
         return "run_workflow error: no chain named %r (or it has no steps)." % name
     return ("workflow '%s' started (first task %s). Steps auto-advance; check "
             "progress with workflow_status." % (name, tid))
+
+
+def _running_tasks(target: str = "") -> list:
+    """The queued or running tasks a request names: by id, by words from the name, or (with no words) all of them."""
+    want = " ".join(str(target or "").lower().split())
+    with TASKS_LOCK:
+        rows = [dict(t) for t in TASKS.values() if t.get('status') in ('queued', 'running')]
+    if not want:
+        return rows
+    exact = [t for t in rows if str(t.get('task_id')) == str(target).strip()]
+    if exact:
+        return exact
+    return [t for t in rows if want in str(t.get('name') or '').lower() or want in str(t.get('description') or '').lower()]
+
+
+def _tool_set_setting(inp):
+    from agent_friday.services import setting_proposals
+    return setting_proposals.tool(inp)
+
+
+def _tool_task_control(inp):
+    """Tool handler: stop a running workflow or task after the step it is on, or send a running task a message.
+    Stopping only ever ends work: nothing is undone and nothing needs approval. A steer is checked for where its
+    words came from like any instruction (taint), so one copied from an email or page waits for a card."""
+    from agent_friday.services import step_lists, task_journal as _tjm
+    inp = inp or {}
+    op = str(inp.get("op") or "").strip().lower()
+    target = str(inp.get("target") or "").strip()
+    quiet = _cloud_voice() or _voice_room()
+    if op not in ("stop", "steer"):
+        return "NOT DONE: op is stop or steer."
+    if op == "steer":
+        message = str(inp.get("message") or "").strip()
+        if not message:
+            return "NOT DONE: say what to tell it."
+        rows = _running_tasks(target)
+        if not rows:
+            return "TASK_NONE: no task is running" + ((" that matches %r" % target[:40]) if target and not quiet else "") + "."
+        if len(rows) > 1:
+            return "NOT DONE: %d tasks are running; say which one." % len(rows)
+        tid = rows[0]['task_id']
+        with _FOLLOW_UP_LOCK:
+            _FOLLOW_UP_QUEUES.setdefault(tid, []).append(message[:2000])
+        try:
+            _tjm.steer(message[:2000], source="agent:friday", task_id=tid)
+        except Exception:
+            pass
+        return "TASK_STEERED: it will hear that after the step it is on."
+    # stop
+    if not target:
+        res = step_lists.stop()
+        if res.get("ok"):
+            return "TASK_STOPPED: " + res["text"]
+        rows = _running_tasks()
+        if len(rows) == 1:
+            target = rows[0]['task_id']
+        elif len(rows) > 1:
+            return "NOT DONE: %d tasks are running; say which one to stop." % len(rows)
+        else:
+            return "TASK_NONE: " + res["text"]
+    if load_workflow_chain(target):
+        res = stop_workflow_chain(target, by="you")
+        try:
+            step_lists.sync_workflow((load_workflow_chain(target) or {}).get('slug') or target)
+        except Exception:
+            pass
+        if not res.get("ok"):
+            return "TASK_NONE: %s." % res.get("reason")
+        return "TASK_STOPPED: stopped by you. The step that is running finishes; the next never starts."
+    rows = _running_tasks(target)
+    if not rows:
+        return "TASK_NONE: no task is running" + ((" that matches %r" % target[:40]) if not quiet else "") + "."
+    if len(rows) > 1:
+        return "NOT DONE: %d tasks match; say which one to stop." % len(rows)
+    tid = rows[0]['task_id']
+    _tjm.request_stop(tid)
+    try:
+        _tjm.steer("stop after this step", source="user", task_id=tid)
+    except Exception:
+        pass
+    return ("TASK_STOPPED: it will stop after the step it is on; nothing it already did is undone."
+            if quiet else "TASK_STOPPED: %s will stop after the step it is on; nothing it already did is undone."
+            % (rows[0].get('name') or tid))
 
 
 def _tool_workflow_status(inp):
@@ -5433,6 +6093,15 @@ def _advance_task_chain(task_id, result_text):
         chain = load_workflow_chain(chain_slug)
         steps = (chain or {}).get('steps') or []
         nxt = int(t.get('chain_step', 0)) + 1
+        stop = _CHAIN_STOP.pop(chain_slug, None)
+        if stop and chain and nxt < len(steps):
+            # the owner said stop while this step was finishing: the next never starts
+            _task_log(task_id, f"Chain stopped at your request: step {nxt + 1}/{len(steps)} did not start.")
+            _journal().decision("chain_stop", f"stopped before step {nxt + 1}/{len(steps)}", task_id=task_id,
+                                reason="the owner asked to stop", alternatives=["advance"])
+            _CHAIN_STOPPED[chain_slug] = {"after_step": int(t.get('chain_step', 0)), "at": _time.time()}
+            _chain_sync(task_id)
+            return None
         if chain and nxt < len(steps):
             step = steps[nxt]
             prompt = step['prompt']
@@ -5447,13 +6116,17 @@ def _advance_task_chain(task_id, result_text):
                                         if step.get('with_context', True) and result_text else
                                         "previous step complete; no context threaded"),
                                 alternatives=["stop chain"])
-            return _spawn_task(
+            new_id = _spawn_task(
                 name=step['name'],
                 prompt=prompt,
                 description=f"Chain '{chain.get('name')}' · step {nxt + 1}/{len(steps)}",
                 chain=chain_slug, chain_step=nxt,
                 model=step.get('seat') or chain.get('seat'),
+                conversation_id=t.get('conversation_id'),
             )
+            _chain_sync(new_id)
+            return new_id
+        _chain_sync(task_id)
         return None
 
     # 2) One-off on_complete spec.
@@ -6428,8 +7101,13 @@ CLAUDE_TOOL_HANDLERS = {
     "show_my_day": _tool_show_my_day,
     "set_chat_tray": _tool_set_chat_tray,
     "organize_email": _tool_organize_email,
+    "screen_select": _tool_screen_select,
+    "task_control": _tool_task_control,
+    "set_setting": _tool_set_setting,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
+    "organize_media": _tool_organize_media,
+    "organize_calendar": _tool_organize_calendar,
     "undo_action": _tool_undo_action,
     "answer_card": _tool_answer_card,
     "switch_model": _tool_switch_model,
@@ -6843,7 +7521,14 @@ TOOL_RINGS: dict[str, int] = {
     # draft_email, and a card is decided by the owner's own words.
     "organize_files":       1,
     "organize_wiki":        1,
+    "organize_media":       1,
+    "organize_calendar":    1,
     "organize_email":       2,
+    # Ticks rows on the owner's own screen and changes nothing else (services/screen_stage).
+    "screen_select":        1,
+    # Ends work Friday started, or sends a running task a message; a steer's words are checked like any instruction.
+    "task_control":         1,
+    "set_setting":          1,
     "undo_action":          2,
     "answer_card":          2,
     # Ring 1 — WRITE (local state mutation, always allowed)
@@ -10191,6 +10876,7 @@ from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import tool_output as _tool_output
+from agent_friday.services import setting_proposals as _setting_proposals  # registers the card hook  # noqa: F401
 
 #: Verb prefixes a model habitually invents in front of a tool's real name.
 #: Example: a seat calls `mcp_higgsfield_get_balance` when the registered

@@ -229,6 +229,7 @@
   const pinch = Core.pinchMachine({ onset: 0.5, release: 0.5, dragSlopPx: 36, holdMs: 700 }); // a pinch moves the tracked midpoint up to ~30 px; past 36 px it is a drag // the engine's hysteresis is authoritative; strength is 0 or 1
   const dwell = Core.dwellMachine({ dwellMs: 700 });
   const zoom = Core.zoomTracker();
+  let pinchT0 = 0, pinchRow = false;
   let locked = null, pinchTarget = null, pinchDragTarget = null, lastPoint = { x: -100, y: -100 }, trackingOn = false, secondHand = null, lastZoomEmit = 0;
   const cfg = () => (window.FridayTracking && window.FridayTracking.cfg) || {};
 
@@ -253,6 +254,7 @@
     if (res.target && !targetUsable(res.target, frozen || (c.snap === false ? raw : null))) {
       res.target = null; pinchTarget = pinchDragTarget = null; snap.release(); endDrag(false);
     }
+    reportCursor(res.target, pinch.pinched);
     if (res.target !== locked) { locked = res.target; highlight(locked); if (locked && locked.orb && typeof window.fridayOrbPointer === 'function') window.fridayOrbPointer(locked.orb.sx, locked.orb.sy); }
     else if (locked && locked.el) { const lr = locked.el.getBoundingClientRect(); if (Math.abs(lr.left - locked.rect.left) > 0.5 || Math.abs(lr.width - locked.rect.width) > 0.5 || Math.abs(lr.top - locked.rect.top) > 0.5) { locked.rect = { left: lr.left, top: lr.top, width: lr.width, height: lr.height }; highlight(locked); } }
     const drawAt = frozen || (locked && c.snap !== false ? Core.center(locked.rect) : res.point);
@@ -276,9 +278,15 @@
       pinchDragTarget = pinchTarget || (el ? { el, rect: el.getBoundingClientRect() } : null);
     }
     const ev = pinch.update(h.pinching ? 1 : 0, raw, now, !!(pinchTarget && (pinchTarget.el ? isGuarded(pinchTarget.el) : pinchTarget.guarded)));
-    if (!ev) { setState(pinch.pinched ? 'pinched' : (locked ? 'locked' : 'free'), now); if (!pinch.pinched) setArc(0); return; }
+    if (!ev) {
+      setState(pinch.pinched ? 'pinched' : (locked ? 'locked' : 'free'), now);
+      if (!pinch.pinched) setArc(0);
+      // a tick row: once the pinch has outlasted a quick tap, the arc fills toward "open"
+      else if (pinchRow && now - pinchT0 > 250) setArc(Math.min(1, (now - pinchT0) / 700));
+      return;
+    }
     switch (ev.type) {
-      case 'pinchStart': setState('pinched', now); break;
+      case 'pinchStart': setState('pinched', now); pinchT0 = now; pinchRow = !!(pinchTarget && pinchTarget.el && pinchTarget.el.closest && pinchTarget.el.closest('[data-fr-pinch="tick"]')); break;
       case 'holdProgress': setArc(ev.progress); break;
       case 'hold': setArc(1); setState('held', now); break;
       case 'drag':
@@ -286,10 +294,36 @@
           if (dragFrom(pinchDragTarget, ev.point, ev.delta) === false) { pinchTarget = pinchDragTarget = locked = null; snap.release(); highlight(null); }
         } else endDrag(false);
         break;
-      case 'click': setArc(0); clickTarget(pinchTarget, ev.point, now, ev.guarded === true); pinchTarget = pinchDragTarget = null; setState('free', now); break;
+      // The release acts on what the pinch began on, never on a fallback under the point.
+      case 'click': setArc(0); pinchClick(pinchTarget, ev, now); pinchTarget = pinchDragTarget = null; setState('free', now); break;
       case 'cancel': pinchTarget = pinchDragTarget = null; setArc(0); setState('free', now); if (typeof window.fridayToast === 'function') window.fridayToast('Hold the pinch to ' + actionWord(locked) + '.'); break;
       case 'pinchEnd': pinchTarget = pinchDragTarget = null; endDrag(); setArc(0); setState('free', now); break;
     }
+  }
+  // Tell the stage which row the reticle is on, so "archive this" means it. A guarded control and an
+  // orb are never reported: only a row that carries a ref is something "this" can mean.
+  function reportCursor(t, pinched) {
+    const FS = window.fridayStage;
+    if (!FS || !FS.cursor) return;
+    let ref = '';
+    if (t && t.el && !t.guarded && !t.orb && t.el.closest) { const r = t.el.closest('[data-fr-ref]'); ref = r ? r.getAttribute('data-fr-ref') || '' : ''; }
+    FS.cursor(ref, ref ? (pinched ? 'pinched' : 'locked') : '');
+  }
+  // A list row that opts in (data-fr-pinch="tick") is ticked by a quick pinch and opened by a held one.
+  function pinchClick(t, ev, now) {
+    const held = ev.guarded === true;
+    const row = t && t.el && t.el.closest ? t.el.closest('[data-fr-pinch="tick"]') : null;
+    if (!row || (t.el.matches && t.el.matches('input,button,a,select,textarea'))) { clickTarget(t, ev.point, now, held); return; }
+    if (Core.pinchIntent(ev.durationMs, 700) === 'open') {
+      clickTarget({ el: row, rect: row.getBoundingClientRect() }, ev.point, now, held);
+      // a row that opens on a double click (a Media card: one click selects it) says so
+      if (row.getAttribute('data-fr-open-event') === 'dblclick') { try { row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window })); } catch (e) { /* ignore */ } }
+      return;
+    }
+    const box = row.querySelector('[data-fr-tick]');
+    if (box) clickTarget({ el: box, rect: box.getBoundingClientRect() }, Core.center(box.getBoundingClientRect()), now, held);
+    // a list whose rows have no checkbox of their own (static/friday_stage.js domList) hears the tick as an event
+    else if (row.hasAttribute('data-fr-ref')) { try { row.dispatchEvent(new CustomEvent('friday:row-tick', { bubbles: true, detail: { ref: row.getAttribute('data-fr-ref') } })); } catch (e) { /* ignore */ } }
   }
   function actionWord(t) { const s = t && t.el ? (t.el.getAttribute('aria-label') || t.el.textContent || '').trim().toLowerCase().slice(0, 24) : ''; return s || 'do that'; }
   function targetAt(p) {

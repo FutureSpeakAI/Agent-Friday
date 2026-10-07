@@ -3728,6 +3728,14 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/vendor/three-r128-UnrealBloomPass.js"></script>
     <!-- Studio › Files: the 3D file browser (defines window.Files3DPanel). -->
     <script src="/static/studio_files3d.js"></script>
+    <!-- See & Touch: the shared selection and stage layer (defines window.fridayStage); the list workspaces need it. -->
+    <script src="/static/friday_stage.js"></script>
+    <!-- The step panel: a workflow's steps, one state each, and a Stop button (defines window.FridayStepPanel). -->
+    <script src="/static/step_panel.js"></script>
+    <!-- Settings rows by sentence: provenance line, Undo, and the outline a row gets when Friday takes you to it. -->
+    <script src="/static/settings_rows.js"></script>
+    <!-- The stage of Calendar, Workflows, People, Career, Trust, Sites, System, the Chat Hub and the counts-only Health, Finance, Family. -->
+    <script src="/static/workspace_stages.js"></script>
     <!-- Media: one card per piece of work (defines window.MediaWS). -->
     <script src="/static/media_ws.js"></script>
     <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
@@ -11878,6 +11886,22 @@ const WS_ALIASES = {
     view: 'library'
   }
 };
+// A list row's identity for the stage (static/workspace_stages.js): spread onto the row's props.
+// kind:id is the ref (the id is URL-encoded), title and facets are what the workspace may publish.
+function fridayRow(kind, id, title, facets) {
+  const o = { 'data-fr-ref': kind + ':' + encodeURIComponent(String(id == null ? '' : id)).slice(0, 150) };
+  if (title) o['data-fr-title'] = String(title).slice(0, 120);
+  if (facets) { try { o['data-fr-facets'] = JSON.stringify(facets); } catch (e) { /* none */ } }
+  return o;
+}
+// When an event is, in words a stage may publish: today, tomorrow, this_week, later or past.
+function fridayWhen(iso) {
+  const t = new Date(iso);
+  if (isNaN(t)) return '';
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const days = Math.floor((t - d0) / 86400000);
+  return days < 0 ? 'past' : days === 0 ? 'today' : days === 1 ? 'tomorrow' : days < 7 ? 'this_week' : 'later';
+}
 function fridayWorkspaceId(id) {
   const a = WS_ALIASES[id];
   return a ? a.workspace : id;
@@ -12188,6 +12212,14 @@ function fridayRunActions(actions) {
             a.result = { tracking: TK.get() };
           }
         }
+      } else if (a.type === 'steps' || a.type === 'step_update') {
+        // The step panel (static/step_panel.js): a workflow's steps and which one is running.
+        try {
+          window.dispatchEvent(new CustomEvent('friday:' + a.type, {
+            detail: a
+          }));
+        } catch (_) {}
+        a.result = { ok: true };
       } else if (a.type === 'hand_cursor') {
         // Voice: "next card", "select", "back", "big mode", "big mode off" (hand_cursor_tools).
         const HC = window.FridayHandCursor;
@@ -18768,6 +18800,7 @@ function CareerWS() {
     const color = score >= 4 ? '#00ff80' : score >= 3 ? '#f59e0b' : '#ff0080';
     return /*#__PURE__*/React.createElement("div", {
       key: i,
+      ...fridayRow('job', (e.company || '') + '|' + (e.role || '') + '|' + i, (e.company || '') + ' \u00B7 ' + (e.role || ''), { kind: 'entry', stage: String(e.status || '').toLowerCase().slice(0, 20) }),
       className: "card",
       style: {
         marginBottom: 4
@@ -23324,6 +23357,7 @@ function FSProjectCard({
     }
   };
   return /*#__PURE__*/React.createElement("div", {
+    ...fridayRow('site', p.name, p.name, { kind: 'project', status: String(st.deploy_status || '').slice(0, 20) }),
     className: "fr-comp-site-card card", "data-deploy-state": st.deploy_status || "remote",
     style: {
       borderColor: ds.c + '33',
@@ -24951,6 +24985,7 @@ function FamilyWS() {
     }
   }, cd.countdowns.map((c, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('fam', 'cd-' + i, '', { kind: 'countdown' }),
     style: {
       display: 'flex',
       justifyContent: 'space-between',
@@ -30258,6 +30293,7 @@ function TrustWS() {
     const col = pct > 70 ? '#00ff80' : pct > 40 ? '#f59e0b' : '#ff0080';
     return /*#__PURE__*/React.createElement("div", {
       key: i,
+      ...fridayRow('trust', p.name || p.Name || i, p.name || p.Name, { kind: 'person', level: pct > 70 ? 'high' : pct > 40 ? 'mid' : 'low' }),
       className: "card",
       style: {
         marginBottom: 6,
@@ -30652,6 +30688,24 @@ function WfEditor({
   const [ui, setUi] = useState(wfWhenToUi(initial.when));
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  // See & Touch: the editor's name, description and each step's text are fields Friday may write into.
+  // Nothing is saved by a fill: only Save does that.
+  const wfRef = useRef(null); wfRef.current = { name, desc, steps };
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => {
+    const FS = window.fridayStage;
+    if (!FS) return undefined;
+    const bump = () => setFillTick(n => n + 1);
+    const un = [
+      FS.registerField('workflows', { key: 'name', label: 'Name', read: () => wfRef.current.name, write: t => { setName(String(t).replace(/\s+/g, ' ').trim()); bump(); } }),
+      FS.registerField('workflows', { key: 'description', label: 'What it is for', read: () => wfRef.current.desc, write: t => { setDesc(String(t).replace(/\s+/g, ' ').trim()); bump(); } })
+    ];
+    for (let i = 0; i < steps.length; i++) {
+      un.push(FS.registerField('workflows', { key: 'step.' + (i + 1) + '.prompt', label: 'Step ' + (i + 1), read: () => (wfRef.current.steps[i] || {}).prompt || '',
+        write: t => { setSteps(cur => cur.map((s, j) => j === i ? Object.assign({}, s, { prompt: String(t) }) : s)); bump(); } }));
+    }
+    return () => un.forEach(f => f());
+  }, [steps.length]);
   const setU = (k, v) => setUi(Object.assign({}, ui, {
     [k]: v
   }));
@@ -30718,7 +30772,7 @@ function WfEditor({
     style: {
       marginBottom: 10
     }
-  }, isNew ? 'Check the draft, then save' : 'Edit workflow'), initial.source === 'simple' && isNew && /*#__PURE__*/React.createElement("div", {
+  }, isNew ? 'Check the draft, then save' : 'Edit workflow'), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['name', 'description'].concat(steps.map((_, i) => 'step.' + (i + 1) + '.prompt')), fridayName(), () => setFillTick(n => n + 1)) : null, initial.source === 'simple' && isNew && /*#__PURE__*/React.createElement("div", {
     className: "wfx-quiet",
     style: {
       marginBottom: 10
@@ -30933,6 +30987,7 @@ function WfEditor({
 function WfCard({
   w,
   onRun,
+  onStop,
   onToggle,
   onEdit,
   onDelete,
@@ -30946,6 +31001,7 @@ function WfCard({
   return /*#__PURE__*/React.createElement("div", {
     className: "card wfx-card", "data-running": w.running ? "true" : "false",
     "data-testid": "wf-card",
+    ...fridayRow('wf', w.slug || w.id, w.name, { status: w.running ? 'running' : w.last_run && w.last_run.status || 'idle', scheduled: !!w.when, steps: (w.steps || []).length }),
     style: paused ? {
       opacity: 0.72
     } : null
@@ -31040,7 +31096,13 @@ function WfCard({
     className: "btn wfx-go",
     disabled: busy || w.running,
     onClick: () => onRun(w)
-  }, busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'), /*#__PURE__*/React.createElement("button", {
+  }, busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'), w.running && !w.schedule_id && onStop ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    "data-testid": "wf-stop",
+    title: "Stop after the step it is on",
+    onClick: () => onStop(w)
+  }, "\u25A0 Stop") : null, /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
     onClick: () => onEdit(w)
@@ -31067,6 +31129,10 @@ function WorkflowsWS() {
   const [error, setError] = useState('');
   const [ask, setAsk] = useState('');
   const [composing, setComposing] = useState(false);
+  // See & Touch: the box that describes a workflow is a field Friday may write into; Draft it is the owner's.
+  const askRef = useRef(ask); askRef.current = ask;
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => window.fridayStage ? window.fridayStage.registerField('workflows', { key: 'compose', label: 'Describe it', read: () => askRef.current, write: t => { setAsk(String(t)); setFillTick(n => n + 1); } }) : undefined, []);
   const [drafting, setDrafting] = useState(false);
   const [draftErr, setDraftErr] = useState('');
   const [editing, setEditing] = useState(null);
@@ -31148,6 +31214,14 @@ function WorkflowsWS() {
       fridayToast('Started “' + w.name + '”.');
     }).catch(e => fridayToast(/already running/i.test(e.message) ? '“' + w.name + '” is already running.' : 'Could not start it: ' + e.message)).then(() => {
       setBusy('');
+      setTimeout(load, 1200);
+    });
+  };
+  // B5: a running workflow can be stopped: the step that is running finishes, the next never starts.
+  const stop = w => {
+    wfPost('/api/workflows/chains/' + encodeURIComponent(w.slug) + '/stop').then(() => {
+      fridayToast('Stopping \u201c' + w.name + '\u201d after the step it is on.');
+    }).catch(e => fridayToast(e.message)).then(() => {
       setTimeout(load, 1200);
     });
   };
@@ -31249,7 +31323,7 @@ function WorkflowsWS() {
       display: 'block',
       marginBottom: 6
     }
-  }, "New workflow \u2014 say what, and when"), /*#__PURE__*/React.createElement("div", {
+  }, "New workflow \u2014 say what, and when"), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['compose'], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("div", {
     className: "wfx-row",
     style: {
       alignItems: 'flex-end'
@@ -31369,6 +31443,7 @@ function WorkflowsWS() {
     w: w,
     busy: busy === w.id,
     onRun: run,
+    onStop: stop,
     onToggle: toggle,
     onDelete: remove,
     onEdit: x => {
@@ -34709,6 +34784,49 @@ function NewsWS() {
     }
   };
   loadFeedRef.current = loadFeed;
+  // See & Touch: the stories on screen and the two filters Friday may set (category, sort). A filter
+  // she sets shows as a chip marked "by" her; a different value is the owner's.
+  const stageFS = window.fridayStage;
+  const fridayNewsFilters = useRef({});
+  const newsStageCfg = useRef(null);
+  const newsBy = (key, val) => String(fridayNewsFilters.current[key]) === String(val) ? 'friday' : 'owner';
+  const newsFilters = () => {
+    const f = [];
+    if (streamCat !== 'All') f.push({ key: 'category', value: streamCat, label: 'Category: ' + streamCat, by: newsBy('category', streamCat) });
+    if (sortBy !== 'relevance') f.push({ key: 'sort', value: sortBy, label: 'Sort: ' + sortBy, by: newsBy('sort', sortBy) });
+    return f;
+  };
+  newsStageCfg.current = {
+    filters: newsFilters,
+    loaded: () => feed.length,
+    total: () => feedTotal,
+    items: () => tab !== 'feed' ? [] : feed.slice(0, 120).map((it, i) => ({
+      ref: 'news:' + (it.id || i), n: i + 1,
+      facets: { category: it.category || '', source: it.source || '', age_h: it.ts ? Math.round((Date.now() / 1000 - it.ts) / 360) / 10 : null, saved: !!(it.url && savedUrls[it.url]) },
+      title: it.title || '', who: it.source || '' })),
+    setFilter: (key, value) => {
+      if (key === 'category') {
+        const want = String(value).toLowerCase();
+        const hit = NEWS_STREAM_CATS.find(c => c.toLowerCase() === want) || NEWS_STREAM_CATS.find(c => c.toLowerCase().indexOf(want) >= 0);
+        if (!hit) return false;
+        fridayNewsFilters.current.category = hit; setStreamCat(hit); setTab('feed');
+        return true;
+      }
+      if (key === 'sort') {
+        if (['relevance', 'time', 'source'].indexOf(value) < 0) return false;
+        fridayNewsFilters.current.sort = value; setSortBy(value); setTab('feed');
+        return true;
+      }
+      return false;
+    },
+    removeFilter: key => {
+      if (key === 'category') { delete fridayNewsFilters.current.category; setStreamCat('All'); return true; }
+      if (key === 'sort') { delete fridayNewsFilters.current.sort; setSortBy('relevance'); return true; }
+      return false;
+    }
+  };
+  useEffect(() => stageFS ? stageFS.register('news', stageFS.makeAdapter('news', () => newsStageCfg.current)) : undefined, []);
+  useEffect(() => { if (stageFS) stageFS.touch(); }, [feed, streamCat, sortBy, tab]);
   const loadArchStats = () => fetch('/api/news/archive/stats').then(r => r.json()).then(d => setArchStats(d)).catch(() => {});
   const loadSources = () => fetch('/api/sources/preferences').then(r => r.json()).then(d => setSources({
     banned: d.banned || [],
@@ -36033,7 +36151,10 @@ function NewsWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     ref: feedTopRef
-  }), /*#__PURE__*/React.createElement("div", {
+  }), stageFS ? stageFS.chipsRow(React.createElement, newsFilters(), key => {
+    newsStageCfg.current.removeFilter(key);
+    stageFS.touch();
+  }, fridayName()) : null, /*#__PURE__*/React.createElement("div", {
     className: "stream-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "stream-tabs"
@@ -36155,6 +36276,7 @@ function NewsWS() {
     className: "news-masonry"
   }, streamItems.map((it, i) => /*#__PURE__*/React.createElement("div", {
     key: it.id || i,
+    'data-fr-ref': 'news:' + (it.id || i),
     className: 'news-card cat-' + (it.color || 'tech') + (i === 0 ? ' feature' : '')
   }, /*#__PURE__*/React.createElement("div", {
     className: "news-cardtop"
@@ -37967,7 +38089,7 @@ function calFmtTime(iso) {
   });
 }
 fridayDeclareNav('calendar', {
-  keys: ['date', 'view', 'meeting_id'],
+  keys: ['date', 'view', 'meeting_id', 'event'],
   sections: [{
     id: 'meetings',
     label: 'Meetings',
@@ -37983,6 +38105,10 @@ function CalendarWS() {
   const [tomorrow, setTomorrow] = useState(null);
   const [now, setNow] = useState(new Date());
   const [quick, setQuick] = useState('');
+  // See & Touch: the quick-add line is a field Friday may write into (never submit).
+  const quickRef = useRef(quick); quickRef.current = quick;
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => window.fridayStage ? window.fridayStage.registerField('calendar', { key: 'quickadd', label: 'Quick add', read: () => quickRef.current, write: t => { setQuick(String(t).replace(/\s+/g, ' ').trim()); setFillTick(n => n + 1); } }) : undefined, []);
   const [adding, setAdding] = useState(false);
   const [prepFor, setPrepFor] = useState(null);
   const [prepText, setPrepText] = useState('');
@@ -37991,8 +38117,20 @@ function CalendarWS() {
   const tlRef = useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   // what its own tab (↗) opens on: the keys useNavTarget below reads
-  useTabState('calendar', () => ({ date: sel || '' }));
+  const [shownEvent, setShownEvent] = useState('');
+  useTabState('calendar', () => ({ date: sel || '', event: shownEvent }));
   useNavTarget('calendar', t => {
+    setShownEvent('');
+    if (t.event) {
+      // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
+      if (t.date) { setSel(t.date); loadDay(t.date); }
+      const ref = 'event:' + encodeURIComponent(String(t.event));
+      [400, 900, 1800].forEach(ms => setTimeout(() => {
+        const FS = window.fridayStage;
+        if (FS && document.querySelector('[data-fr-ref="' + ref.replace(/"/g, '') + '"]')) { FS.point([ref], { badges: 'none', id: 'nav' }); setShownEvent(String(t.event)); }
+      }, ms));
+      return;
+    }
     if (!t.date) return;
     setSel(t.date);
     loadDay(t.date);
@@ -38116,7 +38254,7 @@ function CalendarWS() {
     }
   }, /*#__PURE__*/React.createElement(FridaySays, {
     text: active?.annotation || 'Your timeline is ready.'
-  }), /*#__PURE__*/React.createElement("div", {
+  }), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'calendar', ['quickadd'], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("div", {
     className: "cal-quickadd"
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
@@ -38225,6 +38363,7 @@ function CalendarWS() {
     return /*#__PURE__*/React.createElement("div", {
       key: e.id,
       className: 'cal-event ' + (e.type || 'normal') + (e.conflict ? ' conflict' : ''),
+      ...(e.media ? {} : fridayRow('event', e.id, e.title, { kind: e.type || 'normal', all_day: false, has_guests: !!(e.attendees && e.attendees.length), when: fridayWhen(e.start_time) })),
       style: {
         top,
         minHeight: ht,
@@ -38458,6 +38597,16 @@ function MeetingsPanel() {
   const [sel, setSel] = useState(null);
   const [picked, setPicked] = useState({});
   const [fu, setFu] = useState(null);
+  // See & Touch: the follow-up draft's three fields, while it is open.
+  const fuRef = useRef(fu); fuRef.current = fu;
+  const [fillTick, setFillTick] = useState(0);
+  useEffect(() => {
+    const FS = window.fridayStage;
+    if (!FS || !fu) return undefined;
+    const part = (k, label) => FS.registerField('calendar', { key: 'followup.' + k, label, read: () => (fuRef.current || {})[k] || '', write: t => { setFu(f => f && Object.assign({}, f, { [k]: String(t) })); setFillTick(n => n + 1); } });
+    const un = [part('to', 'To'), part('subject', 'Subject'), part('body', 'Message')];
+    return () => un.forEach(f => f());
+  }, [!!fu]);
   const [showTx, setShowTx] = useState(false);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38872,7 +39021,7 @@ function MeetingsPanel() {
       ...box,
       marginTop: 8
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'calendar', ['followup.to', 'followup.subject', 'followup.body'], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       width: '100%',
@@ -40042,6 +40191,7 @@ style: {
     className: "card-title"
   }, "Portfolio Positions"), positions.map((p, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('fin', 'pos-' + i, '', { kind: 'position' }),
     className: "card",
     style: {
       marginBottom: 6
@@ -40090,6 +40240,7 @@ style: {
     const expiring = p.expires && (new Date(p.expires) - new Date()) / (1000 * 60 * 60 * 24) < 60;
     return /*#__PURE__*/React.createElement("div", {
       key: i,
+      ...fridayRow('fin', 'perk-' + i, '', { kind: 'perk' }),
       className: "card",
       style: {
         marginBottom: 6,
@@ -40344,6 +40495,7 @@ style: {
     className: "card-title"
   }, "Medications"), medList.map((m, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('health', 'med-' + i, '', { kind: 'medication' }),
     className: "card",
     style: {
       marginBottom: 6
@@ -40380,6 +40532,7 @@ style: {
     className: "card-title"
   }, "Appointments & Providers"), apptList.map((a, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('health', 'appt-' + i, '', { kind: 'appointment' }),
     className: "card",
     style: {
       marginBottom: 6
@@ -40484,6 +40637,7 @@ style: {
     className: "card-title"
   }, "Fleet Health"), vehList.map((v, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    ...fridayRow('health', 'veh-' + i, '', { kind: 'vehicle' }),
     className: "card",
     style: {
       marginBottom: 8
@@ -41183,6 +41337,7 @@ style: {
     const col = pct > 70 ? '#00ff80' : pct > 40 ? '#f59e0b' : '#ff0080';
     return /*#__PURE__*/React.createElement("div", {
       key: i,
+      ...fridayRow('person', c.name || i, c.name, { kind: 'person' }),
       className: "card",
       style: {
         cursor: 'pointer',
@@ -47585,6 +47740,11 @@ function TaskControls({
 }) {
   const [steer, setSteer] = useState('');
   const [busy, setBusy] = useState('');
+  // See & Touch: the steer box of a running task is a field Friday may write into; Steer is the owner's.
+  const steerRef = useRef(steer); steerRef.current = steer;
+  const [fillTick, setFillTick] = useState(0);
+  const steerRunning = (task.status || 'running') === 'running' || (task.status || 'running') === 'queued';
+  useEffect(() => (window.fridayStage && steerRunning) ? window.fridayStage.registerField('system', { key: 'steer.' + task.task_id, label: 'Steer', read: () => steerRef.current, write: t => { setSteer(String(t)); setFillTick(n => n + 1); } }) : undefined, [steerRunning, task.task_id]);
   const status = task.status || 'running';
   const running = status === 'running' || status === 'queued';
   const post = async (path, body) => {
@@ -47609,7 +47769,7 @@ function TaskControls({
       marginTop: 6,
       alignItems: 'center'
     }
-  }, running && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+  }, running && /*#__PURE__*/React.createElement(React.Fragment, null, window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'system', ['steer.' + task.task_id], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("input", {
     value: steer,
     onChange: e => setSteer(e.target.value),
     placeholder: "Steer: tell it something without stopping it",
@@ -49959,6 +50119,10 @@ function useSettings() {
     }).catch(() => {});
   };
   useEffect(load, []);
+  useEffect(() => {
+    window.addEventListener('friday:settings-changed', load);
+    return () => window.removeEventListener('friday:settings-changed', load);
+  }, []);
   const save = async patch => {
     try {
       // POST expects {settings:{...}, personality?:string} — personality has its
@@ -50021,9 +50185,11 @@ function useSettings() {
 function StRow({
   label,
   children,
-  desc
+  desc,
+  settingKey
 }) {
   return /*#__PURE__*/React.createElement("div", {
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 16
     }
@@ -50043,7 +50209,9 @@ function StRow({
       lineHeight: 1.5,
       fontFamily: 'var(--st-font)'
     }
-  }, desc), children);
+  }, desc), children, settingKey && window.FridaySettingRows ? /*#__PURE__*/React.createElement(window.FridaySettingRows.Provenance, {
+    path: settingKey
+  }) : null);
 }
 // A real button with role="switch", so it is reachable and operable from the
 // keyboard and announced as on/off.
@@ -50116,10 +50284,12 @@ function StToggle({
 function StSection({
   title,
   desc,
-  children
+  children,
+  settingKey
 }) {
   return /*#__PURE__*/React.createElement("section", {
     "data-st-section": typeof title === 'string' ? title : undefined,
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 30
     }
@@ -50159,11 +50329,13 @@ function StSlider({
   step,
   fmt,
   onLive,
-  onCommit
+  onCommit,
+  settingKey
 }) {
   const v = typeof value === 'number' && !isNaN(value) ? value : min;
   const done = e => onCommit && onCommit(parseFloat(e.target.value));
   return /*#__PURE__*/React.createElement("div", {
+    "data-st-key": settingKey || undefined,
     style: {
       marginBottom: 14
     }
@@ -52224,6 +52396,7 @@ function SidebarRow({ c, active, onOpen, onAct, projects }) {
   return E('div', {
     className: 'friday-conversation-row',
     style: { position: 'relative' },
+    ...fridayRow('convo', c.id, c.title, { project: String(c.project_id || c.project || '').slice(0, 40), archived: false, pinned: !!c.pinned_at }),
     onMouseLeave: () => setMenu(false),
   },
     E('div', {
@@ -56228,6 +56401,7 @@ function CallModePanel({
     d: (fridayName() + ' keeps going through calls. "I\'m on a call" still works by voice or from the chip.')
   }];
   return /*#__PURE__*/React.createElement(StSection, {
+    settingKey: "settings.calls.stand_back",
     title: "Calls",
     desc: ("A video call needs the camera, the mic and most of this computer's memory: the same things " + fridayName() + "'s local brain and 3D scene use.")
   }, /*#__PURE__*/React.createElement("div", {
@@ -56292,6 +56466,7 @@ function TrackingPanel({
     });
   };
   const sl = (key, label, desc, min, max, step, fmt) => /*#__PURE__*/React.createElement(TrackingSlider, {
+    settingKey: 'settings.hologram.window.' + key,
     label: label,
     desc: desc,
     value: cfg[key],
@@ -56388,6 +56563,7 @@ function TrackingPanel({
     }
   }, "Large targets, fewer things per screen, and the primary actions as big cards, for driving the app by hand. Automatic turns it on with hand tracking and off with it. Anything that sends, deletes or spends needs a held pinch or a spoken yes while it is on; approval cards are unchanged."), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
+    "data-st-key": "settings.accessibility.big_mode",
     "aria-label": "Big mode",
     style: {
       display: 'flex',
@@ -60357,14 +60533,23 @@ function SettingsWS() {
   // A notification's target ({workspace:'settings', tab}) lands on that tab;
   // 'phone' opens Accounts & Keys scrolled to the Phone section.
   const [shownSection, setShownSection] = useState('');
+  const [shownRow, setShownRow] = useState('');
   useTabState('settings', () => ({
     tab,
-    section: shownSection
+    section: shownSection,
+    row: shownRow
   }));
   useNavTarget('settings', t => {
     if (!t || !t.tab && !t.section) return;
     if (t.tab) setTab(settingsTabId(t.tab));
     setShownSection('');
+    setShownRow('');
+    // A row with a stable path: outlined once the tab has drawn it, and again while its panels load.
+    if (t.row) {
+      [250, 700, 1500, 2600].forEach(ms => setTimeout(() => {
+        if (window.FridaySettingRows && window.FridaySettingRows.highlight(t.row)) setShownRow(t.row);
+      }, ms));
+    }
     // A section: once the tab has drawn it, and again while its panels load
     // and grow above it, until the person scrolls, clicks or types.
     if (t.section) {
@@ -60558,6 +60743,7 @@ function SettingsTabAppearance({
     title: "Start screen",
     desc: "When your day shows over the scene: the countdowns, the chat field, the mic and Start my day."
   }, /*#__PURE__*/React.createElement(StRow, {
+    settingKey: "settings.display.start_screen",
     label: "Show my day",
     desc: "Smart shows it when it is useful (back at your desk, the start of the day, something coming up within the hour, the pointer resting on it) and fades it while you work or talk. Never shows it only when you ask. Either way Ctrl+/ reaches the chat field and Ctrl+Shift+Space the mic."
   }, /*#__PURE__*/React.createElement("div", {
@@ -61502,7 +61688,8 @@ function ApprovalCardBody({
       padding: 8
     },
     "data-testid": "approval-card",
-    "data-approval-id": a.approval_id
+    "data-approval-id": a.approval_id,
+    ...fridayRow('card', a.approval_id, a.title, { kind: String(a.kind || '').slice(0, 30), status: 'pending' })
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
@@ -65318,7 +65505,12 @@ function App() {
         },
         focused_window: focused,
         chat: { open: kind === 'chat' || !!d.chatOpen, conversation: d.convId || null, windows: (d.convWins || []).length },
-        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined
+        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined,
+        // What the workspace in front shows (rows, ticks, filters), for the server's memory only: null
+        // when it has no stage, which clears the last one (static/friday_stage.js).
+        stage: (() => {
+          try { const sid = kind === 'chat' ? 'chat' : f ? fridayWorkspaceId(f) : null; return sid && window.fridayStage ? window.fridayStage.snapshot(sid) : null; } catch (e) { return null; }
+        })()
       };
     };
     const post = (url, body, extra) => apiFetch(url, Object.assign({
@@ -65374,6 +65566,13 @@ function App() {
         }).catch(() => {});
         soon(400);
       };
+      // See & Touch: tick, clear, hold and "what do you show" are the workspace's own to answer, and
+      // some wait for a list to load, so they answer when the page has actually done them.
+      const stageAct = acts.find(a => a && window.fridayStage && window.fridayStage.handles(a.type));
+      if (stageAct) {
+        window.fridayStage.run(stageAct).then(r => answer(Object.assign({ opened: true, matched: null, result: r.result }, r.stage ? { stage: r.stage } : {})));
+        return;
+      }
       try {
         fridayRunActions(acts);
       } catch (e) {
@@ -65435,6 +65634,9 @@ function App() {
         if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
         else if (m.type === 'desktop_cards_changed') window.dispatchEvent(new Event('friday:desktop-cards-changed'));
         else if (m.type === 'workspace_customizations_changed') window.dispatchEvent(new Event('friday:ws-custom-changed'));
+        else if (m.type === 'settings_changed') {
+          try { window.dispatchEvent(new CustomEvent('friday:settings-changed', { detail: m })); } catch (_) {}
+        }
       };
     };
     connect();
@@ -66510,7 +66712,7 @@ function App() {
   const shellConv = shellChat ? convList.find(c => c.id === convId) || null : null;
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const [tabHistOpen, setTabHistOpen] = useState(false);
-  const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);
+  const shellMeeting = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(MeetingRecIndicator, null), window.FridayStepPanel ? /*#__PURE__*/React.createElement(window.FridayStepPanel, null) : null);
   const shellExperienceAvailable = typeof window.FridayExperience === 'function' && displayStyle === 'simple';
   const shellNavigate = target => {
     try { navigateWithDrafts(target); return true; }

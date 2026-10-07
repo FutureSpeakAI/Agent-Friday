@@ -115,7 +115,10 @@ def test_a_tab_confirms_under_the_id_the_server_gave_it(ui):
 
 def test_messages_takes_a_search_and_a_maximized_conversation():
     assert "'q', 'max'" in MAIL
-    assert "selectFor.current = q" in MAIL and "setSel(new Set((data.messages || []).map(m => m.id)))" in MAIL
+    # the search's results are ticked once they arrive, as Friday's own selection (refs, so the owner's
+    # bulk bar and Friday's tools see the same ticks)
+    assert "selectFor.current = q" in MAIL
+    assert "commitSel({ type: 'select', mode: 'replace', refs: (data.messages || []).map(refOf)" in MAIL
     assert "q: query || ''" in MAIL
     assert ".fm.fm-max.fm-reading .fm-listwrap" in MAIL
 

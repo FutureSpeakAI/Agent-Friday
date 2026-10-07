@@ -471,6 +471,13 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     # Opening an item on the owner's own screen, and reading Friday's state.
     "navigate_to": {},
     "check_situation": {},
+    # See & Touch: ticking, pointing and filtering carry no sensitive argument; the text of a fill is a message
+    # body, so a link or address in it that Friday read in something outside is flagged.
+    "screen_select": {"text": "message_body"},
+    "organize_media": {"cards": "local_item", "value": "detail"},
+    "organize_calendar": {"events": "local_item", "days": "detail", "minutes": "detail"},
+    "task_control": {"message": "instruction"},
+    "set_setting": {"value": "instruction"},
     "set_workspace_layout": {},
     "show_my_day": {},
     "set_chat_tray": {},

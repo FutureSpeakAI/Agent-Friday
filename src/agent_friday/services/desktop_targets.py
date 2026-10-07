@@ -276,6 +276,13 @@ def resolve_settings(query: str = "", section: str = "", id: str = "") -> dict:
     if not phrase:
         return _ok({"workspace": "settings"}, "Settings")
     ws_words = {"settings", "setting", "preferences"}
+    from agent_friday.services import setting_proposals as _sp
+    row = _sp.match_row(phrase)
+    if row:
+        # A row with a stable path: its tab, and the row itself, outlined on arrival.
+        path, home, name = row
+        return _ok({"workspace": "settings", "tab": home, "row": path},
+                   "Settings › %s" % name, verify=("row", path))
     tab = _match_section(spec, phrase, ws_words)
     if tab:
         return _ok({"workspace": "settings", "tab": tab["id"]},
@@ -407,7 +414,7 @@ def resolve_file(query: str = "", id: str = "", budget_s: float = FILE_BUDGET_S)
         if not place:
             return _fail("%s is not in a folder Studio's file browser shows" % id)
         rid, folder, name = place
-        return _ok({"workspace": "studio", "view": "files", "root": rid,
+        return _ok({"workspace": "library", "view": "pc", "root": rid,
                     "path": folder, "file": name}, "the file %s" % name,
                    verify=("file", name))
     words = _tokens(query)
@@ -439,7 +446,7 @@ def resolve_file(query: str = "", id: str = "", budget_s: float = FILE_BUDGET_S)
         if place:
             rid, folder, name = place
             also = [x[2].get("name") for x in ranked[1:5]]
-            return _ok({"workspace": "studio", "view": "files", "root": rid,
+            return _ok({"workspace": "library", "view": "pc", "root": rid,
                         "path": folder, "file": name}, "the file %s" % name,
                        verify=("file", name), also=also)
     return _fail("the matching files are outside the folders Studio shows",
@@ -559,6 +566,17 @@ def _parse_day(text: str, today: date | None = None) -> date | None:
 
 
 def resolve_calendar(query: str = "", id: str = "") -> dict:
+    # One event: "event:<id>" (the ref the screen's stage uses), on its day when the query names one. The page
+    # outlines it, and the verify reads the event back from the page's own report.
+    if id and id.strip().lower().startswith("event:"):
+        eid = id.strip()[6:].strip()
+        if not eid:
+            return _fail("say which event")
+        target = {"workspace": "calendar", "event": eid}
+        d = _parse_day(query) if query else None
+        if d is not None:
+            target["date"] = d.isoformat()
+        return _ok(target, "that event", verify=("event", eid))
     if id and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", id.strip()):
         return _ok({"workspace": "calendar", "view": "meetings", "meeting_id": id},
                    "the meeting %s" % id)
@@ -610,7 +628,10 @@ def resolve_content_post(query: str = "", id: str = "") -> dict:
     pid = (id or "").strip()
     if not re.fullmatch(r"post_[0-9a-f]{6,}", pid):
         return _fail("give the post id (post_…); search the content queue first")
-    return _ok({"workspace": "content", "post": pid}, "the post %s" % pid)
+    # "content" is an alias for Media, which knows a post by its card id, not by `post`
+    from agent_friday.services import media_index as mi
+    card = mi._id_for("post", pid)
+    return _ok({"workspace": "media", "card": card}, "the post %s" % pid, verify=("card", card))
 
 
 def resolve_mail_search(query: str = "", id: str = "") -> dict:
@@ -692,8 +713,9 @@ def resolve_creation(query: str = "", id: str = "") -> dict:
         return _fail("no creation matches %r" % (name or " ".join(q)))
     found.sort(key=lambda x: (round(x[0], 2), x[1]), reverse=True)
     top = found[0][2]
-    return _ok({"workspace": "studio", "creation": top.name}, "the creation %s" % top.name,
-               verify=("creation", top.name), also=[x[2].name for x in found[1:5]])
+    return _ok({"workspace": "library", "view": "pc", "root": "creations", "path": "", "file": top.name},
+               "the creation %s" % top.name, verify=("file", top.name),
+               also=[x[2].name for x in found[1:5]])
 
 
 #: Other names for a kind, as the model and the desktop say them.
@@ -764,7 +786,7 @@ def resolve(kind: str, query: str = "", id: str = "", workspace: str = "",
 #: the screen shows the item itself. News stories are public and keep theirs.
 UNNAMED = {"email": "the email", "file": "the file", "wiki_page": "the wiki page",
            "graph_node": "the wiki entry", "contact": "the contact card",
-           "creation": "the creation"}
+           "creation": "the creation", "card": "the Media card"}
 
 
 def _unnamed(r: dict, kind: str) -> dict:

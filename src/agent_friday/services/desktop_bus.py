@@ -32,6 +32,9 @@ _LOCK = threading.Lock()
 _CLIENTS: dict[str, dict] = {}          # client id -> record
 _PENDING: dict[str, dict] = {}          # command id -> {"event", "ack"}
 _SEQ = itertools.count(1)
+_POINTED: dict[str, dict] = {}           # workspace -> {"id", "refs", "at"}: what Friday last pointed at
+#: How long "those" and "the second one" mean what Friday pointed at.
+POINTED_TTL_S = 120.0
 log = logging.getLogger(__name__)
 
 
@@ -41,7 +44,7 @@ def _record(client_id: str) -> dict:
         rec = _CLIENTS[client_id] = {
             "id": client_id, "kind": "desktop", "queue": None,
             "connected_at": None, "state": {}, "state_at": 0.0,
-            "manifest": None, "manifest_at": 0.0}
+            "manifest": None, "manifest_at": 0.0, "stage": None, "stage_at": 0.0}
     return rec
 
 
@@ -87,6 +90,12 @@ def report_state(client_id: str, state: dict) -> bool:
         manifest = state.pop("manifest", None)
         if isinstance(manifest, dict) and manifest:
             rec["manifest"], rec["manifest_at"] = manifest, now
+        # What the page shows (services/screen_stage): bounded here, kept in memory only,
+        # and gone with the page. A report that says `stage: null` clears it.
+        if "stage" in state:
+            from agent_friday.services import screen_stage
+            rec["stage"] = screen_stage.bound_stage(state.pop("stage"), now)
+            rec["stage_at"] = now if rec["stage"] else 0.0
         rec["state"], rec["state_at"] = state, now
         if state.get("kind") in ("desktop", "tab", "chat"):
             rec["kind"] = state["kind"]
@@ -128,7 +137,7 @@ def send(actions: list, verify: dict | None = None,
         return {"delivered": False,
                 "reason": "no Friday desktop page is open to show it in"}
     cmd_id = "c%d-%d" % (int(time.time()), next(_SEQ))
-    waiter = {"event": threading.Event(), "ack": None}
+    waiter = {"event": threading.Event(), "ack": None, "client": rec.get("id")}
     with _LOCK:
         _PENDING[cmd_id] = waiter
     try:
@@ -143,6 +152,21 @@ def send(actions: list, verify: dict | None = None,
         _PENDING.pop(cmd_id, None)
     return {"delivered": True, "acked": bool(got), "ack": waiter["ack"] or {},
             "page": rec.get("kind")}
+
+
+def push(actions: list) -> bool:
+    """Send `actions` to the page the owner is most likely looking at and do not wait.
+    For news the page should show (an approval's outcome on the rows it held); the
+    action has already happened, so a page that is gone just misses it."""
+    rec = pick_client()
+    if rec is None:
+        return False
+    cmd_id = "p%d-%d" % (int(time.time()), next(_SEQ))
+    try:
+        rec["queue"].put_nowait({"type": "command", "id": cmd_id, "actions": actions, "verify": {}})
+    except (_queue.Full, AttributeError):
+        return False
+    return True
 
 
 def broadcast(event: dict, kind: str = "chat") -> int:
@@ -191,11 +215,21 @@ def wait(cmd_id: str, waiter: dict, timeout: float) -> dict:
 
 def ack(cmd_id: str, payload: dict | None) -> bool:
     """A page's report of what a command did. False for an unknown id."""
+    payload = dict(payload or {})
     with _LOCK:
         waiter = _PENDING.get(cmd_id)
         if waiter is None:
             return False
-        waiter["ack"] = dict(payload or {})
+        # A `stage?` (or any command that changed what the page shows) answers with the
+        # stage itself: bounded and kept for the page that sent it, never passed on raw.
+        if "stage" in payload:
+            from agent_friday.services import screen_stage
+            st = screen_stage.bound_stage(payload.pop("stage"))
+            rec = _CLIENTS.get(waiter.get("client") or "")
+            if rec is not None and st:
+                rec["stage"], rec["stage_at"] = st, time.time()
+            payload["stage_seen"] = bool(st)
+        waiter["ack"] = payload
     waiter["event"].set()
     return True
 
@@ -244,6 +278,44 @@ def state(now: float | None = None) -> dict:
     return out
 
 
+def stage(workspace: str | None = None, max_age: float | None = None,
+          now: float | None = None) -> dict | None:
+    """The newest stage a live page reported, the focused page first; of one workspace
+    when `workspace` is named. None when no page holds one, the page has gone stale, or
+    the stage is older than `max_age` seconds. A copy, with `age_s` (S3, S4)."""
+    now = now or time.time()
+    with _LOCK:
+        live = [r for r in _CLIENTS.values()
+                if r.get("stage") and _fresh(r, now)
+                and (not workspace or r["stage"].get("workspace") == workspace)]
+        if not live:
+            return None
+        best = max(live, key=lambda r: (bool((r.get("state") or {}).get("focused")),
+                                        r.get("stage_at") or 0.0))
+        out = dict(best["stage"])
+        age = now - (best.get("stage_at") or now)
+    if max_age is not None and age > max_age:
+        return None
+    out["age_s"] = round(age, 2)
+    return out
+
+
+def set_pointed(workspace: str, refs: list, pointed_id: str = "") -> None:
+    """Remember what Friday just pointed at, in memory only, so "the second one" can resolve."""
+    with _LOCK:
+        _POINTED[str(workspace)] = {"id": pointed_id, "refs": list(refs)[:500], "at": time.time()}
+
+
+def pointed(workspace: str, now: float | None = None) -> dict | None:
+    """What Friday pointed at in `workspace` within POINTED_TTL_S, else None."""
+    now = now or time.time()
+    with _LOCK:
+        rec = _POINTED.get(str(workspace))
+    if not rec or now - rec["at"] > POINTED_TTL_S:
+        return None
+    return dict(rec)
+
+
 def focused_workspace(now: float | None = None) -> str | None:
     """The workspace the owner is looking at: the one in front on the page that
     has the focus (a workspace tab or the desktop), else the front window of the
@@ -281,3 +353,4 @@ def reset() -> None:
     with _LOCK:
         _CLIENTS.clear()
         _PENDING.clear()
+        _POINTED.clear()
