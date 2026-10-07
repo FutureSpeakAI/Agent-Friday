@@ -342,29 +342,66 @@ def test_speech_when_she_is_not_playing_is_not_a_barge():
 
 def test_a_barge_drops_queued_clauses_and_cancels_the_mind():
     clock = _Clock()
-    mouth = _Mouth(delay=0.05)
+    all_queued = threading.Event()
     seen = {}
 
+    class HeldMouth(_Mouth):
+        def __init__(self):
+            super().__init__()
+            self.held = threading.Event()
+            self.release = threading.Event()
+
+        def synthesize_stream(self, text, cancel=None):
+            # The first clause reaches playback; the second stays in flight
+            # while the rest remain queued, regardless of caller scheduling.
+            if len(self.spoken) == 1:
+                self.held.set()
+                self.release.wait()
+            yield from super().synthesize_stream(text, cancel)
+
+    mouth = HeldMouth()
+    _RELEASE.append(mouth.release)
+
     def gen(user_text, on_delta, cancel):
+        _MINDS.append(threading.current_thread())
         seen["cancel"] = cancel
         for i in range(6):
             on_delta("Clause number %d is here. " % i)
-        cancel.wait(5)                                # a mind that honours cancel
+        all_queued.set()
+        cancel.wait()                                # a mind that honours cancel
         return "done"
     s, frames, _ = _session(gen, detector=_detector(), clock=clock, mouth=mouth)
     s.start()
-    th = _start_turn(s, frames)
-    s.handle({"type": "speaking", "on": True})
-    _feed(s, clock, 300, 5)
-    _feed(s, clock, 4000, 2)
-    th.join(2.0)
-    assert not th.is_alive()
-    assert seen["cancel"].is_set()
-    assert s._speak_q.empty(), "queued clauses survived the barge"
-    time.sleep(0.3)                                   # anything still in flight lands
-    assert len(mouth.spoken) < 6, "every clause was synthesized anyway"
-    t = _types(frames)
-    assert "audio" not in t[t.index("interrupted") + 1:]
+    th = None
+    try:
+        th = _start_turn(s, frames)
+        assert all_queued.wait(5.0), "the mind did not queue its clauses"
+        assert mouth.held.wait(5.0), "the mouth did not reach the held clause"
+        assert not s._speak_q.empty(), "the barge needs queued clauses to cancel"
+        assert not seen["cancel"].is_set()
+        turn = s._current_turn
+        s.handle({"type": "speaking", "on": True})
+        _feed(s, clock, 300, 5)
+        _feed(s, clock, 4000, 2)
+        assert "interrupted" in _types(frames), "talking over Friday did not stop her"
+        assert seen["cancel"].is_set(), "the barge did not cancel the mind"
+        th.join(2.0)
+        assert not th.is_alive()
+        assert s._speak_q.empty(), "queued clauses survived the barge"
+        mouth.release.set()
+        with turn["cv"]:
+            assert turn["cv"].wait_for(lambda: turn["pending"] == 0, timeout=5.0), (
+                "the interrupted clause did not finish")
+        assert len(mouth.spoken) < 6, "every clause was synthesized anyway"
+        t = _types(frames)
+        assert "audio" not in t[t.index("interrupted") + 1:]
+    finally:
+        if "cancel" in seen:
+            seen["cancel"].set()
+        mouth.release.set()
+        s.close()
+        if th is not None:
+            th.join(2.0)
 
 
 def test_no_audio_frame_ever_follows_interrupted():
