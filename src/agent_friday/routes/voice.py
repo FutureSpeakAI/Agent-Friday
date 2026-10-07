@@ -696,12 +696,25 @@ def _run_voice_tool_bounded(fname, fargs, send, session=None, limit=None, runner
     return box.get("r")
 
 
+def _discard_voice_orb(orb_id):
+    """Remove an expired call without recording its arguments or result."""
+    if orb_id:
+        try:
+            process_remove(orb_id)
+        except Exception:
+            pass
+
+
 def _local_voice_tool(fname, fargs, send, session):
     """One tool call from the LOCAL voice front, with the cloud path's manners
     (local voice spec P3 parity): the owner's time limit, a process orb as the
     execution receipt, a slow-call warning, and the late-result label when
     the owner spoke while it ran. No egress gate: the result stays on this
     machine with the local model that asked for it."""
+    from agent_friday.services import agent as _crew_admission_agent
+    refusal = _crew_admission_agent._crew_delegation_denial(fname, session)
+    if refusal:
+        return refusal
     _log.info("voice tool call (local): %s(%s)", fname, fargs)
     try:
         send({"type": "status", "text": f"⚙ {fname}"})
@@ -711,9 +724,17 @@ def _local_voice_tool(fname, fargs, send, session):
     try:
         result = _run_voice_tool_bounded(fname, fargs, send, session)
     except Exception as e:  # noqa: BLE001
+        refusal = _crew_admission_agent._crew_delegation_denial(fname, session)
+        if refusal:
+            _discard_voice_orb(orb_id)
+            return refusal
         _log.error("local voice tool %r failed: %s", fname, e, exc_info=True)
         result = (f"I hit a problem with the {fname} tool ({type(e).__name__}). "
                   f"Please try again.")
+    refusal = _crew_admission_agent._crew_delegation_denial(fname, session)
+    if refusal:
+        _discard_voice_orb(orb_id)
+        return refusal
     if not isinstance(result, str):
         result = str(result)
     result = result[:8000]
@@ -724,6 +745,10 @@ def _local_voice_tool(fname, fargs, send, session):
     if took > VOICE_TOOL_SLOW_S:
         _log.warning("voice tool %s took %.1fs; the caller heard silence for that "
                      "long", fname, took)
+    refusal = _crew_admission_agent._crew_delegation_denial(fname, session)
+    if refusal:
+        _discard_voice_orb(orb_id)
+        return refusal
     _voice_orb_finish(orb_id, fname, fargs, result, took * 1000.0)
     return result
 
@@ -2696,6 +2721,8 @@ if sock is not None:
         # `request` are request-context bound, and turns now run on their own
         # thread where neither is available.
         _ws_authenticated = _ws_auth_ok(_ui_tok_ok)
+        from agent_friday.services import crew_runtime as _crew_host_runtime
+        _crew_call_origin = _crew_host_runtime.capture_host_origin()
 
         done = threading.Event()
 
@@ -2825,6 +2852,7 @@ if sock is not None:
         # deep work may go, when the owner last spoke, and the deep questions
         # waiting for the call to end (Private with the brain parked).
         _tool_session = {"engine": "local", "conversation_id": _open_cid[0],
+                         "_crew_host_origin": _crew_call_origin,
                          "owner_text": "", "user_spoke_at": 0.0,
                          "async_routing": settings.get("voice_async_routing")
                          or "local_only",
@@ -2889,6 +2917,7 @@ if sock is not None:
 
             def _front_turn(user_text, on_delta):
                 _tool_session["owner_text"] = str(user_text or "")[:4000]
+                from agent_friday.services import agent as _crew_admission_agent
                 try:
                     return _front["seat"].run_turn(
                         _front["prompt"],
@@ -2896,6 +2925,8 @@ if sock is not None:
                             user_text, settings, volatile=_volatile())}],
                         _front["contract"], on_delta=on_delta,
                         run_tool=lambda n, a: _local_voice_tool(n, a, _send, _tool_session),
+                        admit_tool=lambda name: _crew_admission_agent._crew_delegation_denial(
+                            name, _tool_session),
                         max_tokens=_voice_reply_cap(settings),
                         temperature=settings.get("temperature"), timings=_timings)
                 finally:
@@ -2947,6 +2978,8 @@ if sock is not None:
                             # spoken: a card is decided by those words (answer_card),
                             # exactly as a typed or cloud-voice answer is.
                             session_ctx={"authenticated": _ws_authenticated,
+                                         "_crew_host_origin": _crew_call_origin,
+                                         "conversation_id": _open_cid[0],
                                          "provider": _prov,
                                          "is_voice": True,
                                          "surface": "voice-local",
@@ -4114,6 +4147,16 @@ if sock is not None:
                         # + 31 s = 40 s) instead of the slowest one.
                         fcs = getattr(tc, 'function_calls', None) or []
 
+                        def _refused_crew_response(name, fid, orb_id=None):
+                            refusal = _crew_delegation_refusal(name)
+                            if not refusal:
+                                return None
+                            _discard_voice_orb(orb_id)
+                            response = {"name": name, "response": {"result": refusal}}
+                            if fid is not None:
+                                response["id"] = fid
+                            return types.FunctionResponse(**response)
+
                         async def _one(fc):
                             fname = getattr(fc, 'name', '') or ''
                             try:
@@ -4163,9 +4206,15 @@ if sock is not None:
                                     fname, fargs, _safe_send, _voice_session,
                                     runner=_crew_tool_run)
                             except Exception as _te:
+                                refused = _refused_crew_response(fname, fid, _orb_id)
+                                if refused is not None:
+                                    return refused
                                 _log.error("Voice tool %r failed: %s", fname, _te, exc_info=True)
                                 result = (f"I hit a problem with the {fname} tool "
                                           f"({type(_te).__name__}). Please try again.")
+                            refused = _refused_crew_response(fname, fid, _orb_id)
+                            if refused is not None:
+                                return refused
                             if not isinstance(result, str):
                                 result = str(result)
                             result = result[:8000]
@@ -4180,6 +4229,9 @@ if sock is not None:
                             # NeverSendBlocked verdict fall through to the
                             # ungated result).
                             result = _gate_voice_tool_result(result, fname)
+                            refused = _refused_crew_response(fname, fid, _orb_id)
+                            if refused is not None:
+                                return refused
                             _tell_hold()
                             _took = _time.time() - _orb_t0
                             result = _mark_if_stale(result, fname, _orb_t0,
@@ -4189,6 +4241,9 @@ if sock is not None:
                             if _took > VOICE_TOOL_SLOW_S:
                                 _log.warning("voice tool %s took %.1fs; the caller heard "
                                              "silence for that long", fname, _took)
+                            refused = _refused_crew_response(fname, fid, _orb_id)
+                            if refused is not None:
+                                return refused
                             _voice_orb_finish(_orb_id, fname, fargs, result, _took * 1000.0)
                             _kw = {"name": fname, "response": {"result": result}}
                             if fid is not None:
@@ -4205,6 +4260,14 @@ if sock is not None:
                             # their old native turn cannot answer after a barge.
                             return
                         if frs:
+                            for index, response in enumerate(frs):
+                                name = (response.get("name") if isinstance(response, dict)
+                                        else getattr(response, "name", "")) or ""
+                                fid = (response.get("id") if isinstance(response, dict)
+                                       else getattr(response, "id", None))
+                                refused = _refused_crew_response(name, fid)
+                                if refused is not None:
+                                    frs[index] = refused
                             try:
                                 await sess.send_tool_response(function_responses=frs)
                                 _vlog(f'sent {len(frs)} tool response(s) back to Gemini')

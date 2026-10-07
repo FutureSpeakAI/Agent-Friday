@@ -10462,11 +10462,16 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         session_ctx=session_ctx,
         pii_lookup=pii_lookup,
     )
+    if name == "ask_crew":
+        ctx.admission = lambda: _crew_delegation_denial(name, session_ctx)
     ctx.meta["t_start"] = _time.time()
 
     # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
     # A DENY short-circuits; the deny message is what the model sees as the result.
     verdict = _hooks.run_pre_hooks(ctx)
+    _crew_denial = _crew_delegation_denial(name, session_ctx)
+    if _crew_denial:
+        return _crew_denial
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
         return verdict.reason
@@ -10536,9 +10541,15 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _taint_mod.CURRENT_KEY.reset(_ktok)
             _taint_mod.CURRENT.reset(_ttok)
             _CURRENT_CONVERSATION.reset(_tok)
+        _crew_denial = _crew_delegation_denial(name, session_ctx)
+        if _crew_denial:
+            return _crew_denial
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
     except Exception as e:
+        _crew_denial = _crew_delegation_denial(name, session_ctx)
+        if _crew_denial:
+            return _crew_denial
         traceback.print_exc()
         _receipts.record(name, ok=False, detail=str(e))
         return ExceptionText(f"Tool error ({name}): {e}")
@@ -12877,6 +12888,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             # Settings > Spending.
             if _loop_guard is not None:
                 for _tu in tool_uses:
+                    _crew_denial = _crew_delegation_denial(_tu.name, session_ctx)
+                    if _crew_denial:
+                        return _crew_denial, tool_trace
                     _hit = _loop_guard.observe(_tu.name, _tu.input)
                     if _hit:
                         _pilot_outcome(session_ctx, "error")
@@ -12893,6 +12907,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             tool_results = []
             _tools_grew = False
             for tu in tool_uses:
+                _crew_denial = _crew_delegation_denial(tu.name, session_ctx)
+                if _crew_denial:
+                    return _crew_denial, tool_trace
                 # B3: the step entry is appended AFTER execution (with status +
                 # timing, tier-redacted args) by _orb_tool_trace — the raw tool
                 # input no longer enters the world-readable process record.
@@ -12942,6 +12959,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         # is no exemption and the gate behaves as it always did.
                         taint_key=_taint_mod.ledger_key(session_ctx),
                     )
+                    _crew_denial = _crew_delegation_denial(tu.name, session_ctx)
+                    if _crew_denial:
+                        return _crew_denial, tool_trace
                     if not _zt_allowed:
                         _zt_result = f"[VAULT-ZT DENY] {_zt_detail}"
                         tool_trace.append({"name": tu.name, "input": tu.input, "result": _zt_result})
@@ -12957,6 +12977,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         })
                         continue
 
+                _crew_denial = _crew_delegation_denial(tu.name, session_ctx)
+                if _crew_denial:
+                    return _crew_denial, tool_trace
                 _task_log_tool(session_ctx, tu.name, tu.input)
                 # Crash-resume (services/task_resume): the ONE window where a
                 # restart cannot tell whether a side effect landed is between
@@ -12977,6 +13000,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 # exactly as unknown as it is after a process death, and a
                 # `finally` would erase the one marker that says so.
                 _resume_unmark(session_ctx)
+                _crew_denial = _crew_delegation_denial(tu.name, session_ctx)
+                if _crew_denial:
+                    return _crew_denial, tool_trace
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tu.name, tu.input, result, _tool_ms)
                 _ledger_tool_call(tu.name, result, _tool_ms, orb_id, session_ctx)
@@ -13556,6 +13582,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             fn = tc.get("function") or {}
             tname = fn.get("name") or ""
             tcid = tc.get("id") or ""
+            _crew_denial = _crew_delegation_denial(tname, session_ctx)
+            if _crew_denial:
+                return _crew_denial, tool_trace
 
             # ── Progressive disclosure: the model asks for schemas ──────────
             #
@@ -13691,6 +13720,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     # gate exempt a business's published contact details.
                     taint_key=_taint_mod.ledger_key(session_ctx),
                 )
+                _crew_denial = _crew_delegation_denial(tname, session_ctx)
+                if _crew_denial:
+                    return _crew_denial, tool_trace
                 if not _zt_allowed:
                     _zt_result = f"[VAULT-ZT DENY] {_zt_detail}"
                     tool_trace.append({"name": tname, "input": targs,
@@ -13729,6 +13761,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                         except Exception:
                             pass
 
+            _crew_denial = _crew_delegation_denial(tname, session_ctx)
+            if _crew_denial:
+                return _crew_denial, tool_trace
             _task_log_tool(session_ctx, tname, targs)
             # Narration is announced inside _execute_tool, after the governance
             # check allows the call (see _call_claude_agent).
@@ -13758,6 +13793,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                                            session_ctx=session_ctx)
             finally:
                 _CURRENT_MODEL.reset(_mtok)
+            _crew_denial = _crew_delegation_denial(tname, session_ctx)
+            if _crew_denial:
+                return _crew_denial, tool_trace
             _tool_ms = int((_time.time() - _t_tool) * 1000)
             _orb_tool_trace(orb_id, tname, targs, result, _tool_ms)
             _ledger_tool_call(tname, result, _tool_ms, orb_id, session_ctx)

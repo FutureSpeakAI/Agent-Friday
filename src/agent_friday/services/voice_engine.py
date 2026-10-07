@@ -674,6 +674,8 @@ def _ask_friday_local(question: str, session: dict) -> str:
                 max_tokens=_voice_reply_cap(settings),
                 session_ctx={"authenticated": True, "provider": "local",
                              "is_voice": True, "surface": "voice-local-deep",
+                             "_crew_host_origin": (session or {}).get("_crew_host_origin"),
+                             "conversation_id": (session or {}).get("conversation_id"),
                              "pin_to_seat": True},
                 workspace=settings.get("active_workspace") or "")
     except Exception as e:
@@ -731,6 +733,8 @@ def _tool_ask_friday(inp, session=None):
                 max_tokens=_voice_reply_cap(settings),
                 session_ctx={"authenticated": True, "provider": "local",
                              "is_voice": True, "surface": "voice-live-relay",
+                             "_crew_host_origin": (session or {}).get("_crew_host_origin"),
+                             "conversation_id": (session or {}).get("conversation_id"),
                              # The prompt is gated for the LOCAL seat: a dead
                              # seat fails here, it never rides a cloud leg.
                              "pin_to_seat": True},
