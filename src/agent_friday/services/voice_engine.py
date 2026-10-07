@@ -244,7 +244,7 @@ def _tool_check_email(inp):
 # FunctionDeclarations without importing types at module load.
 _VOICE_LIVE_TOOLS = [
     ("local_models_advise",
-     "What local AI models this computer can run and how. Use for 'what's the "
+     "Advise which local models this PC can run and how. Use for 'what's the "
      "biggest model I can run', 'could I run X', 'what would I need for X', "
      "'pretend I had 24 gigabytes', 'what's using my graphics memory'. Pass the "
      "user's words as question; put a named model in model; a pretend size in "
@@ -253,20 +253,20 @@ _VOICE_LIVE_TOOLS = [
      "if they want it installed, say Settings, Models, Get, which asks them "
      "first.",
      {"question": ("string", "The user's words."),
-      "model": ("string", "A model name or Hugging Face id, when one is named."),
+      "model": ("string", "Named model or Hugging Face id."),
       "pretend_vram_gb": ("number", "A pretend graphics-memory size in GB."),
       "pretend_ram_gb": ("number", "A pretend RAM size in GB.")},
      ["question"]),
     ("query_calendar",
-     "Get the user's calendar — today's and tomorrow's events with times, "
-     "locations, and attendees. Use whenever they ask 'what's next', 'what's on "
+     "Get today's and tomorrow's calendar events, times, places and attendees. "
+     "Use whenever they ask 'what's next', 'what's on "
      "my calendar', 'am I free at…', or anything schedule-related. Works from any "
      "workspace. If the result has connected:false, the Calendar integration just "
      "needs a one-time connection — tell the user that and OFFER to help connect "
      "it; do NOT say you can't access their calendar.",
      {}, []),
     ("check_email",
-     "Check the user's recent email and flag anything urgent or unread. Use when "
+     "Check recent email for urgent or unread items. Use when "
      "they ask 'any urgent emails', 'what's in my inbox', or 'did I hear back "
      "from…'. Set urgent_only to surface only the pressing items. Works from any "
      "workspace. If the result has connected:false, Gmail just needs a one-time "
@@ -275,8 +275,8 @@ _VOICE_LIVE_TOOLS = [
      {"urgent_only": ("boolean", "Only return urgent/priority messages."),
       "limit": ("integer", "Max messages (1-25, default 12).")}, []),
     ("search_news",
-     "Search the live news feed (the same RSS feed the News workspace shows) for "
-     "current stories matching a query. Returns ranked hits with title, snippet, "
+     "Search the News workspace's live RSS feed for matching current stories. "
+     "Returns ranked hits with title, snippet, "
      "source, trust rating, and URL. Use when the user asks for related coverage, "
      "'any other stories on X', or to ground a claim in current reporting. Omit "
      "the query for the day's top stories across every section. Stories you have "
@@ -285,8 +285,8 @@ _VOICE_LIVE_TOOLS = [
      {"query": ("string", "Keywords across headline/snippet/source. Blank = top stories."),
       "limit": ("integer", "Max stories (1-25, default 8).")}, []),
     ("get_briefing",
-     "Read the most recent daily news briefing Friday has written: the curated, ranked "
-     "summary of the day's important stories across sections. Its first line is the "
+     "Read Friday's latest daily briefing: curated, ranked top stories across sections. "
+     "Its first line is the "
      "file name, which carries the date; if that is not today, say which day it is "
      "from. Use it when "
      "the user asks for the news, the briefing, 'what's happening in the world' "
@@ -294,91 +294,91 @@ _VOICE_LIVE_TOOLS = [
      "(who, what, where), without teasing.",
      {}, []),
     ("search_web",
-     "Search the open web in real time for information that is NOT in the news "
-     "feed — background, definitions, people, companies, or events the feed "
-     "doesn't cover. Returns ranked snippets with URLs.",
+     "Search the live web beyond news. Covers background, "
+     "definitions, people, companies and other events; returns ranked snippets with URLs.",
      {"query": ("string", "What to search for.")}, ["query"]),
     ("open_url",
-     "Open a URL in the user's browser when they ask for it. Only ever open a URL "
+     "Open a requested URL in their browser. Only ever open a URL "
      "that came from real data (a news item, a source you looked up), never a link "
      "you reconstructed from memory. ALWAYS prefer a URL that ends with a "
      "#:~:text=<exact%20passage> text fragment so the cited passage is "
      "highlighted on the page when it opens. Friday's governance decides whether "
      "it needs an approval card, exactly as it does for a typed request.",
      {"url": ("string", "Full https:// URL, ideally with a #:~:text= highlight fragment."),
-      "title": ("string", "Short title of the page (for the chat citation chip).")}, ["url"]),
+      "title": ("string", "Short page title for its chat citation chip.")}, ["url"]),
     ("get_source_trust",
-     "Look up Friday's trust profile for a news source. Returns a composite trust "
+     "Look up a news source's trust profile. Returns a composite trust "
      "score (0-1), a plain-language label, and dimension scores. Use when the "
      "user asks 'how reliable is that source', 'who reported this', or 'can we "
      "trust them'.",
      {"domain": ("string", "Source domain, name, or an article URL, e.g. 'reuters.com'.")}, ["domain"]),
     ("get_article_deep_dive",
-     "Deep-read a single article and return a structured summary, what it means "
-     "for the user, and key verbatim quotes. Use when the user asks to 'go deeper', "
+     "Deep-read an article for a structured summary, user implications and verbatim quotes. "
+     "Use when the user asks to 'go deeper', "
      "'tell me more about that story', or 'what are the implications'.",
-     {"url": ("string", "Full https:// URL of the article to deep-dive."),
+     {"url": ("string", "Article's full https:// URL."),
       "title": ("string", "Article headline, if known.")}, ["url"]),
     ("search_wiki",
-     "Keyword-search Friday's personal wiki for background context the user has "
-     "saved. Returns up to a few hits with a path and excerpt.",
+     "Keyword-search the user's saved wiki context. Returns up to a few hits "
+     "with a path and excerpt.",
      {"query": ("string", "Keywords to match in the wiki."),
       "limit": ("integer", "Max hits (1-20, default 5).")}, ["query"]),
     ("navigate_workspace",
-     "Switch the Friday desktop UI to a workspace on-screen for the user. It is "
+     "Show a Friday desktop workspace. It is "
      "the user's own screen, so no approval is needed. Workspaces: {workspace_ids}.",
      {"workspace": ("string", "Workspace id or spoken name, e.g. 'news', 'settings'.")}, ["workspace"]),
     ("improve_workspace",
-     "Open the codebase chat that improves one of the user's own workspaces ('improve the "
-     "chore wheel'). Say you are opening it while it runs; then say the chat is open and "
+     "Open a codebase chat to improve a user-built workspace ('improve the chore wheel'). "
+     "Say you are opening it while it runs; then say the chat is open and "
      "that nothing goes live until they approve the swap. Only a workspace the user built "
      "(under Mine) can be improved; for a native one (News, Messages and the rest) the "
      "result says improving it means Friday's own source, which is not built yet: say that "
      "plainly, do not promise it.",
      {"workspace": ("string", "Workspace id or spoken name, e.g. 'chore wheel', 'news'.")}, ["workspace"]),
     ("workspace_swap",
-     "When the user says they are happy with the change to their workspace, ask to swap it in. "
+     "Ask to swap in a workspace change when the user says they are happy with it. "
      "This raises ONE card on screen; read the card's spoken line back as one sentence and "
      "wait for their yes, no, or change it. Never say the workspace is swapped before the "
      "card is approved. If the result is refused, say why in one line.",
      {}, []),
     ("codebase_seat",
-     "Change which model the current codebase chat uses: 'use Opus for this one' means which='heavy' "
+     "Set the current codebase chat's small or heavy model. For example, 'use Opus for this one' means which='heavy' "
      "and model='Opus 5.5'; 'use the local model for small edits' means which='small', model='local'. "
      "Speak the result's say line as is; it is the user's choice and needs no approval.",
      {"which": ("string", "'small' or 'heavy'."), "model": ("string", "The model as the user said it, or 'local'.")},
      ["which", "model"]),
     ("codebase_key",
-     "Change whose key pays for the current codebase chat: 'use Alex's key' means profile='Alex'; "
+     "Set whose key pays for the current codebase chat. 'Use Alex's key' means profile='Alex'; "
      "'use my key' means profile='mine'. Speak the result's say line as is; if refused, say the key "
      "is not on this codebase and can be added under Settings, Accounts and Keys.",
      {"profile": ("string", "'mine' or a guest key's label.")}, ["profile"]),
     ("codebase_costs",
-     "Answer 'how much has this cost?' for the current codebase chat from the meter. Speak the result's "
+     "Report the current codebase chat's metered cost. Speak the result's "
      "say line as is; never estimate.", {}, []),
     ("codebase_engine",
-     "Change which engine edits the current codebase: 'use Claude's agent for this codebase' means "
+     "Choose Friday or Claude's agent for this codebase. For example, 'use Claude's agent for this codebase' means "
      "engine='claude_agent'; 'let Friday edit it' means engine='friday'. Speak the result's say line as is, "
      "including the disclosure that Claude's agent runs as a process on this PC.",
      {"engine": ("string", "'friday' or 'claude_agent'.")}, ["engine"]),
     ("codebase_agent",
-     "Run one task with Claude's agent in the current codebase when its engine is claude_agent ('have the "
-     "agent add a search box'). Say the agent is working while it runs; then speak the result's say line as is.",
+     "Run a Claude agent task in this codebase when its engine is claude_agent. "
+     "For example, 'have the agent add a search box'. Say the agent is working while it runs; "
+     "then speak the result's say line as is.",
      {"task": ("string", "What the agent should do.")}, ["task"]),
     ("codebase_run",
-     "Run one shell command in the current codebase's folder ('run the tests', 'build it'). The first command "
+     "Run one shell command in this codebase's folder. Examples: 'run the tests', 'build it'. The first command "
      "of a task raises one card; speak the result's say line as is, then the exit code and the gist of the output.",
      {"command": ("string", "The command, as it would be typed.")}, ["command"]),
     ("open_project",
-     "Open one of the user's projects: its latest chat comes to the front ('open my Friday project'). "
+     "Open a user's project, bringing its latest chat forward. Example: 'open my Friday project'. "
      "HUB_OK means the page showed it; HUB_SAVED means no page did; HUB_FAIL names the projects that exist.",
      {"project": ("string", "The project, as the user said it.")}, ["project"]),
     ("show_preview",
-     "Show the preview beside the current chat ('show me the preview'): the codebase's page or the chat's artifacts.",
+     "Preview the codebase page or chat artifacts beside this chat.",
      {}, []),
     ("build_mode",
-     "Enter build mode in the current chat (its panel becomes the Build panel for one of the project's codebases) "
-     "or leave it ('build mode', 'build mode with the rent tracker', 'leave build mode').",
+     "Enter or leave this chat's codebase Build panel. Examples: 'build mode', "
+     "'build mode with the rent tracker', 'leave build mode'.",
      {"on": ("boolean", "true to enter, false to leave."), "codebase": ("string", "Which codebase, if named.")}, []),
     ("list_crew",
      "List this chat's invited Crew agents. Use their stable IDs with ask_crew. "
@@ -390,7 +390,7 @@ _VOICE_LIVE_TOOLS = [
      {"agent": ("string", "The invited agent's stable ID or unambiguous name."),
       "request": ("string", "The user's complete request to that agent.")}, ["agent", "request"]),
     ("propose_crew_agent",
-     "Open an unsaved Crew profile draft for the user to review. "
+     "Open an unsaved Crew profile draft for review. "
      "Nothing is assigned until the user reviews and saves the draft there. Never claim it was created.",
      {"name": ("string", "Agent name."),
       "role": ("string", "Responsibility."),
@@ -401,23 +401,21 @@ _VOICE_LIVE_TOOLS = [
       "voice_model": ("string", "Speech model ID."),
       "voice_id": ("string", "Voice ID.")}, ["name", "role"]),
     ("delegate_to_friday",
-     "Hand ANY request to the full Friday agent, with every tool it has in chat "
-     "(email drafting, files, the wiki, browsing, research, workflows, anything the "
-     "fast tools here do not cover), running on the right model for this "
-     "conversation. It runs in the background: say one short sentence that you're "
+     "Delegate to Friday's full chat agent on this conversation's model. "
+     "It has every chat tool: email drafting, files, wiki, browsing, research and workflows. "
+     "It runs in the background: say one short sentence that you're "
      "on it, keep the conversation going, and when it finishes the real outcome is "
      "handed back to you to tell the user. Outward actions it takes still raise "
      "approval cards, exactly as in chat. Use it whenever a request needs more "
      "than the fast tools, instead of saying you can't.",
-     {"request": ("string", "The user's request, in full, as they would type it in chat."),
-      "title": ("string", "A short title for the task list, e.g. 'Draft reply to the school'.")},
+     {"request": ("string", "The user's full chat request."),
+      "title": ("string", "Short task-list title, e.g. 'Draft reply to the school'.")},
      ["request"]),
     ("ask_local_for_context",
-     "Ask the user's LOCAL model a question that needs their private data, and use "
-     "this INSTEAD of answering from anything you were told, whenever a request "
-     "reaches their mail, vault, wiki, files, contacts, "
-     "finances or health — as well as their notes, calendar, memory, the people "
-     "in their life and their preferences. Example: 'What do they enjoy doing on "
+     "Ask the user's LOCAL model INSTEAD of answering from prior context for any "
+     "request involving their mail, vault, wiki, files, contacts, finances, health, "
+     "notes, calendar, memory, people in their life or preferences. "
+     "Example: 'What do they enjoy doing on "
      "weekends, and what is on their calendar next weekend?'. The local model "
      "reads the raw data here on their machine; you receive only a summary with the "
      "identifiers replaced — names become placeholders like [their partner] — and "
@@ -429,10 +427,9 @@ _VOICE_LIVE_TOOLS = [
      "decide; if they decline, carry on without it.",
      {"question": ("string", "The question for their local model, in full.")}, ["question"]),
     ("navigate_to",
-     "Open ONE specific thing on the user's Friday desktop, on screen: an email "
-     "thread, the mail a Gmail search finds, a file, a wiki page or graph node, a "
-     "news story, a Studio creation, a Settings tab, a calendar day or meeting, a "
-     "contact, a content post, or a workspace section. Pass the user's own words "
+     "Open a desktop item, search result or workspace section. "
+     "Kinds include email, mail search, file, wiki page, graph node, news, creation, "
+     "Settings tab, calendar day or meeting, contact and content post. Pass the user's own words "
      "as `query` ('the Harbor Legal email', 'my budget spreadsheet', 'model "
      "settings') with the `kind` you think they mean. Prefer this over "
      "navigate_workspace whenever they name a THING rather than a whole "
@@ -448,42 +445,39 @@ _VOICE_LIVE_TOOLS = [
                          "graph_node, news_article, creation, settings, calendar, "
                          "contact, content_post."),
       "query": ("string", "Their words for the thing; for mail_search, the Gmail search."),
-      "id": ("string", "An exact id, if you already have one."),
+      "id": ("string", "Exact id, if known."),
       "workspace": ("string", "For kind=workspace: which workspace."),
       "section": ("string", "A tab or section by name, e.g. 'feed', 'Models'."),
-      "new_tab": ("boolean", "Open it in its own Chrome tab, filling the tab."),
-      "max": ("boolean", "On the desktop: fill the desktop with its window.")},
+      "new_tab": ("boolean", "Fill its own Chrome tab."),
+      "max": ("boolean", "Fill the desktop with its window.")},
      ["kind"]),
     ("check_situation",
-     "What is happening on this machine right now: which workspaces are open, CPU, "
-     "RAM, GPU memory and disk, which models are loaded or serving, running turns, "
-     "tasks and scheduled jobs, and today's spend. Use it for any question about "
+     "Report open workspaces, load, models, active turns, tasks, jobs and today's spend. "
+     "Load includes CPU, RAM, GPU memory and disk. Use it for any question about "
      "current activity or load ('what are you working on', 'is the GPU busy', 'what "
      "did today cost'). Keep `detail` at brief for speech and read back only what they "
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
     ("set_chat_tray",
-     "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or "
-     "the right in a third, a half or two thirds of the screen ('put chat on the right "
-     "third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on "
+     "Show, hide, resize or side-dock chat; the workspace fills the remaining width. "
+     "Examples: 'show chat', 'hide chat', 'put chat on the right third'. Hidden, it leaves a slim pill on "
      "its edge and the workspace takes the full width. Their own screen, so no approval is needed. CHAT_OK: say what changed "
      "in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
      {"visible": ("boolean", "true to show the chat, false to hide it."),
-      "side": ("string", "left or right: the edge it docks on."),
-      "size": ("string", "third, half or two_thirds: how much of the screen it takes.")}, []),
+      "side": ("string", "Dock edge: left or right."),
+      "size": ("string", "Screen share: third, half or two_thirds.")}, []),
     ("show_my_day",
-     "Show the start screen's cluster now ('show my day'): their countdowns, the "
-     "chat field, the mic and Start my day. With mode, set when it shows on its own "
+     "Show the start cluster: countdowns, chat, mic and Start my day. "
+     "With mode, set when it shows on its own "
      "('always show my day' is always): smart (when useful; the default), always, or "
      "never (only when asked). Their own screen, so no approval is needed. DAY_SHOWN: "
      "say so in a few words. DAY_NOT_SHOWN: say why in plain words. DAY_MODE: say what "
      "it will do now. The countdowns are not in the result: do not guess them.",
      {"mode": ("string", "smart, always or never; empty to show it now.")}, []),
     ("set_workspace_layout",
-     "Show a workspace fullscreen with the chat tray docked beside it ('make this "
-     "fullscreen with chat'), or back to normal, or, with fullscreen_chat false and a "
-     "position, in part of the screen ('put News on the left two thirds'). It is their "
+     "Set workspace size/position: fullscreen with docked chat, normal or named position. "
+     "Use fullscreen_chat false with position for 'put News on the left two thirds'. It is their "
      "own screen, so no "
      "approval is needed, and the choice is remembered for that workspace. Leave "
      "workspace empty for the one in front. LAYOUT_OK means the screen did it: say "
@@ -516,7 +510,7 @@ _VOICE_LIVE_TOOLS = [
       "thread_ids": ("array", "Conversation ids from search_email, instead of a query."),
       "label": ("string", "For label, unlabel and move."),
       "account": ("string", "Only this account."),
-      "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
+      "replaces": ("string", "Prior card_id; withdraws and replaces it."),
       "why": ("string", "One short line for the card.")},
      ["action"]),
     ("organize_files",
@@ -532,7 +526,7 @@ _VOICE_LIVE_TOOLS = [
       "to": ("string", "Destination folder (move), or the folder to make (new_folder)."),
       "new_name": ("string", "For rename."),
       "moves": ("array", "To sort into several folders at once: 'file => folder' each."),
-      "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
+      "replaces": ("string", "Prior card_id; withdraws and replaces it."),
       "why": ("string", "One short line for the card.")},
      ["action"]),
     ("organize_wiki",
@@ -548,7 +542,7 @@ _VOICE_LIVE_TOOLS = [
       "new_name": ("string", "For rename."),
       "tags": ("array", "For tag and untag."),
       "moves": ("array", "'page => folder' each, to sort several in one card."),
-      "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
+      "replaces": ("string", "Prior card_id; withdraws and replaces it."),
       "why": ("string", "One short line for the card.")},
      ["action"]),
     ("undo_action",
@@ -559,8 +553,8 @@ _VOICE_LIVE_TOOLS = [
      {"receipt_id": ("string", "rcpt_... from an earlier result; empty for the newest.")},
      []),
     ("answer_card",
-     "Record the user's spoken answer to an organize card (from organize_email, "
-     "organize_files, organize_wiki or undo_action), right after they give it. It "
+     "Record the user's just-spoken answer to an organize_email, organize_files, "
+     "organize_wiki or undo_action card. It "
      "counts only if their own words say it, and in a room of several people a "
      "yes must name Friday. NOT RECORDED means it did not count: ask them "
      "directly, and never say it was done. RUNNING means it is still working: say "
@@ -569,7 +563,7 @@ _VOICE_LIVE_TOOLS = [
       "decision": ("string", "approve or decline.")},
      ["card_id", "decision"]),
     ("run_workflow",
-     "Start one of the user's stored workflows (their routines) by name, spoken. "
+     "Start a stored workflow (routine) by spoken name. "
      "A workflow's own steps run wherever it says to run them, including on their "
      "LOCAL model, so this is how a spoken request reaches private work without "
      "any of it passing through you. It returns as soon as the first step is "
@@ -580,21 +574,20 @@ _VOICE_LIVE_TOOLS = [
      "approval card, exactly as in chat.",
      {"name": ("string", "The workflow's name or slug, as it is stored.")}, ["name"]),
     ("workflow_status",
-     "How one of the user's stored workflows is doing — per-step state for its "
-     "most recent run. Called with no name it LISTS their stored workflows, which "
+     "Report a stored workflow's latest per-step state. Called with no name it "
+     "LISTS their stored workflows, which "
      "is what to use when they ask what routines they have, or when you need the "
      "exact name before starting one. Read it back as a sentence, not a table.",
      {"name": ("string", "The workflow to report on. Omit to list them all.")}, []),
     ("note_conversation_state",
-     "Update your running picture of this conversation when you notice it shift: "
-     "what the user cares about right now, how much detail they want, and what is "
-     "still open. It shapes the 'conversation so far' note you are shown.",
-     {"priorities": ("string", "The topics they care about now, most important first, comma-separated."),
+     "Update changed conversation priorities, desired detail and open questions or tasks. "
+     "It shapes the 'conversation so far' note you are shown.",
+     {"priorities": ("string", "Current topics, most important first, comma-separated."),
       "depth": ("string", "brief, normal or deep."),
       "open_threads": ("string", "Questions or tasks still open, separated by | (optional).")}, []),
     ("search_past_conversations",
-     "Search earlier conversations with the user, voice and chat, with dates: "
-     "what they said, what you told them, what was decided. Use it whenever they "
+     "Search dated voice/chat history: what each of you said and decided. "
+     "Use it whenever they "
      "refers to something from before ('what did we say about...', 'remember "
      "when...'). Matches from earlier calls with you come back directly; matches "
      "from conversations that stayed on their PC are summarised by their local model "
@@ -617,26 +610,24 @@ _VOICE_LIVE_TOOLS = [
      {"request_id": ("string", "The id from ask_local_for_context."),
       "instruction": ("string", "Their instruction, in their words.")}, ["request_id", "instruction"]),
     ("spawn_task",
-     "Start a long-running background task (a 'workflow') that keeps working "
-     "while the conversation continues — deep research, multi-step analysis, "
-     "drafting a long brief, or anything that takes more than about ten "
-     "seconds. THIS IS THE ONLY WAY to do work in voice that outlives the "
+     "Start background work beyond this voice turn: research, analysis or long drafts. "
+     "Use for work taking more than about ten seconds. THIS IS THE ONLY WAY to do work in voice that outlives the "
      "current turn: if the user asks you to research, investigate, analyse, "
      "compile, monitor, or write something substantial, call this tool rather "
      "than describing what you are about to do. Progress appears in the user's "
      "Task Tray (bottom-right). Optionally chain a follow-up with on_complete.",
-     {"name": ("string", "Short human-readable task title, e.g. 'Research the Zelda short film'."),
-      "prompt": ("string", "The full instruction the background agent should execute."),
-      "description": ("string", "Optional one-line subtitle shown in the Task Tray."),
-      "on_complete_spawn": ("string", "Optional title of a follow-up task to auto-start when this one succeeds."),
-      "on_complete_prompt": ("string", "Optional full instruction for that follow-up task.")},
+     {"name": ("string", "Short task title, e.g. 'Research the Zelda short film'."),
+      "prompt": ("string", "Full background-agent instruction."),
+      "description": ("string", "Optional one-line Task Tray subtitle."),
+      "on_complete_spawn": ("string", "Optional follow-up title; auto-starts on success."),
+      "on_complete_prompt": ("string", "Optional full follow-up instruction.")},
      ["name", "prompt"]),
     # voice-system-clean-sheet.md §4.5 (D7): local brain, cloud mouth. The
     # ONE tool that lets Gemini Live reach the user's context honestly -- by
     # asking their local model, whose sealed answer is all Google ever sees.
     ("ask_friday",
-     "Ask Friday's local model, which has full access to the user's notes, "
-     "memory, knowledge graph, files, calendar and email. Use it for ANY "
+     "Ask Friday's local model with full access to their notes, memory, graph, "
+     "files, calendar and email. Use it for ANY "
      "question about the user's own context (their notes, their projects, what "
      "they wrote, what they decided, their wiki, their memory), and for anything "
      "that needs a tool you do not have. Announce it first ('Let me ask Friday.'), "
@@ -829,6 +820,10 @@ _VOICE_SHARED_TOOLS = (
     # "select", "back". select never fires a guarded action.
     "big_mode",
     "hand_cursor",
+    "home_cards",
+    "customize_workspace",
+    "revert_workspace",
+    "list_workspace_history",
 )
 
 
@@ -1067,9 +1062,9 @@ def _build_voice_live_tools(types, behavior=None):
 def _json_schema_to_genai(types, schema, type_map, tool=""):
     """Render one JSON-Schema object as a google.genai Schema.
 
-    Deliberately narrow: object / string / integer / number / boolean / array
-    of those, plus `enum` and `description`. Anything richer raises, and the
-    caller drops the tool rather than declaring a lossy version of it.
+    Explicit nested objects, arrays and nullable scalar/array fields keep their
+    structure. Free-form objects and heterogeneous unions are refused rather
+    than flattened into a shape the handler cannot understand.
     """
     if (schema or {}).get("type") not in (None, "object"):
         raise ValueError("top-level schema must be an object")
@@ -1087,8 +1082,19 @@ def _json_schema_leaf(types, spec, type_map, pname, tool=""):
     spec = spec or {}
     jtype = spec.get("type") or "string"
     kwargs = {}
+    if isinstance(jtype, list):
+        concrete = [kind for kind in jtype if kind != "null"]
+        if "null" not in jtype or len(concrete) != 1:
+            raise ValueError("unsupported union on property %r" % pname)
+        jtype = concrete[0]
+        kwargs["nullable"] = True
     if spec.get("description"):
         kwargs["description"] = spec["description"]
+    for original, rendered in (("minimum", "minimum"), ("maximum", "maximum"),
+                               ("minItems", "min_items"), ("maxItems", "max_items"),
+                               ("minLength", "min_length"), ("maxLength", "max_length")):
+        if original in spec:
+            kwargs[rendered] = spec[original]
     if spec.get("enum"):
         # The Live API refuses the WHOLE setup over one empty enum value --
         # "enum[0]: cannot be empty", close code 1007 -- so a tool that means
@@ -1096,7 +1102,7 @@ def _json_schema_leaf(types, spec, type_map, pname, tool=""):
         # other tool with it. The handlers already read a missing value as ""
         # (inp.get(...) or ""), so dropping it costs nothing; an enum left
         # empty is dropped too, which leaves a plain string.
-        vals = [str(v) for v in spec["enum"]]
+        vals = [str(v) for v in spec["enum"] if v is not None]
         kept = [v for v in vals if v != ""]
         if len(kept) != len(vals):
             _log.warning("voice live tools: %s.%s declared an empty-string "
@@ -1111,9 +1117,21 @@ def _json_schema_leaf(types, spec, type_map, pname, tool=""):
                                     pname + "[]", tool),
             **kwargs)
     if jtype == "object":
-        # Nested free-form objects have no faithful rendering here; refuse
-        # rather than flatten it to a string the handler cannot parse.
-        raise ValueError("nested object property %r is not supported" % pname)
+        properties = spec.get("properties")
+        if not isinstance(properties, dict) or not properties:
+            raise ValueError("free-form object property %r is not supported" % pname)
+        if "additionalProperties" in spec:
+            if spec["additionalProperties"] is not False:
+                raise ValueError("free-form additional properties on %r" % pname)
+            # Live's typed Schema omits additionalProperties, even when the SDK
+            # accepts it. Closed-object restrictions remain in the shared JSON
+            # schema and handlers; sending this field rejects the entire setup.
+        return types.Schema(type=types.Type.OBJECT,
+                            properties={key: _json_schema_leaf(types, value, type_map,
+                                        pname + "." + key, tool)
+                                        for key, value in properties.items()},
+                            required=list(spec.get("required") or []) or None,
+                            **kwargs)
     if jtype not in type_map:
         raise ValueError("unsupported type %r on property %r" % (jtype, pname))
     return types.Schema(type=type_map[jtype], **kwargs)
@@ -1218,6 +1236,8 @@ def _voice_ctx(session=None) -> dict:
         ctx.update({"surface": "voice-local", "taint_key": "voice-local",
                     "provider": "local", "is_voice": True})
     if isinstance(session, dict):
+        if "_crew_host_origin" in session:
+            ctx["_crew_host_origin"] = session["_crew_host_origin"]
         if session.get("conversation_id"):
             ctx["conversation_id"] = session["conversation_id"]
         if session.get("owner_text"):

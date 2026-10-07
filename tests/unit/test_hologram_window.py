@@ -323,7 +323,8 @@ def test_calibration_is_a_setting(engine):
 HEAD_READ = re.compile(r"currFace[XYZ]|TKh\.[xyz]\b|TK\.head\.[xyz]\b|FridayTracking\.head\.[xyz]\b")
 # Every place the page may read the head: the head state itself and its
 # easing, the camera at the window, the HUD and the dock in front of the
-# glass, and the tracking debug overlay.
+# glass, the reserved-stage camera fit, the read-only workspace snapshot,
+# and the tracking debug overlay.
 ALLOWED = [re.compile(p) for p in (
     r"^\s*let currFaceX = 0, currFaceY = 0, currFaceZ = 0;",
     r"^\s*const dz = TKh\.z - headZHeld;",
@@ -331,6 +332,8 @@ ALLOWED = [re.compile(p) for p in (
     r"^\s*updateDock3D\(currFaceX, currFaceY, currFaceZ\);",
     r"^\s*hudEl\.style\.transform = `perspective\(1000px\) rotateY\(\$\{currFaceX \* -2\}deg\)",
     r"^\s*currFaceX, currFaceY, currFaceZ\)\.zoom;",
+    r"^\s*headZoom: TK\.headZoom\(currFaceZ\), glassAt: GLASS_AT,$",
+    r"^\s*head: \{ x: currFaceX, y: currFaceY, z: currFaceZ, seen: !!window\.FridayTracking\.head\.seen \},$",
     r"^\s*rootStyle\.setProperty\('--holo-",
     r"^\s*const h[xy] = \(0\.5 \+ TK\.head\.[xy] \* 0\.5\) \* [WH];",
     r"^\s*ctx\.arc\(hx, hy, 10 \+ TK\.head\.z \* 8,",
@@ -341,8 +344,9 @@ ALLOWED = [re.compile(p) for p in (
 
 def test_nothing_in_an_avatar_reads_the_head():
     """The avatar holds its place: only the camera at the window, the HUD and
-    the dock in front of the glass, and the debug overlay read where the head
-    is. An avatar that leaned with the head would be following it."""
+    the dock in front of the glass, and the read-only workspace/debug
+    snapshots read where the head is. An avatar that leaned with the head
+    would be following it."""
     stray = []
     for n, line in enumerate(INDEX.read_text(encoding="utf-8").splitlines(), 1):
         if HEAD_READ.search(line) and not any(a.search(line) for a in ALLOWED):
@@ -413,6 +417,7 @@ window.__holo = {
   x() { return FridayTracking.head.x; },
   projection() { return Array.from(fridayDebugScene().camera.projectionMatrix.elements); },
   eye() { return fridayDebugScene().camera.position.toArray(); },
+  frame() { return window.__fridayRenderer.info.render.frame; },
   plain() {
     const cam = fridayDebugScene().camera;
     return Array.from(new THREE.PerspectiveCamera(cam.fov, cam.aspect, cam.near, cam.far).projectionMatrix.elements);
@@ -451,6 +456,10 @@ def page():
             except Exception as exc:                           # pragma: no cover
                 pytest.skip("no chromium for playwright: %s" % exc)
             pg = browser.new_page(viewport={"width": 1280, "height": 800})
+            # These physical-window assertions describe Classic's complete
+            # desktop. Simple composes the same projection into a reserved
+            # stage and refits moving geometry to keep it clear of the UI.
+            pg.add_init_script("localStorage.setItem('friday.display-style.v1', 'classic')")
             # The page's API calls 404 against the static server; the scene
             # does not need any of them. Settings must not arrive at all,
             # so the engine runs on its shipped defaults.
@@ -459,6 +468,8 @@ def page():
             pg.goto(url, wait_until="domcontentloaded")
             pg.wait_for_function("() => window.fridayDebugScene && !!fridayDebugScene().camera"
                                  " && !!window.FridayTracking && !!window.FridayGenome", timeout=60000)
+            assert pg.evaluate("window.FridayDisplayStyle.get()") == "classic"
+            assert pg.evaluate("window.FridayHolographicWorkspace?.stageRect || null") is None
             pg.evaluate(MEASURE)
             _until(pg, "() => __holo.measure() !== null", "the scene never drew a structure")
             yield pg
@@ -482,32 +493,52 @@ def _settled(pg, octaves):
     pg.evaluate("__holo.lean(%r)" % octaves)
     _until(pg, "() => Math.abs(__holo.z() - (%r)) < 0.03" % octaves,
            "the head never settled at %g octaves" % octaves)
-    pg.wait_for_timeout(120)
 
 
 def _eye_still(pg, what):
     """With the head held, the cinematic drift stops at its resting pose; a
-    structure just shown glides there first. Wait until the eye is still."""
-    deadline = time.time() + 20
-    prev = pg.evaluate("__holo.eye()")
-    while time.time() < deadline:
-        pg.wait_for_timeout(250)
-        cur = pg.evaluate("__holo.eye()")
-        if max(abs(a - b) for a, b in zip(cur, prev)) < 2e-3:
-            return
+    structure just shown glides there first. A stalled frame is not a
+    settled camera: require fresh frames across the same 250 ms window."""
+    snapshot = "() => ({ frame: __holo.frame(), eye: __holo.eye() })"
+    # Software rendering can need more wall time for the same camera glide,
+    # especially just after a genome rebuild. Stability is measured in real
+    # frames; this deadline only bounds a stalled or non-converging scene.
+    deadline = time.monotonic() + 40
+    prev = pg.evaluate(snapshot)
+    anchor, stable_since, stable_frames = prev["eye"], None, 0
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        _until(pg, "() => __holo.frame() > %d" % prev["frame"],
+               "the renderer never completed a new frame for %s" % what, secs=remaining)
+        cur = pg.evaluate(snapshot)
+        now = time.monotonic()
+        if max(abs(a - b) for a, b in zip(cur["eye"], anchor)) < 2e-3:
+            if stable_since is None:
+                stable_since = now
+            stable_frames += 1
+            if stable_frames >= 2 and now - stable_since >= 0.25:
+                return
+        else:
+            anchor, stable_since, stable_frames = cur["eye"], now, 0
         prev = cur
     raise AssertionError("the eye never came to rest for %s" % what)
 
 
 def _unit_at(pg, octaves, samples=3):
     _settled(pg, octaves)
-    vals, at = [], None
+    _eye_still(pg, "a held head at %g octaves" % octaves)
+    vals, at, frame = [], None, None
     for _ in range(samples):
-        m = pg.evaluate("__holo.measure()")
+        if frame is not None:
+            _until(pg, "() => __holo.frame() > %d" % frame,
+                   "the renderer never advanced between projected-unit samples")
+        sample = pg.evaluate("() => ({ frame: __holo.frame(), measure: __holo.measure() })")
+        frame, m = sample["frame"], sample["measure"]
         assert m, "nothing to measure"
         vals.append(m["unit"])
         at = m["at"]
-        pg.wait_for_timeout(60)
     return sum(vals) / len(vals), at
 
 
@@ -515,12 +546,64 @@ def _ratio(pg, octaves):
     """Leaned by `octaves`, how much larger a projected unit at the structure's
     centre is than at rest, and where it stood each time. Rest is sampled on
     both sides of the lean."""
-    _settled(pg, 0)
-    _eye_still(pg, "a held head at rest")
     rest, at0 = _unit_at(pg, 0)
     leaned, at1 = _unit_at(pg, octaves)
     rest2, at2 = _unit_at(pg, 0)
     return leaned / ((rest + rest2) / 2), [at0, at1, at2]
+
+
+class _EyeFramePage:
+    """A paused renderer can leave the eye unchanged before it moves again."""
+
+    def __init__(self, frames=()):
+        self.frames = iter(frames)
+        self.current = {"frame": 0, "eye": [0, 0, 0]}
+        self.now = 0.0
+
+    def evaluate(self, source):
+        if source == "__holo.eye()":
+            return list(self.current["eye"])
+        if "JSON.stringify" in source:
+            return "{}"
+        if "__holo.frame()" in source and "__holo.eye()" in source:
+            return {"frame": self.current["frame"], "eye": list(self.current["eye"])}
+        raise AssertionError("unexpected synthetic page read: %s" % source)
+
+    def wait_for_timeout(self, milliseconds):
+        # A wall-clock wait cannot make a stalled renderer complete a frame.
+        self.now += milliseconds / 1000
+
+    def wait_for_function(self, source, timeout):
+        after = int(re.search(r"__holo\.frame\(\) > (\d+)", source).group(1))
+        deadline = self.now + timeout / 1000
+        for elapsed, frame, eye in self.frames:
+            self.now += elapsed
+            if self.now >= deadline:
+                break
+            self.current = {"frame": frame, "eye": list(eye)}
+            if frame > after:
+                return
+        self.now = deadline
+        raise TimeoutError("the synthetic renderer did not advance")
+
+
+def test_eye_still_waits_through_a_stalled_frame_and_resumed_motion(monkeypatch):
+    pg = _EyeFramePage([
+        (0.25, 0, [0, 0, 0]), (0.25, 0, [0, 0, 0]),
+        (0.05, 1, [1, 0, 0]), (0.10, 2, [0.5, 0, 0]),
+        (0.10, 3, [0.1, 0, 0]), (0.10, 4, [0, 0, 0]),
+        (0.13, 5, [0.001, 0, 0]), (0.13, 6, [0.0015, 0, 0]),
+    ])
+    monkeypatch.setattr(time, "monotonic", lambda: pg.now)
+    _eye_still(pg, "a renderer resuming after a pause")
+    assert pg.current["frame"] == 6
+
+
+def test_eye_still_refuses_a_renderer_that_never_advances(monkeypatch):
+    pg = _EyeFramePage()
+    monkeypatch.setattr(time, "monotonic", lambda: pg.now)
+    with pytest.raises(AssertionError, match="renderer never completed a new frame"):
+        _eye_still(pg, "a renderer that remains paused")
 
 
 def _each_structure(pg, label):

@@ -20,6 +20,8 @@ const capabilities={status:'ok',supported_tools:['read_file'],skills:[{id:'sampl
   browser=await chromium.launch({headless:true,channel:process.env.FRIDAY_BROWSER_CHANNEL||undefined,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   const page=activePage=await browser.newPage({viewport:{width:1600,height:1000},reducedMotion:'reduce'});page.setDefaultTimeout(10000);
   const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR:',e.message);});
+  await page.route('**/api/desktop/cards',route=>route.request().method()==='GET'
+    ? route.fulfill({contentType:'application/json',body:JSON.stringify({status:'ok',cards:[]})}) : route.fallback());
   await page.route('**/api/crew/**',async route=>{
     const request=route.request(),url=new URL(request.url()),method=request.method(),body=method==='GET'?{}:request.postDataJSON();
     let data,status=200;

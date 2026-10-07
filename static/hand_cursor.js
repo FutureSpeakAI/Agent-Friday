@@ -29,17 +29,17 @@
   let cache = { t: 0, list: [] };
   let dirty = true;
   const mo = new MutationObserver(() => { dirty = true; });
-  function watch() { mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'disabled', 'aria-hidden', 'inert'] }); }
+  function watch() { mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'disabled', 'aria-disabled', 'aria-hidden', 'inert', 'data-fr-guarded'] }); }
   window.addEventListener('scroll', () => { dirty = true; }, true);
   window.addEventListener('resize', () => { dirty = true; });
 
-  function visible(el, r) {
+  function visible(el, r, pointerTransparent = false) {
     if (!r || r.width < 2 || r.height < 2) return false;
     if (r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) return false;
-    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    if (el.disabled || el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') return false;
     if (el.closest('[inert],[aria-hidden="true"],[hidden],[data-fr-target="off"]')) return false;
     const cs = getComputedStyle(el);
-    if (cs.visibility === 'hidden' || cs.pointerEvents === 'none' || +cs.opacity < 0.05) return false;
+    if (cs.visibility === 'hidden' || (!pointerTransparent && cs.pointerEvents === 'none') || +cs.opacity < 0.05) return false;
     return true;
   }
   function isGuarded(el) {
@@ -93,6 +93,7 @@
   function setArc(p) { if (!arc) return; const C = 2 * Math.PI * 17; arc.style.strokeDashoffset = String(C * (1 - Math.max(0, Math.min(1, p)))); arc.style.opacity = p > 0 ? '1' : '0'; }
   let highlighted = null;
   function highlight(t) {
+    if (!snapBox && !ensureDom()) return;
     const el = t && t.el || null;
     if (highlighted && highlighted !== el) { highlighted.classList.remove('fr-snap'); dispatchHover(highlighted, false); }
     if (el && highlighted !== el) { el.classList.add('fr-snap'); dispatchHover(el, true); }
@@ -109,10 +110,45 @@
   }
 
   // ── Clicking ─────────────────────────────────────────────────────────────────
-  function clickTarget(t, point, now) {
+  function usableOrb(t) {
+    const orb = typeof window.fridayOrbTargets === 'function' && window.fridayOrbTargets().find(o => o.id === t.orb.id);
+    const canvas = window.__fridayRenderer && window.__fridayRenderer.domElement;
+    if (!orb || !canvas || !canvas.isConnected || !Number.isFinite(orb.sx) || !Number.isFinite(orb.sy)) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (!visible(canvas, rect, true) || orb.sx < rect.left || orb.sx > rect.right || orb.sy < rect.top || orb.sy > rect.bottom) return null;
+    // The native canvas deliberately passes pointers through. Only the exact
+    // transparent app roots count as bare scene; their children, arbitrary
+    // covers and modal backdrops must block the scene's direct hit test.
+    const top = document.elementFromPoint(orb.sx, orb.sy);
+    if (top === canvas || top === document.body || top === document.documentElement) return orb;
+    if (top && (top === document.getElementById('ui-root') || top === document.getElementById('ui-inner'))) {
+      const style = getComputedStyle(top);
+      if (style.backgroundImage === 'none' && (style.backgroundColor === 'transparent' || style.backgroundColor === 'rgba(0, 0, 0, 0)')) return orb;
+    }
+    return null;
+  }
+  function targetUsable(t, point) {
     if (!t) return false;
-    if (t.orb) { if (typeof window.fridayOrbClickAt === 'function') window.fridayOrbClickAt(t.orb.sx, t.orb.sy); return true; }
+    if (t.orb) return !!usableOrb(t);
+    const el = t.el;
+    if (!el || !el.isConnected) return false;
+    const r = el.getBoundingClientRect();
+    if (!visible(el, r)) return false;
+    const x = point && point.x >= r.left && point.x <= r.right ? point.x : r.left + r.width / 2;
+    const y = point && point.y >= r.top && point.y <= r.bottom ? point.y : r.top + r.height / 2;
+    const top = document.elementFromPoint(x, y);
+    return !!top && (top === el || el.contains(top));
+  }
+  function clickTarget(t, point, now, held) {
+    if (!t) return false;
+    if (!targetUsable(t, point)) return false;
+    if (t.orb) {
+      const orb = usableOrb(t);
+      if (!orb || typeof window.fridayOrbClickAt !== 'function') return false;
+      return window.fridayOrbClickAt(orb.sx, orb.sy)?.ok === true;
+    }
     const el = t.el; if (!el || !el.isConnected) return false;
+    if (isGuarded(el) && !held) return false;
     const r = el.getBoundingClientRect();
     // Click INSIDE the element at the frozen point if it is inside, else at its centre.
     const x = point.x >= r.left && point.x <= r.right ? point.x : r.left + r.width / 2;
@@ -122,6 +158,7 @@
     for (const [ctor, type] of [[PointerEvent, 'pointerdown'], [MouseEvent, 'mousedown'], [PointerEvent, 'pointerup'], [MouseEvent, 'mouseup']]) {
       try { el.dispatchEvent(new ctor(type, init)); } catch (e) { /* ignore */ }
     }
+    if (!targetUsable(t, { x, y }) || (isGuarded(el) && !held)) return false;
     try { el.dispatchEvent(new MouseEvent('click', init)); } catch (e) { if (typeof el.click === 'function') el.click(); }
     if (typeof window.spawnRipple === 'function') window.spawnRipple(x, y, 'rgba(0,212,255,0.9)');
     return true;
@@ -136,6 +173,38 @@
   function dragFrom(t, frozen, delta) {
     const el = t && t.el ? t.el : document.elementFromPoint(frozen.x, frozen.y);
     if (!el) return;
+    if (el.matches('input[type="range"]')) {
+      const style = getComputedStyle(el);
+      if (style.writingMode.startsWith('vertical') || el.getAttribute('orient') === 'vertical') return false;
+      if (!dragFrom.active) {
+        dragFrom.active = { kind: 'range', target: t, point: frozen, x: frozen.x, changed: false };
+        try { el.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+      }
+      const state = dragFrom.active, rect = el.getBoundingClientRect();
+      if (state.kind !== 'range' || state.target.el !== el) return false;
+      state.x += delta.x;
+      state.point = { x: Math.max(rect.left + 1, Math.min(rect.right - 1, state.x)), y: rect.top + rect.height / 2 };
+      if (!targetUsable(t, state.point) || isGuarded(el)) { endDrag(false); return false; }
+      const number = (raw, fallback) => raw !== '' && Number.isFinite(Number(raw)) ? Number(raw) : fallback;
+      const min = number(el.min, 0), max = Math.max(min, number(el.max, 100));
+      let fraction = Math.max(0, Math.min(1, (state.x - rect.left) / rect.width));
+      if (style.direction === 'rtl') fraction = 1 - fraction;
+      let value = min + fraction * (max - min);
+      const step = number(el.step, 1);
+      if (el.step !== 'any') value = min + Math.round((value - min) / (step > 0 ? step : 1)) * (step > 0 ? step : 1);
+      value = Number(Math.max(min, Math.min(max, value)).toFixed(12));
+      if (Number(el.value) !== value) {
+        // React tracks the instance setter. The native setter lets its input
+        // handler observe the changed value and retain controlled state.
+        const previous = el.value;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, String(value));
+        if (el.value !== previous) {
+          state.changed = true;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+      return;
+    }
     // A window's title bar already drags with mouse events; drive it rather than re-implement.
     const bar = el.closest('.fwin-bar, [data-fr-draggable]');
     if (bar) {
@@ -147,14 +216,20 @@
     }
     const sc = scrollableAncestor(el); if (sc) { sc.scrollTop -= delta.y; sc.scrollLeft -= delta.x; }
   }
-  function endDrag() { if (dragFrom.active) { document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: dragFrom.active.x, clientY: dragFrom.active.y })); dragFrom.active = null; } }
+  function endDrag(commit = true) {
+    const state = dragFrom.active; dragFrom.active = null;
+    if (!state) return;
+    if (state.kind === 'range') {
+      if (commit && state.changed && targetUsable(state.target, state.point) && !isGuarded(state.target.el)) state.target.el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: state.x, clientY: state.y }));
+  }
 
   // ── The per-frame step ───────────────────────────────────────────────────────
   const snap = Core.snapController({ engageRadius: 40, releaseRadius: 64, friction: 0.35 });
   const pinch = Core.pinchMachine({ onset: 0.5, release: 0.5, dragSlopPx: 36, holdMs: 700 }); // a pinch moves the tracked midpoint up to ~30 px; past 36 px it is a drag // the engine's hysteresis is authoritative; strength is 0 or 1
   const dwell = Core.dwellMachine({ dwellMs: 700 });
   const zoom = Core.zoomTracker();
-  let locked = null, lastPoint = { x: -100, y: -100 }, trackingOn = false, secondHand = null, lastZoomEmit = 0;
+  let locked = null, pinchTarget = null, pinchDragTarget = null, lastPoint = { x: -100, y: -100 }, trackingOn = false, secondHand = null, lastZoomEmit = 0;
   const cfg = () => (window.FridayTracking && window.FridayTracking.cfg) || {};
 
   /** Called once per animation frame by the page with the engine's shaped hand. */
@@ -165,20 +240,22 @@
     const big = document.body.classList.contains('fr-big');
     snap.set({ scale: big ? 1.5 : 1, engageRadius: +c.snap_radius || 40, releaseRadius: (+c.snap_radius || 40) * 1.6 });
     dwell.set({ dwellMs: Math.max(200, +c.dwell_ms || 700) });
-    if (!h.visible) { setState('free', now); highlight(null); locked = null; snap.release(); pinch.reset(); dwell.reset(); endDrag(); reticle.classList.add('hidden'); return; }
+    if (!h.visible) { setState('free', now); highlight(null); locked = null; pinchTarget = pinchDragTarget = null; snap.release(); pinch.reset(); dwell.reset(); endDrag(); reticle.classList.add('hidden'); return; }
     reticle.classList.remove('hidden');
     const raw = { x: h.x, y: h.y };
     const frozen = pinch.frozen;
     // Snap decides the target from the live point unless we are frozen in a pinch.
-    const res = c.snap === false ? { target: null, point: raw, locked: false } : snap.update(frozen || raw, targets(now));
-    // A covered target (a dropdown over a list) is not clickable: check the topmost element once per lock change.
-    if (res.target && res.target.el && res.target !== locked) {
-      const cc = Core.center(res.target.rect); const top = document.elementFromPoint(cc.x, cc.y);
-      if (top && top !== res.target.el && !res.target.el.contains(top) && !top.closest('#hand-cursor,.fr-snap-box')) { res.target.disabled = true; snap.release(); }
+    const res = pinch.pinched ? { target: pinchTarget, point: frozen, locked: !!pinchTarget }
+      : c.snap === false ? { target: targetAt(raw), point: raw, locked: false }
+      : snap.update(raw, targets(now).filter(t => Core.edgeDistance(raw, t.rect) <= (+c.snap_radius || 40) * 1.6 * (big ? 1.5 : 1) && targetUsable(t)));
+    // Revalidate every frame: opening a popup, disabling a button or leaving
+    // a workspace must revoke the old target even during a frozen pinch.
+    if (res.target && !targetUsable(res.target, frozen || (c.snap === false ? raw : null))) {
+      res.target = null; pinchTarget = pinchDragTarget = null; snap.release(); endDrag(false);
     }
     if (res.target !== locked) { locked = res.target; highlight(locked); if (locked && locked.orb && typeof window.fridayOrbPointer === 'function') window.fridayOrbPointer(locked.orb.sx, locked.orb.sy); }
     else if (locked && locked.el) { const lr = locked.el.getBoundingClientRect(); if (Math.abs(lr.left - locked.rect.left) > 0.5 || Math.abs(lr.width - locked.rect.width) > 0.5 || Math.abs(lr.top - locked.rect.top) > 0.5) { locked.rect = { left: lr.left, top: lr.top, width: lr.width, height: lr.height }; highlight(locked); } }
-    const drawAt = frozen || (locked ? Core.center(locked.rect) : res.point);
+    const drawAt = frozen || (locked && c.snap !== false ? Core.center(locked.rect) : res.point);
     reticle.style.left = drawAt.x + 'px'; reticle.style.top = drawAt.y + 'px';
     lastPoint = drawAt;
     if (locked && locked.orb && !frozen && typeof window.fridayOrbPointer === 'function') window.fridayOrbPointer(drawAt.x, drawAt.y);
@@ -191,20 +268,37 @@
       setState(locked ? 'locked' : 'free', now);
       return;
     }
-    const ev = pinch.update(h.pinching ? 1 : 0, raw, now, !!(locked && locked.guarded));
+    if (!pinch.pinched && h.pinching) {
+      pinchTarget = locked;
+      // Blank content and title bars can still start a scroll or window drag,
+      // but never become an unregistered fallback click target on release.
+      const el = document.elementFromPoint(raw.x, raw.y);
+      pinchDragTarget = pinchTarget || (el ? { el, rect: el.getBoundingClientRect() } : null);
+    }
+    const ev = pinch.update(h.pinching ? 1 : 0, raw, now, !!(pinchTarget && (pinchTarget.el ? isGuarded(pinchTarget.el) : pinchTarget.guarded)));
     if (!ev) { setState(pinch.pinched ? 'pinched' : (locked ? 'locked' : 'free'), now); if (!pinch.pinched) setArc(0); return; }
     switch (ev.type) {
       case 'pinchStart': setState('pinched', now); break;
       case 'holdProgress': setArc(ev.progress); break;
       case 'hold': setArc(1); setState('held', now); break;
-      case 'drag': dragFrom(locked, ev.point, ev.delta); break;
-      case 'click': setArc(0); clickTarget(locked || targetAt(ev.point), ev.point, now); setState('free', now); break;
-      case 'cancel': setArc(0); setState('free', now); if (typeof window.fridayToast === 'function') window.fridayToast('Hold the pinch to ' + actionWord(locked) + '.'); break;
-      case 'pinchEnd': endDrag(); setArc(0); setState('free', now); break;
+      case 'drag':
+        if (pinchDragTarget && targetUsable(pinchDragTarget, ev.point)) {
+          if (dragFrom(pinchDragTarget, ev.point, ev.delta) === false) { pinchTarget = pinchDragTarget = locked = null; snap.release(); highlight(null); }
+        } else endDrag(false);
+        break;
+      case 'click': setArc(0); clickTarget(pinchTarget, ev.point, now, ev.guarded === true); pinchTarget = pinchDragTarget = null; setState('free', now); break;
+      case 'cancel': pinchTarget = pinchDragTarget = null; setArc(0); setState('free', now); if (typeof window.fridayToast === 'function') window.fridayToast('Hold the pinch to ' + actionWord(locked) + '.'); break;
+      case 'pinchEnd': pinchTarget = pinchDragTarget = null; endDrag(); setArc(0); setState('free', now); break;
     }
   }
   function actionWord(t) { const s = t && t.el ? (t.el.getAttribute('aria-label') || t.el.textContent || '').trim().toLowerCase().slice(0, 24) : ''; return s || 'do that'; }
-  function targetAt(p) { const el = document.elementFromPoint(p.x, p.y); const t = el && targets(performance.now()).find(t => t.el === el || (t.el && t.el.contains(el))); return t || (el ? { el, rect: el.getBoundingClientRect(), guarded: isGuarded(el) } : null); }
+  function targetAt(p) {
+    const top = document.elementFromPoint(p.x, p.y);
+    const el = top && top.closest(TARGET_SELECTOR);
+    if (!el) return null;
+    const t = targets(performance.now()).find(item => item.el === el);
+    return t && targetUsable(t, p) ? t : null;
+  }
 
   /** A second hand's point (screen px) for two-hand zoom, or null when it is gone. */
   function second(p) {
@@ -249,24 +343,26 @@
     if (locked && locked.el) setTimeout(() => { if (locked && locked.el && locked.el.isConnected) { const r = locked.el.getBoundingClientRect(); locked.rect = { left: r.left, top: r.top, width: r.width, height: r.height }; highlight(locked); } }, 400);
     return on;
   }
-  function setTracking(on) { trackingOn = !!on; if (!on) { highlight(null); locked = null; } return applyBig(); }
+  function setTracking(on) { trackingOn = !!on; if (!on) { highlight(null); locked = null; pinchTarget = pinchDragTarget = null; snap.release(); pinch.reset(); dwell.reset(); endDrag(); } return applyBig(); }
   function applySettings(s) { if (s && s.big_mode) bigSetting = s.big_mode; return applyBig(); }
   function setBigMode(mode) { bigSetting = mode === 'on' || mode === 'off' ? mode : 'auto'; return applyBig(); }
 
   // ── Voice actions: next, select, back (HIG hand-cursor §2.5) ─────────────────
   function next(dir) {
-    const list = targets(performance.now()).filter(t => t.el).sort((a, b) => (a.rect.top - b.rect.top) || (a.rect.left - b.rect.left));
+    if (!ensureDom()) return { ok: false, code: 'CURSOR_NO_TARGET' };
+    const list = targets(performance.now()).filter(t => t.el && targetUsable(t)).sort((a, b) => (a.rect.top - b.rect.top) || (a.rect.left - b.rect.left));
     if (!list.length) return { ok: false, code: 'CURSOR_NO_TARGET' };
     let i = locked ? list.findIndex(t => t.id === locked.id) : -1;
+    if (i < 0 && dir < 0) i = 0;
     i = (i + (dir < 0 ? -1 : 1) + list.length) % list.length;
     locked = list[i]; highlight(locked); snap.release();
     const cpt = Core.center(locked.rect); if (ensureDom()) { reticle.classList.remove('hidden'); reticle.style.left = cpt.x + 'px'; reticle.style.top = cpt.y + 'px'; }
     return { ok: true, code: 'CURSOR_MOVED', label: actionWord(locked) };
   }
   function select() {
-    if (!locked) return { ok: false, code: 'CURSOR_NO_TARGET' };
-    if (locked.guarded) return { ok: false, code: 'CURSOR_GUARDED', label: actionWord(locked) };
-    clickTarget(locked, Core.center(locked.rect), performance.now());
+    if (!locked || !targetUsable(locked)) { locked = null; highlight(null); snap.release(); return { ok: false, code: 'CURSOR_NO_TARGET' }; }
+    if (locked.el ? isGuarded(locked.el) : locked.guarded) return { ok: false, code: 'CURSOR_GUARDED', label: actionWord(locked) };
+    if (!clickTarget(locked, Core.center(locked.rect), performance.now())) return { ok: false, code: 'CURSOR_NO_TARGET' };
     return { ok: true, code: 'CURSOR_SELECTED', label: actionWord(locked) };
   }
   function back() { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return { ok: true, code: 'CURSOR_BACK' }; }

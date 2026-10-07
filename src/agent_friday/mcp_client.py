@@ -557,7 +557,7 @@ def _sse_lines(fp, deadline: float, max_line: int, server: str):
             if len(raw) > max_line and not raw.endswith(b"\n"):
                 raise _too_large(server, "one line of the stream had no end", max_line)
             yield raw
-        return
+        raise TimeoutError("SSE reply deadline expired")
     pending = b""
     while True:
         while b"\n" in pending:
@@ -567,13 +567,13 @@ def _sse_lines(fp, deadline: float, max_line: int, server: str):
             raise _too_large(server, "one line of the stream had no end", max_line)
         remaining = deadline - time.time()
         if remaining <= 0:
-            return
+            raise TimeoutError("SSE reply deadline expired")
         _tighten_socket(fp, remaining)
         try:
             chunk = pull(_READ_CHUNK)
         except (TimeoutError, OSError) as e:
             if time.time() >= deadline - 0.01 or "timed out" in str(e):
-                return
+                raise TimeoutError("SSE reply deadline expired") from None
             raise
         if not chunk:
             if pending:
@@ -587,8 +587,9 @@ def iter_sse_data(fp, deadline: float, *, max_bytes: int = _MAX_HTTP_BODY_BYTES,
     """Yield the `data:` payload of each SSE event read from a stream.
 
     Multi-line data fields are joined with \n per the SSE spec; comment lines
-    (`:` prefix) and other fields (event/id/retry) are skipped. Stops at EOF
-    or when `deadline` (epoch seconds) passes. A line longer than `max_line`, or a stream
+    (`:` prefix) and other fields (event/id/retry) are skipped. Stops at EOF;
+    reaching `deadline` (epoch seconds) raises TimeoutError rather than flushing
+    an unfinished event as though the stream closed. A line longer than `max_line`, or a stream
     that delivers more than `max_bytes` in all, raises MCPResponseTooLarge.
     """
     buf: list[str] = []
@@ -722,17 +723,23 @@ class MCPServerHTTP:
                 return None
             ctype = (resp.headers.get("Content-Type") or "").lower()
             if "text/event-stream" in ctype:
-                for data in iter_sse_data(resp, deadline, server=self.name):
-                    try:
-                        msg = json.loads(data)
-                    except Exception:
-                        continue
-                    # A batch is a list; scan it for our response.
-                    for m in (msg if isinstance(msg, list) else [msg]):
-                        if isinstance(m, dict) and m.get("id") == want_id:
-                            return m
-                    # Server-initiated requests/notifications are skipped —
-                    # Friday exposes no sampling/roots/elicitation.
+                try:
+                    for data in iter_sse_data(resp, deadline, server=self.name):
+                        try:
+                            msg = json.loads(data)
+                        except Exception:
+                            continue
+                        # A batch is a list; scan it for our response.
+                        for m in (msg if isinstance(msg, list) else [msg]):
+                            if isinstance(m, dict) and m.get("id") == want_id:
+                                return m
+                        # Server-initiated requests/notifications are skipped —
+                        # Friday exposes no sampling/roots/elicitation.
+                except TimeoutError:
+                    # The socket may report its timeout just before the clock
+                    # reaches our deadline. Preserve that cause instead of
+                    # treating the bounded reader's exit as an ordinary EOF.
+                    raise _too_slow(self.name, timeout) from None
                 if time.time() >= deadline:
                     raise _too_slow(self.name, timeout)
                 raise TimeoutError(

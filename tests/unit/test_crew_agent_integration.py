@@ -57,6 +57,16 @@ def test_profile_is_upper_bound_even_if_caller_passes_full_registry(bound, monke
     assert [t["name"] for t in calls[0]["tools"]] == ["read_file"]
 
 
+def test_empty_profile_permissions_never_fall_back_to_registry(bound, monkeypatch):
+    profile, session, _descriptor = bound
+    profile["allowed_tools"] = []
+    calls = []
+    monkeypatch.setattr(agent, "_call_openai", lambda *a, **kw: calls.append(kw) or ("answer", []))
+    agent._generate_agent_untraced([], system="bounded", session_ctx=session,
+                                  tools=agent.CLAUDE_TOOLS)
+    assert calls[0]["tools"] == []
+
+
 def test_local_only_blocks_cloud_crew_before_provider_calls(bound, monkeypatch):
     _profile, session, _descriptor = bound
     monkeypatch.setattr(agent, "_call_openai", lambda *a, **kw: pytest.fail("cloud must not run"))
@@ -110,6 +120,36 @@ def test_runner_restores_spawning_thread_restrictions(monkeypatch, record):
     assert local_only_guard.local_only_snapshot() is None
 
 
+def test_runner_trace_covers_restriction_setup_failure(monkeypatch):
+    import contextlib
+    from agent_friday.services import reasoning_trace
+
+    events = []
+
+    @contextlib.contextmanager
+    def trace(*args, **kwargs):
+        events.append("started")
+        try:
+            yield
+        except RuntimeError as exc:
+            events.append(str(exc))
+            raise
+        finally:
+            events.append("finished")
+
+    def fail_restriction(*args):
+        raise RuntimeError("saved restriction unavailable")
+
+    monkeypatch.setitem(agent.TASKS, "restriction-failure-test", {})
+    monkeypatch.setattr(reasoning_trace, "scope", trace)
+    monkeypatch.setattr(agent, "_task_local_only_label", fail_restriction)
+    monkeypatch.setattr(agent, "_runner_task_worker_untraced",
+                        lambda *a, **kw: pytest.fail("runner must not start"))
+    with pytest.raises(RuntimeError, match="saved restriction unavailable"):
+        agent._runner_task_worker("restriction-failure-test", lambda tid: {})
+    assert events == ["started", "saved restriction unavailable", "finished"]
+
+
 def _hook_setup(bound, monkeypatch):
     profile, session, _descriptor = bound
     task = {"status": "running", "crew_tool_calls": 0,
@@ -143,6 +183,20 @@ def test_critical_hook_denies_missing_identity_cancel_and_timeout(bound, monkeyp
     task["status"] = "running"
     ctx.session_ctx["crew_started"] = time.monotonic() - 100
     assert agent._hook_crew_access(ctx).action == "deny"
+
+
+@pytest.mark.parametrize("private,generation", [(True, 4), (False, 5), (True, 5)])
+def test_critical_hook_refuses_tools_after_crew_privacy_boundary(bound, monkeypatch, private, generation):
+    from agent_friday.services import off_record
+    task, ctx, receipts = _hook_setup(bound, monkeypatch)
+    task["crew_context"].update(off_record=False, off_record_generation=4)
+    monkeypatch.setattr(off_record, "active", lambda: private)
+    monkeypatch.setattr(off_record, "generation", lambda: generation)
+    monkeypatch.setattr(crew_access, "authorize_tool", lambda *a, **kw:
+                        pytest.fail("Expired Crew work must not reach tool authorization"))
+    assert agent._hook_crew_access(ctx).action == "deny"
+    assert task["crew_tool_calls"] == 0
+    assert receipts[-1]["decision"] == "deny"
 
 
 def test_interrupted_or_old_persisted_crew_approval_cannot_restart_work(bound, monkeypatch):
@@ -205,15 +259,60 @@ def test_both_approval_builders_preserve_only_trusted_crew_context(bound, monkey
 
 
 def test_host_tools_use_active_conversation_and_no_model_supplied_request_id(monkeypatch):
-    from agent_friday.services import crew_runtime
+    from agent_friday.services import crew_runtime, off_record
+    monkeypatch.setattr(off_record, "active", lambda: False)
+    monkeypatch.setattr(off_record, "generation", lambda: 7)
     calls = []
     monkeypatch.setattr(crew_runtime, "ask", lambda *a, **kw: calls.append((a, kw)) or {"task_id": "real-task"})
     state = agent._CURRENT_CONVERSATION.set("conv-test")
+    origin_token = crew_runtime.HOST_ORIGIN.set(crew_runtime.capture_host_origin())
     try:
         assert agent._tool_ask_crew({"agent": "Researcher", "request": "Check evidence", "request_id": "spoofed"})["task_id"] == "real-task"
     finally:
+        crew_runtime.HOST_ORIGIN.reset(origin_token)
         agent._CURRENT_CONVERSATION.reset(state)
     assert calls == [(("conv-test", "Researcher", "Check evidence"), {})]
+
+
+@pytest.mark.parametrize("private_at_start", [False, True])
+@pytest.mark.parametrize("tool_name", ["ask_crew", "ask-crew"])
+def test_late_private_host_delegation_refuses_before_tool_parsing_or_hooks(monkeypatch, private_at_start, tool_name):
+    from agent_friday.services import crew_runtime, off_record
+    state = {"private": private_at_start, "generation": 3}
+    monkeypatch.setattr(off_record, "active", lambda: state["private"])
+    monkeypatch.setattr(off_record, "generation", lambda: state["generation"])
+    origin = crew_runtime.capture_host_origin()
+    state.update(private=False, generation=4)
+    monkeypatch.setattr(agent._tool_args, "check", lambda *a, **kw:
+                        pytest.fail("Private input must be refused before parsing or logging"))
+    monkeypatch.setattr(agent._hooks, "run_pre_hooks", lambda *a, **kw:
+                        pytest.fail("Private input must not reach ordinary hooks"))
+    result = agent._execute_tool(tool_name, {"request": "Private host material"},
+                                session_ctx={"_crew_host_origin": origin})
+    assert "CREW DENY" in result and "Private host material" not in result
+
+
+def test_crew_host_origin_cannot_be_forged_by_json_fields(monkeypatch):
+    from agent_friday.services import off_record
+    monkeypatch.setattr(off_record, "active", lambda: False)
+    monkeypatch.setattr(off_record, "generation", lambda: 3)
+    result = agent._execute_tool("ask_crew", {"agent": "Reviewer", "request": "Work"},
+        session_ctx={"_crew_host_origin": {"off_record": False, "generation": 3}})
+    assert "original privacy state was not recorded" in result
+
+
+def test_host_origin_captures_generation_before_private_mode_probe(monkeypatch):
+    from agent_friday.services import crew_runtime, off_record
+    generation = [3]
+    monkeypatch.setattr(off_record, "generation", lambda: generation[0])
+    def ended_during_probe():
+        generation[0] = 4
+        return False
+    monkeypatch.setattr(off_record, "active", ended_during_probe)
+    origin = crew_runtime.capture_host_origin()
+    assert origin.generation == 3
+    with pytest.raises(crew_runtime.CrewRoomError):
+        crew_runtime.require_public_host_origin(origin)
 
 
 @pytest.mark.parametrize("binding", [{"agent_id": "crew-" + "a" * 16}, {}])

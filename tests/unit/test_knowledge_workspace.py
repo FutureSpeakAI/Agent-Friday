@@ -272,7 +272,9 @@ def test_the_bar_is_rendered_unconditionally(ui):
 @pytest.mark.parametrize("ui", sorted(UI))
 def test_knowledge_opens_at_a_two_pane_window_size(ui):
     text = _text(ui)
-    m = re.search(r"const FWIN_FIRST_SIZE\s*=\s*\{\s*knowledge:\s*\{\s*w:\s*(\d+),\s*h:\s*(\d+),\s*v:\s*(\d+)", text)
+    registry = re.search(r"const FWIN_FIRST_SIZE\s*=\s*\{(.*?)\};", text, re.S)
+    assert registry, ui
+    m = re.search(r"\bknowledge:\s*\{\s*w:\s*(\d+),\s*h:\s*(\d+),\s*v:\s*(\d+)", registry.group(1))
     assert m, ui
     w, h, _ = map(int, m.groups())
     assert w >= 1000 and h >= 700

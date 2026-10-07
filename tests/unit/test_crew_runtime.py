@@ -9,13 +9,18 @@ import pytest
 @pytest.fixture
 def room(monkeypatch, tmp_path):
     from agent_friday.services import crew_runtime as runtime
-    from agent_friday.services import crew_access, crew_profiles, conversations, agent, voice_live_channel
+    from agent_friday.services import crew_access, crew_profiles, conversations, agent, voice_live_channel, off_record
     profile = {"id": "crew-" + "a" * 16, "revision": 1, "name": "Reviewer", "role": "Check evidence",
                "persona": "Precise", "caption": {"label": "Reviewer"}, "provider": "chosen",
                "model": "chosen-model", "allowed_tools": [], "memory": {"write": False},
                "time_budget_s": 120}
     state = SimpleNamespace(profile=profile, conv={"id": "chat", "project": "project"},
-                            messages=[], spawns=[], deliveries=[], tasks={}, runs=[])
+                            messages=[], spawns=[], deliveries=[], tasks={}, runs=[],
+                            private=False, generation=1, remembered=[])
+    monkeypatch.setattr(off_record, "active", lambda: state.private)
+    monkeypatch.setattr(off_record, "generation", lambda: state.generation)
+    monkeypatch.setattr(crew_profiles, "remember_result",
+                        lambda *a, **kw: state.remembered.append((a, kw)))
     monkeypatch.setattr(runtime, "friday_home", lambda: tmp_path)
     monkeypatch.setattr(conversations, "load", lambda cid: state.conv if cid == "chat" else None)
     monkeypatch.setattr(conversations, "messages", lambda cid, limit=100: state.messages[-limit:])
@@ -140,6 +145,9 @@ def test_only_current_explicitly_shared_history_enters_context(room):
             "shared_with": {room.profile["id"]: 1}}},
         {"text": "Old permissions", "meta": {"kind": "crew_request", "project_id": "project",
             "shared_with": {room.profile["id"]: 0}}},
+        {"text": "Private host speech", "meta": {"kind": "crew_speech", "project_id": "project",
+            "speaker_id": "friday", "off_record": True,
+            "shared_with": {room.profile["id"]: 1}}},
     ])
     history = room.runtime._history("chat", room.profile, "project")
     assert history == "User: Review it"
@@ -186,3 +194,87 @@ def test_duplicate_active_work_is_bounded_but_idempotent_retry_still_succeeds(ro
     with pytest.raises(room.runtime.CrewRoomError, match="already working"):
         room.runtime.dispatch("chat", {**room.request, "request_id": "two"})
     assert len(room.spawns) == 1
+
+
+def test_private_dispatch_refuses_before_any_request_side_effect(room, monkeypatch):
+    room.private = True
+    room.profile["memory"]["write"] = True
+    writes = []
+    monkeypatch.setattr(room.runtime, "_write", lambda *a: writes.append(a))
+    with pytest.raises(room.runtime.CrewRoomError, match="Off the record"):
+        room.runtime.dispatch("chat", room.request)
+    assert writes == room.spawns == room.messages == room.runs == room.remembered == room.deliveries == []
+    assert room.tasks == {}
+
+
+@pytest.mark.parametrize("private,generation", [(True, 1), (False, 2), (True, 2)])
+def test_queued_work_refuses_private_or_ended_origin_before_provider(room, private, generation):
+    room.profile["memory"]["write"] = True
+    out = room.runtime.dispatch("chat", room.request)
+    before = copy.deepcopy(room.messages)
+    room.private, room.generation = private, generation
+    result = room.spawns[0]["runner"](out["task_id"])
+    assert result["status"] == "failed"
+    assert "Off the record" in result["result"]
+    assert room.runs == room.remembered == room.deliveries == []
+    assert room.messages == before
+
+
+@pytest.mark.parametrize("private,generation", [(True, 1), (False, 2), (True, 2)])
+def test_result_crossing_privacy_boundary_is_not_republished(room, monkeypatch, private, generation):
+    room.profile["memory"]["write"] = True
+    def generate(*a, **kw):
+        room.private, room.generation = private, generation
+        return "Result from an expired privacy lifetime", []
+    monkeypatch.setattr(room.agent, "_generate_agent", generate)
+    out = room.runtime.dispatch("chat", room.request)
+    before = copy.deepcopy(room.messages)
+    result = room.spawns[0]["runner"](out["task_id"])
+    assert result["status"] == "failed"
+    assert "Result from an expired privacy lifetime" not in result["result"]
+    assert room.messages == before
+    assert room.remembered == room.deliveries == []
+
+
+def test_public_dispatch_carries_its_privacy_generation_to_voice(room):
+    out = room.runtime.dispatch("chat", room.request)
+    binding = room.spawns[0]["crew_context"]
+    assert binding["off_record"] is False
+    assert binding["off_record_generation"] == room.generation
+    assert room.spawns[0]["runner"](out["task_id"])["status"] == "completed_unverified"
+    assert room.deliveries[0][1]["off_record"] is False
+    assert room.deliveries[0][1]["off_record_generation"] == room.generation
+
+
+def test_private_transition_during_context_assembly_never_reaches_provider(room, monkeypatch):
+    from agent_friday.services import crew_access
+    def context(*a, **kw):
+        room.private = True
+        return "Private context", {}
+    monkeypatch.setattr(crew_access, "build_context", context)
+    out = room.runtime.dispatch("chat", room.request)
+    before = copy.deepcopy(room.messages)
+    result = room.spawns[0]["runner"](out["task_id"])
+    assert result["status"] == "failed"
+    assert room.runs == room.remembered == room.deliveries == []
+    assert room.messages == before
+
+
+def test_host_delegation_cannot_rebind_to_current_generation_during_room_lookup(room, monkeypatch):
+    origin = room.runtime.capture_host_origin()
+    token = room.runtime.HOST_ORIGIN.set(origin)
+    original = room.runtime.voice_room
+    lookups = []
+    def changed(cid):
+        result = original(cid)
+        if not lookups:
+            room.generation += 1
+        lookups.append(cid)
+        return result
+    monkeypatch.setattr(room.runtime, "voice_room", changed)
+    try:
+        with pytest.raises(room.runtime.CrewRoomError, match="Off the record"):
+            room.runtime.ask("chat", "Reviewer", "Private-derived request")
+    finally:
+        room.runtime.HOST_ORIGIN.reset(token)
+    assert room.spawns == room.messages == []

@@ -218,15 +218,18 @@ def run_pytest(cmd: list[str], tree: Path, log: Path, cfg: dict, poll_s: float =
         def pump():
             for line in proc.stdout:
                 fh.write(line); fh.flush()
-                try:
-                    sys.stdout.write(line); sys.stdout.flush()
-                except (UnicodeError, OSError):
-                    # A restricted console encoding or closed output pipe must
-                    # not stop draining the child or its UTF-8 log.
-                    pass
                 tail.append(line)
                 if len(tail) > 60:
                     del tail[0]
+                # A legacy Windows console cannot represent every traceback.
+                # Keep the UTF-8 log intact and always drain the child pipe.
+                if sys.stdout is not None:
+                    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+                    printable = line.encode(encoding, errors="backslashreplace").decode(encoding)
+                    try:
+                        sys.stdout.write(printable); sys.stdout.flush()
+                    except (OSError, ValueError):
+                        pass  # A closed output consumer does not cancel the run.
 
         t = threading.Thread(target=pump, daemon=True)
         t.start()

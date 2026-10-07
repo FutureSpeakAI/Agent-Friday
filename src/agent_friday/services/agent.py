@@ -638,14 +638,14 @@ def _generate_agent(*args, **kwargs):
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
 
 CLAUDE_TOOLS = [
-    {"name": "list_crew", "description": "List the named agents invited to this conversation's active Crew room, their roles and selected models. Does not start any work.",
+    {"name": "list_crew", "description": "List this chat's invited Crew agents, roles and models; starts no work.",
      "input_schema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "ask_crew", "description": "Ask one invited Crew agent to work on a specific request in this conversation. Returns a real background task ID. The agent's own permissions and selected model apply. Do not claim its result until the task has returned.",
+    {"name": "ask_crew", "description": "Delegate to an invited Crew agent using its own permissions and model. Returns a task ID; await its result.",
      "input_schema": {"type": "object", "properties": {
-         "agent": {"type": "string", "description": "An invited agent's exact name or ID from list_crew"},
-         "request": {"type": "string", "description": "The specific work to delegate"}},
+         "agent": {"type": "string", "description": "Exact invited name or ID from list_crew"},
+         "request": {"type": "string", "description": "Work to delegate"}},
          "required": ["agent", "request"]}},
-    {"name": "search_web", "description": "Search the web for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki — AND for the small factual gaps inside a task you are already doing. If the user asks you to add a business's phone number and you have its name and address, that is a lookup: search for it, confirm it against the business's own site or a second source, and cite where it came from. Do not ask the user for a detail they would reasonably expect you to find, and never invent one. Backends, tried in order: Firecrawl (preferred; needs FIRECRAWL_API_KEY), Brave (BRAVE_API_KEY), then a DuckDuckGo scrape that is often blocked by an anti-bot challenge. Firecrawl IS part of this tool — never say it is not wired up; if a search fails, report the backend's own error and what would enable Firecrawl.",
+    {"name": "search_web", "description": "Search current facts and task-related gaps; returns ranked snippets with URLs. Look up findable details instead of asking the user or inventing them. Before saving a fact, confirm it on the primary site or a second source and cite it. Backends: Firecrawl (FIRECRAWL_API_KEY), Brave (BRAVE_API_KEY), then DuckDuckGo (often anti-bot blocked). Firecrawl is wired in: never say it is not wired up. Report backend errors and how to enable it.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
@@ -655,7 +655,7 @@ CLAUDE_TOOLS = [
          "offset": {"type": "integer", "description": "1-based line to start from (default 1). Use the offset a previous page named to continue."},
          "limit": {"type": "integer", "description": "Maximum lines to return (default and ceiling 2,000)."}},
          "required": ["path"]}},
-    {"name": "search_files", "description": "Find files by name on the local filesystem — the tool for 'find my resume in Downloads' or 'what's the latest report in Documents'. Searches Documents, Downloads, Desktop, and Friday's creations by default (configurable in Settings). Never searches the vault. Set content_query to also search inside extractable text (md/txt now; PDF/docx once read; hollow for other binary formats). Returns paths, names, sizes, and modified times, newest first by default.",
+    {"name": "search_files", "description": "Find local files by name in Documents, Downloads, Desktop and Friday creations (roots configurable in Settings); never the vault. content_query searches extractable md/txt and already-read PDF/docx text, not other binary contents. Returns paths, names, sizes and modification times, newest first by default.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "Filename substring/fuzzy match, e.g. 'resume' or 'cv'. Leave blank to list a root's newest files."},
          "root": {"type": "string", "description": "Restrict to one root: documents, downloads, desktop, creations, or a configured extra root. Default: search all of them."},
@@ -735,7 +735,7 @@ CLAUDE_TOOLS = [
       "required": ["series_id"]}},
     {"name": "query_calendar", "description": "Check the user's Google Calendar (today's & tomorrow's events). Built-in Google integration. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to walk the user through it; do NOT say you lack calendar access.",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "search_email", "description": "Search and read the user's recent Gmail across every connected account (built-in read-only Google integration). The query is sent to Gmail's own search, so its operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes and OR. An empty query returns recent unread. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to set it up; do NOT say you can't access Gmail. If the result has search_failed or error, the search did NOT run — report that failure; never describe it as zero results.",
+    {"name": "search_email", "description": "Search/read recent Gmail across connected accounts (read-only). Gmail operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes, OR. Empty query returns recent unread. Not connected means OAuth setup is needed: offer it, without claiming Gmail is unavailable. search_failed/error means the search failed, never zero results.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:alex after:2026-09-01'. Empty means recent unread."}}, "required": ["query"]}},
     {"name": "search_drive", "description": "Search Google Drive file/folder names across every connected Google account (built-in read-only integration). Returns each hit's id, name, mime_type, and which account it's in — pass the id + mime_type to read_doc for Docs/Sheets content. If a hit's account never granted Drive access, its error is reported per-account, not as 'not connected'.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Name substring to search for; omit for the most recently modified files."}}}},
@@ -813,9 +813,9 @@ CLAUDE_TOOLS = [
                       "properties": {"model": {"type": "string",
                                                "description": "The model the user named, in their words."}},
                       "required": ["model"]}},
-    {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: " + _ws_registry.tool_list() + ".",
+    {"name": "navigate", "description": "Open a named built-in workspace on the user's desktop. Use for requests to open, show or switch workspaces; operate the interface rather than give directions. Workspaces: " + _ws_registry.tool_list() + ".",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
-    {"name": "navigate_to", "description": "Open one specific thing on the user's Friday desktop, on screen: a workspace section or tab, an email thread in Messages, the mail a Gmail search finds (mail_search), a file in Studio's file browser, a creation, a news story, a wiki page or graph node in Knowledge, a Settings tab or section, a calendar day or meeting, a contact card, a content post, or a Media card (kind=card: anything the user made or is making). Pass the user's own words as query ('the Harbor Legal email', 'my budget spreadsheet', 'model settings') or an exact id you already have. new_tab opens it in its own Chrome tab, maximized; max fills the desktop with it. It is the user's own screen, so no approval is needed. NAV_OK means the page confirmed it; NAV_PARTIAL, it opened on something else; NAV_FAIL gives the reason and closest matches.",
+    {"name": "navigate_to", "description": "Open a specific workspace tab, mail thread/search, Studio file, creation, news story, Knowledge page/node, Settings section, calendar day/meeting, contact, post or Media card (kind=card). Pass the user's words as query or a known exact id. new_tab opens a maximized Chrome tab; max fills the desktop. No approval for navigation. NAV_OK confirms display; NAV_PARTIAL opened something else; NAV_FAIL supplies the reason and closest matches.",
      "input_schema": {"type": "object", "properties": {
          "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post", "card"]},
          "new_tab": {"type": "boolean", "description": "Open it in its own Chrome tab, maximized."},
@@ -825,11 +825,11 @@ CLAUDE_TOOLS = [
          "workspace": {"type": "string", "description": "For kind=workspace: which workspace."},
          "section": {"type": "string", "description": "A tab or section by name or id, e.g. 'feed', 'Models', 'Hard stop'."}},
          "required": ["kind"]}},
-    {"name": "check_situation", "description": "Check what is happening right now, instantly, from Friday's live state: open and focused workspaces, CPU, RAM, GPU memory and disk, which models are loaded or serving, running chat turns, tasks, background and scheduled jobs, queue depth, stand-down, and today's spend. Use it for any question about current activity or load. pin=true keeps a live summary in view on every later turn of this conversation; pin=false stops that.",
+    {"name": "check_situation", "description": "Read live activity/load: focused/open workspaces, CPU/RAM/GPU/disk, serving or loaded models, chat turns, tasks, scheduled/background jobs, queue, stand-down and today's spend. pin=true adds a live summary to later turns in this conversation; pin=false stops it.",
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "pin": {"type": "boolean"}}}},
-    {"name": "set_chat_tray", "description": "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or the right in a third, a half or two thirds of the screen ('put chat on the right third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on its edge and the workspace takes the full width. It is the owner's own screen, so no approval is needed. CHAT_OK: say what changed in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
+    {"name": "set_chat_tray", "description": "Show/hide chat or dock it left/right in a third, half or two thirds of the screen; the workspace uses the rest. Hidden chat leaves an edge pill. No approval for this screen change. CHAT_OK: briefly report the change. CHAT_NOT_APPLIED: explain no Friday page was available.",
      "input_schema": {"type": "object", "properties": {
          "visible": {"type": "boolean", "description": "true to show the chat, false to hide it."},
          "side": {"type": "string", "enum": ["left", "right"],
@@ -837,12 +837,12 @@ CLAUDE_TOOLS = [
          "size": {"type": "string", "enum": ["third", "half", "two_thirds"],
                   "description": "How much of the screen's width the tray takes."}},
          "required": []}},
-    {"name": "show_my_day", "description": "Show the start screen's cluster now: the owner's countdowns (from their calendar, commitments and wiki), the chat field, the mic and Start my day ('show my day'). With mode, set when it shows on its own: smart (when useful, fading while they work or talk; the default), always, or never (only when asked). It is the owner's own screen, so no approval is needed. DAY_SHOWN: say so in a few words. DAY_NOT_SHOWN: say why, in plain words. DAY_MODE: say what it will do now. The countdowns are not in the result; do not invent them.",
+    {"name": "show_my_day", "description": "Show Simple Home or Classic's start cluster (countdowns, chat, mic, Start my day). mode controls Classic automatic display: smart when useful (default), always, never except on request. No approval. DAY_SHOWN confirms visibility; DAY_NOT_SHOWN gives the reason; DAY_MODE confirms the preference. Countdown content is not returned: never invent it.",
      "input_schema": {"type": "object", "properties": {
          "mode": {"type": "string", "enum": ["smart", "always", "never"],
-                  "description": "Leave empty to show it now; set to change when it shows on its own."}},
+                  "description": "Omit to show Home now; set to change Classic automatic display."}},
          "required": []}},
-    {"name": "set_workspace_layout", "description": "Show a workspace fullscreen with the chat tray docked beside it, or back to its normal layout, or (with fullscreen_chat false and a position) in part of the screen: a half, a third or two thirds ('put News on the left two thirds'). It is the owner's own screen, so no approval is needed, and the choice is remembered for that workspace. Leave workspace empty for the one in front. LAYOUT_OK means the screen applied it; LAYOUT_SAVED means it is remembered and applies when that workspace is next open.",
+    {"name": "set_workspace_layout", "description": "Set a workspace fullscreen beside chat, restore its normal layout, or with fullscreen_chat=false place it in a screen half/third/two thirds. Omit workspace for the focused one. No approval; the choice is remembered. LAYOUT_OK confirms the screen applied it; LAYOUT_SAVED applies on next open.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id or name; empty for the one in front."},
          "fullscreen_chat": {"type": "boolean", "description": "true: fullscreen with the chat beside it; false: the normal layout, or the position given."},
@@ -889,14 +889,14 @@ CLAUDE_TOOLS = [
          "card_id": {"type": "string", "description": "The approval_id the tool returned."},
          "decision": {"type": "string", "enum": ["approve", "decline"]}},
       "required": ["card_id", "decision"]}},
-    {"name": "revert_workspace", "description": "Undo a change Friday made to one of the user's workspaces. Use whenever the user says 'roll that back', 'undo that', 'put it back', or 'restore my workspace to how it was this morning'. Modes: 'undo' (the most recent change), 'as_of' (the state at a time — pass when), 'version' (a specific version_id from the history), 'reset' (back to baseline). Every undo is itself snapshotted, so an undo can be undone. Call list_workspace_history first if you need to see what changed.",
+    {"name": "revert_workspace", "description": "Undo workspace changes: undo the latest, as_of a given when, version by version_id, or reset to baseline. Each undo is snapshotted and reversible. For ambiguous requests, read list_workspace_history first.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id, e.g. 'studio', 'news', 'calendar'."},
          "mode": {"type": "string", "enum": ["undo", "as_of", "version", "reset"], "description": "Default 'undo'."},
          "when": {"type": "string", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
          "version_id": {"type": "string", "description": "For mode 'version'."}},
       "required": ["workspace"]}},
-    {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when the user is not specific about which change they mean. Each entry names the keys that change touched (`changed_label`) and the keys restoring it would bring back (`keys`) — the customization itself is not returned, so read the entry and revert, don't ask for the contents.",
+    {"name": "list_workspace_history", "description": "Inspect workspace changes before an ambiguous revert. Entries give time, changed_label (keys changed) and keys (what restoring brings back). The customization content is omitted; use the entry to revert, without asking for it.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string"},
          "limit": {"type": "integer", "description": "How many of the most recent snapshots to show. Default 12, max 40."}},
@@ -1103,6 +1103,7 @@ def _tool_list_crew(_inp):
 
 def _tool_ask_crew(inp):
     from agent_friday.services import crew_runtime
+    crew_runtime.require_public_host_origin(crew_runtime.HOST_ORIGIN.get())
     cid = _CURRENT_CONVERSATION.get()
     if not cid:
         return "No conversation is active for this Crew request."
@@ -3363,9 +3364,12 @@ def _tool_show_my_day(inp):
     sent = desktop_bus.send([action], timeout=LANDING_ACK_S)
     seen = (sent.get("ack") or {}).get("landing") or {}
     if mode:
-        now = (" It is showing now." if seen.get("show") else "") if sent.get("acked") else (
+        simple = seen.get("reason") == "Simple Home"
+        now = (" It is showing now." if seen.get("show") and not simple else "") if sent.get("acked") else (
             "" if sent.get("delivered") else " No Friday desktop page is open now.")
-        return "DAY_MODE:%s — the start screen %s.%s" % (mode, _LANDING_MODE_WORDS[mode], now)
+        if simple:
+            now += " Simple Home keeps its own layout."
+        return "DAY_MODE:%s — Classic's start screen %s.%s" % (mode, _LANDING_MODE_WORDS[mode], now)
     if not sent.get("delivered"):
         return "DAY_NOT_SHOWN — no Friday desktop page is open to show it on."
     if not sent.get("acked"):
@@ -4416,9 +4420,11 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # task (distill-to-wiki, deep research) never hard-fails with
         # "ANTHROPIC_API_KEY is not set" on a local/OpenAI setup.
         _tools_override = None
-        if tools is not None:
+        # These optional schedule names narrow discovery, not permissions.
+        # Crew passes its enforced schema list directly through its runner.
+        if tools:
             _tools_override = [t for t in CLAUDE_TOOLS
-                               if t.get('name') in tools]
+                               if t.get('name') in tools] or None
         # Unattended: a scheduled or background run keeps a tighter round cap
         # than an interactive turn, because nobody is watching it.
         from agent_friday.services import turn_budget as _tbud
@@ -5674,16 +5680,17 @@ def _runner_task_worker(task_id, runner, resumed=False):
     research) leaves a record from start to end, with the reason when it ends
     before any model call."""
     from agent_friday.services import reasoning_trace as _rt
-    import contextlib
-    from agent_friday.services.local_only_guard import cloud_pinned, local_only
-    with TASKS_LOCK:
-        rec = TASKS.get(task_id) or {}
-        pin = rec.get("cloud_pin")
-        local = None if pin else _task_local_only_label(task_id, rec)
-    restriction = (cloud_pinned(pin.get("model"), pin.get("label")) if pin else
-                   local_only(local) if local else contextlib.nullcontext())
-    with _rt.scope("task", "Runner task " + str(task_id)), restriction:
-        return _runner_task_worker_untraced(task_id, runner, resumed=resumed)
+    with _rt.scope("task", "Runner task " + str(task_id)):
+        import contextlib
+        from agent_friday.services.local_only_guard import cloud_pinned, local_only
+        with TASKS_LOCK:
+            rec = TASKS.get(task_id) or {}
+            pin = rec.get("cloud_pin")
+            local = None if pin else _task_local_only_label(task_id, rec)
+        restriction = (cloud_pinned(pin.get("model"), pin.get("label")) if pin else
+                       local_only(local) if local else contextlib.nullcontext())
+        with restriction:
+            return _runner_task_worker_untraced(task_id, runner, resumed=resumed)
 
 
 def _runner_task_worker_untraced(task_id, runner, resumed=False):
@@ -8767,13 +8774,7 @@ TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "
 CLAUDE_TOOLS.append({
     "name": "improve_workspace",
     "description": (
-        "Open the codebase chat that improves one of the user's workspaces, by id or spoken name "
-        "('improve the News workspace'). While it runs, say you are opening it. Only a bundle workspace "
-        "(one the user built in the salon, under \"Mine\" in the dock) can be improved this way: its live "
-        "version keeps running and nothing changes until the user approves a swap. A NATIVE workspace "
-        "(News, Messages, Calendar and the rest of Friday's own) is part of Friday herself; improving it "
-        "means editing Friday's own source, which is not built yet, and the result says so: tell the user "
-        "that plainly, do not promise it. The result carries conversation_id: tell the user the chat is open."),
+        "Open the codebase chat for an installed bundle workspace by id/name. Say you are opening it; use the returned conversation_id. The live version stays until the user approves a swap. Native source editing is not built; report the refusal. Use customize_workspace for native presentation changes."),
     "input_schema": {"type": "object", "properties": {
         "workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'rent-board', 'the chore wheel', 'news'."}},
         "required": ["workspace"]},
@@ -8781,12 +8782,7 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "workspace_swap",
     "description": (
-        "Ask the user to swap this chat's codebase in as the live version of the workspace it improves "
-        "(or to install a fresh bundle codebase as a new workspace). Raises ONE approval card after the "
-        "manifest check, the brand check and a browser load check; the user decides on the card or by "
-        "saying yes or no. Call it only when the user says they are happy with the change. If the result "
-        "is refused, say why in one line (a reserved colour, a broken manifest, a page that throws) and "
-        "fix it; never say the workspace is swapped until the card is approved."),
+        "Request a swap of this chat's codebase into its workspace, or install a fresh bundle. Call only after the user says the change is ready. Manifest, brand and browser checks precede ONE approval card; the user decides on the card or by yes/no. Report and fix refusals. Never say it swapped before approval."),
     "input_schema": {"type": "object", "properties": {
         "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
 })
@@ -9465,6 +9461,8 @@ except Exception as _hte:  # never let optional deps break the agent import
 try:
     from agent_friday.services import hand_cursor_tools as _hand_cursor_tools
     _hand_cursor_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    from agent_friday.services import desktop_surface_tools as _desktop_surface_tools
+    _desktop_surface_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
 except Exception as _hcte:  # never let optional deps break the agent import
     print(f"  [HAND CURSOR] registration skipped: {_hcte}")
 
@@ -10392,6 +10390,22 @@ def _schema_for_tool(name):
     return found
 
 
+def _crew_delegation_denial(name, session_ctx=None):
+    resolved = name
+    if name not in CLAUDE_TOOL_HANDLERS:
+        resolved, _ = _resolve_tool_name(name)
+    if resolved != "ask_crew":
+        return None
+    from agent_friday.services import crew_runtime
+    from agent_friday.user_errors import UserFacingError
+    origin = (session_ctx or {}).get("_crew_host_origin", crew_runtime.HOST_ORIGIN.get())
+    try:
+        crew_runtime.require_public_host_origin(origin)
+    except UserFacingError as exc:
+        return "[CREW DENY] " + str(exc)
+    return None
+
+
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -10407,6 +10421,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     voice surface's own helpers). It runs through exactly the same chain;
     there is no other way to invoke a tool handler.
     """
+    _crew_denial = _crew_delegation_denial(name, session_ctx)
+    if _crew_denial:
+        return _crew_denial
     handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
@@ -10497,12 +10514,19 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # local-to-cloud fallback. The loop wins; the session only fills in
         # for a call made outside any loop (voice helpers).
         _prov_tok = _CURRENT_PROVIDER.set(_LOOP_PROVIDER.get() or _sc.get("provider"))
+        _crew_origin_tok = None
+        if name == "ask_crew":
+            from agent_friday.services import crew_runtime
+            _crew_origin_tok = crew_runtime.HOST_ORIGIN.set(
+                _sc.get("_crew_host_origin", crew_runtime.HOST_ORIGIN.get()))
         try:
             _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
             _cred_paths.REFUSED.set(False)
             result = handler(ctx.input)
             _refused = _cred_paths.REFUSED.get()
         finally:
+            if _crew_origin_tok is not None:
+                crew_runtime.HOST_ORIGIN.reset(_crew_origin_tok)
             _CURRENT_PROVIDER.reset(_prov_tok)
             _CURRENT_ORIGIN.reset(_origin_tok)
             _CURRENT_SURFACE.reset(_surface_tok)
@@ -10773,6 +10797,9 @@ def _approval_tool_payload(name, tool_input, session_ctx):
 def _hook_crew_access(ctx):
     """Revalidate a bound Crew identity before normal governance and execution."""
     sc = ctx.session_ctx or {}
+    denial = _crew_delegation_denial(ctx.tool_name, sc)
+    if denial:
+        return _hooks.DENY(denial)
     if sc.get("approved_card"):
         # Approval execution has a fresh session. Recover scope only from the
         # stored card, never from model arguments or an arbitrary session claim.
@@ -10797,6 +10824,9 @@ def _hook_crew_access(ctx):
                 and binding.get("project_id") == sc.get("project_id")):
             try:
                 from agent_friday.services import crew_access
+                if "off_record_generation" in binding:
+                    from agent_friday.services.crew_runtime import _public_generation
+                    _public_generation(binding["off_record_generation"])
                 profile = crew_access.validate_dispatch(sc["crew_agent_id"], sc.get("project_id"), sc["crew_revision"])
                 started = sc.get("crew_started")
                 used = task.get("crew_tool_calls", 0)
@@ -12705,6 +12735,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     continue
                 _guest_auth_failed(_guest, _gexc)      # raises for a refused guest key; never falls back
                 raise
+            for _crew_block in getattr(resp, "content", []):
+                if getattr(_crew_block, "type", None) == "tool_use":
+                    _crew_denial = _crew_delegation_denial(_crew_block.name, session_ctx)
+                    if _crew_denial:
+                        return _crew_denial, tool_trace
             _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
                                              thinking_requested=bool(_thinking_cfg))
             try:
@@ -13345,6 +13380,22 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
         choices = resp.get("choices", [])
         msg = (choices[0].get("message", {}) if choices else {}) or {}
         tool_calls = msg.get("tool_calls") or []
+        # Decode channel-style calls before their arguments can enter logs.
+        _chan_text = msg.get("content") or ""
+        if oai_tools and not tool_calls and _chan_text:
+            try:
+                from agent_friday.services import channel_toolcalls as _chan
+                _found, _rest = _chan.extract(_chan_text, oai_tools)
+                if _found:
+                    tool_calls = _found
+                    msg = dict(msg, content=_rest, tool_calls=_found)
+            except Exception:
+                pass
+        for _crew_call in tool_calls:
+            _crew_denial = _crew_delegation_denial((_crew_call.get("function") or {}).get("name"), session_ctx)
+            if _crew_denial:
+                _led_done()
+                return _crew_denial, tool_trace
         _last_finish = (choices[0].get("finish_reason") if choices else None)
         # Task journal (TV3/TV4): the call, then the model's words.
         try:
@@ -13366,28 +13417,6 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
         _rtrace.after_oai_round(resp, msg, model=_meter_model, seat=_led_seat,
                                 provider=_meter_as,
                                 local=bool(resp.get("_reasoning_local", provider == "local")))
-
-        # ── The gemma4 e-series speaks a channel format, not OpenAI shape ──
-        #
-        # It emits its calls inside the assistant's TEXT:
-        #     <|tool_call>call:get_weather{city:Oslo}<tool_call|>
-        # and `tool_calls` comes back empty. Ollama's daemon parsed that for
-        # us, which is the single reason those seats could not be served as
-        # processes we own without losing tool calling outright.
-        #
-        # Translated here rather than in a per-provider branch, so the loop
-        # stays one loop: below this point nothing can tell which wire format
-        # the model used.
-        _chan_text = msg.get("content") or ""
-        if oai_tools and not tool_calls and _chan_text:
-            try:
-                from agent_friday.services import channel_toolcalls as _chan
-                _found, _rest = _chan.extract(_chan_text, oai_tools)
-                if _found:
-                    tool_calls = _found
-                    msg = dict(msg, content=_rest, tool_calls=_found)
-            except Exception:
-                pass
 
         # A TURN CUT OFF AT ITS OUTPUT LIMIT RUNS NO TOOLS.
         #

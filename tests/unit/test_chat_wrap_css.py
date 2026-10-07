@@ -11,6 +11,7 @@ output) so drift between the two is caught too.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -19,6 +20,25 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _read(path):
     return (_REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _surface_transcript(app):
+    surface = app.split("function ChatSurface(", 1)[1].split("\nfunction ", 1)[0]
+    assert "overflowX:'hidden'" in surface
+    anchor = surface.index("(window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m,i)=>")
+    return surface[anchor:surface.index("{chatLoad&&", anchor)]
+
+
+def _assert_surface_wrap(app):
+    transcript = _surface_transcript(app)
+    # Check the message row and its bubble, not the system notice or another chat.
+    row = re.search(r"<div style=\{\{([^{}]*display:'inline-flex'[^{}]*)\}\}>", transcript)
+    bubble = re.search(r"<div style=\{\{([^{}]*whiteSpace:[^{}]*)\}\}>", transcript)
+    assert row and bubble, "ChatSurface must retain a message row and text bubble"
+    assert "minWidth:0" in row.group(1)
+    assert "minWidth:0" in bubble.group(1)
+    assert "overflowWrap:'anywhere'" in bubble.group(1)
+    assert "wordBreak:'break-word'" in bubble.group(1)
 
 
 @pytest.mark.parametrize("path", ["ui_parts/head.html", "index.html"])
@@ -46,19 +66,20 @@ class TestFridayDocCssWraps:
 
 class TestChatBubbleInlineStyles:
     def test_source_jsx_has_wrap_and_minwidth(self):
+        _assert_surface_wrap(_read("ui_parts/app.html"))
+
+    @pytest.mark.parametrize("declaration,occurrence", [
+        ("minWidth:0", 0), ("minWidth:0", 1),
+        ("overflowWrap:'anywhere'", 0), ("wordBreak:'break-word'", 0),
+    ])
+    def test_guard_rejects_each_missing_message_wrap_rule(self, declaration, occurrence):
         app = _read("ui_parts/app.html")
-        # app.html has TWO chatMsgs.map(...) renderers: a small 280px-wide
-        # "Discuss Briefing" sidebar chat, and the main FRIDAY CHAT (the
-        # "You ·" / "Friday ·" + VOICE-tag window the maintainer screenshotted),
-        # which lives in ChatSurface — this fix's actual scope.
-        assert "overflowX:'hidden'" in app
-        anchor = app.index("chatMsgs.map((m,i)=>", app.index("function ChatSurface("))
-        # Window widened from 1200: the B2 system-line branch (seat-change
-        # notices) renders before the message bubble inside the same map.
-        window = app[anchor:anchor + 3000]
-        assert "minWidth:0" in window
-        assert "overflowWrap:'anywhere'" in window
-        assert "wordBreak:'break-word'" in window
+        transcript = _surface_transcript(app)
+        match = list(re.finditer(re.escape(declaration), transcript))[occurrence]
+        changed = transcript[:match.start()] + transcript[match.end():]
+        # All unrelated renderers remain intact and cannot mask the missing rule.
+        with pytest.raises(AssertionError):
+            _assert_surface_wrap(app.replace(transcript, changed, 1))
 
     def test_built_index_html_has_the_compiled_equivalent(self):
         # index.html is build_ui.py's JSX-precompiled output — the same

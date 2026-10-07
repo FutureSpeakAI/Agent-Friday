@@ -222,11 +222,12 @@ def test_only_finished_specialist_playback_enters_host_context():
 
 def test_encoded_finish_requires_decoded_sample_count_and_off_record_is_latched():
     r = Room()
-    private = [True]
+    private, generation = [True], [4]
     r.floor._off_record = lambda: private[0]
+    r.floor._off_record_generation = lambda: generation[0]
     r.floor.deliver(r.profile, "Report.")
     r.produce()
-    private[0] = False
+    private[0], generation[0] = False, 5
     start = r.starts()[0]
     receipt = {"session_id": start["session_id"], "epoch": start["epoch"],
                "utterance_id": start["utterance_id"], "status": "finished", "played_samples": 240}
@@ -235,6 +236,105 @@ def test_encoded_finish_requires_decoded_sample_count_and_off_record_is_latched(
     assert r.floor.acknowledge({**receipt, "total_samples": 240})
     assert r.receipts[0]["off_record"] is True
     assert r.receipts[0]["provider"] == "elevenlabs"
+    assert r.spoken[0]["off_record"] is True
+    assert r.spoken[0]["off_record_generation"] == r.receipts[0]["off_record_generation"] == 4
+    assert r.spoken[0]["conversation_id"] == "conversation-a"
+
+
+@pytest.mark.parametrize("private_at_start", [False, True])
+def test_playback_receipt_keeps_original_private_session_generation(private_at_start):
+    r = Room()
+    private, generation = [private_at_start], [4]
+    r.floor._off_record = lambda: private[0]
+    r.floor._off_record_generation = lambda: generation[0]
+    r.floor.host_text("Generated before privacy ended.")
+    r.floor.host_audio(b"\0\0" * 240)
+    r.floor.host_end()
+    # Privacy can turn on and end entirely while audio is still playing.
+    private[0], generation[0] = False, 5
+    assert r.ack(r.starts()[0], "finished", 240)
+    assert r.receipts[0]["off_record"] is True
+    assert r.receipts[0]["off_record_generation"] == 4
+
+
+@pytest.mark.parametrize("new_private_session", [False, True])
+def test_queued_private_report_is_discarded_after_its_session_ends(new_private_session):
+    r = Room()
+    private, generation = [True], [4]
+    r.floor._off_record = lambda: private[0]
+    r.floor._off_record_generation = lambda: generation[0]
+    assert r.floor.host_audio(b"\0\0" * 240)
+    assert r.floor.deliver(r.profile, "Private queued report.")
+    assert not r.jobs
+    private[0], generation[0] = new_private_session, 5
+    assert r.floor.host_end()
+    assert r.ack(r.starts()[0], "finished", 240)
+    assert not r.jobs and not r.floor.busy
+    assert not r.floor._pending
+    assert [frame["speaker_id"] for frame in r.starts()] == ["friday"]
+
+
+def test_delivery_rejects_an_ended_worker_privacy_origin():
+    r = Room()
+    r.floor._off_record_generation = lambda: 5
+    assert not r.floor.deliver(r.profile, "Old private result.",
+                               off_record=True, off_record_generation=4)
+    assert not r.jobs and not r.starts()
+
+
+def test_delivery_captures_generation_before_reading_private_mode():
+    r = Room()
+    generation = [4]
+    r.floor._off_record_generation = lambda: generation[0]
+
+    def enter_next_private_session():
+        generation[0] = 5
+        return True
+
+    r.floor._off_record = enter_next_private_session
+    assert not r.floor.deliver(r.profile, "Old private result.")
+    assert not r.jobs and not r.starts()
+
+
+@pytest.mark.parametrize("boundary", ["before-synthesis", "during-synthesis"])
+def test_private_synthesis_cannot_publish_after_session_end(boundary):
+    r = Room()
+    private, generation, synthesized = [True], [4], []
+    r.floor._off_record = lambda: private[0]
+    r.floor._off_record_generation = lambda: generation[0]
+
+    def synth(p, text, task):
+        synthesized.append(text)
+        private[0], generation[0] = False, 5
+        return r.synth(p, text, task)
+
+    r.floor._synthesize = synth
+    assert r.floor.deliver(r.profile, "Private result.")
+    if boundary == "before-synthesis":
+        private[0], generation[0] = False, 5
+    r.produce()
+    assert len(synthesized) == (1 if boundary == "during-synthesis" else 0)
+    assert not r.starts() and not r.floor.busy
+    assert not any(frame["type"] == "crew_audio" for frame in r.frames)
+    assert r.receipts[0]["off_record"] is True
+    assert r.receipts[0]["off_record_generation"] == 4
+
+
+def test_receipt_detects_privacy_end_during_current_mode_probe():
+    r = Room()
+    generation = [4]
+    r.floor._off_record_generation = lambda: generation[0]
+    r.floor.host_audio(b"\0\0" * 240)
+    r.floor.host_end()
+
+    def ended_during_probe():
+        generation[0] = 5
+        return False
+
+    r.floor._off_record = ended_during_probe
+    assert r.ack(r.starts()[0], "finished", 240)
+    assert r.receipts[0]["off_record"] is True
+    assert r.receipts[0]["off_record_generation"] == 4
 
 
 def test_host_caption_deltas_are_bounded_to_the_advertised_text_limit():
@@ -326,3 +426,16 @@ def test_structured_delivery_does_not_fall_back_to_friday_or_another_conversatio
     finally:
         channels.unregister("crew-test-a")
         channels.unregister_crew("crew-test-a")
+
+
+def test_structured_delivery_keeps_worker_privacy_origin():
+    structured = []
+    channels.register_crew("crew-private", lambda p, text, **kw: structured.append(kw) or True)
+    try:
+        assert channels.deliver_crew("crew-private", profile(), "Private result.",
+                                     task_id="private-task", off_record=True,
+                                     off_record_generation=4)
+        assert structured == [{"task_id": "private-task", "off_record": True,
+                               "off_record_generation": 4}]
+    finally:
+        channels.unregister_crew("crew-private")

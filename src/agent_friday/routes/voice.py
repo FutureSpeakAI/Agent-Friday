@@ -140,7 +140,8 @@ LIVE_HEARTBEAT_SECONDS = 15.0
 # on a clean user stop ({type:'end'}) so a deliberate new call starts fresh.
 _LIVE_RESUME_TTL_S = 600
 _LIVE_RESUME_LOCK = threading.Lock()
-_LIVE_RESUME = {"handle": None, "ts": 0.0, "model": None, "voice": None}
+_LIVE_RESUME = {"handle": None, "ts": 0.0, "model": None, "voice": None,
+                "crew_host_origin": None}
 # Connection-generation fence. Every /ws/live handler takes the next
 # generation number; only the CURRENT generation may write the resume cache
 # or renew session legs. A zombie handler on a half-open socket (browser gone,
@@ -171,21 +172,22 @@ def _live_conn_current(gen):
         return gen == _LIVE_CONN_GEN[0]
 
 
-def _live_resume_store(handle, model, voice, gen=None):
+def _live_resume_store(handle, model, voice, gen=None, *, crew_host_origin=None):
     with _LIVE_RESUME_LOCK:
         if gen is not None and gen != _LIVE_CONN_GEN[0]:
             return   # stale handler — never clobber the live conversation's cache
-        _LIVE_RESUME.update(handle=handle, ts=_time.time(), model=model, voice=voice)
+        _LIVE_RESUME.update(handle=handle, ts=_time.time(), model=model, voice=voice,
+                            crew_host_origin=crew_host_origin)
 
 
 def _live_resume_clear(gen=None):
     with _LIVE_RESUME_LOCK:
         if gen is not None and gen != _LIVE_CONN_GEN[0]:
             return   # a zombie's late bye/end must not clear the new handler's cache
-        _LIVE_RESUME.update(handle=None, ts=0.0, model=None, voice=None)
+        _LIVE_RESUME.update(handle=None, ts=0.0, model=None, voice=None, crew_host_origin=None)
 
 
-def _live_resume_load(model, voice):
+def _live_resume_load(model, voice, *, include_crew_origin=False):
     """Return a fresh stored resumption handle for this (model, voice), else None."""
     with _LIVE_RESUME_LOCK:
         h = _LIVE_RESUME["handle"]
@@ -195,7 +197,7 @@ def _live_resume_load(model, voice):
             return None
         if _LIVE_RESUME["model"] != model or _LIVE_RESUME["voice"] != voice:
             return None
-        return h
+        return (h, _LIVE_RESUME.get("crew_host_origin")) if include_crew_origin else h
 
 
 # ── Barge-in (speaker mode) ───────────────────────────────────────────────
@@ -1571,7 +1573,11 @@ def _local_mind_proven() -> bool:
     proven, because a relay that may not exist is not reach."""
     try:
         from agent_friday.services import voice_manifest as _vm
-        return bool(_vm.get_manifest().snapshot_stage("mind").get("ready"))
+        manifest = _vm.get_manifest()
+        manifest.refresh_selection()
+        mind = manifest.snapshot_stage("mind")
+        return bool(mind.get("ready") and
+                    (mind.get("selected") or {}).get("target") == "brain")
     except Exception:
         return False
 
@@ -1590,9 +1596,9 @@ def _voice_context_reach(engine, tool_names=None, local_mind_ready=None, vault_o
     is the self-description lie §3.1 exists to make impossible.
 
     `vault_open` (None reads model_routing.vault_local_only) keeps the HUD in
-    step with what the model is told: with the vault open to cloud sessions an
-    unready local model closes only memory and the knowledge graph, not the
-    user's notes.
+    step with what the model is told. A missing or stale readiness proof is
+    not evidence that the model is stopped; the existing relay can still be
+    attempted and reports its actual result through the privacy gate.
     """
     engine = str(engine or "local").strip().lower()
     if engine == "gemini":
@@ -1624,9 +1630,8 @@ def _voice_context_reach(engine, tool_names=None, local_mind_ready=None, vault_o
                         "line": (f"{len(names) - 1} native tools + ask_friday → your "
                                  "context is reached through Friday's local model"),
                         "notice": ""}
-            # The relay exists but has nothing to relay to. Say that, in the
-            # same words the manifest's describe_for_model() uses, so the
-            # HUD and the model agree.
+            # Readiness has not been proven. Keep reach conservative without
+            # treating a missing or expired proof as evidence of absence.
             if vault_open is None:
                 try:
                     vault_open = not _vault_local_only()
@@ -1636,28 +1641,29 @@ def _voice_context_reach(engine, tool_names=None, local_mind_ready=None, vault_o
                 return {"engine": "gemini", "tool_capable": True,
                         "tools": len(names), "knowledge_graph": False, "memory": False,
                         "full_context": False, "via_local": False, "vault_open": True,
-                        "line": (f"{len(names) - 1} native tools + ask_friday; Friday's "
-                                 "local model is not running, so memory and the "
-                                 "knowledge graph are out of reach, but your vault is "
+                        "line": (f"{len(names) - 1} native tools + ask_friday; the "
+                                 "local context relay has not passed its current "
+                                 "readiness check, but your vault is "
                                  "open to this session: your notes reach it through its "
                                  "context and wiki search"),
-                        "notice": ("Cloud voice (Gemini Live) is running. Friday's local "
-                                   "model is not available right now, so it cannot reach "
-                                   "your memory or knowledge graph; your vault is open to "
-                                   "cloud sessions, so your notes are available through "
-                                   "its context and wiki search.")}
+                        "notice": ("Cloud voice (Gemini Live) is running. The local "
+                                   "context relay has not passed its current readiness "
+                                   "check; Friday can try ask_friday and report its "
+                                   "actual result. Your vault is open to cloud sessions, "
+                                   "so your notes are available through its context and "
+                                   "wiki search.")}
             return {"engine": "gemini", "tool_capable": True,
                     "tools": len(names), "knowledge_graph": False, "memory": False,
                     "full_context": False, "via_local": False,
-                    "line": (f"{len(names) - 1} native tools + ask_friday, but "
-                             "Friday's local model is not proven right now — "
-                             "your notes, memory and knowledge graph are out of "
-                             "reach"),
-                    "notice": ("Cloud voice (Gemini Live) is running, but Friday's "
-                               "local model is not available right now, so it "
-                               "cannot reach your knowledge graph or memory. Open "
-                               "Settings → Voice to prove the local model, or "
-                               "switch to local voice.")}
+                    "line": (f"{len(names) - 1} native tools + ask_friday; the "
+                             "local context relay has not passed its current "
+                             "readiness check"),
+                    "notice": ("Cloud voice (Gemini Live) is running. The local "
+                               "context relay has not passed its current readiness "
+                               "check; Friday can try ask_friday and report its "
+                               "actual result. Your vault stays local-only, and "
+                               "relay answers pass the privacy gate. Open Settings "
+                               "→ Voice to run the readiness check.")}
         elif not full:
             missing = [w for w, ok in (("knowledge graph", kg), ("memory", mem)) if not ok]
             notice = (f"Cloud voice (Gemini Live) runs with {len(names)} fixed "
@@ -3164,6 +3170,12 @@ if sock is not None:
                 pass
             return
 
+        # A provider can request its first tool long after private mode ends.
+        # Bind Crew admission before any provider context or input is sent,
+        # and retain it across every renewal of this WebSocket call.
+        from agent_friday.services import crew_runtime as _crew_host_runtime
+        _crew_call_origin = _crew_host_runtime.capture_host_origin()
+
         # Local-only is an absolute override (the same guarantee F16 already
         # enforces for _resolve_voice_engine and _synthesize_tts_wav) — it
         # must win at the actual dispatch point too, not just in the
@@ -3275,7 +3287,7 @@ if sock is not None:
         try:
             _cm = _vm.get_manifest()
             _cm.refresh_selection(_load_settings() or {})
-            _mind_ready = bool(_cm.snapshot_stage("mind").get("ready"))
+            _mind_ready = _local_mind_proven()
             _cloud_self = (_cm.describe_for_model(vault_open=_vault_open)
                            if _cm.mode == "gemini" else "")
         except Exception:
@@ -3740,9 +3752,19 @@ if sock is not None:
             # has already told instead of reading the same five again.
             _voice_session = {"news_offered": [], "spoken": [],
                               "conversation_id": _call_cid(), "owner_text": "",
+                              "_crew_host_origin": _crew_call_origin,
                               # What he cares about now, how much to say, what is
                               # open (services/voice_conversation_state).
                               "conv_state": _vcs.new_state()}
+
+            def _crew_delegation_refusal(name="ask_crew"):
+                from agent_friday.services import agent as _crew_admission_agent
+                if _crew_admission_agent._crew_delegation_denial(
+                        name, {"_crew_host_origin": _voice_session.get("_crew_host_origin")}):
+                    return ("NOT DONE: Crew delegation requires a fresh on-record voice call. "
+                            "Leave Off the record, stop voice, and start a new call.")
+                return None
+
             _crew_notes = _deque()
             _crew_receipts = _deque()
             _crew_host = {"model": configured_live_model, "voice_id": live_voice}
@@ -3750,13 +3772,15 @@ if sock is not None:
             if _crew_enabled:
                 try:
                     from agent_friday.services import crew_runtime as _crew_runtime
+                    from agent_friday.services import off_record as _crew_off_record
                     from agent_friday.services.crew_voice import CrewVoiceSession
                     if not _crew_runtime.voice_room(_voice_session["conversation_id"]):
                         raise ValueError("This conversation has no enabled Crew room.")
                     _crew[0] = CrewVoiceSession(
                         _safe_send, _voice_session["conversation_id"],
                         spoken=_crew_notes.append, receipt=_crew_receipts.append,
-                        off_record=_off_record_now)
+                        off_record=_off_record_now,
+                        off_record_generation=_crew_off_record.generation)
                     _crew_deliver = _crew[0].deliver
                     _crew_chan[0] = (_voice_session["conversation_id"], _crew_deliver)
                     _voice_live_channel.register_crew(*_crew_chan[0])
@@ -3785,8 +3809,17 @@ if sock is not None:
                         # row. Friday's full generated text is retained with its
                         # playback state; partial playback has no invented word cutoff.
                         body = row["text"] if row["speaker_id"] == "friday" else ""
-                        _crew_cv.append(row["conversation_id"], {
-                            "role": "friday", "text": body, "via": "voice", "meta": meta})
+                        message = {"id": secrets.token_hex(8), "role": "friday",
+                                   "text": body, "via": "voice", "meta": meta}
+                        if row["off_record"]:
+                            from agent_friday.services import off_record as _crew_off
+                            _crew_off.remember_if_active(
+                                row["conversation_id"], message,
+                                generation=row.get("off_record_generation"))
+                            # Private speech never enters ordinary call buffers;
+                            # its temporary transcript belongs to off_record.end().
+                            continue
+                        _crew_cv.append(row["conversation_id"], message)
                         if (body and row["status"] == "finished"
                                 and row["conversation_id"] == _voice_session["conversation_id"]):
                             _voice_session["spoken"].append(body)
@@ -3796,20 +3829,40 @@ if sock is not None:
                     except Exception:
                         _log.warning("Crew playback receipt persistence failed")
 
+            def _crew_note_current(row):
+                from agent_friday.services import off_record as _crew_off
+                generation = row.get("off_record_generation")
+                if (row.get("conversation_id") != _voice_session["conversation_id"]
+                        or type(generation) is not int or generation != _crew_off.generation()):
+                    return False
+                return not row.get("off_record") or (
+                    _crew_off.active() and generation == _crew_off.generation())
+
             async def _flush_crew_notes(sess):
                 if sess is None or not _crew[0] or _crew[0].busy or not _crew_notes:
                     return
-                row = _crew_notes.popleft()
+                while _crew_notes:
+                    row = _crew_notes.popleft()
+                    if _crew_note_current(row):
+                        break
+                else:
+                    return
                 label = row["profile"].get("name") or "Crew agent"
-                note = _injection_or_card(
-                    f"Crew report from {label}: {row['text']}", "crew_report",
-                    _voice_session["conversation_id"])
+                text = f"Crew report from {label}: {row['text']}"
+                # A private report cannot become a deferred approval whose
+                # eventual dispatch outlives its private-memory generation.
+                note = (_injection_text(text, "crew_report") if row.get("off_record")
+                        else _injection_or_card(text, "crew_report",
+                                                _voice_session["conversation_id"]))
+                if not _crew_note_current(row):
+                    return
                 try:
                     await sess.send_client_content(
                         turns={"role": "user", "parts": [{"text": note}]},
                         turn_complete=False)
                 except Exception:
-                    _crew_notes.appendleft(row)
+                    if _crew_note_current(row):
+                        _crew_notes.appendleft(row)
             _state_sig = [None]
             # Results that finish after the turn that asked for them (a task
             # delegated to the full agent, context he approved on a card)
@@ -4068,12 +4121,14 @@ if sock is not None:
                             except Exception:
                                 fargs = {}
                             fid = getattr(fc, 'id', None)
+                            refusal = _crew_delegation_refusal(fname)
                             # Muting a native reply is not permission to execute
                             # its tools. The floor is acquired before dispatch.
-                            if (_crew[0] and not _crew[0].host_begin(
+                            if (not refusal and _crew[0] and not _crew[0].host_begin(
                                     expected_epoch=crew_epoch, **_crew_host)):
-                                _kw = {"name": fname, "response": {"result":
-                                    "NOT DONE: another Crew speaker owns this turn. Wait for the user."}}
+                                refusal = "NOT DONE: another Crew speaker owns this turn. Wait for the user."
+                            if refusal:
+                                _kw = {"name": fname, "response": {"result": refusal}}
                                 if fid is not None:
                                     _kw["id"] = fid
                                 return types.FunctionResponse(**_kw)
@@ -4097,12 +4152,16 @@ if sock is not None:
                                 def _crew_tool_run(*args):
                                     # A worker can begin after a queued tool's
                                     # turn was interrupted. Check at execution too.
-                                    if not _crew[0].host_begin(expected_epoch=crew_epoch, **_crew_host):
+                                    refusal = _crew_delegation_refusal(fname)
+                                    if refusal:
+                                        return refusal
+                                    if (_crew[0] and not _crew[0].host_begin(
+                                            expected_epoch=crew_epoch, **_crew_host)):
                                         return "NOT DONE: this Crew turn ended before the tool began."
                                     return _voice_tool_run(*args)
                                 result = await _voice_tool_with_limit(
                                     fname, fargs, _safe_send, _voice_session,
-                                    runner=_crew_tool_run if _crew[0] else None)
+                                    runner=_crew_tool_run)
                             except Exception as _te:
                                 _log.error("Voice tool %r failed: %s", fname, _te, exc_info=True)
                                 result = (f"I hit a problem with the {fname} tool "
@@ -4346,7 +4405,9 @@ if sock is not None:
                                         if _sru is not None and getattr(_sru, 'new_handle', None):
                                             resume_handle[0] = _sru.new_handle
                                             _handle_model[0] = model_name
-                                            _live_resume_store(_sru.new_handle, model_name, live_voice, gen=_conn_gen)
+                                            _live_resume_store(
+                                                _sru.new_handle, model_name, live_voice, gen=_conn_gen,
+                                                crew_host_origin=_voice_session.get("_crew_host_origin"))
                                         # Cost metering: the Gemini Live session is a
                                         # real, billed call and must be metered like any
                                         # other (PRICING carries rates for this exact
@@ -4683,9 +4744,9 @@ if sock is not None:
                     # conversation whose browser socket dropped (client
                     # auto-reconnect) via the module-level handle cache.
                     if resume_handle[0] is None and _supports_resumption:
-                        _stored = _live_resume_load(model_name, live_voice)
+                        _stored = _live_resume_load(model_name, live_voice, include_crew_origin=True)
                         if _stored:
-                            resume_handle[0] = _stored
+                            resume_handle[0], _voice_session["_crew_host_origin"] = _stored
                             _handle_model[0] = model_name
                             greeted[0] = True   # mid-conversation — never re-greet
                             _vlog('browser reconnect: resuming previous conversation from stored handle')

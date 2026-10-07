@@ -55,7 +55,7 @@ class CrewVoiceSession:
 
     def __init__(self, send, conversation_id, *, room=None, synthesize=None,
                  spoken=None, receipt=None, clock=time.monotonic, session_id=None,
-                 launch=None, off_record=None):
+                 launch=None, off_record=None, off_record_generation=None):
         self.send = send
         self.conversation_id = str(conversation_id or "")
         self.session_id = session_id or uuid.uuid4().hex
@@ -65,6 +65,7 @@ class CrewVoiceSession:
         self._spoken = spoken
         self._receipt = receipt
         self._off_record = off_record or (lambda: False)
+        self._off_record_generation = off_record_generation or (lambda: None)
         self._clock = clock
         self._launch = launch or self._launch_job
         self._lock = threading.RLock()
@@ -108,7 +109,18 @@ class CrewVoiceSession:
                 return copy.deepcopy(member)
         raise ValueError("Crew membership or the speaker profile changed; request a new report.")
 
-    def deliver(self, profile, text, *, task_id=None):
+    def _privacy_origin(self):
+        generation = self._off_record_generation()
+        return {"off_record_generation": generation, "off_record": bool(self._off_record())}
+
+    def _origin_current(self, item):
+        if item["off_record"] and not self._off_record():
+            return False
+        generation = item["off_record_generation"]
+        return generation is None or generation == self._off_record_generation()
+
+    def deliver(self, profile, text, *, task_id=None, off_record=None,
+                off_record_generation=None):
         if not isinstance(profile, dict) or not str(text or "").strip():
             return False
         text = str(text).strip()
@@ -116,6 +128,15 @@ class CrewVoiceSession:
             with self._lock:
                 self._emit("crew_speech_error", code="crew_text_limit", task_id=str(task_id or ""),
                            message="This reply is too long to speak. Its full text is available in the chat.")
+            return False
+        if ((off_record is not None and type(off_record) is not bool)
+                or (off_record_generation is not None and type(off_record_generation) is not int)):
+            return False
+        origin = self._privacy_origin()
+        if off_record_generation is not None:
+            origin["off_record_generation"] = off_record_generation
+        origin["off_record"] = origin["off_record"] or bool(off_record)
+        if not self._origin_current(origin):
             return False
         try:
             profile = self._profile(profile)
@@ -133,22 +154,24 @@ class CrewVoiceSession:
                 return False
             self._pending.append({"profile": profile, "text": text,
                                   "task_id": str(task_id or ""), "epoch": self.epoch,
-                                  "project_id": snapshot.get("project_id")})
+                                  "project_id": snapshot.get("project_id"), **origin})
         self.tick()
         return True
 
-    def _new(self, speaker_id, *, task_id="", text="", profile=None):
+    def _new(self, speaker_id, *, task_id="", text="", profile=None, privacy_origin=None):
         now = self._clock()
         snapshot = self._room(self.conversation_id)
         if not snapshot:
             raise ValueError("This Crew room is no longer available.")
+        origin = privacy_origin if privacy_origin is not None else self._privacy_origin()
         return {"utterance_id": uuid.uuid4().hex, "speaker_id": speaker_id,
                 "task_id": task_id, "epoch": self.epoch, "text": text,
                 "profile": profile, "seq": 0, "samples": 0, "bytes": 0,
                 "sealed": False, "started": False, "played_samples": 0,
                 "encoding": "pcm_s16le", "deadline": now + ACK_TIMEOUT,
                 "created": now, "cancel": threading.Event(),
-                "off_record": bool(self._off_record()),
+                "off_record": origin["off_record"],
+                "off_record_generation": origin["off_record_generation"],
                 "project_id": snapshot.get("project_id"),
                 "shared_with": {p["id"]: p["revision"] for p in snapshot.get("members", [])
                                 if isinstance(p, dict) and p.get("status") == "active"}}
@@ -263,6 +286,13 @@ class CrewVoiceSession:
         if self._active is item:
             self._active = None
 
+    def _private(self, item):
+        private = item["off_record"] or bool(self._off_record())
+        current_generation = self._off_record_generation()
+        return (private
+                or (current_generation is not None
+                    and current_generation != item["off_record_generation"]))
+
     def _record(self, item, status):
         if item.get("recorded") or not self._receipt:
             return
@@ -276,7 +306,8 @@ class CrewVoiceSession:
                            "model": item.get("model", ""),
                            "voice_id": item.get("voice_id", ""),
                            "label": item.get("label", ""),
-                           "off_record": item["off_record"] or bool(self._off_record())})
+                           "off_record": self._private(item),
+                           "off_record_generation": item["off_record_generation"]})
         except Exception:
             log.warning("Crew playback receipt could not be recorded")
 
@@ -322,7 +353,10 @@ class CrewVoiceSession:
                 if status == "finished" and item["speaker_id"] != "friday":
                     report = {"speaker_id": item["speaker_id"], "task_id": item["task_id"],
                               "text": item["text"], "profile": item["profile"],
-                              "played_samples": n, "utterance_id": item["utterance_id"]}
+                              "played_samples": n, "utterance_id": item["utterance_id"],
+                              "conversation_id": self.conversation_id,
+                              "off_record": self._private(item),
+                              "off_record_generation": item["off_record_generation"]}
         if report and self._spoken:
             try:
                 self._spoken(report)
@@ -348,11 +382,13 @@ class CrewVoiceSession:
             request = self._pending.popleft()
             if request["epoch"] != self.epoch:
                 return
+            if not self._origin_current(request):
+                return
             profile = request["profile"]
             try:
                 self._profile(profile, project_id=request["project_id"])
                 job = self._new(profile["id"], task_id=request["task_id"],
-                                text=request["text"], profile=profile)
+                                text=request["text"], profile=profile, privacy_origin=request)
                 if job["project_id"] != request["project_id"]:
                     raise ValueError("Crew room project changed")
             except Exception:
@@ -373,6 +409,8 @@ class CrewVoiceSession:
             profile = self._profile(item["profile"], project_id=item["project_id"])
             if item["cancel"].is_set():
                 return
+            if self._expire_private(item):
+                return
             result = self._synthesize(profile, item["text"], item["task_id"])
             profile = self._profile(profile, project_id=item["project_id"])
             if result.mime not in ("audio/mpeg", "audio/wav"):
@@ -382,6 +420,8 @@ class CrewVoiceSession:
             with self._lock:
                 if (self._closed or self._active is not item or item["cancel"].is_set()
                         or item["epoch"] != self.epoch):
+                    return
+                if self._expire_private(item):
                     return
                 item["encoding"] = result.mime
                 item["bytes"] = len(result.audio)
@@ -408,6 +448,15 @@ class CrewVoiceSession:
             with self._lock:
                 self._worker_busy = False
             self.tick()
+
+    def _expire_private(self, item):
+        if self._origin_current(item):
+            return False
+        with self._lock:
+            if self._active is item and not item["cancel"].is_set():
+                self._fail(item, "crew_private_session_ended",
+                           "This report ended with its off-record session.")
+        return True
 
     def retarget(self, conversation_id):
         with self._lock:

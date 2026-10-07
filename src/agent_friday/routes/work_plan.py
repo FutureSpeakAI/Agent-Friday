@@ -243,9 +243,11 @@ def _runner(item):
 
     model = item.get("seat_hint") or _seat_for(item.get("cls"))
     from agent_friday.services.agent import CLAUDE_TOOLS
-    text, _trace = mr._call_ollama([{"role": "user", "content": spec}],
-                                   model=model, tools=CLAUDE_TOOLS,
-                                   max_tokens=4096)
+    from agent_friday.services import reasoning_trace as rt
+    with rt.scope("background", str(item.get("title") or "Queued work")):
+        text, _trace = mr._call_ollama([{"role": "user", "content": spec}],
+                                       model=model, tools=CLAUDE_TOOLS,
+                                       max_tokens=4096)
     return (text or ""), model
 
 

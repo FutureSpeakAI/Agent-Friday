@@ -231,7 +231,8 @@ def test_cloud_mode_describes_the_relay_honestly(monkeypatch, clock):
     _good_runners(monkeypatch)
     d = m.describe_for_model()
     assert "sent to Google" in d
-    assert "NOT available" in d               # mind unproven -> no path claimed
+    assert "readiness check" in d             # unproven does not mean absent
+    assert "actual result or refusal" in d
     m.prove("mind")
     d = m.describe_for_model()
     assert "`ask_friday`" in d

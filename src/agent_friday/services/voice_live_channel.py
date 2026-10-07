@@ -73,7 +73,8 @@ def unregister_crew(conversation_id, deliver_fn=None) -> None:
             _CREW_CHANNELS.pop(str(conversation_id), None)
 
 
-def deliver_crew(conversation_id, profile, text, *, task_id=None) -> bool:
+def deliver_crew(conversation_id, profile, text, *, task_id=None, off_record=None,
+                 off_record_generation=None) -> bool:
     """Queue a trusted worker result in its open Crew call; never impersonate Friday.
 
     False means that the result remains in its conversation's written history.
@@ -86,7 +87,12 @@ def deliver_crew(conversation_id, profile, text, *, task_id=None) -> bool:
     if fn is None:
         return False
     try:
-        return bool(fn(profile, str(text), task_id=task_id))
+        kwargs = {"task_id": task_id}
+        if off_record is not None:
+            kwargs["off_record"] = off_record
+        if off_record_generation is not None:
+            kwargs["off_record_generation"] = off_record_generation
+        return bool(fn(profile, str(text), **kwargs))
     except Exception as exc:
         _log.warning("Crew voice delivery failed: %s", type(exc).__name__)
         return False

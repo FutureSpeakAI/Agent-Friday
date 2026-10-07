@@ -9,6 +9,8 @@ import re
 import threading
 import time
 import uuid
+from contextvars import ContextVar
+from dataclasses import dataclass
 
 from agent_friday.paths import friday_home
 from agent_friday.user_errors import UserFacingError, UserFacingValueError, error_text
@@ -17,6 +19,30 @@ _LOCK = threading.RLock()
 _ID = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
 MAX_MEMBERS = 6
 MAX_ACTIVE_TURNS = 6
+HOST_ORIGIN = ContextVar("crew_host_origin", default=None)
+
+
+@dataclass(frozen=True)
+class CrewHostOrigin:
+    """Server-only admission state, never reconstructed from model arguments."""
+    off_record: bool
+    generation: int
+
+
+def capture_host_origin():
+    from agent_friday.services import off_record
+    generation = off_record.generation()
+    return CrewHostOrigin(off_record.active(), generation)
+
+
+def require_public_host_origin(origin):
+    if type(origin) is not CrewHostOrigin:
+        raise CrewRoomError("Crew delegation is unavailable because this caller's original privacy state was not recorded. "
+                            "Use the Crew panel or a supported chat or voice call.")
+    if origin.off_record:
+        raise CrewRoomError("Crew delegation cannot use a private host turn. Start a fresh on-record chat turn or voice call.")
+    _public_generation(origin.generation)
+    return origin
 
 
 class CrewRoomError(UserFacingValueError):
@@ -142,7 +168,7 @@ def _history(cid, profile, project_id, *, with_sources=False):
     sources = {}
     for msg in conversations.messages(cid, limit=40):
         meta = msg.get("meta") or {}
-        if meta.get("project_id") != project_id:
+        if meta.get("off_record") or meta.get("project_id") != project_id:
             continue
         if meta.get("kind") == "crew_request":
             # Direct requests are shared with the invited room at submission.
@@ -227,9 +253,22 @@ def hub_tasks():
     return rows[:100]
 
 
-def dispatch(cid, data):
+def _public_generation(expected=None):
+    """Crew workers require one uninterrupted on-record privacy lifetime."""
+    from agent_friday.services import off_record
+    generation = off_record.generation()
+    if (off_record.active() or generation != off_record.generation()
+            or (expected is not None and (type(expected) is not int or expected != generation))):
+        raise CrewRoomError("Crew agent tasks are unavailable in Off the record or after its session changes. "
+                            "Start a fresh Crew request after leaving private mode.")
+    return generation
+
+
+def dispatch(cid, data, *, host_origin=None):
     from agent_friday.services import agent, conversations
     from agent_friday.services.crew_access import validate_dispatch
+    privacy_generation = (require_public_host_origin(host_origin).generation
+                          if host_origin is not None else _public_generation())
     if not isinstance(data, dict) or set(data) - {"room_revision", "agent_id", "text", "request_id"}:
         raise CrewRoomError("Invalid Crew request.")
     aid, text, request_id = data.get("agent_id"), data.get("text"), data.get("request_id")
@@ -266,7 +305,9 @@ def dispatch(cid, data):
         shared = {p["id"]: p["revision"] for p in room["members"]}
         ctx = {"agent_id": aid, "revision": profile["revision"],
                "project_id": room["project_id"], "room_revision": room["revision"],
-               "request_id": request_id, "shared_with": shared}
+               "request_id": request_id, "shared_with": shared,
+               "off_record": False, "off_record_generation": privacy_generation}
+        _public_generation(privacy_generation)
         # Reserve before dispatch. A process interruption cannot turn an ambiguous
         # submitted request into a second task on retry.
         stored["requests"][request_id] = {"digest": digest, "task_id": None}
@@ -275,6 +316,7 @@ def dispatch(cid, data):
             "meta": {"kind": "crew_request", "agent_id": aid, "request_id": request_id,
                      "project_id": room["project_id"], "shared_with": shared}})
         try:
+            _public_generation(privacy_generation)
             task_id = agent._spawn_task(profile["name"], text, "Crew: " + profile["role"],
                 model=profile["model"], conversation_id=cid, crew_context=ctx,
                 runner=lambda tid: _run(tid, cid, text, profile, ctx))
@@ -298,6 +340,13 @@ def _run(task_id, cid, text, profile, binding):
     from agent_friday.services import agent, crew_access, crew_profiles, conversations
     from agent_friday.services import voice_live_channel
     from agent_friday.services.action_policy import seal_system_prompt
+    privacy_generation = binding.get("off_record_generation")
+    try:
+        if binding.get("off_record") or type(privacy_generation) is not int:
+            raise CrewRoomError("Crew agent tasks are unavailable in Off the record. Start a fresh Crew request.")
+        _public_generation(privacy_generation)
+    except CrewRoomError as exc:
+        return {"status": "failed", "result": str(exc)}
     session = {"authenticated": True, "is_background_task": True, "task_id": task_id,
                "conversation_id": cid, "workspace": "crew", "crew_agent_id": profile["id"],
                "crew_revision": profile["revision"], "project_id": binding["project_id"],
@@ -324,12 +373,14 @@ def _run(task_id, cid, text, profile, binding):
         sources.update(memory_sources)
         if len(sources) > 64:
             raise CrewRoomError("This discussion has too many prior agents to verify. Start a new conversation.")
+        _public_generation(privacy_generation)
         reply, trace = agent._generate_agent(
             [{"role": "user", "content": "Crew discussion:\n" + history + "\n\nCurrent request:\n" + text}],
             system=system, model=profile["model"], max_tokens=2048,
             conversation_seat=session["crew_binding"], session_ctx=session,
             tools=schemas, workspace="crew", orb_label=profile["name"],
             on_route=lambda route: agent._task_set(task_id, served_route=route))
+        _public_generation(privacy_generation)
         crew_access.validate_dispatch(profile["id"], binding["project_id"],
                                       bound_revision=profile["revision"])
         for source_id, revision in sources.items():
@@ -350,11 +401,17 @@ def _run(task_id, cid, text, profile, binding):
         verified, summary, status = agent._evidence_verdict(trace)
         agent._task_set(task_id, tool_trace=trace, verified=verified, verification_summary=summary)
         if profile["memory"]["write"]:
+            _public_generation(privacy_generation)
             crew_profiles.remember_result(profile["id"], reply, expected_revision=profile["revision"],
                                           project_id=binding["project_id"], source_revisions=sources)
     except Exception as exc:
         reply = error_text(exc, "This Crew request could not finish. Check the selected provider and try again.")
         status = "failed"
+    try:
+        _public_generation(privacy_generation)
+    except CrewRoomError as exc:
+        # A privacy transition invalidates delivery, including error publication.
+        return {"status": "failed", "result": str(exc)}
     shared = {}
     try:
         room = voice_room(cid)
@@ -368,10 +425,15 @@ def _run(task_id, cid, text, profile, binding):
             "provider": profile["provider"], "model": profile["model"], "status": status,
             "profile_revision": profile["revision"], "project_id": binding["project_id"],
             "shared_with": shared, "source_revisions": sources, "playback": "not_spoken"}
+    try:
+        _public_generation(privacy_generation)
+    except CrewRoomError as exc:
+        return {"status": "failed", "result": str(exc)}
     conversations.append(cid, {"role": "friday", "text": reply, "meta": meta})
     if status != "failed":
         try:
-            voice_live_channel.deliver_crew(cid, profile, reply, task_id=task_id)
+            voice_live_channel.deliver_crew(cid, profile, reply, task_id=task_id,
+                off_record=False, off_record_generation=privacy_generation)
         except Exception:
             # A voice session ending does not erase a completed written result.
             pass
@@ -379,6 +441,7 @@ def _run(task_id, cid, text, profile, binding):
 
 
 def ask(cid, name_or_id, text, request_id=None):
+    origin = require_public_host_origin(HOST_ORIGIN.get())
     room = voice_room(cid)
     if not room:
         raise CrewRoomError("Open Crew in this chat and invite an agent first.")
@@ -387,4 +450,4 @@ def ask(cid, name_or_id, text, request_id=None):
     if len(matches) != 1:
         raise CrewRoomError("Name one invited agent unambiguously. " + roster_text(cid))
     return dispatch(cid, {"room_revision": room["revision"], "agent_id": matches[0]["id"],
-                          "text": text, "request_id": request_id or uuid.uuid4().hex})
+                          "text": text, "request_id": request_id or uuid.uuid4().hex}, host_origin=origin)

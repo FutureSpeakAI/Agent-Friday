@@ -47,6 +47,16 @@ body.friday-experience-enabled .friday-topbar-cell[data-kind=scene] .friday-topb
 .friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .friday-topbar-native>button:hover,
 .friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .friday-topbar-native>div>button:hover{border-color:var(--fr-cyan)!important;color:var(--fr-cyan)!important}
 .friday-topbar-pullout .friday-topbar-action-label{display:inline;font:500 12px/1.4 var(--fr-font-body)}
+/* A nested Classic menu must escape the pullout's scrolling clip. Its
+ * inline desktop anchor remains unchanged when it fits in the top row. */
+body[data-friday-display-style="classic"] .friday-topbar-pullout .friday-shell-menu{
+  position:fixed!important;left:12px!important;right:auto!important;
+  top:calc(var(--fr-topbar-h,54px) + 8px)!important;margin:0!important;
+  width:max-content;min-width:0!important;max-width:calc(100vw - 24px)!important;
+  max-height:calc(100dvh - var(--fr-topbar-h,54px) - 20px)!important;
+  box-sizing:border-box;overflow:auto;overscroll-behavior:contain
+}
+body[data-friday-display-style="classic"] .friday-topbar-pullout .friday-model-menu>div{max-width:100%;box-sizing:border-box}
 .friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .arbiter-strip{flex-wrap:wrap;max-width:100%}
 .friday-topbar-pullout .friday-topbar-cell:not(.friday-topbar-measuring) .ws-tab-name{display:flex;flex-wrap:wrap;max-width:100%;white-space:normal}
 .friday-topbar-cell.friday-topbar-measuring{position:fixed!important;left:0!important;top:0!important;width:max-content!important;max-width:none!important;flex:none!important;visibility:hidden!important}

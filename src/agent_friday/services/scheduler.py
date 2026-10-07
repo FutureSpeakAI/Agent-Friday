@@ -965,7 +965,15 @@ def _run_task(rec):
     saying why, not nothing."""
     from agent_friday.services import reasoning_trace as _rt
     name = rec.get("name") or ((rec.get("task") or {}).get("ref")) or "Scheduled job"
-    with _rt.scope("scheduled", name, nested=True):
+    with _rt.scope("scheduled", name, nested=True) as trace_id:
+        # The orb is created on the dispatch thread, but this worker owns the
+        # run's trace. Bind before any run gate can return or raise.
+        orb_id = rec.get("_orb_id")
+        if orb_id:
+            with core.PROCESSES_LOCK:
+                proc = core.PROCESSES.get(orb_id)
+                if proc is not None:
+                    proc["trace_id"] = trace_id
         return _run_task_inner(rec)
 
 
@@ -1251,9 +1259,13 @@ def dispatch(rec, *, manual=False):
     orb_id = f"sched-{sid}-{run_id[-6:]}" if _make_scheduler_orb(rec) else None
     if orb_id:
         try:
-            process_register(orb_id, name="Scheduler",
-                             label=rec.get('name'), category="monitoring",
-                             icon="⏰", model=_orb_model_for(rec))
+            # Dispatch may run inside a chat turn. Its trace is not the
+            # scheduled worker's record, even while that worker is queued.
+            from agent_friday.services import reasoning_trace as _rt
+            with _rt.activate(None):
+                process_register(orb_id, name="Scheduler",
+                                 label=rec.get('name'), category="monitoring",
+                                 icon="⏰", model=_orb_model_for(rec))
         except Exception:
             orb_id = None
 
