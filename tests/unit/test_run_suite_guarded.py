@@ -28,6 +28,15 @@ rs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rs)
 
 
+@pytest.fixture(autouse=True)
+def isolated_guard_config(monkeypatch):
+    """Use this module's synthetic configs, never the outer suite's live one.
+
+    The outer guard retains its own environment, lock and resource floors.
+    """
+    monkeypatch.delenv("FRIDAY_GUARD_CONFIG", raising=False)
+
+
 def test_defaults_come_from_the_pytest_plugin():
     assert rs.DEFAULTS["min_free_ram_gb"] == guard.MIN_FREE_RAM_GB
     assert rs.DEFAULTS["min_free_disk_gb"] == guard.MIN_FREE_DISK_GB

@@ -184,7 +184,8 @@ def _voice_callback(name, **bindings):
 
 @pytest.mark.parametrize("engine", ["local", "live", "crew"])
 def test_voice_call_summary_leaves_out_off_record_turns(off_record, monkeypatch, engine):
-    from agent_friday.services import taint, voice_session as vs
+    from threading import Event
+    from agent_friday.services import crew_runtime, taint, voice_session as vs
     monkeypatch.setattr(taint, "note_user_message", lambda *a, **k: None)
     session = None
     frames, summaries, turn_log = [], [], []
@@ -199,19 +200,27 @@ def test_voice_call_summary_leaves_out_off_record_turns(off_record, monkeypatch,
         turn_log = session.turn_log
         complete = session.run_turn
     else:
-        incoming, outgoing = [], []
-        flush = _voice_callback(
-            "_flush_turn", in_buf=incoming, out_buf=outgoing, turn_log=turn_log,
-            _crew=[object() if engine == "crew" else None],
-            _voice_session={"spoken": [], "conv_state": {}},
-            _vcs=SimpleNamespace(update=lambda state, user, reply: state),
-            _persist_voice_turn=lambda *a, **k: None, _open_cid=["test-voice"],
-            _safe_send=frames.append, _voice_actions_for=lambda text: [])
+        def new_live_call():
+            incoming, outgoing = [], []
+            flush = _voice_callback(
+                "_flush_turn", in_buf=incoming, out_buf=outgoing, turn_log=turn_log,
+                _crew=[object() if engine == "crew" else None],
+                _voice_session={"spoken": [], "conv_state": {},
+                                "_crew_host_origin": crew_runtime.capture_host_origin()},
+                _vcs=SimpleNamespace(update=lambda state, user, reply: state),
+                _persist_voice_turn=lambda *a, **k: None, _open_cid=["test-voice"],
+                resume_handle=[None], _conn_gen=0, _barged_turn=[False], done=Event(),
+                _live_resume_clear=lambda **kwargs: None,
+                _safe_send=frames.append, _voice_actions_for=lambda text: [])
 
-        def complete(text):
-            incoming.append(text)
-            outgoing.append("answer " + text)
-            flush()
+            def complete_turn(text):
+                incoming.append(text)
+                outgoing.append("answer " + text)
+                flush()
+
+            return complete_turn
+
+        complete = new_live_call()
 
     private = _marker()
     try:
@@ -219,6 +228,10 @@ def test_voice_call_summary_leaves_out_off_record_turns(off_record, monkeypatch,
         assert turn_log == []
         assert any(frame.get("type") == "voice_turn_done" for frame in frames)
         core._save_settings({"off_record": False})
+        if engine != "local":
+            # Privacy changes end a cloud call; new public words use a new
+            # callback and origin, never an old provider session rebound in place.
+            complete = new_live_call()
         complete("public turn")
         # Crew records playback separately; generation completion cannot enter
         # a call summary or claim that unheard output was spoken.
@@ -436,22 +449,33 @@ def test_native_crew_delegation_checks_call_origin_before_logging_and_execution(
 @pytest.mark.parametrize("origin_kind", ["private", "ended-public", "public", "missing"])
 def test_native_crew_reconnect_keeps_cached_provider_privacy_origin(monkeypatch, origin_kind):
     from agent_friday.routes import voice
-    from agent_friday.services import crew_runtime, off_record as private_mode
+    from agent_friday.services import conversations, crew_runtime, off_record as private_mode
     private, generation = [origin_kind == "private"], [4]
     monkeypatch.setattr(private_mode, "active", lambda: private[0])
     monkeypatch.setattr(private_mode, "generation", lambda: generation[0])
     monkeypatch.setattr(voice, "_LIVE_RESUME", {"handle": None, "ts": 0.0, "model": None,
                                              "voice": None, "crew_host_origin": None})
+    monkeypatch.setattr(conversations, "load", lambda cid: {"id": cid})
+    monkeypatch.setattr(voice, "_load_settings", lambda: {"voice_room_mode": "one"})
+    monkeypatch.setattr(crew_runtime, "voice_room", lambda cid: {
+        "conversation_id": cid, "project_id": None, "revision": 2,
+        "member_ids": ["crew-fixture"], "members": [{"id": "crew-fixture", "revision": 3}]})
+    owner = voice._live_resume_owner("fixture-chat", crew_enabled=True, room_mode="one")
     original = None if origin_kind == "missing" else crew_runtime.capture_host_origin()
     voice._live_resume_store("old-context", "synthetic-model", "synthetic-voice",
-                              crew_host_origin=original)
+                              crew_host_origin=original, resume_owner=owner)
     if origin_kind in ("private", "ended-public"):
         private[0], generation[0] = False, 5
     new_call_origin = crew_runtime.capture_host_origin()
     assert not new_call_origin.off_record
-    handle, inherited = voice._live_resume_load(
-        "synthetic-model", "synthetic-voice", include_crew_origin=True)
-    assert handle == "old-context" and inherited is original
+    cached = voice._live_resume_load(
+        "synthetic-model", "synthetic-voice", resume_owner=owner, include_crew_origin=True)
+    if origin_kind != "public":
+        assert cached is None  # missing or ended privacy authority cannot resume provider history
+        inherited = None
+    else:
+        handle, inherited = cached
+        assert handle == "old-context" and inherited is original
     state = {"_crew_host_origin": inherited}
     refusal = _voice_callback("_crew_delegation_refusal", _crew_host_runtime=crew_runtime,
                               _voice_session=state)
@@ -459,7 +483,7 @@ def test_native_crew_reconnect_keeps_cached_provider_privacy_origin(monkeypatch,
     # A deliberate stop discards both provider context and its old authority.
     voice._live_resume_clear()
     assert voice._live_resume_load("synthetic-model", "synthetic-voice",
-                                   include_crew_origin=True) is None
+                                   resume_owner=owner, include_crew_origin=True) is None
     state["_crew_host_origin"] = new_call_origin
     assert refusal() is None
 

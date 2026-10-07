@@ -22,6 +22,7 @@ import hmac as _hmac
 import queue as _queue
 import difflib as _difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
@@ -141,7 +142,7 @@ LIVE_HEARTBEAT_SECONDS = 15.0
 _LIVE_RESUME_TTL_S = 600
 _LIVE_RESUME_LOCK = threading.Lock()
 _LIVE_RESUME = {"handle": None, "ts": 0.0, "model": None, "voice": None,
-                "crew_host_origin": None}
+                "crew_host_origin": None, "owner": None, "closed_gen": None}
 # Connection-generation fence. Every /ws/live handler takes the next
 # generation number; only the CURRENT generation may write the resume cache
 # or renew session legs. A zombie handler on a half-open socket (browser gone,
@@ -172,30 +173,114 @@ def _live_conn_current(gen):
         return gen == _LIVE_CONN_GEN[0]
 
 
-def _live_resume_store(handle, model, voice, gen=None, *, crew_host_origin=None):
+@dataclass(frozen=True)
+class _LiveResumeOwner:
+    conversation_id: str
+    project_id: str | None
+    crew_enabled: bool
+    room_mode: str
+    crew_revision: int | None
+    members: tuple
+
+
+def _live_resume_owner(conversation_id, *, crew_enabled, room_mode):
+    """Capture validated room authority without acquiring a new privacy origin."""
+    from agent_friday.services import conversations, crew_runtime
+    if (not isinstance(conversation_id, str) or not conversation_id
+            or type(crew_enabled) is not bool or room_mode not in ("one", "room")):
+        return None
+    try:
+        conversation = conversations.load(conversation_id)
+        if not conversation or conversation.get("status") == "archived":
+            return None
+        project_id = conversation.get("project") or None
+        revision, members = None, ()
+        if crew_enabled:
+            room = crew_runtime.voice_room(conversation_id)
+            if (not room or room.get("conversation_id") != conversation_id
+                    or room.get("project_id") != project_id
+                    or type(room.get("revision")) is not int or room["revision"] < 1):
+                return None
+            revision = room["revision"]
+            profiles = room["members"]
+            if ([profile["id"] for profile in profiles] != room["member_ids"]
+                    or not profiles or any(type(profile.get("revision")) is not int
+                                           or profile["revision"] < 1 for profile in profiles)):
+                return None
+            members = tuple((profile["id"], profile["revision"]) for profile in profiles)
+        return _LiveResumeOwner(conversation_id, project_id, crew_enabled,
+                                room_mode, revision, members)
+    except Exception:
+        return None
+
+
+def _live_resume_owner_current(owner):
+    if type(owner) is not _LiveResumeOwner:
+        return False
+    try:
+        current = _live_resume_owner(
+            owner.conversation_id, crew_enabled=owner.crew_enabled,
+            room_mode=_voice_room_mode(_load_settings() or {}))
+        return current == owner
+    except Exception:
+        return False
+
+
+def _live_resume_origin_current(origin):
+    """Provider-held history belongs to one unchanged privacy lifetime."""
+    from agent_friday.services import crew_runtime, off_record
+    if (type(origin) is not crew_runtime.CrewHostOrigin
+            or type(origin.off_record) is not bool or type(origin.generation) is not int):
+        return False
+    try:
+        generation = off_record.generation()
+        return (origin.generation == generation
+                and origin.off_record == off_record.active()
+                and generation == off_record.generation())
+    except Exception:
+        return False
+
+
+def _live_resume_store(handle, model, voice, gen=None, *, crew_host_origin=None,
+                       resume_owner=None):
+    from agent_friday.services.crew_runtime import CrewHostOrigin
+    if type(resume_owner) is not _LiveResumeOwner or type(crew_host_origin) is not CrewHostOrigin:
+        return
     with _LIVE_RESUME_LOCK:
         if gen is not None and gen != _LIVE_CONN_GEN[0]:
             return   # stale handler — never clobber the live conversation's cache
+        if gen is not None and gen == _LIVE_RESUME.get("closed_gen"):
+            return   # a late provider update cannot reopen a deliberately ended call
         _LIVE_RESUME.update(handle=handle, ts=_time.time(), model=model, voice=voice,
-                            crew_host_origin=crew_host_origin)
+                            crew_host_origin=crew_host_origin, owner=resume_owner)
 
 
 def _live_resume_clear(gen=None):
     with _LIVE_RESUME_LOCK:
         if gen is not None and gen != _LIVE_CONN_GEN[0]:
             return   # a zombie's late bye/end must not clear the new handler's cache
-        _LIVE_RESUME.update(handle=None, ts=0.0, model=None, voice=None, crew_host_origin=None)
+        if gen is not None:
+            _LIVE_RESUME["closed_gen"] = gen
+        _LIVE_RESUME.update(handle=None, ts=0.0, model=None, voice=None,
+                            crew_host_origin=None, owner=None)
 
 
-def _live_resume_load(model, voice, *, include_crew_origin=False):
-    """Return a fresh stored resumption handle for this (model, voice), else None."""
+def _live_resume_load(model, voice, *, resume_owner=None, include_crew_origin=False):
+    """Only the same validated conversation and room may resume provider context."""
+    if not _live_resume_owner_current(resume_owner):
+        return None
     with _LIVE_RESUME_LOCK:
-        h = _LIVE_RESUME["handle"]
-        if not h:
+        h = _LIVE_RESUME.get("handle")
+        stamp = _LIVE_RESUME.get("ts")
+        if not isinstance(h, str) or not h or type(stamp) not in (int, float):
             return None
-        if (_time.time() - _LIVE_RESUME["ts"]) > _LIVE_RESUME_TTL_S:
+        if not 0 <= _time.time() - stamp <= _LIVE_RESUME_TTL_S:
             return None
-        if _LIVE_RESUME["model"] != model or _LIVE_RESUME["voice"] != voice:
+        if _LIVE_RESUME.get("model") != model or _LIVE_RESUME.get("voice") != voice:
+            return None
+        if (type(_LIVE_RESUME.get("owner")) is not _LiveResumeOwner
+                or _LIVE_RESUME["owner"] != resume_owner
+                or not _live_resume_origin_current(_LIVE_RESUME.get("crew_host_origin"))):
             return None
         return (h, _LIVE_RESUME.get("crew_host_origin")) if include_crew_origin else h
 
@@ -3411,6 +3496,18 @@ if sock is not None:
 
         live_voice = _get_live_voice()
         live_settings = _load_settings() or {}
+        from agent_friday.services import conversations as _cv_owner
+        _open_cid = [_cv_owner.resolve((request.args.get('conversation_id') or '').strip() or None)]
+        _crew_enabled = str(request.args.get('crew') or '') == '1'
+        # Immutable for the provider session, including every renewal. Never
+        # relabel a handle with a later selection or recapture its privacy origin.
+        _resume_owner = _live_resume_owner(
+            _open_cid[0], crew_enabled=_crew_enabled,
+            room_mode=_voice_room_mode(live_settings))
+        if _resume_owner is None:
+            ws.send(json.dumps({"type": "error", "error": "voice_context_unavailable",
+                                "detail": "Choose an available conversation and voice room before starting voice."}))
+            return
 
         live_temperature = live_settings.get("voice_temperature")
         try:
@@ -3513,7 +3610,7 @@ if sock is not None:
         _hold_scope = _sc_hold.layer3_hold_scope(
             override=str(request.args.get('privacy_layer3_override') or '') == '1')
         _voice_holds = _hold_scope.__enter__()
-        if str(request.args.get('crew') or '') == '1':
+        if _crew_enabled:
             try:
                 from agent_friday.services import crew_runtime as _crew_roster
                 _crew_cid = str(request.args.get('conversation_id') or '').strip()
@@ -3662,27 +3759,19 @@ if sock is not None:
 
         done = threading.Event()
 
-        # The thread the user has OPEN, carried by the client on the socket, and
-        # rebound below if the user switches conversations mid-call. Same contract as
-        # /ws/voice-local. None means "no open thread", which
-        # _persist_voice_turn resolves to Main as an explicit fallback.
-        _open_cid = [(request.args.get('conversation_id') or '').strip() or None]
+        # The owner was resolved before provider setup, including the explicit
+        # Main fallback. Switching chats ends this call before another can own it.
         # The call's live channel (registered in the runner, dropped when the
         # handler ends) and the Gemini session of the current leg.
         _live_chan = [None]
         _cur_sess = [None]
-        _crew_enabled = str(request.args.get('crew') or '') == '1'
         _crew = [None]
         _crew_chan = [None]
         _send_lock = threading.RLock()
 
         def _call_cid():
-            """This call's conversation: the one on screen, else Main."""
-            try:
-                from agent_friday.services import conversations as _cv_call
-                return _cv_call.resolve(_open_cid[0])
-            except Exception:
-                return _open_cid[0]
+            """The resolved owner captured before this provider session began."""
+            return _resume_owner.conversation_id
 
         def _safe_send(obj):
             if done.is_set():
@@ -3910,20 +3999,29 @@ if sock is not None:
             _voice_live_channel.register(_voice_session["conversation_id"], _deliver_to_call)
 
             def _retarget_call(cid):
-                """He switched threads mid-call: tasks, cards and results follow."""
-                old = _voice_session.get("conversation_id")
-                if cid == old:
-                    return
-                _voice_live_channel.unregister(old, _deliver_to_call)
-                _voice_session["conversation_id"] = cid
-                _live_chan[0] = (cid, _deliver_to_call)
-                _voice_live_channel.register(cid, _deliver_to_call)
-                if _crew[0]:
-                    _voice_live_channel.unregister_crew(*_crew_chan[0])
-                    _crew[0].retarget(cid)
-                    _crew_notes.clear()
-                    _crew_chan[0] = (cid, _crew_chan[0][1])
-                    _voice_live_channel.register_crew(*_crew_chan[0])
+                """End provider-held history before a different chat can own it."""
+                if cid == _resume_owner.conversation_id:
+                    return False
+                try:
+                    if _crew[0]:
+                        _crew[0].close()
+                        _drain_crew_receipts()
+                    _flush_turn()
+                finally:
+                    for pending in (in_buf, out_buf, _inject_q, _crew_notes):
+                        pending.clear()
+                    resume_handle[0] = None
+                    _live_resume_clear(gen=_conn_gen)
+                    _barged_turn[0] = True
+                    _safe_send({"type": "interrupted"})
+                    if _crew[0]:
+                        _safe_send({"type": "error", "error": "crew_room_changed",
+                                    "detail": "Start a new voice call in this Crew room."})
+                    else:
+                        _safe_send({"type": "error", "error":
+                                    "Voice call ended because you changed chats. Start voice again in this chat to continue."})
+                    done.set()
+                return True
 
             async def _flush_injections(sess):
                 """Hand queued results to the model, one per call, between turns."""
@@ -3982,6 +4080,19 @@ if sock is not None:
                 return _model_speaking[0] or now < _est_play_end_ts[0]
 
             def _flush_turn():
+                # A delayed transcript cannot acquire the current public
+                # lifetime after its original private/public context ended.
+                if not _live_resume_origin_current(_voice_session.get("_crew_host_origin")):
+                    in_buf.clear()
+                    out_buf.clear()
+                    resume_handle[0] = None
+                    _live_resume_clear(gen=_conn_gen)
+                    _barged_turn[0] = True
+                    _safe_send({"type": "interrupted"})
+                    _safe_send({"type": "error", "error": "voice_context_changed",
+                                "detail": "Privacy settings changed. Start a new voice call."})
+                    done.set()
+                    return
                 user_text = ''.join(in_buf).strip()
                 agent_text = ''.join(out_buf).strip()
                 in_buf.clear()
@@ -4392,23 +4503,12 @@ if sock is not None:
                                         _drain_crew_receipts()
                                         await _flush_crew_notes(sess)
                                 elif t == 'conversation':
-                                    if _crew[0]:
-                                        # A Gemini session retains its prior
-                                        # context. Crew rooms need a fresh call
-                                        # when changing conversations.
-                                        if str(msg.get('id') or '').strip() != _crew[0].conversation_id:
-                                            _crew[0].close()
-                                            _drain_crew_receipts()
-                                            _safe_send({"type": "error", "error": "crew_room_changed",
-                                                        "detail": "Start a new voice call in this Crew room."})
-                                            done.set()
-                                            return
-                                        continue
-                                    # He switched threads while the mic was
-                                    # live. Voice follows the conversation on
-                                    # screen, so retarget from here on.
-                                    _open_cid[0] = (msg.get('id') or '').strip() or None
-                                    _retarget_call(_call_cid())
+                                    # Do not reuse a provider session containing
+                                    # another chat's words, results or preferences.
+                                    from agent_friday.services import conversations as _cv_target
+                                    _target_cid = _cv_target.resolve((msg.get('id') or '').strip() or None)
+                                    if _retarget_call(_target_cid):
+                                        return
                                 elif t == 'speaking':
                                     # Client playback transition — the precise
                                     # barge window. A closed→open transition is
@@ -4470,6 +4570,7 @@ if sock is not None:
                                             _handle_model[0] = model_name
                                             _live_resume_store(
                                                 _sru.new_handle, model_name, live_voice, gen=_conn_gen,
+                                                resume_owner=_resume_owner,
                                                 crew_host_origin=_voice_session.get("_crew_host_origin"))
                                         # Cost metering: the Gemini Live session is a
                                         # real, billed call and must be metered like any
@@ -4807,7 +4908,8 @@ if sock is not None:
                     # conversation whose browser socket dropped (client
                     # auto-reconnect) via the module-level handle cache.
                     if resume_handle[0] is None and _supports_resumption:
-                        _stored = _live_resume_load(model_name, live_voice, include_crew_origin=True)
+                        _stored = _live_resume_load(model_name, live_voice,
+                                                    resume_owner=_resume_owner, include_crew_origin=True)
                         if _stored:
                             resume_handle[0], _voice_session["_crew_host_origin"] = _stored
                             _handle_model[0] = model_name
@@ -4872,6 +4974,15 @@ if sock is not None:
                         session_ai = None
                         _max_tries = 3 if _use_handle else 1
                         for _try in range(1, _max_tries + 1):
+                            if (not _live_resume_owner_current(_resume_owner)
+                                    or not _live_resume_origin_current(
+                                        _voice_session.get("_crew_host_origin"))):
+                                resume_handle[0] = None
+                                _live_resume_clear(gen=_conn_gen)
+                                _safe_send({"type": "error", "error": "voice_context_changed",
+                                            "detail": "Conversation, voice room or privacy settings changed. Start a new voice call."})
+                                done.set()
+                                break
                             _with_handle = _use_handle if (_use_handle and _try < _max_tries) else None
                             if _with_handle:
                                 _cfg_try = _leg_config(types, per_model_kwargs, _with_handle)
@@ -4888,6 +4999,22 @@ if sock is not None:
                             try:
                                 session_cm = active_client.aio.live.connect(model=model_name, config=_cfg_try)
                                 session_ai = await session_cm.__aenter__()
+                                if (not _live_resume_owner_current(_resume_owner)
+                                        or not _live_resume_origin_current(
+                                            _voice_session.get("_crew_host_origin"))):
+                                    resume_handle[0] = None
+                                    _live_resume_clear(gen=_conn_gen)
+                                    _safe_send({"type": "error", "error": "voice_context_changed",
+                                                "detail": "Conversation, voice room or privacy settings changed. Start a new voice call."})
+                                    done.set()
+                                    try:
+                                        await session_cm.__aexit__(None, None, None)
+                                    except Exception:
+                                        _vlog('expired voice context close failed')
+                                    finally:
+                                        session_cm = None
+                                        session_ai = None
+                                    break
                                 break
                             except Exception as _ce:
                                 session_cm = None
@@ -4962,6 +5089,13 @@ if sock is not None:
                                     elif _t0 in ('bye', 'end'):
                                         _live_resume_clear(gen=_conn_gen)
                                         done.set()
+                                    elif _t0 == 'conversation':
+                                        from agent_friday.services import conversations as _cv_seam
+                                        _target = _cv_seam.resolve(
+                                            (_m0.get('id') or '').strip() or None)
+                                        if _retarget_call(_target):
+                                            _seam_chunks.clear()
+                                            break
                                     elif _t0 == 'speaking':
                                         _client_signal_seen[0] = True
                                         _client_playing[0] = bool(_m0.get('on'))

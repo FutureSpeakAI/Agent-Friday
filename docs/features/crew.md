@@ -69,6 +69,11 @@ whose original privacy state is unavailable also requires a restart. These
 controls govern Crew delegation and delayed reports; they do not reset the
 remote voice provider's conversation.
 
+Changing chats ends the cloud voice call; start voice again in the selected
+chat. Reconnection can reuse provider history only for the same conversation,
+room settings, member revisions and privacy period. A changed or incomplete
+session starts without that cached provider history.
+
 The room gives one speaker the floor at a time. **Quiet** flushes current and
 queued speech and discards late audio from the interrupted turn. It does not
 cancel background work. On-record generated text is kept with its playback state;
