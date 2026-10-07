@@ -91,7 +91,8 @@ def test_salon_change_is_durable_notified_and_reversible(stores):
     assert studio.load_ws_doc("library")["customization"] == {}
 
 
-@pytest.mark.parametrize("patch", [{}, {"css": "body {display:none}"}, {"model_routing": {}}, {"hidden": [".approval"]}])
+@pytest.mark.parametrize("patch", [{}, {"css": "body {display:none}"}, {"model_routing": {}}, {"hidden": [".approval"]},
+                                  {"note": "A valid field", "unexpected": "refuse the whole patch"}])
 def test_salon_tool_exposes_only_its_declared_presentation_fields(stores, patch):
     _cards, studio, events = stores
     assert "Provide a note" in tools.customize_workspace({"workspace": "library", "patch": patch})
@@ -133,7 +134,7 @@ def test_live_declarations_preserve_cards_actions_and_nullable_customization():
     actions = card.properties["actions"]
     assert actions.type == types.Type.ARRAY and actions.max_items == 3
     assert set(actions.items.required) == {"label", "workspace"}
-    assert actions.items.additional_properties is False
+    assert actions.items.additional_properties is None
     patch = declarations["customize_workspace"].parameters.properties["patch"]
     assert patch.properties["note"].nullable is True
     assert patch.properties["actions"].nullable is True
@@ -149,12 +150,13 @@ def test_schema_converter_still_refuses_free_form_or_heterogeneous_shapes():
     from agent_friday.services import voice_engine
     mapping = {"string": types.Type.STRING}
     for leaf in ({"type": "object"}, {"type": ["string", "integer"]}, {"type": ["string", "integer", "null"]},
-                 {"type": "object", "properties": {"label": {"type": "string"}}, "additionalProperties": True}):
+                 {"type": "object", "properties": {"label": {"type": "string"}}, "additionalProperties": True},
+                 {"type": "object", "properties": {"label": {"type": "string"}}, "additionalProperties": {"type": "string"}}):
         with pytest.raises(ValueError):
             voice_engine._json_schema_to_genai(types, {"type": "object", "properties": {"bad": leaf}}, mapping, "invalid")
 
 
-def test_live_wire_json_keeps_nested_cards_and_nullable_workspace_fields():
+def _live_wire_declarations():
     import asyncio
     from types import SimpleNamespace
 
@@ -175,32 +177,65 @@ def test_live_wire_json_keeps_nested_cards_and_nullable_workspace_fields():
     request["setup"]["model"] = model
     wire = json.loads(json.dumps(request))
 
+    return {decl["name"]: decl for tool in wire["setup"]["tools"]
+            for decl in tool.get("functionDeclarations", tool.get("function_declarations", []))}
+
+
+def test_live_wire_schemas_use_server_supported_fields():
+    # FunctionDeclaration.parameters uses the server's typed OpenAPI subset,
+    # not parametersJsonSchema or every field accepted by the Python SDK.
+    # https://ai.google.dev/api/generate-content#Schema
+    allowed = {"type", "format", "title", "description", "nullable", "enum",
+               "maxItems", "max_items", "minItems", "min_items", "properties",
+               "required", "minProperties", "min_properties", "maxProperties",
+               "max_properties", "minLength", "min_length", "maxLength", "max_length",
+               "pattern", "example", "anyOf", "any_of", "propertyOrdering",
+               "property_ordering", "default", "items", "minimum", "maximum"}
+
+    def check_schema(schema, path):
+        assert isinstance(schema, dict), path
+        assert not (set(schema) - allowed), (path, sorted(set(schema) - allowed))
+        for name, child in schema.get("properties", {}).items():
+            check_schema(child, path + "." + name)
+        if "items" in schema:
+            check_schema(schema["items"], path + "[]")
+        for index, child in enumerate(schema.get("anyOf", schema.get("any_of", []))):
+            check_schema(child, path + ".anyOf[%d]" % index)
+
+    declarations = _live_wire_declarations()
+    assert {"home_cards", "customize_workspace", "revert_workspace", "list_workspace_history"} <= declarations.keys()
+    for name, declaration in declarations.items():
+        if "parameters" in declaration:
+            check_schema(declaration["parameters"], name)
+
+
+def test_live_wire_json_keeps_nested_cards_and_nullable_workspace_fields():
+    declarations = _live_wire_declarations()
+
     # SDK releases may spell schema fields in proto or JSON form. Check values
     # after encoding so model construction alone cannot satisfy the contract.
     def field(obj, camel, snake):
         return obj[camel] if camel in obj else obj[snake]
 
-    declarations = {decl["name"]: decl for tool in wire["setup"]["tools"]
-                    for decl in field(tool, "functionDeclarations", "function_declarations")}
     assert {"home_cards", "customize_workspace", "revert_workspace", "list_workspace_history"} <= declarations.keys()
     home = declarations["home_cards"]["parameters"]
     assert home["required"] == ["action"]
     card = home["properties"]["card"]
     assert card["type"] == "OBJECT" and set(card["required"]) == {"id", "title"}
     assert {"id", "title", "body", "priority", "actions"} == card["properties"].keys()
-    assert field(card, "additionalProperties", "additional_properties") is False
+    assert "additionalProperties" not in card and "additional_properties" not in card
     actions = card["properties"]["actions"]
     assert actions["type"] == "ARRAY" and int(field(actions, "maxItems", "max_items")) == 3
     assert actions["items"]["type"] == "OBJECT"
     assert set(actions["items"]["required"]) == {"label", "workspace"}
     assert set(actions["items"]["properties"]) == {"label", "workspace"}
-    assert field(actions["items"], "additionalProperties", "additional_properties") is False
+    assert "additionalProperties" not in actions["items"] and "additional_properties" not in actions["items"]
 
     customization = declarations["customize_workspace"]["parameters"]
     assert set(customization["required"]) == {"workspace", "patch"}
     patch = customization["properties"]["patch"]
     assert patch["type"] == "OBJECT"
-    assert field(patch, "additionalProperties", "additional_properties") is False
+    assert "additionalProperties" not in patch and "additional_properties" not in patch
     for name in ("note", "accent", "density", "actions"):
         assert patch["properties"][name]["nullable"] is True
     density = patch["properties"]["density"]
@@ -210,6 +245,13 @@ def test_live_wire_json_keeps_nested_cards_and_nullable_workspace_fields():
     assert quick_actions["items"]["type"] == "OBJECT"
     assert set(quick_actions["items"]["required"]) == {"label", "prompt"}
     assert set(quick_actions["items"]["properties"]) == {"label", "prompt"}
+
+    # The provider rendering does not weaken the shared tool contract.
+    specs = {spec["name"]: spec["input_schema"] for spec in tools.TOOLS}
+    source_card = specs["home_cards"]["properties"]["card"]
+    assert source_card["additionalProperties"] is False
+    assert source_card["properties"]["actions"]["items"]["additionalProperties"] is False
+    assert specs["customize_workspace"]["properties"]["patch"]["additionalProperties"] is False
 
 
 @pytest.mark.parametrize("name,args,check", [

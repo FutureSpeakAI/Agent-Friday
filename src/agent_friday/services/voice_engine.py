@@ -1104,7 +1104,9 @@ def _json_schema_leaf(types, spec, type_map, pname, tool=""):
         if "additionalProperties" in spec:
             if spec["additionalProperties"] is not False:
                 raise ValueError("free-form additional properties on %r" % pname)
-            kwargs["additional_properties"] = False
+            # Live's typed Schema omits additionalProperties, even when the SDK
+            # accepts it. Closed-object restrictions remain in the shared JSON
+            # schema and handlers; sending this field rejects the entire setup.
         return types.Schema(type=types.Type.OBJECT,
                             properties={key: _json_schema_leaf(types, value, type_map,
                                         pname + "." + key, tool)
