@@ -241,3 +241,29 @@ def test_the_silent_default_downloads_nothing():
     block = ISS[start:ISS.index("if CloudCheck.Checked then Exit;", start)]
     assert "ModelsCloud|0" in block and "ConsentDownload|0" in block
     assert "(not ChosenConsent)" in block, "models without consent fall back to cloud"
+
+
+@needs_powershell
+def test_memory_held_by_an_earlier_friday_is_not_counted_against_the_card(tmp_path):
+    """Setup stops Friday before it installs, so Friday's own seats in video
+    memory must not make a good card look full (it read as the CPU tier on a
+    12 GB card that was holding the 27B)."""
+    import os
+    import shutil
+    import subprocess
+
+    local = tmp_path / "local"
+    (local / "AgentFriday" / "python").mkdir(parents=True)
+    fake = local / "AgentFriday" / "python" / "pythonw.exe"
+    shutil.copy(Path(os.environ["SystemRoot"]) / "System32" / "ping.exe", fake)
+    script = (". '%s'\n$r = Test-FridayIsRunning\n[string]$r\n" % (LIB / "ModelPicker.ps1"))
+    env = {"LOCALAPPDATA": str(local), "USERPROFILE": str(tmp_path / "home")}
+    assert run_ps(script, tmp_path, env=env).stdout.strip().splitlines()[-1] == "False"
+    proc = subprocess.Popen([str(fake), "-n", "60", "127.0.0.1"], stdout=subprocess.DEVNULL)
+    try:
+        import time
+        time.sleep(0.8)
+        assert run_ps(script, tmp_path, env=env).stdout.strip().splitlines()[-1] == "True"
+    finally:
+        proc.kill()
+    assert "Test-FridayIsRunning" in PICKER and "idle_used_mib = 0" in PICKER

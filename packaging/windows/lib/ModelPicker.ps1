@@ -74,6 +74,25 @@ public static extern bool IsProcessorFeaturePresent(uint ProcessorFeature);
     } catch { return $false }
 }
 
+function Test-FridayIsRunning {
+    <#  True when a process runs from Friday's install folder or from the model
+        runtime under ~\.friday. Its own seats are what an earlier Friday keeps
+        in video memory; setup stops it before it installs anything, so that use
+        must not make a good card look full. #>
+    $roots = @()
+    if ($env:LOCALAPPDATA) { $roots += (Join-Path $env:LOCALAPPDATA 'AgentFriday') }
+    if ($env:USERPROFILE) { $roots += (Join-Path $env:USERPROFILE '.friday\runtime') }
+    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+        try {
+            if (-not $p.Path) { continue }
+            foreach ($r in $roots) {
+                if ($p.Path.StartsWith($r + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+            }
+        } catch { }
+    }
+    return $false
+}
+
 function Get-GpuFacts {
     <#  The largest usable card: name, vendor, total and idle-used VRAM in MiB.
         vram_known is $false when the number is a guess. #>
@@ -95,7 +114,13 @@ function Get-GpuFacts {
                                         idle_used_mib = $used; vram_known = $true; note = 'nvidia-smi' }
                 }
             }
-            if ($best) { return $best }
+            if ($best) {
+                if ($best.idle_used_mib -gt 0 -and (Test-FridayIsRunning)) {
+                    $best.note = 'nvidia-smi; an earlier Friday is running, so the memory it holds is not counted'
+                    $best.idle_used_mib = 0
+                }
+                return $best
+            }
         } catch { }
     }
 
