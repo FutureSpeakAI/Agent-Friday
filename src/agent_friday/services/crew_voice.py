@@ -98,14 +98,17 @@ class CrewVoiceSession:
             self._emit("crew_session", max_audio_bytes=MAX_AUDIO_BYTES,
                        max_text_chars=MAX_TEXT, sample_rate=RATE)
 
-    def _profile(self, profile, *, project_id=_UNSET):
+    def _profile(self, profile, *, project_id=_UNSET, conversation_project_id=_UNSET):
         snapshot = self._room(self.conversation_id)
-        if project_id is not _UNSET and (snapshot or {}).get("project_id") != project_id:
+        if (conversation_project_id is not _UNSET
+                and (snapshot or {}).get("project_id") != conversation_project_id):
             raise ValueError("The Crew room project changed; request a new report.")
         for member in (snapshot or {}).get("members", []):
             if (isinstance(member, dict) and member.get("id") == profile.get("id")
                     and member.get("status") == "active"
                     and member.get("revision") == profile.get("revision")):
+                if project_id is not _UNSET and project_id is not None and project_id not in member.get("project_ids", []):
+                    raise ValueError("The speaker is not assigned to this report's project.")
                 return copy.deepcopy(member)
         raise ValueError("Crew membership or the speaker profile changed; request a new report.")
 
@@ -120,7 +123,7 @@ class CrewVoiceSession:
         return generation is None or generation == self._off_record_generation()
 
     def deliver(self, profile, text, *, task_id=None, off_record=None,
-                off_record_generation=None):
+                off_record_generation=None, project_id=_UNSET):
         if not isinstance(profile, dict) or not str(text or "").strip():
             return False
         text = str(text).strip()
@@ -143,6 +146,8 @@ class CrewVoiceSession:
             snapshot = self._room(self.conversation_id)
             if not snapshot:
                 return False
+            project_id = snapshot.get("project_id") if project_id is _UNSET else project_id
+            profile = self._profile(profile, project_id=project_id)
         except Exception:
             return False
         with self._lock:
@@ -154,16 +159,26 @@ class CrewVoiceSession:
                 return False
             self._pending.append({"profile": profile, "text": text,
                                   "task_id": str(task_id or ""), "epoch": self.epoch,
-                                  "project_id": snapshot.get("project_id"), **origin})
+                                  "project_id": project_id,
+                                  "conversation_project_id": snapshot.get("project_id"), **origin})
         self.tick()
         return True
 
-    def _new(self, speaker_id, *, task_id="", text="", profile=None, privacy_origin=None):
+    def _new(self, speaker_id, *, task_id="", text="", profile=None, privacy_origin=None,
+             project_id=_UNSET):
         now = self._clock()
         snapshot = self._room(self.conversation_id)
         if not snapshot:
             raise ValueError("This Crew room is no longer available.")
         origin = privacy_origin if privacy_origin is not None else self._privacy_origin()
+        project_id = snapshot.get("project_id") if project_id is _UNSET else project_id
+        shared = {p["id"]: p["revision"] for p in snapshot.get("members", [])
+                  if isinstance(p, dict) and p.get("status") == "active"
+                  and (project_id is None or project_id in p.get("project_ids", []))}
+        if speaker_id == "friday" and snapshot.get("cross_project"):
+            # Host speech may refer to several projects. It is audible to the
+            # owner but cannot become a specialist's implicit project context.
+            shared = {}
         return {"utterance_id": uuid.uuid4().hex, "speaker_id": speaker_id,
                 "task_id": task_id, "epoch": self.epoch, "text": text,
                 "profile": profile, "seq": 0, "samples": 0, "bytes": 0,
@@ -172,9 +187,8 @@ class CrewVoiceSession:
                 "created": now, "cancel": threading.Event(),
                 "off_record": origin["off_record"],
                 "off_record_generation": origin["off_record_generation"],
-                "project_id": snapshot.get("project_id"),
-                "shared_with": {p["id"]: p["revision"] for p in snapshot.get("members", [])
-                                if isinstance(p, dict) and p.get("status") == "active"}}
+                "project_id": project_id, "conversation_project_id": snapshot.get("project_id"),
+                "shared_with": shared}
 
     @property
     def external_active(self):
@@ -298,6 +312,17 @@ class CrewVoiceSession:
             return
         item["recorded"] = True
         try:
+            snapshot = self._room(self.conversation_id)
+            if (not snapshot or snapshot.get("project_id") != item["conversation_project_id"]
+                    or (item["speaker_id"] == "friday" and snapshot.get("cross_project"))):
+                item["shared_with"] = {}
+            else:
+                # A native turn may dispatch another project's task after its
+                # opening audio. Audience authority must follow its full turn.
+                item["shared_with"] = {p["id"]: p["revision"] for p in snapshot.get("members", [])
+                    if p.get("status") == "active"
+                    and item["shared_with"].get(p.get("id")) == p.get("revision")
+                    and (item["project_id"] is None or item["project_id"] in p.get("project_ids", []))}
             self._receipt({**self._base(item), "status": status,
                            "text": item["text"], "played_samples": item["played_samples"],
                            "profile": item["profile"], "project_id": item["project_id"],
@@ -386,9 +411,11 @@ class CrewVoiceSession:
                 return
             profile = request["profile"]
             try:
-                self._profile(profile, project_id=request["project_id"])
+                self._profile(profile, project_id=request["project_id"],
+                              conversation_project_id=request["conversation_project_id"])
                 job = self._new(profile["id"], task_id=request["task_id"],
-                                text=request["text"], profile=profile, privacy_origin=request)
+                                text=request["text"], profile=profile, privacy_origin=request,
+                                project_id=request["project_id"])
                 if job["project_id"] != request["project_id"]:
                     raise ValueError("Crew room project changed")
             except Exception:
@@ -406,13 +433,15 @@ class CrewVoiceSession:
 
     def _produce(self, item):
         try:
-            profile = self._profile(item["profile"], project_id=item["project_id"])
+            profile = self._profile(item["profile"], project_id=item["project_id"],
+                                    conversation_project_id=item["conversation_project_id"])
             if item["cancel"].is_set():
                 return
             if self._expire_private(item):
                 return
             result = self._synthesize(profile, item["text"], item["task_id"])
-            profile = self._profile(profile, project_id=item["project_id"])
+            profile = self._profile(profile, project_id=item["project_id"],
+                                    conversation_project_id=item["conversation_project_id"])
             if result.mime not in ("audio/mpeg", "audio/wav"):
                 raise ValueError("The voice provider returned an unsupported audio format.")
             if not result.audio or len(result.audio) > MAX_AUDIO_BYTES:

@@ -66,7 +66,9 @@ async function verifyPreview(){
   assert.notEqual(stripped,served,'The actual synthetic preview marker is required');
   assert.equal(hash(stripped),hash(stored),'Preview index must match this worktree, apart from its known fixture marker');
   result.assets['index.html']=hash(stored);
-  for(const file of ['static/workspace_registry.js','static/friday_experience.js','static/friday_holographic_workspace.js','static/friday_appearance.js']){
+  for(const file of ['static/workspace_registry.js','static/friday_experience.js','static/friday_holographic_workspace.js','static/friday_appearance.js',
+    'static/friday_native_shell.css','static/friday_crew.js','static/friday_crew.css','static/friday_crew_playback.js',
+    'static/friday_agent_workspaces.js','static/friday_agent_workspaces.css']){
     const local=fs.readFileSync(path.join(root,file)),remote=await getLocal('/'+file);
     assert.equal(hash(remote),hash(local),'Served asset mismatch: '+file);result.assets[file]=hash(local);
   }
@@ -181,6 +183,43 @@ async function capture(row,page,scope){
   row.observedStates=await scope.locator('[role="status"],[role="alert"]').allTextContents();
   row.observedStates=row.observedStates.slice(0,8).map(value=>value.trim().slice(0,220));
 }
+async function captureCrewDialog(page,row,kind,entry){
+  let opener;
+  if(kind==='profile'){
+    const workspace=await openWorkspace(page,entry);
+    opener=workspace.getByRole('button',{name:'Edit Sample studio guide',exact:true});
+  }else{
+    const chat=await topControl(page,'button[aria-label^="Open chat with "]');await chat.click();
+    const panel=page.locator('.chat-panel.open');await expect(panel).toBeVisible();opener=panel.locator('.fr-crew-entry');
+  }
+  await expect(opener).toBeVisible();await opener.click();
+  const surface=page.getByRole('dialog',{name:kind==='profile'?'Crew agent profile':'Friday Crew',exact:true});
+  await expect(surface).toBeVisible();
+  await expect(surface.getByRole('button',{name:'Save agent',exact:true})).toBeEnabled();
+  if(kind==='profile')await expect(surface.getByLabel('Name',{exact:true})).toHaveValue('Sample studio guide');
+  else await expect(surface.locator('.fr-crew-members')).toContainText('Sample studio guide');
+  await expect(surface.locator('[role="alert"]')).toHaveCount(0);
+  await expect(surface).toHaveAttribute('data-friday-spatial-surface','overlay');
+  await capture(row,page,surface);
+  const close=surface.getByRole('button',{name:'Close Crew',exact:true});
+  await close.focus();await page.keyboard.press('Shift+Tab');
+  row.crewFocusWrap=await surface.evaluate(element=>{
+    const items=[...element.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]')].filter(node=>node.getClientRects().length);
+    return document.activeElement===items[items.length-1];
+  });
+  assert.equal(row.crewFocusWrap,true,'Crew Shift+Tab must wrap to the last control');
+  await page.keyboard.press('Tab');await expect(close).toBeFocused();
+  row.crewScroll=await surface.locator('.fr-crew-scroll').evaluate(element=>{
+    element.scrollTop=element.scrollHeight;
+    return {top:element.scrollTop,height:element.clientHeight,total:element.scrollHeight};
+  });
+  assert.ok(row.crewScroll.top+row.crewScroll.height>=row.crewScroll.total-2,'Crew content must scroll to its final controls');
+  await close.focus();await page.keyboard.press('Escape');await expect(surface).toHaveCount(0);await expect(opener).toBeFocused();
+  await opener.click();await expect(surface).toBeVisible();await expect(surface).toHaveAttribute('data-friday-spatial-surface','overlay');
+  await settle(page);row.crewReopenedGeometry=await geometry(page,surface);
+  await surface.getByRole('button',{name:'Close Crew',exact:true}).click();await expect(surface).toHaveCount(0);await expect(opener).toBeFocused();
+  row.scope+='; populated synthetic Crew '+kind+' dialog, focus wrap, internal scroll and close/reopen; no save, task dispatch or voice activation';
+}
 async function runCase(name,viewport,action){
   gate();const row={id:name+'-'+viewport.width+'x'+viewport.height,status:'running',scope:'Rendered geometry and sampled keyboard navigation',network:{external:[],blockedWrites:[],httpErrors:[]}};
   result.cases.push(row);writeEvidence();let context,page;
@@ -238,9 +277,10 @@ async function main(){
   fs.mkdirSync(output,{recursive:true});writeEvidence();
   try{
     gate();const {enabled,held}=await verifyPreview();
+    const crew=enabled.find(entry=>entry.id==='crew');
     const shared=['menu-workspace-switcher','menu-display-style','menu-friday-controls','menu-command-palette','keyboard-shortcuts',
       'menu-workspace-customize','menu-workspace-more','salon-draft','appearance-preview','home-card-editor','home-card-reader','home-card-sources',
-      'process-thread','chat-beside-home','scene-and-depth','menu-original-scene'];
+      'process-thread','chat-beside-home','scene-and-depth','menu-original-scene',...(crew?['crew-room-dialog','crew-profile-dialog']:[])];
     result.planned=sizes.flatMap(size=>enabled.map(entry=>'workspace-'+entry.id).concat(views.map(view=>'desktop-'+view),shared).map(name=>name+'-'+size.width+'x'+size.height));
     result.status='running';writeEvidence();gate();
     const executablePath=process.env.FRIDAY_TEST_BROWSER_EXECUTABLE;
@@ -250,7 +290,16 @@ async function main(){
     browser=await chromium.connect(server.wsEndpoint(),{timeout:15000});
     result.browser.version=browser.version();
     for(const viewport of sizes){
-      for(const entry of enabled)await runCase('workspace-'+entry.id,viewport,async(page,row)=>capture(row,page,await openWorkspace(page,entry)));
+      for(const entry of enabled)await runCase('workspace-'+entry.id,viewport,async(page,row)=>{
+        const surface=await openWorkspace(page,entry);
+        if(entry.id==='crew'){
+          await expect(surface.locator('.fr-crew-agent-card')).toHaveCount(2);
+          await expect(surface.locator('.fr-crew-work-list li')).toHaveCount(1);
+          await expect(surface.locator('[role="alert"]')).toHaveCount(0);
+        }
+        await capture(row,page,surface);
+      });
+      if(crew)for(const kind of ['room','profile'])await runCase('crew-'+kind+'-dialog',viewport,async(page,row)=>captureCrewDialog(page,row,kind,crew));
       for(const view of views)await runCase('desktop-'+view,viewport,async(page,row)=>{
         if(view!=='day')await page.evaluate(view=>dispatchEvent(new CustomEvent('friday:desktop-view',{detail:{view}})),view);
         const surface=page.locator('.fx-main[data-view="'+view+'"]');await expect(surface).toBeVisible();

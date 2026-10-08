@@ -9,6 +9,7 @@ from agent_friday.services import voice_live_channel as channels
 
 def profile():
     return {"id": "researcher", "revision": 1, "status": "active", "name": "Researcher",
+            "project_ids": ["project-a"],
             "caption": {"label": "Researcher"},
             "voice": {"provider": "elevenlabs", "model": "eleven_flash_v2_5", "voice_id": "voiceA"}}
 
@@ -439,3 +440,45 @@ def test_structured_delivery_keeps_worker_privacy_origin():
                                "off_record_generation": 4}]
     finally:
         channels.unregister_crew("crew-private")
+
+
+def test_cross_project_report_keeps_task_project_and_excludes_other_project_agents():
+    r = Room()
+    r.profile["project_ids"].append("project-b")
+    other = {**profile(), "id": "other", "name": "Other"}
+    r.snapshot["members"].append(other)
+    assert r.floor.deliver(r.profile, "Project B result", task_id="task-b", project_id="project-b")
+    r.produce()
+    assert r.floor._active["project_id"] == "project-b"
+    assert r.floor._active["conversation_project_id"] == "project-a"
+    assert r.floor._active["shared_with"] == {"researcher": 1}
+
+
+def test_cross_project_host_speech_cannot_become_unspecified_worker_context():
+    r = Room()
+    r.snapshot["cross_project"] = True
+    assert r.floor.host_begin()
+    assert r.floor._active["shared_with"] == {}
+
+
+def test_host_turn_starting_another_project_clears_initial_shared_audience():
+    r = Room()
+    assert r.floor.host_audio(b"\x00\x01" * 240)
+    host = r.starts()[0]
+    assert r.floor._active["shared_with"] == {"researcher": 1}
+    r.snapshot["cross_project"] = True
+    assert r.floor.host_end()
+    assert r.ack(host, "finished", 240)
+    assert r.receipts[0]["shared_with"] == {}
+
+
+def test_cross_project_report_rechecks_room_project_after_synthesis():
+    r = Room()
+    r.profile["project_ids"].append("project-b")
+    def changed(profile, text, task):
+        r.snapshot["project_id"] = "project-b"
+        return r.synth(profile, text, task)
+    r.floor._synthesize = changed
+    assert r.floor.deliver(r.profile, "Project B result", project_id="project-b")
+    r.produce()
+    assert not r.starts()

@@ -40,6 +40,16 @@ const tasks = [
  {task_id:'design-review',name:'Review the launch direction',description:'Compare the opening against the project brief',now:'Ready for a human review',status:'paused',created_at:now-2400,result:''},
  {task_id:'design-outline',name:'A first outline',description:'Gather the story into a useful structure',status:'completed_unverified',created_at:now-4800,result:'Sample outline prepared for this design preview.'}
 ];
+const sampleCrewAgents = [
+ {id:'sample-crew-guide',name:'Sample studio guide',role:'Compare the fictional launch directions and prepare questions for a human review.',persona:'Keep observations clear and distinguish sample records from live work.',provider:'preview',model:'sample-reasoning',voice:{provider:'preview',model:'sample-voice',voice_id:'sample-guide'},caption:{label:'Studio guide'},project_ids:['design-launch'],grants:[],skills:[],allowed_tools:[],memory:{notes:'Fictional profile for layout review. No provider, model or private memory is connected.',read:false,write:false},max_steps:12,time_budget_s:180,status:'active',revision:1},
+ {id:'sample-crew-editor',name:'Sample field editor',role:'Shape field observations into useful questions.',persona:'Use direct language and keep the evidence close to the conclusion.',provider:'preview',model:'sample-reasoning',voice:{provider:'preview',model:'sample-voice',voice_id:'sample-editor'},caption:{label:'Field editor'},project_ids:['design-notes'],grants:[],skills:[],allowed_tools:[],memory:{notes:'This suspended profile is synthetic and cannot perform work.',read:false,write:false},max_steps:8,time_budget_s:120,status:'suspended',revision:1}
+];
+const sampleCrewTasks = [{task_id:'sample-crew-review',agent_id:'sample-crew-guide',speaker_name:'Sample studio guide',conversation_id:'design-main',project_id:'design-launch',status:'completed_unverified'}];
+const sampleCrewCapabilities = {
+ providers:[{id:'preview',label:'Sample provider (not connected)',available:false,models:[{id:'sample-reasoning',label:'Sample reasoning model'}]}],
+ voice_providers:[{id:'preview',label:'Sample voice (not connected)',available:false,reason:'No voice provider is connected in this preview.',models:[{id:'sample-voice',label:'Sample voice model'}],voices:[{id:'sample-guide',label:'Sample guide'},{id:'sample-editor',label:'Sample editor'}]}],
+ projects:projects.map(({id,name})=>({id,name})),skills:[],supported_tools:[],limits:{role:1000,persona:8000,memory_notes:8000,max_steps:200,time_budget_s:3600},offline:{available:false,message:'Offline Crew is not operational in this synthetic preview.'}
+};
 // Fixture shapes follow the native workspace consumers in ui_parts/app.html.
 // These records are fictional, stay in this process and never imply a connection.
 const isoDay = (offset=0) => { const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+offset);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-'); };
@@ -104,6 +114,8 @@ const sampleWorkflows=[
  {id:'sample-field-notes',name:'Turn field notes into useful questions',description:'Keep the observations, the interpretation, and the next experiment connected.',enabled:false,when:null,when_text:'When you choose',running:false,asks_first:[],steps:[{name:'Collect the observations',prompt:'Read the sample notes and group related moments.'},{name:'Find the uncertainty',prompt:'Separate what was observed from what is still an assumption.'},{name:'Frame an experiment',prompt:'Propose one small way to learn what matters next.'}],last_run:{at:now-86400,status:'finished',summary:'Sample result: one research question and a short prototype brief.',steps:[{status:'completed'},{status:'completed'},{status:'completed'}]}}
 ];
 const readOnlyFixtures={
+ '/api/crew/agents':{agents:sampleCrewAgents},'/api/crew/capabilities':sampleCrewCapabilities,'/api/crew/tasks':{tasks:sampleCrewTasks},
+ '/api/browser/workspaces':{workspaces:[]},'/api/browser/workspaces/permission':{permission:{enabled:false,generation:1}},
  '/api/system':{disk:[],processes:[]},
  '/api/context/stats':{enabled:false,off_record:true,retention_days:0,days:0,first_date:null,last_date:null,total_entries:0,total_bytes:0,avg_entries_per_day:0,log_dir:''},
  '/api/context/compression-stats':{compression:null},'/api/self-improvement/latest':{report:null},
@@ -306,6 +318,13 @@ function api(req,res,u,b) {
  if (p.endsWith('/events') || p==='/api/command-stream') {res.writeHead(204);return res.end();}
  if(method==='GET') {
   if(Object.hasOwn(readOnlyFixtures,p))return ok(res,readOnlyFixtures[p]);
+  const crewRoom=p.match(/^\/api\/crew\/rooms\/([^/]+)(\/turns)?$/);
+  if(crewRoom){
+   const id=decodeURIComponent(crewRoom[1]);
+   if(!conversations.some(conversation=>conversation.id===id))return json(res,{status:'error',message:'Sample conversation not found'},404);
+   if(crewRoom[2])return ok(res,{tasks:sampleCrewTasks.filter(task=>task.conversation_id===id),messages:[]});
+   return ok(res,{room:{conversation_id:id,revision:1,enabled:id==='design-main',member_ids:id==='design-main'?['sample-crew-guide']:[]}});
+  }
   if(/^\/api\/calendar\/day\/\d{4}-\d{2}-\d{2}$/.test(p))return ok(res,sampleCalendarDay(p.slice(-10)));
   if(p==='/api/news/archive'){
    const category=u.searchParams.get('category'),offset=Math.max(0,Number(u.searchParams.get('offset'))||0),limit=Math.max(1,Math.min(100,Number(u.searchParams.get('limit'))||40));

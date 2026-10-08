@@ -41,6 +41,21 @@ def test_two_conversations_hold_disjoint_transcripts(store):
         "design rests on is not holding")
 
 
+def test_scoped_append_guard_runs_after_settings_lookup_and_blocks_storage(store, monkeypatch):
+    from agent_friday.services import off_record
+    conversation = store.create(title="Scoped")
+    events = []
+    monkeypatch.setattr(off_record, "skip", lambda *a, **kw: events.append("privacy-resolved") or False)
+    def guard():
+        assert store._LOCK._is_owned()
+        events.append("authority-rechecked")
+        raise ValueError("Scope revoked")
+    with pytest.raises(ValueError, match="Scope revoked"):
+        store.append(conversation["id"], {"role": "friday", "text": "revoked"}, before_write=guard)
+    assert events == ["privacy-resolved", "authority-rechecked"]
+    assert store.messages(conversation["id"]) == []
+
+
 def test_clearing_one_conversation_leaves_the_other_intact(store):
     a = store.create(title="A")
     b = store.create(title="B")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import math
 import os
@@ -9,6 +10,7 @@ import re
 import threading
 import time
 import uuid
+from contextlib import ExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass
 
@@ -19,6 +21,10 @@ _LOCK = threading.RLock()
 _ID = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
 MAX_MEMBERS = 6
 MAX_ACTIVE_TURNS = 6
+MAX_STEERS = 100
+_STEERS = {}
+_TALKS = {}
+DEFAULT_PROJECT = object()
 HOST_ORIGIN = ContextVar("crew_host_origin", default=None)
 
 
@@ -138,7 +144,7 @@ def update_room(cid, data):
         project = _conversation(cid).get("project") or None
         if enabled:
             for aid in members:
-                validate_dispatch(aid, project)
+                validate_dispatch(aid)
         old.update(member_ids=list(members), enabled=enabled, project_id=project,
                    revision=old["revision"] + 1)
         _write(cid, old)
@@ -150,7 +156,7 @@ def voice_room(cid):
     room = get_room(cid)
     if not room["enabled"]:
         return None
-    members = [validate_dispatch(aid, room["project_id"]) for aid in room["member_ids"]]
+    members = [validate_dispatch(aid) for aid in room["member_ids"]]
     return dict(room, members=members)
 
 
@@ -158,8 +164,15 @@ def roster_text(cid):
     room = voice_room(cid)
     if not room:
         return "No Crew room is enabled in this conversation."
-    return "Invited Crew members (use ask_crew to address one):\n" + "\n".join(
-        f"- {p['name']} [{p['id']}]: {p['role']}" for p in room["members"])
+    roster = "Invited Crew members (use ask_crew to address one):\n" + "\n".join(
+        f"- {p['name']} [{p['id']}]: {p['role']}; assigned project IDs: "
+        + ", ".join(p.get("project_ids", [])) for p in room["members"])
+    active = turns(cid)["tasks"]
+    if active:
+        roster += "\nActive tasks (use steer_crew to update existing work):\n" + "\n".join(
+            f"- {t['task_id']}: {t['name']}; project {t.get('project_id') or 'none'}"
+            for t in active)
+    return roster
 
 
 def _history(cid, profile, project_id, *, with_sources=False):
@@ -206,13 +219,14 @@ def turns(cid):
     _conversation(cid)
     with agent.TASKS_LOCK:
         pending = [{"task_id": t["task_id"], "agent_id": t["crew_context"]["agent_id"],
-                    "status": t["status"], "name": t["name"]}
+                    "status": t["status"], "name": t["name"],
+                    "project_id": t["crew_context"].get("project_id")}
                    for t in agent.TASKS.values()
                    if t.get("conversation_id") == cid and t.get("crew_context")
                    and t.get("status") in ("queued", "running")]
     results = [m for m in conversations.messages(cid, limit=100)
                if (m.get("meta") or {}).get("kind") in
-               ("crew_request", "crew_result", "crew_speech", "crew_playback")]
+               ("crew_request", "crew_result", "crew_speech", "crew_playback", "crew_dialogue")]
     return {"messages": results, "tasks": pending}
 
 
@@ -264,19 +278,183 @@ def _public_generation(expected=None):
     return generation
 
 
+def validate_task_binding(task_id, conversation_id=None, *, require_active=True,
+                          require_room=True):
+    """Resolve canonical task authority; callers cannot supply its scope."""
+    from agent_friday.services import agent, crew_access, task_journal
+    with agent.TASKS_LOCK:
+        recorded = agent.TASKS.get(task_id)
+        task = dict(recorded) if recorded else None
+        if task and isinstance(task.get("crew_context"), dict):
+            task["crew_context"] = copy.deepcopy(task["crew_context"])
+    if not task or not isinstance(task.get("crew_context"), dict):
+        raise CrewRoomError("This Crew task is unavailable.")
+    cid = task.get("conversation_id")
+    if conversation_id is not None and cid != conversation_id:
+        raise CrewRoomError("This task belongs to another conversation.")
+    binding = task["crew_context"]
+    if binding.get("off_record"):
+        raise CrewRoomError("Private tasks cannot use independent browser work.")
+    _public_generation(binding.get("off_record_generation"))
+    if type(binding.get("off_record_generation")) is not int:
+        raise CrewRoomError("The task's original privacy authority is unavailable.")
+    original_project = binding.get("conversation_project_id", binding.get("project_id"))
+    if (_conversation(cid).get("project") or None) != original_project:
+        raise CrewRoomError("This task's conversation changed project.")
+    if task.get("status") in ("cancelled", "failed", "interrupted"):
+        raise CrewRoomError("This task was stopped. Start a fresh request.")
+    if require_active and (task.get("status") not in ("queued", "running")
+                           or task_journal.stop_requested(task_id)):
+        raise CrewRoomError("This task is no longer accepting work.")
+    profile = crew_access.validate_dispatch(binding.get("agent_id"), binding.get("project_id"),
+                                           binding.get("revision"))
+    if require_room:
+        room = get_room(cid)
+        if (not room["enabled"] or room["revision"] != binding.get("room_revision")
+                or profile["id"] not in room["member_ids"]):
+            raise CrewRoomError("This task's Crew room changed. Start a fresh request.")
+    # A task may finish or be cancelled while profile and room storage is read.
+    with agent.TASKS_LOCK:
+        current = agent.TASKS.get(task_id) or {}
+        if current.get("conversation_id") != cid or current.get("crew_context") != binding:
+            raise CrewRoomError("This task's ownership changed.")
+        if current.get("status") in ("cancelled", "failed", "interrupted"):
+            raise CrewRoomError("This task was stopped. Start a fresh request.")
+        if require_active and (current.get("status") not in ("queued", "running")
+                               or task_journal.stop_requested(task_id)):
+            raise CrewRoomError("This task is no longer accepting work.")
+        task.update(status=current.get("status"))
+    _public_generation(binding["off_record_generation"])
+    return task, binding, profile
+
+
+def _publish(cid, task_id, binding, profile, message, sources, *, require_room=True):
+    """Pin the canonical conversation and room until the transcript append."""
+    from agent_friday.services import conversations, crew_access
+    def guard():
+        _, current, _ = validate_task_binding(task_id, cid, require_active=False, require_room=require_room)
+        if current != binding:
+            raise CrewRoomError("The task changed before its answer could be delivered.")
+        for aid, revision in sources.items():
+            crew_access.validate_dispatch(aid, binding["project_id"], revision)
+        room = voice_room(cid)
+        message["meta"]["shared_with"] = ({
+            aid: revision for aid, revision in _shared_members(room, binding["project_id"]).items()
+            if binding["shared_with"].get(aid) == revision}
+            if room and room["revision"] == binding["room_revision"] else {})
+        _public_generation(binding["off_record_generation"])
+    # All room mutations already take _LOCK. Conversation project changes take
+    # conversations._LOCK. Preserve that order, including append's late guard.
+    with _LOCK, conversations._LOCK:
+        return conversations.append(cid, message, before_write=guard)
+
+
+def _shared_members(room, project_id):
+    """Room presence alone never grants another project's result context."""
+    from agent_friday.services.crew_access import validate_dispatch
+    shared = {}
+    for member in room["members"]:
+        try:
+            current = validate_dispatch(member["id"], project_id, member["revision"])
+        except UserFacingError:
+            continue
+        shared[current["id"]] = current["revision"]
+    return shared
+
+
+def steer(cid, task_id, data, *, host_origin=None):
+    """Queue an owner instruction once; consumption is a separate receipt."""
+    origin = require_public_host_origin(host_origin or HOST_ORIGIN.get())
+    if not isinstance(data, dict) or set(data) - {"message", "request_id", "room_revision"}:
+        raise CrewRoomError("Invalid steering request.")
+    message, request_id = data.get("message"), data.get("request_id")
+    if (not isinstance(message, str) or not message.strip() or len(message) > 8000
+            or not isinstance(request_id, str) or not _ID.fullmatch(request_id)
+            or type(data.get("room_revision")) is not int):
+        raise CrewRoomError("Enter an instruction of up to 8,000 characters and the current room revision.")
+    task, binding, _ = validate_task_binding(task_id, cid)
+    if origin.generation != binding["off_record_generation"]:
+        raise CrewRoomError("The task belongs to an earlier privacy session.")
+    if data["room_revision"] != binding["room_revision"]:
+        raise CrewConflict("Refresh the room before steering this task.")
+    digest = hashlib.sha256(message.encode()).hexdigest()
+    from agent_friday.services import agent
+    with _LOCK, agent.TASKS_LOCK:
+        current = agent.TASKS.get(task_id) or {}
+        if (current.get("crew_context") != binding or current.get("status") not in ("queued", "running")
+                or current.get("crew_accepts_steer") is False):
+            raise CrewConflict("This task has finished accepting instructions.")
+        require_public_host_origin(origin)
+        rows = _STEERS.setdefault(task_id, {})
+        previous = rows.get(request_id)
+        if previous:
+            if previous["digest"] != digest:
+                raise CrewConflict("This request ID belongs to a different instruction.")
+            return {"task_id": task_id, "request_id": request_id, "status": previous["status"]}
+        if len(rows) >= MAX_STEERS:
+            raise CrewRoomError("This task's instruction limit is reached. Start a new request.")
+        if sum(len(group) for group in _STEERS.values()) >= 5000:
+            raise CrewRoomError("The instruction history is full. Restart Friday before starting more work.")
+        rows[request_id] = {"request_id": request_id, "digest": digest, "message": message.strip(),
+                            "status": "queued", "queued_at": time.time()}
+    return {"task_id": task_id, "request_id": request_id, "status": "queued"}
+
+
+def steering_status(cid, task_id):
+    task, _, _ = validate_task_binding(task_id, cid, require_active=False)
+    with _LOCK:
+        rows = [{k: value for k, value in row.items() if k not in ("message", "digest")}
+                for row in _STEERS.get(task_id, {}).values()]
+    return {"task_id": task_id, "accepting": task.get("status") in ("queued", "running")
+            and task.get("crew_accepts_steer") is not False, "steers": rows}
+
+
+def pending_steering(task_id):
+    with _LOCK:
+        return any(row["status"] == "queued" for row in _STEERS.get(task_id, {}).values())
+
+
+def consume_steering(task_id, session_ctx):
+    """Called at the worker's model boundary, before its next provider request."""
+    task, binding, _ = validate_task_binding(task_id, session_ctx.get("conversation_id"), require_room=False)
+    if (session_ctx.get("crew_agent_id") != binding["agent_id"]
+            or session_ctx.get("crew_revision") != binding["revision"]
+            or session_ctx.get("project_id") != binding["project_id"]):
+        raise CrewRoomError("The worker's steering identity does not match its task.")
+    from agent_friday.services import task_journal
+    with _LOCK:
+        rows = [row for row in _STEERS.get(task_id, {}).values() if row["status"] == "queued"]
+        for row in rows:
+            row.update(status="consumed", consumed_at=time.time())
+    for row in rows:
+        task_journal.steer(row["message"], source="user", task_id=task_id)
+    return [row["message"] for row in rows]
+
+
+def steer_from_host(cid, task_id, message):
+    origin = require_public_host_origin(HOST_ORIGIN.get())
+    room = get_room(cid)
+    return steer(cid, task_id, {"message": message, "request_id": uuid.uuid4().hex,
+                              "room_revision": room["revision"]}, host_origin=origin)
+
+
 def dispatch(cid, data, *, host_origin=None):
     from agent_friday.services import agent, conversations
     from agent_friday.services.crew_access import validate_dispatch
     privacy_generation = (require_public_host_origin(host_origin).generation
                           if host_origin is not None else _public_generation())
-    if not isinstance(data, dict) or set(data) - {"room_revision", "agent_id", "text", "request_id"}:
+    if not isinstance(data, dict) or set(data) - {"room_revision", "agent_id", "text", "request_id", "project_id"}:
         raise CrewRoomError("Invalid Crew request.")
     aid, text, request_id = data.get("agent_id"), data.get("text"), data.get("request_id")
     if (not isinstance(text, str) or not text.strip() or len(text) > 16000
             or not isinstance(request_id, str) or not _ID.fullmatch(request_id)
             or not isinstance(aid, str) or type(data.get("room_revision")) is not int):
         raise CrewRoomError("Choose an agent and enter a request of up to 16,000 characters.")
-    digest = hashlib.sha256(json.dumps([aid, text, data["room_revision"]]).encode()).hexdigest()
+    if "project_id" in data and data["project_id"] is not None and (
+            not isinstance(data["project_id"], str) or not _ID.fullmatch(data["project_id"])):
+        raise CrewRoomError("Choose an assigned project or no project.")
+    digest = hashlib.sha256(json.dumps([aid, text, data["room_revision"],
+        {"project_id": data["project_id"]} if "project_id" in data else {}]).encode()).hexdigest()
     with _LOCK:
         stored = _read(cid)
         previous = stored["requests"].get(request_id)
@@ -291,7 +469,10 @@ def dispatch(cid, data, *, host_origin=None):
             raise CrewRoomError("That agent is not invited to this active Crew room.")
         if data["room_revision"] != room["revision"]:
             raise CrewConflict("Crew membership changed. Refresh before sending.")
-        profile = validate_dispatch(aid, room["project_id"])
+        project_id = data.get("project_id", room["project_id"])
+        profile = validate_dispatch(aid, project_id)
+        if project_id != room["project_id"]:
+            stored["cross_project"] = True
         with agent.TASKS_LOCK:
             active = [t for t in agent.TASKS.values() if t.get("crew_context")
                       and t.get("status") in ("queued", "running")]
@@ -302,9 +483,10 @@ def dispatch(cid, data, *, host_origin=None):
                 raise CrewRoomError("This agent is already working in this chat. Wait for its result or cancel its task.")
         if len(stored["requests"]) >= 1000:
             raise CrewRoomError("This room has reached its request history limit. Start another conversation.")
-        shared = {p["id"]: p["revision"] for p in room["members"]}
+        shared = _shared_members(room, project_id)
         ctx = {"agent_id": aid, "revision": profile["revision"],
-               "project_id": room["project_id"], "room_revision": room["revision"],
+               "project_id": project_id, "conversation_project_id": room["project_id"],
+               "room_revision": room["revision"],
                "request_id": request_id, "shared_with": shared,
                "off_record": False, "off_record_generation": privacy_generation}
         _public_generation(privacy_generation)
@@ -312,9 +494,16 @@ def dispatch(cid, data, *, host_origin=None):
         # submitted request into a second task on retry.
         stored["requests"][request_id] = {"digest": digest, "task_id": None}
         _write(cid, stored)
+        def guard_request():
+            current_room = get_room(cid)
+            if (not current_room["enabled"] or current_room["revision"] != room["revision"]
+                    or current_room["project_id"] != room["project_id"]):
+                raise CrewRoomError("The original Crew room changed before this request could be saved.")
+            validate_dispatch(aid, project_id, profile["revision"])
+            _public_generation(privacy_generation)
         message = conversations.append(cid, {"role": "user", "text": text,
             "meta": {"kind": "crew_request", "agent_id": aid, "request_id": request_id,
-                     "project_id": room["project_id"], "shared_with": shared}})
+                     "project_id": project_id, "shared_with": shared}}, before_write=guard_request)
         try:
             _public_generation(privacy_generation)
             task_id = agent._spawn_task(profile["name"], text, "Crew: " + profile["role"],
@@ -355,6 +544,7 @@ def _run(task_id, cid, text, profile, binding):
     started = time.monotonic()
     session["crew_started"] = started
     session["crew_tool_calls"] = 0
+    agent._task_set(task_id, crew_accepts_steer=True)
     sources = {}
     try:
         current = crew_access.validate_dispatch(profile["id"], binding["project_id"],
@@ -371,15 +561,30 @@ def _run(task_id, cid, text, profile, binding):
             + context, "Crew agent")
         history, sources = _history(cid, current, binding["project_id"], with_sources=True)
         sources.update(memory_sources)
+        session["crew_context_sources"] = sources
         if len(sources) > 64:
             raise CrewRoomError("This discussion has too many prior agents to verify. Start a new conversation.")
         _public_generation(privacy_generation)
-        reply, trace = agent._generate_agent(
-            [{"role": "user", "content": "Crew discussion:\n" + history + "\n\nCurrent request:\n" + text}],
-            system=system, model=profile["model"], max_tokens=2048,
-            conversation_seat=session["crew_binding"], session_ctx=session,
-            tools=schemas, workspace="crew", orb_label=profile["name"],
-            on_route=lambda route: agent._task_set(task_id, served_route=route))
+        messages = [{"role": "user", "content": "Crew discussion:\n" + history + "\n\nCurrent request:\n" + text}]
+        trace = []
+        while True:
+            for instruction in consume_steering(task_id, session):
+                messages.append({"role": "user", "content": "New instruction from the owner: " + instruction})
+            reply, current_trace = agent._generate_agent(
+                messages, system=system, model=profile["model"], max_tokens=2048,
+                conversation_seat=session["crew_binding"], session_ctx=session,
+                tools=schemas, workspace="crew", orb_label=profile["name"],
+                on_route=lambda route: agent._task_set(task_id, served_route=route))
+            trace.extend(current_trace or [])
+            # Queue admission and finishing share this lock: no accepted steer
+            # can be left behind when the final provider response arrives.
+            with _LOCK, agent.TASKS_LOCK:
+                if not pending_steering(task_id):
+                    agent.TASKS[task_id]["crew_accepts_steer"] = False
+                    break
+            if time.monotonic() - started > profile["time_budget_s"]:
+                raise CrewRoomError("This agent reached its time limit before the next instruction.")
+            messages.append({"role": "assistant", "content": reply})
         _public_generation(privacy_generation)
         crew_access.validate_dispatch(profile["id"], binding["project_id"],
                                       bound_revision=profile["revision"])
@@ -390,7 +595,7 @@ def _run(task_id, cid, text, profile, binding):
         with agent.TASKS_LOCK:
             if (agent.TASKS.get(task_id) or {}).get("status") == "cancelled":
                 raise CrewRoomError("This task was cancelled.")
-        if (_conversation(cid).get("project") or None) != binding["project_id"]:
+        if (_conversation(cid).get("project") or None) != binding.get("conversation_project_id", binding["project_id"]):
             raise CrewRoomError("The chat's project changed while this agent was working.")
         if time.monotonic() - started > profile["time_budget_s"]:
             raise CrewRoomError("This agent reached its time limit.")
@@ -407,40 +612,35 @@ def _run(task_id, cid, text, profile, binding):
     except Exception as exc:
         reply = error_text(exc, "This Crew request could not finish. Check the selected provider and try again.")
         status = "failed"
+    finally:
+        agent._task_set(task_id, crew_accepts_steer=False)
     try:
         _public_generation(privacy_generation)
     except CrewRoomError as exc:
         # A privacy transition invalidates delivery, including error publication.
         return {"status": "failed", "result": str(exc)}
-    shared = {}
-    try:
-        room = voice_room(cid)
-        if room and room["project_id"] == binding["project_id"]:
-            shared = {p["id"]: p["revision"] for p in room["members"]
-                      if binding["shared_with"].get(p["id"]) == p["revision"]}
-    except Exception:
-        pass
     meta = {"kind": "crew_result", "speaker_id": profile["id"], "speaker_name": profile["name"],
             "caption_label": profile["caption"]["label"], "task_id": task_id,
             "provider": profile["provider"], "model": profile["model"], "status": status,
             "profile_revision": profile["revision"], "project_id": binding["project_id"],
-            "shared_with": shared, "source_revisions": sources, "playback": "not_spoken"}
+            "shared_with": {}, "source_revisions": sources, "playback": "not_spoken"}
     try:
-        _public_generation(privacy_generation)
-    except CrewRoomError as exc:
+        _publish(cid, task_id, binding, profile, {"role": "friday", "text": reply, "meta": meta}, sources,
+                 require_room=False)
+    except UserFacingError as exc:
         return {"status": "failed", "result": str(exc)}
-    conversations.append(cid, {"role": "friday", "text": reply, "meta": meta})
     if status != "failed":
         try:
             voice_live_channel.deliver_crew(cid, profile, reply, task_id=task_id,
-                off_record=False, off_record_generation=privacy_generation)
+                off_record=False, off_record_generation=privacy_generation,
+                project_id=binding["project_id"])
         except Exception:
             # A voice session ending does not erase a completed written result.
             pass
     return {"status": status, "result": reply}
 
 
-def ask(cid, name_or_id, text, request_id=None):
+def ask(cid, name_or_id, text, request_id=None, *, project_id=DEFAULT_PROJECT):
     origin = require_public_host_origin(HOST_ORIGIN.get())
     room = voice_room(cid)
     if not room:
@@ -449,5 +649,156 @@ def ask(cid, name_or_id, text, request_id=None):
                if p["id"] == name_or_id or p["name"].casefold() == str(name_or_id).casefold()]
     if len(matches) != 1:
         raise CrewRoomError("Name one invited agent unambiguously. " + roster_text(cid))
-    return dispatch(cid, {"room_revision": room["revision"], "agent_id": matches[0]["id"],
-                          "text": text, "request_id": request_id or uuid.uuid4().hex}, host_origin=origin)
+    data = {"room_revision": room["revision"], "agent_id": matches[0]["id"],
+            "text": text, "request_id": request_id or uuid.uuid4().hex}
+    if project_id is not DEFAULT_PROJECT:
+        data["project_id"] = project_id
+    return dispatch(cid, data, host_origin=origin)
+
+
+def talk_status(cid, task_id):
+    validate_task_binding(task_id, cid, require_active=False)
+    with _LOCK:
+        rows = [{k: value for k, value in row.items() if k not in ("digest", "message", "reply", "binding")}
+                for row in _TALKS.get(task_id, {}).values()]
+    return {"task_id": task_id, "talks": rows}
+
+
+def _talk_policy(task, profile):
+    """Intersect the caller and worker's inherited restrictions before spawning."""
+    from agent_friday.services import agent, local_only_guard as policy
+    if (policy.local_only_snapshot() or task.get("local_only")
+            or str((agent._load_settings().get("model_routing") or {}).get("mode") or "").lower() == "local_only"):
+        raise CrewRoomError("This conversation is local-only, so the cloud Crew agent cannot answer.")
+    restrictions = [copy.deepcopy(pin) for pin in (policy.pin_snapshot(), task.get("cloud_pin")) if pin]
+    # Validate each restriction separately: entering the next pin must never
+    # erase a stricter caller policy before it has been checked.
+    try:
+        policy.refuse_if_active(profile["provider"], profile["model"])
+        for pin in restrictions:
+            with policy.cloud_pinned(pin.get("model"), pin.get("label")):
+                if policy.apply_pin(profile["provider"], profile["model"]) != profile["model"]:
+                    raise CrewRoomError("This conversation's model pin does not permit the selected Crew agent.")
+    except policy.CloudRefused as exc:
+        raise CrewRoomError("This conversation's cloud restrictions do not permit the selected Crew agent.") from exc
+    return restrictions
+
+
+def talk(cid, task_id, data, *, host_origin=None):
+    """A bounded, tool-free conversation alongside the existing worker."""
+    origin = require_public_host_origin(host_origin or HOST_ORIGIN.get())
+    if not isinstance(data, dict) or set(data) - {"message", "request_id", "room_revision"}:
+        raise CrewRoomError("Invalid conversation request.")
+    message, request_id = data.get("message"), data.get("request_id")
+    if (not isinstance(message, str) or not message.strip() or len(message) > 8000
+            or not isinstance(request_id, str) or not _ID.fullmatch(request_id)
+            or type(data.get("room_revision")) is not int):
+        raise CrewRoomError("Enter a question of up to 8,000 characters and the current room revision.")
+    task, binding, profile = validate_task_binding(task_id, cid)
+    if binding["room_revision"] != data["room_revision"] or origin.generation != binding["off_record_generation"]:
+        raise CrewConflict("Refresh this task's room before talking to its agent.")
+    restrictions = _talk_policy(task, profile)
+    digest = hashlib.sha256(message.encode()).hexdigest()
+    with _LOCK:
+        rows = _TALKS.setdefault(task_id, {})
+        previous = rows.get(request_id)
+        if previous:
+            if previous["digest"] != digest:
+                raise CrewConflict("This request ID belongs to a different question.")
+            return {k: previous[k] for k in ("task_id", "request_id", "status", "dialogue_id")}
+        active = [row for group in _TALKS.values() for row in group.values() if row["status"] == "accepted"]
+        if len(active) >= MAX_ACTIVE_TURNS or any(row["task_id"] == task_id for row in active):
+            raise CrewConflict("This agent is already answering a question, or all conversational slots are busy.")
+        if len(rows) >= 50 or sum(len(group) for group in _TALKS.values()) >= 1000:
+            raise CrewRoomError("The conversation history limit is reached. Start a fresh task.")
+        row = {"task_id": task_id, "request_id": request_id, "status": "accepted",
+               "dialogue_id": "talk-" + uuid.uuid4().hex, "digest": digest, "created_at": time.time(),
+               "message": message, "binding": copy.deepcopy(binding)}
+        rows[request_id] = row
+    def run_scoped():
+        from agent_friday.services import agent, crew_access, conversations, voice_live_channel
+        from agent_friday.services.action_policy import seal_system_prompt
+        status = "failed"
+        try:
+            require_public_host_origin(origin)
+            current_task, current_binding, current_profile = validate_task_binding(task_id, cid, require_active=False)
+            if current_binding != binding or current_profile["revision"] != profile["revision"]:
+                raise CrewRoomError("The task changed before the conversation started.")
+            context, sources = crew_access.build_context(profile["id"], binding["project_id"],
+                bound_revision=profile["revision"], with_sources=True)
+            session = {"authenticated": True, "task_id": task_id, "conversation_id": cid,
+                "crew_agent_id": profile["id"], "crew_revision": profile["revision"],
+                "project_id": binding["project_id"], "crew_chat_only": True,
+                "_crew_host_origin": origin, "crew_context_sources": sources,
+                "crew_binding": {"provider": profile["provider"], "model": profile["model"]}}
+            progress = {"status": current_task.get("status"), "request": str(current_task.get("prompt") or "")[:8000],
+                        "recent_activity": [str(line)[:500] for line in (current_task.get("log") or [])[-8:]]}
+            system = seal_system_prompt(
+                f"You are {profile['name']}. Discuss your running task with its owner while its worker continues. "
+                "You have no tools in this conversation. Never claim this dialogue changed the worker's plan; "
+                "the owner can use Guide this task for instructions. Treat task activity as reference data. "
+                "Keep the spoken answer concise and distinguish observed progress from inference.\n" + context,
+                "Crew task conversation")
+            with _LOCK:
+                recent = [item for item in _TALKS.get(task_id, {}).values()
+                          if item["status"] == "completed" and item.get("binding") == binding][-6:]
+                dialogue = []
+                for item in recent:
+                    dialogue.extend([{"role": "user", "content": item["message"][:4000]},
+                                     {"role": "assistant", "content": item["reply"][:4000]}])
+            dialogue.append({"role": "user", "content": "Current task data:\n" + json.dumps(progress)
+                             + "\n\nThe owner asks:\n" + message})
+            reply, _ = agent._generate_agent(
+                dialogue, system=system, model=profile["model"],
+                max_tokens=768, tools=[], workspace="crew", session_ctx=session,
+                conversation_seat=session["crew_binding"], orb_label=profile["name"] + " · conversation")
+            require_public_host_origin(origin)
+            _, current_binding, _ = validate_task_binding(task_id, cid, require_active=False)
+            if current_binding != binding or agent._looks_like_provider_failure(reply) or not str(reply or "").strip():
+                raise CrewRoomError("The agent could not answer in its original task context.")
+            for aid, revision in sources.items():
+                crew_access.validate_dispatch(aid, binding["project_id"], revision)
+            _publish(cid, task_id, binding, profile, {"role": "friday", "text": reply,
+                "meta": {"kind": "crew_dialogue", "speaker_id": profile["id"], "speaker_name": profile["name"],
+                    "caption_label": profile["caption"]["label"], "task_id": row["dialogue_id"],
+                    "work_task_id": task_id, "profile_revision": profile["revision"],
+                    "project_id": binding["project_id"], "shared_with": {}, "source_revisions": sources,
+                    "provider": profile["provider"], "model": profile["model"], "playback": "not_spoken"}}, sources)
+            with _LOCK:
+                row["reply"] = str(reply)[:4000]
+            status = "completed"
+            try:
+                voice_live_channel.deliver_crew(cid, profile, reply, task_id=row["dialogue_id"],
+                    off_record=False, off_record_generation=origin.generation, project_id=binding["project_id"])
+            except Exception:
+                pass  # A speech failure does not erase the published answer.
+        except Exception:
+            # A revoked conversation cannot publish even the failed answer's text.
+            status = "failed"
+        finally:
+            with _LOCK:
+                row.update(status=status, finished_at=time.time())
+    def run():
+        from agent_friday.services.local_only_guard import cloud_pinned
+        token = HOST_ORIGIN.set(origin)
+        try:
+            with ExitStack() as stack:
+                for pin in restrictions:
+                    stack.enter_context(cloud_pinned(pin.get("model"), pin.get("label")))
+                run_scoped()
+        finally:
+            HOST_ORIGIN.reset(token)
+    try:
+        threading.Thread(target=run, name="crew-task-conversation", daemon=True).start()
+    except Exception:
+        with _LOCK:
+            row["status"] = "failed"
+        raise CrewRoomError("This conversation could not start. The task continues.")
+    return {k: row[k] for k in ("task_id", "request_id", "status", "dialogue_id")}
+
+
+def talk_from_host(cid, task_id, message):
+    origin = require_public_host_origin(HOST_ORIGIN.get())
+    room = get_room(cid)
+    return talk(cid, task_id, {"message": message, "request_id": uuid.uuid4().hex,
+                             "room_revision": room["revision"]}, host_origin=origin)

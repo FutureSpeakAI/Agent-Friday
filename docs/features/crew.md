@@ -17,7 +17,9 @@ the agent's own memory settings. A folder write grant includes read access.
 Crew grants narrow access; Friday's ordinary governance, file approvals and
 cloud privacy controls still apply. Credentials and linked files are excluded.
 The first tool set supports file reads and writes, web search, news search and
-web browsing. Other capabilities require a future explicitly scoped adapter.
+web browsing. Interactive browser tools require the separate
+[independent workspace permission](agent-workspaces.md). Other capabilities
+require a future explicitly scoped adapter.
 
 The hub shows the roster and its model, voice, project and lifecycle settings.
 Its current-work list includes up to one hundred recent Crew tasks, with active
@@ -41,6 +43,14 @@ in a typed or voice conversation. In voice, Friday can also propose a new
 profile in the editor; the proposal remains unsaved until the user reviews it.
 The user sees each agent's name, selected model, task and result in the chat.
 Up to six Crew tasks run at once, with one outstanding task per agent per chat.
+
+A handoff can select any project assigned to that agent, independently of the
+chat's project. Use **Ask agent** to converse about a running browser task or
+**Guide task** to queue a task change. Replies appear in the chat; guidance is
+acknowledged only when consumed at a worker checkpoint. An active voice room
+can speak conversational replies while other work continues. See
+[independent agent workspaces](agent-workspaces.md) for browser controls and
+permission boundaries.
 
 Voice is optional when working with saved agents: send requests from the Crew
 panel or typed chat without starting a voice room, and read the results in the

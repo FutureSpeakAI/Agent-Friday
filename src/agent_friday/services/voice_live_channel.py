@@ -74,7 +74,7 @@ def unregister_crew(conversation_id, deliver_fn=None) -> None:
 
 
 def deliver_crew(conversation_id, profile, text, *, task_id=None, off_record=None,
-                 off_record_generation=None) -> bool:
+                 off_record_generation=None, **scope) -> bool:
     """Queue a trusted worker result in its open Crew call; never impersonate Friday.
 
     False means that the result remains in its conversation's written history.
@@ -92,6 +92,10 @@ def deliver_crew(conversation_id, profile, text, *, task_id=None, off_record=Non
             kwargs["off_record"] = off_record
         if off_record_generation is not None:
             kwargs["off_record_generation"] = off_record_generation
+        if set(scope) - {"project_id"}:
+            return False
+        if "project_id" in scope:
+            kwargs["project_id"] = scope["project_id"]
         return bool(fn(profile, str(text), **kwargs))
     except Exception as exc:
         _log.warning("Crew voice delivery failed: %s", type(exc).__name__)

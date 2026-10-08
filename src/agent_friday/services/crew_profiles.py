@@ -21,7 +21,9 @@ from agent_friday.user_errors import (
     UserFacingValueError,
 )
 
-SUPPORTED_TOOLS = ("read_file", "write_file", "search_web", "search_news", "browse_web")
+BROWSER_TOOLS = ("browser_open", "browser_read", "browser_click", "browser_type",
+                 "browser_select", "browser_scroll", "browser_close")
+SUPPORTED_TOOLS = ("read_file", "write_file", "search_web", "search_news", "browse_web") + BROWSER_TOOLS
 MAX_PROFILE_BYTES = 160_000
 MAX_MEMORY_BYTES = 100_000
 MAX_MEMORY_ENTRIES = 12

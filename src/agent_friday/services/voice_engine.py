@@ -381,14 +381,19 @@ _VOICE_LIVE_TOOLS = [
      "'build mode with the rent tracker', 'leave build mode'.",
      {"on": ("boolean", "true to enter, false to leave."), "codebase": ("string", "Which codebase, if named.")}, []),
     ("list_crew",
-     "List this chat's invited Crew agents. Use their stable IDs with ask_crew. "
+     "List this room's agents and running task IDs. Use their stable IDs with ask_crew. "
      "If the room is disabled, ask the user to open Crew and invite an agent.", {}, []),
     ("ask_crew",
      "Ask one invited Crew agent to work. It uses its saved model, permissions and voice. "
      "Returns a task ID when accepted. It runs in the background and reports "
      "in this chat; do not impersonate it or claim it has answered before its result arrives.",
-     {"agent": ("string", "The invited agent's stable ID or unambiguous name."),
-      "request": ("string", "The user's complete request to that agent.")}, ["agent", "request"]),
+      {"agent": ("string", "Agent ID or unambiguous name."),
+       "request": ("string", "Owner's complete request."),
+       "project_id": ("string", "Assigned project ID; omitted uses this chat's project.")}, ["agent", "request"]),
+    ("steer_crew", "Guide a running Crew task at its next model step. Queued is not yet applied.",
+     {"task_id": ("string", "Current task ID."), "message": ("string", "Owner's instruction.")}, ["task_id", "message"]),
+    ("talk_crew", "Converse with a working Crew agent without changing its task. Use steer_crew to change work.",
+     {"task_id": ("string", "Current task ID."), "message": ("string", "Owner's question.")}, ["task_id", "message"]),
     ("propose_crew_agent",
      "Open an unsaved Crew profile draft for review. "
      "Nothing is assigned until the user reviews and saves the draft there. Never claim it was created.",
@@ -930,7 +935,9 @@ _LEAD_SENTENCE = re.compile(r"(?<=[.!?])\s+")
 # Compact presentation omits examples repeated by the typed properties. Full
 # declarations remain available to cloud voice and on-demand discovery.
 _COMPACT_TOOL_DESCRIPTIONS = {
-    "list_crew": "List this chat's invited agents and stable IDs; invite agents in Crew if disabled.",
+    "list_crew": "List this room's invited agents and running task IDs; invite agents in Crew if disabled.",
+    "steer_crew": "Guide a running task at its next model step; queued does not mean applied.",
+    "talk_crew": "Converse with a working agent without changing its task; use steer_crew to change work.",
     "ask_crew": "Delegate to an invited agent using its saved model, permissions and voice. Await its actual result; never impersonate it.",
     "propose_crew_agent": "Open an unsaved Crew draft; the agent exists only after the user reviews and saves it.",
     "site_action": "Manage this chat's repository site; build/publish require exact reviews. Check deployment evidence; discover_capabilities gives the full guide.",
@@ -1675,14 +1682,19 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "voice_preferences":
             from agent_friday.services.workflow_tools import voice_preferences
             return _governed(name, lambda a: voice_preferences(a, session), args)
-        if name in ("list_crew", "ask_crew"):
+        if name in ("list_crew", "ask_crew", "steer_crew", "talk_crew"):
             from agent_friday.services import crew_runtime
             cid = session.get("conversation_id") if isinstance(session, dict) else None
 
             def _crew_call(a):
                 if name == "list_crew":
                     return crew_runtime.roster_text(cid)
-                result = crew_runtime.ask(cid, a.get("agent"), a.get("request"))
+                if name == "steer_crew":
+                    return json.dumps(crew_runtime.steer_from_host(cid, a.get("task_id"), a.get("message")))
+                if name == "talk_crew":
+                    return json.dumps(crew_runtime.talk_from_host(cid, a.get("task_id"), a.get("message")))
+                result = crew_runtime.ask(cid, a.get("agent"), a.get("request"),
+                    project_id=a.get("project_id", crew_runtime.DEFAULT_PROJECT))
                 return json.dumps({"status": "accepted", **result})
 
             return _governed(name, _crew_call, args)
