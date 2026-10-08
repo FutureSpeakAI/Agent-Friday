@@ -2042,13 +2042,17 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 except Exception:
                     pass
             _t0 = _time.time()
+            def _post_current(**request_kwargs):
+                if (session_ctx or {}).get("crew_agent_id"):
+                    from agent_friday.services.agent import _crew_model_authority
+                    _crew_model_authority(session_ctx)
+                return requests.post(f"{base_url}/chat/completions", headers=headers,
+                                     timeout=timeout_s, **request_kwargs)
             try:
                 if _want_stream:
                     _spayload = dict(payload)
                     _spayload["stream"] = True
-                    r = requests.post(f"{base_url}/chat/completions",
-                                      headers=headers, json=_spayload,
-                                      timeout=timeout_s, stream=True)
+                    r = _post_current(json=_spayload, stream=True)
                     # An endpoint that refuses to stream must not take the
                     # turn down with it -- fall back to the blocking call once.
                     #
@@ -2063,13 +2067,9 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                         except Exception:
                             pass
                         _want_stream = False
-                        r = requests.post(f"{base_url}/chat/completions",
-                                          headers=headers, json=payload,
-                                          timeout=timeout_s)
+                        r = _post_current(json=payload)
                 else:
-                    r = requests.post(f"{base_url}/chat/completions",
-                                      headers=headers, json=payload,
-                                      timeout=timeout_s)
+                    r = _post_current(json=payload)
             except Exception:
                 _health(False, int((_time.time() - _t0) * 1000))
                 raise
@@ -2085,9 +2085,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 if retry_after > 0:
                     _time.sleep(retry_after)
                     _t0 = _time.time()
-                    r = requests.post(f"{base_url}/chat/completions",
-                                      headers=headers, json=payload,
-                                      timeout=timeout_s)
+                    r = _post_current(json=payload)
             # 503 "Loading model" from a seat we serve ourselves: wait for it.
             # Not for a cloud 503 (that is the fallback chain's business) and
             # not past SEAT_LOADING_WAIT_S, after which the 503 raises as
@@ -2101,10 +2099,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                     except Exception:
                         pass
                     _time.sleep(SEAT_LOADING_POLL_S)
-                    r = requests.post(f"{base_url}/chat/completions",
-                                      headers=headers,
-                                      json=(dict(payload, stream=True) if _want_stream else payload),
-                                      timeout=timeout_s, stream=_want_stream)
+                    r = _post_current(json=(dict(payload, stream=True) if _want_stream else payload),
+                                      stream=_want_stream)
                     if r.status_code == 503 and not _body_says_loading(r):
                         break
             try:

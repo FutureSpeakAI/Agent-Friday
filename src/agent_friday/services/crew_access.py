@@ -126,6 +126,12 @@ arguments. Resolved file paths replace their input spelling before dispatch.
             _refuse("This tool is outside the agent's assigned capabilities.")
         if not isinstance(args, dict):
             _refuse("This tool's arguments cannot be checked.")
+        if tool in profiles.BROWSER_TOOLS:
+            from agent_friday.services import agent_workspace_permissions
+            permission = agent_workspace_permissions.snapshot()
+            if not permission.get("enabled"):
+                _refuse("Independent agent browser work is disabled in Settings.")
+            agent_workspace_permissions.require_generation(permission["generation"])
         if tool in ("read_file", "write_file"):
             target = _resolved_path(args.get("path"))
             _project_file_boundary(target, project_id)

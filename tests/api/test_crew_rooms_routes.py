@@ -30,7 +30,7 @@ def test_room_routes_forward_state_and_conflict_without_retry(client, runtime, m
 
 
 def test_turn_dispatch_returns_accepted_id_and_history(client, runtime, monkeypatch):
-    monkeypatch.setattr(runtime, "dispatch", lambda cid, data: {
+    monkeypatch.setattr(runtime, "dispatch", lambda cid, data, **kw: {
         "task_id": "task", "agent_id": "agent", "request_id": data["request_id"]})
     response = client.post("/api/crew/rooms/chat/turns", json={"request_id": "request"})
     assert response.status_code == 202

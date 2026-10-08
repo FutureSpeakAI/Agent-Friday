@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac as _hmac
+import base64
 import json
 import logging
 import os
@@ -49,6 +50,9 @@ import secrets
 import shutil
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar, copy_context
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -64,6 +68,10 @@ MARKER = ".friday-browser-profile"
 IDLE_SECONDS = 15 * 60
 NAV_TIMEOUT_MS = 30_000
 ACTION_TIMEOUT_MS = 10_000
+MAX_OWNED_SESSIONS = 4
+FRAME_INTERVAL = 0.25
+FRAME_MAX_BYTES = 2_000_000
+OWNED_VIEWPORT = {"width": 1280, "height": 720}
 
 #: The card kind and handler tag for actions that wait on the owner.
 APPROVAL_KIND = "governed_action"
@@ -95,6 +103,58 @@ class BrowserError(RuntimeError):
 
 class BrowserRefused(BrowserError):
     """Friday will not do this; the message says what the owner can do."""
+
+
+@dataclass(frozen=True)
+class BrowserOwner:
+    """Immutable authority supplied by the dispatcher, never by tool arguments."""
+
+    actor_id: str
+    conversation_id: str
+    task_id: Optional[str] = None
+    project_id: Optional[str] = None
+    conversation_project_id: Optional[str] = None
+    profile_revision: Optional[int] = None
+    room_revision: Optional[int] = None
+    privacy_generation: int = 0
+    permission_generation: int = 0
+
+
+@dataclass(frozen=True)
+class _OwnerBinding:
+    owner: BrowserOwner
+    validator: Callable
+    label: Optional[str] = None
+    color: Optional[str] = None
+
+
+_BOUND_OWNER: ContextVar = ContextVar("friday_browser_owner", default=None)
+_EXECUTION: ContextVar = ContextVar("friday_browser_execution", default=None)
+_WORK_TICKET: ContextVar = ContextVar("friday_browser_ticket", default=None)
+
+
+def _validate_owner(owner: BrowserOwner, validator: Callable, purpose: str) -> None:
+    if not isinstance(owner, BrowserOwner) or not callable(validator):
+        raise BrowserRefused("Browser work needs its original agent authority.")
+    try:
+        allowed = validator(owner, purpose=purpose)
+    except BrowserRefused:
+        raise
+    except Exception as e:
+        raise BrowserRefused("Browser permission is no longer valid.") from e
+    if allowed is not True:
+        raise BrowserRefused("Browser permission is no longer valid.")
+
+
+@contextmanager
+def bind_owner(owner: BrowserOwner, validator: Callable, *, label=None, color=None):
+    """Bind trusted ownership before both governance and tool dispatch."""
+    _validate_owner(owner, validator, "act")
+    token = _BOUND_OWNER.set(_OwnerBinding(owner, validator, label, color))
+    try:
+        yield
+    finally:
+        _BOUND_OWNER.reset(token)
 
 
 # ── The profile ─────────────────────────────────────────────────────────────
@@ -504,7 +564,7 @@ class _Worker:
     """One thread that owns Playwright. `call` runs a function on it."""
 
     def __init__(self, on_idle: Callable[[], None], poll: float = 1.0):
-        self._q: "queue.Queue" = queue.Queue()
+        self._q: "queue.Queue" = queue.Queue(maxsize=64)
         self._on_idle = on_idle
         self._poll = poll
         self._stopped = False
@@ -523,9 +583,19 @@ class _Worker:
                 continue
             if item is None:
                 return
-            fn, box, ev = item
+            fn, box, ev, context = item
+            if box.get("cancelled") or time.monotonic() >= box["deadline"]:
+                box["error"] = BrowserRefused("The queued browser action expired.")
+                ev.set()
+                continue
             try:
-                box["result"] = fn()
+                def run():
+                    token = _WORK_TICKET.set(box)
+                    try:
+                        return fn()
+                    finally:
+                        _WORK_TICKET.reset(token)
+                box["result"] = context.run(run)
             except BaseException as e:           # noqa: BLE001 - handed to the caller
                 box["error"] = e
             ev.set()
@@ -535,10 +605,14 @@ class _Worker:
             return fn()
         if self._stopped:
             raise BrowserError("Friday's browser is closed")
-        box: Dict[str, Any] = {}
+        box: Dict[str, Any] = {"deadline": time.monotonic() + timeout}
         ev = threading.Event()
-        self._q.put((fn, box, ev))
+        try:
+            self._q.put_nowait((fn, box, ev, copy_context()))
+        except queue.Full:
+            raise BrowserRefused("The browser is busy; no action was queued.") from None
         if not ev.wait(timeout):
+            box["cancelled"] = True
             raise BrowserError("the browser did not answer in time")
         if "error" in box:
             raise box["error"]
@@ -546,22 +620,59 @@ class _Worker:
 
     def stop(self):
         self._stopped = True
-        self._q.put(None)
+        # Free queued callers before ending the worker. A full queue must not
+        # block a permission revocation or leave callers waiting indefinitely.
+        while True:
+            try:
+                item = self._q.get_nowait()
+            except queue.Empty:
+                break
+            if item is not None:
+                _fn, box, ev, _context = item
+                box["cancelled"] = True
+                box["error"] = BrowserRefused("The browser was closed.")
+                ev.set()
+        self._q.put_nowait(None)
 
 
 # ── The session ─────────────────────────────────────────────────────────────
 
 class BrowserSession:
-    """One visible Chromium window on Friday's own profile."""
+    """One worker-owned Chromium session, optionally scoped to an agent."""
 
     def __init__(self, *, headless: bool = False, idle_seconds: float = IDLE_SECONDS,
-                 allow_local: bool = False, poll: float = 1.0):
+                 allow_local: bool = False, poll: float = 1.0,
+                 owner: Optional[BrowserOwner] = None, validator: Optional[Callable] = None,
+                 label: Optional[str] = None, color: Optional[str] = None):
         # allow_local lets 127.0.0.1 and file:// through. Tests only: nothing
         # in Friday sets it, and it is not reachable from a tool argument.
-        self.headless = headless
+        self.owner = owner
+        self.validator = validator
+        self.surface_id = secrets.token_hex(16) if owner is not None else ""
+        self.display_name = str(label or (owner.actor_id if owner else "Friday"))[:80]
+        self.color = color if re.fullmatch(r"#[0-9a-fA-F]{6}", str(color or "")) else "#00d4ff"
+        self.mode = "agent"
+        self.generation = 1
+        self.page_generation = 0
+        self.frame_sequence = 0
+        self.viewport = dict(OWNED_VIEWPORT)
+        self.cursor = {"x": 0, "y": 0, "action": "idle", "sequence": 0,
+                       "label": self.display_name, "color": self.color}
+        self.title = ""
+        self._state_lock = threading.RLock()
+        self._frame = None
+        self._frame_at = 0.0
+        self._frame_usable = False
+        self._frame_pending = False
+        self._input_pending = False
+        self._cleanup_done = False
+        self._cleanup_started = False
+        self.headless = True if owner is not None else headless
         self.idle_seconds = idle_seconds
         self.allow_local = allow_local
-        self.profile = assert_dedicated(profile_dir())
+        self.profile = assert_dedicated(
+            Path(friday_home()) / "browser-sessions" / self.surface_id
+            if owner is not None else profile_dir())
         self.running = False
         self.url = ""
         self.last_used = time.time()
@@ -576,9 +687,86 @@ class BrowserSession:
         self._doc_url = ""
         self._worker = _Worker(self._idle_check, poll=poll)
 
+    def _authority(self, purpose, expected_generation=None, modes=None):
+        if self.owner is None:
+            return
+        _validate_owner(self.owner, self.validator, purpose)
+        with self._state_lock:
+            if self.mode in ("closed", "revoked"):
+                raise BrowserRefused("This agent browser is closed or revoked.")
+            if expected_generation is not None and expected_generation != self.generation:
+                raise BrowserRefused("Browser control changed; refresh the workspace first.")
+            if modes is not None and self.mode not in modes:
+                raise BrowserRefused("The agent browser is paused or under human control.")
+
+    def _guard(self):
+        """Revalidate after waits and immediately before each browser input."""
+        ticket = _WORK_TICKET.get()
+        if ticket and (ticket.get("cancelled") or time.monotonic() >= ticket["deadline"]):
+            raise BrowserRefused("The browser action expired before it could finish.")
+        if self.owner is None:
+            return
+        execution = _EXECUTION.get()
+        if execution is None or execution[0] is not self:
+            raise BrowserRefused("Agent browser actions must enter their owned worker.")
+        _, generation, purpose, modes = execution
+        self._authority(purpose, generation, modes)
+
+    def _invalidate_frame(self):
+        with self._state_lock:
+            self._frame = None
+            self._frame_usable = False
+
+    def _cursor_action(self, action, *, locator=None, x=None, y=None):
+        if self.owner is None:
+            return
+        self._guard()
+        if locator is not None:
+            locator.scroll_into_view_if_needed(timeout=ACTION_TIMEOUT_MS)
+            self._guard()
+            box = locator.bounding_box(timeout=ACTION_TIMEOUT_MS)
+            if box is None:
+                raise BrowserRefused("The target is no longer visible; read the page again.")
+            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        if x is not None and y is not None:
+            self._guard()
+            self._page.mouse.move(x, y, steps=4)
+        self._guard()
+        with self._state_lock:
+            self.cursor = {**self.cursor, "action": action,
+                           "sequence": self.cursor["sequence"] + 1}
+            if x is not None and y is not None:
+                self.cursor.update(x=round(x, 1), y=round(y, 1))
+            self._invalidate_frame()
+
+    def _approval_binding(self):
+        if self.owner is None:
+            return {}
+        self._guard()
+        return {"browser_scope": {"surface_id": self.surface_id,
+                                  "generation": self.generation,
+                                  "page_generation": self.page_generation,
+                                  "owner": asdict(self.owner)}}
+
+    def _owner_help(self, action):
+        return (f"In Agent workspaces, open {self.display_name} and choose Take control to {action}. "
+                "When you are finished, choose Let agent continue.")
+
+    def status(self):
+        """Metadata only; callers perform authority checks before exposing it."""
+        with self._state_lock:
+            owner = asdict(self.owner) if self.owner else {}
+            return {**owner, "surface_id": self.surface_id,
+                    "display_name": self.display_name, "generation": self.generation,
+                    "page_generation": self.page_generation, "mode": self.mode,
+                    "running": self.running, "url": self.url, "title": self.title,
+                    "viewport": dict(self.viewport), "cursor": dict(self.cursor),
+                    "frame_sequence": self.frame_sequence}
+
     # -- lifecycle (worker thread) --
 
     def _start(self):
+        self._guard()
         if self.running:
             return
         try:
@@ -596,30 +784,44 @@ class BrowserSession:
                               "--disable-sync"])
             if not self.headless:
                 opts["no_viewport"] = True
+            if self.owner is not None:
+                opts["viewport"] = dict(self.viewport)
             self._ctx = self._pw.chromium.launch_persistent_context(str(self.profile), **opts)
         except Exception:
             self._pw.stop()
             self._pw = None
             raise
-        self._ctx.set_default_timeout(ACTION_TIMEOUT_MS)
-        self._ctx.add_init_script(_BANNER_JS)
-        self._ctx.route("**/*", self._route)
         try:
-            # WebSockets are not HTTP requests and bypass `route`; a page could
-            # otherwise open one to this machine's own server. Only unsafe
-            # addresses match; a matched socket is left unconnected (Playwright
-            # mocks it), the rest are not touched.
-            self._ctx.route_web_socket(self._ws_unsafe, self._route_ws)
-        except AttributeError:
-            _log.warning("this Playwright cannot filter WebSockets; they are not checked")
-        self._ctx.on("page", self._on_page)
-        self._on_page(self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page())
-        self.running = True
+            self._ctx.set_default_timeout(ACTION_TIMEOUT_MS)
+            banner = _BANNER_JS
+            if self.owner is not None:
+                text = (f"{self.display_name} is working in this browser. Use Agent workspaces "
+                        "to watch or take control. Actions that send or pay need your approval.")
+                banner = banner.replace(json.dumps(BANNER_TEXT), json.dumps(text), 1)
+            self._ctx.add_init_script(banner)
+            self._ctx.route("**/*", self._route)
+            try:
+                # WebSockets bypass the HTTP route. Owned browsers require
+                # this guard instead of silently accepting an older runtime.
+                self._ctx.route_web_socket(self._ws_unsafe, self._route_ws)
+            except AttributeError:
+                if self.owner is not None:
+                    raise BrowserRefused("Agent browsers require Playwright WebSocket filtering.") from None
+                _log.warning("this Playwright cannot filter WebSockets; they are not checked")
+            self._ctx.on("page", self._on_page)
+            self._on_page(self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page())
+            self._guard()
+            self.running = True
+        except BaseException:
+            self._stop()
+            raise
 
     def _on_page(self, page):
         # A link that opens a new tab: that tab is where the work continues.
         self._page = page
         self._snap = None
+        self.page_generation += 1
+        self._invalidate_frame()
         page.on("framenavigated", lambda frame: self._on_navigated(page, frame))
 
     def _on_navigated(self, page, frame):
@@ -630,7 +832,10 @@ class BrowserSession:
             if doc != self._doc_url:
                 self._snap = None
                 self._typed_from.clear()
+            self.page_generation += 1
+            self._invalidate_frame()
             self._doc_url = doc
+            self.url = str(frame.url or "")
 
     def _check_landing(self):
         """Where a click or a redirect ended up passes the same rules as an
@@ -652,27 +857,53 @@ class BrowserSession:
         self._snap = None
         self._held_values.clear()
         self._pending.clear()
+        self._invalidate_frame()
+        failed = False
         try:
             if self._ctx is not None:
                 self._ctx.close()
         except Exception as e:
+            failed = True
             _log.debug("closing the browser: %s", e)
         try:
             if self._pw is not None:
                 self._pw.stop()
         except Exception as e:
+            failed = True
             _log.debug("stopping playwright: %s", e)
         self._ctx = self._pw = self._page = None
+        if failed and self.owner is not None:
+            raise BrowserError("The agent browser could not confirm shutdown.")
 
     def _idle_check(self):
         if self.running and time.time() - self.last_used > self.idle_seconds:
             _log.info("closing Friday's browser after %.0fs idle", self.idle_seconds)
-            self._stop()
+            if self.owner is not None:
+                _transition(self, "close")
+                _close_owned(self)
+            else:
+                self._stop()
 
-    def call(self, fn, timeout: float = 120.0):
+    def call(self, fn, timeout: float = 120.0, *, purpose="act",
+             expected_generation=None, modes=None):
+        if self.owner is not None:
+            if modes is None:
+                modes = ("agent",) if purpose == "act" else ("agent", "paused", "human")
+            if expected_generation is None:
+                expected_generation = self.generation
+            self._authority(purpose, expected_generation, modes)
+        def run():
+            token = _EXECUTION.set((self, expected_generation, purpose, modes))
+            try:
+                self._guard()
+                result = fn()
+                self._guard()
+                return result
+            finally:
+                _EXECUTION.reset(token)
         self.last_used = time.time()
         try:
-            return self._worker.call(fn, timeout)
+            return self._worker.call(run, timeout)
         finally:
             self.last_used = time.time()
 
@@ -705,6 +936,8 @@ class BrowserSession:
 
     def _route(self, route, request):
         try:
+            if self.owner is not None:
+                self._authority("view")
             ok, why = self.url_allowed(request.url, navigation=request.is_navigation_request())
         except Exception as e:
             ok, why = False, f"the address could not be checked ({e})"
@@ -723,6 +956,8 @@ class BrowserSession:
     def _ws_unsafe(self, url: str) -> bool:
         from agent_friday.services import web_safety
         try:
+            if self.owner is not None:
+                self._authority("view")
             host = _host(url)
             if self.allow_local and host in ("127.0.0.1", "localhost"):
                 return False
@@ -739,6 +974,7 @@ class BrowserSession:
     # -- reading --
 
     def _snapshot(self) -> dict:
+        self._guard()
         self._nonce = secrets.token_hex(4)
         snap = self._page.evaluate(_SNAPSHOT_JS, self._nonce)
         title = str(snap.get("title") or "")
@@ -748,6 +984,7 @@ class BrowserSession:
         snap["nonce"] = self._nonce
         self._snap = snap
         self.url = str(snap.get("url") or "")
+        self.title = title
         return snap
 
     def element(self, i) -> Optional[dict]:
@@ -764,6 +1001,7 @@ class BrowserSession:
         return forms[k] if 0 <= k < len(forms) else None
 
     def _locator(self, i, nonce: Optional[str] = None):
+        self._guard()
         nonce = nonce or self._nonce
         if not nonce or not self._page:
             raise BrowserRefused("read the page first (browser_read), then use an element number")
@@ -795,6 +1033,8 @@ class BrowserSession:
         self._typed_from.clear()
         n_blocked = len(self.blocked)
         try:
+            self._guard()
+            self._cursor_action("navigate")
             self._page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
         except Exception as e:
             if len(self.blocked) != n_blocked:
@@ -804,6 +1044,7 @@ class BrowserSession:
         return self._snapshot()
 
     def _need_running(self):
+        self._guard()
         if not self.running or self._page is None:
             raise BrowserRefused("Friday's browser is not open; use browser_open(url) first")
 
@@ -820,6 +1061,8 @@ class BrowserSession:
               "bottom": "window.scrollTo(0, document.body.scrollHeight)"}.get(d)
         if js is None:
             raise BrowserRefused("direction must be up, down, top or bottom")
+        self._cursor_action("scroll")
+        self._guard()
         self._page.evaluate(js)
         return self._snapshot()
 
@@ -829,11 +1072,17 @@ class BrowserSession:
     def _refuse_sensitive(self, kind: str, cat: Optional[str], value: str, owner_text: str):
         from agent_friday.services import pdf_forms
         if kind == "password":
+            if self.owner is not None:
+                raise BrowserRefused("that is a password field. Agents never type passwords. "
+                                     + self._owner_help("sign in yourself"))
             raise BrowserRefused(
                 "that is a password field. Friday never types passwords: ask the user to "
                 "sign in themselves in Friday's browser window (the one with the purple "
                 "Friday banner) and to tell you when they are done")
         if kind == "never":
+            if self.owner is not None:
+                raise BrowserRefused(pdf_forms._QUESTIONS.get(cat, "Please answer this yourself.")
+                                     + " " + self._owner_help("complete this step yourself"))
             raise BrowserRefused(
                 pdf_forms._QUESTIONS.get(cat, "Please answer this yourself.") +
                 " Ask the user to do it themselves in Friday's browser window.")
@@ -859,13 +1108,17 @@ class BrowserSession:
         self._refuse_sensitive(kind, cat, text, owner_text)
         if kind == "payment":
             return {"held": self._hold_fill(i, d, text, provenance)}
-        self._locator(i).fill(text)
+        loc = self._locator(i)
+        self._cursor_action("type", locator=loc)
+        self._guard()
+        loc.fill(text)
         if provenance:
             self._typed_from[self._field_key(d)] = provenance
         else:
             self._typed_from.pop(self._field_key(d), None)
         if submit:
             if _harmless_search(d.get("form_meta")):
+                self._guard()
                 self._locator(i).press("Enter")
                 self._settle()
                 return {"searched": True}
@@ -885,7 +1138,10 @@ class BrowserSession:
         self._refuse_sensitive(kind, cat, want, owner_text)
         if kind == "payment":
             return {"held": self._hold_fill(i, d, want, provenance, select=True)}
-        self._locator(i).select_option(label=want)
+        loc = self._locator(i)
+        self._cursor_action("select", locator=loc)
+        self._guard()
+        loc.select_option(label=want)
         if provenance:
             self._typed_from[self._field_key(d)] = provenance
         return {"selected": want, "field": d.get("name") or d.get("field")}
@@ -896,13 +1152,19 @@ class BrowserSession:
         kind, why = click_kind(d, d.get("form_meta"))
         if kind == "never":
             from agent_friday.services import pdf_forms
+            if self.owner is not None:
+                raise BrowserRefused(pdf_forms._QUESTIONS.get(why, "Please do this yourself.")
+                                     + " " + self._owner_help("tick this box yourself"))
             raise BrowserRefused(pdf_forms._QUESTIONS.get(why, "Please do this yourself.") +
                                  " Ask the user to tick it themselves in Friday's browser window.")
         if kind.startswith("sensitive:"):
             self._refuse_sensitive("sensitive", why, d.get("name") or "", owner_text)
         if kind == "submit":
             return {"submit": self._submit(i, how="click")}
-        self._locator(i).click(timeout=ACTION_TIMEOUT_MS)
+        loc = self._locator(i)
+        self._cursor_action("click", locator=loc)
+        self._guard()
+        loc.click(timeout=ACTION_TIMEOUT_MS)
         self._settle()
         return {"clicked": True, "why": why}
 
@@ -942,7 +1204,7 @@ class BrowserSession:
                               "f": [(f.get("field"), f.get("type"), f.get("raw"))
                                     for f in prev.get("fields") or []]},
                              sort_keys=True, default=str)
-        return {"handler": HANDLER, "op": "submit", "how": how,
+        return {**self._approval_binding(), "handler": HANDLER, "op": "submit", "how": how,
                 "url": prev.get("url"), "method": prev.get("method"),
                 "action": prev.get("action"), "button": (prev.get("button") or {}).get("label"),
                 "fields": fields, "attachments": attachments, "provenance": flags,
@@ -954,7 +1216,7 @@ class BrowserSession:
         verb = "press Enter to submit" if detail.get("how") == "enter" else \
             f"click “{detail.get('button') or 'the button'}”"
         title = f"Submit a form on {host}"
-        lines = [f"Friday wants to {verb} on {host}.",
+        lines = [f"{self.display_name} wants to {verb} on {host}.",
                  f"Page: {detail.get('url')}"]
         if page_title:
             lines.append(f"Title: {page_title}")
@@ -992,11 +1254,14 @@ class BrowserSession:
         self._pending[fp] = {"i": int(i), "nonce": nonce or self._nonce, "how": how}
         v = _authorize(action_gate, ACTION_SUBMIT, detail, title, body, approval_id,
                        provenance=detail.get("provenance"))
+        self._guard()
         if v.action != "allow":
             return {"submitted": False, "status": "refused" if v.action == "deny" else
                     "waiting_for_approval", "reason": v.reason, "card": body,
                     "approval_id": _pending_card_id(ACTION_SUBMIT, detail)}
         loc = self._locator(i, nonce)
+        self._cursor_action("submit", locator=loc)
+        self._guard()
         if how == "enter":
             loc.press("Enter")
         else:
@@ -1012,25 +1277,28 @@ class BrowserSession:
         label = d.get("name") or d.get("field") or "a payment field"
         mac = _hmac.new(_PROCESS_KEY, json.dumps([self._page.url, d.get("field"), label, value])
                         .encode("utf-8"), hashlib.sha256).hexdigest()
-        detail = {"handler": HANDLER, "op": "fill", "url": self._page.url, "field": d.get("field"),
+        detail = {**self._approval_binding(), "handler": HANDLER, "op": "fill", "url": self._page.url, "field": d.get("field"),
                   "label": label, "value": _mask(value), "select": select, "value_mac": mac}
         self._held_values[mac] = value
         fp = _fingerprint(ACTION_FILL, detail)
         self._pending[fp] = {"i": int(i), "nonce": nonce or self._nonce}
         host = _host(detail["url"]) or "this page"
         title = f"Fill “{label}” on {host}"
-        body = (f"Friday wants to enter {detail['value']} into “{label}” on {host}.\n"
+        body = (f"{self.display_name} wants to enter {detail['value']} into “{label}” on {host}.\n"
                 f"Page: {detail['url']}\n"
                 + (f"Check before approving: this value came from {provenance}, not from you.\n"
                    if provenance else "") +
                 "It is only typed into the field; submitting the form asks you again.")
         v = _authorize(action_gate, ACTION_FILL, detail, title, body, approval_id,
                        provenance=[f"the value came from {provenance}"] if provenance else None)
+        self._guard()
         if v.action != "allow":
             return {"filled": False, "status": "refused" if v.action == "deny" else
                     "waiting_for_approval", "reason": v.reason, "card": body,
                     "approval_id": _pending_card_id(ACTION_FILL, detail)}
         loc = self._locator(i, nonce)
+        self._cursor_action("fill", locator=loc)
+        self._guard()
         if select:
             loc.select_option(label=value)
         else:
@@ -1042,6 +1310,8 @@ class BrowserSession:
     def op_run_approved(self, record: dict) -> dict:
         """Carry out an approved card, re-checking the live page against it."""
         detail = record.get("payload") or {}
+        if self.owner is not None and detail.get("browser_scope") != self._approval_binding().get("browser_scope"):
+            raise BrowserRefused("The browser or its authority changed after this approval.")
         sid = str(record.get("subject_id") or "")
         action = ACTION_SUBMIT if detail.get("op") == "submit" else ACTION_FILL
         fp = sid[len(action) + 1:].split(":")[0] if sid.startswith(action + ":") else ""
@@ -1090,26 +1360,325 @@ def _authorize(action_gate, action: str, detail: dict, title: str, body: str,
         flags = [taint.Flag("", "detail", "", "content", p, "warn", p) for p in provenance]
         tok = taint.CURRENT.set(taint.Decision(action="ask", flags=flags))
     try:
+        actor = ((detail.get("browser_scope") or {}).get("owner") or {}).get("actor_id")
         return action_gate.authorize_external(
-            action, detail, requested_by="friday:browser", title=title,
+            action, detail, requested_by=f"{actor or 'friday'}:browser", title=title,
             description=body, action_description=body, approval_id=approval_id)
     finally:
         if tok is not None:
             taint.CURRENT.reset(tok)
 
 
-# ── The one session ─────────────────────────────────────────────────────────
+# ── Dedicated agent sessions and the compatible legacy window ───────────────
 
 _LOCK = threading.RLock()
 _SESSION: Optional[BrowserSession] = None
+_OWNED: Dict[str, BrowserSession] = {}
+_OWNER_SURFACES: Dict[BrowserOwner, str] = {}
+_BLOCKED_OWNERS: set = set()
+_STOP_PERMISSION_FLOOR = -1
+_STOP_EPOCH = 0
+_MAX_STOPPED_OWNERS = 4096
+
+
+def _new_owned(owner, validator, *, label=None, color=None):
+    with _LOCK:
+        admission_epoch = _STOP_EPOCH
+    _validate_owner(owner, validator, "act")
+    with _LOCK:
+        if (admission_epoch != _STOP_EPOCH or owner in _BLOCKED_OWNERS or
+                owner.permission_generation <= _STOP_PERMISSION_FLOOR):
+            raise BrowserRefused("This browser authority was stopped. Renew workspace permission to start again.")
+        if len(_BLOCKED_OWNERS) >= _MAX_STOPPED_OWNERS:
+            raise BrowserRefused("The browser stop ledger is full. Restart Friday before opening more workspaces.")
+        existing = _OWNED.get(_OWNER_SURFACES.get(owner, ""))
+        if existing is not None and existing.mode not in ("closed", "revoked"):
+            existing._authority("act", modes=("agent",))
+            return existing
+        active = [s for s in _OWNED.values() if not s._cleanup_done]
+        if len(active) >= MAX_OWNED_SESSIONS:
+            raise BrowserRefused("All agent browser spaces are in use. Close one to open another.")
+        # Closed workers cannot be selected again. Bound retained metadata as
+        # well as live browsers; its replacement always gets a fresh surface.
+        for sid, old in list(_OWNED.items()):
+            if old._cleanup_done:
+                _OWNED.pop(sid)
+                if _OWNER_SURFACES.get(old.owner) == sid:
+                    _OWNER_SURFACES.pop(old.owner, None)
+        result = BrowserSession(owner=owner, validator=validator, label=label, color=color)
+        _OWNED[result.surface_id] = result
+        _OWNER_SURFACES[owner] = result.surface_id
+        return result
+
+
+def create_owned_session(owner: BrowserOwner, validator: Callable, *, label=None, color=None) -> dict:
+    """Reserve a headless browser; Chromium starts only on its first open."""
+    return _new_owned(owner, validator, label=label, color=color).status()
+
+
+def resolve_owned_session(owner: BrowserOwner, validator: Optional[Callable] = None):
+    binding = _BOUND_OWNER.get()
+    validator = validator or (binding.validator if binding and binding.owner == owner else None)
+    _validate_owner(owner, validator, "act")
+    with _LOCK:
+        found = _OWNED.get(_OWNER_SURFACES.get(owner, ""))
+    if found is not None:
+        found._authority("act", modes=("agent",))
+    return found
+
+
+def _owned_surface(surface_id, validator, purpose, expected_generation=None):
+    with _LOCK:
+        found = _OWNED.get(str(surface_id or ""))
+    if found is None:
+        raise BrowserRefused("That agent browser no longer exists.")
+    _validate_owner(found.owner, validator, purpose)
+    found._authority(purpose, expected_generation)
+    return found
+
+
+def owned_status(surface_id: str, validator: Callable) -> dict:
+    return _owned_surface(surface_id, validator, "view").status()
+
+
+def list_owned_sessions(validator: Callable) -> list:
+    with _LOCK:
+        ids = list(_OWNED)
+    result = []
+    for sid in ids:
+        try:
+            result.append(owned_status(sid, validator))
+        except BrowserRefused:
+            continue
+    return result
+
+
+def _transition(s: BrowserSession, operation: str):
+    modes = {"pause": "paused", "resume": "agent", "takeover": "human",
+             "revoke": "revoked", "close": "closed"}
+    if operation not in modes:
+        raise BrowserRefused("Unknown browser control operation.")
+    with _LOCK, s._state_lock:
+        if s.mode in ("closed", "revoked"):
+            raise BrowserRefused("This agent browser is already closed.")
+        s.generation += 1
+        s.mode = modes[operation]
+        if operation in ("close", "revoke"):
+            _BLOCKED_OWNERS.add(s.owner)
+        s._pending.clear()
+        s._held_values.clear()
+        s._snap = None
+        s._nonce = ""
+        s._invalidate_frame()
+        s.cursor = {**s.cursor, "action": s.mode, "sequence": s.cursor["sequence"] + 1}
+
+
+def _close_owned(s):
+    try:
+        s.shutdown()
+    except Exception as e:
+        _log.warning("agent browser cleanup failed: %s", type(e).__name__)
+        return
+    # Every owned profile is a fresh, marked task directory. Closing a task
+    # releases its cookies and disk use; the legacy persistent profile is separate.
+    try:
+        if s.profile.exists():
+            assert_dedicated(s.profile)
+            shutil.rmtree(s.profile)
+    except Exception as e:
+        _log.warning("agent browser profile cleanup failed: %s", type(e).__name__)
+    with _LOCK, s._state_lock:
+        s._cleanup_done = True
+
+
+def _generation(value):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise BrowserRefused("A current browser generation is required.")
+    return value
+
+
+def _schedule_close(s):
+    with _LOCK, s._state_lock:
+        if s._cleanup_started or s._cleanup_done:
+            return
+        s._cleanup_started = True
+    threading.Thread(target=_close_owned, args=(s,), name="friday-browser-close", daemon=True).start()
+
+
+def control_owned_session(surface_id: str, operation: str, expected_generation: int,
+                          validator: Callable) -> dict:
+    generation = _generation(expected_generation)
+    if operation in ("close", "revoke"):
+        # The authenticated local owner's stop remains available after task,
+        # privacy, or permission authority expires. Routes admit that owner;
+        # they never accept a replacement browser owner from request data.
+        with _LOCK:
+            s = _OWNED.get(str(surface_id or ""))
+        if s is None:
+            raise BrowserRefused("That agent browser no longer exists.")
+    else:
+        s = _owned_surface(surface_id, validator, "control", generation)
+    with _LOCK, s._state_lock:
+        if s.generation != generation:
+            raise BrowserRefused("Browser control changed; refresh the workspace first.")
+        if operation not in ("close", "revoke"):
+            s._authority("control", generation)
+        _transition(s, operation)
+        result = s.status()
+    if operation in ("close", "revoke"):
+        _schedule_close(s)
+    return result
+
+
+def stop_all_owned_sessions() -> None:
+    """Revoke every queue synchronously; close browsers off the request thread."""
+    global _STOP_EPOCH, _STOP_PERMISSION_FLOOR
+    with _LOCK:
+        _STOP_EPOCH += 1
+        sessions = list(_OWNED.values())
+        try:
+            from agent_friday.services import agent_workspace_permissions
+            permission_generation = agent_workspace_permissions.snapshot()["generation"]
+        except Exception:
+            # A failed consent read cannot give a still-running agent a new
+            # opening after Stop all. Recovery needs a fresh app admission.
+            permission_generation = 2 ** 53
+        _STOP_PERMISSION_FLOOR = max(
+            _STOP_PERMISSION_FLOOR, permission_generation,
+            max((s.owner.permission_generation for s in sessions), default=-1))
+        for s in sessions:
+            if s.mode in ("closed", "revoked"):
+                continue
+            _transition(s, "revoke")
+        # The generation floor retains these stops without one entry per task.
+        _BLOCKED_OWNERS.difference_update({o for o in _BLOCKED_OWNERS
+                                         if o.permission_generation <= _STOP_PERMISSION_FLOOR})
+    for s in sessions:
+        if s._cleanup_done:
+            continue
+        _schedule_close(s)
+
+
+def owned_frame(surface_id: str, expected_generation: int, validator: Callable) -> dict:
+    generation = _generation(expected_generation)
+    s = _owned_surface(surface_id, validator, "view", generation)
+    with s._state_lock:
+        if not s.running:
+            return {**s.status(), "image": None}
+        if s._input_pending:
+            raise BrowserRefused("Browser input is running; wait for its next frame.")
+        if s._frame_pending:
+            raise BrowserRefused("A browser frame is already being captured.")
+        if s._frame is not None and time.monotonic() - s._frame_at < FRAME_INTERVAL:
+            return {**s.status(), "image": s._frame}
+        s._frame_pending = True
+    def capture():
+        s._guard()
+        page_generation = s.page_generation
+        raw = s._page.screenshot(type="jpeg", quality=65, timeout=ACTION_TIMEOUT_MS)
+        s._guard()
+        if len(raw) > FRAME_MAX_BYTES:
+            raise BrowserRefused("The browser frame exceeded its size limit.")
+        title = str(s._page.title() or "")[:300]
+        s._guard()
+        with s._state_lock:
+            if page_generation != s.page_generation:
+                raise BrowserRefused("The page changed during capture; refresh the view.")
+            s.frame_sequence += 1
+            s._frame = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+            s._frame_at = time.monotonic()
+            s._frame_usable = True
+            s.title = title
+            s.url = str(s._page.url or "")
+            return {**s.status(), "image": s._frame}
+    try:
+        return s.call(capture, timeout=15, purpose="view", expected_generation=generation)
+    finally:
+        with s._state_lock:
+            s._frame_pending = False
+
+
+def owned_human_input(surface_id: str, expected_generation: int, event: dict,
+                      validator: Callable) -> dict:
+    generation = _generation(expected_generation)
+    s = _owned_surface(surface_id, validator, "control", generation)
+    if not isinstance(event, dict) or set(event) - {
+        "type", "x", "y", "delta_y", "key", "text", "generation",
+        "page_generation", "frame_sequence",
+    }:
+        raise BrowserRefused("Invalid browser input.")
+    kind = event.get("type")
+    if kind not in ("click", "wheel", "key", "text"):
+        raise BrowserRefused("Unsupported browser input.")
+    _generation(event.get("page_generation"))
+    _generation(event.get("frame_sequence"))
+    if "generation" in event and _generation(event["generation"]) != generation:
+        raise BrowserRefused("Browser control changed; refresh the view.")
+    x, y, delta = event.get("x"), event.get("y"), event.get("delta_y")
+    if kind in ("click", "wheel"):
+        if (isinstance(x, bool) or isinstance(y, bool) or
+                not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or
+                not 0 <= x < s.viewport["width"] or not 0 <= y < s.viewport["height"]):
+            raise BrowserRefused("The pointer must be inside this browser frame.")
+    if kind == "wheel" and (isinstance(delta, bool) or not isinstance(delta, (int, float))
+                            or not -2000 <= delta <= 2000):
+        raise BrowserRefused("Invalid scroll distance.")
+    if kind == "key" and (not isinstance(event.get("key"), str) or event.get("key") not in {
+        "Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowLeft", "ArrowRight",
+        "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Space",
+    }):
+        raise BrowserRefused("That key is not available in browser takeover.")
+    if kind == "text" and (not isinstance(event.get("text"), str) or len(event["text"]) > 2000):
+        raise BrowserRefused("Browser text must contain at most 2000 characters.")
+    with s._state_lock:
+        s._authority("control", generation, ("human",))
+        if (not s.running or not s._frame_usable or s._input_pending or s._frame_pending or
+                event.get("page_generation") != s.page_generation or
+                event.get("frame_sequence") != s.frame_sequence):
+            raise BrowserRefused("That browser frame is stale; refresh it before giving input.")
+        page_generation, frame_sequence = s.page_generation, s.frame_sequence
+        s._frame_usable = False
+        s._input_pending = True
+    def dispatch():
+        s._guard()
+        if page_generation != s.page_generation or frame_sequence != s.frame_sequence:
+            raise BrowserRefused("The page changed before this input could run.")
+        s._cursor_action(kind, x=x if kind in ("click", "wheel") else None,
+                         y=y if kind in ("click", "wheel") else None)
+        s._guard()
+        if kind == "click":
+            s._page.mouse.click(x, y)
+        elif kind == "wheel":
+            s._page.mouse.wheel(0, delta)
+        elif kind == "key":
+            s._page.keyboard.press(event["key"])
+        else:
+            s._page.keyboard.insert_text(event["text"])
+        s._guard()
+        s._check_landing()
+        return s.status()
+    try:
+        return s.call(dispatch, timeout=15, purpose="control", expected_generation=generation,
+                      modes=("human",))
+    except BrowserRefused:
+        raise
+    except Exception:
+        # Browser library diagnostics may echo text arguments, including a
+        # password the owner entered. The HTTP error logger must not receive them.
+        raise BrowserRefused("The browser could not complete that input. Refresh its view.") from None
+    finally:
+        with s._state_lock:
+            s._input_pending = False
+            s._invalidate_frame()
 
 
 def current() -> Optional[BrowserSession]:
-    return _SESSION
+    binding = _BOUND_OWNER.get()
+    return resolve_owned_session(binding.owner, binding.validator) if binding else _SESSION
 
 
 def current_url() -> str:
-    s = _SESSION
+    s = current()
     return s.url if s is not None and s.running else ""
 
 
@@ -1128,6 +1697,10 @@ def use_session(session: Optional[BrowserSession]) -> None:
 
 def session(create: bool = True) -> Optional[BrowserSession]:
     global _SESSION
+    binding = _BOUND_OWNER.get()
+    if binding is not None:
+        return (_new_owned(binding.owner, binding.validator, label=binding.label, color=binding.color)
+                if create else resolve_owned_session(binding.owner, binding.validator))
     with _LOCK:
         if _SESSION is None and create:
             _SESSION = BrowserSession()
@@ -1135,9 +1708,12 @@ def session(create: bool = True) -> Optional[BrowserSession]:
 
 
 def close_session() -> bool:
-    s = _SESSION
+    s = current()
     if s is None or not s.running:
         return False
+    if s.owner is not None:
+        control_owned_session(s.surface_id, "close", s.generation, s.validator)
+        return True
     s.call(s._stop, timeout=30)
     return True
 
@@ -1152,13 +1728,15 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
     live element before acting.
     """
     a = args or {}
-    s = _SESSION
+    s = current()
     el = s.element(a.get("element")) if s is not None and s.running else None
     if el is None:
         return "outward", "an element Friday has not read on the current page"
     if tool_name == "browser_type":
         kind, cat = field_kind(el)
         if kind == "password":
+            if s.owner is not None:
+                return "forbidden", "it would type into a password field; " + s._owner_help("sign in yourself")
             return "forbidden", ("it would type into a password field; the owner signs in "
                                  "himself in Friday's browser window")
         if kind == "never":
@@ -1241,10 +1819,15 @@ def format_snapshot(snap: dict, s: Optional[BrowserSession], *, text_offset: int
              f"URL: {snap.get('url')}",
              f"Title: {snap.get('title')}"]
     if snap.get("has_password"):
-        lines.append("SIGN-IN NEEDED: this page asks for a password. STOP here. Friday "
-                     "never types passwords. Ask the user to sign in themselves in "
-                     "Friday's browser window (the one with the purple Friday banner) "
-                     "and to tell you when they are done; then call browser_read again.")
+        if s is not None and s.owner is not None:
+            lines.append("SIGN-IN NEEDED: this page asks for a password. STOP here. Agents "
+                         "never type passwords. Ask the user: " + s._owner_help("sign in yourself")
+                         + " Then call browser_read again.")
+        else:
+            lines.append("SIGN-IN NEEDED: this page asks for a password. STOP here. Friday "
+                         "never types passwords. Ask the user to sign in themselves in "
+                         "Friday's browser window (the one with the purple Friday banner) "
+                         "and to tell you when they are done; then call browser_read again.")
     lines.append(f"--- interactive elements ({len(els)}; use the number with "
                  f"browser_click / browser_type / browser_select) ---")
     forms = snap.get("forms") or []
@@ -1280,9 +1863,13 @@ def _read_out(s: BrowserSession, snap: dict, text_offset: int = 0) -> str:
         key = snap.get("url") or ""
         if key not in s._signin_noted:
             s._signin_noted.add(key)
-            _notify("Friday's browser needs you to sign in",
-                    f"Sign in yourself in the Friday browser window ({_host(key)}), then "
-                    f"tell Friday you are done.")
+            if s.owner is not None:
+                _notify(f"{s.display_name} needs you to sign in",
+                        f"{_host(key)} needs a sign-in. " + s._owner_help("sign in yourself"))
+            else:
+                _notify("Friday's browser needs you to sign in",
+                        f"Sign in yourself in the Friday browser window ({_host(key)}), then "
+                        f"tell Friday you are done.")
     return format_snapshot(snap, s, text_offset=text_offset)
 
 
@@ -1357,13 +1944,15 @@ def _after_action(s: BrowserSession, res: dict, verb: str) -> str:
             return done + ("\n" + page if page else "")
         if card.get("status") == "refused":
             return f"NOT done: Friday's governance check held it ({card.get('reason')})."
+        destination = (f"{s.display_name}'s Agent workspace" if s.owner is not None
+                       else "the browser window")
         return json.dumps({
             "done": False, "queued": True, "approval_id": card.get("approval_id"),
             "card": card.get("card"),
             "note": ("WAITING FOR THE USER'S APPROVAL on a card; nothing was sent or "
                      "entered. Tell the user plainly that a card is waiting and what it "
-                     "will send. When they approve it, Friday does it in the browser "
-                     "window. Do not call it again this turn.")}, ensure_ascii=False)
+                     "will send. When they approve it, Friday does it in " + destination
+                     + ". Do not call it again this turn.")}, ensure_ascii=False)
     try:
         snap = s.call(s.op_read)
         return f"{verb}\n" + _read_out(s, snap)
@@ -1420,9 +2009,13 @@ def tool_select(element, option: str, owner_text: str = "") -> str:
 
 def tool_close() -> str:
     try:
+        s = current()
         closed = close_session()
     except Exception as e:
         return f"browser_close error: {e}"
+    if s is not None and s.owner is not None:
+        return (f"Closed {s.display_name}'s agent workspace." if closed
+                else f"{s.display_name}'s browser was not open.")
     return "Closed Friday's browser window." if closed else "Friday's browser was not open."
 
 
@@ -1434,6 +2027,16 @@ def _spawn(fn: Callable[[], None]) -> None:
 
 
 def run_approved(record: dict) -> dict:
+    scope = (record.get("payload") or {}).get("browser_scope")
+    if scope is not None:
+        if not isinstance(scope, dict):
+            raise BrowserRefused("The approved browser scope is invalid.")
+        with _LOCK:
+            s = _OWNED.get(str(scope.get("surface_id") or ""))
+        if s is None or scope.get("owner") != asdict(s.owner):
+            raise BrowserRefused("The original agent browser is no longer available.")
+        generation = _generation(scope.get("generation"))
+        return s.call(lambda: s.op_run_approved(record), expected_generation=generation)
     s = _SESSION
     if s is None or not s.running:
         raise BrowserRefused("Friday's browser was closed since the card was raised, so "

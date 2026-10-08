@@ -15700,6 +15700,7 @@ function SetupFinishCard({ state, onFinish, busy }) {
         <dt>Research</dt><dd>{researchLine}</dd>
         <dt>Your style</dt><dd>{state.style_saved ? 'Saved. It keeps evolving as you work together.' : 'My default style for now.'}</dd>
       </dl>
+      {window.FridayAgentWorkspacePermission && <window.FridayAgentWorkspacePermission apiFetch={apiFetch} disabled={busy}/>}
       <div className="sc-row">
         <button type="button" className="sc-btn" disabled={busy} onClick={onFinish}>Open my desktop</button>
       </div>
@@ -17252,6 +17253,9 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="Stored keys">
       <KeystoreWrapPanel/>
+    </StSection>
+    <StSection title="Agent workspaces">
+      {window.FridayAgentWorkspacePermission && <window.FridayAgentWorkspacePermission apiFetch={apiFetch}/>}
     </StSection>
     <StSection title="Computer control">
       <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High risk. Lets {fridayName()} move the mouse, click, type and take screenshots. It needs both this switch and a grant below; once granted, the grant lasts across restarts until you revoke it.</div>

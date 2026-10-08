@@ -13,7 +13,7 @@ def room(monkeypatch, tmp_path):
     profile = {"id": "crew-" + "a" * 16, "revision": 1, "name": "Reviewer", "role": "Check evidence",
                "persona": "Precise", "caption": {"label": "Reviewer"}, "provider": "chosen",
                "model": "chosen-model", "allowed_tools": [], "memory": {"write": False},
-               "time_budget_s": 120}
+               "time_budget_s": 120, "max_steps": 20, "status": "active", "project_ids": ["project"]}
     state = SimpleNamespace(profile=profile, conv={"id": "chat", "project": "project"},
                             messages=[], spawns=[], deliveries=[], tasks={}, runs=[],
                             private=False, generation=1, remembered=[])
@@ -25,13 +25,15 @@ def room(monkeypatch, tmp_path):
     monkeypatch.setattr(conversations, "load", lambda cid: state.conv if cid == "chat" else None)
     monkeypatch.setattr(conversations, "messages", lambda cid, limit=100: state.messages[-limit:])
 
-    def append(cid, msg):
+    def append(cid, msg, *, before_write=None):
+        if before_write:
+            before_write()
         result = {"id": str(len(state.messages) + 1), **msg}
         state.messages.append(result)
         return result
 
     def validate(aid, project_id=None, bound_revision=None):
-        if aid != state.profile["id"] or project_id != "project":
+        if aid != state.profile["id"] or (project_id is not None and project_id not in state.profile["project_ids"]):
             raise runtime.CrewRoomError("Assignment refused")
         if bound_revision is not None and bound_revision != state.profile["revision"]:
             raise runtime.CrewRoomError("Profile changed")
@@ -54,7 +56,13 @@ def room(monkeypatch, tmp_path):
     monkeypatch.setattr(crew_access, "build_context", lambda *a, **k: ("Only the assigned context", {}))
     monkeypatch.setattr(crew_profiles, "get_profile", lambda aid: copy.deepcopy(state.profile))
     monkeypatch.setattr(agent, "TASKS", state.tasks)
-    monkeypatch.setattr(agent, "TASKS_LOCK", threading.RLock())
+    monkeypatch.setattr(agent, "TASKS_LOCK", threading.Lock())
+    monkeypatch.setattr(agent, "_load_settings", lambda: {})
+    from agent_friday.services import task_journal
+    monkeypatch.setattr(task_journal, "stop_requested", lambda task_id: False)
+    monkeypatch.setattr(task_journal, "steer", lambda *a, **kw: None)
+    monkeypatch.setattr(runtime, "_STEERS", {})
+    monkeypatch.setattr(runtime, "_TALKS", {})
     monkeypatch.setattr(agent, "_spawn_task", spawn)
     monkeypatch.setattr(agent, "_task_set", lambda tid, **kw: state.tasks[tid].update(kw))
     monkeypatch.setattr(agent, "_generate_agent", generate)

@@ -11,12 +11,12 @@
   const bridge = window.FridayCrew = {
     enabled: id => !!cache.rooms[id]?.enabled,
     state: detail => { cache.speech = detail; window.dispatchEvent(new CustomEvent('friday:crew-speech',{detail})); },
-    label: meta => meta?.kind === 'crew_result' ? meta.speaker_name || 'Crew agent' : null,
+    label: meta => ['crew_result','crew_dialogue'].includes(meta?.kind) ? meta.speaker_name || 'Crew agent' : null,
     messages: messages => {
       const receipts=new Map();
       for(const message of messages)if(message.meta?.kind==='crew_playback'&&message.meta.task_id)receipts.set(message.meta.task_id,message.meta);
       return messages.filter(m=>m.meta?.kind!=='crew_playback'&&!(m.meta?.kind==='crew_speech'&&!m.text)).map(m=>{
-        const receipt=m.meta?.kind==='crew_result'&&receipts.get(m.meta.task_id);
+        const receipt=['crew_result','crew_dialogue'].includes(m.meta?.kind)&&receipts.get(m.meta.task_id);
         return receipt?{...m,meta:{...m.meta,audio_state:receipt.audio_state,played_samples:receipt.played_samples}}:m;
       });
     },
@@ -30,7 +30,7 @@
     }
   };
   window.FridayCrewByline = function ({meta}) {
-    if (!['crew_result','crew_speech'].includes(meta?.kind)) return null;
+    if (!['crew_result','crew_speech','crew_dialogue'].includes(meta?.kind)) return null;
     const outcome = {complete:'Complete',completed:'Complete',completed_unverified:'Reply ready',failed:'Could not finish'}[meta.status] || '';
     return h('span',{className:'fr-crew-byline',title:['Agent: '+meta.speaker_id,'Task: '+meta.task_id,'Provider: '+meta.provider,'Model: '+meta.model].join('\n')},
       h('strong',null,meta.speaker_name || meta.speaker_label || (meta.speaker_id==='friday'?'Friday':'Crew agent')),' · ',[meta.provider,meta.model].filter(Boolean).join(' / '),outcome?' · '+outcome:'',meta.audio_state&&meta.audio_state!=='finished'?' · speech '+meta.audio_state+'; full reply shown':'');
@@ -45,7 +45,7 @@
     const [open,setOpen] = useState(false), [agents,setAgents] = useState([]), [caps,setCaps] = useState(null), [selected,setSelected] = useState('new');
     const [draft,setDraft] = useState(()=>cache.drafts.new || blank()), [room,setRoom] = useState(null), [members,setMembers] = useState([]);
     const [error,setError] = useState(''), [notice,setNotice] = useState(''), [busy,setBusy] = useState(false), [conflict,setConflict] = useState(null);
-    const [speaker,setSpeaker] = useState(cache.speech), [bounds,setBounds] = useState(area), [request,setRequest] = useState(''), [target,setTarget] = useState(''), [pending,setPending] = useState([]);
+    const [speaker,setSpeaker] = useState(cache.speech), [bounds,setBounds] = useState(area), [request,setRequest] = useState(''), [target,setTarget] = useState(''), [taskProject,setTaskProject] = useState(''), [pending,setPending] = useState([]);
     const buttonRef = useRef(null), dialogRef = useRef(null), generation = useRef(0), requestRef = useRef(null), latest = useRef({conversationId,onMessages});
     latest.current = {conversationId,onMessages};
     async function call(path, options) {
@@ -111,7 +111,7 @@
           const data=await call(base+'/turns');
           if(cancelled || latest.current.conversationId !== conversationId)return;
           setPending((data.tasks || []).filter(t=>['queued','running'].includes(t.status)));
-          const messages=(data.messages || []).filter(m=>['crew_request','crew_result','crew_speech','crew_playback'].includes(m.meta?.kind));
+          const messages=(data.messages || []).filter(m=>['crew_request','crew_result','crew_speech','crew_playback','crew_dialogue'].includes(m.meta?.kind));
           if(messages.length)latest.current.onMessages?.(previous=>{
             const key=m=>m.id || (m.meta?.task_id ? m.meta.kind+':'+m.meta.task_id : null);
             const seen=new Set(previous.map(key).filter(Boolean));
@@ -150,9 +150,9 @@
     });
     const ask=()=>run(async()=>{
       const text=request.trim();if(!text||!target)return;
-      const signature=JSON.stringify([conversationId,target,text,room.revision]);
+      const signature=JSON.stringify([conversationId,target,text,room.revision,taskProject]);
       if(requestRef.current?.signature!==signature)requestRef.current={signature,id:window.crypto?.randomUUID?.() || 'crew-'+Date.now()+'-'+Math.random().toString(36).slice(2)};
-      const result=await call(base+'/turns',{method:'POST',body:{room_revision:room.revision,agent_id:target,text,request_id:requestRef.current.id}});
+      const result=await call(base+'/turns',{method:'POST',body:{room_revision:room.revision,agent_id:target,text,request_id:requestRef.current.id,...(taskProject?{project_id:taskProject}:{})}});
       if(latest.current.conversationId!==conversationId)return;
       setRequest('');requestRef.current=null;setPending(list=>[...list,{task_id:result.task_id,agent_id:target,status:'running'}]);setNotice('Task handed to '+(agents.find(a=>a.id===target)?.name || 'the agent')+'.');
     });
@@ -187,9 +187,11 @@
               h('button',{disabled:!room?.enabled||busy,onClick:()=>voice('start',conversationId)},'Start voice room'),h('button',{disabled:!activeSpeech||activeSpeech.status==='disconnected',onClick:()=>voice('quiet',conversationId)},'Quiet'),h('button',{disabled:!activeSpeech||activeSpeech.status==='disconnected',onClick:()=>voice('stop',conversationId)},'Stop voice')),
             h('p',{className:'fr-crew-muted'},'Cloud voice uses the configured Gemini host and each agent’s saved voice. Quiet stops speech; background tasks continue.'),
             activeSpeech&&h('div',{className:'fr-crew-caption','aria-live':'polite'},h('strong',null,activeSpeech.label||'Friday'),': ',activeSpeech.status,activeSpeech.provider?' · '+activeSpeech.provider:'',activeSpeech.message&&h('p',null,activeSpeech.message),activeSpeech.text&&h('p',null,activeSpeech.text)),
-            h('div',{className:'fr-crew-handoff'},h('label',{className:'fr-crew-field'},h('span',null,'Hand off to'),h('select',{'aria-label':'Hand off to',value:target,onChange:e=>setTarget(e.target.value),disabled:!room?.enabled},options(roomMembers,target))),
+            h('div',{className:'fr-crew-handoff'},h('label',{className:'fr-crew-field'},h('span',null,'Hand off to'),h('select',{'aria-label':'Hand off to',value:target,onChange:e=>{setTarget(e.target.value);setTaskProject('');},disabled:!room?.enabled},options(roomMembers,target))),
+h('label',{className:'fr-crew-field'},h('span',null,'Task project'),h('select',{'aria-label':'Task project',value:taskProject,onChange:e=>setTaskProject(e.target.value),disabled:!room?.enabled},h('option',{value:''},'This chat’s project'),(caps?.projects||[]).filter(p=>(agents.find(a=>a.id===target)?.project_ids||[]).includes(p.id)).map(p=>h('option',{key:p.id,value:p.id},p.name||p.id)))),
               h('label',{className:'fr-crew-field'},h('span',null,'Request'),h('textarea',{'aria-label':'Request',value:request,rows:2,maxLength:8000,onChange:e=>{setRequest(e.target.value);requestRef.current=null;},disabled:!room?.enabled,placeholder:'What should this agent work on?'})),h('button',{disabled:busy||!room?.enabled||!roomMembers.some(a=>a.id===target)||!request.trim(),onClick:ask},'Hand off')),
             pending.length>0&&h('ul',{className:'fr-crew-pending'},pending.map((p,i)=>h('li',{key:p.task_id||i},(agents.find(a=>a.id===p.agent_id)?.name||'Crew agent')+' · '+(p.status||'working')))))),
+          !profileOnly&&conversationId&&window.FridayAgentWorkspaces&&h(window.FridayAgentWorkspaces,{apiFetch,conversationId,active:open}),
           h('section',{className:'fr-crew-profiles'},h('aside',{className:'fr-crew-roster','aria-label':'Agents'},h('h3',null,'Agents'),h('button',{onClick:()=>select('new'),'aria-pressed':selected==='new'},'New agent'),Object.keys(cache.drafts).filter(k=>k.startsWith('proposal-')).map(k=>h('button',{key:k,onClick:()=>select(k),'aria-pressed':selected===k},cache.drafts[k].name||'Suggested agent',' · draft')),agents.map(a=>h('button',{key:a.id,onClick:()=>select(a.id),'aria-pressed':selected===a.id},h('strong',null,a.name),h('small',null,a.status+(cache.drafts[a.id]?' · draft':''))))),
             h('form',{className:'fr-crew-editor',onSubmit:e=>{e.preventDefault();save();}},h('h3',null,!draft.id?'Create agent':draft.name||'Agent profile'),
               h('div',{className:'fr-crew-grid'},input('Name',draft.name,v=>field('name',v),{required:true,maxLength:80}),input('Caption label',draft.caption?.label,v=>field('caption',{label:v}),{maxLength:80})),
@@ -268,6 +270,7 @@
           h('p',{className:'fr-crew-agent-role'},agent.role||'No role specified'),
           h('dl',null,h('dt',null,'Model'),h('dd',null,[agent.provider,agent.model].filter(Boolean).join(' / ')||'Not selected'),h('dt',null,'Voice'),h('dd',null,[agent.voice?.provider,agent.voice?.model,agent.voice?.voice_id].filter(Boolean).join(' / ')||'Not selected'),h('dt',null,'Projects'),h('dd',null,(agent.project_ids||[]).map(projectName).join(', ')||'No projects assigned')),
           h('button',{'aria-label':(agent.status==='retired'?'View ':'Edit ')+agent.name,onClick:e=>editProfile(agent,e)},agent.status==='retired'?'View profile':'Edit profile'))))),
+      window.FridayAgentWorkspaces&&h(window.FridayAgentWorkspaces,{apiFetch,active}),
       h('section',{'aria-labelledby':'crew-work-title',className:'fr-crew-work-list'},h('h3',{id:'crew-work-title'},'Current work'),
         tasksLoading&&h('p',{role:'status'},'Loading current work…'),errors.tasks&&h('p',{role:'alert'},'Could not refresh current work. ',errors.tasks,tasks.length?' Previously loaded tasks are shown.':''),
         !tasksLoading&&!errors.tasks&&!tasks.length&&h('p',{className:'fr-crew-empty'},'No Crew work to show. Open a chat, assemble a room and hand a request to an agent.'),
