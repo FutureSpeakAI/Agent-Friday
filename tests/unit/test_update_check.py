@@ -290,6 +290,65 @@ def test_draft_is_ignored(captured, monkeypatch):
     assert uc.check_for_update()["update_available"] is False
 
 
+# ── Releases are ordered by build sequence, not by version number ────────────
+# Agent Friday Beta 1.0 is 1.0.0b1: numerically below the 5.x line it replaces.
+
+def test_a_newer_sequence_is_an_update_even_when_the_version_number_is_lower(captured, monkeypatch):
+    """The final 1.0.0 follows 5.14.3 although 1 < 5."""
+    calls, fake = captured
+    fake.reply = _Resp([_release("v1.0.0"), _release("v5.14.3")])
+    monkeypatch.setattr(uc, "running_version", lambda *a, **k: "5.14.3")
+
+    result = uc.check_for_update()
+
+    assert result["update_available"] is True
+    assert result["latest_version"] == "1.0.0"
+    assert result["latest_sequence"] > result["current_sequence"]
+
+
+def test_5_14_3_is_never_offered_to_a_beta_install(captured, monkeypatch):
+    calls, fake = captured
+    fake.reply = _Resp([_release("v5.14.3")])
+    for running in ("1.0.0b1", "1.0.0-beta.1"):
+        monkeypatch.setattr(uc, "running_version", lambda *a, _v=running, **k: _v)
+        result = uc.check_for_update()
+        assert result["update_available"] is False, running
+        assert result["reason"] == "up_to_date", running
+
+
+def test_a_beta_install_is_offered_the_next_beta(captured, monkeypatch):
+    calls, fake = captured
+    fake.reply = _Resp([_release("v1.0.0-beta.2", prerelease=True), _release("v5.14.3")])
+    monkeypatch.setattr(uc, "running_version", lambda *a, **k: "1.0.0b1")
+
+    result = uc.check_for_update()
+
+    assert result["update_available"] is True
+    assert result["latest_version"] == "1.0.0-beta.2"
+
+
+def test_a_stable_install_is_never_moved_onto_a_beta(captured, monkeypatch):
+    calls, fake = captured
+    fake.reply = _Resp([_release("v1.0.0-beta.1", prerelease=True), _release("v5.14.3")])
+    monkeypatch.setattr(uc, "running_version", lambda *a, **k: "5.14.3")
+
+    result = uc.check_for_update()
+
+    assert result["update_available"] is False
+    assert result["latest_version"] == "5.14.3"
+
+
+def test_the_build_sequence_line_in_the_notes_decides_the_order(captured, monkeypatch):
+    """A release says its own place in the order; no arithmetic on its tag."""
+    calls, fake = captured
+    later = _release("v1.0.0-beta.1", prerelease=True)
+    later["body"] = "notes\nBuild sequence: 101000009\n"
+    fake.reply = _Resp([later])
+    monkeypatch.setattr(uc, "running_version", lambda *a, **k: "1.0.0b1")
+
+    assert uc.check_for_update()["update_available"] is True
+
+
 def test_unknown_local_version_offers_nothing(captured, monkeypatch):
     """If we cannot read our own version off disk we do not know we are behind.
 

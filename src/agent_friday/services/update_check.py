@@ -59,7 +59,12 @@ from typing import Any, Optional
 import requests
 
 from agent_friday.core import FRIDAY_DIR
-from agent_friday.services.app_version import running_version, version_truth
+from agent_friday.release import (
+    is_prerelease_version,
+    sequence_for_version,
+    sequence_of_release,
+)
+from agent_friday.services.app_version import display_version, running_version, version_truth
 
 _log = logging.getLogger("friday.update_check")
 
@@ -107,29 +112,6 @@ _PRERELEASE_TAG = re.compile(
 )
 
 
-def _parse_version(raw: str) -> Optional[tuple]:
-    """`v5.7.0` / `5.7.0` -> (5, 7, 0). None when it is not a version at all."""
-    if not raw:
-        return None
-    text = str(raw).strip().lstrip("vV")
-    text = re.split(r"[-+]", text, maxsplit=1)[0]
-    parts = text.split(".")
-    if not parts or not parts[0]:
-        return None
-    try:
-        return tuple(int(p) for p in parts)
-    except ValueError:
-        return None
-
-
-def _is_newer(candidate: str, current: str) -> bool:
-    a, b = _parse_version(candidate), _parse_version(current)
-    if a is None or b is None:
-        return False
-    width = max(len(a), len(b))
-    return a + (0,) * (width - len(a)) > b + (0,) * (width - len(b))
-
-
 def _looks_like_a_prerelease(release: dict) -> bool:
     """Belt and braces.
 
@@ -145,16 +127,24 @@ def _looks_like_a_prerelease(release: dict) -> bool:
     return len(suffix) > 1 and bool(_PRERELEASE_TAG.match("-" + suffix[1]))
 
 
-def _newest_stable(releases: list) -> Optional[dict]:
-    best, best_v = None, None
+def _newest_stable(releases: list, *, include_prereleases: bool = False) -> Optional[dict]:
+    """The release that comes last in build-sequence order.
+
+    Drafts are never offered. Pre-releases are offered only when the caller
+    says the running install is itself a pre-release (a Beta follows the Beta
+    line; a stable install is never moved onto one).
+    """
+    best, best_seq = None, None
     for r in releases:
-        if not isinstance(r, dict) or _looks_like_a_prerelease(r):
+        if not isinstance(r, dict) or r.get("draft"):
             continue
-        v = _parse_version(r.get("tag_name") or "")
-        if v is None:
+        if not include_prereleases and _looks_like_a_prerelease(r):
             continue
-        if best_v is None or v > best_v:
-            best, best_v = r, v
+        seq = sequence_of_release(r)
+        if seq is None:
+            continue
+        if best_seq is None or seq > best_seq:
+            best, best_seq = r, seq
     return best
 
 
@@ -251,7 +241,7 @@ def check_for_update() -> dict:
         result["reason"] = "unreachable"
         return result
 
-    newest = _newest_stable(releases)
+    newest = _newest_stable(releases, include_prereleases=is_prerelease_version(current))
     if newest is None:
         result["ok"] = True
         result["reason"] = "no_stable_release"
@@ -269,7 +259,10 @@ def check_for_update() -> dict:
         result["reason"] = "local_version_unknown"
         return result
 
-    if _is_newer(latest, current):
+    result["current_sequence"] = sequence_for_version(current)
+    result["latest_sequence"] = sequence_of_release(newest)
+    if (result["current_sequence"] is not None and result["latest_sequence"] is not None
+            and result["latest_sequence"] > result["current_sequence"]):
         result["update_available"] = True
         result["reason"] = "update_available"
     else:
@@ -297,8 +290,8 @@ def _announce(result: dict) -> None:
         f"You are running {result['current_version']}. "
         f"Agent Friday {version} is available on GitHub.\n\n"
         "Friday will not download or install anything by itself — open the "
-        "release page when you are ready, unzip it, and run "
-        "“Install Agent Friday.cmd”. Your notes, settings and "
+        "release page when you are ready, download the installer and run it. "
+        "It updates Friday in place; your notes, settings and "
         "connected accounts are kept."
     )
     if truth.get("disagreement"):
@@ -391,6 +384,7 @@ def status() -> dict[str, Any]:
     truth = version_truth()
     return {
         "current_version": truth["running"],
+        "release_name": display_version(),
         "version_truth": truth,
         "last_checked_at": state.get("last_checked_at"),
         "last_result": state.get("last_result"),

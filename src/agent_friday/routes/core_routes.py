@@ -770,6 +770,13 @@ def _health_payload():
             _app_version = _pkg_version("agent-friday")
         except Exception:
             _app_version = None
+    _release_name = None
+    try:
+        from agent_friday.services.app_version import display_version
+        _dv = display_version()
+        _release_name = _dv if _dv and _dv != _app_version else None
+    except Exception:
+        _release_name = None
     _mood = None
     try:
         from agent_friday.services.model_router import _get_emotional_arc
@@ -880,6 +887,7 @@ def _health_payload():
             "gemini_key": bool(core.GEMINI_API_KEY),
         },
         "version": _app_version,
+        "release_name": _release_name,
         "mood": _mood,
         "memory_entries": _memory_entries,
         "vault_count": _vault_count,

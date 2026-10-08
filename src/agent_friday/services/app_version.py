@@ -64,6 +64,30 @@ def running_version(app_root: Optional[Path] = None) -> Optional[str]:
     return None
 
 
+def running_sequence(app_root: Optional[Path] = None) -> Optional[int]:
+    """The release ordering number of the code ON DISK, or None.
+
+    Releases are ordered by build sequence, never by version number: Beta 1.0
+    (1.0.0b1) is numerically below the 5.x line it replaces. Derived from
+    `running_version`, so it can only ever describe the files actually present;
+    see `agent_friday.release` for the ordering.
+    """
+    from agent_friday.release import sequence_for_version
+    return sequence_for_version(running_version(app_root))
+
+
+def display_version(app_root: Optional[Path] = None) -> Optional[str]:
+    """What the app shows a person as its version: "Agent Friday Beta 1.0"
+    for the Beta build, the plain version for anything else, None if unknown."""
+    from agent_friday.release import BUILD_SEQUENCE, RELEASE_NAME, sequence_for_version
+    v = running_version(app_root)
+    if not v:
+        return None
+    if sequence_for_version(v) == BUILD_SEQUENCE:
+        return RELEASE_NAME
+    return v
+
+
 def installed_manifest(app_root: Optional[Path] = None) -> dict:
     """`install-manifest.json` for a packaged install, or {}.
 
