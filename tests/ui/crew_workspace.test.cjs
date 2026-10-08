@@ -12,12 +12,20 @@ test('Crew is one native Work destination with unambiguous menu and voice aliase
   assert.ok(fs.existsSync(path.join(root,'assets/icons',crew.icon+'.svg')));
 });
 function environment(){
-  const effects=[],stores=new Map(),timers=new Map(),window={innerWidth:1600,innerHeight:1000,addEventListener(){},removeEventListener(){},dispatchEvent(){},requestAnimationFrame:fn=>fn(),ReactDOM:{createPortal:tree=>tree},setTimeout:fn=>{const id=timers.size+1;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id)};let cursor=0,component;
+  const effects=[],layoutEffects=[],stores=new Map(),timers=new Map(),window={innerWidth:1600,innerHeight:1000,addEventListener(){},removeEventListener(){},dispatchEvent(){},requestAnimationFrame:fn=>fn(),ReactDOM:{createPortal:tree=>tree},setTimeout:fn=>{const id=timers.size+1;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id)};let cursor=0,component;
   const slot=initial=>{const state=stores.get(component),i=cursor++;if(!(i in state))state[i]=typeof initial==='function'?initial():initial;return[state,i];};
   window.React={createElement:(type,props,...children)=>({type,props:props||{},children}),useState:initial=>{const[state,i]=slot(initial);return[state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];},useRef:initial=>{const[state,i]=slot(()=>({current:initial}));return state[i];},useEffect:fn=>effects.push(fn)};
+  // Commit layout effects separately from the explicitly scheduled passive effects.
+  window.React.useLayoutEffect=(fn,deps)=>{
+    const[state,i]=slot(()=>({layoutEffect:true,deps:undefined,cleanup:undefined})),effect=state[i];
+    if(!deps||!effect.deps||deps.length!==effect.deps.length||deps.some((value,index)=>!Object.is(value,effect.deps[index])))layoutEffects.push(()=>{
+      if(typeof effect.cleanup==='function')effect.cleanup();
+      effect.deps=deps?.slice();effect.cleanup=fn();
+    });
+  };
   vm.runInNewContext(read('static/friday_crew.js'),{window,document:{hidden:false,body:{},querySelector:()=>null,addEventListener(){},removeEventListener(){}},JSON,Map,AbortController,CustomEvent:class{constructor(type,options){this.type=type;this.detail=options?.detail;}}});
-  const render=(fn,props)=>{component=fn;cursor=0;if(!stores.has(fn))stores.set(fn,[]);return fn(props);};
-  return{window,effects,timers,render:props=>render(window.FridayCrewWorkspace,props),renderEditor:props=>render(window.FridayCrewEntry,props),unmountEditor:()=>stores.delete(window.FridayCrewEntry)};
+  const render=(fn,props)=>{component=fn;cursor=0;if(!stores.has(fn))stores.set(fn,[]);const tree=fn(props);for(const effect of layoutEffects.splice(0))effect();return tree;};
+  return{window,effects,timers,render:props=>render(window.FridayCrewWorkspace,props),renderEditor:props=>render(window.FridayCrewEntry,props),unmountEditor:()=>{for(const effect of stores.get(window.FridayCrewEntry)||[])if(effect?.layoutEffect&&typeof effect.cleanup==='function')effect.cleanup();stores.delete(window.FridayCrewEntry);}};
 }
 function find(tree,predicate){if(!tree||typeof tree!=='object')return null;if(predicate(tree))return tree;for(const child of tree.children||[]){for(const value of Array.isArray(child)?child:[child]){const found=find(value,predicate);if(found)return found;}}return null;}
 test('hub creates profiles through the existing editor with no conversation dependency',()=>{

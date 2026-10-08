@@ -245,8 +245,18 @@ test('Code chat keeps model and native message controls without a second convers
   const start = page.indexOf('function ChatSurface('), end = page.indexOf('/* The typing-indicator line', start);
   const element = (type, props, ...children) => ({ type, props: props || {}, children });
   const flat = node => node && typeof node === 'object' ? [node, ...node.children.flat(Infinity).flatMap(flat)] : [];
+  // These are separate initial mounts; the new-chat lifecycle is covered by its own tests.
+  const cleanups = [];
   const context = vm.createContext({
-    React: { createElement: element }, window: {}, useSnapMenuOpener: () => ({ bind: {}, open: false, anchor: { current: null } }),
+    React: {
+      createElement: element,
+      useRef: initial => ({ current: initial }),
+      useState(initial) {
+        let value = typeof initial === 'function' ? initial() : initial;
+        return [value, next => { value = typeof next === 'function' ? next(value) : next; }];
+      },
+      useEffect(effect) { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }
+    }, window: {}, useSnapMenuOpener: () => ({ bind: {}, open: false, anchor: { current: null } }),
     FridayChatShell: 'chat-shell', ConversationBar: 'conversation-bar', PodcastButton: 'podcast', FridayChatInput: 'composer',
     fridayName: () => 'Assistant', fridayTM: value => value
   });
@@ -293,7 +303,8 @@ test('Code chat keeps model and native message controls without a second convers
   named(ordinary, 'Switch conversation').props.onClick();
   assert.equal(switched, true);
   assert.ok(ordinary.find(node => node.type === 'conversation-row'));
-  assert.match(read('ui_parts/app.html'), /mode!=='code'&&<button onClick=\{\(\)=>\{setChatMsgs\(\[\]\);/);
+  assert.match(read('ui_parts/app.html'), /mode!=='code'&&<button onClick=\{createNewChat\} disabled=\{newChatState\.pending\}/);
+  cleanups.forEach(cleanup => cleanup());
 });
 
 test('the contained Code model picker retains model selection and ordinary popup sizing', () => {
