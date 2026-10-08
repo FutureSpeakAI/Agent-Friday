@@ -509,6 +509,16 @@ if not _TESTING:
     except Exception as _rc_err:
         print(f"  Reconciliation: unavailable ({_rc_err})")
 
+    # Models the installer's picker chose: fetched here, with progress, resume
+    # and checksum verification, never by the installer itself. A no-op when
+    # there is no first-run request.
+    try:
+        from agent_friday.services import first_run_models as _frm
+        threading.Thread(target=_frm.run_at_boot, daemon=True,
+                         name="first-run-models-boot").start()
+    except Exception as _frm_err:
+        print(f"  First-run models: unavailable ({_frm_err})")
+
     threading.Thread(target=_start_kill_hotkey, daemon=True).start()
     # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central is
     # disabled for general release; re-enable once there are 50+ skills.
@@ -1023,7 +1033,7 @@ if __name__ == '__main__':
             for _name in _pl["missing"]:
                 print(f"  ║  inactive: {_name:<47}║")
             print("  ║  Egress decisions use the remaining layers only.          ║")
-            print("  ║  See requirements.txt + AgentFriday.spec 'excludes'.      ║")
+            print("  ║  See requirements.txt and docs/security for the layers.   ║")
             print("  ╚════════════════════════════════════════════════════════════╝")
             print()
     except Exception as _pl_err:

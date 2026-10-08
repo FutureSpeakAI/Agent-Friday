@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-TIERS = REPO / "docs" / "design" / "active" / "bonsai2-tiers.json"
+TIERS = REPO / "src" / "agent_friday" / "resources" / "bonsai2-tiers.json"
 
 # The live record's serving flags for bonsai2:27b on the reference machine
 # (`serve_num_ctx` and `serve_args`), restated as the T5 baseline (D-Q1).
