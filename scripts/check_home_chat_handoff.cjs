@@ -151,6 +151,13 @@ const settle=page=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(
         await expect(page.getByRole('button',{name:'Preparing…',exact:true})).toBeDisabled();
         await page.evaluate(()=>{handoffFixture.select('other-personal');handoffFixture.setText('A newer chat draft');});
         if(path==='aba')await page.evaluate(()=>{handoffFixture.select('personal');handoffFixture.setText('Changed after returning');});
+        await expect.poll(async()=>{
+          const state=await page.evaluate(()=>handoffFixture.snapshot());
+          return {id:state.id,revision:state.revision,text:state.text,open:state.open};
+        },{timeout:5000,message:'The newer chat draft is rendered before the pending Home reply'}).toEqual({
+          id:path==='aba'?'personal':'other-personal',revision:path==='aba'?2:1,
+          text:path==='aba'?'Changed after returning':'A newer chat draft',open:false
+        });
         const before=await page.evaluate(()=>handoffFixture.snapshot());
         await page.evaluate(()=>finishHomeCreation());await settle(page);
         await expect(page.locator('.fx-error')).toContainText('active chat changed');

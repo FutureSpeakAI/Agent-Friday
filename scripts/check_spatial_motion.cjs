@@ -35,8 +35,11 @@ function layout(arrangement,options={}) {
   return core.spatialLayout({x:16,y:64,w:1568,h:820},
     {enabled:true,viewportWidth:1600,arrangement,...options});
 }
-function equalRect(actual,expected) {
-  for(const key of ['x','y','w','h']) assert.ok(Math.abs(actual[key]-expected[key])<.01,key+' must remain stable');
+function equalRect(actual,expected,diagnostics=false) {
+  for(const key of ['x','y','w','h']) {
+    const delta=Math.abs(actual[key]-expected[key]);
+    assert.ok(delta<.01,key+' must remain stable'+(diagnostics?' (actual='+actual[key]+', expected='+expected[key]+', delta='+delta+', rect='+JSON.stringify(actual)+', layout='+JSON.stringify(expected)+')':''));
+  }
 }
 (async()=>{
   await check('interrupted same-side motion preserves every separating frame',()=>{
@@ -140,7 +143,7 @@ function equalRect(actual,expected) {
         };requestAnimationFrame(tick);});
         unregister();return {values,marker:element.hasAttribute('data-friday-spatial-surface')};
       });
-      samples.values.forEach(sample=>{clear(sample.layout);equalRect(sample.rect,sample.layout.content);});
+      samples.values.forEach(sample=>{clear(sample.layout);equalRect(sample.rect,sample.layout.content,true);});
       assert.equal(samples.marker,false);
     }));
     await check('typing, composition and a real hand lock defer motion then release',()=>mounted(async page=>{
@@ -188,8 +191,16 @@ function equalRect(actual,expected) {
       await page.evaluate(()=>{
         FridayHolographicWorkspace.holdLayout('drag');
         FridayHolographicWorkspace.registerSurface(document.getElementById('window'),{getRect:()=>({x:900,y:80,w:600,h:700})});
+        window.__compactResizeObserved=false;
+        const onResize=()=>{
+          if(innerWidth!==320 || innerHeight!==568)return;
+          window.removeEventListener('resize',onResize);
+          requestAnimationFrame(()=>{window.__compactResizeObserved=true;});
+        };
+        window.addEventListener('resize',onResize);
       });
       await page.setViewportSize({width:320,height:568});
+      await page.waitForFunction(()=>window.__compactResizeObserved===true,null,{timeout:5000});
       const narrow=await page.evaluate(()=>({layout:__snap(),moving:FridayHolographicWorkspace.state.moving}));
       clear(narrow.layout);assert.equal(narrow.moving,false);assert.ok(narrow.layout.content.x+narrow.layout.content.w<=320);
       await page.evaluate(()=>{__style='classic';document.body.classList.remove('friday-experience-enabled');dispatchEvent(new Event('friday:display-style'));});

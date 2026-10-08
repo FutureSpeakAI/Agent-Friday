@@ -45,6 +45,7 @@ async function privacy(page,on){await page.evaluate(on=>appearancePrivacy(on),on
   const browser=await chromium.launch({executablePath,headless:true});
   console.log(JSON.stringify({browser:{executablePath,version:browser.version()}}));
   async function run(name,test,{viewport={width:1600,height:1000},autoLoad=true,initialPrivate=false}={}){
+    process.stdout.write(JSON.stringify({appearanceCase:name,status:'START'})+'\n');
     const page=await browser.newPage({viewport,reducedMotion:'reduce'}),errors=[];
     page.on('pageerror',error=>errors.push(error.message));
     try{
@@ -121,7 +122,8 @@ async function privacy(page,on){await page.evaluate(on=>appearancePrivacy(on),on
       await test(page);
       assert.deepEqual(errors,[],'The actual mounted editor must not throw');
       results.push({name,status:'passed'});
-    }catch(error){results.push({name,status:'failed',message:error.message});}
+      process.stdout.write(JSON.stringify({appearanceCase:name,status:'PASS'})+'\n');
+    }catch(error){results.push({name,status:'failed',message:error.message});process.stdout.write(JSON.stringify({appearanceCase:name,status:'FAIL',error:error.message})+'\n');}
     finally{await page.close();}
   }
   try{

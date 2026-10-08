@@ -95,6 +95,7 @@ const mountedSource = ['useFridayConversationDrafts', 'ConversationRow', 'Conver
           const [pause, setPause] = React.useState({kind:'privacy_hold',message:'Synthetic pending decision'});
           const [list, setList] = React.useState(fixtureConversations.slice());
           const [visible, setVisible] = React.useState(true);
+          React.useEffect(() => { window.fixtureSurfaceUnmounted = !visible; }, [visible]);
           const [listOpen, setListOpen] = React.useState(false);
           const openConversation = id => {
             fixtureOpens.push(id); epoch.current += 1;
@@ -183,7 +184,11 @@ const mountedSource = ['useFridayConversationDrafts', 'ConversationRow', 'Conver
     });
     for (const path of ['different','aba','same-turn','unmount']) await run('late success cannot take ownership after ' + path, async page => {
       await start(page);
-      if (path === 'unmount') await page.evaluate(() => fixtureUnmount());
+      if (path === 'unmount') {
+        await page.evaluate(() => fixtureUnmount());
+        await expect(page.locator('#host')).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => window.fixtureSurfaceUnmounted), {timeout:5000,message:'The chat surface unmount and passive effects have committed'}).toBe(true);
+      }
       else if (path === 'same-turn') await page.evaluate(() => fixtureStartAnotherTurn());
       else {
         await page.evaluate(() => fixtureSelect('conv-other'));

@@ -72,7 +72,10 @@ def permit(_owner, *, purpose="act"):
 
 @pytest.fixture
 def isolated_browsers(tmp_path, monkeypatch):
-    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    test_home = tmp_path.resolve()
+    monkeypatch.setenv("FRIDAY_HOME", str(test_home))
+    # Creation and cleanup share the fixture's canonical root across workers.
+    monkeypatch.setattr(bs, "friday_home", lambda: test_home)
     # Release proofs can select an installed testing binary after home
     # isolation. Ordinary CI retains Playwright's bundled Chromium choice.
     executable = os.environ.get("FRIDAY_TEST_BROWSER_EXECUTABLE")
