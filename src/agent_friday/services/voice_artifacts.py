@@ -27,9 +27,12 @@ ARTIFACTS = {
         "source": "k2-fsa/sherpa-onnx release asr-models",
         "url": ("https://github.com/k2-fsa/sherpa-onnx/releases/download/{revision}/"
                 "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2"),
+        # The release tag is a moving name; the SHA-256 (GitHub's own asset
+        # digest for this exact file) is what pins the bytes.
         "revision": "asr-models",
-        "sha256": None,
-        "size_mb": 682,
+        "sha256": "c6bf5e0df765f9d5b43bc9e0536d4b4b3e7d40bdf5ecf13e45f134c51c05ae3a",
+        "size_bytes": 475271763,
+        "size_mb": 454,
         "licence": "OpenMDW-1.1",
         "dest": "voice/ear/nemotron-3.5-streaming-int8",
         "requires": ["sherpa-onnx"],
@@ -38,9 +41,10 @@ ARTIFACTS = {
         "label": "sherpa-onnx runtime (streaming recognizer)",
         "kind": "pip",
         "package": "sherpa-onnx",
-        "version": None,
+        # 1.13.8 has a Windows wheel for CPython 3.10 to 3.14 (PyPI).
+        "version": "1.13.8",
         "sha256": None,
-        "size_mb": 30,
+        "size_mb": 3,
         "licence": "Apache-2.0",
         "source": "PyPI",
     },
@@ -60,24 +64,30 @@ ARTIFACTS = {
     "voice-front-4b": {
         "label": "Qwen3-4B-Instruct-2507 Q4_K_M (voice front)",
         "kind": "file",
-        "source": "Qwen/Qwen3-4B-Instruct-2507-GGUF (Hugging Face)",
-        "url": ("https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507-GGUF/resolve/"
+        # Qwen publishes no GGUF of the 2507 Instruct model; unsloth's
+        # Apache-2.0 quantisation of it carries the same file name.
+        "source": "unsloth/Qwen3-4B-Instruct-2507-GGUF (Hugging Face)",
+        "url": ("https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/"
                 "{revision}/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"),
-        "revision": None,
-        "sha256": None,
-        "size_mb": 2500,
+        "revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+        "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+        "size_bytes": 2497281120,
+        "size_mb": 2382,
         "licence": "Apache-2.0",
         "dest": "models/gguf/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
     },
     "voice-front-1.7b": {
         "label": "Qwen3-1.7B Q4_K_M (voice front beside the brain)",
         "kind": "file",
-        "source": "Qwen/Qwen3-1.7B-GGUF (Hugging Face)",
-        "url": ("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/"
+        # Qwen's own repo now holds only Q8_0; the llama.cpp maintainers'
+        # (ggml-org) Apache-2.0 Q4_K_M of the same model is used instead.
+        "source": "ggml-org/Qwen3-1.7B-GGUF (Hugging Face)",
+        "url": ("https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/"
                 "{revision}/Qwen3-1.7B-Q4_K_M.gguf"),
-        "revision": None,
-        "sha256": None,
-        "size_mb": 1100,
+        "revision": "daeb8e2d528a760970442092f6bf1e55c3b659eb",
+        "sha256": "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5",
+        "size_bytes": 1282439264,
+        "size_mb": 1223,
         "licence": "Apache-2.0",
         "dest": "models/gguf/Qwen3-1.7B-Q4_K_M.gguf",
     },
@@ -85,9 +95,11 @@ ARTIFACTS = {
         "label": "misaki G2P for Kokoro",
         "kind": "pip",
         "package": "misaki",
-        "version": None,
+        # 0.7.4 is the version Kokoro runs with on this stack; 0.9.x moves
+        # the English G2P to phonemizer-fork and is not verified here.
+        "version": "0.7.4",
         "sha256": None,
-        "size_mb": 5,
+        "size_mb": 4,
         # The package's own metadata (misaki 0.7.4) says Apache 2.0.
         "licence": "Apache-2.0",
         "source": "PyPI",
@@ -137,6 +149,25 @@ ARTIFACTS = {
 }
 
 
+#: What each artifact is for, in plain words, for the Settings screen.
+PURPOSE = {
+    "voice-ear-streaming": "Ear: turns your speech into text as you talk, on this computer.",
+    "sherpa-onnx": "Ear runtime: the small program library the ear model runs in.",
+    "voice-vad-v6": "Ear helper: hears when you start and stop speaking.",
+    "voice-front-4b": "Fast reply model: answers short voice questions quickly (best quality).",
+    "voice-front-1.7b": "Fast reply model: a smaller one that fits beside the main model.",
+    "misaki": "Voice helper: tells the Kokoro voice how to pronounce words.",
+    "espeak-ng-helper": "Voice helper (optional): pronounces unusual names.",
+    "espeakng-loader": "Voice helper (optional): the library the name pronouncer needs.",
+    "voice-ear-turbo": "Ear (optional): a larger, more accurate listener.",
+}
+
+
+def size_bytes(artifact_id: str) -> int:
+    a = ARTIFACTS[artifact_id]
+    return int(a.get("size_bytes") or a["size_mb"] * 1024 * 1024)
+
+
 def pinned(artifact_id: str) -> tuple:
     """``(True, "")`` when the artifact can be installed, else ``(False, why)``."""
     a = ARTIFACTS.get(artifact_id)
@@ -170,7 +201,9 @@ def public_rows() -> list:
     for aid, a in ARTIFACTS.items():
         ok, why = pinned(aid)
         out.append({"id": aid, "label": a["label"], "size_mb": a["size_mb"],
-                    "licence": a["licence"], "source": a.get("source"),
+                    "size_bytes": size_bytes(aid), "purpose": PURPOSE.get(aid, ""),
+                    "pinned": ok, "licence": a["licence"], "source": a.get("source"),
                     "optional": bool(a.get("optional")),
+                    "requires": list(a.get("requires") or []),
                     "installable": ok, "why_not": why})
     return out

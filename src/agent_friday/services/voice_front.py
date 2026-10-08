@@ -49,20 +49,20 @@ _NO_THINKING = {"enable_thinking": False}
 FRONT_MODELS = {
     "qwen3-4b-instruct-2507": {
         "label": "Qwen3-4B-Instruct-2507",
-        "repo": "Qwen/Qwen3-4B-Instruct-2507-GGUF",
+        "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
         "file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-        "sha256": None,
-        "size_mb": 2500,
+        "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+        "size_mb": 2382,
         "licence": "Apache-2.0",
         "ctx": 16384,
         "role": "solo",            # V-B: the brain is parked for the call
     },
     "qwen3-1.7b": {
         "label": "Qwen3-1.7B",
-        "repo": "Qwen/Qwen3-1.7B-GGUF",
+        "repo": "ggml-org/Qwen3-1.7B-GGUF",
         "file": "Qwen3-1.7B-Q4_K_M.gguf",
-        "sha256": None,
-        "size_mb": 1100,
+        "sha256": "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5",
+        "size_mb": 1223,
         "licence": "Apache-2.0",
         "ctx": 12288,
         "role": "co_resident",     # V-A: beside the brain in its voice profile
