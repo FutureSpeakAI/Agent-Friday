@@ -16,6 +16,7 @@ jobs:
   pytest:
     name: pytest (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -32,8 +33,11 @@ jobs:
       # Core dependencies come from pyproject.toml, not a hand-copied list. The
       # heavy optional ML stack (sentence-transformers, chromadb, headroom-ai)
       # is deliberately excluded: the application degrades those to no-ops.
+      # The podcast extra (numpy, pandas, num2words) is light and is what the
+      # podcast engine, the spreadsheet briefings and the egress gate's
+      # embedding layer need; the tests that use them also importorskip.
       - name: Install agent-friday with the dev extra
-        run: pip install -e ".[dev,google,federation]"
+        run: pip install -e ".[dev,google,federation,podcast]"
 
       # The tray and GUI-automation modules import display machinery at module
       # scope and are shipped Windows dependencies; the suite collects them.
@@ -49,12 +53,16 @@ jobs:
       - name: Run unit + API suites
         run: pytest tests/unit tests/api -q
 
+      # Runs even when the unit step failed, so the boundary result is always
+      # visible; a cancelled run skips it.
       - name: Run security + egress boundary suites
+        if: ${{ !cancelled() }}
         run: pytest tests/security tests/test_egress_adversarial.py tests/test_judgment_gate.py -q
 
   guards:
     name: repository guards
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -90,6 +98,7 @@ jobs:
   package:
     name: package build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
