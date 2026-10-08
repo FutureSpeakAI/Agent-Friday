@@ -48,18 +48,20 @@ as you save it and tells you whether she can think.
 
 ## Install
 
-1. Download `AgentFriday-Setup-<version>.zip` from the
+1. Download `AgentFriday-Setup-<version>.exe` from the
    [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest).
-2. Unzip it anywhere and double-click **Install Agent Friday.cmd**. It needs no
-   administrator rights; if Windows asks for administrator access, say no. The
-   scripts are not code-signed, so SmartScreen may warn you first.
-3. Answer the installer's questions. The main one is **how Friday should
-   think**: a cloud key only, or also a local model sized to your card.
+2. Double-click it. It needs no administrator rights; if Windows asks for
+   administrator access, say no. The setup program is not code-signed, so
+   SmartScreen may warn you first.
+3. Choose **how Friday should think**. The model page shows the models that fit
+   this computer for two jobs: a *deep thinker* and a *fast responder*. The
+   recommended one is labelled but you pick. Or choose a cloud model and add a
+   key later. Setup downloads no model; if you agree, Friday fetches your
+   choices the first time she starts, and shows the progress.
    Friday installs into `%LOCALAPPDATA%\AgentFriday`, with its own private
-   copy of Python. Ollama is installed only if you choose a local model.
-4. The installer asks whether Friday should start when you sign in (default:
-   no), then runs the setup questions in the terminal and offers to start
-   Friday.
+   copy of Python.
+4. Tick **Start Agent Friday quietly when I sign in** if you want it (default:
+   off), and finish. You get a shortcut on the Desktop and in the Start menu.
 
 Your data never goes in the program folder. It lives in `.friday` in your user
 folder (`%USERPROFILE%\.friday`), which the installer and updates never touch.

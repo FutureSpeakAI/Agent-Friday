@@ -6,8 +6,6 @@
 
 # ── Local launch scripts and environment files (carry API keys) ──────────
 *.bat
-!scripts/install.bat
-!packaging/windows/*.cmd
 *.vbs
 .env
 *.env
@@ -37,7 +35,6 @@ build/
 build_pyi/
 *.manifest
 *.log
-# AgentFriday.spec is tracked on purpose: it is the PyInstaller recipe.
 
 # ── Per-user runtime state (lives under ~/.friday; never in-repo) ────────
 /settings.json

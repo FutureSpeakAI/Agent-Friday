@@ -11,10 +11,13 @@ it, watch the
 
 ## Updating
 
-1. Download the new `AgentFriday-Setup-<version>.zip` from the releases page.
-2. Quit Friday (tray icon → Quit, or close its console window).
-3. Unzip it and double-click **Install Agent Friday.cmd**, exactly as for a
-   first install.
+1. Download the new `AgentFriday-Setup-<version>.exe` from the releases page.
+2. Double-click it, exactly as for a first install. Setup stops Friday itself.
+
+Before changing anything, setup copies your data to a timestamped folder under
+`%USERPROFILE%\.friday-backups`, and when it finishes it checks that your data
+folder still holds every file and that the vault's key files are unchanged. If
+that check fails it says so and tells you where the copy is.
 
 The installer replaces the program in `%LOCALAPPDATA%\AgentFriday` and keeps:
 
@@ -31,8 +34,9 @@ prints these same steps.
 ## Uninstalling
 
 Use **Start → Agent Friday → Uninstall Agent Friday**, or **Settings → Apps**
-in Windows. The uninstaller shows what it will remove and what it will keep,
-then asks you to confirm.
+in Windows. The uninstaller asks whether to keep your notes, conversations and
+settings and the passphrase that unlocks them. **Keeping them is the default**;
+deleting them asks a second time and cannot be undone.
 
 **Always removed:**
 

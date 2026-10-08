@@ -1,92 +1,61 @@
-# Agent Friday 5.14.3
+# Agent Friday™ Beta 1.0
 
-*26 September 2026. FutureSpeak.AI*
+*FutureSpeak.AI*
 
-**A security release.** GitHub's code scanner had flagged 706 possible
-weaknesses in Friday's code, and its dependency scanner had flagged 7 in the
-libraries Friday uses. Every one has now been looked at. The real problems are
-fixed. The rest are recorded, with the reason each is safe, in the project's
-security documents. Two approval rules are also stricter: which files Friday
-may open without asking, and which pictures she may send to a cloud service.
+This is the first beta of Agent Friday™ on its new numbering. It is a
+**pre-release**: it is meant to be tried, and it will have rough edges.
 
-Full detail is in the [CHANGELOG](CHANGELOG.md); what is not right yet is in
-[KNOWN_ISSUES](KNOWN_ISSUES.md).
+## One file to install
 
----
+Download `AgentFriday-Setup-1.0.0-beta.1.exe` below and double-click it.
 
-## What was fixed
+- It installs for you alone. It does not ask for administrator rights, and it
+  sends nothing anywhere.
+- It brings its own Python and everything Agent Friday needs to start. You do not
+  need Python, git, or a terminal.
+- It is **not code-signed**, so Windows SmartScreen may ask you to confirm.
+  Choose *More info*, then *Run anyway*, after checking the file against the
+  `.sha256` file published beside it.
 
-Most of what the scanners flagged turned out to be safe, but some of it was
-real. The most important:
+## Choose how Agent Friday thinks
 
-- **Files outside Friday's folders could be deleted or read.** Some requests
-  took a name from the caller and used it as part of a file path without
-  checking it. A crafted name could delete a folder next to Friday's task or
-  project store, or read a file elsewhere in your home folder. Every such name
-  is now checked to stay inside the folder it belongs to. Nothing we know of
-  used this, and reaching it needed access to Friday itself.
-- **Error messages showed internals.** When something failed, some screens
-  showed the raw technical error, which could include file paths or pieces of
-  a program trace. Screens now say plainly what failed, with a short error
-  code; the full details go to Friday's log on your PC under that code. Friday
-  herself still sees the real error, so she can explain what went wrong.
-- **A web page could steer a fetch.** When Friday reads an article for you, a
-  link could redirect her to an address on your own network. Every redirect is
-  now checked.
-- **A few things were written or logged less carefully than they should be.**
-  - Your "never send" list entries could appear in a log file.
-  - Sign-in tokens for one kind of connection had a plain-text fallback.
-  - Errors that quoted a web address could log a key that was part of that
-    address.
+Setup looks at your computer (memory, graphics card, free disk space; it stays on
+your computer) and shows only the Bonsai models that fit it, for two jobs:
 
-  All three are fixed.
-- **Some text checks could be made very slow.** A specially written message
-  could make certain text checks run for seconds or minutes. They now run in a
-  fraction of a second whatever they are given.
+- a **fast responder**, for voice and quick replies; and
+- a **deep thinker**, for the harder work.
 
-## New approval rules
+One choice is marked *Recommended*. Nothing is chosen for you. Or choose a cloud
+model and add a key later in Settings.
 
-- **Opening files.** Friday opens documents, pictures, music, videos, plain
-  text and folders for you straight away. Anything else asks first, with an
-  approval card that says where the request came from, and never runs quietly.
-  That includes programs, scripts, shortcuts, and web pages saved as files.
-  If something Friday read (an email, a web page) tries to get her to open a
-  program, the card makes that visible.
-- **Pictures for video and music.** When Friday makes a video or music from a
-  picture, she uses pictures from her own creations folder, or one you named
-  yourself in the conversation. Any other picture needs your approval first,
-  because it would be uploaded to a cloud generation service.
+Setup downloads **no** model. If you tick the box, Agent Friday fetches your
+choices the first time she starts, shows the progress, checks every file against
+the publisher's checksum, and picks up where she stopped if the connection drops.
 
-## Other changes
+## Updating from 5.x
 
-- **Local news is yours to set.** Friday no longer ships with one city's local
-  news outlets built in. To keep a Local section in your briefing, open News ›
-  Customize Briefing › Local beat and enter your city and the local outlets you
-  trust.
-- **The GPU voice option installs from Settings.** The optional NVIDIA voice
-  tier is no longer part of Friday's standard dependency list. Settings installs
-  it, pinned to a tested version, when you ask for it. Nothing changes for you
-  unless you use it.
-- **Task results come back to your chat.** When a task you started from a chat
-  needs your approval, the result now appears in that chat once you approve.
-- **An honest health line.** A privacy layer that is off on purpose is no longer
-  reported as broken. One that should be running and is not still is.
+You can install this over 5.14.3 or any earlier 5.x release. Before changing
+anything, setup stops Agent Friday and copies your data to a dated folder under
+`.friday-backups` in your user folder. When it finishes it checks that your data
+folder has every file it had before and that your vault's key files are
+unchanged. Your notes, settings and passphrase are never deleted by an update.
 
-## Security
+Beta 1.0 is numerically lower than 5.14.3 (1.0.0b1 against 5.14.3), but it is
+newer. Agent Friday and the setup program order releases by a build sequence, so
+5.14.3 is never offered to this beta as an upgrade.
 
-Four ChromaDB advisories have no fix yet. Friday uses ChromaDB only inside the
-app and never runs the server they affect, so they cannot be reached; see
-[docs/security/dependency-advisories.md](docs/security/dependency-advisories.md).
+## Uninstalling
 
-## Upgrade notes
+Uninstall asks whether to keep your notes, conversations and settings. Keeping
+them is the default.
 
-- **Your data and your vault passphrase are preserved.** Run the new installer
-  over the old one. [Updating](docs/user-guide/updating-and-uninstalling.md)
-- **If you used the Local news section**, set your city and outlets in News ›
-  Customize Briefing › Local beat after upgrading.
+## Known limits of this beta
 
-## Known issues
+- The fast responder you choose is recorded and downloaded, but spoken
+  conversation still runs on its own small model for now. See
+  [KNOWN_ISSUES](KNOWN_ISSUES.md).
+- Before this release is published, an automated run installs it on a clean
+  Windows machine, uninstalls it keeping the data, reinstalls it, and upgrades a
+  5.14.3 install in place. It has had little time on real computers.
 
-The most likely to affect you: moving your `.friday` folder to another PC
-holds outward actions until you re-confirm the rules in Settings. All known
-issues, with workarounds, are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+Build sequence: 101000001

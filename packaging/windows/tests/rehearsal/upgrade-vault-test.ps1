@@ -51,17 +51,35 @@
 
     ISOLATION IS ASSERTED, NOT ASSUMED. If the redirected profile does not
     take, this script stops before it can touch the real ~/.friday.
+
+    UPGRADING WITH THE INNO SETUP PROGRAM (-UpgradeExe)
+    ---------------------------------------------------
+    Beta 1.0 ships as AgentFriday-Setup-<tag>.exe, not a zip. With -UpgradeExe
+    the base is still a published release zip (v5.14.3 ships one), and the
+    upgrade is the new exe run silently over it, with /DIR pointing at the same
+    root. On top of the questions above it then asks:
+
+        7. did the installer back the data home up BEFORE touching files, and
+           did its own before/after check pass (file count, vault key hashes)?
+        8. did the Desktop and Start menu shortcuts land where the shell says
+           the Desktop and Start menu are?
+        9. did the 5.x installer's Apps entry give way to the new one, and does
+           the manifest carry the build sequence?
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string] $BaseZip,
-    [Parameter(Mandatory)][string] $UpgradeZip,
+    [string] $UpgradeZip = '',
+    [string] $UpgradeExe = '',
     [Parameter(Mandatory)][string] $Root,
     [Parameter(Mandatory)][string] $Label
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
+
+if ((-not $UpgradeZip) -and (-not $UpgradeExe)) { throw 'give -UpgradeZip or -UpgradeExe' }
+if ($UpgradeZip -and $UpgradeExe) { throw 'give -UpgradeZip or -UpgradeExe, not both' }
 
 function Note($m) { Write-Host ("[{0}] {1}" -f $Label, $m) }
 
@@ -83,8 +101,10 @@ Note "redirected to  : $FakeHome"
 # --- Extract both assets --------------------------------------------------
 Note "extracting base    : $(Split-Path -Leaf $BaseZip)"
 Expand-Archive -LiteralPath $BaseZip -DestinationPath $BaseDir -Force
-Note "extracting upgrade : $(Split-Path -Leaf $UpgradeZip)"
-Expand-Archive -LiteralPath $UpgradeZip -DestinationPath $UpDir -Force
+if ($UpgradeZip) {
+    Note "extracting upgrade : $(Split-Path -Leaf $UpgradeZip)"
+    Expand-Archive -LiteralPath $UpgradeZip -DestinationPath $UpDir -Force
+}
 
 function Find-Installer([string] $dir) {
     $p = Get-ChildItem -LiteralPath $dir -Recurse -Filter 'install.ps1' -File |
@@ -95,9 +115,14 @@ function Find-Installer([string] $dir) {
 }
 
 $baseInstaller = Find-Installer $BaseDir
-$upInstaller   = Find-Installer $UpDir
 Note "base installer : $baseInstaller"
-Note "up   installer : $upInstaller"
+$upInstaller = ''
+if ($UpgradeZip) {
+    $upInstaller = Find-Installer $UpDir
+    Note "up   installer : $upInstaller"
+} else {
+    Note "up   installer : $UpgradeExe (Inno Setup, silent)"
+}
 
 # --- Run an installer with the profile redirected -------------------------
 function Invoke-Installer([string] $script, [string] $tag) {
@@ -115,6 +140,27 @@ function Invoke-Installer([string] $script, [string] $tag) {
                 '-NoProfile','-ExecutionPolicy','Bypass','-File', $script,
                 '-InstallRoot', $InstallRoot, '-Unattended', '-SkipOllama', '-SkipMemory'
              )
+        return $p.ExitCode
+    } finally {
+        $env:USERPROFILE = $RealHome
+        $env:HOME        = $RealHome
+    }
+}
+
+# --- The new setup program, silent, over the same root ----------------------
+function Invoke-InnoUpgrade {
+    $log = Join-Path $Root 'run-upgrade.log'
+    $env:USERPROFILE = $FakeHome
+    $env:HOME        = $FakeHome
+    $env:HOMEDRIVE   = (Split-Path -Qualifier $FakeHome)
+    $env:HOMEPATH    = (Split-Path -NoQualifier $FakeHome)
+    $env:FRIDAY_SKIP_MODEL = '1'
+    try {
+        $p = Start-Process -FilePath $UpgradeExe -PassThru -Wait -NoNewWindow `
+             -RedirectStandardOutput $log -RedirectStandardError "$log.err" `
+             -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-',
+                             "/DIR=`"$InstallRoot`"", "/LOG=`"$(Join-Path $Root 'setup-upgrade.log')`"",
+                             '/ModelsCloud=1', '/SkipMemory=1', '/SkipJudgment=1')
         return $p.ExitCode
     } finally {
         $env:USERPROFILE = $RealHome
@@ -234,7 +280,9 @@ Note "app version before upgrade : $verBefore"
 
 # --- 3. Upgrade in place --------------------------------------------------
 Note 'installing UPGRADE over the same InstallRoot'
-$rc2 = Invoke-Installer $upInstaller 'upgrade'
+$legacyArp = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentFriday'
+$legacyArpBefore = Test-Path $legacyArp
+if ($UpgradeExe) { $rc2 = Invoke-InnoUpgrade } else { $rc2 = Invoke-Installer $upInstaller 'upgrade' }
 Note "upgrade installer exit = $rc2"
 
 # --- 4. The three questions ----------------------------------------------
@@ -395,10 +443,38 @@ print(json.dumps(out))
     $survivalError = $surv.error
 }
 
+# --- 7-9. What only the Inno upgrade claims -------------------------------
+$inno = [ordered]@{ checked = [bool]$UpgradeExe }
+if ($UpgradeExe) {
+    $dataCheck = $null
+    try { $dataCheck = Get-Content -LiteralPath (Join-Path $InstallRoot 'logs\data-check.json') -Raw | ConvertFrom-Json } catch { }
+    $inno.data_check_ok = [bool]($dataCheck -and $dataCheck.ok)
+    $inno.files_before = $(if ($dataCheck) { $dataCheck.files_before } else { $null })
+    $inno.files_after = $(if ($dataCheck) { $dataCheck.files_after } else { $null })
+    $backups = @(Get-ChildItem -LiteralPath (Join-Path $FakeHome '.friday-backups') -Directory -ErrorAction SilentlyContinue)
+    $inno.backup_made = ($backups.Count -gt 0)
+    $inno.backup_has_vault_config = $false
+    if ($backups.Count -gt 0) {
+        $inno.backup_has_vault_config = Test-Path -LiteralPath (Join-Path $backups[0].FullName 'vault\.vault_config.json')
+    }
+    $manifest = $null
+    try { $manifest = Get-Content -LiteralPath (Join-Path $InstallRoot 'install-manifest.json') -Raw | ConvertFrom-Json } catch { }
+    $inno.manifest_build_sequence = $(if ($manifest -and $manifest.PSObject.Properties.Match('build_sequence').Count) { [int64]$manifest.build_sequence } else { 0 })
+    $inno.manifest_installed_by = $(if ($manifest -and $manifest.PSObject.Properties.Match('installed_by').Count) { $manifest.installed_by } else { '' })
+    $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Agent Friday.lnk'
+    $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Agent Friday\Agent Friday.lnk'
+    $inno.desktop_shortcut = Test-Path -LiteralPath $desk
+    $inno.start_menu_shortcut = Test-Path -LiteralPath $menu
+    $inno.legacy_apps_entry_before = $legacyArpBefore
+    $inno.legacy_apps_entry_removed = ($legacyArpBefore -and -not (Test-Path $legacyArp))
+    $inno.first_run_file = Test-Path -LiteralPath (Join-Path $InstallRoot 'first-run.json')
+    $inno.no_model_downloaded = -not (Test-Path -LiteralPath (Join-Path $FakeHome '.friday\runtime\models'))
+}
+
 $summary = [ordered]@{
     label                 = $Label
     base_zip              = (Split-Path -Leaf $BaseZip)
-    upgrade_zip           = (Split-Path -Leaf $UpgradeZip)
+    upgrade_zip           = $(if ($UpgradeZip) { Split-Path -Leaf $UpgradeZip } else { Split-Path -Leaf $UpgradeExe })
     base_exit             = $rc
     upgrade_exit          = $rc2
     version_before        = $verBefore
@@ -420,6 +496,7 @@ $summary = [ordered]@{
     plaintext_line_gone   = $plaintextLineGone
     vault_survives_without_start_bat = $survivedWithoutStartBat
     survival_error        = $survivalError
+    inno                  = $inno
 }
 [System.IO.File]::WriteAllText($Result, ($summary | ConvertTo-Json -Depth 4),
                                (New-Object System.Text.UTF8Encoding($false)))
@@ -442,6 +519,19 @@ if ($relocAvailable) {
     }
 } else {
     Note 'NOTE: this upgrade payload predates the relocation; questions 4-6 were not applicable.'
+}
+
+if ($UpgradeExe) {
+    if ($rc2 -ne 0)                        { $fail += "the setup program exited $rc2" }
+    if (-not $inno.data_check_ok)          { $fail += 'the installer''s own before/after data check did not pass' }
+    if (-not $inno.backup_made)            { $fail += 'no backup of the data home was made before the upgrade' }
+    if (-not $inno.backup_has_vault_config){ $fail += 'the backup does not contain the vault configuration' }
+    if ($inno.manifest_build_sequence -le 51403) { $fail += 'the manifest does not carry a build sequence above the 5.x line' }
+    if (-not $inno.desktop_shortcut)       { $fail += 'the Desktop shortcut is not where Windows says the Desktop is' }
+    if (-not $inno.start_menu_shortcut)    { $fail += 'the Start menu shortcut is missing' }
+    if ($inno.legacy_apps_entry_before -and -not $inno.legacy_apps_entry_removed) { $fail += 'the 5.x installer''s Apps entry was left behind' }
+    if (-not $inno.first_run_file)         { $fail += 'first-run.json was not written' }
+    if (-not $inno.no_model_downloaded)    { $fail += 'a model was downloaded during setup' }
 }
 
 Write-Host ''

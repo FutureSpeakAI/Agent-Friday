@@ -1,19 +1,28 @@
 name: installer
 
-# Builds the Windows installer and proves it on machines that have never seen
-# Friday: every job below runs on a fresh GitHub-hosted Windows VM.
+# Builds the Windows setup program and proves it on machines that have never
+# seen Friday: every job below runs on a fresh GitHub-hosted Windows VM.
 #
-#   build            packaging/windows/build-installer.ps1 -> the setup zip
-#   fresh-install    install, start, check first run, uninstall
+#   build            packaging/windows/build-installer.ps1 stages the payload and
+#                    compiles AgentFriday-Setup-<tag>.exe with Inno Setup (ISCC)
+#   fresh-install    silent install, shortcuts on the Desktop and in the Start
+#                    menu, /api/health, uninstall keeping the person's data,
+#                    reinstall over it
 #                    (packaging/windows/tests/verify-clean-install.ps1)
-#   upgrade          install the previous published release, create a vault,
-#                    upgrade in place, prove the passphrase and data survive
+#   upgrade          install the PREVIOUS published release the way that release
+#                    ships (a zip and Install Agent Friday.cmd), create a vault,
+#                    upgrade in place with the new exe, prove the passphrase and
+#                    the data survive, the data was backed up first, and the
+#                    shortcuts landed
 #                    (packaging/windows/tests/rehearsal/upgrade-vault-test.ps1)
-#   draft-release    on a version tag only: a DRAFT GitHub release carrying the
-#                    zip, its SHA-256 and RELEASE_NOTES.md. A draft is private
-#                    until a maintainer publishes it by hand.
+#   release          on a version tag only: a PUBLISHED pre-release carrying the
+#                    exe, its SHA-256 and RELEASE_NOTES.md.
 #
-# Pushing a tag is the release decision; nothing here publishes anything.
+# Pushing a version tag is the release decision. The release job runs only
+# after the fresh-install and upgrade jobs have passed.
+#
+# The setup program is unsigned and sends nothing anywhere. The model page is
+# answered with the cloud option in CI, so no model is downloaded.
 
 on:
   workflow_dispatch:
@@ -21,7 +30,7 @@ on:
       previous:
         description: "Published release to upgrade from (tag)"
         required: false
-        default: "v5.13.0"
+        default: "v5.14.3"
   push:
     tags: ["v*"]
 
@@ -33,7 +42,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PREVIOUS_RELEASE: ${{ github.event.inputs.previous || 'v5.13.0' }}
+  PREVIOUS_RELEASE: ${{ github.event.inputs.previous || 'v5.14.3' }}
 
 jobs:
   build:
@@ -48,24 +57,46 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
+          # pyproject spells a beta 1.0.0b1 (PEP 440); the tag spells it 1.0.0-beta.1.
           $v = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          if ("v$v" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} does not match pyproject version $v" }
-      - name: Build the installer
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\build-installer.ps1 -BuildPython python
-      - name: Checksum
+          $m = [regex]::Match($v, '^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$')
+          if (-not $m.Success) { throw "pyproject version $v is not a version this workflow understands" }
+          $expected = $m.Groups[1].Value
+          if ($m.Groups[2].Success) {
+            $word = @{ a = 'alpha'; b = 'beta'; rc = 'rc' }[$m.Groups[2].Value]
+            $expected = "$expected-$word.$($m.Groups[3].Value)"
+          }
+          if ("v$expected" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} does not match pyproject version $v (expected v$expected)" }
+          Write-Host "tag ${{ github.ref_name }} matches pyproject version $v"
+      - name: Inno Setup is available
         shell: pwsh
         run: |
-          $zip = Get-ChildItem packaging/windows/dist/AgentFriday-Setup-*.zip | Select-Object -First 1
-          $h = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower()
-          "$h  $($zip.Name)" | Set-Content -Path "$($zip.FullName).sha256" -Encoding ascii
-          Get-Content "$($zip.FullName).sha256"
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'Inno Setup 6 is not installed and could not be installed' }
+          Write-Host "Inno Setup compiler: $iscc"
+      - name: Build the setup program
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\build-installer.ps1 -BuildPython python
+      - name: The checksum matches the file
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem packaging/windows/dist/AgentFriday-Setup-*.exe | Select-Object -First 1
+          $sha = "$($exe.FullName).sha256"
+          if (-not (Test-Path $sha)) { throw "no checksum file beside $($exe.Name)" }
+          $want = ((Get-Content $sha -Raw).Trim() -split '\s+')[0]
+          $have = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          if ($want -ne $have) { throw "checksum file says $want, the file is $have" }
+          Get-Content $sha
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer
           path: |
-            packaging/windows/dist/AgentFriday-Setup-*.zip
-            packaging/windows/dist/AgentFriday-Setup-*.zip.sha256
+            packaging/windows/dist/AgentFriday-Setup-*.exe
+            packaging/windows/dist/AgentFriday-Setup-*.exe.sha256
           if-no-files-found: error
 
   fresh-install:
@@ -78,17 +109,19 @@ jobs:
         with:
           name: installer
           path: artifact
-      - name: Install, check first run, uninstall
+      - name: Install silently, check first run, uninstall keeping data, reinstall
         shell: powershell
         run: |
-          $zip = Get-ChildItem artifact\AgentFriday-Setup-*.zip | Select-Object -First 1
-          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\verify-clean-install.ps1 -Zip $zip.FullName -WorkDir "$env:RUNNER_TEMP\fresh"
+          $exe = Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\verify-clean-install.ps1 -Setup $exe.FullName -WorkDir "$env:RUNNER_TEMP\fresh"
           exit $LASTEXITCODE
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fresh-install-evidence
-          path: ${{ runner.temp }}/fresh/*.json
+          path: |
+            ${{ runner.temp }}/fresh/*.json
+            ${{ runner.temp }}/fresh/*.log
           if-no-files-found: ignore
 
   upgrade:
@@ -101,27 +134,33 @@ jobs:
         with:
           name: installer
           path: artifact
-      - name: Fetch the previous published installer
+      - name: Fetch the previous published release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download $env:PREVIOUS_RELEASE -R ${{ github.repository }} -p "AgentFriday-Setup-*.zip" -D previous
-      - name: Upgrade in place; the vault must still decrypt
+        run: |
+          # v5.14.3 ships one asset, AgentFriday-Setup-5.14.3.zip: unzip it and
+          # run Install Agent Friday.cmd (the rehearsal drives the install.ps1 inside it).
+          gh release view $env:PREVIOUS_RELEASE -R ${{ github.repository }} --json assets --jq '.assets[].name'
+          gh release download $env:PREVIOUS_RELEASE -R ${{ github.repository }} -p "AgentFriday-Setup-*.zip" -D previous
+      - name: Upgrade in place; the vault must still decrypt and the data must be backed up first
         shell: powershell
         run: |
           $base = Get-ChildItem previous\AgentFriday-Setup-*.zip | Select-Object -First 1
-          $up = Get-ChildItem artifact\AgentFriday-Setup-*.zip | Select-Object -First 1
+          $up = Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1
           powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\rehearsal\upgrade-vault-test.ps1 `
-            -BaseZip $base.FullName -UpgradeZip $up.FullName -Root "$env:RUNNER_TEMP\upgrade" -Label ci
+            -BaseZip $base.FullName -UpgradeExe $up.FullName -Root "$env:RUNNER_TEMP\upgrade" -Label ci
           exit $LASTEXITCODE
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: upgrade-evidence
-          path: ${{ runner.temp }}/upgrade/RESULT.json
+          path: |
+            ${{ runner.temp }}/upgrade/RESULT.json
+            ${{ runner.temp }}/upgrade/setup-upgrade.log
           if-no-files-found: ignore
 
-  draft-release:
+  release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [fresh-install, upgrade]
     runs-on: ubuntu-latest
@@ -133,10 +172,21 @@ jobs:
         with:
           name: installer
           path: artifact
-      - name: Create a draft release (not published)
+      - name: The notes carry the build sequence
+        run: |
+          # The updater orders releases by the "Build sequence: N" line in the
+          # notes (src/agent_friday/release.py), not by version number.
+          seq=$(sed -n 's/^BUILD_SEQUENCE *= *\([0-9_]*\).*/\1/p' src/agent_friday/release.py | tr -d '_')
+          test -n "$seq" || { echo "BUILD_SEQUENCE not found in release.py"; exit 1; }
+          cp RELEASE_NOTES.md "$RUNNER_TEMP/notes.md"
+          if ! grep -qi '^build sequence: *[0-9]' "$RUNNER_TEMP/notes.md"; then
+            printf '\n\nBuild sequence: %s\n' "$seq" >> "$RUNNER_TEMP/notes.md"
+          fi
+          grep -i '^build sequence' "$RUNNER_TEMP/notes.md"
+      - name: Publish the release (a pre-release, not a draft)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" artifact/* \
-            --repo "${{ github.repository }}" --draft --verify-tag \
-            --title "Agent Friday ${{ github.ref_name }}" --notes-file RELEASE_NOTES.md
+          gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
+            --repo "${{ github.repository }}" --verify-tag --prerelease \
+            --title "Agent Friday Beta 1.0" --notes-file "$RUNNER_TEMP/notes.md"
