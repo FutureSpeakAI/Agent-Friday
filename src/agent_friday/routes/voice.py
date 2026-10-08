@@ -2658,9 +2658,27 @@ def voice_setup_install():
     data = request.get_json(silent=True) or {}
     target = str(data.get("target") or "").strip()
     from agent_friday.services import voice_installer
+    # A voice artifact is a download of the owner's disk space and bandwidth:
+    # it starts only from an explicit click that was shown its size.
+    if (voice_installer.TARGETS.get(target) or {}).get("artifact")             and data.get("consent") is not True:
+        return jsonify({"state": "error",
+                        "error": "Downloading needs your confirmation first. "
+                                 "Nothing was downloaded."}), 400
     job = voice_installer.start(target)
     code = 200 if job.get("state") == "running" else 400
     return jsonify(job), code
+
+
+@voice_bp.route('/api/voice/artifacts', methods=['GET'])
+@login_required
+def voice_artifacts_list():
+    """The local voice models (ear, fast reply model, voice helpers) with their
+    size, pin, whether they are installed and any download in progress. Listed
+    in every voice mode so a cloud-mode owner can prepare local voice. Start or
+    resume one with POST /api/voice/setup/install {target, consent: true}."""
+    from agent_friday.services import voice_installer
+    return jsonify({"artifacts": voice_installer.artifact_rows(),
+                    "job": voice_installer.status()})
 
 
 @voice_bp.route('/api/voice/setup/install/status', methods=['GET'])

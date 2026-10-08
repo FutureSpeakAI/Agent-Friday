@@ -55173,6 +55173,7 @@ function PushToTranscribeRows({ s, save }) {
 function VoiceStackCard({ s, save, mc }) {
   const [manifest, setManifest] = useState(null);
   const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
   const pollRef = useRef(null);
   const take = useCallback(d => {
     if (!d) return;
@@ -55190,9 +55191,22 @@ function VoiceStackCard({ s, save, mc }) {
     return () => { stop = true; clearTimeout(pollRef.current); };
   }, [take, s.voice_engine, s.local_voice_tts_engine, s.local_voice_kokoro_voice, s.voice_ear_gpu, s.voice_mouth_gpu]);
   const proveNow = useCallback(action => {
-    if (action && action.kind === 'settings') return;
-    apiFetch('/api/voice/prove', { method: 'POST' }).then(r => r.json()).then(take).catch(() => {});
-  }, [take]);
+    const prove = () => apiFetch('/api/voice/prove', { method: 'POST' }).then(r => r.json()).then(take).catch(() => {});
+    if (action && action.kind === 'settings') {
+      // A settings action either names the setting to change (`set`), which
+      // is saved through the same path every Settings row uses and then
+      // proved again, or names the Settings tab that holds the control.
+      if (action.set && typeof action.set === 'object') {
+        setNote(String(action.label || 'Setting changed') + ': saved. Checking again…');
+        Promise.resolve(save(action.set)).then(prove).catch(() => setNote('That setting could not be saved.'));
+      } else if (action.tab) {
+        window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: action.tab } }));
+      }
+      return;
+    }
+    setNote('');
+    prove();
+  }, [take, save]);
   const engines = mc && mc.ttsEngines || TTS_ENGINES_FALLBACK;
   const sel = s.local_voice_tts_engine || 'piper';
   const stages = manifest && manifest.stages || {};
@@ -55206,6 +55220,7 @@ function VoiceStackCard({ s, save, mc }) {
     /*#__PURE__*/React.createElement(StRow, { label: "Voice readiness", desc: "A stage turns green only after it has actually heard, thought or spoken in the last 15 minutes, so green means it works now, not merely that it is installed." },
       /*#__PURE__*/React.createElement("div", null,
         err && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.7 } }, err),
+        note && /*#__PURE__*/React.createElement("div", { role: "status", style: { fontSize: 11, opacity: 0.8, marginBottom: 4 } }, note),
         ['ear', 'mind', 'mouth'].map(k => /*#__PURE__*/React.createElement(VoiceStackRow, { key: k, stage: k, st: stages[k], onProve: proveNow, contract: manifest && manifest.contract })),
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 } },
           /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '5px 12px' }, onClick: () => proveNow(null) }, manifest && manifest.proving ? 'Checking…' : 'Check voice now'),
@@ -55287,6 +55302,82 @@ function VoiceModePicker({ s, save, mc }) {
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
           /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { save({ voice_engine: pending.id }); setPending(null); } }, "Switch to ", pending.label),
           /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => setPending(null) }, "Keep ", cur)))));
+}
+// ── Settings → Voice → Local voice models ────────────────────────────────
+// One row per downloadable piece of the local voice stack (the ear, the fast
+// reply model, the voice helpers), listed in EVERY voice mode so an owner on
+// cloud voice can prepare local voice. Nothing is fetched until the owner has
+// seen the size and confirmed it; the server downloads only pinned files,
+// checks each against its SHA-256, and resumes a stopped download.
+function voiceArtifactSize(mb) {
+  return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
+}
+function LocalVoiceModels() {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+  const [ask, setAsk] = useState(null);
+  const load = useCallback(() => apiFetch('/api/voice/artifacts').then(r => r.json()).then(d => {
+    setRows(d && d.artifacts || []);
+    setErr('');
+  }).catch(() => setErr('Could not read the list of local voice models.')), []);
+  useEffect(() => { load(); }, [load]);
+  const running = (rows || []).some(r => r.job && r.job.state === 'running');
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(load, 1500);
+    return () => clearInterval(t);
+  }, [running, load]);
+  const start = row => {
+    setAsk(null);
+    setErr('');
+    apiFetch('/api/voice/setup/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: row.id, consent: true })
+    }).then(r => r.json()).then(j => {
+      if (j && j.state === 'error') setErr(j.error || 'The download did not start.');
+      load();
+    }).catch(() => setErr('Could not reach the server to start the download.'));
+  };
+  const stop = () => apiFetch('/api/voice/setup/install/cancel', { method: 'POST' }).then(() => load()).catch(() => {});
+  const byId = {};
+  (rows || []).forEach(r => { byId[r.id] = r; });
+  // What a click downloads: the row plus any not-yet-installed piece it needs.
+  const needs = r => [r].concat((r.requires || []).map(i => byId[i]).filter(x => x && !x.installed));
+  const stateOf = r => {
+    const j = r.job;
+    if (j && j.state === 'running') {
+      const p = j.progress;
+      return ['downloading' + (p && p.total ? ' ' + Math.floor(100 * p.done / p.total) + '%' : '…'), '#38bdf8'];
+    }
+    if (r.installed) return ['installed', '#00ff80'];
+    if (j && j.state === 'error') return ['failed: ' + (j.error || 'no reason given'), '#ef4444'];
+    if (j && j.state === 'cancelled') return ['stopped; Download continues where it stopped', 'var(--st-dim)'];
+    if (!r.installable) return ['not available yet: ' + r.why_not, 'var(--st-dim)'];
+    return ['not installed', 'var(--st-dim)'];
+  };
+  if (rows === null) return React.createElement('div', { style: { fontSize: 11.5, color: 'var(--st-dim)' } }, err || 'Reading the local voice models…');
+  return React.createElement('div', null,
+    err && React.createElement('div', { role: 'alert', style: { fontSize: 11.5, color: '#ef4444', marginBottom: 8 } }, err),
+    rows.map(r => {
+      const [text, color] = stateOf(r);
+      const isRunning = !!(r.job && r.job.state === 'running');
+      const can = !r.installed && r.installable && !isRunning;
+      const group = needs(r);
+      const mb = group.reduce((n, x) => n + (x.size_mb || 0), 0);
+      const redo = r.job && (r.job.state === 'error' || r.job.state === 'cancelled');
+      return React.createElement(StRow, { key: r.id, label: r.label + (r.optional ? ' (optional)' : ''), desc: r.purpose },
+        React.createElement('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 } },
+          React.createElement('span', { style: { opacity: 0.75 } }, voiceArtifactSize(r.size_mb)),
+          React.createElement('span', { role: 'status', style: { color } }, text),
+          can && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: () => setAsk(r.id) }, redo ? 'Continue download' : 'Download'),
+          isRunning && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: stop }, 'Stop')),
+        ask === r.id && React.createElement('div', { style: { marginTop: 8, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
+          React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Download ' + voiceArtifactSize(mb) + '?'),
+          React.createElement('div', null, group.map(x => x.label + ' (' + voiceArtifactSize(x.size_mb) + ')').join(' and ') + ' will be saved on this computer. It comes from ' + (r.source || 'its publisher') + ' under the ' + r.licence + ' licence, and is checked against a fixed checksum before it is used; a file that does not match is deleted. If the download stops, Continue download picks up where it left off.'),
+          React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
+            React.createElement('button', { className: 'settings-btn active', style: { fontSize: 11 }, onClick: () => start(r) }, 'Download ' + voiceArtifactSize(mb)),
+            React.createElement('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => setAsk(null) }, 'Not now'))));
+    }));
 }
 /** What voice cannot do, and why (from /api/voice/restrictions). Voice can do
  *  anything chat can; these are the limits that remain: the user's own
@@ -55438,6 +55529,9 @@ function SettingsTabVoice({
     key: v,
     value: v
   }, l))))), /*#__PURE__*/React.createElement(StSection, {
+  title: "Local voice models",
+  desc: "The pieces of on-device voice, whichever mode is selected now. Nothing downloads until you confirm its size."
+}, /*#__PURE__*/React.createElement(LocalVoiceModels, null)), /*#__PURE__*/React.createElement(StSection, {
   title: "Conversation style",
   desc: "These preferences apply to your next voice session."
 }, /*#__PURE__*/React.createElement(StRow, {
