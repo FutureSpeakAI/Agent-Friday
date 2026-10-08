@@ -3746,6 +3746,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- The artifact panel beside every chat (defines window.FridayArtifactHost). -->
     <script src="/static/friday_repo_atlas.js"></script>
     <script src="/static/friday_artifacts.js"></script>
+    <link rel="stylesheet" href="/static/friday_code_studio.css">
+    <script src="/static/friday_code_studio.js"></script>
     <!-- Publish to web: the card body and the Settings section (defines window.FridayPublishCard). -->
     <script src="/static/friday_publish.js"></script>
     <script src="/static/friday_bundles.js"></script>
@@ -15180,6 +15182,7 @@ function fridayResizeCursor(dir) {
 // this shell so the panel is one column added next to the chat, never a
 // change inside it. When the script is absent the shell is a Fragment.
 function FridayChatShell(props) {
+  if (props.mode === 'code') return React.createElement('div', { className: 'cs-native-chat', 'data-code-chat-surface': '', style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 } }, props.children);
   const Host = window.FridayArtifactHost;
   if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, onCodebaseAsk: props.onCodebaseAsk, chatBusy: props.chatBusy }, props.children);
   return /*#__PURE__*/React.createElement(React.Fragment, null, props.children);
@@ -15269,14 +15272,14 @@ function ChatSurface(props) {
     open: convOpen, setOpen: setConvOpen,
     pickerOpen: convPickerOpen, setPickerOpen: setConvPickerOpen,
     onOpenConversation: openConversation, onBindSeat: bindConvSeat,
-    onRefresh: refreshConvs,
+    onRefresh: refreshConvs, fixedConversation: mode === 'code',
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, mode !== 'code' && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       // A new conversation is not responsible for the old one's turn. Bump the
       // epoch so any reply still in flight lands in the conversation that
@@ -15309,7 +15312,7 @@ function ChatSurface(props) {
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "+ New Chat"), /*#__PURE__*/React.createElement("button", {
+  }, "+ New Chat"), mode !== 'code' && /*#__PURE__*/React.createElement("button", {
     /* HEARTBEAT, ON ONE CLICK.
        The heartbeat runs twice a day and checks calendar and inbox for
        anything time-sensitive. Running it on demand was already possible —
@@ -15461,7 +15464,7 @@ function ChatSurface(props) {
       lineHeight: 1,
       padding: '2px 4px'
     }
-  }, props.traySide === 'left' ? "\u21E4" : "\u21E5") : /*#__PURE__*/React.createElement("button", {
+  }, props.traySide === 'left' ? "\u21E4" : "\u21E5") : mode !== 'code' && /*#__PURE__*/React.createElement("button", {
     onClick: () => setChatOpen(false),
     title: "Close chat",
     "aria-label": "Close chat",
@@ -15837,7 +15840,7 @@ function ChatSurface(props) {
       color: agentSettings.cite_sources ? '#34d399' : '#888',
       transition: 'all .15s'
     }
-  }, "\uD83D\uDCCE Cite Sources", agentSettings.cite_sources ? ' · ON' : ''), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCCE Cite Sources", agentSettings.cite_sources ? ' · ON' : ''), mode !== 'code' && /*#__PURE__*/React.createElement("button", {
     onClick: showSources,
     title: "Generate a source dossier for this conversation \u2014 every claim, its source, confidence, and link",
     style: {
@@ -33307,9 +33310,11 @@ function DevVibe({
 function DevGit({
   repos,
   onLog,
-  onRefresh
+  onRefresh,
+  selectedRepo
 }) {
-  const [repo, setRepo] = useState('');
+  const [localRepo, setRepo] = useState('');
+  const repo = selectedRepo === undefined ? localRepo : selectedRepo;
   const [branches, setBranches] = useState([]);
   const [current, setCurrent] = useState('');
   const [diff, setDiff] = useState('');
@@ -33320,8 +33325,8 @@ function DevGit({
   const [prTitle, setPrTitle] = useState('');
   const [prBody, setPrBody] = useState('');
   useEffect(() => {
-    if (!repo && repos.length) setRepo(repos[0].name);
-  }, [repos]);
+    if (selectedRepo === undefined && !repo && repos.length) setRepo(repos[0].name);
+  }, [repos, selectedRepo]);
   const loadBranches = () => {
     if (!repo) return;
     fetch('/api/git/branches?repo=' + encodeURIComponent(repo)).then(r => r.json()).then(d => {
@@ -33383,7 +33388,7 @@ function DevGit({
       fontSize: 11,
       color: '#9ad'
     }
-  }, "Repo"), /*#__PURE__*/React.createElement("select", {
+  }, "Repo"), selectedRepo !== undefined ? React.createElement('span', {style:{flex:1,fontSize:12,overflowWrap:'anywhere'}}, repo) : /*#__PURE__*/React.createElement("select", {
     className: "input",
     style: {
       flex: 1,
@@ -33914,26 +33919,35 @@ const CODE_TABS = [{
   ico: '📡',
   label: 'Logs'
 }];
-fridayDeclareNav('code', {
-  key: 'tab',
-  keys: ['tab'],
-  sections: CODE_TABS
-});
-function CodeWS() {
-  const TABS = CODE_TABS;
-  const [tab, setTab] = useState('repos');
+const CODE_STUDIO_TABS = [
+  {id:'understand',label:'Understand'}, {id:'files',label:'Files'},
+  {id:'changes',label:'Changes'}, {id:'preview',label:'Preview'},
+  {id:'terminal',label:'Terminal'}, ...CODE_TABS.filter(t=>t.id!=='files')
+];
+fridayDeclareNav('code', {key:'tab', keys:['tab','codebase_id','path'], sections:CODE_STUDIO_TABS});
+function CodeWS({chat}) {
+  const [navTarget, setNavTarget] = useState(null);
+  const navState = useRef({tab:'understand'});
+  useTabState('code', () => navState.current);
+  useNavTarget('code', target => setNavTarget({...target}));
+  return window.FridayCodeStudio
+    ? React.createElement(window.FridayCodeStudio, {chat, navTarget,
+        onNavState: state => { navState.current = state; },
+        tools: {Repos:DevRepos, Git:DevGit, Files:DevFiles, Procs:DevProcs, Logs:DevCodeLogs}})
+    : React.createElement(LegacyCodeWS, {navTarget});
+}
+function DevCodeLogs() { return React.createElement(LegacyCodeWS, {only:'logs'}); }
+function LegacyCodeWS({only, navTarget}) {
+  const TABS = only ? [] : CODE_TABS;
+  const [tab, setTab] = useState(only || 'repos');
+  const [selectedRepo, setSelectedRepo] = useState(undefined);
   const [repos, setRepos] = useState([]);
   const [repoLoading, setRepoLoading] = useState(true);
   const [logs, setLogs] = useState([]);
   const [unseen, setUnseen] = useState(0);
   const [srcFilter, setSrcFilter] = useState('');
   const logBoxRef = useRef(null);
-  // Deep-link: a notification target {workspace:'code', tab:'logs'|'repos'|...}.
-  // what its own tab (↗) opens on: the keys useNavTarget below reads
-  useTabState('code', () => ({ tab }));
-  useNavTarget('code', t => {
-    if (t.tab) setTab(t.tab);
-  });
+  useEffect(() => { if (navTarget && navTarget.tab) setTab(navTarget.tab); }, [navTarget]);
   const scanRepos = () => {
     setRepoLoading(true);
     fetch('/api/repos/scan').then(r => r.json()).then(d => {
@@ -33942,8 +33956,8 @@ function CodeWS() {
     }).catch(() => setRepoLoading(false));
   };
   useEffect(() => {
-    scanRepos();
-  }, []);
+    if (!only) scanRepos();
+  }, [only]);
   // Live log stream via SSE — kept alive across tabs so the badge keeps pulsing.
   useEffect(() => {
     let es;
@@ -33987,7 +34001,7 @@ function CodeWS() {
   };
   return /*#__PURE__*/React.createElement("div", {className:"fr-comp-root fr-comp-code","data-view":tab}, /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
+      display: only ? 'none' : 'flex',
       gap: 4,
       marginBottom: 12,
       flexWrap: 'wrap',
@@ -34025,14 +34039,15 @@ function CodeWS() {
     repos: repos,
     loading: repoLoading,
     onScan: scanRepos,
-    onPick: r => setTab('git')
+    onPick: r => { setSelectedRepo(r.name); setTab('git'); }
   }), tab === 'vibe' && /*#__PURE__*/React.createElement(DevVibe, {
     repos: repos,
     onLog: scanRepos
   }), tab === 'git' && /*#__PURE__*/React.createElement(DevGit, {
     repos: repos,
     onLog: () => {},
-    onRefresh: scanRepos
+    onRefresh: scanRepos,
+    selectedRepo: selectedRepo
   }), tab === 'files' && /*#__PURE__*/React.createElement(DevFiles, null), tab === 'procs' && /*#__PURE__*/React.createElement(DevProcs, {
     onLog: () => {}
   }), tab === 'logs' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -51925,6 +51940,7 @@ function ModelPicker({ intel, need, current, onPick, onClose, note, err, onRetry
   const hiddenUnfit = all.filter(match).filter(m => !fitOK(m)).length;
 
   return E('div', {
+    className: 'fr-model-picker',
     style: {
       background: 'rgba(10,14,26,0.97)', border: '1px solid rgba(0,212,255,0.22)',
       borderRadius: 12, padding: 10, width: 400, maxHeight: 520, overflowY: 'auto',
@@ -52128,18 +52144,19 @@ function ConversationRow({ c, active, onOpen }) {
 /** Which conversation you are in, and which model it uses. */
 function ConversationBar({ convList, convId, convSeat, open, setOpen,
                            pickerOpen, setPickerOpen, onOpenConversation,
-                           onBindSeat, onRefresh }) {
+                           onBindSeat, onRefresh, fixedConversation = false }) {
   const cur = convList.filter(c => c.id === convId)[0];
   const live = convList.filter(c => c.status !== 'archived');
   return E('div', {
-    style: { display: 'flex', alignItems: 'center', gap: 8, position: 'relative' },
+    style: { display: 'flex', alignItems: 'center', gap: 8, position: 'relative',
+      ...(fixedConversation ? { flexWrap: 'wrap', minWidth: 0, width: '100%' } : {}) },
   },
-    E('button', {
-      onClick: () => { setOpen(!open); onRefresh(); },
-      title: 'Switch conversation',
-      'aria-label': 'Switch conversation',
+    E(fixedConversation ? 'span' : 'button', {
+      onClick: fixedConversation ? undefined : () => { setOpen(!open); onRefresh(); },
+      title: fixedConversation ? 'The conversation for this codebase' : 'Switch conversation',
+      'aria-label': fixedConversation ? undefined : 'Switch conversation',
       style: {
-        background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+        background: 'none', border: 'none', cursor: fixedConversation ? 'default' : 'pointer', padding: 0,
         fontFamily: 'Orbitron, sans-serif', fontSize: 11, color: '#00d4ff',
         display: 'flex', alignItems: 'center', gap: 5, maxWidth: 180,
       },
@@ -52147,7 +52164,7 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
       E('span', {
         style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
       }, (cur && cur.title) || 'FRIDAY CHAT'),
-      E('span', { style: { fontSize: 9, opacity: 0.7 } }, '\u25BE')),
+      !fixedConversation && E('span', { style: { fontSize: 9, opacity: 0.7 } }, '\u25BE')),
 
     E('button', {
       onClick: () => setPickerOpen(!pickerOpen),
@@ -52163,7 +52180,7 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
       },
     }, convSeat ? prettyModel(convSeat.model) : 'default model'),
 
-    open ? E('div', {
+    !fixedConversation && open ? E('div', {
       style: {
         position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 2400,
         width: 300, maxHeight: 340, overflowY: 'auto', padding: 6,
@@ -52183,7 +52200,10 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
           }))) : null,
 
     pickerOpen ? E('div', {
-      style: { position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 2400 },
+      className: fixedConversation ? 'fr-code-model-popup' : undefined,
+      style: fixedConversation
+        ? { position: 'static', flexBasis: '100%', minWidth: 0, width: '100%' }
+        : { position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 2400 },
     }, E(ConversationSeatPicker, {
       current: convSeat && convSeat.model,
       onPick: onBindSeat,
@@ -61939,30 +61959,50 @@ function App() {
 
   useEffect(() => { refreshConvs(); }, [refreshConvs]);
 
-  const openConversation = React.useCallback(cid => {
-    if (!cid) return;
+  const openConversation = React.useCallback((cid, options = {}) => {
+    if (!cid) return Promise.resolve(false);
+    const prior = conversationReadyRef.current;
+    if (options.reuseReady && prior && !prior.failed && prior.id === cid
+        && prior.epoch === chatEpoch.current && getConversationId() === cid) {
+      return options.requireReady ? prior.promise : prior.promise.catch(() => false);
+    }
     const epoch = ++chatEpoch.current;
+    const load = {id:cid, epoch, promise:null, failed:false};
+    const ownsLoad = () => chatEpoch.current === epoch && getConversationId() === cid;
     setChatMsgs([]);
     setChatLoad(false);
     setPausePending(null);
+    setUploading(null);
     setConvId(cid);
+    conversationLoadRef.current = cid;
     setConvOpen(false);
-    apiFetch('/api/conversations/' + encodeURIComponent(cid) + '/messages')
-      .then(r => r.json()).then(d => {
-        if (chatEpoch.current !== epoch) return;
-        setChatMsgs((d.messages || []).map(m => ({
+    setConvSeat(null);
+    const ready = apiFetch('/api/conversations/' + encodeURIComponent(cid) + '/messages')
+      .then(async r => {
+        if (!r.ok) throw new Error('Could not load this conversation. Try again.');
+        const d = await r.json();
+        if (!ownsLoad()) {
+          throw new Error('The conversation changed before it was ready.');
+        }
+        if (!Array.isArray(d.messages)) throw new Error(d.error || 'Could not load this conversation. Try again.');
+        setChatMsgs(d.messages.map(m => ({
           role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
-          text: m.text || '',
-          time: m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : '',
-          model: (m.meta || {}).model,
-          seat: (m.meta || {}).seat,
-          kind: (m.meta || {}).kind,
-          trace_id: (m.meta || {}).trace_id,
+          text: m.text || '', time: m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : '',
+          model: (m.meta || {}).model, seat: (m.meta || {}).seat,
+          kind: (m.meta || {}).kind, trace_id: (m.meta || {}).trace_id
         })));
-      }).catch(() => { if (chatEpoch.current === epoch) setChatMsgs([]); });
+        return true;
+      }).catch(error => {
+        if (ownsLoad()) setChatMsgs([{role:'system', text:error.message}]);
+        load.failed = true;
+        throw error;
+      });
     apiFetch('/api/conversations/' + encodeURIComponent(cid))
-      .then(r => r.json()).then(d => { if (chatEpoch.current === epoch) setConvSeat((d.conversation || {}).seat || null); })
-      .catch(() => { if (chatEpoch.current === epoch) setConvSeat(null); });
+      .then(r => r.json()).then(d => { if (ownsLoad()) setConvSeat((d.conversation || {}).seat || null); })
+      .catch(() => { if (ownsLoad()) setConvSeat(null); });
+    load.promise = ready;
+    conversationReadyRef.current = load;
+    return options.requireReady ? ready : ready.catch(() => false);
   }, []);
 
   /* An APPROVED CARD FINISHING has to show up in the DOCKED chat too.
@@ -62010,8 +62050,10 @@ function App() {
       }
       if (!ev || ev.type !== 'approval_result') return;
       if (ev.conversation_id && ev.conversation_id !== convId) return;
+      const refreshEpoch = chatEpoch.current;
       apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
         .then(r => r.json()).then(d => {
+          if (stopped || chatEpoch.current !== refreshEpoch || getConversationId() !== convId) return;
           setChatMsgs((d.messages || []).map(m => ({
             role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
             text: m.text || '',
@@ -62030,7 +62072,7 @@ function App() {
   useEffect(() => {
     if (convId && convIdRef.current !== convId) {
       convIdRef.current = convId;
-      openConversation(convId);
+      if (conversationLoadRef.current !== convId) openConversation(convId);
       // Voice follows the OPEN thread, not the one that happened to be open
       // when the mic was pressed. The socket carries the thread as a query
       // param at connect; this keeps a live session in step when the user switches
@@ -62047,25 +62089,30 @@ function App() {
   /** Bind a model to THIS conversation — never the global default. */
   const bindConvSeat = (m) => {
     const seat = m ? { model: m.id, provider: (m.providers || [])[0] } : null;
-    const selectionEpoch = chatEpoch.current;
+    const selectionEpoch = chatEpoch.current, selectionConversation = convId;
+    const ownsSelection = () => chatEpoch.current === selectionEpoch && getConversationId() === selectionConversation;
+    if (!ownsSelection()) return;
+    const setOwnedSeat = ownedChatUpdate(setConvSeat), setOwnedMsgs = ownedChatUpdate(setChatMsgs);
     setConvPickerOpen(false);
-    fridaySaveConversationSeat(convId, seat, saved => {
-      if (chatEpoch.current !== selectionEpoch) return;
-      setConvSeat(saved);
-      setChatMsgs(p => [...p, {
+    fridaySaveConversationSeat(selectionConversation, seat, saved => {
+      if (!ownsSelection()) return;
+      setOwnedSeat(saved);
+      setOwnedMsgs(p => [...p, {
         role: 'system', kind: 'seat_change',
         text: saved ? ('This chat now uses ' + prettyModel(saved.model) + ' for its next turn.')
                     : 'This chat now follows your default model.',
       }]);
       refreshConvs();
     }, error => {
-      if (chatEpoch.current === selectionEpoch) fridayToast(error.message);
+      if (ownsSelection()) fridayToast(error.message);
     }, message => {
-      if (chatEpoch.current === selectionEpoch) fridayToast(message);
+      if (ownsSelection()) fridayToast(message);
     });
   };
 
   const chatEpoch = useRef(0);
+  const conversationReadyRef = useRef(null);
+  const conversationLoadRef = useRef(null);
   const inFlightEpoch = useRef(-1);
   const inFlightSince = useRef(0);
   /* The id this turn was sent under, so the client can ASK whether it is
@@ -65701,12 +65748,30 @@ function App() {
      whatever disclosure the server attached. */
   const chatFileRef = React.useRef(null);
   const [uploading, setUploading] = useState(null);
-  const uploadFile = file => fridayAnalyzeFile(file, setChatMsgs, setUploading);
+  // Delayed native actions may update only the conversation that started them.
+  const ownedChatUpdate = setter => {
+    const ownerConversation = getConversationId(), ownerEpoch = chatEpoch.current;
+    const current = () => getConversationId() === ownerConversation && chatEpoch.current === ownerEpoch;
+    return value => {
+      if (current()) setter(previous => current() ? (typeof value === 'function' ? value(previous) : value) : previous);
+    };
+  };
+  const uploadFile = file => fridayAnalyzeFile(file, ownedChatUpdate(setChatMsgs), ownedChatUpdate(setUploading));
 
   const sendChat = async (overrideMsg, opts) => {
     const m = (overrideMsg || chatIn).trim();
     if (!m) return;
     opts = opts || {};
+    const turnConversation = getConversationId();
+    const turnEpoch = chatEpoch.current;
+    const ownsTurn = () => chatEpoch.current === turnEpoch && getConversationId() === turnConversation;
+    if (opts.expectedConversationId && opts.expectedConversationId !== turnConversation) {
+      throw new Error('Open this codebase’s conversation before asking.');
+    }
+    const setTurnMsgs = value => { if (ownsTurn()) setChatMsgs(previous => ownsTurn() ? (typeof value === 'function' ? value(previous) : value) : previous); };
+    const setTurnBusy = value => { if (ownsTurn()) setChatLoad(value); };
+    const setTurnPause = value => { if (ownsTurn()) setPausePending(value); };
+
     /* The user's own message renders IMMEDIATELY and synchronously. Nothing
        about echoing what they just typed needs the server's permission.
          An awaited /api/work/forecast call ahead of the optimistic render
@@ -65716,7 +65781,7 @@ function App() {
        tokens. */
     if (!opts.alreadyShown) {
       if (!opts.preserveDraft) setChatIn('');
-      setChatMsgs(p => [...p, {
+      setTurnMsgs(p => [...p, {
         role: 'user',
         text: m,
         time: new Date().toLocaleTimeString()
@@ -65730,7 +65795,7 @@ function App() {
         // Same conversation, turn still running: a double-tap. Say so rather
         // than swallowing it — a silent return is indistinguishable from a
         // hang, which is how this was reported.
-        setChatMsgs(p => [...p, {
+        setTurnMsgs(p => [...p, {
           role: 'system', kind: 'busy',
           text: 'Still finishing the previous message here. This one was not sent — '
             + 'send it again once she replies, or start a new chat to talk while it runs.',
@@ -65739,7 +65804,7 @@ function App() {
       }
       // A different conversation owns that turn. It keeps running and reports
       // back to where it started; this chat is free to talk.
-      setChatLoad(false);
+      setTurnBusy(false);
     }
     if (!opts.skipForecast) {
       try {
@@ -65754,10 +65819,11 @@ function App() {
           })
         });
         const f = await fr.json();
+        if (!ownsTurn()) { if (opts.expectedConversationId) throw new Error('The conversation changed. Send this request again from its codebase.'); return; }
         const seatId = (f && (f.affects || [])[0]) || curOrchId || 'unknown';
         const priorChoice = pauseAnswered[seatId];
         if (f && f.will_pause && !agentSettings.pause_warnings_off && !priorChoice) {
-          setPausePending({
+          setTurnPause({
             forecast: f,
             message: m,
             seatId: seatId
@@ -65769,9 +65835,13 @@ function App() {
         if (f && f.will_pause && priorChoice === 'now_cloud') {
           opts = { ...opts, routeMode: 'cloud' };
         }
-      } catch (_) {/* a forecast we cannot get must never block a message */}
+      } catch (error) {
+        if (opts.expectedConversationId && !ownsTurn()) throw error;
+        /* A forecast we cannot get must never block a message. */
+      }
     }
-    setPausePending(null);
+    if (!ownsTurn()) { if (opts.expectedConversationId) throw new Error('The conversation changed. Send this request again from its codebase.'); return; }
+    setTurnPause(null);
     inFlightEpoch.current = chatEpoch.current;
     inFlightSince.current = Date.now();
     /* Minted here, sent with the turn, and the handle the liveness poll above
@@ -65780,14 +65850,14 @@ function App() {
     inFlightTurn.current = 'turn-' + Date.now().toString(36) + '-'
       + Math.random().toString(36).slice(2, 8);
     setTurnStatus(null);
-    setChatLoad(true);
+    setTurnBusy(true);
     try {
       const body = {
         message: m,
         voice_mode: voiceOn,
         cite_sources: !!agentSettings.cite_sources,
         // Without this every turn lands in Main and the transcripts merge again.
-        conversation_id: convId || undefined,
+        conversation_id: turnConversation || undefined,
         turn_id: inFlightTurn.current
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
@@ -65797,7 +65867,7 @@ function App() {
       if (frame) body.image = frame;
       // A placeholder the deltas fill in, so the reply appears as it is
       // written instead of arriving whole after a spinner.
-      setChatMsgs(p => [...p, {
+      setTurnMsgs(p => [...p, {
         role: 'friday',
         text: '',
         streaming: true,
@@ -65806,7 +65876,7 @@ function App() {
       let d;
       let streamTraceId = null;
       try {
-        d = await fridayChatTurn(body, piece => setChatMsgs(p => {
+        d = await fridayChatTurn(body, piece => setTurnMsgs(p => {
           const q = p.slice();
           for (let i = q.length - 1; i >= 0; i--) {
             if (q[i].streaming) {
@@ -65819,17 +65889,18 @@ function App() {
           // The placeholder learns its trace before the first word, so its
           // Reasoning section spools while the reply is written.
           streamTraceId = tid;
-          setChatMsgs(p => p.map(x => x.streaming ? { ...x, trace_id: tid } : x));
+          setTurnMsgs(p => p.map(x => x.streaming ? { ...x, trace_id: tid } : x));
           try { window.fridayTraceStore.kick(); } catch (_) {}
         });
       } finally {
         // The placeholder is scaffolding, never the record: the real message
         // is appended below with its model, seat and fallback chain.
-        setChatMsgs(p => p.filter(x => !x.streaming));
+        setTurnMsgs(p => p.filter(x => !x.streaming));
       }
+      if (!ownsTurn()) { if (opts.expectedConversationId) throw new Error('This request was sent to its original conversation. Open it to check the result before sending another request.'); return; }
       // B2: seat changes detected this turn render as system lines BEFORE the
       // reply — a routing flip is never silent again.
-      if (d.seat_events && d.seat_events.length) setChatMsgs(p => [...p, ...d.seat_events.map(ev => ({
+      if (d.seat_events && d.seat_events.length) setTurnMsgs(p => [...p, ...d.seat_events.map(ev => ({
         role: 'system',
         kind: 'seat_change',
         text: '⚙ ' + ev.text,
@@ -65841,7 +65912,7 @@ function App() {
       // Its own `kind` because these are not seat changes and must not borrow
       // that tooltip: a notice that misdescribes itself is the thing this
       // whole line of work exists to remove.
-      if (d.vision_events && d.vision_events.length) setChatMsgs(p => [...p, ...d.vision_events.map(ev => ({
+      if (d.vision_events && d.vision_events.length) setTurnMsgs(p => [...p, ...d.vision_events.map(ev => ({
         role: 'system',
         kind: ev.kind || 'vision_egress',
         text: ev.text,
@@ -65851,18 +65922,18 @@ function App() {
       // system line records it in the transcript and the card offers "send
       // anyway" or "wait". A held turn has no reply to show.
       if (d.privacy_hold) {
-        setChatMsgs(p => [...p, {
+        setTurnMsgs(p => [...p, {
           role: 'system',
           kind: 'privacy_hold',
           text: '\u{1F6E1} ' + d.privacy_hold.text,
           time: new Date().toLocaleTimeString()
         }]);
-        setPausePending({ kind: 'privacy_hold', message: m, hold: d.privacy_hold });
+        setTurnPause({ kind: 'privacy_hold', message: m, hold: d.privacy_hold });
         if (!d.response) return;
       }
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
-      setChatMsgs(p => [...p, {
+      setTurnMsgs(p => [...p, {
         role: 'friday',
         text: d.response,
         model: d.model,
@@ -65881,13 +65952,15 @@ function App() {
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);
     } catch (e) {
-      setChatMsgs(p => [...p, {
+      setTurnMsgs(p => [...p, {
         role: 'friday',
         text: '[Connection error]',
         time: new Date().toLocaleTimeString()
       }]);
+      if (opts.expectedConversationId) throw e;
+    } finally {
+      setTurnBusy(false);
     }
-    setChatLoad(false);
   };
   const sendPrompt = () => {
     if (!promptText.trim()) return;
@@ -65901,7 +65974,7 @@ function App() {
   const toggleCiteSources = () => saveAgentSettings({
     cite_sources: !agentSettings.cite_sources
   });
-  const showSources = () => fridayShowSources(setChatMsgs, setChatLoad);
+  const showSources = () => fridayShowSources(ownedChatUpdate(setChatMsgs), ownedChatUpdate(setChatLoad));
 
   // Existing installs see the full FutureSpeak business pipeline under "Sites";
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
@@ -65921,6 +65994,90 @@ function App() {
     ws,
     source
   }, el) : el;
+  // Code uses the owning native chat surface, so its transcript, draft and
+  // policy controls are identical to the ordinary chat tray.
+  const codeChatActive = !!window.FridayCodeStudio && window.__FRIDAY_CHROME__ !== 'chat'
+    && (STANDALONE_WS === 'code' || (!STANDALONE_WS && !experienceDesktop && focusWin === 'code' && openWins.has('code')));
+  const nativeChatProps = {
+    mode: 'panel',
+    traySide: chatSide,
+    trayFrac: chatFrac || chatW / vw(),
+    onTrayPlace: (side, frac) => {
+      placeTray(side, frac);
+      showChat(true);
+      if (trayDo.current.remember) trayDo.current.remember(side, frac);
+    },
+    agentSettings: agentSettings,
+    audioDevicePopup: audioDevicePopup,
+    audioDevicePopupRef: audioDevicePopupRef,
+    audioInputDevices: audioInputDevices,
+    audioOutputDevices: audioOutputDevices,
+    bindConvSeat: bindConvSeat,
+    chatEnd: chatEnd,
+    chatEpoch: chatEpoch,
+    chatFileRef: chatFileRef,
+    chatIn: chatIn,
+    chatLoad: chatLoad,
+    chatMsgs: chatMsgs,
+    convId: convId,
+    convList: convList,
+    convOpen: convOpen,
+    convPickerOpen: convPickerOpen,
+    convSeat: convSeat,
+    micLevel: micLevel,
+    micTestActive: micTestActive,
+    micTestLevel: micTestLevel,
+    micTestMsg: micTestMsg,
+    openConversation: openConversation,
+    pausePending: pausePending,
+    refreshAudioDevicesRef: refreshAudioDevicesRef,
+    refreshConvs: refreshConvs,
+    rememberPauseChoice: rememberPauseChoice,
+    saveAgentSettings: saveAgentSettings,
+    sendChat: sendChat,
+    setAgentSettings: setAgentSettings,
+    setAudioDevicePopup: setAudioDevicePopup,
+    setChatIn: setChatIn,
+    setChatLoad: setChatLoad,
+    setChatMsgs: setChatMsgs,
+    setChatOpen: showChat,
+    setConvId: setConvId,
+    setConvOpen: setConvOpen,
+    setConvPickerOpen: setConvPickerOpen,
+    setPausePending: setPausePending,
+    showSources: showSources,
+    speakerTestActive: speakerTestActive,
+    speakerTestMsg: speakerTestMsg,
+    testMicrophone: testMicrophone,
+    testSpeaker: testSpeaker,
+    toggleCiteSources: toggleCiteSources,
+    toggleVoice: toggleVoice,
+    turnStatus: turnStatus,
+    stopTurn: stopTurn,
+    uploadFile: uploadFile,
+    uploading: uploading,
+    voiceContract: voiceContract,
+    voiceEgress: voiceEgress,
+    voiceNotices: voiceNotices,
+    voiceOn: voiceOn,
+    voicePartial: voicePartial,
+    voiceReach: voiceReach,
+    voiceStages: voiceStages,
+    voiceStatus: voiceStatus
+  };
+  const codeChat = {
+    active: codeChatActive, conversationId: convId, busy: chatLoad,
+    ask: async (message, expectedConversationId) => {
+      if (!codeChatActive || !expectedConversationId || getConversationId() !== expectedConversationId) {
+        throw new Error('Open this codebase’s conversation before asking.');
+      }
+      return sendChat(message, {preserveDraft:true, expectedConversationId});
+    },
+    openConversation: id => codeChatActive
+      ? openConversation(id, {requireReady:true, reuseReady:true})
+      : Promise.reject(new Error('Open the Code workspace before switching conversations.')),
+    surface: codeChatActive ? React.createElement(ChatSurface, {...nativeChatProps, mode:'code', setChatMsgs:ownedChatUpdate(setChatMsgs)}) : null
+  };
   const wsMap = {
     career: /*#__PURE__*/React.createElement(CareerWS, null),
     knowledge: /*#__PURE__*/React.createElement(KnowledgeWS, null),
@@ -65943,7 +66100,7 @@ function App() {
     }, "The Library did not load."),
     trust: with3D('trust', 'people', /*#__PURE__*/React.createElement(TrustWS, null)),
     system: /*#__PURE__*/React.createElement(SystemWS, null),
-    code: with3D('code', 'code', /*#__PURE__*/React.createElement(CodeWS, null)),
+    code: /*#__PURE__*/React.createElement(CodeWS, {chat:codeChat}),
     news: with3D('news', 'news', /*#__PURE__*/React.createElement(NewsWS, null)),
     draft: /*#__PURE__*/React.createElement(DraftWS, null),
     finance: /*#__PURE__*/React.createElement(FinanceWS, null),
@@ -66359,6 +66516,10 @@ function App() {
   // Ctrl+/: the cluster's chat field when the desktop shows no window (the
   // cluster comes with it), else the chat tray's.
   const focusChatField = () => {
+    if (codeChatActive) {
+      window.dispatchEvent(new CustomEvent('friday:code-chat-focus'));
+      return;
+    }
     if (!experienceEnabled && !STANDALONE_WS && (experienceDesktop || openWins.size === 0)) {
       window.dispatchEvent(new CustomEvent('friday:landing', { detail: { summon: true, focus: true, via: 'key' } }));
       return;
@@ -66939,7 +67100,7 @@ function App() {
     style: {
       fontSize: 13
     }
-  }, "\u270D\uFE0F")), !shellChat && /*#__PURE__*/React.createElement("button", {
+  }, "\u270D\uFE0F")), !shellChat && !codeChatActive && /*#__PURE__*/React.createElement("button", {
     onClick: toggleChat,
     style: {
       background: 'none',
@@ -67073,7 +67234,7 @@ function App() {
     seedPrompt: wsChat.seed,
     onClose: () => setWsChat(null)
   });
-  const shellChatPanel = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  const shellChatPanel = codeChatActive ? null : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: `chat-panel ${chatOpen ? 'open' : ''}${chatSide === 'left' ? ' left' : ''}`,
     "aria-hidden": chatOpen ? undefined : 'true',
     style: chatH ? {
@@ -67109,73 +67270,7 @@ function App() {
       };
       setChatResize('h');
     }
-  }), /*#__PURE__*//*#__PURE__*/React.createElement(ChatSurface, {
-    mode: 'panel',
-    traySide: chatSide,
-    trayFrac: chatFrac || chatW / vw(),
-    onTrayPlace: (side, frac) => {
-      placeTray(side, frac);
-      showChat(true);
-      if (trayDo.current.remember) trayDo.current.remember(side, frac);
-    },
-    agentSettings: agentSettings,
-    audioDevicePopup: audioDevicePopup,
-    audioDevicePopupRef: audioDevicePopupRef,
-    audioInputDevices: audioInputDevices,
-    audioOutputDevices: audioOutputDevices,
-    bindConvSeat: bindConvSeat,
-    chatEnd: chatEnd,
-    chatEpoch: chatEpoch,
-    chatFileRef: chatFileRef,
-    chatIn: chatIn,
-    chatLoad: chatLoad,
-    chatMsgs: chatMsgs,
-    convId: convId,
-    convList: convList,
-    convOpen: convOpen,
-    convPickerOpen: convPickerOpen,
-    convSeat: convSeat,
-    micLevel: micLevel,
-    micTestActive: micTestActive,
-    micTestLevel: micTestLevel,
-    micTestMsg: micTestMsg,
-    openConversation: openConversation,
-    pausePending: pausePending,
-    refreshAudioDevicesRef: refreshAudioDevicesRef,
-    refreshConvs: refreshConvs,
-    rememberPauseChoice: rememberPauseChoice,
-    saveAgentSettings: saveAgentSettings,
-    sendChat: sendChat,
-    setAgentSettings: setAgentSettings,
-    setAudioDevicePopup: setAudioDevicePopup,
-    setChatIn: setChatIn,
-    setChatLoad: setChatLoad,
-    setChatMsgs: setChatMsgs,
-    setChatOpen: showChat,
-    setConvId: setConvId,
-    setConvOpen: setConvOpen,
-    setConvPickerOpen: setConvPickerOpen,
-    setPausePending: setPausePending,
-    showSources: showSources,
-    speakerTestActive: speakerTestActive,
-    speakerTestMsg: speakerTestMsg,
-    testMicrophone: testMicrophone,
-    testSpeaker: testSpeaker,
-    toggleCiteSources: toggleCiteSources,
-    toggleVoice: toggleVoice,
-    turnStatus: turnStatus,
-    stopTurn: stopTurn,
-    uploadFile: uploadFile,
-    uploading: uploading,
-    voiceContract: voiceContract,
-    voiceEgress: voiceEgress,
-    voiceNotices: voiceNotices,
-    voiceOn: voiceOn,
-    voicePartial: voicePartial,
-    voiceReach: voiceReach,
-    voiceStages: voiceStages,
-    voiceStatus: voiceStatus
-  })), !chatOpen && /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*//*#__PURE__*/React.createElement(ChatSurface, nativeChatProps)), !chatOpen && /*#__PURE__*/React.createElement("button", {
     className: 'chat-edge-pill' + (chatSide === 'left' ? ' left' : ''),
     "data-testid": "chat-edge-pill",
     title: "Show chat (Ctrl+Alt+C)",
@@ -68246,13 +68341,13 @@ function App() {
     // The shown tray is docked: its width comes off its side for a workspace in
     // a tab and for every window snapped or maximised beside it (unified-shell.md
     // §11.2). A phone's tray is a sheet, not a side.
-    const docked = chatOpen && window.__FRIDAY_CHROME__ !== 'chat' && (window.innerWidth || 1280) > 768;
+    const docked = chatOpen && !codeChatActive && window.__FRIDAY_CHROME__ !== 'chat' && (window.innerWidth || 1280) > 768;
     document.documentElement.style.setProperty('--fr-chat-dock', docked && chatSide !== 'left' ? chatW + 'px' : '0px');
     document.documentElement.style.setProperty('--fr-chat-dock-left', docked && chatSide === 'left' ? chatW + 'px' : '0px');
     try {
       window.dispatchEvent(new Event('friday:chat-dock'));
     } catch (_) {}
-  }, [shellTab, fsOn, chatOpen, chatW, chatSide, dockHidden]);
+  }, [shellTab, fsOn, chatOpen, chatW, chatSide, dockHidden, codeChatActive]);
   // A workspace in its own tab: that workspace, full-tab, under the same shell
   // as the desktop (top bar, chat tray, notifications, settings, palette); no
   // dock, windows, HUD or scene. Settings never gets here (the server sends
