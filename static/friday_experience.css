@@ -591,9 +591,16 @@ body.friday-experience-enabled .fa-table { font-size: 13px; }
 body.friday-experience-enabled .fa-table th { font-size: 12px; }
 body.friday-experience-enabled .fa-table td { padding: 9px 12px; }
 body.friday-experience-enabled .fa-foot { padding: 10px 16px; color: var(--fx-muted); }
-body.friday-experience-enabled .cmd-palette { border-radius: var(--fx-radius); background: var(--fx-panel); border-color: var(--fx-line-strong); box-shadow: var(--fx-shadow); }
+body.friday-experience-enabled .cmd-palette { border-radius: var(--fx-radius); background: var(--fx-panel); border-color: var(--fx-line-strong); box-shadow: var(--fx-shadow); container: friday-palette / inline-size; }
 body.friday-experience-enabled .cmd-palette-input { font-size: 16px; padding: 18px; }
 body.friday-experience-enabled .cmd-palette-item { min-height: 44px; font-size: 14px; }
+@container friday-palette (max-width: 480px) {
+  body.friday-experience-enabled .cmd-palette-item { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 10px; row-gap: 3px; padding: 10px 14px; }
+  body.friday-experience-enabled .cmd-palette-item .ico { grid-row: 1 / span 2; align-self: start; }
+  body.friday-experience-enabled .cmd-palette-item > span:nth-child(2) { min-width: 0; font-weight: 600; overflow-wrap: normal; word-break: normal; }
+  body.friday-experience-enabled .cmd-palette-item .meta { grid-column: 2; margin-left: 0; white-space: normal; overflow-wrap: normal; word-break: normal; }
+  body.friday-experience-enabled .cmd-palette-item .meta:empty { display: none; }
+}
 
 /* The materials tray shares the same source references in every container. */
 body.friday-experience-enabled .fm-tray.fx-materials { display: block; margin: 20px 0 28px; padding: 20px; border: 1px solid var(--fx-line); border-radius: 12px; background: var(--fx-raised); font-size: 14px; }
@@ -785,7 +792,7 @@ body.friday-experience-enabled .fx-day-resume { flex-shrink: 0; }
 body.friday-experience-enabled .fx-day-resume button { max-width: 100%; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
 @container friday-home (max-width: 680px) {
   body.friday-experience-enabled .fx-day-heading { gap: 8px; }
-  body.friday-experience-enabled .fx-day-heading h1 { font-size: 20px; }
+  body.friday-experience-enabled .fx-main[data-home-board="true"] .fx-day-heading h1 { font-size: 20px; }
   body.friday-experience-enabled .fx-day-links { max-width: 180px; }
   body.friday-experience-enabled .fx-board-heading { align-items: flex-start; flex-wrap: wrap; gap: 8px; }
   body.friday-experience-enabled .fx-board-heading p { display: none; }
@@ -795,27 +802,36 @@ body.friday-experience-enabled .fx-day-resume button { max-width: 100%; text-ove
 }
 @container friday-desktop (max-height: 520px) {
   body.friday-experience-enabled .fx-main[data-view="day"][data-home-board="true"] { gap: 8px; padding-top: 5px; }
-  body.friday-experience-enabled .fx-day-heading h1 { font-size: 17px; margin: 3px 0; }
+  body.friday-experience-enabled .fx-main[data-home-board="true"] .fx-day-heading h1 { font-size: 17px; margin: 3px 0; }
   body.friday-experience-enabled .fx-day-heading p, body.friday-experience-enabled .fx-day-resume, body.friday-experience-enabled .fx-day-composer > small, body.friday-experience-enabled .fx-board-check { display: none; }
   body.friday-experience-enabled .fx-day-heading .fx-eyebrow { font-size: 9px; }
   body.friday-experience-enabled .fx-working-board { gap: 6px; padding: 9px; }
   body.friday-experience-enabled .fx-board-heading p { display: none; }
+  /* One stable tool row leaves compact Home space for the actual card. */
+  body.friday-experience-enabled .fx-board-heading { align-items: center; flex-wrap: nowrap; }
+  body.friday-experience-enabled .fx-board-heading > div:first-child { display: none; }
+  body.friday-experience-enabled .fx-board-tools { flex: 1 1 0; max-width: 100%; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  body.friday-experience-enabled .fx-board-tools > .fx-action { flex-shrink: 0; }
+  body.friday-experience-enabled .fx-board-pending[aria-hidden="true"] { display: none; }
   body.friday-experience-enabled .fx-day-composer { padding: 8px 10px; }
   body.friday-experience-enabled .fx-day-composer textarea { height: 30px; min-height: 30px; }
   body.friday-experience-enabled .fx-board-card { padding: 10px; gap: 6px; }
+  body.friday-experience-enabled .fx-board-card h3 { order: -1; }
 }
 @container friday-desktop (max-height: 300px) {
   body.friday-experience-enabled .fx-day-heading { display: none; }
   body.friday-experience-enabled .fx-board-heading h2 { font-size: 14px; }
   body.friday-experience-enabled .fx-board-tabs { padding-bottom: 3px; }
   body.friday-experience-enabled .fx-day-context > button { display: none; }
-  body.friday-experience-enabled .fx-day-composer { display: flex; align-items: center; gap: 8px; }
+  body.friday-experience-enabled .fx-day-composer { display: flex; align-items: center; gap: 8px; padding: 4px 6px; }
+  body.friday-experience-enabled .fx-day-composer button { white-space: nowrap; }
   body.friday-experience-enabled .fx-day-composer textarea { flex: 1 1 70px; }
   body.friday-experience-enabled .fx-day-composer-footer { flex: 0 1 170px; flex-wrap: nowrap; }
   body.friday-experience-enabled .fx-day-context { flex-basis: 80px; }
   body.friday-experience-enabled .fx-day-context select { max-width: 100px; font-size: 11px; }
-  body.friday-experience-enabled .fx-working-board { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-  body.friday-experience-enabled :is(.fx-board-grid, .fx-board-empty, .fx-board-reader, .fx-board-editor, .fx-board-sources) { flex: 0 0 auto; min-height: 100px; overflow: visible; }
+  /* Keep each panel bounded and internally scrollable, as it is on wide
+   * screens. The dormant Home draft keeps its DOM while a card is open. */
+  body.friday-experience-enabled .fx-main:has(.fx-board-editor, .fx-board-reader, .fx-board-sources) .fx-day-composer { display: none; }
 }
 @media (max-width: 440px) {
   body.friday-experience-enabled .fx-day-heading { flex-direction: column; }

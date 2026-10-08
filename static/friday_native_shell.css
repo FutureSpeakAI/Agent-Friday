@@ -158,3 +158,12 @@ body.friday-experience-enabled .fx-home-card-deck[data-expanded=true]{flex:1 1 0
   :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-context select{width:100%;min-width:0;max-width:140px}
   :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-context>button{display:none}
 }
+
+/* Keep the complete chat reachable when its protected work area is short. */
+@media(max-height:480px){
+  body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .chat-panel.open .fa-chat{overflow:auto;overscroll-behavior:contain}
+}
+/* Compact titlebars count padding inside their intended height. */
+@media(max-width:760px){
+  body.friday-experience-enabled .fwin-bar{box-sizing:border-box;min-height:46px;padding:7px 11px}
+}

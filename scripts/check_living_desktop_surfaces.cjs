@@ -41,7 +41,8 @@ function writeEvidence(){
   fs.writeFileSync(path.join(output,'results.json'),JSON.stringify(result,null,2));
   const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const rows=result.cases.map(row=>'<article><h2>'+esc(row.id)+' · '+esc(row.status)+'</h2><p>'+esc(row.error||row.scope||'')+'</p>'+
-    (row.image?'<a href="'+esc(row.image)+'"><img loading="lazy" src="'+esc(row.image)+'" alt="'+esc(row.id)+'"></a>':'')+'</article>').join('');
+    (row.image?'<a href="'+esc(row.image)+'"><img loading="lazy" src="'+esc(row.image)+'" alt="'+esc(row.id)+'"></a>':'')+
+    (row.mediaCardImage?'<a href="'+esc(row.mediaCardImage)+'"><img loading="lazy" src="'+esc(row.mediaCardImage)+'" alt="'+esc(row.id)+' first Media card"></a>':'')+'</article>').join('');
   fs.writeFileSync(path.join(output,'index.html'),'<!doctype html><meta charset="utf-8"><title>Friday surface capture</title><style>body{background:#0b101b;color:#ecf3ff;font:16px/1.5 system-ui;margin:30px}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px}article{padding:16px;background:#141e2e;border:1px solid #334057;border-radius:12px}h2{font-size:16px}img{max-width:100%;height:auto}p{overflow-wrap:anywhere}</style><h1>Friday surface capture</h1><p>'+esc(result.status)+' · Automated bounds and sampled keyboard checks. All frames require human visual review. Synthetic preview data only.</p><main>'+rows+'</main>');
 }
 function getLocal(relative){
@@ -298,6 +299,21 @@ async function main(){
           await expect(surface.locator('[role="alert"]')).toHaveCount(0);
         }
         await capture(row,page,surface);
+        if(entry.id==='media'){
+          const title=surface.locator('.md-card').first().locator('.md-title');await expect(title).toHaveCount(1);
+          await title.scrollIntoViewIfNeeded();await settle(page);
+          row.mediaCardSample=await title.evaluate(element=>{
+            const rect=element.getBoundingClientRect(),hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
+            return {text:element.textContent.trim(),bounds:{x:rect.x,y:rect.y,w:rect.width,h:rect.height},
+              visible:rect.width>0&&rect.height>0&&rect.x>=-2&&rect.y>=-2&&rect.right<=innerWidth+2&&rect.bottom<=innerHeight+2,
+              hit:!!hit&&(element===hit||element.contains(hit))};
+          });
+          assert.ok(row.mediaCardSample.text&&row.mediaCardSample.visible&&row.mediaCardSample.hit,'Media card title is clipped or covered: '+JSON.stringify(row.mediaCardSample));
+          row.mediaCardGeometry=await geometry(page,surface);const image=row.id+'-media-card-visible.png';
+          assert.equal(row.status,'running','Capture case has ended');await page.screenshot({path:path.join(output,image),animations:'disabled',timeout:10000});
+          assert.equal(row.status,'running','Capture case has ended');row.mediaCardImage=image;
+          row.scope+='; first Media card title scrolled into view without opening, editing or publishing';
+        }
       });
       if(crew)for(const kind of ['room','profile'])await runCase('crew-'+kind+'-dialog',viewport,async(page,row)=>captureCrewDialog(page,row,kind,crew));
       for(const view of views)await runCase('desktop-'+view,viewport,async(page,row)=>{
@@ -311,7 +327,7 @@ async function main(){
         const {popup}=await openSwitcher(page),names=await popup.locator('.fx-switcher-option strong').allTextContents();
         assert.deepEqual([...names].sort(),enabled.map(w=>w.label).sort(),'Switcher must offer exactly the available native registry');
         await capture(row,page,popup);await page.keyboard.press('Escape');await expect(popup).toHaveCount(0);
-        const focus=await page.evaluate(()=>document.activeElement?.className||'');assert.match(focus,/fx-switcher-trigger|friday-topbar-more/);
+        await expect.poll(()=>page.evaluate(()=>document.activeElement?.className||''),{timeout:5000}).toMatch(/fx-switcher-trigger|friday-topbar-more/);
         for(const entry of held){await page.evaluate(id=>fridayOpenWorkspace({workspace:id}),entry.id);await expect(page.locator('.fwin[data-friday-workspace="'+entry.id+'"]')).toHaveCount(0);}
       });
       await runCase('menu-display-style',viewport,async(page,row)=>{
@@ -388,7 +404,20 @@ async function main(){
         const trigger=await topControl(page,'button[aria-label^="Open chat with "]');await trigger.focus();await page.keyboard.press('Enter');
         const surface=page.locator('.chat-panel.open');await expect(surface).toBeVisible();
         await expect(page.locator('.fx-day-composer')).toHaveCount(0);await capture(row,page,surface);
-        row.scope+='; chat shown without voice, sending or conversation mutation';
+        const composer=surface.locator('textarea[data-chat-input]'),send=surface.getByRole('button',{name:'Send',exact:true});
+        await expect(composer).toHaveCount(1);await composer.fill('Synthetic unsent reachability draft');row.chatControlSamples=[];
+        for(const control of [composer,send]){
+          await control.focus();await control.scrollIntoViewIfNeeded();await expect(control).toBeFocused();
+          const sample=await control.evaluate(element=>{
+            const rect=element.getBoundingClientRect(),hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
+            return {tag:element.tagName,label:element.getAttribute('aria-label')||element.textContent,bounds:{x:rect.x,y:rect.y,w:rect.width,h:rect.height},
+              visible:rect.width>0&&rect.height>0&&rect.x>=-2&&rect.y>=-2&&rect.right<=innerWidth+2&&rect.bottom<=innerHeight+2,
+              hit:!!hit&&(element===hit||element.contains(hit)),disabled:!!element.disabled};
+          });
+          row.chatControlSamples.push(sample);assert.ok(sample.visible&&sample.hit&&!sample.disabled,'Chat composer or Send is clipped or covered: '+JSON.stringify(sample));
+        }
+        await expect(composer).toHaveValue('Synthetic unsent reachability draft');row.chatComposerGeometry=await geometry(page,surface);
+        row.scope+='; unsent composer and Send focus/scroll reachability, without voice, sending or conversation mutation';
       });
       await runCase('scene-and-depth',viewport,async(page,row)=>{
         const trigger=await topControl(page,'button[aria-label="Scene and workspace depth"]');await trigger.focus();await page.keyboard.press('Enter');
@@ -397,8 +426,11 @@ async function main(){
         await capture(row,page,surface);await page.keyboard.press('Escape');await expect(surface).not.toBeVisible();
       });
       await runCase('menu-original-scene',viewport,async(page,row)=>{
-        const trigger=await topControl(page,'button[aria-label="Scene selection"]');await trigger.focus();await page.keyboard.press('Enter');
-        const surface=page.locator('.friday-scene-menu');await expect(surface).toBeVisible();await capture(row,page,surface);
+        const trigger=await topControl(page,'button[aria-label="Scene and workspace depth"]');await trigger.focus();await page.keyboard.press('Enter');
+        const surface=page.getByRole('dialog',{name:'Scene & depth',exact:true});await expect(surface).toBeVisible();
+        const forms=await page.evaluate(()=>fridayVibe.getStructures().map(form=>form.name));assert.ok(forms.length,'Original scene inventory must be available');
+        assert.deepEqual(await surface.locator('[data-holo-form] strong').allTextContents(),forms,'Simple must offer every original avatar form');
+        await capture(row,page,surface);row.scope+='; original avatar inventory through the available Simple scene control';
         await page.keyboard.press('Escape');await expect(surface).not.toBeVisible();
       });
     }

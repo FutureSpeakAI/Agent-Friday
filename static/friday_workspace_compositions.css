@@ -331,6 +331,10 @@ body.friday-experience-enabled .ws-custom-root[data-ws="library"] .lb-insp :is(d
   body.friday-experience-enabled .ws-custom-root .fr-comp-root .card { padding: 17px; }
   body.friday-experience-enabled .ws-custom-root .fr-comp-grid-two, body.friday-experience-enabled .ws-custom-root .fr-comp-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   body.friday-experience-enabled .ws-custom-root[data-ws="media"] .md-root { gap: 12px; }
+  /* Let the existing workspace scroller carry wrapped controls, rather than
+     compressing the native card scroller into an unusable strip. Keep the
+     normal 3D stage and other Media views on their existing sizing rules. */
+  body.friday-experience-enabled .ws-custom-root[data-ws="media"] .md-root[data-view="library"] .md-stage-wrap:has(> .md-grid) { min-height: 320px; }
   body.friday-experience-enabled .ws-custom-root[data-ws="media"] .md-head { gap: 8px; padding-bottom: 12px; }
   body.friday-experience-enabled .ws-custom-root[data-ws="media"] .md-head h2 { font-size: var(--fr-text-xl); }
   body.friday-experience-enabled .ws-custom-root[data-ws="media"] .md-head > .md-count { flex-basis: 100%; order: 2; }

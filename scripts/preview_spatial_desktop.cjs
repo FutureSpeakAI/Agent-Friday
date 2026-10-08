@@ -370,7 +370,7 @@ function api(req,res,u,b) {
  }
  if(p==='/api/work/forecast')return ok(res,{will_pause:false});
  if(p==='/api/tasks')return ok(res,{tasks});
- if(method==='GET'&&p.startsWith('/api/tasks/'))return ok(res,{task:tasks.find(t=>t.task_id===p.split('/')[3])||tasks[0],log:[]});
+ if(method==='GET'&&p.startsWith('/api/tasks/'))return ok(res,{...(tasks.find(t=>t.task_id===p.split('/')[3])||tasks[0]),log:[]});
  if(p==='/api/approvals'||p==='/api/approvals/pending')return ok(res,{approvals:[],pending:[]});
  if(p==='/api/health')return ok(res,{connected:true,preview:true,model_ready:false});
  if(p==='/api/workspace/customizations')return ok(res,{customizations});
