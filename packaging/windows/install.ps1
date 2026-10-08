@@ -67,7 +67,19 @@ param(
 
     # Stop after the dependency install. Used to test the machinery without
     # creating shortcuts or touching the registry.
-    [switch] $DepsOnly
+    [switch] $DepsOnly,
+
+    # Set by the Inno Setup installer (AgentFriday-Setup-*.exe), which owns the
+    # shortcuts, the autostart entry and the Add/Remove Programs entry. This
+    # script then does the engine's work only: it protects the data home first
+    # (stop, back up, snapshot), installs, and proves the data home intact.
+    [switch] $InnoManaged,
+
+    # The release ordering number and display name the installer carries (see
+    # src/agent_friday/release.py). Recorded in the manifest so a later
+    # installer can tell whether it is older or newer than what is here.
+    [string] $BuildSequence = '',
+    [string] $ReleaseName = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,6 +92,7 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $Here 'lib\Deps.ps1')
 . (Join-Path $Here 'lib\Ollama.ps1')
 . (Join-Path $Here 'lib\Shortcuts.ps1')
+. (Join-Path $Here 'lib\Upgrade.ps1')
 . (Join-Path $Here 'lib\Heal.ps1')
 . (Join-Path $Here 'lib\OfficeCli.ps1')
 
@@ -94,7 +107,7 @@ $ManifestPath  = Join-Path $InstallRoot 'install-manifest.json'
 $PayloadDir    = Join-Path $Here 'payload'        # produced by build-installer.ps1
 $WheelhouseDir = Join-Path $Here 'wheelhouse'
 $ReqDir        = Join-Path $Here 'requirements'
-$IconPath      = Join-Path $InstallRoot 'app\assets\friday.ico'
+$IconPath      = Join-Path $InstallRoot 'app\assets\icons\futurespeak.ico'
 
 New-Item -ItemType Directory -Force -Path $InstallRoot, $LogDir, $CacheDir, $ToolsDir | Out-Null
 Initialize-Log (Join-Path $LogDir ("install-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss')))
@@ -181,6 +194,42 @@ if ($os.Caption) { $osName = ($os.Caption -replace '^Microsoft\s+', '') }
 elseif ($osVer.Build -ge 22000) { $osName = 'Windows 11' }
 else { $osName = 'Windows 10' }
 Say-Ok "$osName, 64-bit, $freeGb GB free."
+
+# =========================================================================
+#  Step 1b - Protect what is already here (Inno-managed installs)
+#
+#  Before a single file is touched: see what is installed and how it ranks
+#  against this release (by build sequence, never by version number), stop
+#  Friday politely, copy the data home to a timestamped backup, and take the
+#  snapshot the end of this script compares against. An upgrade that cannot
+#  protect the data does not start.
+# =========================================================================
+
+$upgrade = $null
+if ($InnoManaged) {
+    Set-StepTotal 17
+    Say-Step 'Protecting what you already have'
+    [int64]$newSequence = 0
+    if ($BuildSequence -match '^[0-9]+$') { $newSequence = [int64]$BuildSequence }
+    else { $derived = Get-BuildSequence -Version $Version; if ($derived) { $newSequence = [int64]$derived } }
+    try {
+        $upgrade = Invoke-UpgradePreflight -InstallRoot $InstallRoot -NewSequence $newSequence
+    } catch {
+        Write-Log "Upgrade preflight failed: $($_.Exception.Message)" 'FAIL'
+        Say-Problem -What $_.Exception.Message `
+                    -WhatToDo 'Nothing was changed. If this keeps happening, the install report named at the end of the log says why.'
+        Complete-Install -Failed -FailedStep 'upgrade.preflight'
+        exit 1
+    }
+    if ($upgrade.Existing.Found) {
+        Say-Ok ("Found Agent Friday {0}. Friday is stopped and nothing of yours has been touched." -f $upgrade.Existing.Version)
+        if ($upgrade.Backup) {
+            Say-Detail ("A copy of your data is at {0} ({1:N0} files)." -f $upgrade.Backup.Path, $upgrade.Backup.Files)
+        }
+    } else {
+        Say-Ok 'Nothing is installed yet, so there is nothing to protect.'
+    }
+}
 
 # =========================================================================
 #  Step 2 - The self-repair question
@@ -959,11 +1008,13 @@ $null = Invoke-Step -Id 'shortcuts.launchers' -Title 'Creating the shortcuts' `
         Copy-Item -LiteralPath (Join-Path $Here 'lib') -Destination $ToolsDir -Recurse -Force
         Copy-Item -LiteralPath (Join-Path $Here 'uninstall.ps1') -Destination (Join-Path $ToolsDir 'uninstall.ps1') -Force
         Copy-Item -LiteralPath (Join-Path $Here 'autostart.ps1') -Destination (Join-Path $ToolsDir 'autostart.ps1') -Force
+        Copy-Item -LiteralPath (Join-Path $Here 'ensure-shortcuts.ps1') -Destination (Join-Path $ToolsDir 'ensure-shortcuts.ps1') -Force
         Copy-Item -LiteralPath (Join-Path $Here 'sources.json') -Destination (Join-Path $ToolsDir 'sources.json') -Force
         [void](Install-LauncherScripts -InstallRoot $InstallRoot)
     } `
     -Verify { Test-LauncherScripts -InstallRoot $InstallRoot }
 
+if (-not $InnoManaged) {
 $null = Invoke-Step -Id 'shortcuts.icons' -Title 'Putting Friday on the desktop' `
     -Optional `
     -VerifyDescription 'the desktop shortcut exists and its target exists' `
@@ -981,6 +1032,7 @@ $null = Invoke-Step -Id 'shortcuts.uninstall' -Title 'Registering the uninstalle
     -VerifyDescription 'Friday appears in Add/Remove Programs and the uninstall command exists' `
     -Action { Register-Uninstaller -InstallRoot $InstallRoot -Version $Version -IconPath $IconPath } `
     -Verify { Test-UninstallerRegistered -ExpectedVersion $Version }
+}
 
 # =========================================================================
 #  Step 11 - Autostart
@@ -1140,6 +1192,9 @@ $manifest = [ordered]@{
     version           = $versionOnDisk       # MEASURED off app\pyproject.toml
     installer_version = $Version             # what this installer carried
     installed_at      = (Get-Date).ToString('o')
+    build_sequence    = [int64](Get-Measured 'the build sequence' { [int64](Get-BuildSequence -Version $versionOnDisk) } 0)
+    release_name      = $ReleaseName
+    installed_by      = $(if ($InnoManaged) { 'inno' } else { 'script' })
     install_root      = $InstallRoot
     python_version    = $script:Sources.python.version
     shortcuts         = @(Get-Measured 'the installed shortcuts' { Get-InstalledShortcutPaths } $shortcutsCreated)
@@ -1149,7 +1204,7 @@ $manifest = [ordered]@{
         method                      = [string]$ollamaOutcome.Method
         models_pulled               = @($modelTagsPulled)
     }
-    uninstall_reg_key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentFriday'
+    uninstall_reg_key = $(if ($InnoManaged) { 'owned by the Inno Setup uninstaller (unins000.exe)' } else { 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentFriday' })
     _note = @(
         'The uninstaller reads this file so it removes exactly what was created and nothing else.',
         'In particular it only offers to remove Ollama if installed_by_this_installer is true,',
@@ -1171,6 +1226,19 @@ try {
     Write-Log "Manifest could not be written: $($_.Exception.Message)" 'FAIL'
     Add-InstallWarning ('The install completed but install-manifest.json could not be written. ' +
                         'Uninstalling will still work; it will be more cautious about what it removes.')
+}
+
+# The last thing checked: the data home is what it was. Not "we did not touch
+# it" but "we looked, and it is the same".
+if ($upgrade -and $upgrade.Snapshot) {
+    $dataCheck = Test-DataHomeIntact -Before $upgrade.Snapshot -LogDir $LogDir
+    if (-not $dataCheck.Ok) {
+        Say-Problem -What ('Something in your data folder is not as it was before the upgrade: ' + ($dataCheck.Problems -join ' ')) `
+                    -WhatToDo $(if ($upgrade.Backup) { "Your data was copied to $($upgrade.Backup.Path) before anything was changed. Restore from there, or contact support." } else { 'Check the data folder before starting Friday.' })
+        Complete-Install -Failed -FailedStep 'upgrade.datacheck'
+        exit 1
+    }
+    Say-Ok ("Your data is intact: {0} files before, {1} after, vault keys and settings byte-identical." -f $dataCheck.FilesBefore, $dataCheck.FilesAfter)
 }
 
 Complete-Install
