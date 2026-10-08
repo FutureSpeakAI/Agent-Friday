@@ -26,7 +26,14 @@ def test_worker_requests_are_capped(requested, expected):
     assert g.capped_workers(requested) == expected
 
 
-def test_auto_resolves_to_the_cap():
+@pytest.fixture
+def not_ci(monkeypatch):
+    """The guard's behaviour on a developer machine, whatever runs this test."""
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
+def test_auto_resolves_to_the_cap(not_ci):
     assert g.pytest_xdist_auto_num_workers(None) == 2
 
 
@@ -55,7 +62,7 @@ def _config(args, n):
     return SimpleNamespace(option=SimpleNamespace(numprocesses=n), args=args, rootpath=ROOT)
 
 
-def test_configure_caps_workers_and_stops_a_broad_run_without_room(monkeypatch):
+def test_configure_caps_workers_and_stops_a_broad_run_without_room(monkeypatch, not_ci):
     monkeypatch.setattr(g, "free_ram_gb", lambda: 2.0)
     monkeypatch.setattr(g, "free_disk_gb", lambda p=None: 50.0)
     cfg = _config(["tests/unit", "tests/api"], 4)
@@ -65,12 +72,33 @@ def test_configure_caps_workers_and_stops_a_broad_run_without_room(monkeypatch):
     assert "free memory is 2.0 GB" in str(ei.value)
 
 
-def test_configure_lets_a_targeted_run_through_whatever_the_room(monkeypatch):
+def test_configure_lets_a_targeted_run_through_whatever_the_room(monkeypatch, not_ci):
     monkeypatch.setattr(g, "free_ram_gb", lambda: 0.4)
     monkeypatch.setattr(g, "free_disk_gb", lambda p=None: 1.0)
     cfg = _config(["tests/unit/test_resource_guard.py"], 4)
     g.pytest_configure(cfg)
     assert cfg.option.numprocesses == 2
+
+
+def test_only_a_github_runner_is_exempt_and_only_with_both_variables():
+    assert g.on_github_actions({"CI": "true", "GITHUB_ACTIONS": "true"}) is True
+    assert g.on_github_actions({"CI": "1", "GITHUB_ACTIONS": "True"}) is True
+    assert g.on_github_actions({"CI": "true"}) is False, "CI alone is easy to set by hand"
+    assert g.on_github_actions({"GITHUB_ACTIONS": "true"}) is False
+    assert g.on_github_actions({"CI": "false", "GITHUB_ACTIONS": "true"}) is False
+    assert g.on_github_actions({}) is False
+
+
+def test_on_a_github_runner_the_guard_neither_caps_nor_refuses(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(g, "free_ram_gb", lambda: 2.0)
+    monkeypatch.setattr(g, "free_disk_gb", lambda p=None: 1.0)
+    assert g.pytest_xdist_auto_num_workers(None) is None
+    cfg = _config(["tests/unit", "tests/api"], 4)
+    g.pytest_cmdline_main(cfg)
+    g.pytest_configure(cfg)  # would raise pytest.exit on a developer machine
+    assert cfg.option.numprocesses == 4
 
 
 def test_the_root_conftest_loads_the_guard_for_every_invocation():
@@ -83,10 +111,12 @@ def test_a_real_run_asking_for_four_workers_gets_two(tmp_path):
     import subprocess
     import sys
     probe = ROOT / "tests" / "unit" / "test_resource_guard.py"
+    import os
+    env = {k: v for k, v in os.environ.items() if k not in ("CI", "GITHUB_ACTIONS")}
     out = subprocess.run(
         [sys.executable, "-m", "pytest", f"{probe}::test_the_floors_are_the_agreed_ones",
          "-n", "4", "-p", "no:cacheprovider", "-o", "addopts="],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=300)
+        cwd=str(ROOT), capture_output=True, text=True, timeout=300, env=env)
     text = out.stdout + out.stderr
     assert out.returncode == 0, text[-2000:]
     assert "2 workers" in text and "4 workers" not in text, text[-2000:]
