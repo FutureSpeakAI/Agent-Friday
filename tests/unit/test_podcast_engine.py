@@ -382,6 +382,7 @@ def test_a_voice_that_is_not_installed_is_refused_by_name(monkeypatch):
 
 
 def test_kokoro_is_built_from_cached_paths_on_the_cpu(monkeypatch, tmp_path):
+    pytest.importorskip("numpy", reason="the fake pipeline yields numpy audio (podcast extra)")
     built = {}
 
     class KModel:
@@ -401,7 +402,7 @@ def test_kokoro_is_built_from_cached_paths_on_the_cpu(monkeypatch, tmp_path):
             self.g2p = types.SimpleNamespace(fallback=object())
 
         def __call__(self, text, voice):
-            np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
+            import numpy as np
             built.setdefault("voices", []).append(voice)
             yield text, "ph", np.zeros(240, dtype="float32")
 
