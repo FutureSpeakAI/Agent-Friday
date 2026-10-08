@@ -45,7 +45,6 @@ from agent_friday.core import (
     _offline_queue_list,
     _offline_queue_remove,
     _ollama_available,
-    _save_agent_personality,
     _save_settings,
 )  # noqa: E501
 from agent_friday.services.agent import (
@@ -1647,13 +1646,18 @@ def api_settings():
                              name='residency-replan').start()
         personality = data.get('personality')
         if personality is not None:
-            # The personality store is free-text (GET returns it as a string), so
-            # reject a non-string payload with a clean 400 instead of letting
-            # _save_agent_personality().strip() raise an AttributeError → 500.
+            # Settings edits use the same canonical file, validation and version
+            # history as the personality API and the next prompt's reader.
             if not isinstance(personality, str):
                 return jsonify({"status": "error",
                                 "message": "personality must be a string"}), 400
-            _save_agent_personality(personality)
+            from agent_friday.services import soul
+            saved = soul.save_soul(personality)
+            if not saved.get("ok"):
+                return jsonify(public_result({
+                    "status": "error",
+                    "message": saved.get("error") or "Couldn't save the personality",
+                }, "Couldn't save the personality")), 400
         return jsonify({
             "status": "ok",
             "settings": merged,

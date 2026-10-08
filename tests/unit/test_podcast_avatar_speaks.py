@@ -30,9 +30,13 @@ def _wav() -> bytes:
         w.setsampwidth(2)
         w.setframerate(RATE)
         frames = bytearray()
+        # Sustained speech-band energy lets the real spectral analyser be
+        # sampled at any phase. Averaging the tones bounds the PCM peak at 9000.
+        frequencies = (220, 660, 1540)
         for i in range(int(RATE * 4.8)):
             t = i / RATE
-            frames += struct.pack("<h", int(9000 * math.sin(2 * math.pi * 220 * t) * (1 + math.sin(2 * math.pi * 3 * t)) / 2))
+            sample = sum(math.sin(2 * math.pi * hz * t) for hz in frequencies) / len(frequencies)
+            frames += struct.pack("<h", int(9000 * sample))
         w.writeframes(bytes(frames))
     return buf.getvalue()
 
@@ -108,7 +112,7 @@ SAMPLE = """async ([ms]) => {
 }"""
 
 
-def test_friday_s_line_shows_her_speaking_and_the_co_host_s_does_not(page):
+def test_friday_s_line_shows_her_speaking_and_the_co_host_s_does_not(page, record_property):
     page.evaluate("id => window.dispatchEvent(new CustomEvent('friday-podcast', {detail: {op: 'play', episode_id: id}}))", EID)
     page.wait_for_function("() => { const a = document.querySelector('[aria-label=\"Podcast player\"] audio');"
                            " return a && !a.paused && a.currentTime > 0.2; }", timeout=20000)
@@ -116,6 +120,8 @@ def test_friday_s_line_shows_her_speaking_and_the_co_host_s_does_not(page):
     hers = [x for x in s if 0.4 < x["t"] < 2.1 and not x["paused"]]
     cohost = [x for x in s if 2.9 < x["t"] < 4.5 and not x["paused"]]
     assert hers and cohost, "the episode played through both lines: %r" % s[::10]
+    record_property("friday_max_amplitude", max(x["amp"] for x in hers))
+    record_property("cohost_max_amplitude", max(x["amp"] for x in cohost))
     assert all(x["tts"] for x in hers), "Friday's line shows the speaking mood"
     assert max(x["amp"] for x in hers) > 0.05, "her speech moves the avatar: the amplitude follows the audio"
     assert not any(x["tts"] for x in cohost) and max(x["amp"] for x in cohost) == 0, \

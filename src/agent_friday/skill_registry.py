@@ -40,6 +40,9 @@ from __future__ import annotations
 
 import re
 import json
+import os
+import hashlib
+import threading
 import shutil
 import zipfile
 import tempfile
@@ -269,7 +272,11 @@ def match_skills(message, dirs=None, limit=3) -> list:
 
 
 def build_injection(message, dirs=None, limit=3, max_body=1200) -> str:
-    """Build a system-prompt block for skills matched by the message. '' if none."""
+    """Index matched skills; retrieve the complete procedure with read_skill.
+
+    ``max_body`` is retained for caller compatibility. A partial procedure can
+    omit its verification or scope restrictions, so no body prefix is injected.
+    """
     matched = match_skills(message, dirs=dirs, limit=limit)
     if not matched:
         return ""
@@ -281,7 +288,7 @@ def build_injection(message, dirs=None, limit=3, max_body=1200) -> str:
         if s.tool_chain:
             block.append("Suggested tools: " + ", ".join(s.tool_chain))
         if s.body:
-            block.append(s.body[:max_body])
+            block.append(f"Load the complete procedure with read_skill(name={s.name!r}) before using it.")
         if s.success_criteria:
             block.append("Success when: " + "; ".join(s.success_criteria))
         parts.append("\n".join(block))
@@ -308,6 +315,22 @@ def _render_skill_md(skill: Skill) -> str:
     return f"---\n{front}\n---\n\n{skill.body.strip()}\n"
 
 
+_SKILL_WRITE_LOCK = threading.RLock()
+
+
+def _atomic_skill_write(target, data):
+    descriptor, temporary = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def save_skill(name, description="", body="", triggers=None, tool_chain=None,
                success_criteria=None, source="friday", version=1, license="MIT") -> Path:
     """Create/overwrite a SKILL.md folder under ~/.friday/skills/."""
@@ -320,7 +343,21 @@ def save_skill(name, description="", body="", triggers=None, tool_chain=None,
         success_criteria=_as_list(success_criteria),
         version=int(version), license=license, source=source, path=str(folder),
     )
-    (folder / "SKILL.md").write_text(_render_skill_md(skill), encoding="utf-8")
+    target = folder / "SKILL.md"
+    content = _render_skill_md(skill).encode("utf-8")
+    with _SKILL_WRITE_LOCK:
+        previous = target.read_bytes() if target.exists() else None
+        if previous == content:
+            return folder
+        if previous is not None:
+            history = folder / "_history"
+            history.mkdir(parents=True, exist_ok=True)
+            # Content identity retains prior procedures even when an importer
+            # reuses a version number. The manifest remains the active version.
+            archived = history / (hashlib.sha256(previous).hexdigest() + ".md")
+            if not archived.exists():
+                _atomic_skill_write(archived, previous)
+        _atomic_skill_write(target, content)
     return folder
 
 

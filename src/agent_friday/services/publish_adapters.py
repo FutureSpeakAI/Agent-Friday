@@ -20,13 +20,21 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import logging
 import mimetypes
 import re
+import queue
 import shutil
+import socket
+import ssl
+import threading
+import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 from agent_friday.paths import contained
 
@@ -34,6 +42,9 @@ _log = logging.getLogger(__name__)
 
 LABELS = {"cloudflare_pages": "Cloudflare Pages", "github_pages": "GitHub Pages"}
 _UA = "Friday/publish-to-web"
+_SITE_DEADLINE = ContextVar("site_publish_deadline", default=None)
+_SITE_GENERATION = ContextVar("site_publish_generation", default=None)
+_SITE_RESPONSE_LIMIT = 4_000_000
 
 
 class AdapterError(RuntimeError):
@@ -42,15 +53,173 @@ class AdapterError(RuntimeError):
 
 # ── one HTTP function ────────────────────────────────────────────────────────
 
+def _site_http(method, url, *, headers, json_body, deadline, generation):
+    """Fixed-host HTTPS JSON with one absolute cutoff, including headers/body.
+
+    The resolver worker can outlive its wait but has no request or credential
+    and can never continue into a connection. The timer shuts down the owned
+    socket; an already received remote mutation cannot be undone by a timeout.
+    """
+    from agent_friday.services import sites_privacy
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or parsed.hostname not in {"api.github.com", "api.cloudflare.com"}
+            or parsed.port not in (None, 443) or parsed.username or parsed.password or parsed.fragment):
+        raise AdapterError("Unsupported hosting API destination.")
+    host = parsed.hostname
+    target = parsed.path or "/"
+    if parsed.query:
+        target += "?" + parsed.query
+    expired, socket_lock = threading.Event(), threading.Lock()
+    current_socket = [None]
+
+    def close(sock):
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            finally:
+                sock.close()
+
+    def cutoff():
+        expired.set()
+        with socket_lock:
+            sock = current_socket[0]
+        close(sock)
+
+    def remaining():
+        left = deadline - time.monotonic()
+        if expired.is_set() or left <= 0:
+            raise AdapterError("The publishing deadline elapsed; reconcile before retrying.")
+        sites_privacy.require_generation(generation)
+        return left
+
+    def own(sock):
+        with socket_lock:
+            current_socket[0] = sock
+            late = expired.is_set()
+        if late:
+            close(sock)
+        remaining()
+
+    timer = threading.Timer(remaining(), cutoff)
+    timer.daemon = True
+    response, connection = None, None
+    timer.start()
+    try:
+        payload = None if json_body is None else json.dumps(json_body, allow_nan=False).encode("utf-8")
+        request_headers = dict(headers or {}, **{"Accept-Encoding": "identity", "Connection": "close"})
+        if payload is not None:
+            request_headers["Content-Type"] = "application/json"
+        answers = queue.Queue(maxsize=1)
+        def resolve():
+            try:
+                remaining()
+                answers.put(socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM))
+            except (OSError, ValueError, AdapterError):
+                answers.put(None)
+        threading.Thread(target=resolve, daemon=True, name="site-provider-dns").start()
+        try:
+            addresses = answers.get(timeout=remaining())
+        except queue.Empty:
+            raise AdapterError("The hosting API lookup deadline elapsed; reconcile before retrying.") from None
+        remaining()
+        if not addresses:
+            raise AdapterError("The hosting API address is unavailable.")
+        raw = None
+        for family, kind, protocol, _canonical, address in addresses:
+            remaining()
+            raw = socket.socket(family, kind, protocol)
+            own(raw)
+            try:
+                raw.settimeout(min(remaining(), 10))
+                raw.connect(address)
+                break
+            except OSError:
+                close(raw)
+                raw = None
+        if raw is None:
+            remaining()
+            raise AdapterError("The hosting API connection is unavailable.")
+        remaining()
+        # Register TLS before its handshake so cutoff also interrupts peers
+        # that drip handshake or header bytes before each inactivity timeout.
+        secure = ssl.create_default_context().wrap_socket(raw, server_hostname=host, do_handshake_on_connect=False)
+        own(secure)
+        secure.settimeout(min(remaining(), 30))
+        secure.do_handshake()
+        remaining()
+        connection = http.client.HTTPSConnection(host)
+        connection.sock = secure
+        connection.auto_open = 0  # Never reconnect implicitly after cutoff.
+        remaining()
+        connection.request(method, target, body=payload, headers=request_headers)
+        remaining()
+        response = connection.getresponse()
+        remaining()
+        length = response.getheader("Content-Length")
+        if length and (not length.isdigit() or int(length) > _SITE_RESPONSE_LIMIT):
+            raise AdapterError("The hosting API response exceeded its size limit.")
+        if response.getheader("Content-Encoding", "identity").lower() not in {"identity", ""}:
+            raise AdapterError("The hosting API returned an unsupported response encoding.")
+        content = response.read(_SITE_RESPONSE_LIMIT + 1)
+        remaining()
+        if len(content) > _SITE_RESPONSE_LIMIT:
+            raise AdapterError("The hosting API response exceeded its size limit.")
+        if length and len(content) != int(length):
+            raise AdapterError("The hosting API response was incomplete; reconcile before retrying.")
+        text = content.decode("utf-8", errors="replace")
+        try:
+            body = json.loads(content)
+        except (ValueError, UnicodeError):
+            body = None
+        remaining()
+        return response.status, body, text
+    except (OSError, http.client.HTTPException):
+        raise AdapterError("The hosting API response was not confirmed; reconcile before retrying.") from None
+    finally:
+        timer.cancel()
+        # Release the TLS stream on parsing, privacy, and response-size errors.
+        try:
+            if response is not None:
+                response.close()
+        finally:
+            try:
+                if connection is not None:
+                    connection.close()
+            finally:
+                with socket_lock:
+                    sock = current_socket[0]
+                close(sock)
+
+
 def _http(method: str, url: str, *, headers=None, json_body=None, data=None, files=None, timeout=30):
     """(status, parsed json or None, text). Replaced by a fake under test."""
     import requests
-    r = requests.request(method, url, headers=headers, json=json_body, data=data, files=files, timeout=timeout)
+    generation = _SITE_GENERATION.get()
+    if generation is not None:
+        from agent_friday.services import sites_privacy
+        sites_privacy.require_generation(generation)
+    deadline = _SITE_DEADLINE.get()
+    if deadline is not None:
+        from agent_friday.services import sites_privacy
+        if data is not None or files is not None:
+            raise AdapterError("Saved Sites requires the supported JSON hosting API.")
+        result = _site_http(method, url, headers=headers, json_body=json_body, deadline=deadline, generation=generation)
+        sites_privacy.require_generation(generation)
+        return result
+    r = requests.request(method, url, headers=headers, json=json_body, data=data, files=files,
+                         timeout=timeout, allow_redirects=False)
     try:
-        body = r.json()
-    except Exception:
-        body = None
-    return r.status_code, body, r.text
+        if generation is not None:
+            sites_privacy.require_generation(generation)
+        try:
+            body = r.json()
+        except Exception:
+            body = None
+        return r.status_code, body, r.text
+    finally:
+        r.close()
 
 
 def _fail(label: str, status: int, body, text: str) -> AdapterError:
@@ -172,7 +341,7 @@ def _gh_check(status: int, body, text: str, ok=(200, 201)) -> None:
         raise _fail(LABELS["github_pages"], status, body, text)
 
 
-def _gh_commit(conn: dict, changes: dict, message: str) -> None:
+def _gh_commit(conn: dict, changes: dict, message: str, *, replace_tree: bool = False) -> Optional[str]:
     """`changes`: 'path' -> bytes to write, or None to delete. One commit on
     the pages branch; an orphan first commit when the branch does not exist."""
     base, hdr, branch = _gh_base(conn), _gh_headers(conn), conn.get("branch") or "gh-pages"
@@ -199,7 +368,7 @@ def _gh_commit(conn: dict, changes: dict, message: str) -> None:
     if not entries:
         return
     tree_body = {"tree": entries}
-    if base_tree:
+    if base_tree and not replace_tree:
         tree_body["base_tree"] = base_tree
     status, body, text = _http("POST", base + "/git/trees", headers=hdr, json_body=tree_body)
     _gh_check(status, body, text)
@@ -216,6 +385,7 @@ def _gh_commit(conn: dict, changes: dict, message: str) -> None:
         status, body, text = _http("PATCH", "%s/git/refs/heads/%s" % (base, branch), headers=hdr,
                                    json_body={"sha": commit_sha, "force": False})
         _gh_check(status, body, text)
+    return commit_sha
 
 
 def _gh_enable_pages(conn: dict) -> None:
@@ -267,10 +437,115 @@ def unpublish(adapter: str, slug: str, conn: dict) -> None:
         raise AdapterError("invalid slug")
     site = _mirror(adapter) / slug
     paths = [slug + "/" + f.relative_to(site).as_posix() for f in site.rglob("*") if f.is_file()] if site.exists() else []
-    _drop_mirror(adapter, slug)
     if adapter == "cloudflare_pages":
         _cf_ensure_project(conn)
-        _cf_deploy(conn, _site_files(adapter))
+        remaining = {path: data for path, data in _site_files(adapter).items() if not path.startswith(slug + "/")}
+        _cf_deploy(conn, remaining)
+        _drop_mirror(adapter, slug)
         return
     if paths:
         _gh_commit(conn, {p: None for p in paths}, 'Take down "%s" from Friday' % slug)
+    _drop_mirror(adapter, slug)
+
+
+def site_dns_requirements(conn: dict, hostname: str, domain: str) -> dict:
+    """Provider requirements only; no DNS changes or implicit host selection."""
+    from agent_friday.services.site_hosting import target_identity, require_supported
+    require_supported(conn["adapter"])
+    if hostname != domain and not hostname.endswith("." + domain):
+        raise ValueError("The hostname must belong to the selected domain.")
+    host = hostname[:-len(domain)].rstrip(".")
+    if host:
+        records = [{"host": host, "type": "CNAME", "answer": conn["repo"].split("/")[0].lower() + ".github.io", "ttl": 300}]
+    else:
+        records = [{"host": "", "type": "A", "answer": address, "ttl": 300}
+                   for address in ("185.199.108.153", "185.199.109.153", "185.199.110.153", "185.199.111.153")]
+    return {"hostname": hostname, "domain": domain, "target_identity": target_identity(conn),
+            "records": records, "host_association_required": True,
+            "note": "Approve hosting association before changing DNS. Other DNS records must be preserved."}
+
+
+def publish_site(bundle, conn: dict, *, privacy_generation: int, hostname: str = "") -> dict:
+    from agent_friday.services import sites_privacy, site_hosting
+    sites_privacy.require_generation(privacy_generation)
+    site_hosting.require_supported(conn["adapter"])
+    token = _SITE_DEADLINE.set(time.monotonic() + 120)
+    origin = _SITE_GENERATION.set(privacy_generation)
+    try:
+        result = _publish_site(bundle, conn, hostname=hostname)
+        sites_privacy.require_generation(privacy_generation)
+        return result
+    finally:
+        _SITE_DEADLINE.reset(token)
+        _SITE_GENERATION.reset(origin)
+
+
+def _publish_site(bundle, conn: dict, *, hostname: str = "") -> dict:
+    """Publish one site's complete root to its dedicated target, without slug mirrors."""
+    adapter = conn["adapter"]
+    if adapter == "github_pages":
+        files = dict(bundle.files, **{".nojekyll": b""})
+        if hostname:
+            files["CNAME"] = (hostname + "\n").encode("ascii")
+        commit = _gh_commit(conn, files, "Publish saved site build from Friday", replace_tree=True)
+        receipt = {"provider_deployment_id": commit, "provider_url": _gh_url(conn, "").replace("//", "/").replace("https:/", "https://")}
+        pages = _gh_base(conn) + "/pages"
+        status, _body, _text = _http("GET", pages, headers=_gh_headers(conn))
+        config = {"source": {"branch": conn.get("branch") or "gh-pages", "path": "/"}}
+        create = status == 404
+        if status not in (200, 404):
+            receipt.update(status="partial", error="Files committed; GitHub Pages configuration could not be read.")
+            return receipt
+        if create:
+            status, _body, _text = _http("POST", pages, headers=_gh_headers(conn), json_body=config)
+            if status not in (200, 201, 204):
+                receipt.update(status="partial", error="Files committed; GitHub Pages could not be enabled.")
+                return receipt
+        # cname is supported by the update endpoint, not by create.
+        config["cname"] = hostname or None
+        status, _body, _text = _http("PUT", pages, headers=_gh_headers(conn), json_body=config)
+        if status not in (200, 201, 204):
+            receipt.update(status="partial", error="Files committed; GitHub Pages configuration needs review.")
+            return receipt
+    else:
+        raise ValueError("Choose a supported saved hosting connection.")
+    receipt.update(status="provider_accepted", verified=False, hostname=hostname or None)
+    return receipt
+
+
+def site_deployment_status(conn: dict, deployment: dict, *, privacy_generation: int) -> dict:
+    """Read-back retains the caller's admitted generation across every request."""
+    from agent_friday.services import sites_privacy
+    sites_privacy.require_generation(privacy_generation)
+    deadline = _SITE_DEADLINE.set(time.monotonic() + 30)
+    origin = _SITE_GENERATION.set(privacy_generation)
+    try:
+        result = _site_deployment_status(conn, deployment)
+        sites_privacy.require_generation(privacy_generation)
+        return result
+    finally:
+        _SITE_DEADLINE.reset(deadline)
+        _SITE_GENERATION.reset(origin)
+
+
+def _site_deployment_status(conn: dict, deployment: dict) -> dict:
+    """Read provider evidence. Provider readiness alone never proves live content."""
+    identity = str(deployment.get("provider_deployment_id") or "")
+    if not identity or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", identity):
+        return {"status": "unknown", "verified": False, "note": "No confirmed provider identity; inspect the hosting account before retrying."}
+    if conn["adapter"] == "cloudflare_pages":
+        url = "%s/accounts/%s/pages/projects/%s/deployments/%s" % (_CF_API, conn["account_id"], conn["project"], identity)
+        status, body, _text = _http("GET", url, headers=_cf_headers(conn))
+        if status != 200:
+            raise AdapterError("Cloudflare deployment status is unavailable (HTTP %d)." % status)
+        result = (body or {}).get("result") or {}
+        state = (result.get("latest_stage") or {}).get("status")
+        return {"status": "provider_ready" if state == "success" else "failed" if state == "failure" else "provider_pending",
+                "provider_state": state, "provider_deployment_id": identity, "verified": False}
+    status, body, _text = _http("GET", _gh_base(conn) + "/pages/builds/latest", headers=_gh_headers(conn))
+    if status != 200:
+        raise AdapterError("GitHub Pages build status is unavailable (HTTP %d)." % status)
+    matches = (body or {}).get("commit") == identity
+    state = (body or {}).get("status")
+    return {"status": "provider_ready" if matches and state == "built" else "failed" if matches and state == "errored" else "provider_pending",
+            "provider_state": state, "matching_revision": matches, "provider_deployment_id": identity, "verified": False}

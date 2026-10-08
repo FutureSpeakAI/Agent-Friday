@@ -20,7 +20,7 @@ def stores(tmp_path, monkeypatch):
 
     monkeypatch.setattr(desktop_cards, "CARDS_PATH", tmp_path / "cards.json")
     monkeypatch.setattr(workspace_studio, "WS_STUDIO_DIR", tmp_path / "studio")
-    monkeypatch.setattr(off_record, "active", lambda: False)
+    monkeypatch.setattr(off_record, "active", lambda settings=None: False)
     monkeypatch.setattr(boot_guard, "safe_mode", lambda: False)
     events = []
     monkeypatch.setattr(desktop_bus, "broadcast", lambda message, **kw: events.append(message))
@@ -133,7 +133,8 @@ def test_live_declarations_preserve_cards_actions_and_nullable_customization():
     assert card.properties["priority"].minimum == 0 and card.properties["priority"].maximum == 100
     actions = card.properties["actions"]
     assert actions.type == types.Type.ARRAY and actions.max_items == 3
-    assert set(actions.items.required) == {"label", "workspace"}
+    assert set(actions.items.required) == {"label"}
+    assert set(actions.items.properties["view"].enum) == {"projects", "activity"}
     assert actions.items.additional_properties is None
     patch = declarations["customize_workspace"].parameters.properties["patch"]
     assert patch.properties["note"].nullable is True
@@ -227,9 +228,18 @@ def test_live_wire_json_keeps_nested_cards_and_nullable_workspace_fields():
     actions = card["properties"]["actions"]
     assert actions["type"] == "ARRAY" and int(field(actions, "maxItems", "max_items")) == 3
     assert actions["items"]["type"] == "OBJECT"
-    assert set(actions["items"]["required"]) == {"label", "workspace"}
-    assert set(actions["items"]["properties"]) == {"label", "workspace"}
+    assert set(actions["items"]["required"]) == {"label"}
+    assert set(actions["items"]["properties"]) == {"label", "workspace", "view"}
+    assert set(actions["items"]["properties"]["view"]["enum"]) == {"projects", "activity"}
     assert "additionalProperties" not in actions["items"] and "additional_properties" not in actions["items"]
+
+    change = home["properties"]["change"]
+    assert set(change["required"]) == {"op", "expected_revision"}
+    assert change["properties"]["expected_revision"]["minimum"] == 0
+    assert set(change["properties"]["source"]["required"]) == {"kind", "id"}
+    assert change["properties"]["card"] == card
+    assert int(field(change["properties"]["ids"], "maxItems", "max_items")) == 256
+    assert {"track", "stop_tracking", "dismiss", "restore", "snooze", "reorder"} <= set(change["properties"]["op"]["enum"])
 
     customization = declarations["customize_workspace"]["parameters"]
     assert set(customization["required"]) == {"workspace", "patch"}

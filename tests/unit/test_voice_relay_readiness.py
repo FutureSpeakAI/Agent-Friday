@@ -203,3 +203,41 @@ def test_old_mind_proof_cannot_publish_after_selection_change(manifest, monkeypa
     assert stage["proof"]["state"] == "unproven"
     assert stage["effective"] == {} and stage["progress"] == ""
     assert not stage["ready"]
+
+
+
+def test_explicit_reply_limit_change_invalidates_mind_proof(manifest):
+    m, settings, _clock = manifest
+    settings["voice_max_tokens"] = 5000
+    m.refresh_selection()
+    assert m.prove("mind")["ready"]
+    settings["voice_max_tokens"] = 6000
+    m.refresh_selection()
+    stage = m.snapshot_stage("mind")
+    assert stage["selected"]["reply_cap"] == 6000
+    assert not stage["ready"] and stage["effective"] == {}
+
+
+def test_readiness_contract_reserves_the_actual_explicit_reply_limit(manifest, monkeypatch):
+    from agent_friday.services import tool_budget
+    _m, settings, _clock = manifest
+    settings["voice_max_tokens"] = 5000
+    monkeypatch.setattr(tool_budget, "_window", lambda seat: 4096)
+    monkeypatch.setattr(tool_budget, "fit_tools_to_seat", lambda *a, **kw:
+                        ([{"name": "knowledge_query", "input_schema": {"type": "object"}}], ""))
+    monkeypatch.setattr(tool_budget, "measure_request", lambda *a, **kw: 100)
+    monkeypatch.setattr(tool_budget, "_tokens", lambda tools: 100)
+    monkeypatch.setattr(tool_budget, "_FLOOR_TOOLS", [])
+    monkeypatch.setattr(tool_budget, "_LOOP_RESERVE", 0)
+    contract = vm.compute_contract("example-brain", system_prompt="Synthetic prompt.")
+    assert contract["reply_cap"] == rv._voice_reply_cap(settings) == 5000
+    assert not contract["fits"], "A 5000-token reply cannot fit a 4096-token seat."
+
+
+@pytest.mark.parametrize("settings, expected", [
+    ({}, 400), ({"voice_max_tokens": "invalid"}, 400),
+    ({"voice_max_tokens": 32}, 32), ({"voice_response_depth": "detailed"}, 1400)])
+def test_readiness_defaults_match_saved_voice_settings(settings, expected):
+    from agent_friday.services.voice_delivery import using_preferences
+    with using_preferences({"voice_response_depth": "concise"}):
+        assert vm.read_selection(settings)["mind"]["reply_cap"] == expected

@@ -38,6 +38,7 @@ import logging
 import threading
 import time as _time
 from dataclasses import dataclass, field
+from typing import Callable
 
 _log = logging.getLogger("friday.tool_hooks")
 
@@ -86,6 +87,9 @@ class HookContext:
     session_ctx: dict | None = None
     pii_lookup: dict | None = None
     meta: dict = field(default_factory=dict)
+    # A trusted executor may retain admission across callbacks that can wait.
+    # Model arguments never supply this callback.
+    admission: Callable[[], str | None] | None = field(default=None, repr=False)
 
     @property
     def workspace(self):
@@ -184,6 +188,15 @@ def _applies(hook, tool_name):
 
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
+def _admission_denial(ctx):
+    if ctx.admission is None:
+        return None
+    try:
+        return ctx.admission()
+    except Exception:
+        return "[TOOL DENY] This action's original admission could not be verified."
+
+
 def run_pre_hooks(ctx: HookContext) -> PreVerdict:
     """Run the PreToolUse chain. Returns the first DENY verdict, or ALLOW.
 
@@ -194,9 +207,15 @@ def run_pre_hooks(ctx: HookContext) -> PreVerdict:
             continue
         if not hook_enabled(hook.name, hook.critical):
             continue
+        denial = _admission_denial(ctx)
+        if denial:
+            return DENY(denial)
         try:
             verdict = hook.fn(ctx)
         except Exception as e:  # noqa: BLE001
+            denial = _admission_denial(ctx)
+            if denial:
+                return DENY(denial)
             if hook.critical:
                 # Fail closed — a crash in a security gate must not open it.
                 return PreVerdict("deny",
@@ -204,6 +223,9 @@ def run_pre_hooks(ctx: HookContext) -> PreVerdict:
                                   hook=hook.name)
             _log_hook_error("pre", hook.name, e)
             continue
+        denial = _admission_denial(ctx)
+        if denial:
+            return DENY(denial)
         if verdict is None or verdict.action == "allow":
             continue
         if verdict.action == "modify":
@@ -223,11 +245,20 @@ def run_post_hooks(ctx: HookContext, result: str) -> str:
             continue
         if not hook_enabled(hook.name, hook.critical):
             continue
+        denial = _admission_denial(ctx)
+        if denial:
+            return denial
         try:
             out = hook.fn(ctx, result)
+            denial = _admission_denial(ctx)
+            if denial:
+                return denial
             if out is not None:
                 result = out
         except Exception as e:  # noqa: BLE001
+            denial = _admission_denial(ctx)
+            if denial:
+                return denial
             _log_hook_error("post", hook.name, e)
             continue
     return result

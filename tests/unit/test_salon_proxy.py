@@ -108,9 +108,20 @@ def test_a_streamed_answer_arrives_as_it_is_sent(proxy):
     assert data.count("event: ping") == 3 and '"n": 2' in data
 
 
-def test_the_capture_names_hosts_paths_and_status_and_never_a_key_or_a_body(proxy):
+def test_the_capture_names_hosts_paths_and_status_and_never_a_key_or_a_body(proxy, monkeypatch):
+    recorded = {path: threading.Event() for path in ("/v1/messages", "/nope")}
+    record = proxy._record
+
+    def observed_record(**entry):
+        record(**entry)
+        recorded[entry["path"]].set()
+
+    monkeypatch.setattr(proxy, "_record", observed_record)
+    # Receiving the response body does not mean its handler has recorded it yet.
     _call(proxy.url + "/v1/messages", body={"secret_prompt": "do not leak"})
+    assert recorded["/v1/messages"].wait(timeout=5), "provider request was not recorded"
     _call(proxy.url + "/nope", body={})
+    assert recorded["/nope"].wait(timeout=5), "refused request was not recorded"
     cap = proxy.capture()
     assert [c["path"] for c in cap][-2:] == ["/v1/messages", "/nope"]
     assert cap[-2]["status"] == 200 and cap[-1]["status"] == 403 and cap[-1]["refused"] is True

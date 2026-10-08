@@ -281,7 +281,7 @@ def project_instructions(cid: str) -> str:
 
 # ── Messages ────────────────────────────────────────────────────────────────
 
-def append(cid: str, message: dict) -> dict:
+def append(cid: str, message: dict, *, settings: dict | None = None, before_write=None) -> dict:
     """Append one message. Creates the conversation if it does not exist.
 
     Auto-titles from the first user message: a list of conversations all called
@@ -289,13 +289,21 @@ def append(cid: str, message: dict) -> dict:
 
     Off the record, the message is kept in this session's memory only: no
     messages.jsonl line, no title taken from it, no conversation file touched.
+    A caller already holding the store lock can supply its settings snapshot
+    to avoid resolving provider availability inside that critical section.
     """
     from agent_friday.services import off_record as _off
-    if _off.skip("conversations"):
-        message.setdefault("id", secrets.token_hex(8))
-        return _off.remember(cid, message)
+    unsaved = (_off.skip("conversations") if settings is None
+               else _off.skip("conversations", settings))
     with _LOCK:
-        conv = load(cid)
+        conv = load(cid) if not unsaved else None
+        # Scoped asynchronous callers can revalidate after settings resolution
+        # and while project changes are excluded by the canonical store lock.
+        if before_write is not None:
+            before_write()
+        if unsaved:
+            message.setdefault("id", secrets.token_hex(8))
+            return _off.remember(cid, message)
         if conv is None:
             conv = create(cid=cid)
         message.setdefault("id", secrets.token_hex(8))

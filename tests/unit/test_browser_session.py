@@ -400,21 +400,67 @@ def test_every_browser_tool_has_a_governance_class(monkeypatch):
     {"authenticated": True, "session_id": "chat-1", "taint_key": "chat-1"},
     {"authenticated": True, "is_background_task": True, "task_id": "t-browser"},
 ], ids=["chat", "background"])
-def test_through_the_checkpoint_a_submit_is_a_card_and_a_password_is_held(sess, server, ctx):
+def test_through_the_checkpoint_a_submit_is_a_card_and_a_password_is_held(
+        sess, server, ctx, tmp_path, monkeypatch):
     import agent_friday.services.agent as agent
+    from agent_friday.services import (
+        agent_workspace_permissions as permission, conversations, crew_runtime,
+        off_record, task_journal,
+    )
+
+    # Model dispatch resolves its own authority while direct service calls in
+    # this module retain the separate legacy session fixture.
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    monkeypatch.setattr(conversations, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(off_record, "active", lambda: False)
+    monkeypatch.setattr(off_record, "generation", lambda: 1)
+    monkeypatch.setattr(agent, "TASKS", {})
+    monkeypatch.setattr(task_journal, "_STOP_REQUESTED", set())
+    for attribute, value in (("_OWNED", {}), ("_OWNER_SURFACES", {}),
+                             ("_BLOCKED_OWNERS", set()), ("_STOP_PERMISSION_FLOOR", -1),
+                             ("_STOP_EPOCH", 0)):
+        monkeypatch.setattr(bs, attribute, value)
+    browser_session = bs.BrowserSession
+    monkeypatch.setattr(bs, "BrowserSession", lambda **kwargs:
+                        browser_session(**kwargs, allow_local=True))
+    cid = conversations.create(title="Browser checkpoint fixture")["id"]
+    ctx = {**ctx, "conversation_id": cid,
+           "_crew_host_origin": crew_runtime.capture_host_origin()}
+    if ctx.get("task_id"):
+        agent.TASKS[ctx["task_id"]] = {
+            "conversation_id": cid, "status": "running",
+            "browser_conversation_scope": {"conversation_id": cid, "project_id": None},
+        }
     agent._PENDING_CONFIRMATIONS.clear()
     agent._hooks.reset_rate_limiter()
-    out = agent._execute_tool("browser_open", {"url": server + "/form"}, session_ctx=ctx)
-    assert "Submit application" in out
-    held = agent._execute_tool("browser_type", {"element": _num(out, "Password"), "text": "pw"},
-                               session_ctx=ctx)
-    assert "NOT executed" in held and "password" in held
-    res = agent._execute_tool("browser_click", {"element": _num(out, "Submit application")},
-                              session_ctx=ctx)
-    assert "WAITING FOR THE USER'S APPROVAL" in res
-    time.sleep(0.5)
-    assert _Handler.posts == []
-    assert len(_pending()) == 1
+    legacy_url = sess.url
+    try:
+        denied = agent._execute_tool("browser_open", {"url": server + "/form"}, session_ctx=ctx)
+        assert "BROWSER DENY" in denied and not bs._OWNED
+        permission.set_enabled(True, expected_generation=permission.snapshot()["generation"])
+        out = agent._execute_tool("browser_open", {"url": server + "/form"}, session_ctx=ctx)
+        assert "Submit application" in out
+        [owned] = list(bs._OWNED.values())
+        assert owned is not sess and owned.headless
+        assert owned.owner.conversation_id == cid and owned.owner.task_id == ctx.get("task_id")
+        assert bs._SESSION is sess and sess.url == legacy_url
+        held = agent._execute_tool(
+            "browser_type", {"element": _num(out, "Password"), "text": "pw"}, session_ctx=ctx)
+        assert "NOT executed" in held and "password" in held
+        assert owned.call(lambda: owned._page.locator("input[name=pw]").input_value()) == ""
+        res = agent._execute_tool(
+            "browser_click", {"element": _num(out, "Submit application")}, session_ctx=ctx)
+        assert "WAITING FOR THE USER'S APPROVAL" in res
+        time.sleep(0.5)
+        assert _Handler.posts == []
+        assert len(_pending()) == 1
+    finally:
+        for owned in list(bs._OWNED.values()):
+            bs._transition(owned, "close")
+            bs._close_owned(owned)
+            assert owned._cleanup_done
+            owned._worker.thread.join(timeout=2)
+            assert not owned._worker.thread.is_alive()
 
 
 def test_click_rules_by_label_and_form():

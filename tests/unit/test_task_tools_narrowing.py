@@ -34,7 +34,8 @@ def _run_task_worker_capturing_tools(monkeypatch, *, tools):
     finally:
         with agent_mod.TASKS_LOCK:
             agent_mod.TASKS.pop(task_id, None)
-    return captured.get('tools')
+    assert 'tools' in captured, "the worker must reach generation before its tool set is checked"
+    return captured['tools']
 
 
 class TestTaskToolsNarrowing:
@@ -43,6 +44,11 @@ class TestTaskToolsNarrowing:
         _generate_agent gets tools=None and falls back to CLAUDE_TOOLS itself,
         exactly as every task worked before this override existed."""
         got = _run_task_worker_capturing_tools(monkeypatch, tools=None)
+        assert got is None
+
+    def test_empty_schedule_tool_names_keep_default_registry(self, monkeypatch):
+        """A schedule's optional names are not a Crew permission boundary."""
+        got = _run_task_worker_capturing_tools(monkeypatch, tools=[])
         assert got is None
 
     def test_named_tools_are_filtered_down_from_the_full_registry(self, monkeypatch):

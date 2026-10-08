@@ -126,15 +126,15 @@ from flask import Blueprint as _Blueprint
 # is the frozen fallback. tests/unit/test_blueprint_discovery.py fails if it
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
-    'actions', 'activity', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
+    'actions', 'agent_workspaces', 'activity', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
     'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code', 'compute',
     'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_routes', 'desktop',
-    'costs', 'creations', 'creative_pipeline', 'defederation', 'documents', 'dreaming', 'ext_security', 'federation',
+    'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'insights',
     'intelligence', 'jobs', 'knowledge_graph', 'learning', 'library', 'liveness', 'local_address', 'media', 'meetings', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
     'platform', 'podcasts', 'privacy_consent', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
-    'setup_chat', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',
+    'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',
     'work_plan', 'updates', 'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_bundles', 'workspace_studio', 'workspace_undo',
 ]

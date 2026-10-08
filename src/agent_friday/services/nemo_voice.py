@@ -772,16 +772,18 @@ class NeMoTTS:
             return b""
         self.load()
         import torch
+        from agent_friday.services.voice_delivery import synthesis_plan, finish_pcm
+        plan = synthesis_plan(text)
         with torch.no_grad():
             tokens = self._spec.parse(str(text))
-            spectrogram = self._spec.generate_spectrogram(tokens=tokens)
+            spectrogram = self._spec.generate_spectrogram(tokens=tokens, pace=plan["speed"])
             audio = self._voc.convert_spectrogram_to_audio(spec=spectrogram)
         try:
             wav = audio.to("cpu").detach().numpy().reshape(-1)
         except Exception:
             wav = audio
         pcm = _float_to_pcm16(wav)
-        return _resample_pcm16(pcm, self._native_rate(), PLAYBACK_RATE)
+        return finish_pcm(_resample_pcm16(pcm, self._native_rate(), PLAYBACK_RATE), plan)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

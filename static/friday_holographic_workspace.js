@@ -24,6 +24,13 @@
         const live = patch => { win.FridayTracking?.apply?.(patch); return read(); };
         function save(patch) {
             const edit = {...patch};
+            // Camera distance is a browser/device binding. A full live cfg
+            // must not overwrite the preserved legacy account calibration.
+            delete edit.neutral_face_width;
+            if (!Object.keys(edit).length) {
+                const error = new Error('Use Calibrate distance for this camera.');
+                notify(error.message); return Promise.reject(error);
+            }
             live(edit);
             const mine = ++revision;
             Object.keys(edit).forEach(key => unsaved.set(key, mine));
@@ -47,6 +54,104 @@
             });
         }
         return { read, live, save };
+    }
+
+    function cameraCalibration(win, notify = () => {}) {
+        const key = 'friday_camera_calibration_v1', limit = 8;
+        const validWidth = value => Number.isFinite(value) && value > .02 && value <= 2;
+        const validId = value => typeof value === 'string' && value.length > 0 && value.length <= 512;
+        let bindings = [], observedId, publishing = false, lastStatus = '';
+        try {
+            const raw = win.localStorage.getItem(key);
+            const stored = raw && raw.length <= 32768 ? JSON.parse(raw) : null;
+            if (stored?.version === 1 && Array.isArray(stored.cameras)) {
+                for (const entry of stored.cameras.slice(-limit)) {
+                    if (!validId(entry?.id) || !validWidth(entry?.width)) continue;
+                    bindings = bindings.filter(item => item.id !== entry.id);
+                    bindings.push({id:entry.id,width:entry.width,saved:true});
+                }
+            }
+        } catch (_) { /* An unreadable device preference is never an account calibration. */ }
+        function identity() {
+            try {
+                const id = win.fridayVibe?.getTrackedCameraId?.();
+                return validId(id) ? id : null;
+            } catch (_) { return null; }
+        }
+        function current() {
+            const id = identity(), binding = id && bindings.find(item => item.id === id);
+            const live = win.FridayCamera?.state?.status === 'live';
+            const status = binding ? (binding.saved ? 'Distance calibrated for this camera in this browser.'
+                : 'Calibrated for this session. This browser could not save the camera calibration.')
+                : id ? 'Calibrate distance for this camera.'
+                : live ? 'Camera identity is unavailable. Calibrate distance for this camera when its identity is available.'
+                : 'Enable head tracking, then Calibrate distance for this camera.';
+            return {id,binding,view:{verified:!!binding,saved:!!binding?.saved,width:binding?.width || 0,status}};
+        }
+        function publish(view, id) {
+            const signature = JSON.stringify([id,view]);
+            if (signature === lastStatus) return;
+            lastStatus = signature;
+            notify({...view});
+            // Device identity remains in this browser's binding store; status
+            // events expose no camera identifier to the desktop action bus.
+            if (win.dispatchEvent && win.CustomEvent) win.dispatchEvent(new win.CustomEvent('friday:camera-calibration',{detail:{...view}}));
+        }
+        function sync() {
+            const {id,view} = current(), tk = win.FridayTracking;
+            if (publishing) return {...view};
+            publishing = true;
+            try {
+                const changed = observedId !== id;
+                observedId = id;
+                if (tk && (changed || Number(tk.get?.().neutral_face_width || 0) !== view.width)) {
+                    // Clear filter history when cameras change. This touches
+                    // only the live tracker, never the legacy account value.
+                    if (changed) tk.calibrate?.(view.width);
+                    tk.apply?.({neutral_face_width:view.width});
+                }
+                publish(view,id);
+            } finally { publishing = false; }
+            return {...view};
+        }
+        function persist(next) {
+            try {
+                win.localStorage.setItem(key,JSON.stringify({version:1,cameras:next.map(({id,width})=>({id,width}))}));
+                next.forEach(entry => { entry.saved = true; });
+                return true;
+            } catch (_) { return false; }
+        }
+        function calibrateCurrent() {
+            const id = identity();
+            let width;
+            try { width = win.fridayVibe?.getTrackedFaceWidth?.(); } catch (_) { width = null; }
+            if (!id) {
+                const view = sync();
+                return {ok:false,...view,status:'Camera identity is unavailable. Calibrate distance for this camera when its identity is available.'};
+            }
+            if (!validWidth(width) || identity() !== id || !win.FridayTracking?.calibrate) {
+                sync();
+                return {ok:false,saved:false,status:'No fresh face seen. Enable head tracking and look at the camera before calibrating.'};
+            }
+            const next = bindings.filter(entry=>entry.id !== id).concat({id,width,saved:false}).slice(-limit);
+            persist(next); bindings = next;
+            win.FridayTracking.calibrate(width);
+            const view = sync();
+            return {ok:true,...view};
+        }
+        function resetCurrent() {
+            const id = identity();
+            if (!id) return {ok:false,saved:false,status:'No identified camera is active.'};
+            const next = bindings.filter(entry=>entry.id !== id), saved = persist(next);
+            // A failed removal remains unsaved; do not pretend the stored
+            // binding has gone or silently restore it on the next frame.
+            bindings = next;
+            win.FridayTracking?.calibrate?.(0); sync();
+            return {ok:true,saved,status:saved?'Calibrate distance for this camera.':'Reset for this session. This browser could not save the reset.'};
+        }
+        return {sync,calibrateCurrent,resetCurrent,
+            filterSettings:patch=>({...patch,neutral_face_width:current().view.width}),
+            get state() { return {...current().view}; }};
     }
 
     // Enclosing scenery is authored for a camera inside a world. Framing that
@@ -156,6 +261,67 @@
         return { layout: 'wide', stage, content };
     }
 
+    const LAYOUT_MS = 300;
+    const copyLayout = layout => JSON.parse(JSON.stringify(layout));
+    function separatingSides(layout) {
+        const stage = layout.stageFrame || layout.stage, content = layout.content;
+        if (!stage || !content) return [];
+        const sides = [];
+        if (stage.x + stage.w <= content.x) sides.push('left');
+        if (content.x + content.w <= stage.x) sides.push('right');
+        if (stage.y + stage.h <= content.y) sides.push('above');
+        if (content.y + content.h <= stage.y) sides.push('below');
+        return sides;
+    }
+    function canAnimateLayout(from, to) {
+        // A common separating half-plane stays separating under interpolation.
+        // A side swap or orientation change must settle before paint instead
+        // of flying the character through readable content.
+        const workSafe = separatingSides(from).some(side => separatingSides(to).includes(side));
+        const chatSafe = !from.chat || !to.chat || separatingSides({...from,content:from.chat})
+            .some(side => separatingSides({...to,content:to.chat}).includes(side));
+        return from.layout === to.layout && !!from.chat === !!to.chat && workSafe && chatSafe;
+    }
+    function interpolateLayout(from, to, progress) {
+        const p = Math.max(0, Math.min(1, progress));
+        if (!canAnimateLayout(from, to)) return copyLayout(to);
+        const result = { ...to };
+        for (const key of ['content', 'stageFrame', 'stage', 'caption', 'chat']) {
+            if (!from[key] || !to[key]) continue;
+            result[key] = {};
+            for (const axis of ['x', 'y', 'w', 'h']) result[key][axis] = from[key][axis] + (to[key][axis] - from[key][axis]) * p;
+        }
+        return result;
+    }
+    function createLayoutMotion(initial) {
+        let current = copyLayout(initial), target = copyLayout(initial), start = null;
+        let startedAt = 0, lastAt = 0, slowFrames = 0, fallbackUntil = 0;
+        return {
+            request(next, now, options = {}) {
+                if (JSON.stringify(next) === JSON.stringify(target) && !options.immediate) return false;
+                target = copyLayout(next);
+                if (options.immediate || !options.enabled || now < fallbackUntil || !canAnimateLayout(current, target)) {
+                    current = copyLayout(target); start = null;
+                } else { start = copyLayout(current); startedAt = lastAt = now; slowFrames = 0; }
+                return true;
+            },
+            frame(now, held = false) {
+                if (!start) return current;
+                if (held) { startedAt += Math.max(0, now-lastAt); lastAt = now; return current; }
+                if (now-lastAt > 48) slowFrames++; else slowFrames = 0;
+                lastAt = now;
+                if (slowFrames >= 3) { fallbackUntil = now+5000; current = copyLayout(target); start = null; return current; }
+                const t = Math.max(0, Math.min(1, (now-startedAt)/LAYOUT_MS));
+                current = interpolateLayout(start, target, t*t*(3-2*t));
+                if (t === 1) start = null;
+                return current;
+            },
+            settle() { current = copyLayout(target); start = null; return current; },
+            get current() { return current; }, get target() { return target; },
+            get active() { return !!start; }, get fallbackUntil() { return fallbackUntil; }
+        };
+    }
+
     function stageProjection(camera, stage, width, height) {
         if (!stage || !(width > 0 && height > 0)) return;
         const sx = stage.w / width, sy = stage.h / height;
@@ -211,10 +377,10 @@
         return Number.isFinite(left) && right>left && bottom>top ? {x:left,y:top,w:right-left,h:bottom-top} : null;
     }
 
-    function stageFill(bounds, width, height, padding) {
+    function stageFill(bounds, width, height, padding, headroom = 1) {
         if (!bounds || !(bounds.w>0 && bounds.h>0)) return {scale:1,x:0,y:0};
         padding=Math.max(0,Math.min(padding,width/4,height/4));
-        const scale = Math.min((width-padding*2)/bounds.w,(height-padding*2)/bounds.h);
+        const scale = Math.min((width-padding*2)/bounds.w,(height-padding*2)/bounds.h) / Math.max(1, headroom);
         return {scale, x:(width/2-bounds.x-bounds.w/2)*scale, y:(height/2-bounds.y-bounds.h/2)*scale};
     }
 
@@ -287,11 +453,12 @@
         const doc = win.document, root = doc.documentElement;
         const esc = text => String(text == null ? '' : text).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         const upper = text => text[0].toUpperCase() + text.slice(1);
-        const state = { mode: 'balanced', source: 'off', arrangement: 'companion', error: '', open: false };
+        const state = { mode: 'balanced', source: 'off', arrangement: 'companion', motion: 'on', error: '', preferenceError: '', open: false };
         try {
             const preferences = JSON.parse(win.localStorage.getItem('friday_holographic_workspace_v1') || '{}');
             if (MODES.includes(preferences.mode)) state.mode = preferences.mode;
             if (ARRANGEMENTS.includes(preferences.arrangement)) state.arrangement = preferences.arrangement;
+            if (preferences.motion === 'off') state.motion = 'off';
         } catch (_) { /* Display preferences are optional. Camera intent is never persisted. */ }
         let dialog = null, opener = null, depth = null, session = null, sessionVibe = null;
         let ownedPreview = null, timer = null, observer = null, destroyed = false, signature = '';
@@ -299,18 +466,84 @@
         let chromeObserver = null, chromeFrame = 0, chromeUntil = 0, ownedTopbar = false;
         const observedChrome = new Set(), previousTopbar = root.style.getPropertyValue('--fr-topbar-h');
         let occupancy = { layout: 'classic', content: null, stage: null };
+        const layoutMotion = createLayoutMotion(occupancy), surfaces = new Map(), interactionHolds = new Set();
+        let layoutFrame = 0, applyingLayout = false, viewportKey = '', activityUntil = 0, composing = false;
+        const heldPointers = new Set();
+        let mouseHeld = false;
         let caption = null, captionSignature = '';
         const captionNodes = new Map();
         let fitBounds = null, fitKey = '', fitAt = 0, fittedDistance = 0, projectedBounds = null;
         let trackingStatus = '';
         const tuner = trackingTuner(win, message => { trackingStatus = message; refreshTracking(); });
+        const calibration = cameraCalibration(win, () => refreshTracking());
         const originalFog = new WeakMap();
         const tagged = new Map();
         const reduced = win.matchMedia('(prefers-reduced-motion: reduce)');
         const simpleStyle = () => win.FridayDisplayStyle ? win.FridayDisplayStyle.get() === 'simple' : doc.body?.classList.contains('friday-experience-enabled');
 
         function persist() {
-            try { win.localStorage.setItem('friday_holographic_workspace_v1', JSON.stringify({ mode: state.mode, arrangement: state.arrangement })); } catch (_) {}
+            try {
+                win.localStorage.setItem('friday_holographic_workspace_v1', JSON.stringify({ mode: state.mode, arrangement: state.arrangement, motion: state.motion }));
+                state.preferenceError = '';
+            } catch (_) { state.preferenceError = 'Applied for now. This browser could not save your layout preferences.'; }
+        }
+        function interactionHeld(now = win.performance.now()) {
+            return composing || mouseHeld || heldPointers.size > 0 || interactionHolds.size > 0 || now < activityUntil ||
+                !!(win.FridayTracking?.hand?.seen && (win.FridayHandCursor?.locked || win.FridayTracking.hand.pinching));
+        }
+        function holdLayout(owner) {
+            const token = {owner};
+            interactionHolds.add(token);
+            return () => { interactionHolds.delete(token); activityUntil = win.performance.now()+180; scheduleLayout(); };
+        }
+        function onDirectInput(event) {
+            if (!simpleStyle() && !['pointerup','pointercancel','lostpointercapture','mouseup','compositionend','blur'].includes(event.type)) return;
+            if (event.type === 'compositionstart') composing = true;
+            if (event.type === 'compositionend') composing = false;
+            if (event.type === 'pointerdown') heldPointers.add(event.pointerId);
+            if (['pointerup','pointercancel','lostpointercapture'].includes(event.type)) heldPointers.delete(event.pointerId);
+            if (event.type === 'mousedown') mouseHeld = true;
+            if (event.type === 'mouseup') mouseHeld = false;
+            if (event.type === 'blur') { composing = mouseHeld = false; heldPointers.clear(); }
+            // Focus itself is not a hold: a requested arrangement must still
+            // work after a keyboard user has focused its button.
+            activityUntil = win.performance.now() + (event.type === 'input' || event.type === 'keydown' ? 420 : 180);
+            scheduleLayout();
+        }
+        function surfaceArea(kind) {
+            return occupancy.stage ? (kind === 'chat' && occupancy.chat ? occupancy.chat : occupancy.content) : null;
+        }
+        function updateSurface(element) {
+            const entry = surfaces.get(element), area = entry && surfaceArea(entry.kind);
+            if (!entry || !element.isConnected) return;
+            if (!area) { clearSurface(element, entry); return; }
+            let request;
+            try { request = entry.getRect(); } catch (_) { /* A disappearing owner cannot break other surfaces' containment. */ }
+            if (!request || !['x','y','w','h'].every(key => Number.isFinite(request[key])) || request.w <= 0 || request.h <= 0) {
+                const bounds = element.getBoundingClientRect();
+                request = entry.lastRect || {x:bounds.x,y:bounds.y,w:Math.max(1,bounds.width),h:Math.max(1,bounds.height)};
+            }
+            entry.lastRect = {...request};
+            const rect = constrainSpatialRect(request, area);
+            element.dataset.fridaySpatialSurface = entry.kind;
+            for (const axis of ['x','y','w','h']) element.style.setProperty('--friday-surface-'+axis, rect[axis]+'px');
+        }
+        function clearSurface(element, entry) {
+            for (const axis of ['x','y','w','h']) {
+                const name = '--friday-surface-'+axis, previous = entry.previous[name];
+                if (previous) element.style.setProperty(name, previous); else element.style.removeProperty(name);
+            }
+            if (entry.marker == null) element.removeAttribute('data-friday-spatial-surface');
+            else element.setAttribute('data-friday-spatial-surface', entry.marker);
+        }
+        function registerSurface(element, options = {}) {
+            if (!element || typeof options.getRect !== 'function') return () => {};
+            if (surfaces.has(element)) clearSurface(element, surfaces.get(element));
+            const entry = { kind: ['window','overlay','chat'].includes(options.kind) ? options.kind : 'overlay',
+                getRect: options.getRect, marker: element.getAttribute('data-friday-spatial-surface'), previous: {} };
+            for (const axis of ['x','y','w','h']) entry.previous['--friday-surface-'+axis] = element.style.getPropertyValue('--friday-surface-'+axis);
+            surfaces.set(element, entry); updateSurface(element);
+            return () => { if (surfaces.get(element) === entry) { clearSurface(element, entry); surfaces.delete(element); } };
         }
         function cameraSession() {
             if (!session || sessionVibe !== win.fridayVibe) {
@@ -377,13 +610,13 @@
             const height = Math.min(Math.max(34, Math.ceil(caption.scrollHeight) + 1), Math.max(1, frame.h - 40));
             const gap = Math.min(8, Math.max(0, frame.h - height - 1));
             const status = { x: frame.x + (frame.w - Math.min(frame.w,420))/2, y: frame.y + frame.h - height, w: Math.min(frame.w,420), h: height };
-            caption.style.left = status.x + 'px'; caption.style.top = status.y + 'px';
-            caption.style.maxHeight = height + 'px';
             return { ...layout, stageFrame: frame, caption: status, stage: { ...frame, h: Math.max(1, frame.h-height-gap) } };
         }
         function workspaceArea(area) {
             if (!area || destroyed) return area;
+            if (applyingLayout) return occupancy.content || area;
             const rightChat = parseFloat(win.getComputedStyle(root).getPropertyValue('--fr-chat-dock')) || 0;
+            const leftChat = parseFloat(win.getComputedStyle(root).getPropertyValue('--fr-chat-dock-left')) || 0;
             const enabled = simpleStyle() && doc.body.classList.contains('friday-experience-enabled') && !win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat';
             const compact = enabled && (win.innerWidth < 1100 || area.w < 680);
             const gutter = win.innerWidth < 760 ? 8 : 16;
@@ -407,8 +640,72 @@
                 }
                 ownedTopbar=false;
             }
-            occupancy = reserveCaption(spatialLayout(base, { enabled, compact, shortLandscape: win.innerHeight <= 500 && win.innerWidth > win.innerHeight, viewportWidth: win.innerWidth, arrangement: state.arrangement, rightChat: rightChat > 0 }));
+            const next = reserveCaption(spatialLayout(base, { enabled, compact, shortLandscape: win.innerHeight <= 500 && win.innerWidth > win.innerHeight, viewportWidth: win.innerWidth, arrangement: state.arrangement, rightChat: rightChat > 0 }));
+            if (enabled && !compact && (rightChat || leftChat)) next.chat = {
+                x: leftChat ? 0 : win.innerWidth-rightChat, y:base.y,
+                w: leftChat || rightChat, h:base.h
+            };
+            // Chrome and newly opened chat already occupy their new pixels.
+            // Reflow before paint rather than animate through those regions.
+            const viewport = [win.innerWidth,win.innerHeight,enabled,base.x,base.y,base.w,base.h,leftChat,rightChat].join('|');
+            const immediate = viewport !== viewportKey || !enabled || doc.hidden;
+            viewportKey = viewport;
+            const changed = layoutMotion.request(next, win.performance.now(), {
+                immediate, enabled: state.motion === 'on' && !reduced.matches && !doc.hidden
+            });
+            if (changed) {
+                occupancy = layoutMotion.current;
+                applyLayout(!layoutMotion.active);
+                scheduleLayout();
+            }
             return occupancy.content;
+        }
+        function scheduleLayout() {
+            if (destroyed || layoutFrame || !layoutMotion.active) return;
+            layoutFrame = win.requestAnimationFrame(advanceLayout);
+        }
+        function advanceLayout(now) {
+            layoutFrame = 0;
+            if (destroyed) return;
+            const next = doc.hidden ? layoutMotion.settle() : layoutMotion.frame(now, interactionHeld(now));
+            if (next !== occupancy || !layoutMotion.active) {
+                occupancy = next; applyLayout(!layoutMotion.active);
+            }
+            scheduleLayout();
+        }
+        function applyLayout(announce = false) {
+            if (applyingLayout || !doc.body) return;
+            applyingLayout = true;
+            try {
+                const styled = simpleStyle(), content = occupancy.content, stage = occupancy.stage;
+                if (stage) doc.body.dataset.fridaySpatialLayout = occupancy.layout;
+                else delete doc.body.dataset.fridaySpatialLayout;
+                if (styled) doc.body.dataset.fridayLayoutMotion = layoutMotion.active ? 'moving' : state.motion;
+                else delete doc.body.dataset.fridayLayoutMotion;
+                const values = {
+                    'content-left': stage && content ? content.x : 0,
+                    'content-right': stage && content ? Math.max(0, win.innerWidth-content.x-content.w) : 0,
+                    'content-top': stage && content ? content.y : 0,
+                    'content-bottom': stage && content ? Math.max(0, win.innerHeight-content.y-content.h) : 0,
+                    'avatar-left': stage?.x || 0, 'avatar-top': stage?.y || 0,
+                    'avatar-width': stage?.w || 0, 'avatar-height': stage?.h || 0, 'avatar-gap':16
+                };
+                for (const [name,value] of Object.entries(values)) {
+                    if (styled) root.style.setProperty('--friday-'+name,value+'px'); else root.style.removeProperty('--friday-'+name);
+                }
+                if (caption && occupancy.caption) {
+                    const box = occupancy.caption;
+                    caption.style.left=box.x+'px'; caption.style.top=box.y+'px';
+                    caption.style.width=box.w+'px'; caption.style.maxHeight=box.h+'px';
+                }
+                surfaces.forEach((_,element) => updateSurface(element));
+                const signature = JSON.stringify(occupancy);
+                win.dispatchEvent(new win.CustomEvent('friday:spatial-frame',{detail:copyLayout(occupancy)}));
+                if (announce && signature !== spatialSignature) {
+                    spatialSignature = signature;
+                    win.dispatchEvent(new win.CustomEvent('friday:spatial-layout',{detail:copyLayout(occupancy)}));
+                }
+            } finally { applyingLayout = false; }
         }
         function updateLayout() {
             if (destroyed || !doc.body) return;
@@ -426,21 +723,7 @@
                 tagged.forEach((value, el) => { if (el.getAttribute('data-depth') === 'middle') el.removeAttribute('data-depth'); }); tagged.clear();
             }
             if (typeof win.fridayDesktopArea === 'function') win.fridayDesktopArea();
-            const content = occupancy.content, stage = occupancy.stage;
-            if (stage) doc.body.dataset.fridaySpatialLayout = occupancy.layout;
-            else delete doc.body.dataset.fridaySpatialLayout;
-            const values = {
-                '--friday-content-left': stage && content ? content.x : 0,
-                '--friday-content-right': stage && content ? Math.max(0, win.innerWidth - content.x - content.w) : 0,
-                '--friday-content-top': stage && content ? content.y : 0,
-                '--friday-content-bottom': stage && content ? Math.max(0, win.innerHeight - content.y - content.h) : 0,
-                '--friday-avatar-left': stage?.x || 0, '--friday-avatar-top': stage?.y || 0,
-                '--friday-avatar-width': stage?.w || 0, '--friday-avatar-height': stage?.h || 0,
-                '--friday-avatar-gap': 16,
-            };
-            Object.entries(values).forEach(([name,value]) => { if (styled) root.style.setProperty(name, value + 'px'); else root.style.removeProperty(name); });
-            const spatialNext=JSON.stringify(occupancy);
-            if(spatialNext!==spatialSignature){spatialSignature=spatialNext;win.dispatchEvent(new win.CustomEvent('friday:spatial-layout',{detail:JSON.parse(spatialNext)}));}
+            applyLayout(!layoutMotion.active);
             for (const el of styled ? doc.querySelectorAll('.fwin-body,.chat-panel,.chat-win') : []) {
                 if (!tagged.has(el) && !el.hasAttribute('data-depth')) { tagged.set(el, null); el.setAttribute('data-depth', 'middle'); }
             }
@@ -453,7 +736,7 @@
             const tick=()=>{chromeFrame=0;if(destroyed||doc.hidden)return;const now=win.performance.now();if(now-last>=32){last=now;updateLayout();}if(now<chromeUntil)chromeFrame=win.requestAnimationFrame(tick);};
             chromeFrame=win.requestAnimationFrame(tick);
         }
-        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null, structures:null };
+        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null, lean:null, structures:null };
         function fitSceneCamera(sceneState) {
             const stage = destroyed ? null : occupancy.stage;
             const { camera, scene, basePosition, targetLook, structures, keys, delta } = sceneState;
@@ -552,9 +835,12 @@
             const radius = fitBounds.radius + fitBounds.center.distanceTo(targetLook);
             const vertical = camera.fov * Math.PI / 360;
             const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
-            // The stage projection handles the actual head pose each frame;
-            // neutral framing therefore needs only a modest breathing margin.
-            const zoom = Number.isFinite(sceneState.headZoom) ? sceneState.headZoom : 1;
+            // Frame a fixed safe envelope for the available lean, rather than
+            // moving the neutral camera to compensate for each head movement.
+            // pushFace bounds face-width ratios at 2.5 before calculating z.
+            const tracking = !!win.fridayVibe?.isHologramOn?.();
+            const zoom = tracking ? win.FridayTracking?.headZoom?.(Math.log2(2.5)) || 1
+                : Number.isFinite(sceneState.headZoom) ? sceneState.headZoom : 1;
             const glass = Number.isFinite(sceneState.glassAt) ? sceneState.glassAt : 1;
             const eyeFraction = Math.max(.1, 1-glass*(1-1/zoom));
             const required = Math.max(radius / Math.sin(Math.min(vertical, horizontal)) * 1.12, radius * 1.15 / eyeFraction);
@@ -574,7 +860,37 @@
             neutral.position.copy(basePosition);neutral.lookAt(targetLook);neutral.updateMatrixWorld(true);neutral.updateProjectionMatrix();
             const raw=projectedPieces(neutral,frameFit.pieces,stage.w,stage.h);
             const pad=Math.max(8,Math.min(stage.w,stage.h)*.045);
-            const desired=stageFill(raw,stage.w,stage.h,pad);
+            let desired=stageFill(raw,stage.w,stage.h,pad);
+            if (tracking) {
+                // Reserve the pieces' actual extent at up to ten percent
+                // focal growth: nearer geometry grows faster than the focus.
+                // Keep that headroom inside the FINAL usable rectangle.
+                // Depth-off needs none; reduced motion needs only its gentle
+                // lean. The untracked avatar retains its original full fit.
+                const gain = 1 / Math.max(.1, glass + (1-glass)*zoom);
+                const allowance = Math.min(1.10, Math.max(1, gain));
+                const inset = Math.min(12,stage.w/8,stage.h/8);
+                const active = stageFill(raw,stage.w,stage.h,inset,allowance);
+                if (raw && glass > 1 && allowance > 1) {
+                    const lean = frameFit.lean || (frameFit.lean = neutral.clone());
+                    lean.copy(neutral);
+                    const probeZoom = Math.min(zoom, (glass-1/allowance)/(glass-1));
+                    const screenDist = Math.max(4, glass*basePosition.distanceTo(targetLook));
+                    lean.position.addScaledVector(targetLook.clone().sub(basePosition).normalize(), screenDist*(1-1/probeZoom));
+                    lean.updateMatrixWorld(true);
+                    // A centered eye moves toward the fixed glass; its wider
+                    // frustum divides both projection scales by the same zoom.
+                    lean.projectionMatrix.elements[0] /= probeZoom;
+                    lean.projectionMatrix.elements[5] /= probeZoom;
+                    const grown = projectedPieces(lean,frameFit.pieces,stage.w,stage.h);
+                    const limit = grown && stageFill(grown,stage.w,stage.h,inset);
+                    if (limit && limit.scale < active.scale) {
+                        const shrink = limit.scale/active.scale;
+                        active.scale = limit.scale; active.x *= shrink; active.y *= shrink;
+                    }
+                }
+                if (active.scale < desired.scale) desired = active;
+            }
             const follow=frameFit.ready?1-Math.exp(-frameFit.delta*3):1;
             frameFit.scale+=(desired.scale-frameFit.scale)*follow;
             frameFit.x+=(desired.x-frameFit.x)*follow;frameFit.y+=(desired.y-frameFit.y)*follow;
@@ -645,6 +961,9 @@
             dialog.querySelectorAll('[data-holo-mode]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoMode === state.mode)));
             dialog.querySelectorAll('[data-holo-source]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoSource === state.source)));
             dialog.querySelectorAll('[data-holo-arrangement]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoArrangement === state.arrangement)));
+            dialog.querySelectorAll('[data-holo-motion]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoMotion === state.motion)));
+            const preferences = dialog.querySelector('[data-holo-preference-status]');
+            if (preferences) preferences.textContent = state.preferenceError || (reduced.matches ? 'Your system’s reduced motion preference is active.' : 'Layout preferences stay in this browser.');
             dialog.querySelectorAll('[data-holo-form]').forEach(el => el.setAttribute('aria-pressed', String(Number(el.dataset.holoForm) === current.scene?.index)));
             const reduce = dialog.querySelector('[data-holo-reduced]'); if (reduce) reduce.hidden = !reduced.matches;
             refreshTracking();
@@ -661,6 +980,13 @@
             });
             const status = dialog.querySelector('[data-holo-tracking-status]');
             if (status) status.textContent = trackingStatus || 'Applies to the avatar in both display styles. Your existing preferences are kept.';
+            const distance = dialog.querySelector('[data-holo-calibration-status]');
+            if (distance) distance.textContent = calibration.state.status;
+        }
+        function calibrateDistance() {
+            const result = calibration.calibrateCurrent();
+            trackingStatus = result.ok && result.saved ? '' : result.status;
+            refreshTracking(); return result;
         }
         async function setSource(source, userInitiated) {
             if (!['off', 'preview', 'camera'].includes(source) || destroyed) return;
@@ -698,6 +1024,16 @@
             if (id) win.dispatchEvent(new CustomEvent('friday:fwin-max', { detail: { workspace: id, max: true } }));
             refreshPanel();
         }
+        function setMotion(value) {
+            if (value !== 'on' && value !== 'off') return;
+            state.motion = value; persist();
+            if (value === 'off') { occupancy = layoutMotion.settle(); applyLayout(true); }
+            updateLayout(); refreshPanel();
+        }
+        function resetLayout() {
+            state.arrangement = 'companion'; state.motion = 'on';
+            persist(); updateLayout(); refreshPanel();
+        }
         function close() {
             if (!dialog) return;
             state.open = false; dialog.close();
@@ -714,9 +1050,12 @@
                     const button = event.target.closest('button'); if (!button || !dialog.contains(button)) return;
                     if (button.hasAttribute('data-holo-close')) close();
                     if (button.hasAttribute('data-holo-details')) { close(); win.dispatchEvent(new CustomEvent('friday:scene-details')); }
+                    if (button.hasAttribute('data-holo-calibrate')) void calibrateDistance();
                     if (button.dataset.holoMode) setMode(button.dataset.holoMode);
                     if (button.dataset.holoSource) void setSource(button.dataset.holoSource, event.isTrusted);
                     if (button.dataset.holoArrangement) setArrangement(button.dataset.holoArrangement);
+                    if (button.dataset.holoMotion) setMotion(button.dataset.holoMotion);
+                    if (button.hasAttribute('data-holo-reset-layout')) resetLayout();
                     if (button.dataset.holoForm !== undefined) {
                         const index = Number(button.dataset.holoForm), scenes = win.fridayVibe?.getStructures?.() || [];
                         if (Number.isInteger(index) && index >= 0 && index < scenes.length && sample().ready) { win.fridayVibe.setStructure(index); refreshPanel(); }
@@ -743,8 +1082,9 @@
                 <div class="fr-holo-content"><section class="fr-holo-collection" aria-label="Avatar collection"><div class="fr-holo-scene-heading"><small data-holo-transition>Original Friday scene</small><h3 data-holo-scene-name></h3><p>Your holographic desktop stays alive as you work.</p></div><div class="fr-holo-forms">${scenes.map((scene, index) => `<button data-holo-form="${index}" aria-pressed="false"><span>${String(index + 1).padStart(2, '0')}</span><strong>${esc(scene.name)}</strong></button>`).join('') || '<p>Scene collection is loading. Reopen this panel in a moment.</p>'}</div></section>
                 <aside class="fr-holo-controls"><section><h3>Workspace depth</h3><div class="fr-holo-segment">${MODES.map(mode => `<button data-holo-mode="${mode}" aria-pressed="false">${upper(mode)}</button>`).join('')}</div><p>Depth changes the light and layers around your work. Text and controls stay steady.</p></section>
                 <section><h3>Motion source</h3><div class="fr-holo-sources"><button data-holo-source="off">Off</button><button data-holo-source="preview">Pointer preview</button><button data-holo-source="camera">Enable head tracking</button></div><p>Pointer preview uses no camera. Head tracking requests camera access through Friday’s original tracker.</p><div class="fr-holo-status" role="status" data-holo-status></div><p data-holo-reduced hidden>Reduced motion is on. Moving workspace decorations remain still.</p></section>
-                <section><h3>Head tracking comfort</h3><p>These controls change the avatar’s response. Workspace depth above changes only the surrounding layers.</p><div class="fr-holo-tracking">${TRACKING_DIALS.map(dial => `<label><span>${dial.label}<output data-holo-tracking-value="${dial.key}"></output></span><input type="range" data-holo-tracking="${dial.key}" aria-label="${dial.label}" min="${dial.min}" max="${dial.max}" step="${dial.step}"><small>${dial.help}</small></label>`).join('')}</div><p role="status" data-holo-tracking-status></p></section>
-                <section><h3>Friday’s place in your work</h3><div class="fr-holo-arrangements">${[['companion','Companion','A place beside the work'],['present','Present','A generous holographic stage'],['focus','Focus','More room for the workspace']].map(([value, title, description]) => `<button data-holo-arrangement="${value}" aria-pressed="false"><strong>${title}</strong><small>${description}</small></button>`).join('')}</div><p>Applies to desktop workspaces. Your floating window sizes are kept for Restore.</p></section>${!win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat' ? '<section class="fr-holo-advanced"><button data-holo-details>More scene settings ↗</button><p>Evolution, hand tracking, timelapse and the original scene controls.</p></section>' : ''}</aside></div>`;
+                <section><h3>Head tracking comfort</h3><p>These controls change the avatar’s response. Workspace depth above changes only the surrounding layers.</p><div class="fr-holo-tracking">${TRACKING_DIALS.map(dial => `<label><span>${dial.label}<output data-holo-tracking-value="${dial.key}"></output></span><input type="range" data-holo-tracking="${dial.key}" aria-label="${dial.label}" min="${dial.min}" max="${dial.max}" step="${dial.step}"><small>${dial.help}</small></label>`).join('')}</div><p>Sit at your usual distance, then set the starting point for leaning in and out. Distance calibration stays with this camera in this browser.</p><button data-holo-calibrate>Calibrate distance</button><p data-holo-calibration-status></p><p role="status" data-holo-tracking-status></p></section>
+                <section><h3>Friday’s place in your work</h3><div class="fr-holo-arrangements">${[['companion','Companion','A place beside the work'],['present','Present','A generous holographic stage'],['focus','Focus','More room for the workspace']].map(([value, title, description]) => `<button data-holo-arrangement="${value}" aria-pressed="false"><strong>${title}</strong><small>${description}</small></button>`).join('')}</div><p>Applies to desktop workspaces. Your floating window sizes are kept for Restore.</p></section>
+                <section><h3>Arrangement motion</h3><div class="fr-holo-segment"><button data-holo-motion="on" aria-pressed="false">Gentle</button><button data-holo-motion="off" aria-pressed="false">Off</button></div><p>Friday and the workspace move together. Motion pauses while you type, drag or target a control by hand. Camera tracking has its own controls above.</p><button data-holo-reset-layout>Reset layout</button><p role="status" data-holo-preference-status></p></section>${!win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat' ? '<section class="fr-holo-advanced"><button data-holo-details>More scene settings ↗</button><p>Evolution, hand tracking, timelapse and the original scene controls.</p></section>' : ''}</aside></div>`;
             state.open = true; doc.body.dataset.fridayHoloStudio = 'true';
             dialog.showModal(); refreshPanel(); dialog.querySelector('[data-holo-close]')?.focus();
         }
@@ -758,9 +1098,15 @@
             ownedPreview = tk.head.debug;
         }
         function leavePointer() { clearPreview(); }
-        function onVisibility() { if (doc.hidden) { clearPreview(); void setSource('off', false); } }
+        function onVisibility() {
+            if (doc.hidden) {
+                clearPreview(); void setSource('off', false); mouseHeld = composing = false; heldPointers.clear();
+                occupancy = layoutMotion.settle(); applyLayout(true);
+            }
+        }
         function poll() {
             if (destroyed || doc.hidden) return;
+            calibration.sync();
             ensureDepth();
             const nextCaption = ['state-indicator','presence-status'].map(id => {
                 const node = doc.getElementById(id); return node ? node.textContent + ':' + node.style.display : '';
@@ -779,18 +1125,24 @@
             if (destroyed) return;
             destroyed = true; selectSerial++; clearPreview(); void session?.release();
             restoreCaption();
-            win.clearInterval(timer); observer?.disconnect(); chromeObserver?.disconnect(); win.cancelAnimationFrame(chromeFrame); depth?.destroy(); dialog?.remove();
+            win.clearInterval(timer); observer?.disconnect(); chromeObserver?.disconnect(); win.cancelAnimationFrame(chromeFrame); win.cancelAnimationFrame(layoutFrame); depth?.destroy(); dialog?.remove();
+            surfaces.forEach((entry,element) => clearSurface(element,entry)); surfaces.clear(); interactionHolds.clear();
+            for (const name of ['pointerdown','pointerup','pointercancel','lostpointercapture','mousedown','mouseup','keydown','input','compositionstart','compositionend']) doc.removeEventListener(name,onDirectInput,true);
+            win.removeEventListener('blur',onDirectInput);
             doc.removeEventListener('pointermove', onPointer); doc.removeEventListener('pointerleave', leavePointer); doc.removeEventListener('visibilitychange', onVisibility);
             doc.removeEventListener('transitionrun',onChromeTransition,true); doc.removeEventListener('transitionend',onChromeTransition,true);
             win.removeEventListener('resize', updateLayout); win.removeEventListener('friday:surface-changed', updateLayout); win.removeEventListener('friday:chat-dock', updateLayout); win.removeEventListener('friday:display-style', onDisplayStyle); win.removeEventListener('pagehide', destroy); reduced.removeEventListener?.('change', refreshReduced);
             win.removeEventListener('friday:tracking-settings', refreshTracking);
             tagged.forEach((value, el) => { if (el.getAttribute('data-depth') === 'middle') el.removeAttribute('data-depth'); }); tagged.clear();
-            delete doc.body.dataset.fridayHoloArrangement; delete doc.body.dataset.fridayHoloWorking; delete doc.body.dataset.fridayHoloStudio; delete doc.body.dataset.fridaySpatialLayout;
+            delete doc.body.dataset.fridayHoloArrangement; delete doc.body.dataset.fridayHoloWorking; delete doc.body.dataset.fridayHoloStudio; delete doc.body.dataset.fridaySpatialLayout; delete doc.body.dataset.fridayLayoutMotion;
             for (const name of ['content-left','content-right','content-top','content-bottom','avatar-left','avatar-top','avatar-width','avatar-height','avatar-gap']) root.style.removeProperty('--friday-'+name);
             if(ownedTopbar){if(previousTopbar)root.style.setProperty('--fr-topbar-h',previousTopbar);else root.style.removeProperty('--fr-topbar-h');ownedTopbar=false;}
             occupancy={layout:'classic',content:null,stage:null};projectedBounds=null;
         }
-        function refreshReduced() { if (reduced.matches) clearPreview(); refreshPanel(); }
+        function refreshReduced() {
+            if (reduced.matches) { clearPreview(); occupancy = layoutMotion.settle(); applyLayout(true); }
+            refreshPanel();
+        }
         function onDisplayStyle() {
             if (!simpleStyle() && state.open) close();
             updateLayout(); ensureDepth();
@@ -798,16 +1150,36 @@
         function start() {
             if (destroyed || timer !== null) return;
             if(win.ResizeObserver)chromeObserver=new win.ResizeObserver(updateLayout);
-            ensureDepth(); cameraSession(); updateLayout();
+            ensureDepth(); cameraSession(); calibration.sync(); updateLayout();
             timer = win.setInterval(poll, 40);
             observer = new win.MutationObserver(updateLayout); observer.observe(doc.getElementById('ui-root') || doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
             doc.addEventListener('pointermove', onPointer, { passive: true }); doc.addEventListener('pointerleave', leavePointer); doc.addEventListener('visibilitychange', onVisibility);
             doc.addEventListener('transitionrun',onChromeTransition,true); doc.addEventListener('transitionend',onChromeTransition,true);
+            for (const name of ['pointerdown','pointerup','pointercancel','lostpointercapture','mousedown','mouseup','keydown','input','compositionstart','compositionend']) doc.addEventListener(name,onDirectInput,true);
+            win.addEventListener('blur',onDirectInput);
             win.addEventListener('resize', updateLayout); win.addEventListener('friday:surface-changed', updateLayout); win.addEventListener('friday:chat-dock', updateLayout); win.addEventListener('friday:display-style', onDisplayStyle); win.addEventListener('pagehide', destroy); reduced.addEventListener?.('change', refreshReduced);
             win.addEventListener('friday:tracking-settings', refreshTracking);
         }
         if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start, { once: true }); else start();
-        return { open, close, setMode, setArrangement, workspaceArea, fitSceneCamera, projectSceneStage, updateAmbientStage, constrainRect: rect => constrainSpatialRect(rect, occupancy.stage ? occupancy.content : null), destroy, get stageRect() { return occupancy.stage ? { ...occupancy.stage } : null; }, get state() { return { ...state, ownsTracking: !!session?.owns, spatial: JSON.parse(JSON.stringify(occupancy)), projectedAvatarBounds: projectedBounds ? {...projectedBounds} : null }; } };
+        // The outer factory publishes the API after mount returns. Native
+        // settings filtering can then resolve a restored binding immediately,
+        // even if the existing camera was live before this module loaded.
+        win.queueMicrotask?.(() => { if (!destroyed) calibration.sync(); });
+        return { open, close, setMode, setArrangement, setMotion, resetLayout, holdLayout, registerSurface, updateSurface, cameraCalibration:calibration,
+            workspaceArea, fitSceneCamera, projectSceneStage, updateAmbientStage,
+            constrainRect: rect => constrainSpatialRect(rect, occupancy.stage ? occupancy.content : null),
+            getOverlayRect(rect, padding = 8) {
+                const area = occupancy.stage && occupancy.content;
+                if (!area) return {...rect};
+                const pad = Math.max(0,Math.min(Number(padding)||0,area.w/4,area.h/4));
+                return constrainSpatialRect(rect,{x:area.x+pad,y:area.y+pad,w:area.w-pad*2,h:area.h-pad*2});
+            },
+            destroy, get stageRect() { return occupancy.stage ? { ...occupancy.stage } : null; },
+            get layoutRect() { return copyLayout(occupancy); },
+            get state() { return { ...state, moving:layoutMotion.active, layoutHeld:interactionHeld(), performanceFallback:win.performance.now()<layoutMotion.fallbackUntil,
+                ownsTracking: !!session?.owns, spatial: copyLayout(occupancy), projectedAvatarBounds: projectedBounds ? {...projectedBounds} : null }; } };
     }
-    return { trackingSession, trackingTuner, TRACKING_DIALS, setStageScenery, prepareStageField, prepareStagePoints, scaleStagePoints, spatialLayout, stageProjection, projectedSphere, projectedPieces, stageFill, ambientStageUniforms, constrainSpatialRect, fitRadialDistance, mount };
+    return { trackingSession, trackingTuner, cameraCalibration, TRACKING_DIALS, setStageScenery, prepareStageField, prepareStagePoints, scaleStagePoints,
+        spatialLayout, separatingSides, canAnimateLayout, interpolateLayout, createLayoutMotion, LAYOUT_MS,
+        stageProjection, projectedSphere, projectedPieces, stageFill, ambientStageUniforms, constrainSpatialRect, fitRadialDistance, mount };
 });

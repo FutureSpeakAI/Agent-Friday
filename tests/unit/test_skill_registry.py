@@ -446,18 +446,19 @@ class TestBuildInjection:
         result = build_injection("prepare for my meeting", dirs=[tmp_path])
         assert "Prepare briefing" in result
 
-    def test_injection_contains_body(self, tmp_path):
+    def test_injection_points_to_complete_body(self, tmp_path):
         _write_skill_folder(tmp_path, "meeting-prep", PREP_SKILL_MD)
         result = build_injection("prepare for my meeting", dirs=[tmp_path])
-        assert "Follow these steps" in result
+        assert "read_skill" in result
+        assert "Follow these steps" not in result
 
-    def test_body_truncated_at_max_body(self, tmp_path):
+    def test_index_does_not_inject_or_truncate_long_body(self, tmp_path):
         long_body = "word " * 500  # 2500 chars, well over default max_body=1200
         md = f"---\nname: long-skill\ntriggers:\n  - long test\n---\n{long_body}"
         _write_skill_folder(tmp_path, "long-skill", md)
         result = build_injection("long test query", dirs=[tmp_path], max_body=100)
-        # The injected body portion should be at most max_body chars
-        # (plus header lines); total result should be modest
+        assert "read_skill" in result
+        assert "word word" not in result
         assert len(result) < 500
 
     def test_empty_dir_returns_empty(self, tmp_path):

@@ -289,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         seat = seat_up(cfg["seat_port"])
         n = worker_count(a.workers, seat, cfg)
         cmd = [sys.executable, "-m", "pytest", *args, "-p", "no:cacheprovider"]
-        # Zero means serial, not pytest.ini's default of all available CPUs.
+        # Explicit zero also overrides inherited -n auto or caller options.
         cmd += ["-n", str(n)]
         state, fields = lock_state(lock)
         if state == "stale":

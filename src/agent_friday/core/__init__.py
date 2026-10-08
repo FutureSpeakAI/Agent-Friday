@@ -2176,6 +2176,8 @@ DEFAULT_SETTINGS = {
     "tts_voice": "Aoede",                  # any of the 30 Gemini-TTS voices
     "voice_language": "",                  # BCP-47 (e.g. "en-US"); blank = server default
     "voice_style_prompt": "",              # free-text styling instruction passed to Gemini
+    "voice_response_depth": "adaptive",    # adaptive | concise | detailed
+    "voice_speaking_pace": "adaptive",     # adaptive | measured | natural | brisk
     "voice_temperature": None,             # 0.0 – 2.0; null = SDK default
     "voice_max_tokens": 0,                 # cap response length in tokens; 0 = unlimited
     "voice_affective": True,               # Live API enable_affective_dialog
@@ -2207,7 +2209,7 @@ DEFAULT_SETTINGS = {
     "voice_tool_hard_limit_s": 20,
     # Local voice: seconds without a first word before Friday says "Hang on."
     # (the turn is stopped honestly at voice_tool_hard_limit_s). 0 = off.
-    "voice_first_token_filler_s": 6,
+    "voice_first_token_filler_s": 0,
     # In "room" mode a spoken approval counts only when it names Friday
     # ("Friday, send it"), because voices are not told apart until Household
     # Identity lands. This is the ONE voice limit left ON by default, and it is

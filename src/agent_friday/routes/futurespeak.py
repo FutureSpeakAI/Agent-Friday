@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import json
 import glob
@@ -201,7 +201,7 @@ def fs_project_edit(name):
 
     Mirrors /api/vibe-code/launch but pre-sets cwd to the project's clone so
     the Dev Studio flow is scoped to a single site. With deploy=true the task
-    is wrapped to stage, commit and push (Replit auto-deploys from GitHub).
+    is wrapped to commit and push source. Publication requires separate proof.
     """
     data = request.get_json(silent=True) or {}
     instruction = (data.get('task') or data.get('instruction') or '').strip()
@@ -221,9 +221,9 @@ def fs_project_edit(name):
     if data.get('deploy'):
         task_desc = (
             f"In the {proj['name']} repo: {instruction}. "
-            "When the change is complete and verified, stage all changes, commit with a clear "
+            "When the change is complete and verified, stage only the files changed for this task, commit with a clear "
             "conventional-commit message describing the change, and push to the current branch's "
-            "remote so Replit auto-deploys from GitHub. Report the commit hash and push result."
+            "remote. Report the commit hash and push result. A push does not prove publication; check the configured hosting deployment separately and report its actual state."
         )
 
     cwd = os.path.normpath(str(repo_path))
@@ -234,7 +234,7 @@ def fs_project_edit(name):
     rec = _cct.request(tid, task_desc, cwd, requested_by="owner",
                        extra={'project': proj['name']})
     return jsonify({"status": "ok", "terminal_id": tid, "project": proj['name'],
-                    "cwd": cwd, "deploy": bool(data.get('deploy')),
+                    "cwd": cwd, "deploy": bool(data.get('deploy')), "deployment_verified": False,
                     "approval_id": rec.get("approval_id"), "pending": True,
                     "message": "Approve the card in Friday to start this edit; nothing runs until then."})
 

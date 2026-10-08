@@ -601,8 +601,15 @@ class TestSettings:
         )
         assert resp.status_code < 500
 
-    def test_settings_personality_string_round_trip(self, client):
+    def test_settings_personality_string_round_trip(self, client, tmp_path, monkeypatch):
         """The personality store is free text: POST a string, GET it back."""
+        import agent_friday.core as core
+        from agent_friday.services import soul
+        monkeypatch.setattr(core, "SOUL_FILE", tmp_path / "SOUL.md")
+        monkeypatch.setattr(soul, "FRIDAY_DIR", tmp_path)
+        monkeypatch.setattr(soul, "SOUL_FILE", tmp_path / "SOUL.md")
+        monkeypatch.setattr(soul, "HISTORY_DIR", tmp_path / "soul_history")
+        monkeypatch.setattr(soul, "_cache", {"text": None, "mtime": 0.0})
         text = "Curious, candid, and a little mischievous. [test-marker]"
         post_resp = client.post("/api/settings", json={"personality": text})
         assert post_resp.status_code == 200

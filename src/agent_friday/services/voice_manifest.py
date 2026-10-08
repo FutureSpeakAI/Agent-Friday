@@ -132,12 +132,12 @@ def read_selection(settings: dict | None = None) -> dict:
 
 
 def _reply_cap(s: dict) -> int:
-    try:
-        n = int(s.get("voice_max_tokens") or 0)
-    except Exception:
-        n = 0
-    # The same default as routes/voice._VOICE_REPLY_TOKENS_DEFAULT.
-    return 400 if n <= 0 else max(64, min(n, 2048))
+    # Proof identity and context accounting use the same explicit/default
+    # limits as real voice turns. Temporary call preferences cannot change
+    # the readiness record for these saved settings.
+    from agent_friday.services.voice_delivery import reply_budget, using_preferences
+    with using_preferences({}):
+        return reply_budget(s or {})
 
 
 # ═══════════════════════════════════════════════════════════════════════════

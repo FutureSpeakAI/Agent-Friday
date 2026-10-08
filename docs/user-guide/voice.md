@@ -37,6 +37,38 @@ address; Friday says so and tells you where it does work.
 Voice uses the same tools and the same approvals as typed chat. Anything
 outward still asks first.
 
+## Depth, pace and personality
+
+In **Settings → Voice & Tracking**, **Answer depth** and **Speaking pace**
+control Friday's delivery starting with the next voice session. Adaptive depth
+allows a simple answer to be brief
+and a complex explanation to develop without a fixed sentence quota. Adaptive
+pace leaves more room around dense ideas, names and numbers.
+
+During a call, say “slow down,” “keep it brief,” or “talk that through.” These
+adjustments belong to that call and conversation. Ask for a lasting default
+explicitly, or change it in Settings. Switching conversations does not carry
+another conversation's temporary delivery choices with it.
+Switching chats ends the current call; start a new call in the new chat so
+old speech, queued results and temporary preferences do not carry into it.
+
+Local speech engines use native synthesis speed and pauses at thought
+boundaries. Older Piper versions without a speed option use the pauses alone.
+Native cloud conversation uses delivery instructions, so exact
+timing and inflection still depend on the provider. Speech remains
+interruptible; Friday does not add a timed filler line by default.
+
+Friday's character draws on the saved personality, your stated preferences
+and the actual conversation. Local voice retains recent exchanges from that
+chat so corrections and unfinished thoughts can carry across calls. Humor,
+reasoned disagreement and admitting uncertainty are part of the conversation;
+Friday should not invent shared memories or a personal biography. Lasting
+personality changes remain visible in the existing personality settings.
+
+Voice can also create, inspect and operate [workflows](workflows.md), including
+their sources, result requirements, timing and notification choice. A started
+workflow can continue in the background while you keep talking.
+
 ## Push-to-transcribe (Alt+T)
 
 Hold **Alt+T** anywhere in Windows, speak, and let go. Friday transcribes what

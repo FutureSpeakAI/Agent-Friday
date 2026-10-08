@@ -27,6 +27,15 @@ g = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(g)
 
 
+@pytest.fixture(autouse=True)
+def isolated_guard_config(monkeypatch):
+    """Synthetic hook fixtures must not inherit the outer suite's live config.
+
+    Subprocess environment-path tests explicitly set their own config below.
+    """
+    monkeypatch.delenv("FRIDAY_GUARD_CONFIG", raising=False)
+
+
 def bash(command, cwd):
     return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
 

@@ -199,9 +199,15 @@ def test_workspaces_get_the_3d_bar(path):
     text = (ROOT / path).read_text(encoding="utf-8")
     # There is no ("home", "tasks") pairing: there is no Home workspace -- the
     # desktop hero is the landing screen -- so there is no window to decorate.
-    for ws, src in [("trust", "people"), ("code", "code"), ("news", "news"),
+    for ws, src in [("trust", "people"), ("news", "news"),
                     ("contacts", "people"), ("messages", "messages"), ("calendar", "calendar")]:
         assert f"with3D('{ws}', '{src}'" in text or f"with3D('{ws}','{src}'" in text, ws
+    # Code owns its repository map and chat in the directly mounted Studio.
+    assert ("code:<CodeWS chat={codeChat}/>" in text
+            or "code: /*#__PURE__*/React.createElement(CodeWS, {chat:codeChat})" in text)
+    start = text.index("function CodeWS({chat})")
+    code = text[start:text.index("function DevCodeLogs()", start)]
+    assert "React.createElement(window.FridayCodeStudio, {chat, navTarget," in code
     assert "with3DModels(" in text
     assert "useNavTarget('contacts'" in text
 

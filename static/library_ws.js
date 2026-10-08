@@ -169,9 +169,10 @@
       document.addEventListener('keydown', k, true);
       return () => document.removeEventListener('keydown', k, true);
     }, [onClose]);
+    // Folder choices arrive after mount; fit their committed size before paint.
+    React.useLayoutEffect(() => { fitInView(ref.current); });
     React.useLayoutEffect(() => {
       const fit = () => fitInView(ref.current);
-      fit();
       window.addEventListener('resize', fit);
       const ro = window.ResizeObserver ? new ResizeObserver(fit) : null;
       if (ro && ref.current) ro.observe(ref.current);

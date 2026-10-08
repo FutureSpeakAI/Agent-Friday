@@ -3600,10 +3600,14 @@ window.addEventListener('DOMContentLoaded',function(){
         @media (max-width: 700px) { .kw-view { padding: 6px 9px; } }
     </style>
 <link rel="stylesheet" href="/static/friday_experience.css"/>
+<link rel="stylesheet" href="/static/friday_crew.css"/>
+<link rel="stylesheet" href="/static/friday_sites.css"/>
+<link rel="stylesheet" href="/static/friday_agent_workspaces.css"/>
 <link rel="stylesheet" href="/static/friday_workspace_depth.css"/>
 <link rel="stylesheet" href="/static/friday_holographic_workspace.css"/>
 <link rel="stylesheet" href="/static/friday_workspace_compositions.css"/>
 <link rel="stylesheet" href="/static/friday_shared_surfaces.css"/>
+<link rel="stylesheet" href="/static/friday_appearance.css"/>
 <link rel="stylesheet" href="/static/friday_native_shell.css"/>
 <link rel="stylesheet" href="/static/friday_responsive_topbar.css"/>
 <link rel="stylesheet" href="/static/friday_workspace_tools.css"/>
@@ -3754,8 +3758,11 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- The artifact panel beside every chat (defines window.FridayArtifactHost). -->
     <script src="/static/friday_repo_atlas.js"></script>
     <script src="/static/friday_artifacts.js"></script>
+    <link rel="stylesheet" href="/static/friday_code_studio.css">
+    <script src="/static/friday_code_studio.js"></script>
     <!-- Publish to web: the card body and the Settings section (defines window.FridayPublishCard). -->
     <script src="/static/friday_publish.js"></script>
+    <script src="/static/friday_sites.js"></script>
     <script src="/static/friday_bundles.js"></script>
     <script src="/static/friday_salon.js"></script>
     <script src="/static/friday_materials.js"></script>
@@ -3763,6 +3770,10 @@ window.addEventListener('DOMContentLoaded',function(){
 <script src="/static/friday_holographic_workspace.js"></script>
 <script src="/static/friday_workspace_compositions.js"></script>
 <script src="/static/friday_experience.js"></script>
+<script src="/static/friday_appearance.js"></script>
+<script src="/static/friday_crew_playback.js"></script>
+<script src="/static/friday_agent_workspaces.js"></script>
+<script src="/static/friday_crew.js"></script>
 <script src="/static/friday_responsive_topbar.js"></script>
 <script src="/static/friday_display_style.js"></script>
     <script src="/static/friday_workspace_switcher.js"></script>
@@ -3943,8 +3954,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 fx.hold(head.x, tSec); fy.hold(head.y, tSec); fz.hold(head.z, tSec);
                 head.seen = false;
             }
-            // The calibrated width is a setting, so it survives a reload and
-            // a voice "calibrate" can be persisted like any other dial.
+            // Camera identity and persistence belong to the local binding
+            // controller; this primitive changes only the live tracker.
             function calibrate(boxW) {
                 head.baseline = (boxW && boxW > 0.02) ? boxW : null;
                 cfg.neutral_face_width = head.baseline || 0;
@@ -4172,7 +4183,8 @@ window.addEventListener('DOMContentLoaded',function(){
             }
 
             function apply(next) {
-                Object.assign(cfg, next || {});
+                const calibration = window.FridayHolographicWorkspace?.cameraCalibration;
+                Object.assign(cfg, calibration ? calibration.filterSettings(next || {}) : {...next,neutral_face_width:0});
                 retune();
                 const nfw = Number(cfg.neutral_face_width);
                 head.baseline = (isFinite(nfw) && nfw > 0.02) ? nfw : null;
@@ -4653,6 +4665,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 lastT = -1;
                 if (!raf) raf = requestAnimationFrame(loop);
                 set('live', '');
+                window.FridayHolographicWorkspace?.cameraCalibration?.sync();
             }
             function onEnded() { drop(); set('lost', 'camera stopped'); schedule(); }
             function onMute() {
@@ -4693,6 +4706,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
                 stream = null; track = null; feeding = false;
                 try { videoElement.srcObject = null; } catch (e) {}
+                window.FridayHolographicWorkspace?.cameraCalibration?.sync();
                 if (onLost) onLost();
             }
             function start(frameFn, lostFn) {
@@ -11251,6 +11265,23 @@ window.fridayVibe = {
     },
     setHologram: function(enabled, owner) { return setHologram(!!enabled, owner); },
     getHologramState: function() { return hologramState(); },
+    getTrackedCameraId: function() {
+        if (document.visibilityState === 'hidden') return null;
+        try {
+            const track = videoElement?.srcObject?.getVideoTracks?.().find(t => t.readyState === 'live' && !t.muted);
+            const id = track?.getSettings?.().deviceId;
+            return typeof id === 'string' && id.length > 0 && id.length <= 512 ? id : null;
+        } catch (_) { return null; }
+    },
+    getTrackedFaceWidth: function() {
+        const head = window.FridayTracking?.head;
+        const width = typeof lastFaceBoxW === 'number' ? lastFaceBoxW : 0;
+        const age = typeof lastFaceAt === 'number' && lastFaceAt > 0 ? performance.now() - lastFaceAt : Infinity;
+        const hold = typeof FACE_HOLD_MS === 'number' && typeof faceGapMs === 'number'
+            ? Math.max(FACE_HOLD_MS, 3 * faceGapMs) : 0;
+        return isHologramMode && isFaceVisible && head?.seen && !head.debug
+            && age >= 0 && age <= hold && Number.isFinite(width) && width > .02 ? width : null;
+    },
     releaseHologram: function(owner, revision) {
         if (hologramOwner !== owner || hologramRevision !== revision) return Promise.resolve(false);
         return setHologram(false, owner);
@@ -11923,7 +11954,7 @@ function fridayNavigate(target) {
   if (here && here !== 'settings' && target.workspace !== here && target.workspace !== 'settings') {
     const q = new URLSearchParams();
     Object.keys(target).forEach(k => {
-      if (k !== 'workspace' && target[k] != null && target[k] !== '') q.set(k, target[k]);
+      if (k !== 'workspace' && k !== 'preview_request_id' && target[k] != null && target[k] !== '') q.set(k, target[k]);
     });
     window.location.href = '/w/' + encodeURIComponent(target.workspace) + (q.toString() ? '?' + q : '');
     return;
@@ -12088,7 +12119,10 @@ function fridayStructureIndex(text) {
 function fridayRunActions(actions) {
   if (!Array.isArray(actions) || !actions.length) return;
   try {
-    console.info('[friday] running %s action(s):', actions.length, actions);
+    console.info('[friday] running %s action(s):', actions.length, actions.map(a => {
+      if (!a || typeof a !== 'object') return a;
+      const safe = {...a}; delete safe.preview_request_id; return safe;
+    }));
   } catch (_) {}
   for (const a of actions) {
     if (!a || typeof a !== 'object') continue;
@@ -12188,25 +12222,17 @@ function fridayRunActions(actions) {
       } else if (a.type === 'tracking') {
         // Voice or chat tuning the hologram window (hologram_tools). The
         // server has already persisted the dials; this applies them live.
-        // A calibrate is the one op only the page can do, since only the
-        // page knows how wide the face is right now, so it persists that
-        // itself. The result rides back on the action, into the ack.
+        // Calibration uses a fresh physical face and a browser-local camera
+        // binding. Its confirmed status rides back in the action ack.
         const TK = window.FridayTracking;
         if (TK) {
           if (a.op === 'calibrate') {
-            const seen = typeof isFaceVisible === 'undefined' || isFaceVisible;
-            const w = seen && typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
-            const got = TK.calibrate(w);
-            a.result = { calibrated: got || null };
-            if (got) {
-              apiFetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ settings: { tracking: { neutral_face_width: got } } })
-              }).catch(() => {});
-            }
+            const result = window.FridayHolographicWorkspace?.cameraCalibration?.calibrateCurrent();
+            a.result = result ? {...result,calibrated:result.ok ? result.width : null} : {ok:false,calibrated:null,status:'Camera calibration is unavailable.'};
           } else if (a.op === 'reset') {
-            a.result = { tracking: TK.reset() };
+            const calibration = window.FridayHolographicWorkspace?.cameraCalibration?.resetCurrent();
+            TK.reset();
+            a.result = {tracking:TK.get(),calibration:calibration || {ok:false,saved:false,status:'Camera calibration is unavailable.'}};
           } else if (a.tracking && typeof a.tracking === 'object') {
             TK.apply(a.tracking);
             a.result = { tracking: TK.get() };
@@ -12691,9 +12717,12 @@ function SnapPreview({
   box,
   slot
 }) {
+  const surfaceRef = useRef(null);
+  useFridaySpatialSurface(surfaceRef, () => slot ? fridaySnapBox(fridayDesktopArea(),slot) : box, 'window', !!box);
   if (!box) return null;
   return ReactDOM.createPortal( /*#__PURE__*/React.createElement("div", {
     className: "snap-preview",
+    ref: surfaceRef,
     "data-testid": "snap-preview",
     "data-slot": slot,
     style: {
@@ -12782,6 +12811,7 @@ function SnapMenu({
   const left = Math.max(8, Math.min((window.innerWidth || 1280) - width - 8, r.right - width));
   const requestedBox={x:left,y:Math.round(r.bottom+6),w:width,h:380};
   const shownBox=window.FridayHolographicWorkspace?.constrainRect(requestedBox)||requestedBox;
+  useFridaySpatialSurface(ref, () => ({...requestedBox,h:Math.min(380,ref.current?.scrollHeight||380)}), 'overlay');
   const zone = (slot, grow, label, pick, on, extra) => /*#__PURE__*/React.createElement("button", {
     key: label,
     type: "button",
@@ -12824,6 +12854,7 @@ function SnapMenu({
     ref: ref,
     id: id,
     className: "snap-menu"+(onToggle?" ws-arrange-menu":""),
+    "data-friday-overlay": "menu",
     role: "menu",
     "aria-label": kind === 'tray' ? 'Where the chat goes' : 'Snap layouts',
     "data-testid": "snap-menu",
@@ -13038,9 +13069,11 @@ function fridayToast(msg, opts) {
     if (!host) {
       host = document.createElement('div');
       host.id = 'friday-toast-host';
+      host.setAttribute('data-friday-overlay', 'toast');
+      host.setAttribute('aria-label', 'Notifications');
       host.style.cssText = 'position:fixed;z-index:99999;right:16px;bottom:16px;' +
         'display:flex;flex-direction:column;gap:8px;align-items:flex-end;' +
-        'pointer-events:none;max-width:min(520px,calc(100vw - 32px))';
+        'pointer-events:none;max-width:min(520px,calc(100vw - 32px));max-height:40vh;overflow:auto';
       document.body.appendChild(host);
     }
     var el = document.createElement('div');
@@ -13051,18 +13084,27 @@ function fridayToast(msg, opts) {
       ';border:1px solid ' + (bad ? 'rgba(255,90,110,0.55)' : 'rgba(255,255,255,0.16)') +
       ';box-shadow:0 8px 28px rgba(0,0,0,0.45);white-space:pre-wrap;' +
       'opacity:0;transform:translateY(6px);transition:opacity .16s,transform .16s';
-    el.textContent = text;
-    el.onclick = function () { el.remove(); };
+    var message = document.createElement('span');
+    message.textContent = text;
+    el.appendChild(message);
+    var dismiss = document.createElement('button');
+    dismiss.type = 'button'; dismiss.textContent = '×';
+    dismiss.setAttribute('aria-label', 'Dismiss notification');
+    dismiss.style.cssText = 'margin-left:12px;min-width:28px;min-height:28px;background:transparent;color:inherit;border:1px solid currentColor;border-radius:5px;cursor:pointer';
+    dismiss.onclick = function () { el.remove(); };
+    el.appendChild(dismiss);
     host.appendChild(el);
     requestAnimationFrame(function () {
       el.style.opacity = '1'; el.style.transform = 'translateY(0)';
     });
-    // Long messages need longer than a glance; an error stays until dismissed.
+    // Long messages need longer than a glance. Focus and hover retain them.
     var ms = bad ? 15000 : Math.min(14000, 3200 + text.length * 28);
-    setTimeout(function () {
+    var expire = function () {
+      if (el.contains(document.activeElement) || el.matches(':hover')) { setTimeout(expire, 1000); return; }
       el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
       setTimeout(function () { el.remove(); }, 200);
-    }, ms);
+    };
+    setTimeout(expire, ms);
   } catch (e) { /* a notice that throws is worse than no notice */ }
 }
 window.fridayToast = fridayToast;
@@ -13686,6 +13728,7 @@ function WsToolMenu({
 }) {
   const ref = useRef(null);
   const [box, setBox] = useState(null);
+  useFridaySpatialSurface(ref, () => box, 'overlay');
   React.useLayoutEffect(() => {
     const place = () => {
       const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : {
@@ -13752,6 +13795,7 @@ function WsToolMenu({
     ref: ref,
     id: id,
     className: "ws-tools-menu",
+    "data-friday-overlay": "menu",
     "data-arrange-tucked": arrangeTucked ? 'true' : 'false',
     role: "menu",
     "aria-label": label,
@@ -13903,6 +13947,11 @@ function WsTools({
   }, /*#__PURE__*/React.createElement("div", {
     className: "ws-tools-menu-heading"
   }, /*#__PURE__*/React.createElement(WsPickaxe, null), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Vibe Coding Salon"), /*#__PURE__*/React.createElement("span", null, "Choose what you want to shape"))), /*#__PURE__*/React.createElement("button", {
+    role: "menuitem", disabled: bundle,
+    'aria-label': 'Preview appearance of ' + title,
+    onClick: () => act(() => window.FridayWorkspaceAppearance?.open({id,title,opener:customize.current}))
+  }, React.createElement('span', {className:'ws-menu-icon'}, '◇'), React.createElement('span', null,
+    React.createElement('strong', null, 'Preview appearance'), React.createElement('small', null, bundle ? 'Use the codebase preview for this workspace' : 'Review spacing, accent, notes and quick actions'))), /*#__PURE__*/React.createElement("button", {
     role: "menuitem",
     "aria-label": 'Workspace chat for ' + title,
     onClick: () => act(() => window.fridayOpenWorkspaceChat?.(id, title, emoji))
@@ -14076,6 +14125,31 @@ function WsCustomBody({
     },
     onClick: () => openWsChat(a.prompt)
   }, a.label))), children);
+}
+// Native owners retain their saved rectangles; the shared scene constrains
+// each rendered frame without turning an animation into saved window moves.
+function fridayRenderedBox(ref, fallback) {
+  const bounds = ref.current?.getBoundingClientRect();
+  return bounds && bounds.width > 0 && bounds.height > 0 && [bounds.x,bounds.y,bounds.width,bounds.height].every(Number.isFinite)
+    ? {x:bounds.x,y:bounds.y,w:bounds.width,h:bounds.height} : fallback;
+}
+function useFridaySpatialSurface(ref, requested, kind = 'window', active = true) {
+  const latest = useRef(requested), binding = useRef(null);
+  latest.current = requested;
+  React.useLayoutEffect(() => {
+    const element = active ? ref.current : null;
+    if (binding.current?.element !== element) {
+      binding.current?.release?.(); binding.current = null;
+    }
+    const scene = window.FridayHolographicWorkspace;
+    if (element && !binding.current && scene?.registerSurface) {
+      binding.current = {element, release: scene.registerSurface(element, {
+        kind, getRect: () => typeof latest.current === 'function' ? latest.current() : latest.current
+      })};
+    }
+    if (element) scene?.updateSurface?.(element);
+  });
+  React.useLayoutEffect(() => () => { binding.current?.release?.(); binding.current = null; }, []);
 }
 function FWin({
   id,
@@ -14252,13 +14326,14 @@ function FWin({
   // Resize from any edge or corner; the dragged side moves, the opposite one stays.
   const startResize = (e, dir) => {
     if (snap.slot) return;
+    const visible = fridayRenderedBox(fwinRef, box);
     rStart.current = {
       px: e.clientX,
       py: e.clientY,
-      x: box.x,
-      y: box.y,
-      w: box.w,
-      h: box.h,
+      x: visible.x,
+      y: visible.y,
+      w: visible.w,
+      h: visible.h,
       dir
     };
     setResizing(dir);
@@ -14347,6 +14422,7 @@ function FWin({
     h: size.h
   };
   const box = window.FridayHolographicWorkspace?.constrainRect(requestedBox) || requestedBox;
+  useFridaySpatialSurface(fwinRef, () => snap.slot ? fridaySnapBox(fridayDesktopArea(), snap.slot) : requestedBox);
   const [histOpen, setHistOpen] = useState(false);
   // The browser refused the tab (pop-ups blocked): the window stays and says why.
   const [tabBlocked, setTabBlocked] = useState(false);
@@ -14386,21 +14462,22 @@ function FWin({
     },
     onMouseDown: e => {
       if (e.target.closest('.fwin-btns') || e.button !== 0) return;
+      const visible = fridayRenderedBox(fwinRef, box);
       onFocus();
       // Dragged away, a snapped window is freed at its own size, with the pointer
       // at the same place along its title bar.
       if (snap.slot) {
-        const rel = box.w ? (e.clientX - box.x) / box.w : 0.5;
+        const rel = visible.w ? (e.clientX - visible.x) / visible.w : 0.5;
         dOff.current = {
           x: Math.round(rel * size.w),
-          y: e.clientY - box.y,
+          y: e.clientY - visible.y,
           free: true,
           sx: e.clientX,
           sy: e.clientY
         };
       } else dOff.current = {
-        x: e.clientX - box.x,
-        y: e.clientY - box.y
+        x: e.clientX - visible.x,
+        y: e.clientY - visible.y
       };
       setDragging(true);
     }
@@ -14497,13 +14574,21 @@ function WorkspaceChat({
   label,
   emoji,
   seedPrompt,
-  onClose
+  onClose,
+  onRegisterGuard
 }) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState([]);
   const [showVer, setShowVer] = useState(false);
+  const [decision, setDecision] = useState(null);
+  const [leaveTitle, setLeaveTitle] = useState('');
+  const [mustRefresh, renderMustRefresh] = useState(false);
+  const mustRefreshRef = useRef(false), privateRef = useRef(!!window.__fridayOffRecord);
+  const setMustRefresh = value => { mustRefreshRef.current=value; renderMustRefresh(value); };
+  const [privateMode, setPrivateMode] = useState(!!window.__fridayOffRecord);
+  const leaveAction = useRef(null), leaveGuard = useRef(null), requests = useRef(new Set());
   const setToast = useFridayToast();
   const [pos, setPos] = useState(() => ({
     x: Math.max(20, (window.innerWidth || 1280) - 410),
@@ -14520,6 +14605,8 @@ function WorkspaceChat({
   const endRef = useRef(null);
   const inRef = useRef(null);
   const seededRef = useRef(false);
+  const surfaceRef = useRef(null);
+  useFridaySpatialSurface(surfaceRef, () => ({x:pos.x,y:pos.y,w:390,h:Math.min(620,window.innerHeight*.76)}), 'overlay');
   const flash = t => {
     setToast(t);
   };
@@ -14529,9 +14616,20 @@ function WorkspaceChat({
   useEffect(() => () => {
     alive.current = false;
     operation.current++;
+    requests.current.forEach(controller => controller.abort());
   }, []);
+  useEffect(() => {
+    const privacy = event => {
+      operation.current++; privateRef.current=!!event.detail?.on; setPrivateMode(privateRef.current); setMustRefresh(true);
+      flash('Privacy changed. Your public draft is kept; refresh workspace history before continuing.');
+    };
+    window.addEventListener('friday:off-record', privacy);
+    return () => window.removeEventListener('friday:off-record', privacy);
+  }, []);
+  const publicNow = () => !privateRef.current && !window.__fridayOffRecord;
+  const owns = ticket => alive.current && ticket === operation.current && publicNow();
   const begin = () => {
-    if (busy.current) return false;
+    if (busy.current || decision || mustRefreshRef.current || !publicNow()) return false;
     busy.current = true;
     operation.current++;
     setLoading(true);
@@ -14555,20 +14653,40 @@ function WorkspaceChat({
       removeEventListener('mouseup', up);
     };
   }, [dragging]);
-  const readReply = async r => {
+  const readReply = async (r, kind) => {
     const d = await r.json();
-    if (!r.ok || !d || d.status !== 'ok') throw new Error(d.message || d.error || 'The workspace request failed.');
+    if (!r.ok || !d || d.status !== 'ok') throw new Error(d?.message || d?.error || 'The workspace request failed.');
+    const object = value => !!value && typeof value === 'object' && !Array.isArray(value);
+    const history = value => Array.isArray(value) && value.every(m => object(m) && ['user','friday','assistant'].includes(m.role) && typeof m.text === 'string');
+    const versions = value => Array.isArray(value) && value.every(v => object(v) && typeof v.id === 'string' && typeof v.label === 'string');
+    const customization = value => object(value) && (value.note == null || typeof value.note === 'string') &&
+      (value.accent == null || typeof value.accent === 'string') && (value.css == null || typeof value.css === 'string') &&
+      (value.hidden == null || Array.isArray(value.hidden) && value.hidden.every(s => typeof s === 'string')) &&
+      (value.actions == null || Array.isArray(value.actions) && value.actions.every(a => object(a) && typeof a.label === 'string' && typeof a.prompt === 'string'));
+    const valid = kind === 'clear' ? history(d.chat) && d.chat.length === 0 : customization(d.customization) && versions(d.versions) &&
+      (kind === 'history' ? history(d.chat) : kind === 'reply' ? typeof d.response === 'string' && typeof d.applied === 'boolean' &&
+        (!d.applied || typeof d.revert_to === 'string' && !!d.revert_to) : true);
+    if (!valid) throw new Error('The workspace returned an incomplete result. Refresh its history before trying again.');
     return d;
   };
+  const request = async (path, options, kind) => {
+    const controller = new AbortController(); requests.current.add(controller);
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try { return await fetch('/api/workspace/' + encodeURIComponent(wsId) + '/' + path,{...options,signal:controller.signal}).then(r=>readReply(r,kind)); }
+    catch(error) { if(error.name==='AbortError') throw new Error('The request timed out. Its outcome is uncertain; refresh workspace history before trying again.'); throw error; }
+    finally { clearTimeout(timer); requests.current.delete(controller); }
+  };
   const load = () => {
+    if (busy.current || !publicNow()) return;
     const ticket = ++operation.current;
-    fetch('/api/workspace/' + wsId + '/chat').then(readReply).then(d => {
-      if (!alive.current || ticket !== operation.current) return;
+    request('chat',undefined,'history').then(d => {
+      if (!owns(ticket)) return;
+      setMustRefresh(false);
       setMsgs(d.chat || []);
       setVersions(d.versions || []);
       if (d.customization !== undefined) setCust(wsId, d.customization);
     }).catch(() => {
-      if (alive.current && ticket === operation.current) flash('Could not load workspace history.');
+      if (owns(ticket)) flash('Could not load workspace history.');
     });
   };
   useEffect(() => {
@@ -14576,12 +14694,13 @@ function WorkspaceChat({
   }, [wsId]);
   useEffect(() => {
     endRef.current?.scrollIntoView({
-      behavior: 'smooth'
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
     });
   }, [msgs.length, loading]);
   const send = async override => {
     const m = (override || input).trim();
     if (!m || !begin()) return;
+    const ticket = operation.current;
     setInput('');
     setMsgs(p => [...p, {
       role: 'user',
@@ -14590,7 +14709,7 @@ function WorkspaceChat({
     }]);
     setLoading(true);
     try {
-      const r = await fetch(`/api/workspace/${wsId}/chat`, {
+      const d = await request('chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -14599,9 +14718,8 @@ function WorkspaceChat({
           message: m,
           label
         })
-      });
-      const d = await readReply(r);
-      if (!alive.current) return;
+      }, 'reply');
+      if (!owns(ticket)) { if(alive.current){setMustRefresh(true);setInput(current=>current||m);} return; }
       setMsgs(p => [...p, {
         role: 'friday',
         text: d.response || '[no response]',
@@ -14615,30 +14733,35 @@ function WorkspaceChat({
       if (d.applied) flash('✨ Applied: ' + (d.change || 'change'));
     } catch (e) {
       if (!alive.current) return;
+      setMustRefresh(true);
       setInput(current => current || m);
+      if (!owns(ticket)) return;
       setMsgs(p => [...p, {
         role: 'friday',
-        text: 'Could not apply that request. Your draft is ready to retry.'
+        text: 'The request was not confirmed. Your draft is kept. Refresh workspace history before trying again.'
       }]);
       flash(e.message || 'Workspace request failed');
     }
-    finish();
-    inRef.current?.focus();
+    finally { finish(); if(alive.current)inRef.current?.focus(); }
   };
   // Auto-send a seed prompt (e.g. clicked quick-action) exactly once.
   useEffect(() => {
     if (seedPrompt && !seededRef.current) {
       seededRef.current = true;
+      if (!publicNow()) return;
+      setInput(current => current || seedPrompt);
       send(seedPrompt);
     }
   }, [seedPrompt]);
   const change = async (path, options, onSaved, failure) => {
     if (!begin()) return;
+    const ticket = operation.current;
     try {
-      const d = await fetch('/api/workspace/' + wsId + '/' + path, options).then(readReply);
-      if (alive.current) onSaved(d);
+      const d = await request(path, options, path==='chat/clear'?'clear':'state');
+      if (owns(ticket)) onSaved(d);
+      else if (alive.current) setMustRefresh(true);
     } catch (e) {
-      if (alive.current) flash(failure);
+      if (owns(ticket)) { setMustRefresh(true); flash(failure.replace(/[.!?]+$/, '') + '. Refresh workspace history before trying again.'); }
     } finally {
       finish();
     }
@@ -14660,7 +14783,10 @@ function WorkspaceChat({
     flash('↩ Reverted');
   }, 'Revert failed');
   const reset = () => {
-    if (busy.current || !window.confirm('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?')) return;
+    if (busy.current) return;
+    setDecision('reset');
+  };
+  const applyReset = () => {
     return change('reset', {
       method: 'POST'
     }, d => {
@@ -14674,11 +14800,24 @@ function WorkspaceChat({
     setMsgs([]);
     flash('History cleared');
   }, 'Could not clear history.');
+  const closeStudio = () => leaveGuard.current({proceed:onClose});
+  leaveGuard.current = ({proceed,title}) => {
+    if (busy.current) { flash('This workspace request is still running. Wait for its result before closing.'); return; }
+    if (input.trim()) { leaveAction.current=proceed; setLeaveTitle(title||''); setDecision('close'); } else proceed();
+  };
+  useEffect(() => onRegisterGuard?.(request=>leaveGuard.current(request)), [onRegisterGuard]);
+  const resetQueued = useRef(false);
+  useEffect(() => {
+    if (decision === null && resetQueued.current) { resetQueued.current=false; applyReset(); }
+  }, [decision]);
   const STARTERS = ['Make this layout more compact', 'I don’t like the colors — try a warmer accent', 'Pin a note reminding me what this workspace is for', 'Add quick-action buttons for my common tasks here'];
   return /*#__PURE__*/React.createElement("div", {
     className: "friday-workspace-studio",
+    ref: surfaceRef,
+    "data-friday-overlay": "dialog",
     role: "dialog",
     "aria-label": label + " customization",
+    onKeyDown: e => { if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeStudio();} },
     style: {
       position: 'fixed',
       '--friday-shared-x': pos.x + 'px',
@@ -14754,7 +14893,7 @@ function WorkspaceChat({
     }
   }, "\uD83D\uDD58 ", versions.length), /*#__PURE__*/React.createElement("button", {
     "aria-label": "Close",
-    onClick: onClose,
+    onClick: closeStudio,
     title: "Close",
     style: {
       background: 'none',
@@ -14764,7 +14903,12 @@ function WorkspaceChat({
       fontSize: 18,
       lineHeight: 1
     }
-  }, "\xD7")), showVer && /*#__PURE__*/React.createElement("div", {
+  }, "\xD7")), decision && React.createElement('div',{role:'alert',style:{padding:12,borderBottom:'1px solid var(--fr-glass-edge)'}},
+    React.createElement('p',null,decision==='close'?(leaveTitle?'Discard this unsent workspace draft and open '+leaveTitle+'?':'Discard this unsent workspace draft?'):'Reset this workspace’s appearance to its original settings? Earlier snapshots remain in history.'),
+    React.createElement('button',{type:'button',className:'btn',disabled:loading,onClick:()=>setDecision(null)},'Keep editing'),
+    React.createElement('button',{type:'button',className:'btn',disabled:loading,onClick:()=>{if(busy.current)return;if(decision==='close')leaveAction.current?.();else{resetQueued.current=true;setDecision(null);}}},decision==='close'?'Discard draft':'Reset appearance')),
+  (privateMode||mustRefresh) && React.createElement('p',{role:'status',style:{padding:'0 12px'}},privateMode?'Off the record: workspace changes are paused because this Salon saves history.':'Refresh workspace history to confirm the last result before continuing.'),
+  showVer && /*#__PURE__*/React.createElement("div", {
     style: {
       maxHeight: 160,
       overflowY: 'auto',
@@ -14956,7 +15100,8 @@ function WorkspaceChat({
   }, /*#__PURE__*/React.createElement("textarea", {
     ref: inRef,
     value: input,
-    onChange: e => setInput(e.target.value),
+    onChange: e => { if(publicNow())setInput(e.target.value); },
+    disabled: privateMode,
     onKeyDown: e => fridayEnterSends(e, send),
     placeholder: `Ask ${fridayName()} to change ${label}…`,
     rows: 1,
@@ -14975,14 +15120,14 @@ function WorkspaceChat({
     }
   }), /*#__PURE__*/React.createElement("button", {
     onClick: () => send(),
-    disabled: loading || !input.trim(),
+    disabled: loading || !!decision || mustRefresh || privateMode || !input.trim(),
     className: "btn",
     style: {
       fontSize: 12,
       fontWeight: 600,
       opacity: loading || !input.trim() ? 0.5 : 1
     }
-  }, "Send")), msgs.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Send")), React.createElement('button',{type:'button',className:'btn',disabled:loading||!!decision||privateMode,onClick:load,style:{margin:'4px 12px',alignSelf:'flex-start'}},'Refresh workspace history'), msgs.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '0 12px 8px',
       textAlign: 'right'
@@ -15212,6 +15357,7 @@ function fridayResizeCursor(dir) {
 // this shell so the panel is one column added next to the chat, never a
 // change inside it. When the script is absent the shell is a Fragment.
 function FridayChatShell(props) {
+  if (props.mode === 'code') return React.createElement('div', { className: 'cs-native-chat', 'data-code-chat-surface': '', style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 } }, props.children);
   const Host = window.FridayArtifactHost;
   if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, onCodebaseAsk: props.onCodebaseAsk, chatBusy: props.chatBusy }, props.children);
   return /*#__PURE__*/React.createElement(React.Fragment, null, props.children);
@@ -15278,6 +15424,50 @@ function ChatSurface(props) {
     voiceStatus
   } = props;
   const trayMenu = useSnapMenuOpener();
+  const newChatRequest = React.useRef(null);
+  const newChatOwner = React.useRef({alive:true, id:convId, revision:0});
+  const [newChatState, setNewChatState] = React.useState({pending:false, error:'', revision:0});
+  if (newChatOwner.current.id !== convId) {
+    newChatOwner.current.id = convId;
+    newChatOwner.current.revision += 1;
+  }
+  React.useEffect(() => {
+    const owner = newChatOwner.current;
+    owner.alive = true;
+    return () => { owner.alive = false; owner.revision += 1; };
+  }, []);
+  const createNewChat = async () => {
+    if (newChatRequest.current) return;
+    const owner = newChatOwner.current;
+    const ticket = {id:convId, revision:owner.revision, epoch:chatEpoch?.current};
+    const current = () => owner.alive && owner.id === ticket.id &&
+      owner.revision === ticket.revision && chatEpoch?.current === ticket.epoch;
+    newChatRequest.current = ticket;
+    setNewChatState({pending:true, error:'', revision:ticket.revision});
+    try {
+      const response = await apiFetch('/api/conversations', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({title:'New chat'}),
+      });
+      const data = await response.json();
+      const id = data?.conversation?.id;
+      if (!response.ok || data?.status !== 'ok' || typeof id !== 'string' ||
+          !id.trim() || id.trim() !== id || id === ticket.id) throw new Error('Creation not confirmed');
+      // Keep the old turn and draft until creation is confirmed. The normal
+      // selection lifecycle owns its epoch, transcript and composer reset.
+      if (current()) openConversation(id);
+      if (owner.alive) refreshConvs();
+    } catch (_) {
+      if (current()) setNewChatState({pending:true,
+        error:'Could not confirm a new chat. Your current conversation is unchanged. Check the conversation list before retrying.',
+        revision:ticket.revision});
+    } finally {
+      if (newChatRequest.current === ticket) {
+        newChatRequest.current = null;
+        if (owner.alive) setNewChatState(value => ({...value, pending:false}));
+      }
+    }
+  };
   return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, chatBusy: chatLoad,
     onCodebaseAsk: message => sendChat(message, { preserveDraft: true }) }, React.createElement("div", {
     "data-chat-head": "",
@@ -15301,35 +15491,17 @@ function ChatSurface(props) {
     open: convOpen, setOpen: setConvOpen,
     pickerOpen: convPickerOpen, setPickerOpen: setConvPickerOpen,
     onOpenConversation: openConversation, onBindSeat: bindConvSeat,
-    onRefresh: refreshConvs,
-  })), /*#__PURE__*/React.createElement("div", {
+    onRefresh: refreshConvs, fixedConversation: mode === 'code',
+  })), window.FridayCrewEntry && React.createElement(window.FridayCrewEntry,{conversationId:convId,apiFetch,onMessages:setChatMsgs}), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      // A new conversation is not responsible for the old one's turn. Bump the
-      // epoch so any reply still in flight lands in the conversation that
-      // asked for it, and release the composer here immediately.
-      // Create a conversation and switch to it, rather than clearing the ONE
-      // global transcript and deleting a chat the user wants to come back to.
-      // Nothing belonging to any other conversation is touched.
-      chatEpoch.current += 1;
-      setChatLoad(false);
-      setPausePending(null);
-      setChatMsgs([]);
-      apiFetch('/api/conversations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'New chat' }),
-      }).then(r => r.json()).then(d => {
-        const id = (d.conversation || {}).id;
-        if (id) setConvId(id);
-        refreshConvs();
-      }).catch(() => {});
-    },
+  }, mode !== 'code' && /*#__PURE__*/React.createElement("button", {
+    onClick: createNewChat,
+    disabled: newChatState.pending,
+    'aria-busy': newChatState.pending,
     title: "Start a new conversation (the current one is kept)",
     style: {
       background: 'rgba(0,212,255,0.06)',
@@ -15341,7 +15513,7 @@ function ChatSurface(props) {
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "+ New Chat"), /*#__PURE__*/React.createElement("button", {
+  }, newChatState.pending ? "Creating…" : "+ New Chat"), mode !== 'code' && /*#__PURE__*/React.createElement("button", {
     /* HEARTBEAT, ON ONE CLICK.
        The heartbeat runs twice a day and checks calendar and inbox for
        anything time-sensitive. Running it on demand was already possible —
@@ -15493,7 +15665,7 @@ function ChatSurface(props) {
       lineHeight: 1,
       padding: '2px 4px'
     }
-  }, props.traySide === 'left' ? "\u21E4" : "\u21E5") : /*#__PURE__*/React.createElement("button", {
+  }, props.traySide === 'left' ? "\u21E4" : "\u21E5") : mode !== 'code' && /*#__PURE__*/React.createElement("button", {
     onClick: () => setChatOpen(false),
     title: "Close chat",
     "aria-label": "Close chat",
@@ -15503,7 +15675,10 @@ function ChatSurface(props) {
       color: '#999',
       cursor: 'pointer'
     }
-  }, "\u2715"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u2715"))),
+  newChatState.error && newChatState.revision === newChatOwner.current.revision &&
+    React.createElement('div', {role:'alert', style:{color:'#ffab9f',fontSize:11,padding:'8px 14px',overflowWrap:'anywhere'}}, newChatState.error),
+  /*#__PURE__*/React.createElement("div", {
     className: 'fx-chat-transcript',
     style: {
       flex: 1,
@@ -15518,7 +15693,7 @@ function ChatSurface(props) {
       fontSize: 12,
       marginTop: 30
     }
-  }, ("Talk to " + fridayName() + ". Type, speak, or drop a file.")), chatMsgs.map((m, i) => m.role === 'system'
+  }, ("Talk to " + fridayName() + ". Type, speak, or drop a file.")), (window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m, i) => m.role === 'system'
   /* B2: system lines — seat changes and other transparency notices.
      Amber, centered, unmistakably NOT Friday speaking. Never sent to
      the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
@@ -15630,7 +15805,7 @@ function ChatSurface(props) {
       color: '#888',
       marginTop: 1
     }
-  }, m.role === 'user' ? 'You' : fridayName(), " \xB7 ", m.time || '', m.via === 'voice' && /*#__PURE__*/React.createElement("span", {
+  }, ['crew_result','crew_speech','crew_dialogue'].includes(m.meta?.kind) && window.FridayCrewByline ? React.createElement(window.FridayCrewByline,{meta:m.meta}) : (m.role === 'user' ? 'You' : fridayName()), " \xB7 ", m.time || '', m.via === 'voice' && /*#__PURE__*/React.createElement("span", {
     style: {
       marginLeft: 6,
       padding: '1px 5px',
@@ -15869,7 +16044,7 @@ function ChatSurface(props) {
       color: agentSettings.cite_sources ? '#34d399' : '#888',
       transition: 'all .15s'
     }
-  }, "\uD83D\uDCCE Cite Sources", agentSettings.cite_sources ? ' · ON' : ''), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCCE Cite Sources", agentSettings.cite_sources ? ' · ON' : ''), mode !== 'code' && /*#__PURE__*/React.createElement("button", {
     onClick: showSources,
     title: "Generate a source dossier for this conversation \u2014 every claim, its source, confidence, and link",
     style: {
@@ -16349,6 +16524,8 @@ function ConversationWindow({
   const snap = useFridaySnap('chat:' + convId, null);
   const requestedBox = snap.box || {x:pos.x,y:pos.y,w:shownW,h:shownH};
   const shownBox = window.FridayHolographicWorkspace?.constrainRect(requestedBox) || requestedBox;
+  const surfaceRef = useRef(null);
+  useFridaySpatialSurface(surfaceRef, () => snap.slot ? fridaySnapBox(fridayDesktopArea(),snap.slot) : requestedBox);
   const snapRef = useRef(snap);
   snapRef.current = snap;
   const menu = useSnapMenuOpener();
@@ -16394,7 +16571,8 @@ function ConversationWindow({
 
   // Resizing from an edge or corner. The bottom edge stops at the dock.
   const startResize = (e, dir) => {
-    rStart.current = { px: e.clientX, py: e.clientY, x: shownBox.x, y: shownBox.y, w: shownBox.w, h: shownBox.h, dir };
+    const visible = fridayRenderedBox(surfaceRef, shownBox);
+    rStart.current = { px: e.clientX, py: e.clientY, ...visible, dir };
     setResizing(dir);
     onFocus && onFocus();
   };
@@ -16440,7 +16618,8 @@ function ConversationWindow({
           model: (m.meta || {}).model,
           seat: (m.meta || {}).seat,
           kind: (m.meta || {}).kind,
-          trace_id: (m.meta || {}).trace_id
+          trace_id: (m.meta || {}).trace_id,
+          meta: m.meta, id: m.id
         })));
       })
       .catch(() => setMsgs([]));
@@ -16505,7 +16684,8 @@ function ConversationWindow({
         model: (m.meta || {}).model,
         seat: (m.meta || {}).seat,
         kind: (m.meta || {}).kind,
-        trace_id: (m.meta || {}).trace_id
+        trace_id: (m.meta || {}).trace_id,
+        meta: m.meta, id: m.id
       })));
     }).catch(() => {});
   const talk = () => {
@@ -16645,6 +16825,7 @@ function ConversationWindow({
 
   return /*#__PURE__*/React.createElement("div", {
     className: "chat-win" + (snap.slot ? ' snapped' : ''),
+    ref: surfaceRef,
     "data-chat-window": cid,
     "data-snap": snap.slot || undefined,
     role: "dialog",
@@ -16671,11 +16852,12 @@ function ConversationWindow({
       title: "Drag to move",
       onMouseDown: e => {
         if (e.button !== 0 || e.target.closest('button')) return;
+        const visible = fridayRenderedBox(surfaceRef, shownBox);
         if (snap.box) {
-          const rel = snap.box.w ? (e.clientX - snap.box.x) / snap.box.w : 0.5;
-          dOff.current = { x: Math.round(rel * shownW), y: e.clientY - snap.box.y, free: true, sx: e.clientX, sy: e.clientY };
+          const rel = visible.w ? (e.clientX - visible.x) / visible.w : 0.5;
+          dOff.current = { x: Math.round(rel * shownW), y: e.clientY - visible.y, free: true, sx: e.clientX, sy: e.clientY };
         } else {
-          dOff.current = { x: e.clientX - shownBox.x, y: e.clientY - shownBox.y };
+          dOff.current = { x: e.clientX - visible.x, y: e.clientY - visible.y };
         }
         setDragging(true);
       },
@@ -16906,9 +17088,11 @@ function CommandPalette({
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "cmd-palette-overlay",
+    "data-friday-overlay-backdrop": "",
     onClick: onClose
   }, /*#__PURE__*/React.createElement("div", {
     className: "cmd-palette",
+    "data-friday-overlay": "dialog",
     onClick: e => e.stopPropagation(),
     onKeyDown: onKey
   }, /*#__PURE__*/React.createElement("input", {
@@ -18004,6 +18188,9 @@ async function careerRequest(url, body) {
   const d = await r.json();
   if (!r.ok || d.error || d.status === 'error' || d.status === 'failed') throw new Error(d.error || d.message || 'Request failed (' + r.status + ')');
   return d;
+}
+function CrewWS({active=true}) {
+  return window.FridayCrewWorkspace ? React.createElement(window.FridayCrewWorkspace,{apiFetch,active}) : React.createElement('p',{role:'alert'},'Crew did not load. Reload this workspace to try again.');
 }
 function CareerWS() {
   const [tracker, setTracker] = useState(null);
@@ -23270,24 +23457,24 @@ function KnowledgePages({
 }
 // ═══ FUTURESPEAK STUDIO — portfolio project / deployment cockpit ═══
 // Project-management layer over the Dev Studio vibe-coding backend. Each
-// deployed site gets an interactive card with live git/deploy status, an
-// "Open in Replit" jump, scoped Quick Edit, and a one-click Apply+Deploy flow.
+// saved entry shows its local Git status and repository editing controls, an
+// optional hosting link and a scoped Quick Edit. Git status is not publication evidence.
 const FS_DEPLOY_META = {
   green: {
     c: '#00ff80',
-    label: 'DEPLOYED'
+    label: 'CLEAN CHECKOUT'
   },
   yellow: {
     c: '#f59e0b',
-    label: 'UNCOMMITTED'
+    label: 'LOCAL CHANGES'
   },
   red: {
     c: '#ff0080',
-    label: 'ERROR'
+    label: 'GIT ERROR'
   },
   remote: {
     c: '#00d4ff',
-    label: 'REPLIT-ONLY'
+    label: 'NO LOCAL COPY'
   }
 };
 const FS_CAT_META = {
@@ -23334,7 +23521,7 @@ function FSProjectCard({
       });
       const d = await r.json();
       if (d.status === 'ok') {
-        onToast((deploy ? 'Deploy' : 'Quick Edit') + ' queued for ' + p.name + ' — approve its card to start');
+        onToast((deploy ? 'Source push' : 'Quick Edit') + ' queued for ' + p.name + ' — approve its card to start');
         setInstr('');
         setEditing(false);
         setDeploy(false);
@@ -23499,7 +23686,7 @@ function FSProjectCard({
       borderRadius: 4,
       padding: '5px 7px'
     }
-  }, "Live on Replit \xB7 not cloned locally"), /*#__PURE__*/React.createElement("div", {
+  }, "Local repository not linked. Publication not checked."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 4,
@@ -23573,7 +23760,7 @@ function FSProjectCard({
     type: "checkbox",
     checked: deploy,
     onChange: e => setDeploy(e.target.checked)
-  }), " commit & deploy"), /*#__PURE__*/React.createElement("button", {
+  }), " commit & push (publication not verified)"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11,
@@ -23581,13 +23768,13 @@ function FSProjectCard({
     },
     disabled: busy || !instr.trim(),
     onClick: runEdit
-  }, busy ? 'Launching…' : deploy ? '🚀 Apply, Commit & Deploy' : '💻 Apply in Claude Code')), /*#__PURE__*/React.createElement("div", {
+  }, busy ? 'Launching…' : deploy ? '🚀 Apply & push' : '💻 Apply in Claude Code')), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#666',
       marginTop: 4
     }
-  }, "Opens a scoped Claude Code terminal in ", p.repo, ". ", deploy ? 'Pushes to GitHub → Replit auto-deploys.' : 'Diff stays local until you commit.')), expanded && /*#__PURE__*/React.createElement("div", {
+  }, "Opens a scoped Claude Code terminal in ", p.repo, ". ", deploy ? 'Commits and pushes source. Publication is not verified.' : 'Diff stays local until you commit.')), expanded && /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid rgba(255,255,255,0.06)',
       paddingTop: 6,
@@ -23770,7 +23957,7 @@ function FSStudio() {
     style: {
       color: '#00ff80'
     }
-  }, "\u25CF ", counts.green || 0, " deployed"), /*#__PURE__*/React.createElement("span", {
+  }, "\u25CF ", counts.green || 0, " clean checkouts"), /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#f59e0b'
     }
@@ -23782,7 +23969,7 @@ function FSStudio() {
     style: {
       color: '#00d4ff'
     }
-  }, "\u25CF ", counts.remote || 0, " replit-only")), /*#__PURE__*/React.createElement("div", {
+  }, "\u25CF ", counts.remote || 0, " without a local copy")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 4
@@ -23997,6 +24184,8 @@ function FSStudio() {
   }, "No projects in portfolio. Click \uD83D\uDD04 Refresh All to discover repos, or \uFF0B New Project."));
 }
 function FuturespeakWS() {
+  const [sitesTarget, setSitesTarget] = useState(null);
+  useNavTarget('futurespeak', t => {setSitesTarget({...t}); setView('sites');});
   const [view, setView] = useState('sites');
   const [pipe, setPipe] = useState(null);
   const [rev, setRev] = useState(null);
@@ -24111,7 +24300,7 @@ function FuturespeakWS() {
       padding: '3px 8px'
     },
     onClick: () => setView(v)
-  }, v === 'sites' ? '🚀 sites' : v))), view === 'sites' && /*#__PURE__*/React.createElement(FSStudio, null), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, v === 'sites' ? '🚀 sites' : v))), view === 'sites' && /*#__PURE__*/React.createElement(SitesWS, {request: sitesTarget, embedded: true, onRequestConsumed: () => setSitesTarget(null)}), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 10
@@ -24698,7 +24887,7 @@ style: {
       fontSize: 11,
       color: '#a8a8b4'
     }
-  }, "Connect your sites to track deploy status. Use Claude Code for deploy actions."))), view === 'talent' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "Use Sites to review builds, publications and domain status."))), view === 'talent' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       textAlign: 'center',
@@ -30421,6 +30610,14 @@ const WF_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const WF_DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const WF_EXAMPLES = ['Every weekday at 7:30am, check the city council site for new agendas and tell me what changed', 'Every Friday at 4pm, pull together the reader tips from my inbox and sort them by beat', 'Every morning, give me a one-paragraph summary of overnight news on my beats'];
 const WF_STATUS = {
+  complete: { color: 'var(--fr-ok)', label: 'Finished' },
+  completed: { color: 'var(--fr-ok)', label: 'Finished' },
+  completed_unverified: { color: 'var(--fr-warn)', label: 'Finished · not verified' },
+  unverified: { color: 'var(--fr-warn)', label: 'Finished · not verified' },
+  waiting: { color: 'var(--fr-warn)', label: 'Needs your decision' },
+  awaiting_approval: { color: 'var(--fr-warn)', label: 'Needs your decision' },
+  interrupted: { color: 'var(--fr-warn)', label: 'Interrupted' },
+  queued: { color: 'var(--fr-cyan)', label: 'Queued' },
   finished: {
     color: '#00ff80',
     label: 'Finished'
@@ -30481,6 +30678,45 @@ const WF_CSS = `
 .wfx-err{color:#ff8fae;font-size:12.5px;margin-top:6px}
 .wfx-icon{background:none;border:1px solid transparent;color:#a8a8b4;cursor:pointer;border-radius:4px;padding:2px 6px;font-size:13px}
 .wfx-icon:hover{border-color:rgba(255,255,255,.2);color:#fff}
+.wfx-fieldset{border:0;padding:0;margin:12px 0;min-width:0}
+.wfx-editor .wfx-lbl{margin-top:12px}
+.wfx-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px}
+.wfx-field{display:flex;flex-direction:column;gap:5px;color:var(--fr-dim);font-size:12px;margin:10px 0;min-width:0}
+.wfx-in{min-width:0;max-width:100%}
+.wfx-in option{background:var(--fr-surface);color:var(--fr-text)}
+.wfx-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px}
+.wfx-actions .btn,.wfx-link{white-space:normal;text-align:left;overflow-wrap:anywhere}
+.wfx-editor-actions{justify-content:flex-end;border-top:1px solid var(--fr-glass-edge);padding-top:14px}
+.wfx-disclosure{border-top:1px solid var(--fr-glass-edge);padding-top:12px;margin-top:14px;min-width:0}
+.wfx-disclosure>summary{cursor:pointer;color:var(--fr-text);font-size:12px;font-weight:600;list-style-position:inside}
+.wfx-disclosure>summary:focus-visible,.wfx-link:focus-visible{outline:2px solid var(--fr-cyan);outline-offset:3px}
+.wfx-outcome{border-left:2px solid var(--fr-cyan);padding:0 0 2px 12px;margin:12px 0}
+.wfx-result-copy{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6;margin:10px 0}
+.wfx-checks{padding-left:20px;color:var(--fr-dim);font-size:12px;overflow-wrap:anywhere}
+.wfx-output-list{display:grid;gap:8px;margin:10px 0;overflow-wrap:anywhere}
+.wfx-output-list small{display:block}
+.wfx-starters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr));gap:10px;margin-top:12px}
+.wfx-starter{border:1px solid var(--fr-glass-edge);background:var(--fr-glass);color:var(--fr-text);padding:12px;border-radius:8px;cursor:pointer;text-align:left;font:inherit;min-width:0}
+.wfx-starter:hover{border-color:var(--fr-cyan)}
+.wfx-starter strong,.wfx-starter span{display:block;overflow-wrap:anywhere}
+.wfx-starter span{font-size:12px;color:var(--fr-dim);margin-top:4px}
+.wfx-compose{display:flex;align-items:flex-end;gap:10px;margin:12px 0}
+.wfx-compose textarea{flex:1;min-width:0;resize:vertical}
+.wfx-compose>.btn{flex:none}
+.wfx-details{margin-top:14px;border-top:1px solid var(--fr-glass-edge);padding-top:2px}
+.wfx-step-label{color:var(--fr-cyan);font-weight:600}
+.wfx-step-head{margin-bottom:8px;flex-wrap:wrap}
+.wfx-step-head .wfx-grow{flex:1 1 120px}
+.wfx-step-head .wfx-actions{margin:0}
+.wfx-timing{width:auto;flex:1 1 140px}
+.wfx-hours{width:68px}
+.wfx-days{gap:5px}
+.wfx-routine{padding:12px 0;border-bottom:1px solid var(--fr-glass-edge)}
+.wfx [disabled]{cursor:default;opacity:.5}
+.wfx-promise{flex-wrap:wrap}
+.wfx-desc,.wfx-name{overflow-wrap:anywhere}
+@media(max-width:560px){.wfx-compose{flex-direction:column;align-items:stretch}.wfx-compose textarea{width:100%}.wfx-card{padding:12px}.wfx-fields{grid-template-columns:1fr}.wfx-card-actions{gap:9px}.wfx-starters{grid-template-columns:1fr}}
+
 `;
 function wfClock(h, m) {
   h = Number(h) || 0;
@@ -30648,18 +30884,15 @@ function wfOpenApprovals() {
   if (window.fridayOpenWorkspace) window.fridayOpenWorkspace(t);else fridayNavigate(t);
 }
 function wfPost(url, body) {
-  return apiFetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body || {})
-  }).then(r => r.json().catch(() => ({})).then(d => r.ok ? d : Promise.reject(new Error(d.message || 'HTTP ' + r.status))));
-}
+    return apiFetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body || {})})
+      .then(r => r.json().catch(() => ({})).then(d => { if (!r.ok || d.status === 'error' || d.ok === false) throw new Error(d.message || d.error || ('HTTP ' + r.status)); return d; }));
+  }
+
 function WfSwitch({
   on,
   onChange,
-  label
+  label,
+  disabled
 }) {
   return /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -30668,11 +30901,110 @@ function WfSwitch({
     "aria-label": label,
     title: on ? 'On — click to pause' : 'Paused — click to turn on',
     className: "wfx-sw",
+    disabled: disabled,
     onClick: onChange
   });
 }
+
+function wfOutcomeState(value) {
+  return typeof value === 'string' ? value : value && (value.status || value.state) || 'unknown';
+}
+function wfChatUrl(cid, artifact, version) {
+  const q = new URLSearchParams({
+    chrome: 'chat',
+    conversation: cid
+  });
+  if (artifact) q.set('artifact', artifact);
+  if (Number.isSafeInteger(version) && version > 0) q.set('version', String(version));
+  return '/?' + q.toString();
+}
+function wfResultUrl(item, run) {
+  const cid = item.conversation_id || run.conversation_id || (run.delivery || {}).conversation_id;
+  const aid = item.artifact_id || (item.kind === 'artifact' ? item.id : null);
+  if (cid && aid) return wfChatUrl(cid, aid, item.version);
+  const url = item.url || item.href;
+  return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//') && !url.includes('\\') ? url : null;
+}
+function wfOpenTask(id) {
+  const target = {
+    workspace: 'system',
+    tab: 'task',
+    task: id
+  };
+  if (window.fridayOpenWorkspace) window.fridayOpenWorkspace(target);else fridayNavigate(target);
+}
+function WfOutcome({
+  run
+}) {
+  if (!run) return null;
+  const verification = wfOutcomeState(run.verification);
+  const delivery = wfOutcomeState(run.delivery);
+  const checked = ['verified', 'passed'].includes(verification);
+  const checks = run.verification && Array.isArray(run.verification.checks) ? run.verification.checks : [];
+  const outputs = Array.isArray(run.outputs) ? run.outputs : [];
+  const cid = run.conversation_id || (run.delivery || {}).conversation_id;
+  const deliveryLabels = {
+    delivered: 'Delivered to the conversation',
+    sent: 'Delivered to the conversation',
+    failed: 'Delivery failed',
+    pending: 'Delivery pending',
+    deferred: 'Delivery after the final step',
+    not_requested: 'No delivery requested',
+    suppressed: 'Routine notification suppressed',
+    unchanged: 'No notification: unchanged'
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "wfx-outcome",
+    "data-testid": "wf-outcome"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-meta"
+  }, /*#__PURE__*/React.createElement("span", {
+    "data-verification": verification
+  }, checked ? run.verification.scope === 'deliverable_structure' ? 'Deliverable verified' : 'Checks passed' : verification === 'failed' ? 'Checks did not pass' : ['pending', 'running'].includes(verification) ? 'Checks pending' : 'Result not verified'), /*#__PURE__*/React.createElement("span", {
+    "data-delivery": delivery
+  }, deliveryLabels[delivery] || 'Delivery not confirmed')), run.summary && /*#__PURE__*/React.createElement("p", {
+    className: "wfx-result-copy"
+  }, run.summary), run.verification && run.verification.summary && /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, run.verification.summary), run.delivery && (run.delivery.error || run.delivery.reason) && /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, run.delivery.error || run.delivery.reason), checks.length > 0 && /*#__PURE__*/React.createElement("ul", {
+    className: "wfx-checks"
+  }, checks.map((c, i) => /*#__PURE__*/React.createElement("li", {
+    key: c.id || i
+  }, typeof c === 'string' ? c : (c.label || c.name || c.check || 'Check').replaceAll('_', ' ') + ': ' + (c.status || (c.passed === true ? 'passed' : 'not confirmed')).replaceAll('_', ' ') + (c.message || c.detail ? ' · ' + (c.message || c.detail) : '')))), outputs.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-output-list",
+    "aria-label": "Workflow results"
+  }, outputs.map((o, i) => {
+    const href = wfResultUrl(o, run);
+    const label = o.title || o.name || o.path || 'Result ' + (i + 1);
+    return /*#__PURE__*/React.createElement("div", {
+      key: o.id || o.artifact_id || i
+    }, href ? /*#__PURE__*/React.createElement("a", {
+      className: "wfx-link",
+      href: href,
+      target: "_blank",
+      rel: "noopener noreferrer"
+    }, label, " \u2197") : /*#__PURE__*/React.createElement("span", null, label), o.path && o.path !== label && /*#__PURE__*/React.createElement("small", {
+      className: "wfx-quiet"
+    }, o.path));
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-actions"
+  }, cid && /*#__PURE__*/React.createElement("a", {
+    className: "wfx-link",
+    href: wfChatUrl(cid),
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, "Open conversation \u2197"), (run.task_ids || []).length > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-link",
+    onClick: () => wfOpenTask(run.task_ids[run.task_ids.length - 1])
+  }, "View task and progress")));
+}
 function WfEditor({
   initial,
+  projects = [],
+  conversations = [],
   onCancel,
   onSaved
 }) {
@@ -30682,10 +31014,19 @@ function WfEditor({
     name: '',
     prompt: ''
   }]).map(s => ({
+    ...s,
     name: s.name || '',
     prompt: s.prompt || ''
   })));
   const [ui, setUi] = useState(wfWhenToUi(initial.when));
+  const [project, setProject] = useState(initial.project_id || '');
+  const [conversation, setConversation] = useState(initial.conversation_id || '');
+  const [inputs, setInputs] = useState((initial.inputs || []).join('\n'));
+  const [criteria, setCriteria] = useState(initial.success_criteria || '');
+  const [output, setOutput] = useState(initial.output || {
+    kind: 'reply'
+  });
+  const [notify, setNotify] = useState(initial.notify || 'on_complete');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   // See & Touch: the editor's name, description and each step's text are fields Friday may write into.
@@ -30706,28 +31047,38 @@ function WfEditor({
     }
     return () => un.forEach(f => f());
   }, [steps.length]);
-  const setU = (k, v) => setUi(Object.assign({}, ui, {
+  const saving = useRef(false);
+  const editor = useRef(null);
+  useEffect(() => {
+    editor.current?.scrollIntoView({
+      block: 'start'
+    });
+  }, []);
+  const setU = (k, v) => setUi(p => ({
+    ...p,
     [k]: v
   }));
-  const setS = (i, k, v) => {
-    const n = steps.slice();
-    n[i] = Object.assign({}, n[i], {
-      [k]: v
-    });
-    setSteps(n);
-  };
-  const move = (i, d) => {
-    const n = steps.slice();
-    const t = n[i];
-    n[i] = n[i + d];
-    n[i + d] = t;
-    setSteps(n);
-  };
+  const setS = (i, k, v) => setSteps(p => p.map((s, n) => n === i ? {
+    ...s,
+    [k]: v
+  } : s));
+  const move = (i, d) => setSteps(p => {
+    const n = p.slice();
+    [n[i], n[i + d]] = [n[i + d], n[i]];
+    return n;
+  });
   const when = wfUiToWhen(ui);
   const isNew = !initial.slug && !initial.schedule_id;
+  const choices = conversations.filter(c => !project || (c.project_id || c.project) === project);
+  const chooseProject = id => {
+    setProject(id);
+    if (conversation && !conversations.some(c => c.id === conversation && (!id || (c.project_id || c.project) === id))) setConversation('');
+  };
   const save = () => {
+    if (saving.current) return;
     setErr('');
     const clean = steps.filter(s => s.prompt.trim()).map((s, i) => ({
+      ...s,
       name: s.name.trim() || 'Step ' + (i + 1),
       prompt: s.prompt.trim()
     }));
@@ -30736,48 +31087,47 @@ function WfEditor({
       return;
     }
     if (!clean.length) {
-      setErr(('Say what ' + fridayName() + ' should do in at least one step.'));
+      setErr('Add instructions in at least one step.');
       return;
     }
     if (ui.repeat === 'once' && !ui.date) {
       setErr('Pick the day it should run.');
       return;
     }
+    saving.current = true;
     setBusy(true);
     wfPost('/api/workflows/save', {
+      ...initial,
       name: name.trim(),
       description: desc.trim(),
       steps: clean,
       when,
       slug: initial.slug || null,
       schedule_id: initial.schedule_id || null,
-      enabled: initial.enabled === undefined ? true : initial.enabled
-    }).then(d => {
+      enabled: initial.enabled === undefined ? true : initial.enabled,
+      project_id: project || null,
+      conversation_id: conversation || null,
+      inputs: inputs.split('\n').map(s => s.trim()).filter(Boolean),
+      success_criteria: criteria.trim(),
+      output,
+      notify
+    }).then(d => onSaved(d, name.trim())).catch(e => setErr(e.message)).finally(() => {
+      saving.current = false;
       setBusy(false);
-      onSaved(d, name.trim());
-    }).catch(e => {
-      setBusy(false);
-      setErr(e.message);
     });
   };
-  const ask = initial.asks_first || [];
   return /*#__PURE__*/React.createElement("div", {
-    className: "card wfx-card",
-    style: {
-      borderColor: 'rgba(0,212,255,.35)'
-    },
+    ref: editor,
+    className: "card wfx-card wfx-editor",
     "data-testid": "wf-editor"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title",
-    style: {
-      marginBottom: 10
-    }
-  }, isNew ? 'Check the draft, then save' : 'Edit workflow'), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['name', 'description'].concat(steps.map((_, i) => 'step.' + (i + 1) + '.prompt')), fridayName(), () => setFillTick(n => n + 1)) : null, initial.source === 'simple' && isNew && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-quiet",
-    style: {
-      marginBottom: 10
-    }
-  }, (fridayName() + " couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below.")), /*#__PURE__*/React.createElement("label", {
+    className: "card-title"
+  }, isNew ? 'Check the draft, then save' : initial.make_routine ? 'Make this a routine' : 'Edit workflow'), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['name', 'description'].concat(steps.map((_, i) => 'step.' + (i + 1) + '.prompt')), fridayName(), () => setFillTick(n => n + 1)) : null, initial.source === 'simple' && isNew && /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, "The model was unavailable, so this draft keeps your words as one step. You can edit it below."), /*#__PURE__*/React.createElement("fieldset", {
+    disabled: busy,
+    className: "wfx-fieldset"
+  }, /*#__PURE__*/React.createElement("label", {
     className: "wfx-lbl",
     htmlFor: "wf-name"
   }, "Name"), /*#__PURE__*/React.createElement("input", {
@@ -30785,39 +31135,167 @@ function WfEditor({
     className: "wfx-in",
     value: name,
     onChange: e => setName(e.target.value),
-    placeholder: "e.g. Council agenda watch"
+    placeholder: "e.g. Weekly research brief"
   }), /*#__PURE__*/React.createElement("label", {
     className: "wfx-lbl",
-    htmlFor: "wf-desc",
-    style: {
-      marginTop: 10
-    }
-  }, "What it's for ", /*#__PURE__*/React.createElement("span", {
-    className: "wfx-quiet"
-  }, "(optional)")), /*#__PURE__*/React.createElement("input", {
+    htmlFor: "wf-desc"
+  }, "What it should accomplish"), /*#__PURE__*/React.createElement("input", {
     id: "wf-desc",
     className: "wfx-in",
     value: desc,
     onChange: e => setDesc(e.target.value),
-    placeholder: "One line, for you"
+    placeholder: "The result you want"
   }), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-h",
-    style: {
-      marginTop: 16
-    }
-  }, "When"), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      flexWrap: 'wrap',
-      gap: 8
-    }
+    className: "wfx-h"
+  }, "Result and context"), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-fields"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "wfx-field"
+  }, "Project", /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Workflow project",
+    className: "wfx-in",
+    value: project,
+    onChange: e => chooseProject(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "No project"), project && !projects.some(p => p.id === project) && /*#__PURE__*/React.createElement("option", {
+    value: project
+  }, "Saved project (unavailable)"), projects.map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.id,
+    value: p.id
+  }, p.name)))), /*#__PURE__*/React.createElement("label", {
+    className: "wfx-field"
+  }, "Return the result to", /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Result conversation",
+    className: "wfx-in",
+    value: conversation,
+    onChange: e => setConversation(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "A conversation for this workflow"), conversation && !choices.some(c => c.id === conversation) && /*#__PURE__*/React.createElement("option", {
+    value: conversation
+  }, "Saved conversation (unavailable)"), choices.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c.id,
+    value: c.id
+  }, c.title || 'Untitled chat')))), /*#__PURE__*/React.createElement("label", {
+    className: "wfx-field"
+  }, "Deliverable", /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Deliverable",
+    className: "wfx-in",
+    value: output.kind,
+    onChange: e => setOutput({
+      ...output,
+      kind: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "reply"
+  }, "Answer in the conversation"), /*#__PURE__*/React.createElement("option", {
+    value: "artifact"
+  }, "Editable artifact"), /*#__PURE__*/React.createElement("option", {
+    value: "file"
+  }, "Saved file"), /*#__PURE__*/React.createElement("option", {
+    value: "code"
+  }, "Code change"))), output.kind !== 'reply' && /*#__PURE__*/React.createElement("label", {
+    className: "wfx-field"
+  }, "Result title", /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Result title",
+    className: "wfx-in",
+    value: output.title || '',
+    onChange: e => setOutput({
+      ...output,
+      title: e.target.value
+    }),
+    placeholder: "e.g. Research brief"
+  }))), ['file', 'code'].includes(output.kind) && /*#__PURE__*/React.createElement("label", {
+    className: "wfx-field"
+  }, "Expected file or folder", /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Expected file or folder",
+    className: "wfx-in",
+    value: output.path || '',
+    onChange: e => setOutput({
+      ...output,
+      path: e.target.value
+    }),
+    placeholder: ('A location ' + fridayName() + ' is allowed to use')
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "wfx-lbl",
+    htmlFor: "wf-checks"
+  }, "What should be checked?"), /*#__PURE__*/React.createElement("textarea", {
+    id: "wf-checks",
+    className: "wfx-in",
+    rows: "2",
+    value: criteria,
+    onChange: e => setCriteria(e.target.value),
+    placeholder: "e.g. Cite the sources, compare with last week, and mark anything uncertain."
+  }), /*#__PURE__*/React.createElement("details", {
+    className: "wfx-disclosure",
+    open: inputs ? true : undefined
+  }, /*#__PURE__*/React.createElement("summary", null, "Sources and notes", inputs ? ' · ' + inputs.split('\n').filter(Boolean).length : ' (optional)'), /*#__PURE__*/React.createElement("label", {
+    className: "wfx-lbl",
+    htmlFor: "wf-inputs"
+  }, "One source or instruction per line"), /*#__PURE__*/React.createElement("textarea", {
+    id: "wf-inputs",
+    className: "wfx-in",
+    rows: "3",
+    value: inputs,
+    onChange: e => setInputs(e.target.value),
+    placeholder: "Document reference, website, file path, or a note to carry into each run"
+  })), /*#__PURE__*/React.createElement("details", {
+    className: "wfx-disclosure",
+    open: true
+  }, /*#__PURE__*/React.createElement("summary", null, "Steps \xB7 ", steps.length), /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, "Each step receives the previous step's result."), steps.map((s, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "wfx-step"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row wfx-step-head"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "wfx-step-label"
+  }, i + 1), /*#__PURE__*/React.createElement("input", {
+    "aria-label": 'Step ' + (i + 1) + ' name',
+    className: "wfx-in wfx-grow",
+    value: s.name,
+    onChange: e => setS(i, 'name', e.target.value),
+    placeholder: "Short name"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "wfx-actions"
+  }, i > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-icon",
+    "aria-label": 'Move step ' + (i + 1) + ' up',
+    onClick: () => move(i, -1)
+  }, "\u2191"), i < steps.length - 1 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-icon",
+    "aria-label": 'Move step ' + (i + 1) + ' down',
+    onClick: () => move(i, 1)
+  }, "\u2193"), steps.length > 1 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-icon",
+    "aria-label": 'Remove step ' + (i + 1),
+    onClick: () => setSteps(p => p.filter((_, j) => j !== i))
+  }, "\xD7"))), /*#__PURE__*/React.createElement("textarea", {
+    "aria-label": 'Step ' + (i + 1) + ' instructions',
+    className: "wfx-in",
+    rows: "3",
+    value: s.prompt,
+    onChange: e => setS(i, 'prompt', e.target.value),
+    placeholder: 'Tell ' + fridayName() + ' what to do.'
+  }))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    onClick: () => setSteps(p => p.concat([{
+      name: '',
+      prompt: ''
+    }]))
+  }, "+ Add a step")), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-h"
+  }, "When and notifications"), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-actions"
   }, /*#__PURE__*/React.createElement("select", {
     "aria-label": "How often",
-    className: "wfx-in",
-    style: {
-      width: 'auto',
-      flex: '1 1 180px'
-    },
+    className: "wfx-in wfx-timing",
     value: ui.repeat,
     onChange: e => setU('repeat', e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
@@ -30835,147 +31313,62 @@ function WfEditor({
   }, "Once")), ui.repeat === 'once' && /*#__PURE__*/React.createElement("input", {
     "aria-label": "Date",
     type: "date",
-    className: "wfx-in",
-    style: {
-      width: 'auto'
-    },
+    className: "wfx-in wfx-timing",
     value: ui.date,
     onChange: e => setU('date', e.target.value)
   }), ['daily', 'weekdays', 'days', 'once'].includes(ui.repeat) && /*#__PURE__*/React.createElement("input", {
     "aria-label": "Time",
     type: "time",
-    className: "wfx-in",
-    style: {
-      width: 'auto'
-    },
+    className: "wfx-in wfx-timing",
     value: ui.time,
     onChange: e => setU('time', e.target.value)
-  }), ui.repeat === 'hours' && /*#__PURE__*/React.createElement("span", {
+  }), ui.repeat === 'hours' && /*#__PURE__*/React.createElement("label", {
     className: "wfx-row"
-  }, "every ", /*#__PURE__*/React.createElement("input", {
+  }, "Every ", /*#__PURE__*/React.createElement("input", {
     "aria-label": "Hours between runs",
     type: "number",
     min: "1",
     max: "24",
-    className: "wfx-in",
-    style: {
-      width: 64
-    },
+    className: "wfx-in wfx-hours",
     value: ui.hours,
     onChange: e => setU('hours', e.target.value)
   }), " hours")), ui.repeat === 'days' && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      gap: 4,
-      marginTop: 8,
-      flexWrap: 'wrap'
-    }
+    className: "wfx-actions wfx-days"
   }, WF_DAYS.map((d, i) => /*#__PURE__*/React.createElement("button", {
     key: d,
     type: "button",
     className: "wfx-daybtn",
     "aria-pressed": ui.days.includes(i),
-    onClick: () => setU('days', ui.days.includes(i) ? ui.days.filter(x => x !== i) : ui.days.concat([i]))
-  }, d))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8,
-      color: '#9fe8ff',
-      fontSize: 12.5
-    },
-    "data-testid": "wf-when-sentence"
-  }, "\uD83D\uDD52 ", wfDescribe(when)), initial.when_note && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-err",
-    style: {
-      color: '#ffd08a'
-    }
-  }, initial.when_note), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-h",
-    style: {
-      marginTop: 16
-    }
-  }, ("What " + fridayName() + " does")), /*#__PURE__*/React.createElement("div", {
+    onClick: () => setU('days', ui.days.includes(i) ? ui.days.filter(x => x !== i) : ui.days.concat(i))
+  }, d))), /*#__PURE__*/React.createElement("p", {
     className: "wfx-quiet",
-    style: {
-      marginBottom: 8
-    }
-  }, "Steps run in order. Each step gets what the step before it found."), steps.map((s, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "wfx-step"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#00d4ff',
-      fontWeight: 600,
-      fontSize: 12
-    }
-  }, "Step ", i + 1), /*#__PURE__*/React.createElement("input", {
-    "aria-label": 'Step ' + (i + 1) + ' name',
-    className: "wfx-in wfx-grow",
-    style: {
-      padding: '5px 8px'
-    },
-    value: s.name,
-    onChange: e => setS(i, 'name', e.target.value),
-    placeholder: "Short name"
-  }), i > 0 && /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "wfx-icon",
-    title: "Move up",
-    "aria-label": 'Move step ' + (i + 1) + ' up',
-    onClick: () => move(i, -1)
-  }, "\u2191"), i < steps.length - 1 && /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "wfx-icon",
-    title: "Move down",
-    "aria-label": 'Move step ' + (i + 1) + ' down',
-    onClick: () => move(i, 1)
-  }, "\u2193"), steps.length > 1 && /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "wfx-icon",
-    title: "Remove this step",
-    "aria-label": 'Remove step ' + (i + 1),
-    onClick: () => setSteps(steps.filter((_, j) => j !== i))
-  }, "\u2715")), /*#__PURE__*/React.createElement("textarea", {
-    "aria-label": 'Step ' + (i + 1) + ' instructions',
+    "data-testid": "wf-when-sentence"
+  }, wfDescribe(when)), initial.when_note && /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, initial.when_note), /*#__PURE__*/React.createElement("label", {
+    className: "wfx-field"
+  }, "Notify me", /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Workflow notifications",
     className: "wfx-in",
-    style: {
-      minHeight: 60,
-      resize: 'vertical'
-    },
-    value: s.prompt,
-    onChange: e => setS(i, 'prompt', e.target.value),
-    placeholder: ("Tell " + fridayName() + " what to do, the way you'd tell a colleague.")
-  }))), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn",
-    onClick: () => setSteps(steps.concat([{
-      name: '',
-      prompt: ''
-    }]))
-  }, "+ Add a step"), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-promise",
-    style: {
-      marginTop: 14,
-      marginBottom: 0
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true"
-  }, "\uD83D\uDEE1\uFE0F"), /*#__PURE__*/React.createElement("div", null, ask.length ? /*#__PURE__*/React.createElement("span", null, "This looks like it will ", /*#__PURE__*/React.createElement("b", null, wfJoin(ask)), (". " + fridayName() + " won't do that on her own: when a step gets there, she stops and asks you with an approval card.")) : /*#__PURE__*/React.createElement("span", null, ("If a step ever tries to send, post, buy, delete or change something outside your computer, " + fridayName() + " stops and asks you first with an approval card.")))), err && /*#__PURE__*/React.createElement("div", {
+    value: notify,
+    onChange: e => setNotify(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "on_complete"
+  }, "When a run finishes"), /*#__PURE__*/React.createElement("option", {
+    value: "on_change"
+  }, "Only when something changes"), /*#__PURE__*/React.createElement("option", {
+    value: "never"
+  }, "Keep results here; no routine notifications"))), /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, ('Approval requests still need your decision. Scheduled work runs while ' + FRIDAY_BRAND.name + ' is running on this computer.'))), err && /*#__PURE__*/React.createElement("div", {
     className: "wfx-err",
     role: "alert"
   }, err), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      marginTop: 14,
-      justifyContent: 'flex-end'
-    }
+    className: "wfx-actions wfx-editor-actions"
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
+    disabled: busy,
     onClick: onCancel
   }, "Cancel"), /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -30986,535 +31379,521 @@ function WfEditor({
 }
 function WfCard({
   w,
-  onRun,
-  onStop,
+  onAction,
   onToggle,
   onEdit,
   onDelete,
   busy
 }) {
-  const [open, setOpen] = useState(w.steps.length > 1);
+  const [open, setOpen] = useState(false);
   const last = w.last_run;
-  const st = w.running ? WF_STATUS.running : last ? WF_STATUS[last.status] || WF_STATUS.finished : null;
+  const steps = w.steps || [];
+  const runState = w.running ? 'running' : last && (last.status || last.state);
+  const waitingStep = (last?.steps || []).find(s => ['waiting', 'waiting_approval', 'waiting_for_approval', 'queued-for-seat'].includes(s.status));
+  const state = runState === 'running' && waitingStep ? waitingStep.status : runState;
+  const active = w.running || ['running', 'queued', 'queued-for-seat', 'waiting', 'waiting_approval', 'waiting_for_approval'].includes(state);
+  const st = state === 'queued-for-seat' ? {
+    color: 'var(--fr-warn)',
+    label: 'Waiting for a model'
+  } : ['waiting', 'waiting_approval', 'waiting_for_approval'].includes(state) ? {
+    color: 'var(--fr-warn)',
+    label: 'Needs your decision'
+  } : state && WF_STATUS[state];
   const paused = w.when && !w.enabled;
-  const what = w.description || w.steps[0] && w.steps[0].prompt || '';
+  const verified = last && ['verified', 'passed'].includes(wfOutcomeState(last.verification));
+  const cid = w.conversation_id || (last || {}).conversation_id;
   return /*#__PURE__*/React.createElement("div", {
-    className: "card wfx-card", "data-running": w.running ? "true" : "false",
+    className: "card wfx-card",
+    "data-running": w.running ? 'true' : 'false',
     "data-testid": "wf-card",
-    ...fridayRow('wf', w.slug || w.id, w.name, { status: w.running ? 'running' : w.last_run && w.last_run.status || 'idle', scheduled: !!w.when, steps: (w.steps || []).length }),
-    style: paused ? {
-      opacity: 0.72
-    } : null
+    ...fridayRow('wf', w.slug || w.id, w.name, { status: w.running ? 'running' : last && last.status || 'idle', scheduled: !!w.when, steps: steps.length })
   }, /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      alignItems: 'flex-start'
-    }
+    className: "wfx-row"
   }, /*#__PURE__*/React.createElement("div", {
     className: "wfx-grow"
   }, /*#__PURE__*/React.createElement("div", {
     className: "wfx-name"
-  }, w.name), what && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-desc",
-    style: open ? null : {
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    }
-  }, what)), w.when && /*#__PURE__*/React.createElement(WfSwitch, {
+  }, w.name), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-desc"
+  }, w.description || (steps[0] || {}).prompt)), w.when && /*#__PURE__*/React.createElement(WfSwitch, {
     on: w.enabled,
+    disabled: busy,
     label: 'Run ' + w.name + ' on its schedule',
     onChange: () => onToggle(w)
   })), /*#__PURE__*/React.createElement("div", {
     className: "wfx-meta"
-  }, /*#__PURE__*/React.createElement("span", {
-    title: "When it runs"
-  }, "\uD83D\uDD52 ", /*#__PURE__*/React.createElement("b", null, w.when_text), paused ? ' · paused' : ''), /*#__PURE__*/React.createElement("span", {
-    title: "Last run"
-  }, st ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, w.when_text || wfDescribe(w.when), paused ? ' · paused' : ''), /*#__PURE__*/React.createElement("span", null, state ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     className: "wfx-dot",
     style: {
-      background: st.color,
-      boxShadow: '0 0 6px ' + st.color
+      background: st ? st.color : 'var(--fr-dim)'
     }
-  }), w.running ? 'Running now' : st.label + ' ' + wfAgo(last.at)) : /*#__PURE__*/React.createElement("span", {
-    className: "wfx-quiet"
-  }, "Hasn't run yet")), w.when && w.enabled && w.next_run && !w.running && /*#__PURE__*/React.createElement("span", {
-    title: "Next run"
-  }, "Next: ", wfNext(w.next_run)), w.steps.length > 1 && /*#__PURE__*/React.createElement("span", {
-    className: "wfx-quiet"
-  }, w.steps.length, " steps")), w.asks_first && w.asks_first.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-shield",
-    title: (fridayName() + " stops and asks you before doing these")
-  }, "\uD83D\uDEE1\uFE0F Asks you before it can ", wfJoin(w.asks_first)), open && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 10,
-      borderTop: '1px solid rgba(255,255,255,.08)',
-      paddingTop: 8
-    }
-  }, /*#__PURE__*/React.createElement("ol", {
-    className: "wfx-steps"
-  }, w.steps.map((s, i) => {
-    const ls = last && last.steps && last.steps[i];
-    return /*#__PURE__*/React.createElement("li", {
-      key: i
-    }, /*#__PURE__*/React.createElement("b", {
-      style: {
-        color: '#fff',
-        fontWeight: 600
-      }
-    }, s.name), ls && ls.status && ls.status !== 'pending' ? /*#__PURE__*/React.createElement("span", {
-      className: "wfx-quiet"
-    }, " \u2014 last time: ", ls.status === 'completed' ? 'done' : ls.status) : null, /*#__PURE__*/React.createElement("div", {
-      className: "wfx-quiet",
-      style: {
-        whiteSpace: 'pre-wrap'
-      }
-    }, s.prompt));
-  })), last && last.summary && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "wfx-lbl",
-    style: {
-      display: 'inline'
-    }
-  }, "Last result: "), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: last.status === 'failed' ? '#ff8fae' : '#d6d6e0',
-      fontSize: 12.5,
-      whiteSpace: 'pre-wrap'
-    }
-  }, last.summary))), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("button", {
+  }), st ? st.label : String(state).replaceAll('_', ' '), !w.running && last.at ? ' ' + wfAgo(last.at) : '') : "Hasn't run yet"), w.when && w.enabled && w.next_run && !w.running && /*#__PURE__*/React.createElement("span", null, "Next: ", wfNext(w.next_run)), w.project_name && /*#__PURE__*/React.createElement("span", null, w.project_name)), w.asks_first && w.asks_first.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-shield"
+  }, "Asks you before it can ", wfJoin(w.asks_first)), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-actions wfx-card-actions"
+  }, active ? w.slug ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    disabled: busy,
+    onClick: () => onAction('stop', w)
+  }, "Stop run") : /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    disabled: true
+  }, "Run in progress") : /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn wfx-go",
-    disabled: busy || w.running,
-    onClick: () => onRun(w)
-  }, busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'), w.running && !w.schedule_id && onStop ? /*#__PURE__*/React.createElement("button", {
+    disabled: busy,
+    onClick: () => onAction(last ? 'repeat' : 'run', w)
+  }, busy ? 'Working…' : last ? 'Do again' : 'Run now'), active && last && (last.task_ids || []).length > 0 && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
-    "data-testid": "wf-stop",
-    title: "Stop after the step it is on",
-    onClick: () => onStop(w)
-  }, "\u25A0 Stop") : null, /*#__PURE__*/React.createElement("button", {
+    onClick: () => wfOpenTask(last.task_ids[last.task_ids.length - 1])
+  }, "View progress"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
+    disabled: busy || active,
     onClick: () => onEdit(w)
   }, "Edit"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "wfx-link",
-    onClick: () => setOpen(!open),
+    onClick: () => setOpen(v => !v),
     "aria-expanded": open
-  }, open ? 'Hide details' : 'Details'), /*#__PURE__*/React.createElement("span", {
-    className: "wfx-grow"
-  }), /*#__PURE__*/React.createElement("button", {
+  }, open ? 'Hide details' : 'Details')), open && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-details"
+  }, /*#__PURE__*/React.createElement(WfOutcome, {
+    run: last
+  }), last?.run_id && wfOutcomeState(last.delivery) === 'failed' && /*#__PURE__*/React.createElement("button", {
     type: "button",
-    className: "wfx-icon",
-    title: "Delete this workflow",
-    "aria-label": 'Delete ' + w.name,
+    className: "btn",
+    disabled: busy || active,
+    onClick: () => onAction('retry_delivery', w)
+  }, "Retry delivery"), w.success_criteria && /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, /*#__PURE__*/React.createElement("b", null, "Checks requested: "), w.success_criteria), (w.inputs || []).length > 0 && /*#__PURE__*/React.createElement("details", {
+    className: "wfx-disclosure"
+  }, /*#__PURE__*/React.createElement("summary", null, "Sources and notes \xB7 ", w.inputs.length), /*#__PURE__*/React.createElement("ul", {
+    className: "wfx-checks"
+  }, w.inputs.map((x, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, x)))), /*#__PURE__*/React.createElement("ol", {
+    className: "wfx-steps"
+  }, steps.map((s, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, /*#__PURE__*/React.createElement("b", null, s.name), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet"
+  }, s.prompt)))), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-actions"
+  }, !w.when && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    disabled: busy || active,
+    onClick: () => onEdit({
+      ...w,
+      make_routine: true,
+      when: {
+        trigger: 'weekly',
+        spec: {
+          weekdays: [0, 1, 2, 3, 4],
+          hour: 9,
+          minute: 0
+        }
+      }
+    })
+  }, "Make routine"), verified && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    disabled: busy || active,
+    onClick: () => onAction('learn', w)
+  }, "Keep as reusable procedure"), !last && cid && /*#__PURE__*/React.createElement("a", {
+    className: "wfx-link",
+    href: wfChatUrl(cid),
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, "Open conversation \u2197"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-link",
+    disabled: busy || active,
     onClick: () => onDelete(w)
-  }, "\uD83D\uDDD1")));
+  }, "Delete workflow"))));
 }
+fridayDeclareNav('workflows', {
+  keys: ['project_id', 'slug']
+});
 function WorkflowsWS() {
   const [data, setData] = useState(null);
-  const [addingTemplate, setAddingTemplate] = useState(false);
-  const [templateError, setTemplateError] = useState('');
-  const templatePending = useRef(false);
   const [error, setError] = useState('');
   const [ask, setAsk] = useState('');
-  const [composing, setComposing] = useState(false);
   // See & Touch: the box that describes a workflow is a field Friday may write into; Draft it is the owner's.
   const askRef = useRef(ask); askRef.current = ask;
   const [fillTick, setFillTick] = useState(0);
   useEffect(() => window.fridayStage ? window.fridayStage.registerField('workflows', { key: 'compose', label: 'Describe it', read: () => askRef.current, write: t => { setAsk(String(t)); setFillTick(n => n + 1); } }) : undefined, []);
   const [drafting, setDrafting] = useState(false);
-  const [draftErr, setDraftErr] = useState('');
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState('');
+  const [notice, setNotice] = useState('');
+  const [starters, setStarters] = useState([]);
+  const [templateError, setTemplateError] = useState(null);
   const [showRoutines, setShowRoutines] = useState(false);
-  const [otherActivity, setOtherActivity] = useState([]);
-  const load = () => fetch('/api/workflows/overview').then(r => r.json()).then(d => {
-    if (d.status !== 'ok') throw new Error(d.message || 'error');
-    setData(d);
-    setError('');
-  }).catch(e => setError(e.message || 'error'));
+  const [projectFilter, setProjectFilter] = useState(() => new URLSearchParams(window.location.search).get('project_id') || '');
+  const [focusedSlug, setFocusedSlug] = useState(() => new URLSearchParams(window.location.search).get('slug') || '');
+  const epoch = useRef(0);
+  const mutation = useRef(false);
+  const alive = useRef(true);
+  useNavTarget('workflows', target => {
+    if (target.project_id !== undefined) setProjectFilter(target.project_id || '');
+    if (target.slug !== undefined) setFocusedSlug(target.slug || '');
+  });
+  const load = React.useCallback(() => {
+    const revision = ++epoch.current;
+    return apiFetch('/api/workflows/overview').then(r => r.json().then(d => {
+      if (!r.ok || d.status !== 'ok') throw new Error(d.message || d.error || 'Could not load workflows.');
+      return d;
+    })).then(d => {
+      if (alive.current && revision === epoch.current) {
+        setData(d);
+        setError('');
+      }
+    }).catch(e => {
+      if (alive.current && revision === epoch.current) setError(e.message);
+    });
+  }, []);
   useEffect(() => {
+    alive.current = true;
     load();
-  }, []);
-  const anyRunning = !!(data && data.workflows.some(w => w.running));
-  useEffect(() => {
-    const t = setInterval(load, anyRunning ? 4000 : 20000);
-    return () => clearInterval(t);
-  }, [anyRunning]);
-  // Background work that isn't one of these workflows still shows here, so an
-  // idle list never reads as "Friday is doing nothing" while she is busy.
-  useEffect(() => {
-    let alive = true;
-    const tick = () => fetch('/api/tasks').then(r => r.json()).then(d => {
-      if (alive) setOtherActivity((d.tasks || d || []).filter(t => t.status === 'running' && !t.chain && !String(t.description || '').startsWith('scheduled:')));
+    apiFetch('/api/workflows/starters').then(r => r.ok ? r.json() : {}).then(d => {
+      if (alive.current) setStarters(Array.isArray(d.starters) ? d.starters : []);
     }).catch(() => {});
-    tick();
-    const t = setInterval(tick, 5000);
     return () => {
-      alive = false;
-      clearInterval(t);
+      alive.current = false;
+      ++epoch.current;
     };
-  }, []);
-  const draft = () => {
+  }, [load]);
+  const anyRunning = !!data?.workflows?.some(w => w.running);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!mutation.current) load();
+    }, anyRunning ? 4000 : 20000);
+    return () => clearInterval(timer);
+  }, [anyRunning, load]);
+  const contextDraft = value => {
+    const context = typeof window.fridayWorkflowContext === 'function' ? window.fridayWorkflowContext() : {};
+    if (projectFilter && context.project_id !== projectFilter) {
+      context.project_id = projectFilter;
+      context.conversation_id = null;
+    }
+    return {
+      ...context,
+      ...value
+    };
+  };
+  const draft = async () => {
+    if (mutation.current) return;
     if (!ask.trim()) {
-      setDraftErr('Describe what you want ' + fridayName() + ' to do.');
+      setError('Describe what you want ' + fridayName() + ' to do.');
       return;
     }
+    mutation.current = true;
+    ++epoch.current;
     setDrafting(true);
-    setDraftErr('');
-    wfPost('/api/workflows/draft', {
-      text: ask
-    }).then(d => {
-      setDrafting(false);
-      setEditing(d.draft);
-    }).catch(e => {
-      setDrafting(false);
-      setDraftErr(e.message);
-    });
-  };
-  const addCareerTemplate = async () => {
-    if (templatePending.current) return;
-    templatePending.current = true;
-    setAddingTemplate(true);
-    setTemplateError('');
+    setError('');
     try {
-      const d = await careerRequest('/api/workflows/templates/career-search/add', {});
+      const d = await wfPost('/api/workflows/draft', {
+        text: ask
+      });
+      if (alive.current) setEditing(contextDraft(d.draft));
+    } catch (e) {
+      if (alive.current) setError(e.message);
+    } finally {
+      mutation.current = false;
+      if (alive.current) setDrafting(false);
+    }
+  };
+  const action = async (operation, w) => {
+    if (mutation.current) return;
+    mutation.current = true;
+    ++epoch.current;
+    setBusy(w.id || w.schedule_id);
+    setError('');
+    setNotice('');
+    try {
+      const legacyRun = !w.slug && w.schedule_id && ['run', 'repeat'].includes(operation);
+      const d = legacyRun ? await wfPost('/api/schedules/' + encodeURIComponent(w.schedule_id) + '/run-now') : await wfPost('/api/workflows/action', {
+        action: operation,
+        slug: w.slug,
+        run_id: w.last_run?.run_id
+      });
+      if (alive.current) setNotice(d.note || (legacyRun ? 'Run requested. Its schedule is unchanged.' : 'Request accepted.'));
+      await load();
+    } catch (e) {
+      if (alive.current) setError(e.message);
+    } finally {
+      mutation.current = false;
+      if (alive.current) setBusy('');
+    }
+  };
+  const addTemplate = async template => {
+    if (mutation.current) return;
+    mutation.current = true;
+    ++epoch.current;
+    setBusy('template:' + template.id);
+    setTemplateError(null);
+    setError('');
+    setNotice('');
+    try {
+      const d = await wfPost('/api/workflows/templates/' + encodeURIComponent(template.id) + '/add', {});
       if (d.status !== 'ok' || !d.slug) throw new Error('The workflow was not saved.');
       await load();
-      fridayToast(d.created ? 'Career search added. Review its steps before running or scheduling it.' : 'Career search is already saved. Your steps are unchanged.');
+      if (alive.current) setNotice(d.created ? template.name + ' added. Review its steps before running or scheduling it.' : template.name + ' is already saved. Your steps are unchanged.');
     } catch (e) {
-      setTemplateError(e.message || 'Could not add Career search.');
+      if (alive.current) setTemplateError({
+        id: template.id,
+        message: e.message || 'Could not add this starter.'
+      });
     } finally {
-      templatePending.current = false;
-      setAddingTemplate(false);
+      mutation.current = false;
+      if (alive.current) setBusy('');
+    }
+  };
+  const toggle = async w => {
+    if (w.slug) return action(w.enabled ? 'pause' : 'resume', w);
+    if (mutation.current) return;
+    mutation.current = true;
+    ++epoch.current;
+    setBusy(w.id || w.schedule_id);
+    setError('');
+    try {
+      await apiFetch('/api/schedules/' + encodeURIComponent(w.schedule_id), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          enabled: !w.enabled
+        })
+      }).then(r => r.json().then(d => {
+        if (!r.ok || d.status === 'error') throw new Error(d.message || d.error || 'Could not change the schedule.');
+      }));
+      await load();
+    } catch (e) {
+      if (alive.current) setError(e.message);
+    } finally {
+      mutation.current = false;
+      if (alive.current) setBusy('');
+    }
+  };
+  const remove = async w => {
+    if (mutation.current || !confirm('Delete “' + w.name + '” and its schedule?')) return;
+    mutation.current = true;
+    ++epoch.current;
+    setBusy(w.id);
+    setError('');
+    try {
+      await wfPost('/api/workflows/remove', {
+        slug: w.slug,
+        schedule_id: w.schedule_id
+      });
+      await load();
+    } catch (e) {
+      if (alive.current) setError(e.message);
+    } finally {
+      mutation.current = false;
+      if (alive.current) setBusy('');
     }
   };
   const saved = (d, name) => {
+    ++epoch.current;
     setEditing(null);
     setAsk('');
-    setComposing(false);
+    setNotice('Saved “' + name + '”.');
     load();
-    fridayToast('Saved “' + name + '”.');
   };
-  const run = w => {
-    setBusy(w.id);
-    const url = w.schedule_id ? '/api/schedules/' + w.schedule_id + '/run-now' : '/api/workflows/chains/' + encodeURIComponent(w.slug) + '/run';
-    wfPost(url).then(() => {
-      fridayToast('Started “' + w.name + '”.');
-    }).catch(e => fridayToast(/already running/i.test(e.message) ? '“' + w.name + '” is already running.' : 'Could not start it: ' + e.message)).then(() => {
-      setBusy('');
-      setTimeout(load, 1200);
-    });
-  };
-  // B5: a running workflow can be stopped: the step that is running finishes, the next never starts.
-  const stop = w => {
-    wfPost('/api/workflows/chains/' + encodeURIComponent(w.slug) + '/stop').then(() => {
-      fridayToast('Stopping \u201c' + w.name + '\u201d after the step it is on.');
-    }).catch(e => fridayToast(e.message)).then(() => {
-      setTimeout(load, 1200);
-    });
-  };
-  const toggle = w => apiFetch('/api/schedules/' + w.schedule_id, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      enabled: !w.enabled
-    })
-  }).then(load);
-  const remove = w => {
-    if (!confirm('Delete “' + w.name + '”? This removes it and its schedule, and can’t be undone.')) return;
-    wfPost('/api/workflows/remove', {
-      slug: w.slug,
-      schedule_id: w.schedule_id
-    }).then(load).catch(e => fridayToast(e.message));
-  };
-  if (error && !data) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#ff8fae',
-      textAlign: 'center',
-      padding: 40
-    }
-  }, "Couldn't load your workflows (", error, "). ", /*#__PURE__*/React.createElement("button", {
+  if (!data) return /*#__PURE__*/React.createElement("div", {
+    className: "wfx"
+  }, /*#__PURE__*/React.createElement("style", null, WF_CSS), /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, error || 'Loading workflows…'), error && /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "btn",
     onClick: load
   }, "Try again"));
-  if (!data) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#a8a8b4',
-      textAlign: 'center',
-      padding: 40
-    }
-  }, "Loading workflows\u2026");
-  const wfs = data.workflows,
+  const all = data.workflows || [],
+    wfs = all.filter(w => (!projectFilter || w.project_id === projectFilter) && (!focusedSlug || w.slug === focusedSlug)),
     routines = data.routines || [],
-    pending = data.pending_approvals || 0;
-  const onCount = routines.filter(r => r.enabled).length;
+    templates = data.templates || [];
   return /*#__PURE__*/React.createElement("div", {
     className: "wfx"
   }, /*#__PURE__*/React.createElement("style", null, WF_CSS), error && /*#__PURE__*/React.createElement("div", {
     className: "wfx-err",
     role: "alert"
-  }, "Could not refresh workflows: ", error, ". ", /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: load
-  }, "Try again")), !editing && (data.templates || []).filter(t => t.id === 'career-search').map(t => /*#__PURE__*/React.createElement("div", {
-    key: t.id,
-    className: "card wfx-card",
-    "data-testid": "wf-career-starter",
-    style: {
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title"
-  }, t.name), /*#__PURE__*/React.createElement("div", {
+  }, error), notice && /*#__PURE__*/React.createElement("p", {
     className: "wfx-quiet",
-    style: {
-      marginBottom: 8
-    }
-  }, t.description), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "wfx-quiet wfx-grow",
-    "data-testid": "wf-career-meta",
-    style: {
-      flex: '1 1 240px'
-    }
-  }, t.step_count, " steps \xB7 Choose when to run after adding"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    disabled: addingTemplate || !!t.problem,
-    onClick: () => {
-      const saved = t.installed && wfs.find(w => w.slug === t.slug);
-      if (saved) setEditing(Object.assign({}, saved, {
-        when_note: ''
-      }));else addCareerTemplate();
-    }
-  }, addingTemplate ? 'Adding…' : t.installed ? 'Review workflow' : 'Add Career search workflow'), /*#__PURE__*/React.createElement("a", {
-    className: "wfx-link",
-    href: "/w/career"
-  }, "Open Career \u2192")), (t.problem || templateError) && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-err",
-    role: "alert"
-  }, t.problem || templateError))), !editing && /*#__PURE__*/React.createElement("div", {
-    className: "card wfx-card",
-    style: {
-      borderColor: 'rgba(0,212,255,.3)',
-      marginBottom: 8
-    }
+    role: "status"
+  }, notice), editing ? /*#__PURE__*/React.createElement(WfEditor, {
+    key: editing.slug || editing.id || editing.request || 'new',
+    initial: editing,
+    projects: data.projects || [],
+    conversations: data.conversations || [],
+    onCancel: () => setEditing(null),
+    onSaved: saved
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "card wfx-card"
   }, /*#__PURE__*/React.createElement("label", {
     htmlFor: "wf-ask",
-    className: "card-title",
-    style: {
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "New workflow \u2014 say what, and when"), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['compose'], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      alignItems: 'flex-end'
-    }
+    className: "card-title"
+  }, "What would you like ", fridayName(), " to take care of?"), window.fridayStage ? window.fridayStage.fillChips(React.createElement, 'workflows', ['compose'], fridayName(), () => setFillTick(n => n + 1)) : null, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-compose"
   }, /*#__PURE__*/React.createElement("textarea", {
     id: "wf-ask",
-    className: "wfx-in wfx-ask wfx-grow",
-    rows: composing ? 3 : 1,
-    style: {
-      minHeight: composing ? 72 : 38,
-      height: composing ? undefined : 38,
-      resize: composing ? 'vertical' : 'none',
-      overflow: composing ? 'auto' : 'hidden',
-      whiteSpace: composing ? undefined : 'nowrap'
-    },
+    className: "wfx-in",
+    rows: "2",
     value: ask,
     onChange: e => setAsk(e.target.value),
-    onFocus: () => setComposing(true),
     onKeyDown: e => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         draft();
       }
     },
-    placeholder: "e.g. Every weekday at 7:30am, check the council site and tell me what changed"
+    placeholder: "e.g. Each Friday, turn my project notes into a source-linked brief"
   }), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn wfx-go",
-    style: {
-      height: 38,
-      whiteSpace: 'nowrap'
-    },
-    disabled: drafting,
+    disabled: drafting || !!busy,
     onClick: draft
-  }, drafting ? 'Drafting…' : 'Draft it →')), (composing || !wfs.length) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "wfx-quiet",
-    style: {
-      marginTop: 8
-    }
-  }, "Use your own words. ", fridayName(), " writes a draft for you to check; nothing is saved until you say so."), !ask && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8
-    }
-  }, WF_EXAMPLES.map(x => /*#__PURE__*/React.createElement("button", {
-    key: x,
-    type: "button",
-    className: "wfx-chip",
-    onClick: () => setAsk(x)
-  }, x))), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-row",
-    style: {
-      marginTop: 4
-    }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, drafting ? 'Drafting…' : 'Draft it →')), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-actions"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "wfx-quiet"
+  }, "Review the steps, result and timing before saving."), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "wfx-link",
-    onClick: () => setEditing({
+    disabled: drafting || !!busy,
+    onClick: () => setEditing(contextDraft({
       name: '',
       steps: [],
       when: null
-    })
-  }, "Or build it step by step"), /*#__PURE__*/React.createElement("span", {
-    className: "wfx-grow"
-  }), composing && wfs.length > 0 && /*#__PURE__*/React.createElement("button", {
+    }))
+  }, "Build step by step")), (starters.length > 0 || templates.length > 0) && /*#__PURE__*/React.createElement("details", {
+    className: "wfx-disclosure",
+    open: !wfs.length
+  }, /*#__PURE__*/React.createElement("summary", null, "Start from an example"), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-starters"
+  }, starters.filter(s => !templates.some(t => t.id === s.id)).map(s => /*#__PURE__*/React.createElement("button", {
+    key: s.id || s.name,
     type: "button",
-    className: "wfx-link",
+    className: "wfx-starter",
+    disabled: drafting || !!busy,
+    onClick: () => s.steps?.length ? setEditing(contextDraft({
+      ...s,
+      slug: null,
+      schedule_id: null
+    })) : setAsk(s.request || s.description || s.name)
+  }, /*#__PURE__*/React.createElement("strong", null, s.name), /*#__PURE__*/React.createElement("span", null, s.description))), templates.map(t => /*#__PURE__*/React.createElement("div", {
+    key: t.id,
+    className: "wfx-starter",
     style: {
-      color: '#a8a8b4'
+      cursor: 'default'
     },
-    onClick: () => {
-      setComposing(false);
-      setAsk('');
-      setDraftErr('');
-    }
-  }, "Close"))), draftErr && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-err",
-    role: "alert"
-  }, draftErr)), editing && /*#__PURE__*/React.createElement(WfEditor, {
-    key: editing.slug || editing.schedule_id || editing.request || 'new',
-    initial: editing,
-    onCancel: () => setEditing(null),
-    onSaved: saved
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-promise",
-    "data-testid": "wf-promise",
-    style: {
-      padding: '8px 12px',
-      alignItems: 'center'
-    }
+    "data-testid": t.id === 'career-search' ? 'wf-career-starter' : 'wf-template-starter'
+  }, /*#__PURE__*/React.createElement("strong", null, t.name), /*#__PURE__*/React.createElement("span", null, t.description), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-actions"
   }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true"
-  }, "\uD83D\uDEE1\uFE0F"), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-grow"
-  }, "Workflows run on their own, but ", fridayName(), " ", /*#__PURE__*/React.createElement("b", null, "asks you first"), " before any of them sends, posts, buys or deletes anything."), pending > 0 && /*#__PURE__*/React.createElement("button", {
+    className: "wfx-quiet",
+    "data-testid": t.id === 'career-search' ? 'wf-career-meta' : undefined,
+    style: {
+      flex: '1 1 240px'
+    }
+  }, t.step_count, " steps \xB7 Choose when to run after adding"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
-    style: {
-      borderColor: 'rgba(245,158,11,.6)',
-      color: '#ffd08a',
-      whiteSpace: 'nowrap'
-    },
+    disabled: drafting || !!busy || !!t.problem,
+    onClick: () => {
+      const saved = t.installed && all.find(w => w.slug === t.slug);
+      if (saved) setEditing({
+        ...saved,
+        when_note: ''
+      });else addTemplate(t);
+    }
+  }, busy === 'template:' + t.id ? 'Adding…' : t.installed ? 'Review workflow' : 'Add ' + t.name + ' workflow'), t.id === 'career-search' && /*#__PURE__*/React.createElement("a", {
+    className: "wfx-link",
+    href: "/w/career"
+  }, "Open Career \u2192")), (t.problem || templateError?.id === t.id) && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-err",
+    role: "alert"
+  }, t.problem || templateError.message)))))), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-promise",
+    "data-testid": "wf-promise"
+  }, /*#__PURE__*/React.createElement("div", null, fridayName(), " ", /*#__PURE__*/React.createElement("b", null, "asks you first"), " before a workflow sends, posts, buys or deletes anything."), data.pending_approvals > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-link",
     onClick: wfOpenApprovals
-  }, pending === 1 ? '1 waiting for your OK' : pending + ' waiting for your OK', " \u2192")), otherActivity.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-quiet",
-    style: {
-      marginBottom: 10
-    }
-  }, "Also working on right now: ", otherActivity.map(t => t.name || t.description || t.task_id).join(', ')), /*#__PURE__*/React.createElement("div", {
+  }, "All pending approvals (", data.pending_approvals, ")")), /*#__PURE__*/React.createElement("div", {
     className: "wfx-h"
-  }, "Your workflows", wfs.length ? ' (' + wfs.length + ')' : ''), !wfs.length && /*#__PURE__*/React.createElement("div", {
-    className: "wfx-quiet",
-    style: {
-      padding: '14px 2px'
+  }, "Your workflows", wfs.length ? ' · ' + wfs.length : ''), (data.projects || []).length > 0 && /*#__PURE__*/React.createElement("label", {
+    className: "wfx-field"
+  }, "Show workflows for", /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Filter workflows by project",
+    className: "wfx-in",
+    value: projectFilter,
+    onChange: e => {
+      setProjectFilter(e.target.value);
+      setFocusedSlug('');
     }
-  }, "Nothing yet. Describe one above \u2014 for example, a daily check of a website you watch, or a weekly roundup of your notes."), wfs.map(w => /*#__PURE__*/React.createElement(WfCard, {
-    key: w.id,
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "All projects"), projectFilter && !data.projects.some(p => p.id === projectFilter) && /*#__PURE__*/React.createElement("option", {
+    value: projectFilter
+  }, "Selected project"), data.projects.map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.id,
+    value: p.id
+  }, p.name)))), focusedSlug && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-link",
+    onClick: () => setFocusedSlug('')
+  }, "Show other workflows"), !wfs.length && /*#__PURE__*/React.createElement("p", {
+    className: "wfx-quiet"
+  }, projectFilter || focusedSlug ? 'No workflows match this view. Create one above or choose another project.' : 'Begin with one useful result. You can run it once, then make it a routine.'), wfs.map(w => /*#__PURE__*/React.createElement(WfCard, {
+    key: w.id || w.slug,
     w: w,
-    busy: busy === w.id,
-    onRun: run,
-    onStop: stop,
+    busy: !!busy,
+    onAction: action,
     onToggle: toggle,
     onDelete: remove,
-    onEdit: x => {
-      setEditing(Object.assign({}, x, {
-        when_note: ''
-      }));
-      setTimeout(() => {
-        const el = document.querySelector('[data-testid="wf-editor"]');
-        if (el) el.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'
-        });
-      }, 60);
-    }
-  })), routines.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "wfx-h wfx-link",
-    style: {
-      textDecoration: 'none',
-      display: 'block',
-      marginTop: 20
-    },
-    "aria-expanded": showRoutines,
-    onClick: () => setShowRoutines(!showRoutines)
-  }, showRoutines ? '▾' : '▸', " ", fridayName(), "'s built-in routines (", onCount, " of ", routines.length, " on)"), showRoutines && /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      padding: '4px 12px'
-    }
+    onEdit: setEditing
+  })), routines.length > 0 && /*#__PURE__*/React.createElement("details", {
+    className: "wfx-disclosure",
+    open: showRoutines,
+    onToggle: e => setShowRoutines(e.currentTarget.open)
+  }, /*#__PURE__*/React.createElement("summary", null, fridayName(), "'s built-in routines \xB7 ", routines.filter(r => r.enabled).length, " on"), routines.map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.schedule_id,
+    className: "wfx-row wfx-routine"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "wfx-quiet",
-    style: {
-      padding: '6px 0'
-    }
-  }, "Jobs that come with ", fridayName(), ", like the news briefings. You can switch them on or off."), routines.map(r => {
-    const st = r.running ? WF_STATUS.running : r.last_run ? WF_STATUS[r.last_run.status] || WF_STATUS.finished : null;
-    return /*#__PURE__*/React.createElement("div", {
-      key: r.schedule_id,
-      className: "wfx-row",
-      style: {
-        padding: '8px 0',
-        borderTop: '1px solid rgba(255,255,255,.06)'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "wfx-grow"
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        color: r.enabled ? '#fff' : '#a8a8b4',
-        fontWeight: 500
-      }
-    }, r.name), /*#__PURE__*/React.createElement("div", {
-      className: "wfx-quiet"
-    }, r.when_text, st ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("span", {
-      className: "wfx-dot",
-      style: {
-        background: st.color
-      }
-    }), r.running ? 'running now' : st.label.toLowerCase() + ' ' + wfAgo(r.last_run.at)) : '')), /*#__PURE__*/React.createElement(WfSwitch, {
-      on: r.enabled,
-      label: 'Run ' + r.name,
-      onChange: () => toggle(r)
-    }));
-  }))));
+    className: "wfx-grow"
+  }, /*#__PURE__*/React.createElement("strong", null, r.name), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet"
+  }, r.when_text)), /*#__PURE__*/React.createElement(WfSwitch, {
+    disabled: !!busy,
+    on: r.enabled,
+    label: 'Run ' + r.name,
+    onChange: () => toggle(r)
+  }))))));
 }
-function SitesWS() {
-  // Sites — general-purpose portfolio & deploy manager (wraps FSStudio).
-  // Shown to fresh installs in place of the full FutureSpeak business pipeline.
-  return /*#__PURE__*/React.createElement("div", {className:"fr-comp-root fr-comp-sites"}, /*#__PURE__*/React.createElement(FridaySays, {
-    text: "Your sites & projects \u2014 portfolio status, deploy state, and one-click scaffolding via Claude Code."
-  }), /*#__PURE__*/React.createElement(FSStudio, null));
+
+function SitesWS({request, embedded = false, onRequestConsumed} = {}) {
+  const [target, setTarget] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return {site_id: q.get('site_id') || q.get('site') || '', account_id: q.get('account_id') || '', domain: q.get('domain') || ''};
+  });
+  const [accepted, setAccepted] = useState({});
+  useNavTarget('futurespeak', next => {if (!embedded) setTarget({...next});});
+  useEffect(() => {if (request) {setTarget(request); if (onRequestConsumed) onRequestConsumed();}}, [request]);
+  useTabState('futurespeak', () => ({site_id: null, account_id: null, domain: null, domain_ref: null, preview_build_id: null, ...accepted}));
+  return React.createElement('div', {className: 'fr-comp-root fr-comp-sites'}, window.FridaySitesWorkspace
+    ? React.createElement(window.FridaySitesWorkspace, {target, onAccepted: setAccepted, legacy: React.createElement(FSStudio)})
+    : React.createElement('p', {role: 'alert'}, 'The Sites interface could not load. Refresh the page to try again.'));
 }
+fridayDeclareNav('futurespeak', {keys: ['site_id', 'account_id', 'domain', 'preview_build_id']});
 // ═══ TASK RECORDS (retention is the user's setting; 0 keeps everything) ═══
 // ─── What Friday did: the morning receipt. Read-only; every row is a signed
 // checkpoint receipt from /api/governance/receipts, checked server-side. ───
@@ -33382,9 +33761,11 @@ function DevVibe({
 function DevGit({
   repos,
   onLog,
-  onRefresh
+  onRefresh,
+  selectedRepo
 }) {
-  const [repo, setRepo] = useState('');
+  const [localRepo, setRepo] = useState('');
+  const repo = selectedRepo === undefined ? localRepo : selectedRepo;
   const [branches, setBranches] = useState([]);
   const [current, setCurrent] = useState('');
   const [diff, setDiff] = useState('');
@@ -33395,8 +33776,8 @@ function DevGit({
   const [prTitle, setPrTitle] = useState('');
   const [prBody, setPrBody] = useState('');
   useEffect(() => {
-    if (!repo && repos.length) setRepo(repos[0].name);
-  }, [repos]);
+    if (selectedRepo === undefined && !repo && repos.length) setRepo(repos[0].name);
+  }, [repos, selectedRepo]);
   const loadBranches = () => {
     if (!repo) return;
     fetch('/api/git/branches?repo=' + encodeURIComponent(repo)).then(r => r.json()).then(d => {
@@ -33458,7 +33839,7 @@ function DevGit({
       fontSize: 11,
       color: '#9ad'
     }
-  }, "Repo"), /*#__PURE__*/React.createElement("select", {
+  }, "Repo"), selectedRepo !== undefined ? React.createElement('span', {style:{flex:1,fontSize:12,overflowWrap:'anywhere'}}, repo) : /*#__PURE__*/React.createElement("select", {
     className: "input",
     style: {
       flex: 1,
@@ -33989,26 +34370,35 @@ const CODE_TABS = [{
   ico: '📡',
   label: 'Logs'
 }];
-fridayDeclareNav('code', {
-  key: 'tab',
-  keys: ['tab'],
-  sections: CODE_TABS
-});
-function CodeWS() {
-  const TABS = CODE_TABS;
-  const [tab, setTab] = useState('repos');
+const CODE_STUDIO_TABS = [
+  {id:'understand',label:'Understand'}, {id:'files',label:'Files'},
+  {id:'changes',label:'Changes'}, {id:'preview',label:'Preview'},
+  {id:'terminal',label:'Terminal'}, ...CODE_TABS.filter(t=>t.id!=='files')
+];
+fridayDeclareNav('code', {key:'tab', keys:['tab','codebase_id','path'], sections:CODE_STUDIO_TABS});
+function CodeWS({chat}) {
+  const [navTarget, setNavTarget] = useState(null);
+  const navState = useRef({tab:'understand'});
+  useTabState('code', () => navState.current);
+  useNavTarget('code', target => setNavTarget({...target}));
+  return window.FridayCodeStudio
+    ? React.createElement(window.FridayCodeStudio, {chat, navTarget,
+        onNavState: state => { navState.current = state; },
+        tools: {Repos:DevRepos, Git:DevGit, Files:DevFiles, Procs:DevProcs, Logs:DevCodeLogs}})
+    : React.createElement(LegacyCodeWS, {navTarget});
+}
+function DevCodeLogs() { return React.createElement(LegacyCodeWS, {only:'logs'}); }
+function LegacyCodeWS({only, navTarget}) {
+  const TABS = only ? [] : CODE_TABS;
+  const [tab, setTab] = useState(only || 'repos');
+  const [selectedRepo, setSelectedRepo] = useState(undefined);
   const [repos, setRepos] = useState([]);
   const [repoLoading, setRepoLoading] = useState(true);
   const [logs, setLogs] = useState([]);
   const [unseen, setUnseen] = useState(0);
   const [srcFilter, setSrcFilter] = useState('');
   const logBoxRef = useRef(null);
-  // Deep-link: a notification target {workspace:'code', tab:'logs'|'repos'|...}.
-  // what its own tab (↗) opens on: the keys useNavTarget below reads
-  useTabState('code', () => ({ tab }));
-  useNavTarget('code', t => {
-    if (t.tab) setTab(t.tab);
-  });
+  useEffect(() => { if (navTarget && navTarget.tab) setTab(navTarget.tab); }, [navTarget]);
   const scanRepos = () => {
     setRepoLoading(true);
     fetch('/api/repos/scan').then(r => r.json()).then(d => {
@@ -34017,8 +34407,8 @@ function CodeWS() {
     }).catch(() => setRepoLoading(false));
   };
   useEffect(() => {
-    scanRepos();
-  }, []);
+    if (!only) scanRepos();
+  }, [only]);
   // Live log stream via SSE — kept alive across tabs so the badge keeps pulsing.
   useEffect(() => {
     let es;
@@ -34062,7 +34452,7 @@ function CodeWS() {
   };
   return /*#__PURE__*/React.createElement("div", {className:"fr-comp-root fr-comp-code","data-view":tab}, /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
+      display: only ? 'none' : 'flex',
       gap: 4,
       marginBottom: 12,
       flexWrap: 'wrap',
@@ -34100,14 +34490,15 @@ function CodeWS() {
     repos: repos,
     loading: repoLoading,
     onScan: scanRepos,
-    onPick: r => setTab('git')
+    onPick: r => { setSelectedRepo(r.name); setTab('git'); }
   }), tab === 'vibe' && /*#__PURE__*/React.createElement(DevVibe, {
     repos: repos,
     onLog: scanRepos
   }), tab === 'git' && /*#__PURE__*/React.createElement(DevGit, {
     repos: repos,
     onLog: () => {},
-    onRefresh: scanRepos
+    onRefresh: scanRepos,
+    selectedRepo: selectedRepo
   }), tab === 'files' && /*#__PURE__*/React.createElement(DevFiles, null), tab === 'procs' && /*#__PURE__*/React.createElement(DevProcs, {
     onLog: () => {}
   }), tab === 'logs' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -46596,6 +46987,8 @@ function fridayProcessSteps(steps) {
   });
 }
 function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose}) {
+  const surfaceRef = useRef(null);
+  useFridaySpatialSurface(surfaceRef, () => ({x:position.x,y:position.y,w:400,h:320}), 'overlay');
   const traceId = meta?.trace_id || orb.trace_id || null;
   const taskId = meta?.linked_task_id || orb.task_id || null;
   const status = meta?.status || orb.status || 'running';
@@ -46619,7 +47012,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
     setActivityExpanded(!traceId&&!taskId);
     if(bodyRef.current)bodyRef.current.scrollTop=0;
   },[orb.viewRevision]);
-  return rtEl('div', {className:'thread-panel open', role:'region', 'aria-label':'Process: ' + (orb.label || 'Process'),
+  return rtEl('div', {ref:surfaceRef,'data-friday-overlay':'dialog',className:'thread-panel open', role:'region', 'aria-label':'Process: ' + (orb.label || 'Process'),
     style:{'--friday-shared-x':position.x+'px','--friday-shared-y':position.y+'px',width,height,left:x,top:y}, onClick:e=>e.stopPropagation()},
     rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
       rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
@@ -49592,7 +49985,7 @@ function SetupFinishCard({
     "data-sc-focus": ""
   }, "All set"), /*#__PURE__*/React.createElement("dl", {
     className: "sc-summary-list"
-  }, /*#__PURE__*/React.createElement("dt", null, "Name"), /*#__PURE__*/React.createElement("dd", null, state.agent_name), /*#__PURE__*/React.createElement("dt", null, "Connected"), /*#__PURE__*/React.createElement("dd", null, conn ? connected.length ? connected.join(', ') : 'Nothing yet' : 'Checking…', skipped ? ' (' + skipped + ' skipped, waiting in Settings)' : ''), /*#__PURE__*/React.createElement("dt", null, "Research"), /*#__PURE__*/React.createElement("dd", null, researchLine), /*#__PURE__*/React.createElement("dt", null, "Your style"), /*#__PURE__*/React.createElement("dd", null, state.style_saved ? 'Saved. It keeps evolving as you work together.' : 'My default style for now.')), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("dt", null, "Name"), /*#__PURE__*/React.createElement("dd", null, state.agent_name), /*#__PURE__*/React.createElement("dt", null, "Connected"), /*#__PURE__*/React.createElement("dd", null, conn ? connected.length ? connected.join(', ') : 'Nothing yet' : 'Checking…', skipped ? ' (' + skipped + ' skipped, waiting in Settings)' : ''), /*#__PURE__*/React.createElement("dt", null, "Research"), /*#__PURE__*/React.createElement("dd", null, researchLine), /*#__PURE__*/React.createElement("dt", null, "Your style"), /*#__PURE__*/React.createElement("dd", null, state.style_saved ? 'Saved. It keeps evolving as you work together.' : 'My default style for now.')), window.FridayAgentWorkspacePermission && React.createElement(window.FridayAgentWorkspacePermission, {apiFetch, disabled:busy}), /*#__PURE__*/React.createElement("div", {
     className: "sc-row"
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -52097,6 +52490,7 @@ function ModelPicker({ intel, need, current, onPick, onClose, note, err, onRetry
   const hiddenUnfit = all.filter(match).filter(m => !fitOK(m)).length;
 
   return E('div', {
+    className: 'fr-model-picker',
     style: {
       background: 'rgba(10,14,26,0.97)', border: '1px solid rgba(0,212,255,0.22)',
       borderRadius: 12, padding: 10, width: 400, maxHeight: 520, overflowY: 'auto',
@@ -52300,18 +52694,19 @@ function ConversationRow({ c, active, onOpen }) {
 /** Which conversation you are in, and which model it uses. */
 function ConversationBar({ convList, convId, convSeat, open, setOpen,
                            pickerOpen, setPickerOpen, onOpenConversation,
-                           onBindSeat, onRefresh }) {
+                           onBindSeat, onRefresh, fixedConversation = false }) {
   const cur = convList.filter(c => c.id === convId)[0];
   const live = convList.filter(c => c.status !== 'archived');
   return E('div', {
-    style: { display: 'flex', alignItems: 'center', gap: 8, position: 'relative' },
+    style: { display: 'flex', alignItems: 'center', gap: 8, position: 'relative',
+      ...(fixedConversation ? { flexWrap: 'wrap', minWidth: 0, width: '100%' } : {}) },
   },
-    E('button', {
-      onClick: () => { setOpen(!open); onRefresh(); },
-      title: 'Switch conversation',
-      'aria-label': 'Switch conversation',
+    E(fixedConversation ? 'span' : 'button', {
+      onClick: fixedConversation ? undefined : () => { setOpen(!open); onRefresh(); },
+      title: fixedConversation ? 'The conversation for this codebase' : 'Switch conversation',
+      'aria-label': fixedConversation ? undefined : 'Switch conversation',
       style: {
-        background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+        background: 'none', border: 'none', cursor: fixedConversation ? 'default' : 'pointer', padding: 0,
         fontFamily: 'Orbitron, sans-serif', fontSize: 11, color: '#00d4ff',
         display: 'flex', alignItems: 'center', gap: 5, maxWidth: 180,
       },
@@ -52319,7 +52714,7 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
       E('span', {
         style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
       }, (cur && cur.title) || 'FRIDAY CHAT'),
-      E('span', { style: { fontSize: 9, opacity: 0.7 } }, '\u25BE')),
+      !fixedConversation && E('span', { style: { fontSize: 9, opacity: 0.7 } }, '\u25BE')),
 
     E('button', {
       onClick: () => setPickerOpen(!pickerOpen),
@@ -52335,7 +52730,7 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
       },
     }, convSeat ? prettyModel(convSeat.model) : 'default model'),
 
-    open ? E('div', {
+    !fixedConversation && open ? E('div', {
       style: {
         position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 2400,
         width: 300, maxHeight: 340, overflowY: 'auto', padding: 6,
@@ -52355,7 +52750,10 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
           }))) : null,
 
     pickerOpen ? E('div', {
-      style: { position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 2400 },
+      className: fixedConversation ? 'fr-code-model-popup' : undefined,
+      style: fixedConversation
+        ? { position: 'static', flexBasis: '100%', minWidth: 0, width: '100%' }
+        : { position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 2400 },
     }, E(ConversationSeatPicker, {
       current: convSeat && convSeat.model,
       onPick: onBindSeat,
@@ -55114,6 +55512,49 @@ function SettingsTabVoice({
     key: v,
     value: v
   }, l))))), /*#__PURE__*/React.createElement(StSection, {
+  title: "Conversation style",
+  desc: "These preferences apply to your next voice session."
+}, /*#__PURE__*/React.createElement(StRow, {
+  label: "Answer depth",
+  desc: "Adaptive follows the request and conversation. You can always ask for a shorter answer or more detail."
+}, /*#__PURE__*/React.createElement("select", {
+  className: "input",
+  "aria-label": "Voice answer depth",
+  style: {
+    width: '100%'
+  },
+  value: s.voice_response_depth || 'adaptive',
+  onChange: e => save({
+    voice_response_depth: e.target.value
+  })
+}, /*#__PURE__*/React.createElement("option", {
+  value: "adaptive"
+}, "Adaptive"), /*#__PURE__*/React.createElement("option", {
+  value: "concise"
+}, "Concise"), /*#__PURE__*/React.createElement("option", {
+  value: "detailed"
+}, "Detailed"))), /*#__PURE__*/React.createElement(StRow, {
+  label: "Speaking pace",
+  desc: "Adaptive slows for dense detail and follows the conversation. Choose a fixed pace if you prefer."
+}, /*#__PURE__*/React.createElement("select", {
+  className: "input",
+  "aria-label": "Voice speaking pace",
+  style: {
+    width: '100%'
+  },
+  value: s.voice_speaking_pace || 'adaptive',
+  onChange: e => save({
+    voice_speaking_pace: e.target.value
+  })
+}, /*#__PURE__*/React.createElement("option", {
+  value: "adaptive"
+}, "Adaptive"), /*#__PURE__*/React.createElement("option", {
+  value: "measured"
+}, "Measured"), /*#__PURE__*/React.createElement("option", {
+  value: "natural"
+}, "Natural"), /*#__PURE__*/React.createElement("option", {
+  value: "brisk"
+}, "Brisk")))), /*#__PURE__*/React.createElement(StSection, {
     title: "Listening"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: ("Interrupting " + fridayName()),
@@ -55745,7 +56186,9 @@ function SettingsTabPrivacy({
     title: (fridayName() + "’s rules on this PC")
   }, /*#__PURE__*/React.createElement(ClawsRepinPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Stored keys"
-  }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null)), /*#__PURE__*/React.createElement(StSection, {
+  }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null)), React.createElement(StSection, {
+    title: "Agent workspaces"
+  }, window.FridayAgentWorkspacePermission && React.createElement(window.FridayAgentWorkspacePermission, {apiFetch})), /*#__PURE__*/React.createElement(StSection, {
     title: "Computer control"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -56617,15 +57060,8 @@ function TrackingPanel({
       padding: '7px 14px'
     },
     onClick: () => {
-      const TKx = window.FridayTracking;
-      // Only a face the camera sees right now counts; the last width seen
-      // before the hologram was turned off is a distance nobody sits at.
-      const seen = typeof isFaceVisible === 'undefined' || isFaceVisible;
-      const w = seen && typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
-      const got = TKx ? TKx.calibrate(w) : null;
-      // Persisted as a dial, so the calibration survives a reload.
-      if (got) commit({ neutral_face_width: got });
-      setCalib(got ? 'Set from your current distance.' : 'No face seen. Turn the hologram on and look at the camera.');
+      const result = window.FridayHolographicWorkspace?.cameraCalibration?.calibrateCurrent();
+      setCalib(result?.status || 'Camera calibration is unavailable.');
       setTimeout(() => setCalib(null), 4000);
     }
   }, "Calibrate distance"), /*#__PURE__*/React.createElement("button", {
@@ -56647,8 +57083,10 @@ function TrackingPanel({
       });
       setCfg(next);
       if (TK) TK.apply(next);
+      const persisted = {...next};
+      delete persisted.neutral_face_width;
       save({
-        tracking: next
+        tracking: persisted
       });
     }
   }, "Reset tracking to defaults")), calib && /*#__PURE__*/React.createElement("div", {
@@ -60512,6 +60950,18 @@ function fridayScrollToSettingsSection(want) {
   });
   return el.getAttribute('data-st-section');
 }
+const SETTINGS_RESPONSIVE_CSS = `
+body[data-friday-display-style="classic"] .ws-custom-root[data-ws="settings"]{container-type:inline-size;container-name:friday-workspace}
+@container friday-workspace (max-width:630px){
+  body .ws-custom-root[data-ws="settings"] .st-root{flex-direction:column}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-rail{flex-direction:row!important;flex:0 0 auto;width:100%!important;overflow-x:auto;overflow-y:hidden!important;padding:6px 0 10px!important;border-right:0!important;border-bottom:1px solid var(--st-line);gap:6px}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-rail>div{display:none}
+  body .ws-custom-root[data-ws="settings"] .st-rail-btn{width:auto;white-space:nowrap;flex:0 0 auto;margin:0;padding:8px 12px;min-height:34px}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-content{min-height:0}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-heading{position:static!important;padding:16px!important}
+  body .ws-custom-root[data-ws="settings"] .fx-settings-sections{padding:16px!important}
+}
+`;
 function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
   // Settings straight onto Accounts & Keys. The global covers a window that
@@ -60588,7 +61038,7 @@ function SettingsWS() {
       fontFamily: 'var(--st-font)',
       color: 'var(--st-text)'
     }
-  }, /*#__PURE__*/React.createElement("nav", {
+  }, /*#__PURE__*/React.createElement("style", null, SETTINGS_RESPONSIVE_CSS), /*#__PURE__*/React.createElement("nav", {
     "aria-label": "Settings sections",
     className: "fx-settings-rail",
     style: {
@@ -61984,7 +62434,7 @@ function useFridayConversationDrafts(initialId) {
   }
   const [convId, setId] = useState(() => restored.current ? restored.current.id : typeof initialId === 'function' ? initialId() : initialId);
   const [chatIn, setText] = useState(() => restored.current ? new Map(restored.current.entries).get(convId) || '' : '');
-  const drafts = useRef({id:convId,text:chatIn,byId:new Map(restored.current ? restored.current.entries : [])});
+  const drafts = useRef({id:convId,text:chatIn,revision:0,byId:new Map(restored.current ? restored.current.entries : [])});
   const setChatIn = React.useCallback(value => {
     const d = drafts.current;
     d.text = typeof value === 'function' ? value(d.text) : value;
@@ -61995,9 +62445,10 @@ function useFridayConversationDrafts(initialId) {
     if (next === d.id) return;
     d.byId.set(d.id, d.text);
     d.text = d.id === null && !d.byId.has(next) ? d.text : d.byId.get(next) || '';
-    d.id = next; setText(d.text); setId(next);
+    d.id = next; d.revision += 1; setText(d.text); setId(next);
   }, []);
   const getConversationId = React.useCallback(() => drafts.current.id, []);
+  const getConversationRevision = React.useCallback(() => drafts.current.revision, []);
   const navigateWithDrafts = React.useCallback(target => {
     const url = new URL(target, window.location.href), d = drafts.current;
     if (url.origin !== window.location.origin) throw new Error('Workspaces open within this '+FRIDAY_BRAND.name+' window.');
@@ -62012,7 +62463,7 @@ function useFridayConversationDrafts(initialId) {
     }
     window.location.assign(url.href);
   }, []);
-  return {convId,setConvId,chatIn,setChatIn,getConversationId,navigateWithDrafts};
+  return {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts};
 }
 function ExperienceApprovals() {
   const items = useApprovalFeed();
@@ -62060,6 +62511,8 @@ function App() {
   // Workspace Studio: which workspace's contextual chat is open, + the live
   // customization map shared down to every FWin via WsCustomCtx.
   const [wsChat, setWsChat] = useState(null); // {wsId,label,emoji,seed} | null
+  const studioGuard = useRef(null), studioSequence = useRef(0);
+  const registerStudioGuard = useCallback(guard => { studioGuard.current=guard; return()=>{if(studioGuard.current===guard)studioGuard.current=null;}; }, []);
   /* Conversations open as WINDOWS inside the holographic UI, several at once,
      each on its own seat. An array rather than a Set because the order is the
      cascade order - the nth window is offset so it does not land exactly on
@@ -62070,6 +62523,11 @@ function App() {
     ...m,
     [id]: patch || {}
   })), []);
+  useEffect(() => {
+    const saved = event => { const d=event.detail; if(d?.workspace && d.customization) setCust(d.workspace,d.customization); };
+    window.addEventListener('friday:appearance-saved', saved);
+    return () => window.removeEventListener('friday:appearance-saved', saved);
+  }, [setCust]);
   const [zMap, setZMap] = useState({});
   /* An undocked window IS the chat panel, so it opens open. Anywhere else the
      panel starts closed, as it always has. */
@@ -62095,7 +62553,7 @@ function App() {
      `refreshConvs` does `setConvId(cur => cur || d.main_id)` — an effect that
      set it afterwards would race the list and the window could flash Main
      before landing on the thread it was opened for. */
-  const {convId,setConvId,chatIn,setChatIn,getConversationId,navigateWithDrafts} = useFridayConversationDrafts(() => {
+  const {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts} = useFridayConversationDrafts(() => {
     try {
       return new URLSearchParams(window.location.search).get('conversation')
              || null;
@@ -62112,6 +62570,14 @@ function App() {
      surfaces move together. */
   const [projList, setProjList] = useState([]);
 
+  useEffect(() => {
+    window.fridayWorkflowContext = () => {
+      const id = getConversationId();
+      const current = convList.find(c => c.id === id);
+      return current ? { conversation_id: id, project_id: current.project || null } : {};
+    };
+    return () => { delete window.fridayWorkflowContext; };
+  }, [convList, getConversationId]);
   const refreshConvs = React.useCallback(() => apiFetch('/api/conversations')
     .then(r => r.json()).then(d => {
       if (d && d.status === 'ok') {
@@ -62126,18 +62592,33 @@ function App() {
 
   useEffect(() => { refreshConvs(); }, [refreshConvs]);
 
-  const openConversation = React.useCallback(cid => {
-    if (!cid) return;
+  const openConversation = React.useCallback((cid, options = {}) => {
+    if (!cid) return Promise.resolve(false);
+    const prior = conversationReadyRef.current;
+    if (options.reuseReady && prior && !prior.failed && prior.id === cid
+        && prior.epoch === chatEpoch.current && getConversationId() === cid) {
+      return options.requireReady ? prior.promise : prior.promise.catch(() => false);
+    }
     const epoch = ++chatEpoch.current;
+    const load = {id:cid, epoch, promise:null, failed:false};
+    const ownsLoad = () => chatEpoch.current === epoch && getConversationId() === cid;
     setChatMsgs([]);
     setChatLoad(false);
     setPausePending(null);
+    setUploading(null);
     setConvId(cid);
+    conversationLoadRef.current = cid;
     setConvOpen(false);
-    apiFetch('/api/conversations/' + encodeURIComponent(cid) + '/messages')
-      .then(r => r.json()).then(d => {
-        if (chatEpoch.current !== epoch) return;
-        setChatMsgs((d.messages || []).map(m => ({
+    setConvSeat(null);
+    const ready = apiFetch('/api/conversations/' + encodeURIComponent(cid) + '/messages')
+      .then(async r => {
+        if (!r.ok) throw new Error('Could not load this conversation. Try again.');
+        const d = await r.json();
+        if (!ownsLoad()) {
+          throw new Error('The conversation changed before it was ready.');
+        }
+        if (!Array.isArray(d.messages)) throw new Error(d.error || 'Could not load this conversation. Try again.');
+        setChatMsgs(d.messages.map(m => ({
           role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
           text: m.text || '',
           time: m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : '',
@@ -62145,11 +62626,20 @@ function App() {
           seat: (m.meta || {}).seat,
           kind: (m.meta || {}).kind,
           trace_id: (m.meta || {}).trace_id,
+          meta: m.meta, id: m.id,
         })));
-      }).catch(() => { if (chatEpoch.current === epoch) setChatMsgs([]); });
+        return true;
+      }).catch(error => {
+        if (ownsLoad()) setChatMsgs([{role:'system', text:error.message}]);
+        load.failed = true;
+        throw error;
+      });
     apiFetch('/api/conversations/' + encodeURIComponent(cid))
-      .then(r => r.json()).then(d => { if (chatEpoch.current === epoch) setConvSeat((d.conversation || {}).seat || null); })
-      .catch(() => { if (chatEpoch.current === epoch) setConvSeat(null); });
+      .then(r => r.json()).then(d => { if (ownsLoad()) setConvSeat((d.conversation || {}).seat || null); })
+      .catch(() => { if (ownsLoad()) setConvSeat(null); });
+    load.promise = ready;
+    conversationReadyRef.current = load;
+    return options.requireReady ? ready : ready.catch(() => false);
   }, []);
 
   /* An APPROVED CARD FINISHING has to show up in the DOCKED chat too.
@@ -62197,8 +62687,10 @@ function App() {
       }
       if (!ev || ev.type !== 'approval_result') return;
       if (ev.conversation_id && ev.conversation_id !== convId) return;
+      const refreshEpoch = chatEpoch.current;
       apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
         .then(r => r.json()).then(d => {
+          if (stopped || chatEpoch.current !== refreshEpoch || getConversationId() !== convId) return;
           setChatMsgs((d.messages || []).map(m => ({
             role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
             text: m.text || '',
@@ -62207,6 +62699,7 @@ function App() {
             seat: (m.meta || {}).seat,
             kind: (m.meta || {}).kind,
             trace_id: (m.meta || {}).trace_id,
+          meta: m.meta, id: m.id,
           })));
         }).catch(() => {});
     };
@@ -62217,7 +62710,7 @@ function App() {
   useEffect(() => {
     if (convId && convIdRef.current !== convId) {
       convIdRef.current = convId;
-      openConversation(convId);
+      if (conversationLoadRef.current !== convId) openConversation(convId);
       // Voice follows the OPEN thread, not the one that happened to be open
       // when the mic was pressed. The socket carries the thread as a query
       // param at connect; this keeps a live session in step when the user switches
@@ -62225,7 +62718,8 @@ function App() {
       try {
         const _v = voiceRef.current;
         if (_v && _v.ws && _v.ws.readyState === WebSocket.OPEN) {
-          _v.ws.send(JSON.stringify({ type: 'conversation', id: convId }));
+          if (_v.crewPlayback) voiceStopRef.current?.({status:'Crew voice stopped because the chat changed. Start voice in this room to continue.'});
+          else _v.ws.send(JSON.stringify({ type: 'conversation', id: convId }));
         }
       } catch (_) {}
     }
@@ -62234,25 +62728,30 @@ function App() {
   /** Bind a model to THIS conversation — never the global default. */
   const bindConvSeat = (m) => {
     const seat = m ? { model: m.id, provider: (m.providers || [])[0] } : null;
-    const selectionEpoch = chatEpoch.current;
+    const selectionEpoch = chatEpoch.current, selectionConversation = convId;
+    const ownsSelection = () => chatEpoch.current === selectionEpoch && getConversationId() === selectionConversation;
+    if (!ownsSelection()) return;
+    const setOwnedSeat = ownedChatUpdate(setConvSeat), setOwnedMsgs = ownedChatUpdate(setChatMsgs);
     setConvPickerOpen(false);
-    fridaySaveConversationSeat(convId, seat, saved => {
-      if (chatEpoch.current !== selectionEpoch) return;
-      setConvSeat(saved);
-      setChatMsgs(p => [...p, {
+    fridaySaveConversationSeat(selectionConversation, seat, saved => {
+      if (!ownsSelection()) return;
+      setOwnedSeat(saved);
+      setOwnedMsgs(p => [...p, {
         role: 'system', kind: 'seat_change',
         text: saved ? ('This chat now uses ' + prettyModel(saved.model) + ' for its next turn.')
                     : 'This chat now follows your default model.',
       }]);
       refreshConvs();
     }, error => {
-      if (chatEpoch.current === selectionEpoch) fridayToast(error.message);
+      if (ownsSelection()) fridayToast(error.message);
     }, message => {
-      if (chatEpoch.current === selectionEpoch) fridayToast(message);
+      if (ownsSelection()) fridayToast(message);
     });
   };
 
   const chatEpoch = useRef(0);
+  const conversationReadyRef = useRef(null);
+  const conversationLoadRef = useRef(null);
   const inFlightEpoch = useRef(-1);
   const inFlightSince = useRef(0);
   /* The id this turn was sent under, so the client can ASK whether it is
@@ -62311,11 +62810,31 @@ function App() {
     } catch (_) {}
   };
 
+  const homeDraftGetter = useRef(null);
+  const registerHomeDraft = React.useCallback(getter => {
+    homeDraftGetter.current = getter;
+    return () => { if (homeDraftGetter.current === getter) homeDraftGetter.current = null; };
+  }, []);
+  const showGlobalChat = () => {
+    if (!chatOpen && experienceEnabled && experienceDesktop) {
+      const draft = homeDraftGetter.current?.();
+      if (draft && typeof draft.text === 'string' && draft.text.trim()) {
+        const current = convList.find(item => item.id === getConversationId() && item.status !== 'archived');
+        if (current && (current.project || null) === (draft.projectId || null)) {
+          setChatIn(previous => previous.trim() ? previous + '\n\n' + draft.text : draft.text);
+          draft.consume?.();
+        } else fridayToast('Your Home draft is kept with its project. Use Continue on Home to open it in that context.');
+      }
+    }
+    showChat(true);
+  };
+
   // A gathered reference prepares a draft in the actual project conversation.
   // It never reads document contents or sends a message on the owner's behalf.
   const experienceDraft = async (text, projectId, options = {}) => {
     if (!String(text || '').trim()) return;
     const sourceConversation = getConversationId();
+    const sourceRevision = getConversationRevision();
     let cid = sourceConversation;
     const personalContext = options.personal === true && !projectId;
     if (projectId || personalContext) {
@@ -62326,13 +62845,13 @@ function App() {
       else {
         const response = await apiFetch('/api/conversations', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:personalContext ? 'New chat' : 'Working with materials',project:projectId || null})});
         const result = await response.json();
-        if (!response.ok || result.status !== 'ok' || !result.conversation || !result.conversation.id) throw new Error(result.error || result.message || 'Could not open the conversation.');
+        if (!response.ok || result.status !== 'ok' || !result.conversation || typeof result.conversation.id !== 'string' || !result.conversation.id.trim()) throw new Error(result.error || result.message || 'Could not open the conversation.');
         if (personalContext ? !!result.conversation.project : result.conversation.project !== projectId) throw new Error(personalContext ? 'A personal conversation could not be opened. Your draft is still here.' : 'This project is no longer available. Refresh Projects and try again.');
         cid = result.conversation.id;
         await refreshConvs();
       }
     }
-    if (getConversationId() !== sourceConversation) throw new Error('The active chat changed. Gathered materials are still here; choose Discuss again.');
+    if (getConversationId() !== sourceConversation || getConversationRevision() !== sourceRevision) throw new Error('The active chat changed. Your draft is still here; choose Continue again.');
     if (cid && cid !== getConversationId()) openConversation(cid);
     setChatIn(previous => previous.trim() ? previous + '\n\n' + String(text) : String(text));
     showChat(true);
@@ -62383,6 +62902,13 @@ function App() {
     w: 0,
     h: 0
   });
+  const chatPanelRef = useRef(null);
+  useFridaySpatialSurface(chatPanelRef, () => {
+    const layout=window.FridayHolographicWorkspace?.layoutRect;
+    const lane=layout?.chat||layout?.content||{x:0,y:60,w:window.innerWidth,h:Math.max(1,window.innerHeight-176)};
+    const w=Math.min(chatW,lane.w), h=chatH?Math.min(chatH,lane.h):lane.h;
+    return {x:chatSide==='left'?lane.x:lane.x+lane.w-w,y:lane.y+lane.h-h,w,h};
+  }, 'chat', chatOpen);
   useEffect(() => {
     if (!chatResize) return;
     // width: panel is right-anchored, so dragging the left edge LEFT (smaller clientX) grows it.
@@ -63141,6 +63667,9 @@ function App() {
   // acquired — instead of finishing and leaking a hot mic / ghost socket.
   // Bumped by every start AND every stop.
   const voiceGenRef = useRef(0);
+  const crewVoicePendingRef = useRef(null);
+  const crewMainConversationRef = useRef(convId);
+  crewMainConversationRef.current = convId;
   // News Anchor Mode: a text turn queued to fire the moment the live session's
   // socket opens (e.g. "read me the Front Page"). Sent once, then cleared, so a
   // reconnect mid-session doesn't replay it.
@@ -63173,6 +63702,7 @@ function App() {
     window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: FLUSH called from: ' + (caller || 'unknown') + ' (stopping ' + _stopped + ' active sources)');
     window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: playbackCancelled set TRUE by: ' + (caller || 'unknown'));
     v.playbackCancelled = true;
+    v.crewPlayback?.quiet();
     // Worklet path: empty the ring buffer instantly so interrupted/old-turn audio
     // stops, and clear the speaking flag (+ its drain hangover) so the mic reopens.
     if (v.playerNode) {
@@ -63234,7 +63764,9 @@ function App() {
   };
   voiceStartRef.current = async opts => {
     const _isReconnect = !!(opts && opts.reconnect);
-    if (voiceOn && !_isReconnect) return;
+    if (!_isReconnect) voiceKeepRef.current.crewConversationId = opts?.crew ? opts.conversationId : (window.FridayCrew?.enabled(convIdRef.current) ? convIdRef.current : null);
+    const _crewCid = voiceKeepRef.current.crewConversationId;
+    if (voiceOn && !_isReconnect && !opts?.crew) return;
     voiceKeepRef.current.wanted = true;
     if (!_isReconnect) {
       voiceKeepRef.current.attempts = 0;
@@ -63254,7 +63786,7 @@ function App() {
     // Mic samples per frame sent. Gemini Live keeps 4096 (~171 ms at 24 kHz).
     // The local voice judges talk-over on the server from these frames, so
     // it sends 2048 (~85 ms): two frames confirm a barge (~171 ms).
-    const MIC_FRAMES = (agentSettings.voice_engine || 'local') === 'gemini' ? 4096 : 2048;
+    const MIC_FRAMES = _crewCid || (agentSettings.voice_engine || 'local') === 'gemini' ? 4096 : 2048;
     const v = voiceRef.current;
     const f2pcm = (float32, outRate, inRate) => {
       const ratio = inRate / outRate;
@@ -63334,6 +63866,7 @@ function App() {
           // spurious server-side VAD interrupt.
           v.playerNode.port.onmessage = e => {
             const t = e.data && e.data.type;
+            if(v.crewPlayback?.worklet(e.data) || v.crewPlayback)return;
             if (t === 'active') {
               v.fridaySpeaking = true;
               _wsSpeak(true);
@@ -63597,7 +64130,8 @@ function App() {
     // Same audio plumbing + message contract on both, so only the URL changes.
     let _wsUrl = '/ws/voice-local',
       _engine = 'local';
-    try {
+    if (_crewCid) { _wsUrl='/ws/live'; _engine='gemini'; }
+    else try {
       const _si = await apiFetch('/api/voice/session-info').then(r => r.json());
       if (_si && _si.ws_url) {
         _wsUrl = _si.ws_url;
@@ -63623,6 +64157,7 @@ function App() {
       } catch (_) {}
       return;
     }
+    if (_crewCid && (!v.usePlayerWorklet || !window.FridayCrewPlayback)) { voiceStopRef.current?.({status:'Crew voice needs the shared audio player. Reload and try again.'}); return; }
     v.engine = _engine;
     // Pass the ephemeral UI session token so the WS handler can auth non-loopback
     // connections without requiring a full cookie-based session.
@@ -63636,10 +64171,24 @@ function App() {
     // than the thread currently on screen.
     const _qs = [];
     if (_ftok) _qs.push('t=' + encodeURIComponent(_ftok));
-    if (convIdRef.current) _qs.push('conversation_id=' + encodeURIComponent(convIdRef.current));
+    if (_crewCid || convIdRef.current) _qs.push('conversation_id=' + encodeURIComponent(_crewCid || convIdRef.current));
+    if (_crewCid) _qs.push('crew=1');
     if (voicePrivacyOverrideRef.current) _qs.push('privacy_layer3_override=1');
     const ws = new WebSocket(proto + '//' + location.host + _wsUrl + (_qs.length ? '?' + _qs.join('&') : ''));
     v.ws = ws;
+    if (_crewCid) {
+      v.crewPlayback = new window.FridayCrewPlayback.Coordinator({
+        port:v.playerNode.port, audioContext:v.audioCtx,
+        send:message=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(message));},
+        onState:state=>{
+          v.fridaySpeaking=!!v.crewPlayback?.active?.started&&!v.crewPlayback.active.terminal; _wsSpeak(v.fridaySpeaking);
+          window.FridayCrew?.state(state);
+          setVoiceStatus((state.label?state.label+' · ':'')+state.status);
+          if(v.fridaySpeaking){try{window._fridayStopFpAudio?.();}catch(_){}}
+        },
+        onError:message=>setVoiceStatus('Crew voice: '+message)
+      });
+    }
     let wsOpened = false;
     setVoiceStatus('connecting…');
     ws.onopen = () => {
@@ -63721,6 +64270,7 @@ function App() {
       }, 1000);
     };
     ws.onmessage = ev => {
+      if(voiceRef.current.ws!==ws || _stale())return;
       let m;
       try {
         m = JSON.parse(ev.data);
@@ -63733,6 +64283,9 @@ function App() {
         K.sawHb = true;
         return;
       }
+      if(m.type==='crew_profile_draft'){window.FridayCrew?.propose(m.draft);return;}
+      if(v.crewPlayback?.receive(m))return;
+      if(v.crewPlayback && ['audio','interrupted','turn_end','tts_pause','tts_resume'].includes(m.type))return;
       // Feed one base64 PCM chunk to the active playback path (worklet ring or
       // legacy BufferSource). Shared by the live 'audio' branch and the
       // tts_resume replay of chunks HELD during an action pause.
@@ -63885,7 +64438,7 @@ function App() {
           });
           // Strip personality/mood/reasoning scaffolding — only the spoken words
           // belong in the transcript. Skip the bubble entirely if nothing remains.
-          if (m.agent_text) {
+          if (m.agent_text && !v.crewPlayback) {
             const clean = sanitizeVoiceTranscript(m.agent_text);
             if (clean) next.push({
               role: 'friday',
@@ -64024,6 +64577,7 @@ function App() {
       }
       // Stop mic tracks so Chrome clears the recording indicator
       const v2 = voiceRef.current;
+      v2.crewPlayback?.close();
       try {
         v2.silenceTimer && clearTimeout(v2.silenceTimer);
       } catch (_) {}
@@ -64136,7 +64690,9 @@ function App() {
     // errors). Without this, the final setVoiceStatus('') below wiped every
     // early-failure message and the mic click looked like a silent no-op.
     const _keepStatus = opts && opts.status;
+    crewVoicePendingRef.current = null;
     const v = voiceRef.current;
+    v.crewPlayback?.close();
     // 0) This is a DELIBERATE stop: disarm auto-reconnect before anything else
     //    so the onclose that follows doesn't resurrect the session.
     const K = voiceKeepRef.current;
@@ -64245,6 +64801,36 @@ function App() {
     setVoiceOn(false);
     setVoiceStatus(_keepStatus || '');
   };
+  useEffect(() => {
+    const command = e => {
+      const action = e.detail?.action;
+      const cid = e.detail?.conversationId;
+      if (!cid) return;
+      if (action === 'start' && window.FridayCrew?.enabled(cid)) {
+        voiceStopRef.current?.();
+        if (crewMainConversationRef.current !== cid) {
+          // The global mic and transcript must first belong to this window's chat.
+          crewVoicePendingRef.current = cid;
+          openConversation(cid);
+        } else voiceStartRef.current?.({crew:true,conversationId:cid});
+      } else if (action === 'stop') {
+        if (crewVoicePendingRef.current === cid) crewVoicePendingRef.current = null;
+        if (voiceKeepRef.current.wanted && voiceKeepRef.current.crewConversationId === cid) voiceStopRef.current?.();
+      } else if (action === 'quiet' && voiceKeepRef.current.wanted && voiceKeepRef.current.crewConversationId === cid) {
+        const v = voiceRef.current;
+        try { if (v.ws?.readyState === WebSocket.OPEN) v.ws.send(JSON.stringify({type:'barge'})); } catch (_) {}
+        flushPlaybackRef.current?.('Crew quiet / barge');
+      }
+    };
+    window.addEventListener('friday:crew-voice',command);
+    return () => window.removeEventListener('friday:crew-voice',command);
+  }, []);
+  useEffect(()=>{
+    const pending = crewVoicePendingRef.current;
+    crewVoicePendingRef.current = null;
+    if(voiceKeepRef.current.wanted&&voiceKeepRef.current.crewConversationId&&voiceKeepRef.current.crewConversationId!==convId)voiceStopRef.current?.({status:'Crew voice stopped because the chat changed. Start voice in this room to continue.'});
+    if(pending===convId&&window.FridayCrew?.enabled(convId))voiceStartRef.current?.({crew:true,conversationId:convId});
+  },[convId]);
   const toggleVoice = () => {
     if (voiceOn) voicePrivacyOverrideRef.current = false;
     voiceOn ? voiceStopRef.current?.() : voiceStartRef.current?.();
@@ -65764,14 +66350,14 @@ function App() {
   useEffect(() => {
     window.fridayOpenWorkspaceChat = (wsId, label, emoji, seed) => {
       if (!wsId) return;
-      openWs(wsId);
-      setWsChat({
+      const proceed = () => { openWs(wsId); setWsChat({
         wsId,
         label: label || wsId,
         emoji: emoji || '',
         seed: seed || '',
-        key: Date.now()
-      });
+        key: ++studioSequence.current
+      }); };
+      if(studioGuard.current) studioGuard.current({proceed,title:label||wsId}); else proceed();
     };
     return () => {
       if (window.fridayOpenWorkspaceChat) delete window.fridayOpenWorkspaceChat;
@@ -65903,12 +66489,30 @@ function App() {
      whatever disclosure the server attached. */
   const chatFileRef = React.useRef(null);
   const [uploading, setUploading] = useState(null);
-  const uploadFile = file => fridayAnalyzeFile(file, setChatMsgs, setUploading);
+  // Delayed native actions may update only the conversation that started them.
+  const ownedChatUpdate = setter => {
+    const ownerConversation = getConversationId(), ownerEpoch = chatEpoch.current;
+    const current = () => getConversationId() === ownerConversation && chatEpoch.current === ownerEpoch;
+    return value => {
+      if (current()) setter(previous => current() ? (typeof value === 'function' ? value(previous) : value) : previous);
+    };
+  };
+  const uploadFile = file => fridayAnalyzeFile(file, ownedChatUpdate(setChatMsgs), ownedChatUpdate(setUploading));
 
   const sendChat = async (overrideMsg, opts) => {
     const m = (overrideMsg || chatIn).trim();
     if (!m) return;
     opts = opts || {};
+    const turnConversation = getConversationId();
+    const turnEpoch = chatEpoch.current;
+    const ownsTurn = () => chatEpoch.current === turnEpoch && getConversationId() === turnConversation;
+    if (opts.expectedConversationId && opts.expectedConversationId !== turnConversation) {
+      throw new Error('Open this codebase’s conversation before asking.');
+    }
+    const setTurnMsgs = value => { if (ownsTurn()) setChatMsgs(previous => ownsTurn() ? (typeof value === 'function' ? value(previous) : value) : previous); };
+    const setTurnBusy = value => { if (ownsTurn()) setChatLoad(value); };
+    const setTurnPause = value => { if (ownsTurn()) setPausePending(value); };
+
     /* The user's own message renders IMMEDIATELY and synchronously. Nothing
        about echoing what they just typed needs the server's permission.
          An awaited /api/work/forecast call ahead of the optimistic render
@@ -65918,7 +66522,7 @@ function App() {
        tokens. */
     if (!opts.alreadyShown) {
       if (!opts.preserveDraft) setChatIn('');
-      setChatMsgs(p => [...p, {
+      setTurnMsgs(p => [...p, {
         role: 'user',
         text: m,
         time: new Date().toLocaleTimeString()
@@ -65932,7 +66536,7 @@ function App() {
         // Same conversation, turn still running: a double-tap. Say so rather
         // than swallowing it — a silent return is indistinguishable from a
         // hang, which is how this was reported.
-        setChatMsgs(p => [...p, {
+        setTurnMsgs(p => [...p, {
           role: 'system', kind: 'busy',
           text: 'Still finishing the previous message here. This one was not sent — '
             + 'send it again once she replies, or start a new chat to talk while it runs.',
@@ -65941,7 +66545,7 @@ function App() {
       }
       // A different conversation owns that turn. It keeps running and reports
       // back to where it started; this chat is free to talk.
-      setChatLoad(false);
+      setTurnBusy(false);
     }
     if (!opts.skipForecast) {
       try {
@@ -65956,10 +66560,11 @@ function App() {
           })
         });
         const f = await fr.json();
+        if (!ownsTurn()) { if (opts.expectedConversationId) throw new Error('The conversation changed. Send this request again from its codebase.'); return; }
         const seatId = (f && (f.affects || [])[0]) || curOrchId || 'unknown';
         const priorChoice = pauseAnswered[seatId];
         if (f && f.will_pause && !agentSettings.pause_warnings_off && !priorChoice) {
-          setPausePending({
+          setTurnPause({
             forecast: f,
             message: m,
             seatId: seatId
@@ -65971,9 +66576,13 @@ function App() {
         if (f && f.will_pause && priorChoice === 'now_cloud') {
           opts = { ...opts, routeMode: 'cloud' };
         }
-      } catch (_) {/* a forecast we cannot get must never block a message */}
+      } catch (error) {
+        if (opts.expectedConversationId && !ownsTurn()) throw error;
+        /* A forecast we cannot get must never block a message. */
+      }
     }
-    setPausePending(null);
+    if (!ownsTurn()) { if (opts.expectedConversationId) throw new Error('The conversation changed. Send this request again from its codebase.'); return; }
+    setTurnPause(null);
     inFlightEpoch.current = chatEpoch.current;
     inFlightSince.current = Date.now();
     /* Minted here, sent with the turn, and the handle the liveness poll above
@@ -65982,14 +66591,14 @@ function App() {
     inFlightTurn.current = 'turn-' + Date.now().toString(36) + '-'
       + Math.random().toString(36).slice(2, 8);
     setTurnStatus(null);
-    setChatLoad(true);
+    setTurnBusy(true);
     try {
       const body = {
         message: m,
         voice_mode: voiceOn,
         cite_sources: !!agentSettings.cite_sources,
         // Without this every turn lands in Main and the transcripts merge again.
-        conversation_id: convId || undefined,
+        conversation_id: turnConversation || undefined,
         turn_id: inFlightTurn.current
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
@@ -65999,7 +66608,7 @@ function App() {
       if (frame) body.image = frame;
       // A placeholder the deltas fill in, so the reply appears as it is
       // written instead of arriving whole after a spinner.
-      setChatMsgs(p => [...p, {
+      setTurnMsgs(p => [...p, {
         role: 'friday',
         text: '',
         streaming: true,
@@ -66008,7 +66617,7 @@ function App() {
       let d;
       let streamTraceId = null;
       try {
-        d = await fridayChatTurn(body, piece => setChatMsgs(p => {
+        d = await fridayChatTurn(body, piece => setTurnMsgs(p => {
           const q = p.slice();
           for (let i = q.length - 1; i >= 0; i--) {
             if (q[i].streaming) {
@@ -66021,17 +66630,18 @@ function App() {
           // The placeholder learns its trace before the first word, so its
           // Reasoning section spools while the reply is written.
           streamTraceId = tid;
-          setChatMsgs(p => p.map(x => x.streaming ? { ...x, trace_id: tid } : x));
+          setTurnMsgs(p => p.map(x => x.streaming ? { ...x, trace_id: tid } : x));
           try { window.fridayTraceStore.kick(); } catch (_) {}
         });
       } finally {
         // The placeholder is scaffolding, never the record: the real message
         // is appended below with its model, seat and fallback chain.
-        setChatMsgs(p => p.filter(x => !x.streaming));
+        setTurnMsgs(p => p.filter(x => !x.streaming));
       }
+      if (!ownsTurn()) { if (opts.expectedConversationId) throw new Error('This request was sent to its original conversation. Open it to check the result before sending another request.'); return; }
       // B2: seat changes detected this turn render as system lines BEFORE the
       // reply — a routing flip is never silent again.
-      if (d.seat_events && d.seat_events.length) setChatMsgs(p => [...p, ...d.seat_events.map(ev => ({
+      if (d.seat_events && d.seat_events.length) setTurnMsgs(p => [...p, ...d.seat_events.map(ev => ({
         role: 'system',
         kind: 'seat_change',
         text: '⚙ ' + ev.text,
@@ -66043,7 +66653,7 @@ function App() {
       // Its own `kind` because these are not seat changes and must not borrow
       // that tooltip: a notice that misdescribes itself is the thing this
       // whole line of work exists to remove.
-      if (d.vision_events && d.vision_events.length) setChatMsgs(p => [...p, ...d.vision_events.map(ev => ({
+      if (d.vision_events && d.vision_events.length) setTurnMsgs(p => [...p, ...d.vision_events.map(ev => ({
         role: 'system',
         kind: ev.kind || 'vision_egress',
         text: ev.text,
@@ -66053,18 +66663,18 @@ function App() {
       // system line records it in the transcript and the card offers "send
       // anyway" or "wait". A held turn has no reply to show.
       if (d.privacy_hold) {
-        setChatMsgs(p => [...p, {
+        setTurnMsgs(p => [...p, {
           role: 'system',
           kind: 'privacy_hold',
           text: '\u{1F6E1} ' + d.privacy_hold.text,
           time: new Date().toLocaleTimeString()
         }]);
-        setPausePending({ kind: 'privacy_hold', message: m, hold: d.privacy_hold });
+        setTurnPause({ kind: 'privacy_hold', message: m, hold: d.privacy_hold });
         if (!d.response) return;
       }
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
-      setChatMsgs(p => [...p, {
+      setTurnMsgs(p => [...p, {
         role: 'friday',
         text: d.response,
         model: d.model,
@@ -66083,13 +66693,15 @@ function App() {
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);
     } catch (e) {
-      setChatMsgs(p => [...p, {
+      setTurnMsgs(p => [...p, {
         role: 'friday',
         text: '[Connection error]',
         time: new Date().toLocaleTimeString()
       }]);
+      if (opts.expectedConversationId) throw e;
+    } finally {
+      setTurnBusy(false);
     }
-    setChatLoad(false);
   };
   const sendPrompt = () => {
     if (!promptText.trim()) return;
@@ -66103,7 +66715,7 @@ function App() {
   const toggleCiteSources = () => saveAgentSettings({
     cite_sources: !agentSettings.cite_sources
   });
-  const showSources = () => fridayShowSources(setChatMsgs, setChatLoad);
+  const showSources = () => fridayShowSources(ownedChatUpdate(setChatMsgs), ownedChatUpdate(setChatLoad));
 
   // Existing installs see the full FutureSpeak business pipeline under "Sites";
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
@@ -66123,7 +66735,92 @@ function App() {
     ws,
     source
   }, el) : el;
+  // Code uses the owning native chat surface, so its transcript, draft and
+  // policy controls are identical to the ordinary chat tray.
+  const codeChatActive = !!window.FridayCodeStudio && window.__FRIDAY_CHROME__ !== 'chat'
+    && (STANDALONE_WS === 'code' || (!STANDALONE_WS && !experienceDesktop && focusWin === 'code' && openWins.has('code')));
+  const nativeChatProps = {
+    mode: 'panel',
+    traySide: chatSide,
+    trayFrac: chatFrac || chatW / vw(),
+    onTrayPlace: (side, frac) => {
+      placeTray(side, frac);
+      showChat(true);
+      if (trayDo.current.remember) trayDo.current.remember(side, frac);
+    },
+    agentSettings: agentSettings,
+    audioDevicePopup: audioDevicePopup,
+    audioDevicePopupRef: audioDevicePopupRef,
+    audioInputDevices: audioInputDevices,
+    audioOutputDevices: audioOutputDevices,
+    bindConvSeat: bindConvSeat,
+    chatEnd: chatEnd,
+    chatEpoch: chatEpoch,
+    chatFileRef: chatFileRef,
+    chatIn: chatIn,
+    chatLoad: chatLoad,
+    chatMsgs: chatMsgs,
+    convId: convId,
+    convList: convList,
+    convOpen: convOpen,
+    convPickerOpen: convPickerOpen,
+    convSeat: convSeat,
+    micLevel: micLevel,
+    micTestActive: micTestActive,
+    micTestLevel: micTestLevel,
+    micTestMsg: micTestMsg,
+    openConversation: openConversation,
+    pausePending: pausePending,
+    refreshAudioDevicesRef: refreshAudioDevicesRef,
+    refreshConvs: refreshConvs,
+    rememberPauseChoice: rememberPauseChoice,
+    saveAgentSettings: saveAgentSettings,
+    sendChat: sendChat,
+    setAgentSettings: setAgentSettings,
+    setAudioDevicePopup: setAudioDevicePopup,
+    setChatIn: setChatIn,
+    setChatLoad: setChatLoad,
+    setChatMsgs: setChatMsgs,
+    setChatOpen: showChat,
+    setConvId: setConvId,
+    setConvOpen: setConvOpen,
+    setConvPickerOpen: setConvPickerOpen,
+    setPausePending: setPausePending,
+    showSources: showSources,
+    speakerTestActive: speakerTestActive,
+    speakerTestMsg: speakerTestMsg,
+    testMicrophone: testMicrophone,
+    testSpeaker: testSpeaker,
+    toggleCiteSources: toggleCiteSources,
+    toggleVoice: toggleVoice,
+    turnStatus: turnStatus,
+    stopTurn: stopTurn,
+    uploadFile: uploadFile,
+    uploading: uploading,
+    voiceContract: voiceContract,
+    voiceEgress: voiceEgress,
+    voiceNotices: voiceNotices,
+    voiceOn: voiceOn,
+    voicePartial: voicePartial,
+    voiceReach: voiceReach,
+    voiceStages: voiceStages,
+    voiceStatus: voiceStatus
+  };
+  const codeChat = {
+    active: codeChatActive, conversationId: convId, busy: chatLoad,
+    ask: async (message, expectedConversationId) => {
+      if (!codeChatActive || !expectedConversationId || getConversationId() !== expectedConversationId) {
+        throw new Error('Open this codebase’s conversation before asking.');
+      }
+      return sendChat(message, {preserveDraft:true, expectedConversationId});
+    },
+    openConversation: id => codeChatActive
+      ? openConversation(id, {requireReady:true, reuseReady:true})
+      : Promise.reject(new Error('Open the Code workspace before switching conversations.')),
+    surface: codeChatActive ? React.createElement(ChatSurface, {...nativeChatProps, mode:'code', setChatMsgs:ownedChatUpdate(setChatMsgs)}) : null
+  };
   const wsMap = {
+    crew: React.createElement(CrewWS,{active:STANDALONE_WS==='crew'||(!experienceDesktop&&focusWin==='crew')}),
     career: /*#__PURE__*/React.createElement(CareerWS, null),
     knowledge: /*#__PURE__*/React.createElement(KnowledgeWS, null),
     futurespeak: showAllWorkspaces ? /*#__PURE__*/React.createElement(FuturespeakWS, null) : /*#__PURE__*/React.createElement(SitesWS, null),
@@ -66145,7 +66842,7 @@ function App() {
     }, "The Library did not load."),
     trust: with3D('trust', 'people', /*#__PURE__*/React.createElement(TrustWS, null)),
     system: /*#__PURE__*/React.createElement(SystemWS, null),
-    code: with3D('code', 'code', /*#__PURE__*/React.createElement(CodeWS, null)),
+    code: /*#__PURE__*/React.createElement(CodeWS, {chat:codeChat}),
     news: with3D('news', 'news', /*#__PURE__*/React.createElement(NewsWS, null)),
     draft: /*#__PURE__*/React.createElement(DraftWS, null),
     finance: /*#__PURE__*/React.createElement(FinanceWS, null),
@@ -66268,7 +66965,7 @@ function App() {
   // and Right dock it to that side and step a third, a half, two thirds; Up
   // shows it; Down hides it.
   const trayKey = dir => {
-    if (dir === 'up') return showChat(true);
+    if (dir === 'up') return showGlobalChat();
     if (dir === 'down') return showChat(false);
     const n = fridayTrayStep(chatFrac || chatW / vw(), chatSide, dir);
     placeTray(n.side, n.frac);
@@ -66342,7 +67039,7 @@ function App() {
     }
   };
   const toggleChat = () => {
-    showChat(!chatOpen);
+    if (chatOpen) showChat(false); else showGlobalChat();
     if (!chatOpen) {
       setSettingsOpen(false);
       setQuickDraft(false);
@@ -66561,6 +67258,10 @@ function App() {
   // Ctrl+/: the cluster's chat field when the desktop shows no window (the
   // cluster comes with it), else the chat tray's.
   const focusChatField = () => {
+    if (codeChatActive) {
+      window.dispatchEvent(new CustomEvent('friday:code-chat-focus'));
+      return;
+    }
     if (!experienceEnabled && !STANDALONE_WS && (experienceDesktop || openWins.size === 0)) {
       window.dispatchEvent(new CustomEvent('friday:landing', { detail: { summon: true, focus: true, via: 'key' } }));
       return;
@@ -67141,7 +67842,7 @@ function App() {
     style: {
       fontSize: 13
     }
-  }, "\u270D\uFE0F")), !shellChat && /*#__PURE__*/React.createElement("button", {
+  }, "\u270D\uFE0F")), !shellChat && !codeChatActive && /*#__PURE__*/React.createElement("button", {
     onClick: toggleChat,
     style: {
       background: 'none',
@@ -67273,10 +67974,12 @@ function App() {
     label: wsChat.label,
     emoji: wsChat.emoji,
     seedPrompt: wsChat.seed,
+    onRegisterGuard: registerStudioGuard,
     onClose: () => setWsChat(null)
   });
-  const shellChatPanel = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  const shellChatPanel = codeChatActive ? null : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: `chat-panel ${chatOpen ? 'open' : ''}${chatSide === 'left' ? ' left' : ''}`,
+    ref: chatPanelRef,
     "aria-hidden": chatOpen ? undefined : 'true',
     style: chatH ? {
       width: chatW,
@@ -67311,78 +68014,12 @@ function App() {
       };
       setChatResize('h');
     }
-  }), /*#__PURE__*//*#__PURE__*/React.createElement(ChatSurface, {
-    mode: 'panel',
-    traySide: chatSide,
-    trayFrac: chatFrac || chatW / vw(),
-    onTrayPlace: (side, frac) => {
-      placeTray(side, frac);
-      showChat(true);
-      if (trayDo.current.remember) trayDo.current.remember(side, frac);
-    },
-    agentSettings: agentSettings,
-    audioDevicePopup: audioDevicePopup,
-    audioDevicePopupRef: audioDevicePopupRef,
-    audioInputDevices: audioInputDevices,
-    audioOutputDevices: audioOutputDevices,
-    bindConvSeat: bindConvSeat,
-    chatEnd: chatEnd,
-    chatEpoch: chatEpoch,
-    chatFileRef: chatFileRef,
-    chatIn: chatIn,
-    chatLoad: chatLoad,
-    chatMsgs: chatMsgs,
-    convId: convId,
-    convList: convList,
-    convOpen: convOpen,
-    convPickerOpen: convPickerOpen,
-    convSeat: convSeat,
-    micLevel: micLevel,
-    micTestActive: micTestActive,
-    micTestLevel: micTestLevel,
-    micTestMsg: micTestMsg,
-    openConversation: openConversation,
-    pausePending: pausePending,
-    refreshAudioDevicesRef: refreshAudioDevicesRef,
-    refreshConvs: refreshConvs,
-    rememberPauseChoice: rememberPauseChoice,
-    saveAgentSettings: saveAgentSettings,
-    sendChat: sendChat,
-    setAgentSettings: setAgentSettings,
-    setAudioDevicePopup: setAudioDevicePopup,
-    setChatIn: setChatIn,
-    setChatLoad: setChatLoad,
-    setChatMsgs: setChatMsgs,
-    setChatOpen: showChat,
-    setConvId: setConvId,
-    setConvOpen: setConvOpen,
-    setConvPickerOpen: setConvPickerOpen,
-    setPausePending: setPausePending,
-    showSources: showSources,
-    speakerTestActive: speakerTestActive,
-    speakerTestMsg: speakerTestMsg,
-    testMicrophone: testMicrophone,
-    testSpeaker: testSpeaker,
-    toggleCiteSources: toggleCiteSources,
-    toggleVoice: toggleVoice,
-    turnStatus: turnStatus,
-    stopTurn: stopTurn,
-    uploadFile: uploadFile,
-    uploading: uploading,
-    voiceContract: voiceContract,
-    voiceEgress: voiceEgress,
-    voiceNotices: voiceNotices,
-    voiceOn: voiceOn,
-    voicePartial: voicePartial,
-    voiceReach: voiceReach,
-    voiceStages: voiceStages,
-    voiceStatus: voiceStatus
-  })), !chatOpen && /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*//*#__PURE__*/React.createElement(ChatSurface, nativeChatProps)), !chatOpen && /*#__PURE__*/React.createElement("button", {
     className: 'chat-edge-pill' + (chatSide === 'left' ? ' left' : ''),
     "data-testid": "chat-edge-pill",
     title: "Show chat (Ctrl+Alt+C)",
     "aria-label": "Show chat",
-    onClick: () => showChat(true)
+    onClick: showGlobalChat
   }, chatSide === 'left' ? "\u203A" : "\u2039"));
   const shellTrace = /*#__PURE__*/React.createElement(TraceModalHost, null);
   const shellActivity = activityOpen && /*#__PURE__*/React.createElement("div", {
@@ -68448,13 +69085,13 @@ function App() {
     // The shown tray is docked: its width comes off its side for a workspace in
     // a tab and for every window snapped or maximised beside it (unified-shell.md
     // §11.2). A phone's tray is a sheet, not a side.
-    const docked = chatOpen && window.__FRIDAY_CHROME__ !== 'chat' && (window.innerWidth || 1280) > 768;
+    const docked = chatOpen && !codeChatActive && window.__FRIDAY_CHROME__ !== 'chat' && (window.innerWidth || 1280) > 768;
     document.documentElement.style.setProperty('--fr-chat-dock', docked && chatSide !== 'left' ? chatW + 'px' : '0px');
     document.documentElement.style.setProperty('--fr-chat-dock-left', docked && chatSide === 'left' ? chatW + 'px' : '0px');
     try {
       window.dispatchEvent(new Event('friday:chat-dock'));
     } catch (_) {}
-  }, [shellTab, fsOn, chatOpen, chatW, chatSide, dockHidden]);
+  }, [shellTab, fsOn, chatOpen, chatW, chatSide, dockHidden, codeChatActive]);
   // A workspace in its own tab: that workspace, full-tab, under the same shell
   // as the desktop (top bar, chat tray, notifications, settings, palette); no
   // dock, windows, HUD or scene. Settings never gets here (the server sends
@@ -68500,7 +69137,8 @@ function App() {
       openWorkspaceIds: openWins, activeWorkspaceId: focusWin,
       projects: projList, conversations: convList, activeConversationId: convId,
       tasks: bgTasks, settings: agentSettings, projectsStatus, tasksStatus,
-      enabled: experienceEnabled, desktopVisible: experienceDesktop,
+      enabled: experienceEnabled, desktopVisible: experienceDesktop, chatOpen,
+      onRegisterHomeDraft: registerHomeDraft,
       onShowDesktop: () => setExperienceDesktop(true),
       onOpenWorkspace: target => { const nav = fridayResolveTarget(target); openWs(nav.workspace); fridayNavigate(nav); },
       onOpenConversation: cid => { openConversation(cid); showChat(true); },
@@ -68508,7 +69146,7 @@ function App() {
       onOpenTask: id => { openWs('system'); fridayNavigate({workspace:'system',tab:'task',task:id}); },
       onOpenSettings: () => openWs('settings'),
       onCustomize: id => { const w=wsInfo[id]; if(w && window.fridayOpenWorkspaceChat) window.fridayOpenWorkspaceChat(id,w.label,w.ico); },
-      onOpenSearch: () => setPaletteOpen(true), onShowChat: () => showChat(true),
+      onOpenSearch: () => setPaletteOpen(true), onShowChat: showGlobalChat,
       onDraftChat: experienceDraft, apiFetch,
       renderApprovals: () => React.createElement(ExperienceApprovals)
 }), !experienceEnabled && !STANDALONE_WS && /*#__PURE__*/React.createElement("div", {

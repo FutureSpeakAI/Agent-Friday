@@ -78,7 +78,8 @@ def _status(states, steps=2):
     """A fake chain_run_status that walks through `states`, one per read."""
     seq = list(states)
 
-    def fake(slug):
+    def fake(slug, run_id=None):
+        assert run_id, 'A scheduled poll must identify its own invocation'
         st = seq.pop(0) if len(seq) > 1 else seq[0]
         return {"state": st, "steps": [
             {"index": i, "name": f"s{i}", "status": "completed" if st == "completed" else
@@ -94,7 +95,7 @@ def fast(monkeypatch):
     monkeypatch.setattr(s, "WORKFLOW_STALL_S", 0)
     started = []
     monkeypatch.setattr(ag, "run_workflow_chain",
-                        lambda slug, conversation_id=None: started.append(slug) or "t1")
+                        lambda slug, conversation_id=None, **context: started.append(slug) or "t1")
     return started
 
 
@@ -124,6 +125,6 @@ def test_a_workflow_that_stops_partway_says_how_far_it_got(monkeypatch, fast):
 
 
 def test_a_missing_workflow_is_an_error_not_a_silent_success(monkeypatch):
-    monkeypatch.setattr(ag, "run_workflow_chain", lambda slug, conversation_id=None: None)
+    monkeypatch.setattr(ag, "run_workflow_chain", lambda slug, conversation_id=None, **context: None)
     with pytest.raises(RuntimeError, match="missing or has no steps"):
         s._run_task({"id": "w1", "task": {"kind": "workflow", "ref": "gone"}})

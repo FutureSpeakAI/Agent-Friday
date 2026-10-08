@@ -139,7 +139,7 @@ class ClauseChunker:
     yields an empty clause; ``flush()`` returns the remainder.
     """
 
-    def __init__(self, comma_words: int = 6, hard_words: int = 12):
+    def __init__(self, comma_words: int = 18, hard_words: int = 48):
         self.comma_words = comma_words
         self.hard_words = hard_words
         self._buf = ""
@@ -156,6 +156,12 @@ class ClauseChunker:
             if cut is None:
                 break
             clause, self._buf = self._buf[:cut].strip(), self._buf[cut:]
+            # Preserve an available paragraph boundary for the mouth's breath
+            # pause, while the returned words remain one natural phrase.
+            paragraph = re.match(r"[ \t]*\n[ \t]*\n", self._buf)
+            if paragraph and clause:
+                clause += "\n\n"
+                self._buf = self._buf[paragraph.end():]
             if clause:
                 out.append(clause)
         return out
@@ -182,7 +188,7 @@ class ClauseChunker:
                         and self._words(s[:i]) >= self.comma_words:
                     return i + 1
         # Hard cut at hard_words, on a whitespace boundary, only when more
-        # words have already arrived (so a 12-word clause still ends at its
+        # words have already arrived (so a clause at the limit still ends at its
         # punctuation rather than one word early).
         if self._words(s) > self.hard_words:
             k = 0
@@ -241,7 +247,7 @@ class VoiceSession:
                  barge_cooldown_s: float = BARGE_COOLDOWN_S,
                  first_token_filler_s: float | None = None,
                  first_token_abort_s: float | None = None,
-                 stream_ear=None):
+                 stream_ear=None, delivery_session=None):
         self.send = send
         self.ear = ear
         self.mouth = mouth
@@ -260,6 +266,11 @@ class VoiceSession:
         self.done = threading.Event()
         self.turn_log: list = []
         self.conversation_id = None
+        self.delivery_session = delivery_session if delivery_session is not None else {}
+        from agent_friday.services.voice_delivery import initialize_session_preferences
+        # The route supplies its settings snapshot; direct injectable sessions
+        # use adaptive defaults and never resolve providers during construction.
+        initialize_session_preferences(self.delivery_session, {})
         self._turn_lock = threading.Lock()
         self._turn_seq = 0
         self._current_turn = None       # dict per turn
@@ -347,6 +358,8 @@ class VoiceSession:
     # ── client → server ──────────────────────────────────────────────────
 
     def handle(self, msg: dict) -> None:
+        if self.done.is_set():
+            return
         t = msg.get("type")
         if t == "audio" and msg.get("data"):
             try:
@@ -359,8 +372,36 @@ class VoiceSession:
         elif t == "speaking":
             self._client_speaking(bool(msg.get("on")))
         elif t == "conversation":
-            self.conversation_id = (msg.get("id") or "").strip() or None
-            # Late results and tool reports follow the thread he switched to.
+            target = (msg.get("id") or "").strip() or None
+            if target == self.conversation_id:
+                return
+            # The initial handshake may supply the chat before any words or
+            # results arrive. Once a call has an owner or context, switching
+            # ends it; mutable callbacks and queued work must keep that owner.
+            pristine = (self.conversation_id is None and not self._turn_seq
+                        and not self._hearing and not self._partials
+                        and self._inject_q.empty() and not self.turn_log
+                        and not getattr(self.vad, "_buf", None))
+            if not pristine:
+                self.done.set()
+                self.barge("conversation")
+                self.delivery_session["delivery_preferences"] = {}
+                self._partials.clear()
+                self._hearing = False
+                self._chunk_pos = 0
+                try:
+                    self.vad.reset()
+                except Exception:
+                    pass
+                try:
+                    while True:
+                        self._inject_q.get_nowait()
+                except queue.Empty:
+                    pass
+                self.send({"type": "error", "error":
+                           "Voice call ended because you changed chats. Start voice again in this chat to continue."})
+                return
+            self.conversation_id = target
             rt = self.hooks.get("retarget")
             if rt is not None and self.conversation_id:
                 try:
@@ -559,7 +600,7 @@ class VoiceSession:
     def deliver(self, text: str, kind: str = "result") -> None:
         """Queue a late result (already introduced as not from the user) to
         be spoken at the next quiet moment."""
-        if text and str(text).strip():
+        if not self.done.is_set() and text and str(text).strip():
             self._inject_q.put((str(text), str(kind or "result")))
             self._maybe_inject()
 
@@ -664,6 +705,13 @@ class VoiceSession:
         if not user_text or self.done.is_set():
             return
         with self._turn_lock:
+            if self.done.is_set():
+                return
+            from agent_friday.services import voice_delivery
+            if not injected:
+                voice_delivery.update_session_preferences(
+                    self.delivery_session, user_text, self.conversation_id)
+            delivery = voice_delivery.session_preferences(self.delivery_session, self.conversation_id)
             self._turn_seq += 1
             turn = {"id": f"{self.session_id}-{self._turn_seq}", "cancel": threading.Event(),
                     # Stops the MIND only (the first-token deadline); `cancel`
@@ -671,11 +719,20 @@ class VoiceSession:
                     "mind_cancel": threading.Event(), "deadline_hit": None,
                     "aborted": False, "barge": "", "clauses": 0, "first_clause_ms": None,
                     "first_audio_ms": None, "t0": self._clock(), "spoken": [],
-                    "audio_bytes": 0, "fallback_used": False,
+                    "audio_bytes": 0, "fallback_used": False, "delivery": delivery,
+                    "conversation_id": self.conversation_id,
                     # `cv` wakes run_turn when the mind returns, a clause
                     # finishes (`pending` counts queued ones) or a barge lands.
                     "cv": threading.Condition(), "pending": 0, "mind_done": False}
             self._current_turn = turn
+            # A chat switch can close the call while delivery preferences are
+            # being prepared, before barge() can see this turn. Publishing the
+            # turn first makes every later close visible to its cancel event.
+            if self.done.is_set():
+                turn["cancel"].set()
+                turn["mind_cancel"].set()
+                self._current_turn = None
+                return
             if self.gpu_queue is not None:
                 self.gpu_queue.clear_turn(turn["id"])
             receipt = self._new_receipt()
@@ -711,8 +768,11 @@ class VoiceSession:
 
             def think():
                 try:
-                    mind["reply"] = self.generate(user_text, on_delta,
-                                                  turn["mind_cancel"]) or ""
+                    if self.done.is_set() or turn["mind_cancel"].is_set():
+                        return
+                    with voice_delivery.using_preferences(turn["delivery"]):
+                        mind["reply"] = self.generate(user_text, on_delta,
+                                                      turn["mind_cancel"]) or ""
                 except Exception as e:
                     mind["error"] = e
                 finally:
@@ -824,7 +884,7 @@ class VoiceSession:
             try:
                 p = self.hooks.get("persist")
                 if p:
-                    p(said, reply, self.conversation_id)
+                    p(said, reply, turn["conversation_id"])
             except Exception:
                 pass
             try:
@@ -852,22 +912,26 @@ class VoiceSession:
             turn["pending"] += 1
         self._speak_q.put((turn, clause, receipt))
 
-    def _synth(self, engine, clause: str, cancel, turn_id=None):
+    def _synth(self, engine, clause: str, cancel, turn_id=None, delivery=None):
         # A clause is one engine call (Kokoro and Piper synthesize it whole),
         # so a barge cannot cut one mid-synthesis: the queue drops the turn's
         # waiting jobs, the running one is flagged, and its audio is never
         # sent.
         from agent_friday import brand
         clause = brand.spoken(clause)
+        from agent_friday.services.voice_delivery import using_preferences
+        def synthesize(job_cancel):
+            with using_preferences(delivery):
+                return list(engine.synthesize_stream(clause, job_cancel))
         if self.gpu_queue is not None and getattr(engine, "device", "") == "cuda":
             out = []
             d = self.gpu_queue.submit(turn_id,
-                                      lambda c: out.extend(engine.synthesize_stream(clause, c)) or True)
+                                      lambda c: out.extend(synthesize(c)) or True)
             d.wait()
             if d.error:
                 raise d.error
             return out
-        return list(engine.synthesize_stream(clause, cancel))
+        return synthesize(cancel)
 
     def _speak_loop(self) -> None:
         while not self.done.is_set():
@@ -880,8 +944,10 @@ class VoiceSession:
                     continue
                 self.stage("mouth", "busy", clause[:40])
                 chunks = None
+                from agent_friday.services.voice_delivery import session_preferences
+                delivery = session_preferences(self.delivery_session, turn["conversation_id"])
                 try:
-                    chunks = self._synth(self.mouth, clause, turn["cancel"], turn["id"])
+                    chunks = self._synth(self.mouth, clause, turn["cancel"], turn["id"], delivery)
                 except Exception as e:
                     log.error("mouth failed on a clause (%s): %s", type(e).__name__, e)
                     if receipt is not None:
@@ -895,7 +961,7 @@ class VoiceSession:
                             f"({type(e).__name__})")
                         try:
                             chunks = self._synth(self.fallback_mouth, clause,
-                                                 turn["cancel"], turn["id"])
+                                                 turn["cancel"], turn["id"], delivery)
                         except Exception as e2:
                             log.error("fallback mouth failed too: %s", e2)
                             chunks = None

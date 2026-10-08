@@ -25,6 +25,25 @@ from agent_friday.services import desktop_bus
 desktop_bp = Blueprint("desktop", __name__)
 
 
+@desktop_bp.route("/api/desktop/board", methods=["GET", "POST"])
+@login_required
+def desktop_board():
+    from agent_friday.services import desktop_cards as cards
+    from agent_friday.routes._errors import api_error
+    try:
+        if request.method == "GET":
+            return jsonify(cards.read_board())
+        # Body parsing may wait across a privacy-session transition.
+        origin = cards._admit()
+        return jsonify(cards.change_board(request.get_json(silent=True), origin=origin))
+    except cards.BoardConflict as exc:
+        return jsonify({"status": "error", "code": "board_changed", "message": str(exc)}), 409
+    except cards.CardError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return api_error(exc, "Couldn't read Home" if request.method == "GET" else "Couldn't save the Home change")
+
+
 @desktop_bp.route("/api/desktop/cards", methods=["GET", "POST"])
 @login_required
 def desktop_cards():
@@ -33,7 +52,8 @@ def desktop_cards():
     try:
         if request.method == "GET":
             return jsonify({"status": "ok", "cards": cards.list_cards()})
-        card = cards.upsert_card(request.get_json(silent=True))
+        origin = cards._admit()
+        card = cards.upsert_card(request.get_json(silent=True), origin=origin)
         return jsonify({"status": "ok", "card": card})
     except cards.CardError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400

@@ -49,6 +49,10 @@ class WorkspaceConflictError(OSError):
     """A newer workspace state must be read before retrying this change."""
 
 
+class WorkspaceGenerationError(RuntimeError):
+    """No usable response was generated; the existing document is unchanged."""
+
+
 class _WorkspaceDoc(dict):
     def __init__(self, values, revision=None):
         super().__init__(values)
@@ -126,10 +130,36 @@ def load_ws_doc(ws_id):
         raise OSError("Workspace customization could not be read") from exc
 
 
-def save_ws_doc(ws_id, doc):
+def _admit_write(origin=None):
+    """Capture storage authority before reading or generating a mutation."""
+    from agent_friday import core
+    from agent_friday.services import off_record
+    with core._SETTINGS_WRITE_LOCK:
+        if off_record.active(core._load_settings()):
+            raise PermissionError("Off the record is on. Workspace Studio changes and chat are not saved.")
+        if origin is not None:
+            _check_write(origin)
+            return origin
+        return off_record.generation()
+
+
+def _check_write(origin):
+    from agent_friday import core
+    from agent_friday.services import off_record
+    if off_record.active(core._load_settings()) or type(origin) is not int or origin != off_record.generation():
+        raise PermissionError("The privacy context changed. No workspace or Studio history change was saved.")
+
+
+def save_ws_doc(ws_id, doc, *, origin=None):
     # Generation happens outside this brief commit lock. A response built from
     # older state must never replace a voice change, reset or cleared history.
-    with _SAVE_LOCK:
+    from agent_friday import core
+    if origin is None:
+        origin = _admit_write()
+    # Every writer shares this lock order, including the appearance editor.
+    # Never wait for settings while holding only the studio commit lock.
+    with core._SETTINGS_WRITE_LOCK, _SAVE_LOCK:
+        _check_write(origin)
         return _save_current_doc(ws_id, doc)
 
 
@@ -389,6 +419,7 @@ def apply_customization(ws_id, patch, label=None):
     sanitized, so the refusal cannot be bypassed by a sanitizer that learns a
     new key later.
     """
+    origin = _admit_write()
     try:
         from agent_friday.services.boot_guard import check_blast_radius, safe_mode
         if safe_mode():
@@ -404,13 +435,106 @@ def apply_customization(ws_id, patch, label=None):
     ver = _apply_to_doc(doc, patch, label)
     if ver is None:
         return doc, None
-    save_ws_doc(ws_id, doc)
+    save_ws_doc(ws_id, doc, origin=origin)
     return doc, ver
 
 
-def revert_customization(ws_id, version_id):
+def _presentation_target(ws_id):
+    from agent_friday.services import workspace_registry
+    target = workspace_registry.get(check_ws_id(ws_id))
+    if not target or workspace_registry.is_held(target) or (target.get("boundary") or {}).get("kind", "native") != "native":
+        raise ValueError("Choose an available native workspace to customize.")
+
+
+def _presentation_patch(patch):
+    """The appearance editor has no arbitrary CSS or hidden-control input."""
+    if not isinstance(patch, dict) or not patch or set(patch) - {"note", "accent", "density", "actions"}:
+        raise ValueError("Choose a note, accent, density or quick actions.")
+    if "note" in patch and patch["note"] is not None and (not isinstance(patch["note"], str) or len(patch["note"]) > 1500):
+        raise ValueError("A workspace note must be at most 1500 characters.")
+    if "accent" in patch and patch["accent"] is not None and (not isinstance(patch["accent"], str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", patch["accent"])):
+        raise ValueError("Choose a six-digit hex accent color.")
+    if "density" in patch and patch["density"] not in (None, "comfortable", "compact"):
+        raise ValueError("Choose comfortable or compact spacing.")
+    if "actions" in patch and patch["actions"] is not None:
+        actions = patch["actions"]
+        if not isinstance(actions, list) or len(actions) > 8:
+            raise ValueError("A workspace can have at most eight quick actions.")
+        for action in actions:
+            if not isinstance(action, dict) or set(action) != {"label", "prompt"}:
+                raise ValueError("Each quick action needs a label and prompt.")
+            for key, limit in (("label", 40), ("prompt", 400)):
+                value = action[key]
+                if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                    raise ValueError("A quick action needs a short label and prompt.")
+    return _sanitize_patch(patch)
+
+
+def _presentation_view(doc):
+    revision = getattr(doc, "_revision", None)
+    return {"workspace": doc["workspace"], "revision": revision.hex() if revision else "new",
+            "customization": doc.get("customization", {}), "versions": doc.get("versions", [])}
+
+
+def read_presentation(ws_id):
+    _presentation_target(ws_id)
+    return _presentation_view(load_ws_doc(ws_id))
+
+
+def _presentation_origin():
+    """Capture even a private origin: read-only previews remain local."""
+    from agent_friday import core
+    from agent_friday.services import off_record
+    with core._SETTINGS_WRITE_LOCK:
+        return off_record.active(core._load_settings()), off_record.generation()
+
+
+def review_presentation(ws_id, patch, expected_revision, *, apply=False, origin=None):
+    """Preview is read-only; applying uses the exact state that was reviewed."""
+    from agent_friday import core
+    from agent_friday.services import off_record
+    from agent_friday.services.boot_guard import check_blast_radius, safe_mode
+
+    origin = _presentation_origin() if origin is None else origin
+    if (type(origin) is not tuple or len(origin) != 2
+            or type(origin[0]) is not bool or type(origin[1]) is not int):
+        raise PermissionError("The privacy context changed. Reload appearance before applying this draft.")
+    origin_private, origin_generation = origin
+    _presentation_target(ws_id)
+    clean = _presentation_patch(patch)
+    if not isinstance(expected_revision, str) or not re.fullmatch(r"new|[a-f0-9]{64}", expected_revision):
+        raise ValueError("Read the workspace appearance before changing it.")
+    # The local edit is brief and contains no provider call. A privacy/settings
+    # transition and another workspace writer cannot cross this commit.
+    with core._SETTINGS_WRITE_LOCK, _SAVE_LOCK:
+        _presentation_target(ws_id)
+        if apply and (origin_private or origin_generation != off_record.generation()):
+            raise PermissionError("The privacy context changed. Reload appearance before applying this draft.")
+        doc = load_ws_doc(ws_id)
+        state = _presentation_view(doc)
+        if state["revision"] != expected_revision:
+            raise WorkspaceConflictError("This workspace changed. Reload its appearance before applying your draft.")
+        allowed, reason = check_blast_radius(clean)
+        if safe_mode() or not allowed:
+            raise PermissionError(reason or "Workspace changes are unavailable in safe mode.")
+        preview = _merge_customization(doc.get("customization", {}), clean)
+        changed = [key for key in clean if doc.get("customization", {}).get(key) != preview.get(key)]
+        if not apply:
+            return {**state, "preview": preview, "changed": changed, "applied": False}
+        if off_record.active(core._load_settings()):
+            raise PermissionError("Off the record is on. Workspace appearance was not saved.")
+        if not changed:
+            return {**state, "changed": [], "applied": False}
+        version = _apply_to_doc(doc, clean, "Workspace appearance")
+        save_ws_doc(ws_id, doc, origin=origin_generation)
+        return {**_presentation_view(doc), "changed": changed, "applied": True,
+                "revert_to": version["id"] if version else None}
+
+
+def revert_customization(ws_id, version_id, *, origin=None):
     """Restore the customization captured in `version_id`. The pre-revert state
     is itself snapshotted first, so reverts are undoable."""
+    origin = _admit_write(origin)
     doc = load_ws_doc(ws_id)
     target = next((v for v in doc.get("versions", []) if v["id"] == version_id), None)
     if not target:
@@ -419,7 +543,7 @@ def revert_customization(ws_id, version_id):
     doc["customization"] = json.loads(json.dumps(target.get("customization", {})))
     # The walk continues from here: the next undo goes before this version.
     doc["undo_cursor"] = target["id"]
-    save_ws_doc(ws_id, doc)
+    save_ws_doc(ws_id, doc, origin=origin)
     return doc
 
 
@@ -431,6 +555,7 @@ def undo_last(ws_id):
     tree, so a mechanism that worked was unusable. This is the one-step form,
     and it is what both the spoken undo and the UI control call.
     """
+    origin = _admit_write()
     doc = load_ws_doc(ws_id)
     # Only the states before CHANGES are steps to walk back through. The
     # snapshots an undo itself takes ("undo_point") are kept so an undo can be
@@ -453,7 +578,7 @@ def undo_last(ws_id):
     _snapshot(doc, "before undo", kind="undo_point")
     doc["customization"] = json.loads(json.dumps(target.get("customization", {})))
     doc["undo_cursor"] = target["id"]
-    save_ws_doc(ws_id, doc)
+    save_ws_doc(ws_id, doc, origin=origin)
     return doc, None
 
 
@@ -466,6 +591,7 @@ def restore_as_of(ws_id, when):
     or before it wins, because that snapshot holds the state as it was BEFORE
     the change that followed.
     """
+    origin = _admit_write()
     if isinstance(when, str):
         try:
             when = datetime.fromisoformat(when)
@@ -489,7 +615,7 @@ def restore_as_of(ws_id, when):
                       % (when.isoformat(timespec="minutes"), oldest.get("ts")))
     candidates.sort(key=lambda t: t[0])
     target = candidates[-1][1]
-    out = revert_customization(ws_id, target["id"])
+    out = revert_customization(ws_id, target["id"], origin=origin)
     if out is None:
         return None, "the chosen snapshot could not be restored"
     return out, None
@@ -543,18 +669,20 @@ def history(ws_id):
 
 def reset_customization(ws_id):
     """Snapshot current, then clear all customization (back to baseline)."""
+    origin = _admit_write()
     doc = load_ws_doc(ws_id)
     if doc.get("customization"):
         _snapshot(doc, "before reset")
     doc["customization"] = {}
-    save_ws_doc(ws_id, doc)
+    save_ws_doc(ws_id, doc, origin=origin)
     return doc
 
 
 def clear_chat(ws_id):
+    origin = _admit_write()
     doc = load_ws_doc(ws_id)
     doc["chat"] = []
-    save_ws_doc(ws_id, doc)
+    save_ws_doc(ws_id, doc, origin=origin)
     return doc
 
 
@@ -632,13 +760,17 @@ Current customization for this workspace:
     return (base_system or "") + guide
 
 
-def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None):
+def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None, *, origin=None):
     """Run one workspace-studio chat turn.
 
     `generate(messages, system, orb_label)` -> reply text. Injected so the
     route can wire the model router (and so tests can stub it). If omitted we
     import the router lazily.
     """
+    from agent_friday import core
+    origin = _admit_write(origin)
+    with core._SETTINGS_WRITE_LOCK:
+        _check_write(origin)
     ws_label = ws_label or ws_id
     doc = load_ws_doc(ws_id)
     doc["chat"].append({
@@ -660,11 +792,15 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None):
                                   orb_label=orb_label, workspace=ws_id)
 
     reply = ""
+    with core._SETTINGS_WRITE_LOCK:
+        _check_write(origin)
     try:
-        reply = generate(history, sys_prompt, f"🛠️ {ws_label} Studio") or ""
+        reply = generate(history, sys_prompt, f"🛠️ {ws_label} Studio")
     except Exception as e:
-        _log.warning("workspace_chat_turn generate error (%s): %s", ws_id, e)
-        reply = "I hit an error reaching the model. Try again in a moment."
+        _log.warning("workspace_chat_turn generation failed (%s): %s", ws_id, type(e).__name__)
+        raise WorkspaceGenerationError("No workspace response was generated. Chat and appearance were not changed.") from None
+    if not isinstance(reply, str) or not reply.strip():
+        raise WorkspaceGenerationError("The model returned no usable workspace response. Chat and appearance were not changed.")
 
     patch = _extract_patch(reply)
     visible_reply = _strip_patch_block(reply) or reply
@@ -705,7 +841,7 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None):
         entry["revert_to"] = applied_version["id"]
         entry["change"] = applied_version["label"]
     doc["chat"].append(entry)
-    save_ws_doc(ws_id, doc)
+    save_ws_doc(ws_id, doc, origin=origin)
 
     return {
         "status": "ok",

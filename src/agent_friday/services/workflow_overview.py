@@ -336,8 +336,19 @@ def _clean_steps(steps):
         prompt = str(s.get("prompt") or "").strip()
         if not prompt:
             continue
-        out.append({"name": str(s.get("name") or "").strip()[:80] or f"Step {len(out) + 1}",
-                    "prompt": prompt[:4000]})
+        step = {"name": str(s.get("name") or "").strip()[:80] or f"Step {len(out) + 1}",
+                "prompt": prompt[:4000]}
+        if "retries" in s:
+            if type(s["retries"]) is not int or not 0 <= s["retries"] <= 3:
+                raise UserFacingValueError("Step retries must be a whole number between 0 and 3.")
+            step["retries"] = s["retries"]
+        if "with_context" in s:
+            if not isinstance(s["with_context"], bool):
+                raise UserFacingValueError("Choose whether the step uses the previous result.")
+            step["with_context"] = s["with_context"]
+        if s.get("seat"):
+            step["seat"] = str(s["seat"])[:200]
+        out.append(step)
         if len(out) >= MAX_STEPS:
             break
     return out
@@ -389,6 +400,8 @@ def draft_from_text(text, *, generate=None, now=None) -> dict:
         "asks_first": asks_first([task_text] + [s["prompt"] for s in drafted["steps"]]),
         "source": source,
         "request": text,
+        "output": {"kind": "reply"}, "inputs": [], "success_criteria": "",
+        "notify": "on_change" if re.search(r"\b(?:only|just)\b.{0,60}\bchang", text, re.I) else "on_complete",
     }
 
 
@@ -398,7 +411,8 @@ _RESULT = {"complete": "finished", "completed": "finished", "ok": "finished",
            "success": "finished", "done": "finished", "failed": "failed",
            "error": "failed", "timeout": "failed", "skipped": "skipped",
            "paused": "skipped", "running": "running", "interrupted": "stopped",
-           "cancelled": "stopped"}
+           "cancelled": "stopped", "completed_unverified": "unverified",
+           "waiting_approval": "waiting", "waiting_for_approval": "waiting"}
 
 
 def _sched_last(rec):
@@ -407,7 +421,8 @@ def _sched_last(rec):
     status = "running" if rec.get("running") else _RESULT.get(
         str(rec.get("last_status") or "").lower(), str(rec.get("last_status") or "finished"))
     return {"at": float(rec["last_run_ts"]), "status": status,
-            "summary": str(rec.get("last_summary") or "")[:300]}
+            "summary": str(rec.get("last_summary") or "")[:300],
+            "run_id": rec.get("last_workflow_run_id")}
 
 
 def _chain_last(st):
@@ -419,11 +434,12 @@ def _chain_last(st):
     if not at:
         return None
     state = st.get("state")
-    status = {"completed": "finished", "failed": "failed", "running": "running"}.get(
-        state, "stopped")
+    status = {"completed": "finished", "failed": "failed", "running": "running",
+              "completed_unverified": "unverified", "waiting_approval": "waiting",
+              "waiting_for_approval": "waiting", "queued": "running"}.get(state, "stopped")
     done = [s for s in steps if s.get("status") == "completed"]
     bad = next((s for s in steps if s.get("status") in ("failed", "interrupted", "cancelled")), None)
-    if status == "finished":
+    if status in ("finished", "unverified"):
         summary = (steps[-1].get("result_tail") or "").strip() if steps else ""
     elif bad:
         summary = f"Step {int(bad.get('index', 0)) + 1} ({bad.get('name')}): " + str(
@@ -434,7 +450,11 @@ def _chain_last(st):
     else:
         summary = f"Stopped after {len(done)} of {len(steps)} steps."
     return {"at": at, "status": status, "summary": summary[-300:],
-            "steps": [{"name": s.get("name"), "status": s.get("status")} for s in steps]}
+            "steps": [{"name": s.get("name"), "status": s.get("status"),
+                       "task_id": s.get("task_id")} for s in steps],
+            "task_ids": [s["task_id"] for s in steps if s.get("task_id")],
+            **{key: st.get(key) for key in ("run_id", "workflow_revision", "conversation_id", "project_id",
+                                          "verification", "delivery", "outputs")}}
 
 
 def _newest(*runs):
@@ -442,10 +462,12 @@ def _newest(*runs):
     if not runs:
         return None
     best = max(runs, key=lambda r: r["at"])
-    # A chain's own record knows its steps; keep them on whichever run wins.
+    # Enrich only the same invocation. Nearby timestamps can belong to
+    # different runs and must never borrow each other's output or verification.
     for r in runs:
-        if r is not best and r.get("steps") and not best.get("steps") and abs(r["at"] - best["at"]) < 6 * 3600:
-            best = dict(best, steps=r["steps"])
+        if (r is not best and r.get("steps") and best.get("run_id")
+                and r.get("run_id") == best["run_id"]):
+            best = dict(best, **r)
     return best
 
 
@@ -476,7 +498,7 @@ def overview() -> dict:
         if slug in invalid_starters:
             continue
         full = _agent.load_workflow_chain(slug) or {}
-        steps = [{"name": s.get("name"), "prompt": s.get("prompt")} for s in full.get("steps") or []]
+        steps = [dict(s) for s in full.get("steps") or []]
         rec = by_ref.get(slug)
         when = {"trigger": rec["trigger"], "spec": rec.get("spec") or {}} if rec else None
         try:
@@ -493,6 +515,11 @@ def overview() -> dict:
             "next_run": (rec or {}).get("next_run"), "last_run": last,
             "asks_first": asks_first(s["prompt"] for s in steps),
             "updated": c.get("updated"),
+            "revision": full.get("revision", 1),
+            "project_id": full.get("project_id"), "conversation_id": full.get("conversation_id"),
+            "inputs": full.get("inputs") or [], "success_criteria": full.get("success_criteria") or "",
+            "output": full.get("output") or {"kind": "reply"},
+            "notify": (rec or {}).get("notify") or full.get("notify") or "on_complete",
         })
     for r in schedules:
         task = r.get("task") or {}
@@ -520,8 +547,14 @@ def overview() -> dict:
     workflows.sort(key=lambda w: (not w["running"], -(w["last_run"] or {}).get("at", 0),
                                   (w["name"] or "").lower()))
     routines.sort(key=lambda r: (not r["enabled"], (r["name"] or "").lower()))
+    from agent_friday.services import conversations as _conversations, projects as _projects
     return {"workflows": workflows, "routines": routines, "templates": templates,
-            "pending_approvals": _pending_approvals(), "now": _time.time()}
+            "pending_approvals": _pending_approvals(), "now": _time.time(),
+            "projects": [{"id": p["id"], "name": p["name"]} for p in _projects.list_all()],
+            "conversations": [{"id": c["id"], "title": c["title"], "project_id": c.get("project")}
+                              for c in _conversations.list_all(include_archived=False)],
+            "execution": {"host": "this_computer", "requires_friday_running": True,
+                          "note": "Runs while Friday is running on this computer. Sleeping or shutting it down pauses availability."}}
 
 
 # ── Saving and deleting ─────────────────────────────────────────────────────
@@ -531,7 +564,11 @@ def _linked_schedule(slug, schedule_id):
     if schedule_id:
         rec = _sched.get_schedule(schedule_id)
         if rec:
+            task = rec.get("task") or {}
+            if slug and (task.get("kind") != "workflow" or task.get("ref") != slug):
+                raise UserFacingValueError("That schedule does not belong to this workflow.")
             return rec
+        raise UserFacingValueError("That schedule is unavailable; reload the workflow before saving.")
     if slug:
         for r in _sched.list_schedules():
             t = r.get("task") or {}
@@ -541,62 +578,96 @@ def _linked_schedule(slug, schedule_id):
 
 
 def save(draft) -> dict:
-    """Save a reviewed draft: the steps as a workflow, the timing as a
-    schedule that runs it. Returns `{"slug", "schedule_id"}`.
-
-    `slug` / `schedule_id` on the draft name what is being edited. A renamed
-    workflow moves to its new name; a one-step scheduled prompt made by the
-    older screen becomes a workflow the first time it is edited here.
-    """
-    from agent_friday.services import agent as _agent
+    """Validate and save one definition and its schedule under a shared lock."""
+    from agent_friday.services import workflow_operations as _ops
+    _ops.require_recording()
     from agent_friday.services import scheduler as _sched
-    draft = draft or {}
+    with _ops.LOCK, _sched._STORE_LOCK:
+        return _save(draft)
+
+
+def _save(draft) -> dict:
+    from agent_friday.services import agent as _agent, scheduler as _sched
+    from agent_friday.services import workflow_operations as _ops
+    if not isinstance(draft, dict):
+        raise UserFacingValueError("A workflow needs a name and a list of steps.")
     name = str(draft.get("name") or "").strip()
+    if not name or len(name) > 120:
+        raise UserFacingValueError("Give the workflow a name of at most 120 characters.")
+    if not isinstance(draft.get("steps"), list) or len(draft["steps"]) > MAX_STEPS:
+        raise UserFacingValueError(f"A workflow needs at most {MAX_STEPS} steps.")
     steps = _clean_steps(draft.get("steps"))
-    if not name:
-        raise UserFacingValueError("Give the workflow a name.")
     if not steps:
         raise UserFacingValueError("Add at least one step that says what Friday should do.")
     old_slug = draft.get("slug") or None
-    new_slug = _agent._chain_slug(name)
-    if new_slug != old_slug and _agent.load_workflow_chain(new_slug):
+    previous = _agent.load_workflow_chain(old_slug) if old_slug else None
+    if old_slug and not previous:
+        raise UserFacingValueError("That workflow no longer exists; reload before saving.")
+    if previous and "revision" in draft and draft["revision"] != previous.get("revision", 1):
+        raise UserFacingValueError("This workflow changed since you opened it. Reload and review the newer version before saving.")
+    new_slug = old_slug or _agent._chain_slug(name)
+    if not old_slug and _agent.load_workflow_chain(new_slug):
         raise UserFacingValueError(f"There's already a workflow called “{name}”. Pick another name.")
     rec = _linked_schedule(old_slug, draft.get("schedule_id"))
     if rec and rec.get("source") == "builtin":
         raise UserFacingValueError("Friday's built-in routines can be switched on or off, not edited.")
-    when = draft.get("when") or None
-    if when:
-        trig = when.get("trigger")
-        if trig not in ("daily", "weekly", "interval", "once"):
-            raise UserFacingValueError("That timing isn't one Friday can keep.")
-        if trig == "once" and float((when.get("spec") or {}).get("at") or 0) <= _time.time():
-            raise UserFacingValueError("That time has already passed.")
-    stored = _agent.save_workflow_chain({
-        "name": name, "description": str(draft.get("description") or "").strip()[:300],
-        "steps": [{"name": s["name"], "prompt": s["prompt"]} for s in steps]})
-    slug = stored["slug"]
-    if old_slug and old_slug != slug:
-        _agent.delete_workflow_chain(old_slug)
+    contract = _ops.validate_contract(draft, previous)
+    when = _ops.validate_timing(draft.get("when") or None)
+    if previous:
+        _ops.remember_definition(previous, rec)
+    # The definition and timetable form one save. Keep exact prior bytes so
+    # rollback neither invents a revision nor loses scheduler bookkeeping.
+    target = _agent._workflows_dir() / f"{new_slug}.json"
+    original = target.read_bytes() if target.exists() else None
+    prior_schedules = _sched._read_store()
     schedule_id = None
-    if when:
-        body = {"name": name, "trigger": when["trigger"], "spec": dict(when.get("spec") or {}),
-                "task": {"kind": "workflow", "ref": slug}}
-        if rec:
-            patch = dict(body, enabled=bool(draft.get("enabled", rec.get("enabled", True))))
-            if int(rec.get("timeout_seconds") or 0) < WORKFLOW_TIMEOUT_S:
-                patch["timeout_seconds"] = WORKFLOW_TIMEOUT_S
-            schedule_id = _sched.update_schedule(rec["id"], patch)["id"]
-        else:
-            schedule_id = _sched.register_schedule(dict(
-                body, enabled=bool(draft.get("enabled", True)),
-                notify="on_complete", timeout_seconds=WORKFLOW_TIMEOUT_S))["id"]
-    elif rec:
-        _sched.delete_schedule(rec["id"])
-    return {"slug": slug, "schedule_id": schedule_id}
+    try:
+        stored = _agent.save_workflow_chain({
+            **(previous or {}), "name": name, "slug": new_slug,
+            "description": str(draft.get("description") or "").strip()[:300],
+            "steps": steps, **contract})
+        slug = stored["slug"]
+        if when:
+            body = {"name": name, "trigger": when["trigger"], "spec": dict(when.get("spec") or {}),
+                    "task": {"kind": "workflow", "ref": slug}, "notify": contract["notify"]}
+            if rec:
+                patch = dict(body, enabled=bool(draft.get("enabled", rec.get("enabled", True))))
+                if int(rec.get("timeout_seconds") or 0) < WORKFLOW_TIMEOUT_S:
+                    patch["timeout_seconds"] = WORKFLOW_TIMEOUT_S
+                saved_schedule = _sched.update_schedule(rec["id"], patch)
+                if not saved_schedule:
+                    raise UserFacingValueError("The schedule changed while saving. Reload and try again.")
+            else:
+                saved_schedule = _sched.register_schedule(dict(
+                    body, enabled=bool(draft.get("enabled", True)), timeout_seconds=WORKFLOW_TIMEOUT_S))
+            schedule_id = saved_schedule["id"]
+        elif rec:
+            if not _sched.delete_schedule(rec["id"]):
+                raise UserFacingValueError("The schedule changed while saving. Reload and try again.")
+        _ops.remember_definition(stored, _sched.get_schedule(schedule_id) if schedule_id else None)
+    except Exception:
+        try:
+            if _sched._read_store() != prior_schedules:
+                _sched._write_store(prior_schedules)
+        finally:
+            if original is None:
+                target.unlink(missing_ok=True)
+            else:
+                _ops.atomic_write(target, original)
+        raise
+    return {"slug": slug, "schedule_id": schedule_id, "revision": stored.get("revision", 1)}
 
 
 def delete(slug=None, schedule_id=None) -> bool:
-    """Remove a workflow and the schedule that runs it."""
+    """Remove a workflow and its schedule without racing a save or run."""
+    from agent_friday.services import workflow_operations as _ops
+    from agent_friday.services import scheduler as _sched
+    _ops.require_recording()
+    with _ops.LOCK, _sched._STORE_LOCK:
+        return _delete(slug, schedule_id)
+
+
+def _delete(slug=None, schedule_id=None):
     from agent_friday.services import agent as _agent
     from agent_friday.services import scheduler as _sched
     rec = _linked_schedule(slug, schedule_id)

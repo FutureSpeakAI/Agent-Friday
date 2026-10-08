@@ -486,7 +486,7 @@ def runs(cid: str, limit: int = 30) -> list:
     return data[:max(1, int(limit or 30))]
 
 
-def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S) -> dict:
+def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S, _site_snapshot=None) -> dict:
     """One command in the codebase's own folder (the Terminal, chat-hub.md M3b).
 
     The same refusals as the chat's run_command apply before anything runs: a
@@ -518,8 +518,18 @@ def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S) -> dict:
         return {"status": "refused", "say": "Blocked: that command addresses Friday's own local API, which trusts this machine as the owner. It was not run."}
     t0 = time.time()
     try:
-        proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], cwd=str(repo),
-                              capture_output=True, text=True, timeout=timeout_s, creationflags=_POPEN_FLAGS)
+        if _site_snapshot is not None:
+            # Internal Sites approval executor only; never a model/tool input.
+            from agent_friday.services import site_builds
+            frozen_cwd, build_env = site_builds.execution_context(cid, _site_snapshot)
+            from agent_friday.services import sites_privacy
+            generation = site_builds.execution_generation(frozen_cwd)
+            proc = site_builds.run_process(command, cwd=frozen_cwd, env=build_env, timeout_s=timeout_s,
+                guard=site_builds.launch_guard(cid, frozen_cwd, command),
+                check_current=lambda: sites_privacy.require_generation(generation))
+        else:
+            proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], cwd=str(repo),
+                                  capture_output=True, text=True, timeout=timeout_s, creationflags=_POPEN_FLAGS)
         out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
         code = proc.returncode
         status = "ok"
@@ -527,6 +537,11 @@ def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S) -> dict:
         out, code, status = "(timed out after %ds)" % timeout_s, -1, "timeout"
     except Exception as e:
         out, code, status = "(could not run: %s)" % e, -1, "error"
+    if _site_snapshot is not None:
+        try:
+            site_builds.execution_generation(_site_snapshot)
+        except ValueError:
+            return {"status": "refused", "say": "This build's privacy context ended; no command output was retained."}
     try:
         out = _cred.redact_secrets(out)
     except Exception:
@@ -536,6 +551,11 @@ def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S) -> dict:
     entry = {"id": "run-" + secrets.token_hex(4), "command": command[:2000], "exit": code, "status": status,
              "output": out, "duration_s": round(time.time() - t0, 2), "ts": time.time(),
              "at": datetime.now().isoformat(timespec="seconds")}
+    if _site_snapshot is not None:
+        # Sites owns this build's durable receipt. Do not duplicate delayed
+        # output in the codebase ledger or announce it on a second channel.
+        site_builds.execution_generation(_site_snapshot)
+        return dict(entry, status=status)
     with _LOCK:
         try:
             p = _runs_file(cid)

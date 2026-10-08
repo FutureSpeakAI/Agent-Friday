@@ -30,11 +30,16 @@ def test_ask_friday_is_egress_gated(monkeypatch):
         calls["ctx"] = kw.get("session_ctx")
         calls["max_tokens"] = kw.get("max_tokens")
         return "Priya's number is 555-0100 and the vault says TIER_3 secret.", []
+
+    def fake_reply_cap(settings=None, user_text=""):
+        calls["cap_question"] = user_text
+        return 300
+
     monkeypatch.setattr("agent_friday.services.agent._generate_agent", fake_generate)
     monkeypatch.setattr("agent_friday.services.local_seats.resolve", lambda role: "seat-x")
     monkeypatch.setattr(rv, "_build_voice_system_prompt",
                         lambda settings=None, description=None, seat=None: ("VOICE PROMPT", {}))
-    monkeypatch.setattr(rv, "_voice_reply_cap", lambda settings=None: 300)
+    monkeypatch.setattr(rv, "_voice_reply_cap", fake_reply_cap)
     gated = {}
 
     def fake_gate(result, fname):
@@ -52,6 +57,7 @@ def test_ask_friday_is_egress_gated(monkeypatch):
     assert calls["model"] == "seat-x"
     assert calls["ctx"]["provider"] == "local" and calls["ctx"]["is_voice"] is True
     assert calls["max_tokens"] == 300
+    assert calls["cap_question"] == "what is Priya's number?"
     # The relay note rides in the USER turn and the question ends it; the
     # system text is the voice prompt untouched, so it shares the seat's
     # prefix cache with local sessions (any change to the system message

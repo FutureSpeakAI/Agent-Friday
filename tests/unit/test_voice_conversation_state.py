@@ -50,10 +50,12 @@ def test_a_detail_seeking_exchange_asks_for_depth_and_keeps_it():
     assert {"voter", "database"} & set(vcs.priorities(s))
 
 
-def test_a_quick_back_and_forth_stays_brief():
+def test_a_quick_back_and_forth_stays_adaptive_without_a_sentence_quota():
     s, seen = _replay(QUICK)
-    assert "deep" not in seen, seen
-    assert "a sentence or two" in vcs.render(s) or "a few spoken sentences" in vcs.render(s)
+    assert seen == ["normal"] * len(QUICK), seen
+    note = vcs.render(s)
+    assert "no sentence quota" in note
+    assert "a sentence or two" not in note and "connected paragraphs" not in note
 
 
 def test_a_brevity_cue_sticks_until_he_asks_for_more():

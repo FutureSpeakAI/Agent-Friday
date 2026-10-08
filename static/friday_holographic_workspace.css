@@ -11,6 +11,8 @@ body[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .fr
     max-height: max(1px, calc(100dvh - var(--friday-content-top, 0px) - var(--friday-content-bottom, 0px) - 16px));
 }
 .fr-holo-dialog * { box-sizing: border-box; }
+.fr-holo-dialog [data-holo-preference-status]:empty { display: none; }
+.fr-holo-dialog [data-holo-reset-layout] { margin-top: 12px; }
 .fr-holo-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 24px 28px 20px; border-bottom: 1px solid color-mix(in srgb, var(--fr-cyan) 16%, transparent); }
 .fr-holo-header h2 { margin: 6px 0 0; font: 500 25px/1.3 var(--fr-font-display); letter-spacing: -.02em; }
 .fr-holo-eyebrow { color: var(--fr-cyan); font: 10px/1.4 var(--fr-font-display); letter-spacing: .16em; }

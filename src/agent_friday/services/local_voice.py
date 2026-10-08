@@ -618,22 +618,36 @@ class PiperTTS:
         from agent_friday import brand
         text = brand.spoken(text)
         self.load()
-        raw = self._synthesize_native(text)
-        return _resample_pcm16(raw, self._native_rate(), PLAYBACK_RATE)
+        from agent_friday.services.voice_delivery import synthesis_plan, finish_pcm
+        plan = synthesis_plan(text)
+        raw = self._synthesize_native(text, speed=plan["speed"])
+        return finish_pcm(_resample_pcm16(raw, self._native_rate(), PLAYBACK_RATE), plan)
 
-    def _synthesize_native(self, text: str) -> bytes:
+    def _synthesize_native(self, text: str, speed: float = 1.0) -> bytes:
         """Return PCM16 bytes at the voice's native sample rate.
 
         Handles both the streaming-raw API and the write-to-WAV API across
         piper-tts versions, plus AudioChunk objects from newer releases.
         """
         piper = self._piper
+        def options(method):
+            # Piper 1.3 uses SynthesisConfig; earlier supported releases use
+            # length_scale. Inspect before calling so a TypeError raised by
+            # synthesis itself is not mistaken for an unsupported option.
+            import inspect
+            parameters = inspect.signature(method).parameters
+            if "syn_config" in parameters:
+                from piper.config import SynthesisConfig
+                return {"syn_config": SynthesisConfig(length_scale=1.0 / speed)}
+            if "length_scale" in parameters:
+                return {"length_scale": 1.0 / speed}
+            return {}
         # Newer piper: synthesize() yields AudioChunk objects.
         if hasattr(piper, "synthesize"):
             try:
                 out = bytearray()
                 produced = False
-                for chunk in piper.synthesize(text):
+                for chunk in piper.synthesize(text, **options(piper.synthesize)):
                     produced = True
                     data = getattr(chunk, "audio_int16_bytes", None)
                     if data is None:
@@ -647,13 +661,13 @@ class PiperTTS:
         # Older piper: synthesize_stream_raw() yields raw PCM bytes.
         if hasattr(piper, "synthesize_stream_raw"):
             out = bytearray()
-            for b in piper.synthesize_stream_raw(text):
+            for b in piper.synthesize_stream_raw(text, **options(piper.synthesize_stream_raw)):
                 out.extend(b)
             return bytes(out)
         # Fallback: synthesize to a WAV file object.
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
-            piper.synthesize(text, wf)
+            piper.synthesize(text, wf, **options(piper.synthesize))
         pcm, _rate = _wav_to_pcm16(buf.getvalue())
         return pcm
 

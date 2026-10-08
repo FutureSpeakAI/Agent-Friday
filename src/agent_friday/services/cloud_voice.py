@@ -36,6 +36,7 @@ NO KEYS IN THIS FILE. Keys resolve through the existing mechanism
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -291,6 +292,7 @@ class CloudVoiceResult:
     priced: bool
     durable: bool
     notes: list = field(default_factory=list)
+    voice_id: str = ""
 
 
 # -- Keys --------------------------------------------------------------------
@@ -667,7 +669,8 @@ def gate_synthesis_input(text: str, provider: str) -> str:
 
 def synthesize(text: str, *, provider: str | None = None,
                settings: dict | None = None,
-               session_ctx=None) -> CloudVoiceResult:
+               session_ctx=None, model: str | None = None,
+               voice_id: str | None = None) -> CloudVoiceResult:
     """Synthesize `text` with the user's selected cloud provider.
 
     Raises :class:`CloudVoiceUnavailable` rather than falling back. The caller
@@ -688,6 +691,17 @@ def synthesize(text: str, *, provider: str | None = None,
         raise CloudVoiceUnavailable(
             "%r is not a known cloud voice provider" % name,
             code="cloud_voice_unknown_provider", requested=str(name))
+    # A Crew profile binds an exact voice/model. Invalid explicit choices
+    # never fall through to the user's unrelated default voice.
+    if model is not None and model not in PROVIDERS[name]["models"]:
+        raise CloudVoiceUnavailable(
+            "the selected voice model is not supported by this provider",
+            code="cloud_voice_unknown_model", requested=name)
+    if voice_id is not None and (not isinstance(voice_id, str)
+                                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", voice_id)):
+        raise CloudVoiceUnavailable(
+            "the selected voice identifier is invalid",
+            code="cloud_voice_invalid_voice", requested=name)
     if not ga_established(name):
         raise CloudVoiceUnavailable(
             "%s cannot be used: %s" % (
@@ -730,13 +744,19 @@ def synthesize(text: str, *, provider: str | None = None,
     # THE GATE. Before any byte leaves. Raises on withhold.
     text = gate_synthesis_input(text, name)
 
-    model = selected_model(name, s)
-    voice = selected_voice(name, s)
+    model = model if model is not None else selected_model(name, s)
+    voice = voice_id if voice_id is not None else selected_voice(name, s)
+    from agent_friday.services.voice_delivery import current_overrides, synthesis_plan
+    # Call-bound preferences override the saved pace. A caller with neither
+    # keeps the provider's own voice settings; no audio is retimed locally.
+    speed = None
+    if "voice_speaking_pace" in s or "voice_speaking_pace" in current_overrides():
+        speed = synthesis_plan(text, s)["speed"]
     started = time.time()
     if name == "elevenlabs":
-        audio, mime = _synth_elevenlabs(text, key, model, voice)
+        audio, mime = _synth_elevenlabs(text, key, model, voice, speed=speed)
     else:
-        audio, mime = _synth_inworld(text, key, model, voice)
+        audio, mime = _synth_inworld(text, key, model, voice, speed=speed)
     elapsed_ms = int((time.time() - started) * 1000)
 
     cost = _meter(name, model, text, elapsed_ms, s, session_ctx)
@@ -747,7 +767,7 @@ def synthesize(text: str, *, provider: str | None = None,
             "Inworld audio is for playback only - Friday will not archive it. "
             "See Q3 in the cloud voice spec.")
     return CloudVoiceResult(
-        audio=audio, mime=mime, provider=name, model=model,
+        audio=audio, mime=mime, provider=name, model=model, voice_id=voice,
         chars=len(text), duration_ms=elapsed_ms, cost_usd=cost,
         priced=(metered_id == model), durable=audio_is_durable(name),
         notes=notes)
@@ -775,14 +795,17 @@ def _meter(provider: str, model: str, text: str, elapsed_ms: int,
         return None
 
 
-def _synth_elevenlabs(text: str, key: str, model: str, voice: str):
+def _synth_elevenlabs(text: str, key: str, model: str, voice: str, *, speed=None):
     """POST /text-to-speech/{voice_id}. HTTP client imported lazily (C3)."""
     import requests
     url = "%s/text-to-speech/%s" % (PROVIDERS["elevenlabs"]["base_url"], voice)
+    payload = {"text": text, "model_id": model}
+    if speed is not None:
+        payload["voice_settings"] = {"speed": speed}
     try:
         resp = requests.post(
             url, headers={"xi-api-key": key, "accept": "audio/mpeg"},
-            json={"text": text, "model_id": model}, timeout=_TIMEOUT)
+            json=payload, timeout=_TIMEOUT)
     except Exception as e:
         raise CloudVoiceUnavailable(
             "could not reach ElevenLabs",
@@ -794,7 +817,7 @@ def _synth_elevenlabs(text: str, key: str, model: str, voice: str):
     return resp.content, "audio/mpeg"
 
 
-def _synth_inworld(text: str, key: str, model: str, voice: str):
+def _synth_inworld(text: str, key: str, model: str, voice: str, *, speed=None):
     """POST /voice. Inworld authenticates with ``Authorization: Basic <key>``.
 
     Q5 - whether Inworld has an ElevenLabs-style key-id trap - is unverified, so
@@ -803,11 +826,16 @@ def _synth_inworld(text: str, key: str, model: str, voice: str):
     import base64
     import requests
     url = "%s/voice" % PROVIDERS["inworld"]["base_url"]
+    # The response contract below is WAV, while this endpoint defaults to MP3.
+    audio_config = {"audioEncoding": "LINEAR16"}
+    if speed is not None:
+        audio_config["speakingRate"] = speed
     try:
         resp = requests.post(
             url, headers={"Authorization": "Basic %s" % key,
                           "Content-Type": "application/json"},
-            json={"text": text, "voiceId": voice, "modelId": model},
+            json={"text": text, "voiceId": voice, "modelId": model,
+                  "audioConfig": audio_config},
             timeout=_TIMEOUT)
     except Exception as e:
         raise CloudVoiceUnavailable(

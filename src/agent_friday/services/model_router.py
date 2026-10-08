@@ -1546,6 +1546,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
     # The pinned model of a scheduled cloud run (see _call_claude). The legacy
     # single slot pointed at OpenRouter is OpenRouter for this purpose.
     from agent_friday.services.local_only_guard import apply_pin, pinned_model
+    _crew_binding = (session_ctx or {}).get("crew_binding")
+    if _crew_binding:
+        if (_crew_binding.get("model") != model or _crew_binding.get("provider") != provider):
+            raise RuntimeError("The Crew agent's selected provider and model cannot be substituted.")
+        fallback_models = None
     if pinned_model():
         _pin_provider = provider
         if not _pin_provider:
@@ -1554,6 +1559,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             _pin_provider = 'openrouter' if 'openrouter.ai' in _legacy_url else 'openai'
         model = apply_pin(_pin_provider, model)
         fallback_models = None      # no server-side hop to another model
+    if _crew_binding and model != _crew_binding.get("model"):
+        raise RuntimeError("This run's model pin conflicts with the Crew agent's selected model.")
     import requests
     # Lazy for the same reason as in _call_ollama: defined in the upper layer.
     from agent_friday.services.agent import _oai_agentic_loop
@@ -1574,6 +1581,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             except Exception:
                 prov = None
 
+    if _crew_binding and prov is None:
+        raise RuntimeError("The Crew agent's selected provider is no longer registered.")
     features = {}
     local_bypass = False
     timeout_s = 180
@@ -2033,13 +2042,17 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 except Exception:
                     pass
             _t0 = _time.time()
+            def _post_current(**request_kwargs):
+                if (session_ctx or {}).get("crew_agent_id"):
+                    from agent_friday.services.agent import _crew_model_authority
+                    _crew_model_authority(session_ctx)
+                return requests.post(f"{base_url}/chat/completions", headers=headers,
+                                     timeout=timeout_s, **request_kwargs)
             try:
                 if _want_stream:
                     _spayload = dict(payload)
                     _spayload["stream"] = True
-                    r = requests.post(f"{base_url}/chat/completions",
-                                      headers=headers, json=_spayload,
-                                      timeout=timeout_s, stream=True)
+                    r = _post_current(json=_spayload, stream=True)
                     # An endpoint that refuses to stream must not take the
                     # turn down with it -- fall back to the blocking call once.
                     #
@@ -2054,13 +2067,9 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                         except Exception:
                             pass
                         _want_stream = False
-                        r = requests.post(f"{base_url}/chat/completions",
-                                          headers=headers, json=payload,
-                                          timeout=timeout_s)
+                        r = _post_current(json=payload)
                 else:
-                    r = requests.post(f"{base_url}/chat/completions",
-                                      headers=headers, json=payload,
-                                      timeout=timeout_s)
+                    r = _post_current(json=payload)
             except Exception:
                 _health(False, int((_time.time() - _t0) * 1000))
                 raise
@@ -2076,9 +2085,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 if retry_after > 0:
                     _time.sleep(retry_after)
                     _t0 = _time.time()
-                    r = requests.post(f"{base_url}/chat/completions",
-                                      headers=headers, json=payload,
-                                      timeout=timeout_s)
+                    r = _post_current(json=payload)
             # 503 "Loading model" from a seat we serve ourselves: wait for it.
             # Not for a cloud 503 (that is the fallback chain's business) and
             # not past SEAT_LOADING_WAIT_S, after which the 503 raises as
@@ -2092,10 +2099,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                     except Exception:
                         pass
                     _time.sleep(SEAT_LOADING_POLL_S)
-                    r = requests.post(f"{base_url}/chat/completions",
-                                      headers=headers,
-                                      json=(dict(payload, stream=True) if _want_stream else payload),
-                                      timeout=timeout_s, stream=_want_stream)
+                    r = _post_current(json=(dict(payload, stream=True) if _want_stream else payload),
+                                      stream=_want_stream)
                     if r.status_code == 503 and not _body_says_loading(r):
                         break
             try:
@@ -2167,6 +2172,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # Attribute cost to the model the provider ACTUALLY served (an
             # OpenRouter fallback may answer with a different model than asked).
             served = resp.get('model')
+            if _crew_binding and served and served != model:
+                raise RuntimeError("The selected provider returned a different model; Crew did not accept the substituted response.")
             if served:
                 _last_served['id'] = served
             if served and served != model and isinstance(resp, dict):
@@ -3178,6 +3185,9 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     # describing capabilities she does not have — and improvisation about
     # yourself is indistinguishable from lying about yourself.
     prefix += honest_limits_block()
+    from agent_friday.services.workflow_tools import CAPABILITY_INDEX
+    from agent_friday.services.voice_delivery import PRESENCE_RULE
+    prefix += "\n" + CAPABILITY_INDEX + "\n" + PRESENCE_RULE
     try:
         from agent_friday.services.self_account import describe as _self_account
         _acct = _self_account()

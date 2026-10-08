@@ -59,6 +59,34 @@ body:where(.friday-experience-enabled)[data-friday-spatial-layout] .fwin.closing
   body.friday-experience-enabled .dock { display: none !important; }
 }
 body.friday-experience-enabled .fx-main[data-view=day]{max-height:none;min-width:0}
+/* Geometry is written once for the scene and every registered native surface.
+ * Independent CSS transitions would break that shared collision boundary. */
+html body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) [data-friday-spatial-surface][style]{
+  position:fixed!important;left:var(--friday-surface-x)!important;top:var(--friday-surface-y)!important;
+  right:auto!important;bottom:auto!important;width:var(--friday-surface-w)!important;height:var(--friday-surface-h)!important;
+  min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;
+  box-sizing:border-box;transform:none!important;transition:none!important;
+}
+body.friday-experience-enabled[data-friday-spatial-layout] [data-friday-overlay]{
+  box-sizing:border-box;min-width:0;min-height:0;
+  max-width:max(1px,calc(100vw - var(--friday-content-left) - var(--friday-content-right) - 16px))!important;
+  max-height:max(1px,calc(100dvh - var(--friday-content-top) - var(--friday-content-bottom) - 16px))!important;
+  overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere;
+}
+body.friday-experience-enabled[data-friday-spatial-layout] [data-friday-overlay-backdrop]{
+  position:fixed!important;inset:var(--friday-content-top) var(--friday-content-right) var(--friday-content-bottom) var(--friday-content-left)!important;
+  width:auto!important;height:auto!important;min-width:0;min-height:0;box-sizing:border-box;
+}
+body.friday-experience-enabled[data-friday-spatial-layout] [data-friday-overlay=toast]{
+  position:fixed!important;left:calc(var(--friday-content-left) + 8px)!important;right:calc(var(--friday-content-right) + 8px)!important;
+  top:auto!important;bottom:calc(var(--friday-content-bottom) + 8px)!important;transform:none!important;margin-inline:auto;width:max-content;
+}
+body.friday-experience-enabled[data-friday-layout-motion=off] :is(.fwin,.chat-win,.fx-shell,.friday-avatar-caption){animation:none!important;transition:none!important}
+/* A short protected work area must scroll its complete Salon, including an
+ * inline confirmation and composer. Keep a usable log inside that fallback. */
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-workspace-studio{overflow:auto!important;overscroll-behavior:contain}
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-studio-log{min-height:80px}
+@media(prefers-reduced-motion:reduce){#friday-toast-host>[role="status"]{transform:none!important;transition:none!important;animation:none!important}}
 :where(body.friday-experience-enabled) .fx-home-bottom,:where(body.friday-experience-enabled) .fx-home-composer{min-width:0}
 :where(body.friday-experience-enabled) .fx-home-composer-footer,:where(body.friday-experience-enabled) .fx-home-context{flex-wrap:wrap}
 :where(body.friday-experience-enabled) .fx-home-composer textarea{min-width:0;box-sizing:border-box}
@@ -129,4 +157,13 @@ body.friday-experience-enabled .fx-home-card-deck[data-expanded=true]{flex:1 1 0
   :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-context{flex:1;flex-wrap:nowrap}
   :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-context select{width:100%;min-width:0;max-width:140px}
   :where(body.friday-experience-enabled) .fx-main:has(.fx-home-card-deck) .fx-home-context>button{display:none}
+}
+
+/* Keep the complete chat reachable when its protected work area is short. */
+@media(max-height:480px){
+  body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .chat-panel.open .fa-chat{overflow:auto;overscroll-behavior:contain}
+}
+/* Compact titlebars count padding inside their intended height. */
+@media(max-width:760px){
+  body.friday-experience-enabled .fwin-bar{box-sizing:border-box;min-height:46px;padding:7px 11px}
 }

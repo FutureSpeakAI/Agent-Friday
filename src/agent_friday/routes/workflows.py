@@ -794,8 +794,14 @@ def workflow_chains_create():
     with_context?}, ...]}."""
     data = request.get_json(silent=True) or {}
     try:
-        stored = save_workflow_chain(data)
-        return jsonify({"status": "ok", "chain": stored})
+        from agent_friday.services import workflow_operations as _ops
+        if not isinstance(data, dict):
+            raise ValueError("Provide a workflow definition.")
+        previous = load_workflow_chain(data.get('slug') or data.get('name') or '')
+        if previous:
+            data = dict(data, slug=previous['slug'])
+        saved = _ops.execute("update" if previous else "create", data)
+        return jsonify({"status": "ok", "chain": saved["workflow"]})
     except ValueError as ve:
         return api_error(ve, "Couldn't create the workflow chain", 400)
     except Exception as e:
@@ -814,8 +820,13 @@ def workflow_chain_get(name):
 @workflows_bp.route('/api/workflows/chains/<name>', methods=['DELETE'])
 @login_required
 def workflow_chain_delete(name):
-    ok = delete_workflow_chain(name)
-    return jsonify({"status": "ok" if ok else "not_found"}), (200 if ok else 404)
+    from agent_friday.services import workflow_overview as _wo
+    try:
+        chain = load_workflow_chain(name)
+        ok = _wo.delete(slug=(chain or {}).get("slug") or name)
+        return jsonify({"status": "ok" if ok else "not_found"}), (200 if ok else 404)
+    except ValueError as exc:
+        return api_error(exc, "Couldn't remove the workflow", 400)
 
 
 @workflows_bp.route('/api/workflows/chains/<name>/status', methods=['GET'])
@@ -872,16 +883,19 @@ def workflow_chain_run(name):
     chain = load_workflow_chain(name)
     if not chain:
         return jsonify({"status": "error", "message": "Unknown chain"}), 404
-    tid = run_workflow_chain(name)
-    if not tid:
-        return jsonify({"status": "error", "message": "Chain has no runnable steps"}), 400
-    return jsonify({
-        "status": "ok",
-        "chain": chain.get('name'),
-        "task_id": tid,
-        "steps": len(chain.get('steps') or []),
-        "message": f"Chain '{chain.get('name')}' started — watch the Task Tray.",
-    })
+    from agent_friday.services import workflow_operations as _ops
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    try:
+        if not isinstance(data, dict):
+            raise ValueError("Provide workflow run options as an object.")
+        result = _ops.execute("run", {"slug": chain.get("slug") or name},
+                              {"conversation_id": data.get("conversation_id")})
+        return jsonify(dict(result, chain=chain.get("name"), steps=len(chain.get("steps") or []),
+                            message=result["note"]))
+    except ValueError as exc:
+        return api_error(exc, "Couldn't start the workflow", 400)
 
 
 # ═══ THE WORKFLOWS SCREEN ═════════════════════════════════════
@@ -889,6 +903,7 @@ def workflow_chain_run(name):
 # plain-language draft step, and save/remove that keep the two stores in step.
 # See services/workflow_overview.py.
 @workflows_bp.route('/api/workflows/overview', methods=['GET'])
+@login_required
 def workflows_overview():
     from agent_friday.services import workflow_overview as _wo
     try:
@@ -955,3 +970,28 @@ def workflows_template_add(template_id):
         return api_error(exc, "Couldn't add the workflow starter", 400)
     except Exception as exc:
         return api_error(exc, "Couldn't add the workflow starter")
+
+
+@workflows_bp.route('/api/workflows/starters', methods=['GET'])
+@login_required
+def workflow_starters():
+    from agent_friday.services import workflow_operations as _ops
+    return jsonify({"status": "ok", "starters": _ops.starters()})
+
+
+@workflows_bp.route('/api/workflows/action', methods=['POST'])
+@login_required
+def workflow_action():
+    """One shared action contract also used by governed chat and voice tools."""
+    from agent_friday.services import workflow_operations as _ops
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "Provide a workflow action."}), 400
+    data = dict(data)
+    action = data.pop("action", "")
+    try:
+        return jsonify(_ops.execute(action, data, {"conversation_id": data.get("conversation_id")}))
+    except ValueError as exc:
+        return api_error(exc, "Couldn't perform the workflow action", 400)
+    except Exception as exc:
+        return api_error(exc, "The workflow action could not finish; inspect its state before retrying")

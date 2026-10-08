@@ -271,6 +271,13 @@ def test_page_csp_admits_only_itself_for_images_media_and_connections():
     assert font is not None and not any(t.startswith(("http:", "https:", "*")) for t in font), csp
 
 
+def test_page_csp_keeps_preview_capabilities_behind_a_trusted_wrapper():
+    csp = _csp_namespace()["OWN_PAGE_CSP"]
+    assert set(_directive(csp, "frame-src")) == {"'self'", "blob:", "data:"}
+    for directive in ("script-src", "connect-src", "img-src", "font-src", "media-src"):
+        assert "http://*.localhost:*" not in _directive(csp, directive)
+
+
 def test_sandboxed_documents_cannot_load_remote_images_or_connect_out():
     ns = _csp_namespace()
     out = ns["_sandboxed_csp"]("")

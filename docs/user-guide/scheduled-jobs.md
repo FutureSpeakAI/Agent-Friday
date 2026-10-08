@@ -25,6 +25,9 @@ hand. You can also ask Friday in chat.
 Jobs are stored in `%USERPROFILE%\.friday\schedules.json`, and each run is
 recorded in `schedule_runs.jsonl`.
 
+See [Workflows](workflows.md) for project destinations, checked outputs,
+change-only notices and the same controls in chat and voice.
+
 ## Built-in jobs run on your PC by default
 
 These built-in jobs are set to **local only**: they run on a model on your PC
