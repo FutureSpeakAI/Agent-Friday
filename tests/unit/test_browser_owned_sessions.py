@@ -407,3 +407,124 @@ def test_owned_sign_in_notice_names_takeover_controls_and_legacy_keeps_its_windo
     assert "purple Friday banner" in legacy_result
     assert "Friday browser window" in notices[1][1]
     assert "Agent workspaces" not in legacy_result
+
+
+def test_profile_preparation_excludes_construction_but_not_browser_start(monkeypatch, tmp_path):
+    """A shared parent cannot appear midway through another profile's resolution."""
+    import sys
+    from types import ModuleType
+
+    preparing = threading.Event()
+    release_preparation = threading.Event()
+    constructor_attempted = threading.Event()
+    constructor_validated = threading.Event()
+    constructor_done = threading.Event()
+    launch_probe_acquired = threading.Event()
+    constructor_thread = []
+    constructor_blocked = []
+
+    class ObservedLock:
+        def __init__(self):
+            self.inner = threading.RLock()
+
+        def __enter__(self):
+            if (constructor_thread == [threading.get_ident()]
+                    and not constructor_attempted.is_set()):
+                acquired = self.inner.acquire(blocking=False)
+                constructor_blocked.append(not acquired)
+                constructor_attempted.set()
+                if acquired:
+                    return self
+            assert self.inner.acquire(timeout=5), "Profile registry lock did not become available"
+            return self
+
+        def __exit__(self, *_args):
+            self.inner.release()
+
+    class BrowserStartReached(Exception):
+        pass
+
+    first = create(owner("worker-a"))
+    lock = ObservedLock()
+    monkeypatch.setattr(bs, "_LOCK", lock)
+    original_prepare = bs._prepare_profile
+    original_validate = bs.assert_dedicated
+
+    def prepare(path):
+        assert path == first.profile
+        preparing.set()
+        assert release_preparation.wait(5), "Preparation was never released"
+        original_prepare(path)
+
+    def validate(path):
+        if constructor_thread == [threading.get_ident()]:
+            constructor_validated.set()
+        return original_validate(path)
+
+    def construct_second():
+        constructor_thread.append(threading.get_ident())
+        try:
+            return create(owner("worker-b"))
+        finally:
+            constructor_done.set()
+
+    def start_without_browser():
+        # An overbroad fix holding the registry through browser startup would
+        # prevent the already-waiting constructor from finishing here.
+        assert constructor_done.wait(5), "Browser startup still holds the profile registry"
+
+        def probe():
+            with lock:
+                launch_probe_acquired.set()
+
+        probe_thread = threading.Thread(target=probe, daemon=True)
+        probe_thread.start()
+        try:
+            assert launch_probe_acquired.wait(5), "Registry lock spans browser startup"
+        finally:
+            probe_thread.join(timeout=5)
+        assert not probe_thread.is_alive()
+        raise BrowserStartReached
+
+    fake_package = ModuleType("playwright")
+    fake_package.__path__ = []
+    fake_api = ModuleType("playwright.sync_api")
+    fake_api.sync_playwright = lambda: SimpleNamespace(start=start_without_browser)
+    fake_package.sync_api = fake_api
+    monkeypatch.setitem(sys.modules, "playwright", fake_package)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_api)
+    monkeypatch.setattr(bs, "_prepare_profile", prepare)
+    monkeypatch.setattr(bs, "assert_dedicated", validate)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            starting = pool.submit(first.call, first._start, timeout=20)
+            constructing = None
+            try:
+                assert preparing.wait(5), "Owned worker never reached profile preparation"
+                constructing = pool.submit(construct_second)
+                assert constructor_attempted.wait(5), "Second constructor never reached the registry"
+                assert constructor_blocked == [True], "Profile construction overlapped parent creation"
+                assert not constructor_validated.is_set()
+            finally:
+                release_preparation.set()
+                # Consume both futures even when the ordering assertion fails.
+                try:
+                    with pytest.raises(BrowserStartReached):
+                        starting.result(timeout=20)
+                finally:
+                    if constructing is not None:
+                        second = constructing.result(timeout=10)
+            assert constructor_validated.is_set() and launch_probe_acquired.is_set()
+            assert first.profile != second.profile
+            for session in (first, second):
+                assert session.profile.is_relative_to(tmp_path.resolve())
+                assert original_validate(session.profile) == session.profile
+    finally:
+        release_preparation.set()
+        for session in list(bs._OWNED.values()):
+            if session.mode not in ("closed", "revoked"):
+                bs._transition(session, "close")
+            bs._close_owned(session)
+            session._worker.thread.join(timeout=5)
+            assert session._cleanup_done and not session._worker.thread.is_alive()

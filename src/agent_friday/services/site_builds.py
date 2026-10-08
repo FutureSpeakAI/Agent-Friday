@@ -427,14 +427,14 @@ def execute_build(site, build):
     root = build_dir(site["site_id"], build["build_id"])
     if digest(collect(root / "source")) != build["source_hash"]:
         raise ValueError("Frozen source changed after approval was prepared. Prepare a new build.")
-    cwd = contained(root / "source", site["build_root"])
+    cwd = contained(root / "source", site["build_root"], allow_root=True)
     run = {"status": "ok", "exit": 0, "output": "Static source needs no build command."}
     if site["build_command"]:
         run = codebases.run(site["codebase_id"], site["build_command"], timeout_s=300, _site_snapshot=cwd)
     sites_privacy.require_generation(generation)
     if run.get("status") != "ok" or run.get("exit") != 0:
         return {"status": "failed", "run": run, "error": "The build did not finish successfully."}
-    files = collect(contained(cwd, site["output_dir"]), output=True)
+    files = collect(contained(cwd, site["output_dir"], allow_root=True), output=True)
     if "index.html" not in files:
         raise ValueError("The output needs an index.html. Server-rendered apps need another hosting adapter.")
     bundle = publish_web.Bundle(files, site["name"], site["site_id"], "site", site["site_id"], site["conversation_id"], site["revision"])

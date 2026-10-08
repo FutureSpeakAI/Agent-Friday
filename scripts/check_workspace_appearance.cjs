@@ -15,7 +15,7 @@ function read(file,optional=false){
 const source=process.env.FRIDAY_APPEARANCE_SOURCE?fs.readFileSync(process.env.FRIDAY_APPEARANCE_SOURCE,'utf8'):read('static/friday_appearance.js',true),results=[];
 const pause=page=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
 const editor=page=>page.getByRole('dialog',{name:'Appearance of Synthetic Library',exact:true});
-const note=page=>editor(page).getByLabel('Pinned workspace note',{exact:true});
+const note=page=>editor(page).getByRole('textbox',{name:'Pinned workspace note',exact:true});
 const preview=page=>editor(page).getByRole('button',{name:'Preview changes',exact:true});
 const apply=page=>editor(page).getByRole('button',{name:'Apply appearance',exact:true});
 async function respond(page,kind='success',data){await page.evaluate(({kind,data})=>appearanceReply(kind,data),{kind,data});await pause(page);}
@@ -130,10 +130,10 @@ async function privacy(page,on){await page.evaluate(on=>appearancePrivacy(on),on
     await run('GET reads the exact workspace without creating an apply request',async page=>{
       const state=await snapshot(page);assert.deepEqual(state.requests.map(r=>r.method),['GET']);assert.equal(state.server.revision,'a'.repeat(64));
       await expect(apply(page)).toBeDisabled();await expect(preview(page)).toBeDisabled();
-      await expect(editor(page).getByLabel('Spacing',{exact:true})).toHaveValue('comfortable');
+      await expect(editor(page).getByRole('combobox',{name:'Spacing',exact:true})).toHaveValue('comfortable');
     });
     await run('preview is read-only and apply sends exactly the reviewed patch and revision',async page=>{
-      await note(page).fill('Reviewed note');await editor(page).getByLabel('Spacing',{exact:true}).selectOption('compact');
+      await note(page).fill('Reviewed note');await editor(page).getByRole('combobox',{name:'Spacing',exact:true}).selectOption('compact');
       await preview(page).click();await respond(page);
       const before=await snapshot(page),request=before.requests.at(-1).body;
       assert.equal(request.apply,false);assert.deepEqual(request.patch,{note:'Reviewed note',density:'compact'});assert.equal(before.server.customization.note,'Original note');
@@ -160,9 +160,9 @@ async function privacy(page,on){await page.evaluate(on=>appearancePrivacy(on),on
     },{initialPrivate:true});
     await run('privacy pauses fields and preserves the public draft until fresh reload and review',async page=>{
       await review(page,'Existing public draft');await privacy(page,true);
-      await expect(note(page)).toBeDisabled();await expect(editor(page).getByLabel('Spacing',{exact:true})).toBeDisabled();
+      await expect(note(page)).toBeDisabled();await expect(editor(page).getByRole('combobox',{name:'Spacing',exact:true})).toBeDisabled();
       await expect(editor(page).getByLabel('Choose accent color',{exact:true})).toBeDisabled();
-      await expect(editor(page).getByLabel('Prompt 1',{exact:true})).toBeDisabled();
+      await expect(editor(page).getByRole('textbox',{name:'Prompt 1',exact:true})).toBeDisabled();
       await expect(preview(page)).toBeDisabled();await expect(apply(page)).toBeDisabled();
       await expect(editor(page).getByRole('region',{name:'Appearance preview',exact:true})).toHaveCount(0);
       await privacy(page,false);await expect(note(page)).toHaveValue('Existing public draft');

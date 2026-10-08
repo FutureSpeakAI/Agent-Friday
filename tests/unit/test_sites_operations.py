@@ -534,3 +534,116 @@ def test_slow_readback_cannot_overwrite_newer_receipt_or_verification(world, mon
     observed = sites.execute("deployment_status", {"site_id": site["site_id"], "operation_id": operation["operation_id"]}, world.caller)["operation"]
     assert observed == committed
     assert sites._operation(site, operation["operation_id"]) == committed
+
+
+@pytest.mark.parametrize(("build_root", "output_dir"), [
+    (".", "dist"), ("web", "."), (".", "."), ("web", "dist"),
+])
+def test_command_build_accepts_root_and_nested_directories(world, monkeypatch, build_root, output_dir):
+    from agent_friday.services import codebases
+    source = world.repo if build_root == "." else world.repo / build_root
+    source.mkdir(exist_ok=True)
+    (source / "entry.txt").write_text("captured input", encoding="utf-8")
+    site = sites.execute("save", {"site_id": world.site["site_id"], "revision": 1,
+        "build_root": build_root, "output_dir": output_dir, "build_command": "node build.mjs"}, world.caller)["site"]
+    prepared = sites.execute("build", {"site_id": site["site_id"]}, world.caller)
+    build = sites._build(site, prepared["operation"]["build_id"])
+    frozen = builds.build_dir(site["site_id"], build["build_id"]) / "source"
+    expected_cwd = frozen if build_root == "." else frozen / build_root
+    (source / "entry.txt").write_text("unapproved working copy", encoding="utf-8")
+    commands = []
+
+    def command(cid, command, *, timeout_s, _site_snapshot):
+        commands.append((cid, command, _site_snapshot))
+        assert _site_snapshot == expected_cwd
+        assert (_site_snapshot / "entry.txt").read_text(encoding="utf-8") == "captured input"
+        output = _site_snapshot if output_dir == "." else _site_snapshot / output_dir
+        output.mkdir(exist_ok=True)
+        (output / "index.html").write_text("<h1>Built from frozen input</h1>", encoding="utf-8")
+        return {"status": "ok", "exit": 0, "output": ""}
+
+    monkeypatch.setattr(codebases, "run", command)
+    result = builds.execute_build(site, build)
+    assert commands == [("cb-test", "node build.mjs", expected_cwd)]
+    assert result["status"] == "built"
+    assert (builds.build_dir(site["site_id"], build["build_id"]) / "output" / "index.html").read_text(
+        encoding="utf-8") == "<h1>Built from frozen input</h1>"
+
+
+def _inline_approval_worker(monkeypatch):
+    class Thread:
+        def __init__(self, *, target, args, daemon, name):
+            assert name == "site-operation" and daemon is True
+            self.target, self.args = target, args
+        def start(self):
+            self.target(*self.args)
+    monkeypatch.setattr(sites.threading, "Thread", Thread)
+
+
+@pytest.mark.parametrize("failure", ["checkpoint", "execution"])
+def test_approved_early_failure_finishes_only_its_exact_build(world, monkeypatch, failure):
+    from agent_friday.governance import action_gate
+    from agent_friday.services import approvals
+    prepared = sites.execute("build", {"site_id": world.site["site_id"]}, world.caller)
+    other = sites.execute("save", {"name": "Other", "codebase_id": "cb-test"}, world.caller)["site"]
+    untouched = sites.execute("build", {"site_id": other["site_id"]}, world.caller)
+    other_path = builds.build_dir(other["site_id"], untouched["operation"]["build_id"]) / "build.json"
+    other_before = other_path.read_bytes()
+    executed = []
+
+    def checkpoint(*args, **kwargs):
+        assert kwargs["approval_id"] == prepared["approval_id"]
+        if failure == "checkpoint":
+            raise action_gate.Held("synthetic checkpoint failure")
+
+    def execute(*args):
+        executed.append(True)
+        assert failure == "execution", "A held checkpoint must prevent the build command"
+        raise RuntimeError("synthetic execution failure")
+
+    monkeypatch.setattr(action_gate, "record_external", checkpoint)
+    monkeypatch.setattr(builds, "execute_build", execute)
+    _inline_approval_worker(monkeypatch)
+    _record, won = approvals.decide_with_outcome(prepared["approval_id"], "approve")
+    assert won is True
+    assert approvals.get_approval(prepared["approval_id"])["executing_at"]
+    operation = sites._operation(world.site, prepared["operation_id"])
+    failed = sites._build(world.site, prepared["operation"]["build_id"])
+    assert operation["status"] == failed["status"] == "failed"
+    assert failed["error"] == operation["error"]
+    assert failed["finished_at"] == operation["finished_at"]
+    assert "synthetic" not in failed["error"]
+    assert executed == ([True] if failure == "execution" else [])
+    assert other_path.read_bytes() == other_before
+    _record, won = approvals.decide_with_outcome(prepared["approval_id"], "approve")
+    assert won is False
+    assert executed == ([True] if failure == "execution" else [])
+
+
+def test_failed_build_does_not_write_after_original_privacy_expires(world, monkeypatch):
+    from agent_friday.governance import action_gate
+    from agent_friday.services import approvals
+    prepared = sites.execute("build", {"site_id": world.site["site_id"]}, world.caller)
+    build_path = builds.build_dir(world.site["site_id"], prepared["operation"]["build_id"]) / "build.json"
+    operation_path = sites._site_dir(world.site["site_id"]) / "operations" / (prepared["operation_id"] + ".json")
+    current = {"valid": True}
+    before = {}
+
+    def require(generation):
+        if not current["valid"]:
+            raise ValueError("original privacy ended")
+        return SimpleNamespace(generation=generation)
+
+    def execute(*args):
+        before.update(build=build_path.read_bytes(), operation=operation_path.read_bytes())
+        current["valid"] = False
+        raise RuntimeError("synthetic execution failure")
+
+    monkeypatch.setattr(sites.sites_privacy, "require_generation", require)
+    monkeypatch.setattr(action_gate, "record_external", lambda *args, **kwargs: None)
+    monkeypatch.setattr(builds, "execute_build", execute)
+    _inline_approval_worker(monkeypatch)
+    _record, won = approvals.decide_with_outcome(prepared["approval_id"], "approve")
+    assert won is True and before
+    assert build_path.read_bytes() == before["build"]
+    assert operation_path.read_bytes() == before["operation"]

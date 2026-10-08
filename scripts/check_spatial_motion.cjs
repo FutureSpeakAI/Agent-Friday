@@ -35,10 +35,10 @@ function layout(arrangement,options={}) {
   return core.spatialLayout({x:16,y:64,w:1568,h:820},
     {enabled:true,viewportWidth:1600,arrangement,...options});
 }
-function equalRect(actual,expected,diagnostics=false) {
+function equalRect(actual,expected,diagnostics=false,tolerance=.01) {
   for(const key of ['x','y','w','h']) {
     const delta=Math.abs(actual[key]-expected[key]);
-    assert.ok(delta<.01,key+' must remain stable'+(diagnostics?' (actual='+actual[key]+', expected='+expected[key]+', delta='+delta+', rect='+JSON.stringify(actual)+', layout='+JSON.stringify(expected)+')':''));
+    assert.ok(delta<tolerance,key+' must remain stable'+(diagnostics?' (actual='+actual[key]+', expected='+expected[key]+', delta='+delta+', tolerance='+tolerance+', rect='+JSON.stringify(actual)+', layout='+JSON.stringify(expected)+')':''));
   }
 }
 (async()=>{
@@ -138,12 +138,18 @@ function equalRect(actual,expected,diagnostics=false) {
         FridayHolographicWorkspace.setArrangement('focus');
         const values=[];
         await new Promise(resolve=>{const start=performance.now();const tick=()=>{
-          const r=element.getBoundingClientRect();values.push({layout:__snap(),rect:{x:r.x,y:r.y,w:r.width,h:r.height}});
+          const r=element.getBoundingClientRect(),style=element.style;
+          const css=Object.fromEntries(['x','y','w','h'].map(axis=>[axis,parseFloat(style.getPropertyValue('--friday-surface-'+axis))]));
+          values.push({layout:__snap(),css,rect:{x:r.x,y:r.y,w:r.width,h:r.height}});
           if(performance.now()-start<480)requestAnimationFrame(tick);else resolve();
         };requestAnimationFrame(tick);});
         unregister();return {values,marker:element.hasAttribute('data-friday-spatial-surface')};
       });
-      samples.values.forEach(sample=>{clear(sample.layout);equalRect(sample.rect,sample.layout.content,true);});
+      samples.values.forEach(sample=>{
+        clear(sample.layout);equalRect(sample.css,sample.layout.content,true);
+        // Rendered pixels may round; controller coordinates keep the strict comparison.
+        equalRect(sample.rect,sample.layout.content,true,.02);
+      });
       assert.equal(samples.marker,false);
     }));
     await check('typing, composition and a real hand lock defer motion then release',()=>mounted(async page=>{

@@ -76,6 +76,33 @@ def isolated_browsers(tmp_path, monkeypatch):
     monkeypatch.setenv("FRIDAY_HOME", str(test_home))
     # Creation and cleanup share the fixture's canonical root across workers.
     monkeypatch.setattr(bs, "friday_home", lambda: test_home)
+    # Record the original containment operands without resolving a path twice.
+    diagnostic = threading.local()
+    dedicated, within = bs.assert_dedicated, bs._within
+
+    def traced_within(candidate, root):
+        result = within(candidate, root)
+        if getattr(diagnostic, "active", False) and diagnostic.containment is None:
+            diagnostic.containment = (str(candidate), str(root), result)
+        return result
+
+    def traced_dedicated(path):
+        diagnostic.active = True
+        diagnostic.containment = None
+        try:
+            return dedicated(path)
+        except bs.BrowserRefused:
+            try:
+                print(f"Browser profile refusal: {str(path)!r}; "
+                      f"original containment: {diagnostic.containment!r}")
+            except (OSError, UnicodeError):
+                pass
+            raise
+        finally:
+            diagnostic.active = False
+
+    monkeypatch.setattr(bs, "_within", traced_within)
+    monkeypatch.setattr(bs, "assert_dedicated", traced_dedicated)
     # Release proofs can select an installed testing binary after home
     # isolation. Ordinary CI retains Playwright's bundled Chromium choice.
     executable = os.environ.get("FRIDAY_TEST_BROWSER_EXECUTABLE")

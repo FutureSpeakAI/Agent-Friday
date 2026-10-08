@@ -515,7 +515,17 @@ def _perform(record):
                                "The operation could not complete. Check ownership, source, connection and the build output before preparing it again.")
     operation["finished_at"] = time.time()
     try:
-        _save_operation(operation)
+        with LOCK:
+            _save_operation(operation)
+            if operation["action"] == "build":
+                sites_privacy.require_operation(operation.get("privacy_generation"), operation.get("privacy_boot"))
+                failed_build = _build(site, operation["build_id"])
+                if (failed_build.get("status") == "awaiting_approval"
+                        and failed_build.get("operation_id") == operation["operation_id"]
+                        and all(failed_build.get(key) == operation.get(key)
+                                for key in ("site_id", "build_id", "site_revision", "privacy_generation", "privacy_boot"))):
+                    failed_build.update(status="failed", error=operation["error"], finished_at=operation["finished_at"])
+                    _write(site_builds.build_dir(site["site_id"], operation["build_id"]) / "build.json", failed_build)
     except ValueError:
         # A privacy transition invalidates delayed public receipts too.
         return

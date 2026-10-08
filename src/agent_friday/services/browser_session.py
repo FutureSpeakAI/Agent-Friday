@@ -775,7 +775,8 @@ class BrowserSession:
             raise BrowserError(f"Playwright is not installed ({e}). The owner installs it "
                                f"with `pip install playwright` and "
                                f"`python -m playwright install chromium`.")
-        _prepare_profile(self.profile)
+        with _LOCK:
+            _prepare_profile(self.profile)
         self._pw = sync_playwright().start()
         try:
             opts = dict(headless=self.headless, accept_downloads=False,
