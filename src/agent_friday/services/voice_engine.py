@@ -626,7 +626,7 @@ _VOICE_LIVE_TOOLS = [
     # ONE tool that lets Gemini Live reach the user's context honestly -- by
     # asking their local model, whose sealed answer is all Google ever sees.
     ("ask_friday",
-     "Ask Friday's local model with full access to their notes, memory, graph, "
+     "Ask Friday's local model about their notes, memory, knowledge graph, "
      "files, calendar and email. Use it for ANY "
      "question about the user's own context (their notes, their projects, what "
      "they wrote, what they decided, their wiki, their memory), and for anything "
