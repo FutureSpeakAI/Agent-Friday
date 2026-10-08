@@ -55,6 +55,8 @@ HANDLER = "item_batch"
 APPROVAL_KIND = "governed_action"
 #: A call naming this many items or more is a batch: one card for all of it.
 BULK_FROM = 2
+#: The owner's rule (2026-10): taking something away (trash, archive) waits for one card, even for one item.
+TRASH_LIKE = ("trash", "archive")
 #: The most items one call may change. A larger request is asked to narrow.
 MAX_ITEMS = 500
 #: How many items a card, a result or a spoken read-back names.
@@ -816,10 +818,13 @@ def plan_files(action: str, items=None, to: str = "", new_name: str = "", moves=
 
 def classify_files(args: dict) -> tuple[str, str]:
     """(INTERNAL|OUTWARD, why) for an organize_files call. One local change
-    Friday can undo is internal; a batch, anything in the code projects, and
-    a move into a folder a cloud client syncs wait for a card."""
+    Friday can undo is internal; trashing (even one file), a batch, anything
+    in the code projects, and a move into a folder a cloud client syncs wait
+    for a card."""
     a = args or {}
     try:
+        if str(a.get("action") or "").lower() in TRASH_LIKE:
+            return "outward", "trashing a file waits for one card"
         n = len(_parse_moves(a.get("moves"))) if a.get("moves") else len(a.get("items") or [])
         if str(a.get("action") or "").lower() == "new_folder":
             n = 1
@@ -1324,6 +1329,8 @@ def plan_wiki(action: str, pages=None, to: str = "", new_name: str = "", tags=No
 
 def classify_wiki(args: dict) -> tuple[str, str]:
     a = args or {}
+    if str(a.get("action") or "").lower() in TRASH_LIKE:
+        return "outward", "trashing or archiving a page waits for one card"
     n = len(_parse_moves(a.get("moves"))) if a.get("moves") else len(a.get("pages") or [])
     if n >= BULK_FROM:
         return "outward", "a batch of %d waits for one card" % n
@@ -1831,7 +1838,8 @@ def organize_wiki(action: str, *, pages=None, to: str = "", new_name: str = "", 
                   moves=None, why: str = "", conversation_id: str | None = None,
                   owner_words: str = "", requested_by: str = "friday", replaces: str = "") -> dict:
     ops = plan_wiki(action, pages, to, new_name, tags, moves)
-    return _local("wiki", str(action).lower(), ops, bulk=len(ops) >= BULK_FROM, why=why,
+    klass, _why = classify_wiki({"action": action, "pages": pages, "moves": moves})
+    return _local("wiki", str(action).lower(), ops, bulk=klass != "internal", why=why,
                   conversation_id=conversation_id, owner_words=owner_words,
                   requested_by=requested_by, replaces=replaces)
 
@@ -1842,6 +1850,8 @@ def classify_undo(args: dict, conversation_id: str | None = None) -> tuple[str, 
     rec = _undo_target((args or {}).get("receipt_id"), conversation_id, strict=False)
     if rec and rec.get("domain") == "email":
         return "outward", "putting mail back changes Gmail"
+    if rec and rec.get("domain") == "calendar":
+        return "outward", "putting events back changes Google Calendar"
     return "internal", "it puts back Friday's own local change"
 
 
@@ -1876,6 +1886,17 @@ def undo(receipt_id: str = "", *, conversation_id: str | None = None, owner_word
                            title="Friday wants to put back %s" % _plural(n, "conversation"), body=body)
         return {**card, "count": n, "readback": "Shall I put back the %s I %s?" % (
             _plural(n, "conversation"), EMAIL_ACTIONS.get(rec.get("action"), ("", "", "changed"))[2])}
+    if dom == "calendar" and not by_owner:
+        # Putting events back writes to Google like moving them did: one card, as the move had.
+        n = len((rec.get("undo") or {}).get("calendar") or [])
+        detail = {"handler": HANDLER, "domain": "calendar_undo", "action": "undo",
+                  "receipt_id": rec["receipt_id"], "count": n,
+                  "conversation_id": conversation_id or "", "asked_with": words_hash(owner_words)}
+        body = "Friday proposes to undo: %s\nThat puts %s back at the times they had." % (
+            rec.get("summary") or "", _plural(n, "event"))
+        card = _raise_card("calendar_undo", "undo", detail, requested_by=requested_by,
+                           title="Friday wants to put back %s" % _plural(n, "event"), body=body)
+        return {**card, "count": n, "readback": "Shall I put back the %s I moved?" % _plural(n, "event")}
     out = (undo_email(rec) if dom == "email" else undo_files(rec) if dom == "files"
            else undo_wiki(rec) if dom == "wiki" else undo_media(rec) if dom == "media"
            else undo_calendar(rec) if dom == "calendar" else None)
@@ -1900,6 +1921,13 @@ def _execute(detail: dict, approval_id: str | None) -> dict:
         if not rec:
             raise Refused("the receipt to undo is gone")
         return undo_email(rec, approval_id=approval_id)
+    if dom == "calendar_undo":
+        rec = journal.get(detail.get("receipt_id") or "")
+        if not rec:
+            raise Refused("the receipt to undo is gone")
+        if rec.get("undone"):
+            raise Refused("those events were already put back")
+        return undo_calendar(rec)
     if dom == "files":
         return run_files(detail.get("ops") or [], approval_id=approval_id,
                          conversation_id=detail.get("conversation_id"))

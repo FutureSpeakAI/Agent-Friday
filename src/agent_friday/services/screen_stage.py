@@ -66,6 +66,8 @@ STAGE_FACETS: dict[str, frozenset[str]] = {
 #: Workspaces whose rows are about the owner's body, money or family. Their rows reach Friday as a kind and a
 #: position only: no title, no name, no figure, whatever the page sends.
 PRIVATE_WORKSPACES = frozenset({"health", "finance", "family"})
+#: The kinds a private workspace's row may be; any other word the page sends is dropped.
+PRIVATE_KINDS = frozenset({"medication", "appointment", "vehicle", "position", "perk", "countdown"})
 
 #: The most rows Friday outlines with a numbered badge at once; the rest are counted ("and N more").
 POINT_CAP = 12
@@ -143,6 +145,8 @@ def bound_stage(raw: Any, now: float | None = None) -> dict | None:
     if not ws:
         return None
     allowed = STAGE_FACETS.get(ws, frozenset())
+    # Every word a private workspace's page sends is dropped here: titles, names, labels, filter values.
+    private = ws in PRIVATE_WORKSPACES
     items = []
     for it in (raw.get("items") or [])[:MAX_ITEMS]:
         if not isinstance(it, dict):
@@ -154,26 +158,27 @@ def bound_stage(raw: Any, now: float | None = None) -> dict | None:
         facets = {}
         for k, v in raw_f.items():
             if k in allowed and (v is None or isinstance(v, (str, int, float, bool))):
+                if private and (k != "kind" or str(v or "").lower() not in PRIVATE_KINDS):
+                    continue
                 facets[k] = _clip(v, 40) if isinstance(v, str) else v
         try:
             n = int(it.get("n"))
         except (TypeError, ValueError):
             n = len(items) + 1
-        private = ws in PRIVATE_WORKSPACES
         items.append({"ref": ref, "n": n, "facets": facets,
                       "title": "" if private else _clip(it.get("title")), "who": "" if private else _clip(it.get("who"))})
     sel = raw.get("selection") if isinstance(raw.get("selection"), dict) else {}
     refs = [r for r in (_ref(x) for x in (sel.get("refs") or [])[:MAX_REFS]) if r]
     source = sel.get("source") if sel.get("source") in ("friday", "owner", "mixed") else ""
     selection = {"id": _clip(sel.get("id"), 40), "refs": refs, "count": len(refs),
-                 "label": _clip(sel.get("label"), 40), "source": source,
+                 "label": "" if private else _clip(sel.get("label"), 40), "source": source,
                  "beyond_loaded": max(0, int(sel.get("beyond_loaded") or 0))
                  if isinstance(sel.get("beyond_loaded"), (int, float)) else 0}
     filters = []
     for f in (raw.get("filters") or [])[:MAX_FILTERS]:
         if isinstance(f, dict) and f.get("key"):
-            filters.append({"key": _clip(f["key"], 24), "value": _clip(f.get("value"), 40),
-                            "label": _clip(f.get("label"), 40),
+            filters.append({"key": _clip(f["key"], 24), "value": "" if private else _clip(f.get("value"), 40),
+                            "label": "" if private else _clip(f.get("label"), 40),
                             "by": f.get("by") if f.get("by") in ("friday", "owner") else "owner"})
     cur = raw.get("cursor") if isinstance(raw.get("cursor"), dict) else None
     cursor = None
@@ -186,7 +191,7 @@ def bound_stage(raw: Any, now: float | None = None) -> dict | None:
     fields = []
     for f in (raw.get("fields") or [])[:MAX_FIELDS]:
         if isinstance(f, dict) and f.get("key"):
-            fields.append({"key": _clip(f["key"], 40), "label": _clip(f.get("label"), 40),
+            fields.append({"key": _clip(f["key"], 40), "label": "" if private else _clip(f.get("label"), 40),
                            "filled_by": "friday" if f.get("filled_by") == "friday" else None})
     held = []
     for h in (raw.get("held") or [])[:MAX_HELD]:

@@ -82,8 +82,11 @@ def test_undo_puts_it_back_and_only_the_newest_change_can_be_undone(world):
     first = [r for r in sp.changes() if r["new"] == "on"][0]
     refused = sp.undo(change_id=first["id"])
     assert refused["ok"] is False and "changed again" in refused["text"] and _load_settings()["big_mode"] == "auto"
+    # Putting a setting back is a change to settings: said to Friday, it changes nothing and points to the
+    # row's own Undo, which is the owner's click.
     out = _set(op="undo")
-    assert out.startswith("SETTING_UNDONE") and _load_settings()["big_mode"] == "on"
+    assert out.startswith("SETTING_UNDO_ON_SCREEN") and _load_settings()["big_mode"] == "auto"
+    assert sp.undo(path="settings.accessibility.big_mode")["ok"] is True and _load_settings()["big_mode"] == "on"
     assert sp.undo(path="settings.accessibility.big_mode")["ok"] is True and _load_settings()["big_mode"] == "off"
 
 

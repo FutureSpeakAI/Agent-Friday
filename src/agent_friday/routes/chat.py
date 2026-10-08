@@ -2725,6 +2725,18 @@ def chat_history():
                     "count": len(messages), "conversation_id": _cid or None})
 
 
+def _screen_block_for(provider_name, conversation_id):
+    """The ON SCREEN block for one provider: the rows on the owner's screen (who and subject),
+    scrubbed for a guarded cloud turn as /api/chat scrubs its volatile tail."""
+    from agent_friday.services.screen_stage import chat_tail
+    block = chat_tail(conversation_id)
+    if block and provider_name != 'local':
+        from agent_friday.services.egress_gate import is_unrestricted_cloud
+        if not is_unrestricted_cloud():
+            block, _sub = _scrub_pii(block)
+    return block
+
+
 @chat_bp.route('/api/chat/send', methods=['POST'])
 @_traced_turn
 @_privacy_hold_turn
@@ -2864,8 +2876,7 @@ def chat_send():
             try:
                 from agent_friday.services.situation import pinned_block
                 prompt = prompt + pinned_block(_conversation_id)
-                from agent_friday.services.screen_stage import chat_tail
-                prompt = prompt + chat_tail(_conversation_id)
+                prompt = prompt + _screen_block_for(provider_name, _conversation_id)
             except Exception:
                 pass
             try:

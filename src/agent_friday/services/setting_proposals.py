@@ -254,7 +254,7 @@ def _on_decision(record: dict) -> None:
         ap.mark_used(aid, "setting_proposals", {"ok": ok, "summary": text[:300]})
     except Exception:
         pass
-    said = ("Done. %s Say “undo that” within %d days to put it back." % (text, UNDO_DAYS)) if ok else \
+    said = ("Done. %s The Undo beside that row in Settings puts it back for %d days." % (text, UNDO_DAYS)) if ok else \
         "The approved change did not happen: %s" % text
     item_actions._post_back(detail.get("conversation_id"), said, aid)
     _tell_pages(str(detail.get("path") or ""))
@@ -326,12 +326,18 @@ def _route(path: str, value: str):
 
 
 def tool(inp) -> str:
-    """Tool handler: set exactly one Settings row by its path, as a diff the owner says Yes to, or undo the last
-    change to a row (within thirty days). The row's own tool holds the change and raises the card."""
+    """Tool handler: set exactly one Settings row by its path, as a diff the owner says Yes to. The row's own
+    tool holds the change and raises the card. op=undo writes nothing: putting a setting back is a change to
+    settings too, so Friday points to the row's own Undo, which is the owner's click."""
     inp = inp or {}
     if str(inp.get("op") or "").strip().lower() == "undo":
-        res = undo(path=str(inp.get("path") or "").strip().lower().replace(" ", "_"))
-        return ("SETTING_UNDONE: " if res["ok"] else "SETTING_FAIL: ") + res["text"]
+        path = str(inp.get("path") or "").strip().lower().replace(" ", "_")
+        row = next((r for r in reversed(_read()) if not r.get("undone") and (not path or r.get("path") == path)), None)
+        if row is None:
+            return "SETTING_FAIL: There is no change to undo."
+        return ("SETTING_UNDO_ON_SCREEN: %s was changed to %s; the Undo beside that row in Settings puts it back "
+                "to %s. Nothing has changed: Friday does not change a setting on her own word."
+                % (row.get("label"), row.get("new"), row.get("old")))
     routed = _route(inp.get("path"), inp.get("value"))
     if isinstance(routed, str):
         return routed

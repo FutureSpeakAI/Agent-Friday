@@ -776,7 +776,7 @@ CLAUDE_TOOLS = [
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
-    {"name": "set_setting", "description": "Change one Settings row by its path, or undo its last change (op=undo, 30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>.",
+    {"name": "set_setting", "description": "Change one Settings row by its path; op=undo changes nothing and says where the row's own Undo is (30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string"}}, "required": ["path"]}},
     {"name": "task_control", "description": "Stop or steer work Friday is doing in the background. op=stop ends a running workflow or task after the step it is on: the step that is running finishes, the next never starts, nothing already done is undone. With no target it stops the steps shown on the user's screen. op=steer sends a running task a message without stopping it. target: a workflow name, a task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what actually happened.",
      "input_schema": {"type": "object", "properties": {
@@ -835,7 +835,7 @@ CLAUDE_TOOLS = [
          "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
          "why": {"type": "string", "description": "One short line for the card."}},
       "required": ["action"]}},
-    {"name": "organize_files", "description": "Move, rename or trash the user's files, or make a folder, in Documents, Downloads, Desktop, Creations or Projects. Name each file as a path inside one of those folders (Documents/Taxes/w2.pdf) or the full path search_files gave. One file changes now; two or more (or anything in Projects, or into a folder a cloud service syncs) wait for ONE approval card. Trash goes to Friday's own trash, nothing is deleted or overwritten, and undo_action puts it back.",
+    {"name": "organize_files", "description": "Move, rename or trash the user's files, or make a folder, in Documents, Downloads, Desktop, Creations or Projects. Name each file as a path inside one of those folders (Documents/Taxes/w2.pdf) or the full path search_files gave. One file moved or renamed changes now; trash, two or more (or anything in Projects, or into a folder a cloud service syncs) wait for ONE approval card. Trash goes to Friday's own trash, nothing is deleted or overwritten, and undo_action puts it back.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["move", "rename", "trash", "new_folder"]},
          "items": {"type": "array", "items": {"type": "string"}, "description": "The files or folders."},
@@ -857,7 +857,7 @@ CLAUDE_TOOLS = [
          "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
          "why": {"type": "string", "description": "One short line for the card."}},
       "required": ["action"]}},
-    {"name": "organize_wiki", "description": "Move, rename, tag, untag, archive or trash pages in the user's wiki (the Knowledge workspace). Name pages by title or path (people/dana.md); an ambiguous title returns numbered choices to ask about (then give the page as #1, #2...). A rename updates the links to the page. One page changes now; two or more wait for ONE approval card. Archive keeps a page out of the graph, trash moves it to Friday's trash, and undo_action puts it back.",
+    {"name": "organize_wiki", "description": "Move, rename, tag, untag, archive or trash pages in the user's wiki (the Knowledge workspace). Name pages by title or path (people/dana.md); an ambiguous title returns numbered choices to ask about (then give the page as #1, #2...). A rename updates the links to the page. One page moved, renamed or tagged changes now; archive, trash or two or more wait for ONE approval card. Archive keeps a page out of the graph, trash moves it to Friday's trash, and undo_action puts it back.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["move", "rename", "tag", "untag", "archive", "trash"]},
          "pages": {"type": "array", "items": {"type": "string"}},
