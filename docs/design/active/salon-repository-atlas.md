@@ -1,6 +1,6 @@
 # Understand repositories in the salon
 
-Status: implemented on the feature branch; deployment and broad-suite validation are separate checks.
+Status: implemented in the salon and integrated into the repository-first Code workspace.
 
 The salon's **Understand** tab helps a person explore an unfamiliar repository,
 learn a technique, or plan an adaptation while retaining source references.
@@ -9,6 +9,11 @@ It is an independent Friday implementation inspired by
 compatible graph import. No upstream runner or dashboard is bundled.
 
 ## Workflow
+
+The **Code** workspace also offers **Study a repository** and lists existing
+salon codebases. Its repository-first layout places the map, source editor,
+changes, preview and run history beside the codebase's own Friday conversation.
+See [Code workspace](code-workspace.md) for selection and continuity contracts.
 
 Use **+ Codebase → Study a repository** and choose a local repository folder.
 Friday creates a managed text snapshot. The original folder, branch and history

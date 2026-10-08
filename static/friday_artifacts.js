@@ -165,6 +165,14 @@
   background:linear-gradient(180deg,rgba(10,14,26,0.92),rgba(10,14,26,0.80));
   border-left:1px solid rgba(0,212,255,0.16);font-family:Inter,system-ui,sans-serif;color:#dfe7f2}
 .fa-panel.fa-tab{border-left:none;flex:1}
+.fa-panel.fa-codebase-workspace{background:transparent;border:0;container-type:inline-size}
+.fa-codebase-workspace .fa-head{padding:0 0 8px}
+.fa-codebase-workspace .fa-tools{margin-top:0}
+.fa-body.fa-codebase-files{display:flex;gap:10px;padding:0}
+.fa-codebase-file-list{width:180px;max-width:40%;flex-shrink:0;border-right:1px solid rgba(0,212,255,0.10);overflow:auto;padding:8px 6px;font-family:'JetBrains Mono',monospace;font-size:11px}
+.fa-codebase-file-button{display:block;width:100%;border:0;text-align:left;font:inherit;padding:5px 6px;cursor:pointer;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fa-codebase-file-button:focus-visible{outline:2px solid var(--fr-cyan);outline-offset:-2px}
+@container (max-width:460px){.fa-codebase-files{flex-direction:column}.fa-codebase-file-list{width:auto;max-width:none;max-height:125px;border-right:0;border-bottom:1px solid rgba(0,212,255,0.10)}}
 .fa-panel::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;
   background:linear-gradient(90deg,transparent,rgba(0,212,255,0.6),transparent);pointer-events:none}
 .fa-head{padding:8px 10px 6px;border-bottom:1px solid rgba(0,212,255,0.10);flex-shrink:0}
@@ -546,9 +554,15 @@
   const WIDTHS = [['phone', 390], ['tablet', 768], ['desktop', 0]];
 
   const stepKeyOf = cb => (cb && cb.updated_at) || '';
-  function CodebasePanel({ convId, codebase, artifactsTab, onCollapse, tab, width, refreshKey, wantView, onCodebaseAsk, chatBusy }) {
-    const [view, setView] = useState(codebase.source_snapshot ? 'understand' : 'preview');
-    useEffect(() => { if (wantView && wantView.view) setView(wantView.view); }, [wantView]);
+  function CodebasePanel({ convId, codebase, artifactsTab, onCollapse, tab, width, refreshKey, wantView, onCodebaseAsk, chatBusy, workspace, onDirtyChange, onViewChange }) {
+    ensureCss();
+    const owner = convId + ':' + codebase.id;
+    const ownership = useRef(null);
+    if (!ownership.current || ownership.current.id !== owner) ownership.current = { id: owner, live: true, requests: {}, writing: false, asking: false };
+    const life = ownership.current;
+    const isCurrent = () => life.live && ownership.current === life;
+    useEffect(() => { life.live = true; return () => { life.live = false; }; }, [life]);
+    const [view, setView] = useState(() => wantView && ['understand', 'preview', 'files', 'changes', 'terminal', 'artifacts'].includes(wantView.view) ? wantView.view : codebase.source_snapshot ? 'understand' : 'preview');
     const [html, setHtml] = useState(null);
     const [files, setFiles] = useState([]);
     const [file, setFile] = useState(null);           // {path, content}
@@ -562,6 +576,43 @@
     const [reload, setReload] = useState(0);
     const [pointing, setPointing] = useState(false);
     const [pick, setPick] = useState(codebase.pick || null);
+    const dirty = editing && !!file && draft !== file.content;
+    const editor = useRef(null);
+    editor.current = { file, editing, draft, dirty };
+    const dirtyReporter = useRef(onDirtyChange);
+    dirtyReporter.current = onDirtyChange;
+    useEffect(() => { if (typeof onDirtyChange === 'function') onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+    useEffect(() => () => { if (typeof dirtyReporter.current === 'function') dirtyReporter.current(false); }, [life]);
+    useEffect(() => {
+      const preventLoss = event => { if (editor.current.dirty) { event.preventDefault(); event.returnValue = ''; } };
+      window.addEventListener('beforeunload', preventLoss);
+      return () => window.removeEventListener('beforeunload', preventLoss);
+    }, []);
+    const mayLeaveFile = () => {
+      if (life.writing) { setNote({ text: 'Wait for the current change to finish.' }); return false; }
+      if (editor.current.dirty) { setNote({ text: 'Save or cancel your file changes before opening another file or view.' }); return false; }
+      return true;
+    };
+    const changeView = next => {
+      if (!['understand', 'preview', 'files', 'changes', 'terminal', 'artifacts'].includes(next)) return false;
+      if (next !== view && !mayLeaveFile()) { if (typeof onViewChange === 'function') onViewChange(view); return false; }
+      setView(next);
+      if (typeof onViewChange === 'function') onViewChange(next);
+      return true;
+    };
+    useEffect(() => { if (wantView && wantView.view) changeView(wantView.view); }, [wantView, life]);
+    // Each slot keeps its newest request; a departed owner cannot commit a late
+    // response into another repository, file, or diff selection.
+    const ownedRead = useCallback((slot, url, accept, failed) => {
+      const sequence = (life.requests[slot] || 0) + 1;
+      life.requests[slot] = sequence;
+      const current = () => life.live && ownership.current === life && life.requests[slot] === sequence;
+      return getJ(url).then(data => {
+        if (!current()) return;
+        if (data && (data.status === 'error' || data.error)) throw new Error(data.error || data.message || 'Could not read the codebase.');
+        accept(data);
+      }).catch(error => { if (current() && failed) failed(error); });
+    }, [life]);
     // A codebase that improves a bundle workspace (spec §4.9.1): Compare shows
     // the live version beside the improved one; Swap in raises the ONE card.
     const wsId = codebase.workspace_id || null;
@@ -570,17 +621,22 @@
     const [liveDoc, setLiveDoc] = useState(null);
     useEffect(() => {
       if (!compare || !wsId) return;
+      let active = true;
       api('/api/workspaces/' + encodeURIComponent(wsId) + '/bundle').then(r => r.text())
-        .then(t => setLiveDoc(window.fridayArtifactFrameDoc(t))).catch(() => setLiveDoc(window.fridayArtifactFrameDoc('<p>The live version could not be read.</p>')));
-    }, [compare, wsId, stepKeyOf(codebase)]);
+        .then(t => { if (active && isCurrent()) setLiveDoc(window.fridayArtifactFrameDoc(t)); })
+        .catch(() => { if (active && isCurrent()) setLiveDoc(window.fridayArtifactFrameDoc('<p>The live version could not be read.</p>')); });
+      return () => { active = false; };
+    }, [compare, wsId, stepKeyOf(codebase), life]);
     const swapIn = () => {
-      if (busy) return;
-      setBusy(true);
+      if (life.writing) return;
+      life.writing = true; setBusy(true);
       postJ('/api/workspaces/swap', { codebase_id: codebase.id }).then(({ ok, j }) => {
+        if (!isCurrent()) return;
         if (!ok) { setNote({ text: (j && j.error) || 'Refused.' }); return; }
         const p = (j.approval && j.approval.payload) || {};
         setNote({ text: (p.is_new ? 'Card raised: install it as a workspace. ' : 'Card raised: swap it in. ') + (p.spoken || 'Decide on the card.'), ok: true });
-      }).catch(e => setNote({ text: 'Could not raise the card: ' + e })).then(() => setBusy(false));
+      }).catch(e => { if (isCurrent()) setNote({ text: 'Could not raise the card: ' + e }); })
+        .finally(() => { life.writing = false; if (isCurrent()) setBusy(false); });
     };
     const frameRef = useRef(null);
     const base = '/api/codebases/' + encodeURIComponent(codebase.id);
@@ -590,17 +646,24 @@
     const [runs, setRuns] = useState([]);
     const [cmd, setCmd] = useState('');
     const [asking, setAsking] = useState('');
-    useEffect(() => { getJ(base + '/runs').then(d => setRuns(d.runs || [])).catch(() => {}); }, [base, refreshKey]);
+    const [runPending, setRunPending] = useState(false);
+    useEffect(() => { ownedRead('runs', base + '/runs', d => setRuns(d.runs || [])); }, [base, refreshKey, ownedRead]);
     const askRun = () => {
-      const c = cmd.trim(); if (!c) return;
+      const c = cmd.trim(); if (!c || life.asking || chatBusy) return;
+      if (workspace && typeof onCodebaseAsk !== 'function') { setAsking('Open this codebase in its chat to request a run.'); return; }
+      life.asking = true; setRunPending(true);
       setAsking('Asking ' + 'Friday' + ' to run it\u2026');
-      postJ('/api/chat/send', { message: 'Run this in the codebase and tell me the result: `' + c + '`', conversation_id: convId })
-        .then(() => { setCmd(''); setAsking(''); }).catch(() => setAsking('Could not ask; say it in the chat.'));
+      const message = 'Run this in the codebase and tell me the result: `' + c + '`';
+      return Promise.resolve().then(() => typeof onCodebaseAsk === 'function' ? onCodebaseAsk(message) : postJ('/api/chat/send', { message, conversation_id: convId })
+        .then(({ ok, j }) => { if (!ok || j.status === 'error') throw new Error(j.error || 'Could not send the request.'); }))
+        .then(() => { if (isCurrent()) { setCmd(''); setAsking(typeof onCodebaseAsk === 'function' ? 'Follow this request in the chat.' : ''); } })
+        .catch(error => { if (isCurrent()) setAsking(error.message || 'Could not ask; say it in the chat.'); })
+        .finally(() => { life.asking = false; if (isCurrent()) setRunPending(false); });
     };
     // The header line (spec §4.7): seats · key · this codebase's cost. It is
     // computed on the server and re-read after every step and every change.
     const [hdr, setHdr] = useState(null);
-    const loadHeader = useCallback(() => getJ(base + '/header').then(h => setHdr(h)).catch(() => {}), [base]);
+    const loadHeader = useCallback(() => ownedRead('header', base + '/header', h => setHdr(h)), [base, ownedRead]);
     useEffect(() => { loadHeader(); }, [loadHeader, refreshKey]);
     useEffect(() => {
       if (!window.fridayBusSubscribe) return undefined;
@@ -613,64 +676,106 @@
         const d = e.data;
         if (!d || d.__friday !== 'pick' || typeof d.selector !== 'string') return;
         const body = { selector: d.selector, tag: d.tag, text: d.text, snippet: d.snippet, rect: d.rect, font_px: d.font_px };
-        postJ(base + '/pick', body).then(({ ok, j }) => { if (ok) setPick(j.pick); else setNote({ text: 'Could not keep that selection: ' + ((j && j.error) || '') }); }).catch(() => {});
+        postJ(base + '/pick', body).then(({ ok, j }) => { if (!isCurrent()) return; if (ok) setPick(j.pick); else setNote({ text: 'Could not keep that selection: ' + ((j && j.error) || '') }); }).catch(() => {});
       };
       window.addEventListener('message', onMsg);
       return () => window.removeEventListener('message', onMsg);
-    }, [base]);
+    }, [base, life]);
     const quick = action => {
-      if (!pick || busy) return;
-      setBusy(true);
+      if (!pick || life.writing) return;
+      life.writing = true; setBusy(true);
       postJ(base + '/quick-style', { selector: pick.selector, action, font_px: pick.font_px }).then(({ ok, j }) => {
+        if (!isCurrent()) return;
         if (!ok) { setNote({ text: (j && j.error) || 'That edit did not apply.' }); return; }
         setNote({ text: j.step.summary + ' (a step you can undo)', ok: true });
         loadSteps(); loadPreview();
-      }).catch(e => setNote({ text: 'That edit did not apply: ' + e })).then(() => setBusy(false));
+      }).catch(e => { if (isCurrent()) setNote({ text: 'That edit did not apply: ' + e }); })
+        .finally(() => { life.writing = false; if (isCurrent()) setBusy(false); });
     };
-    const clearPick = () => { postJ(base + '/pick/clear', {}).then(() => setPick(null)).catch(() => {}); };
+    const clearPick = () => { postJ(base + '/pick/clear', {}).then(() => { if (isCurrent()) setPick(null); }).catch(() => {}); };
 
-    const loadPreview = useCallback(() => getJ(base + '/preview').then(d => setHtml(d.html || '')).catch(() => setHtml('')), [base]);
-    const loadFiles = useCallback(() => getJ(base + '/files').then(d => setFiles(d.files || [])).catch(() => {}), [base]);
-    const loadSteps = useCallback(() => getJ(base + '/steps').then(d => setSteps(d.steps || [])).catch(() => {}), [base]);
-    useEffect(() => { loadPreview(); loadFiles(); loadSteps(); setDiff(null); }, [refreshKey, loadPreview, loadFiles, loadSteps]);
-    useEffect(() => { if (file && !editing) getJ(base + '/file?path=' + encodeURIComponent(file.path)).then(d => d.content != null && setFile({ path: file.path, content: d.content })).catch(() => {}); }, [refreshKey]);  // eslint-disable-line
+    const loadPreview = useCallback(() => ownedRead('preview', base + '/preview', d => setHtml(d.html || ''), () => setHtml('')), [base, ownedRead]);
+    const loadFiles = useCallback(() => ownedRead('files', base + '/files', d => setFiles(d.files || []), () => setNote({ text: 'Could not read this codebase’s files.' })), [base, ownedRead]);
+    const loadSteps = useCallback(() => ownedRead('steps', base + '/steps', d => setSteps(d.steps || [])), [base, ownedRead]);
+    useEffect(() => { loadPreview(); loadFiles(); loadSteps(); life.requests.diff = (life.requests.diff || 0) + 1; setDiff(null); }, [refreshKey, loadPreview, loadFiles, loadSteps]);
+    useEffect(() => {
+      const current = editor.current;
+      if (current.file && !current.file.loading && !current.editing) {
+        const path = current.file.path;
+        ownedRead('file', base + '/file?path=' + encodeURIComponent(path), d => {
+          if (typeof d.content === 'string' && !editor.current.editing && editor.current.file && editor.current.file.path === path) setFile({ ...editor.current.file, content: d.content });
+        });
+      }
+    }, [refreshKey, base, ownedRead]);
 
-    const openFile = f => { setEditing(false); getJ(base + '/file?path=' + encodeURIComponent(f.path)).then(d => setFile({ path: f.path, content: d.content || '' })).catch(() => setNote({ text: 'Could not read ' + f.path })); };
+    const openFile = f => {
+      if (!f || typeof f.path !== 'string') return false;
+      if (editor.current.file && editor.current.file.path === f.path && editor.current.editing) return true;
+      if (!mayLeaveFile()) return false;
+      const pending = { path: f.path, lineRange: f.lineRange, content: '', loading: true };
+      editor.current = { file: pending, editing: false, draft: '', dirty: false };
+      setEditing(false); setFile(pending); setNote(null);
+      ownedRead('file', base + '/file?path=' + encodeURIComponent(f.path), d => {
+        if (typeof d.content !== 'string') throw new Error('The source file is unavailable.');
+        if (editor.current.editing || !editor.current.file || editor.current.file.path !== f.path) return;
+        const loaded = { path: f.path, lineRange: f.lineRange, content: d.content };
+        editor.current.file = loaded; setFile(loaded);
+      }, () => { setFile(null); editor.current.file = null; setNote({ text: 'Could not read ' + f.path }); });
+      return true;
+    };
+    const beginEdit = () => {
+      const file = editor.current.file;
+      if (!file || file.loading || life.writing) return;
+      life.requests.file = (life.requests.file || 0) + 1;
+      editor.current = { file, draft: file.content, editing: true, dirty: false };
+      setDraft(file.content); setEditing(true); setNote(null);
+    };
+    const cancelEdit = () => {
+      if (life.writing) return;
+      editor.current = { ...editor.current, draft: '', editing: false, dirty: false };
+      setEditing(false); setDraft(''); setNote(null);
+    };
     const save = () => {
-      if (!file || busy) return;
-      setBusy(true);
-      postJ(base + '/file', { path: file.path, content: draft }).then(({ ok, j }) => {
-        if (!ok) { setNote({ text: 'Not saved: ' + ((j && j.error) || 'unknown error') }); return; }
-        setEditing(false); setFile({ path: file.path, content: draft });
+      if (!editor.current.file || life.writing || !editor.current.editing) return;
+      const saved = { ...editor.current.file, content: editor.current.draft };
+      life.writing = true; setBusy(true);
+      postJ(base + '/file', { path: saved.path, content: saved.content }).then(({ ok, j }) => {
+        if (!isCurrent()) return;
+        if (!ok || j.status === 'error') { setNote({ text: 'Not saved: ' + ((j && j.error) || 'unknown error') }); return; }
+        editor.current = { file: saved, draft: '', editing: false, dirty: false };
+        setEditing(false); setFile(saved); setDraft('');
         setNote({ text: j.step ? 'Saved as a step: ' + j.step.summary : 'Nothing changed.', ok: true });
         loadSteps(); loadPreview();
-      }).catch(e => setNote({ text: 'Not saved: ' + e })).then(() => setBusy(false));
+      }).catch(e => { if (isCurrent()) setNote({ text: 'Not saved: ' + e }); })
+        .finally(() => { life.writing = false; if (isCurrent()) setBusy(false); });
     };
     const undo = () => {
-      if (busy) return;
-      setBusy(true);
+      if (!mayLeaveFile()) return;
+      life.writing = true; setBusy(true);
       postJ(base + '/undo', {}).then(({ ok, j }) => {
+        if (!isCurrent()) return;
         if (!ok) { setNote({ text: (j && j.error) || 'Nothing to undo.' }); return; }
         setNote({ text: j.step.summary, ok: true });
         loadSteps(); loadPreview(); loadFiles();
-      }).catch(e => setNote({ text: 'Undo failed: ' + e })).then(() => setBusy(false));
+      }).catch(e => { if (isCurrent()) setNote({ text: 'Undo failed: ' + e }); })
+        .finally(() => { life.writing = false; if (isCurrent()) setBusy(false); });
     };
-    const showDiff = st => { if (diff && diff.sha === st.sha) { setDiff(null); return; } getJ(base + '/diff/' + st.sha).then(d => setDiff({ sha: st.sha, text: d.diff || '' })).catch(() => {}); };
+    const showDiff = st => { if (diff && diff.sha === st.sha) { life.requests.diff = (life.requests.diff || 0) + 1; setDiff(null); return; } ownedRead('diff', base + '/diff/' + encodeURIComponent(st.sha), d => setDiff({ sha: st.sha, text: d.diff || '' })); };
     const kindChip = k => chipEl(k === 'undo' ? 'UNDO' : k === 'start' ? 'START' : 'STEP', k === 'undo' ? AMBER : k === 'start' ? 'rgba(255,255,255,0.5)' : ACCENT);
-    const tabBtn = (id, label) => h('button', { className: 'fa-btn' + (view === id ? ' fa-primary' : ' fa-quiet'), onClick: () => setView(id), role: 'tab', 'aria-selected': view === id }, label);
+    const tabBtn = (id, label) => h('button', { className: 'fa-btn' + (view === id ? ' fa-primary' : ' fa-quiet'), onClick: () => changeView(id), role: 'tab', 'aria-selected': view === id }, label);
     const doc = useMemo(() => html == null ? null : window.fridayArtifactFrameDoc(pointing ? window.fridayPickerDoc(html) : html), [html, reload, pointing]);
 
-    return h('div', { className: 'fa-panel' + (tab ? ' fa-tab' : ''), style: tab ? undefined : { width, flexShrink: 0 }, 'data-codebase-panel': codebase.id, 'data-codebase-view': view, role: 'complementary', 'aria-label': 'Codebase panel' },
+    return h('div', { className: 'fa-panel' + (tab ? ' fa-tab' : '') + (workspace ? ' fa-codebase-workspace' : ''), style: tab ? undefined : { width, flexShrink: 0 }, 'data-codebase-panel': codebase.id, 'data-codebase-view': view, role: workspace ? 'region' : 'complementary', 'aria-label': workspace ? 'Repository tools' : 'Codebase panel' },
       h('div', { className: 'fa-head' },
         h('div', { className: 'fa-eyebrow' },
-          h('span', { className: 'fa-brand' }, 'FRIDAY ', h('b', null, '· CODEBASE')),
+          workspace ? null : h('span', { className: 'fa-brand' }, 'FRIDAY ', h('b', null, '· CODEBASE')),
           h('span', { style: { display: 'flex', gap: 2 } },
             view === 'preview' ? h('button', { className: 'fa-icon', title: 'Reload the preview', 'aria-label': 'Reload', onClick: () => { setReload(k => k + 1); loadPreview(); } }, '↻') : null,
             h('button', { className: 'fa-icon', title: 'Export as a plain project (zip, nothing of Friday\'s inside)', 'aria-label': 'Export', onClick: () => exportZip(base, codebase.slug) }, '⤓'),
             wsId ? h('span', { className: 'fa-chip', 'data-improves': wsId, title: 'This codebase improves a workspace in your dock; nothing goes live until you approve a swap' },
               'improves ' + ((((window.FRIDAY_INSTALLED_BUNDLES || []).find(b => b.id === wsId) || {}).label) || wsId)) : null,
-            h('button', { className: 'fa-icon', title: tab ? 'Back to the chat' : 'Collapse the panel', 'aria-label': 'Collapse', onClick: onCollapse }, tab ? '✕' : '⟩'))),
-        h('div', { className: 'fa-title-row' },
+            workspace ? null : h('button', { className: 'fa-icon', title: tab ? 'Back to the chat' : 'Collapse the panel', 'aria-label': 'Collapse', onClick: () => { if (mayLeaveFile() && onCollapse) onCollapse(); } }, tab ? '✕' : '⟩'))),
+        workspace ? null : h('div', { className: 'fa-title-row' },
           h('span', { className: 'fa-title', title: codebase.title }, codebase.title),
           chipEl(codebase.source_snapshot ? 'text snapshot' : codebase.template || 'folder', 'rgba(255,255,255,0.6)'),
           chipEl((codebase.tier || 'B0') + ' · ' + (TIER_LABEL[codebase.tier || 'B0'] || ''), ACCENT, 'Where the code runs: B0 is the browser frame, no process, no install')),
@@ -679,7 +784,7 @@
           hdr.text.replace(/^[^·]*·\s*/, ''), hdr.red && hdr.note ? h('span', { style: { display: 'block', color: '#ff6b9d' } }, hdr.note) : null) : null,
         h('div', { className: 'fa-tools', role: 'tablist' },
           window.FridayRepoAtlas ? tabBtn('understand', 'Understand') : null,
-          tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')), tabBtn('terminal', 'Terminal' + (runs.length ? ' · ' + runs.length : '')),
+          workspace ? null : tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')), workspace ? tabBtn('preview', 'Preview') : null, tabBtn('terminal', (workspace ? 'Run' : 'Terminal') + (runs.length ? ' · ' + runs.length : '')),
           artifactsTab ? tabBtn('artifacts', 'Artifacts') : null,
           view === 'preview' ? h('button', { className: 'fa-btn' + (pointing ? ' fa-primary' : ' fa-quiet'), 'data-point-mode': pointing ? 'on' : 'off', onClick: () => setPointing(v => !v), title: 'Point at something in the preview, then say what to change' }, '\u2316 Point') : null,
           view === 'preview' && wsId ? h('button', { className: 'fa-btn' + (compare ? ' fa-primary' : ' fa-quiet'), 'data-compare': compare ? 'on' : 'off', onClick: () => setCompare(v => !v), title: 'The version in your dock beside the improved one' }, 'Compare') : null,
@@ -687,6 +792,7 @@
           view === 'preview' ? h('span', { style: { marginLeft: 'auto', display: 'flex', gap: 4 } }, WIDTHS.map(([name, w]) => h('button', { key: name, className: 'fa-btn fa-quiet', style: frameW === w ? { color: ACCENT, borderColor: ACCENT } : undefined, onClick: () => setFrameW(w), title: name }, name))) : null,
           view === 'changes' ? h('button', { className: 'fa-btn fa-amber', style: { marginLeft: 'auto' }, onClick: undo, disabled: busy || steps.filter(s => s.kind === 'step').length === 0 }, 'Undo last step') : null)),
       note ? h('div', { className: 'fa-note' + (note.ok ? ' fa-ok' : ''), role: 'status' }, note.text) : null,
+      dirty ? h('div', { className: 'fa-note', role: 'status' }, 'Unsaved file changes. Save or cancel before leaving this file.') : null,
       view === 'preview' && (pointing || pick) ? h('div', { className: 'fa-note', 'data-pick': pick ? pick.selector : '', role: 'status', style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
         pick ? h(React.Fragment, null,
           h('span', { style: { flexBasis: '100%', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: pick.selector },
@@ -712,18 +818,18 @@
           : h('iframe', { key: reload + ':' + codebase.id + ':' + (pointing ? 'p' : 'v'), ref: frameRef, className: 'fa-frame', sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer', title: 'Preview (sandboxed)', style: frameW ? { width: frameW, maxWidth: '100%', borderLeft: '1px solid rgba(0,212,255,0.15)', borderRight: '1px solid rgba(0,212,255,0.15)' } : undefined })) : null,
       view === 'understand' && window.FridayRepoAtlas ? h(window.FridayRepoAtlas, {
         key: convId + ':' + codebase.id, codebase, convId, refreshKey, onAsk: onCodebaseAsk, chatBusy, onShowChat: onCollapse,
-        onOpenFile: f => { setView('files'); openFile(f); }
+        onOpenFile: f => { if (openFile(f)) changeView('files'); }
       }) : null,
-      view === 'files' ? h('div', { className: 'fa-body', style: { display: 'flex', gap: 10, padding: 0 } },
-        h('div', { style: { width: 180, flexShrink: 0, borderRight: '1px solid rgba(0,212,255,0.10)', overflow: 'auto', padding: '8px 6px', fontFamily: MONO, fontSize: 11 } },
-          files.map(f => h('div', { key: f.path, onClick: () => openFile(f), title: f.bytes + ' bytes', style: { padding: '3px 6px', cursor: 'pointer', borderRadius: 4, color: file && file.path === f.path ? ACCENT : '#dfe7f2', background: file && file.path === f.path ? 'rgba(0,212,255,0.08)' : undefined, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, f.path))),
+      view === 'files' ? h('div', { className: 'fa-body fa-codebase-files' },
+        h('div', { className: 'fa-codebase-file-list fa-file-tree', 'aria-label': 'Repository files' },
+          files.map(f => h('button', { key: f.path, type: 'button', className: 'fa-codebase-file-button', onClick: () => openFile(f), 'aria-pressed': !!file && file.path === f.path, title: f.path + ' · ' + f.bytes + ' bytes', style: { color: file && file.path === f.path ? ACCENT : '#dfe7f2', background: file && file.path === f.path ? 'rgba(0,212,255,0.08)' : 'transparent' } }, f.path))),
         h('div', { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 8 } },
           file ? h(React.Fragment, null,
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } },
-              h('span', { style: { fontFamily: MONO, fontSize: 11, color: ACCENT, flex: 1 } }, file.path),
-              editing ? h('button', { className: 'fa-btn fa-primary', onClick: save, disabled: busy }, busy ? 'Saving…' : 'Save as a step') : h('button', { className: 'fa-btn', onClick: () => { setDraft(file.content); setEditing(true); } }, 'Edit'),
-              editing ? h('button', { className: 'fa-btn fa-quiet', onClick: () => setEditing(false) }, 'Cancel') : null),
-            editing ? h('textarea', { className: 'fa-editor', value: draft, onChange: e => setDraft(e.target.value), spellCheck: false, style: { flex: 1 } })
+              h('span', { style: { fontFamily: MONO, fontSize: 11, color: ACCENT, flex: 1, overflowWrap: 'anywhere' } }, file.path + (file.lineRange ? ' · lines ' + file.lineRange.join('–') : '')),
+              editing ? h('button', { className: 'fa-btn fa-primary', onClick: save, disabled: busy }, busy ? 'Saving…' : 'Save as a step') : h('button', { className: 'fa-btn', onClick: beginEdit, disabled: busy || file.loading }, 'Edit'),
+              editing ? h('button', { className: 'fa-btn fa-quiet', onClick: cancelEdit, disabled: busy }, 'Cancel') : null),
+            file.loading ? h('div', { className: 'fa-empty', role: 'status' }, 'Loading source…') : editing ? h('textarea', { className: 'fa-editor', 'aria-label': 'Edit ' + file.path, value: draft, onChange: e => { const value = e.target.value; editor.current = { ...editor.current, draft: value, dirty: value !== editor.current.file.content }; setDraft(value); }, disabled: busy, spellCheck: false, style: { flex: 1 } })
               : h('pre', { style: { margin: 0, flex: 1, overflow: 'auto', fontFamily: MONO, fontSize: 11.5, lineHeight: 1.5, color: '#dfe7f2', whiteSpace: 'pre-wrap' } }, file.content))
             : h('div', { className: 'fa-empty' }, 'Pick a file.'))) : null,
       view === 'changes' ? h('div', { className: 'fa-body' },
@@ -736,8 +842,8 @@
           diff && diff.sha === st.sha ? h('div', { style: { marginTop: 6 } }, h(Diff, { diff: diff.text })) : null))) : null,
       view === 'terminal' ? h('div', { className: 'fa-body', 'data-codebase-runs': codebase.id, style: { display: 'flex', flexDirection: 'column', gap: 8 } },
         h('div', { style: { display: 'flex', gap: 6 } },
-          h('input', { className: 'fa-editor', value: cmd, onChange: e => setCmd(e.target.value), onKeyDown: e => { if (e.key === 'Enter') askRun(); }, placeholder: 'A command for ' + codebase.title + ', e.g. npm test (' + 'Friday' + ' runs it; the first one asks you once per task)', 'aria-label': 'Command to run', style: { flex: 1, fontFamily: MONO, fontSize: 11.5, padding: '6px 8px' } }),
-          h('button', { className: 'fa-btn fa-primary', 'data-ask-run': '1', onClick: askRun, disabled: !cmd.trim() }, 'Run')),
+          h('input', { className: 'fa-editor', value: cmd, disabled: runPending, onChange: e => setCmd(e.target.value), onKeyDown: e => { if (e.key === 'Enter') askRun(); }, placeholder: 'A command for ' + codebase.title + ', e.g. npm test (' + 'Friday' + ' runs it; the first one asks you once per task)', 'aria-label': 'Command to run', style: { flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 11.5, padding: '6px 8px' } }),
+          h('button', { className: 'fa-btn fa-primary', 'data-ask-run': '1', onClick: askRun, disabled: !cmd.trim() || runPending || chatBusy }, 'Run')),
         asking ? h('div', { role: 'status', style: { fontSize: 11, color: '#ffd28a' } }, asking) : null,
         !runs.length ? h('div', { style: { color: 'rgba(255,255,255,0.5)', fontSize: 12 } }, 'Nothing has run yet. Ask for the tests, a build or a script; the first command of a task raises one card.')
           : runs.map(r => h('div', { key: r.id, 'data-codebase-run': r.id, style: { border: '1px solid rgba(0,212,255,0.12)', borderRadius: 6, overflow: 'hidden' } },

@@ -10917,7 +10917,23 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     if _arg_error:
         _receipts.record(name, ok=False, denied=True, detail="invalid arguments")
         return _arg_error
-    tool_input = _checked
+    tool_input = _restore_placeholders(_checked or {}, pii_lookup)
+    # The gate and handler must act on the same codebase even if the chat is
+    # rebound while its turn runs. Pin implicit scope before every pre-hook.
+    if name in ("codebase_edit", "codebase_undo", "codebase_read", "codebase_understand") and not str(tool_input.get("codebase_id") or "").strip():
+        try:
+            from agent_friday.services import codebases as _scope_cb
+            _scope_ctx = session_ctx or {}
+            _scope_conv = (_scope_ctx.get("conversation_id")
+                           or _scope_ctx.get("conversation")) or None
+            _scope_rec = _scope_cb.for_conversation(_scope_conv)
+        except Exception:
+            _scope_rec = None
+        if not _scope_rec or not _scope_rec.get("id"):
+            _reason = f"[NOT RUN] '{name}': this turn has no resolvable codebase. Open its codebase conversation before trying again."
+            _receipts.record(name, ok=False, denied=True, detail=_reason)
+            return _reason
+        tool_input = dict(tool_input, codebase_id=_scope_rec["id"])
 
     _host_name = name if name in CLAUDE_TOOL_HANDLERS else _resolve_tool_name(name)[0]
     _host_scoped = _host_name in {"ask_crew", "site_action", "domain_action"}
@@ -10927,7 +10943,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _host_origin = (session_ctx or {}).get("_crew_host_origin", crew_runtime.HOST_ORIGIN.get())
     ctx = _hooks.HookContext(
         tool_name=name,
-        input=_restore_placeholders(tool_input or {}, pii_lookup),
+        input=tool_input,
         session_ctx=session_ctx,
         pii_lookup=pii_lookup,
     )

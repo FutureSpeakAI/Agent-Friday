@@ -89,3 +89,174 @@ def test_a_bad_path_is_refused_out_loud(_root):
     out = ag.CLAUDE_TOOL_HANDLERS["codebase_edit"]({"codebase_id": rec["id"], "files": {"../x": "y"}, "summary": "s"})
     assert isinstance(out, str) and "refused" in out.lower()
     assert len(cb.steps(rec["id"])) == 1
+
+
+@pytest.fixture
+def scoped_dispatch(monkeypatch, tmp_path, _root):
+    """Keep real dispatch, pre-hooks and policy; isolate storage and UI effects."""
+    from agent_friday import core
+    from agent_friday.services import model_router, repo_atlas_context
+
+    records = {"managed": {"id": "managed"}, "external": {"id": "external"}}
+    _root.update({"conv-managed": "managed", "conv-external": "external"})
+    monkeypatch.setattr(cb, "load", records.get)
+    monkeypatch.setattr(cb, "is_managed", lambda cid: cid == "managed")
+    folder = tmp_path / "existing-repository"
+    monkeypatch.setattr(cb, "repo_path", lambda cid: folder)
+    monkeypatch.setattr(cb, "path_of", lambda cid, path: folder / path)
+    seen, writes, executed, receipts = [], [], [], []
+
+    def classify_existing(path):
+        writes.append(path)
+        return action_gate.OUTWARD, "existing-folder policy"
+
+    def step(cid, files, summary, **kwargs):
+        executed.append(cid)
+        return {"sha": "synthetic", "summary": summary,
+                "receipt": {"files": [{"path": p} for p in files], "deleted": []}}
+
+    def undo(cid):
+        executed.append(cid)
+        return {"sha": "synthetic", "summary": "Undo", "undoes": "previous"}
+
+    def read(cid, path):
+        executed.append(cid)
+        return "sample source"
+
+    def brief(cid, **kwargs):
+        executed.append(cid)
+        return {"codebase_id": cid}
+
+    def observe(ctx):
+        seen.append(dict(ctx.input))
+        return ag._hooks.ALLOW
+
+    monkeypatch.setattr(cb, "step", step)
+    monkeypatch.setattr(cb, "undo", undo)
+    monkeypatch.setattr(cb, "read", read)
+    monkeypatch.setattr(repo_atlas_context, "brief", brief)
+    monkeypatch.setattr(action_gate, "classify_write", classify_existing)
+    monkeypatch.setattr(action_gate, "verify_claws", lambda: (True, "test"))
+    monkeypatch.setattr(action_gate, "_receipt", receipts.append)
+    monkeypatch.setattr(ag._receipts, "record", lambda *a, **kw: None)
+    monkeypatch.setattr(ag._tool_output, "clip_result", lambda name, result: result)
+    monkeypatch.setattr(model_router, "announce_tool", lambda *a: None)
+    monkeypatch.setattr(core, "_load_settings", lambda: {})
+    monkeypatch.setattr(ag, "_load_settings", lambda: {})
+    monkeypatch.setattr(ag, "_PENDING_CONFIRMATIONS", {})
+    monkeypatch.setattr(ag._taint_mod, "_LEDGERS", {})
+    monkeypatch.setattr(ag._hooks, "_POST_HOOKS", [])
+    ag._hooks.register_pre_hook(observe, name="test_scope_observer", priority=0)
+    try:
+        yield {"seen": seen, "writes": writes, "executed": executed,
+               "receipts": receipts, "folder": folder}
+    finally:
+        ag._hooks.unregister_hook("test_scope_observer")
+        ag._hooks.unregister_hook("test_scope_rebind")
+
+
+def _dispatch_args(tool):
+    return {"codebase_edit": {"files": {"a.txt": "value"}, "summary": "Edit"},
+            "codebase_undo": {}, "codebase_read": {"path": "a.txt"},
+            "codebase_understand": {"mode": "learn"}}[tool]
+
+
+def _session(**scope):
+    return {"authenticated": True, "session_id": "scope-test", **scope}
+
+
+@pytest.mark.parametrize("ambient", [None, "conv-external"])
+@pytest.mark.parametrize("tool", ["codebase_read", "codebase_understand", "codebase_edit", "codebase_undo"])
+def test_dispatch_uses_trusted_scope_before_hooks(scoped_dispatch, ambient, tool):
+    state = scoped_dispatch
+    args = _dispatch_args(tool)
+    marker = ag._CURRENT_CONVERSATION.set(ambient)
+    try:
+        result = ag._execute_tool(tool, args, session_ctx=_session(
+            conversation_id="conv-managed", codebase="external"))
+        assert state["executed"] == ["managed"], result
+        assert state["seen"] == [dict(args, codebase_id="managed")]
+        assert "codebase_id" not in args
+        assert state["writes"] == []
+        assert ag._CURRENT_CONVERSATION.get() == ambient
+    finally:
+        ag._CURRENT_CONVERSATION.reset(marker)
+
+
+@pytest.mark.parametrize("scope", [None, {}, {"conversation_id": None},
+    {"conversation_id": ""}, {"conversation_id": "unknown"},
+    {"conversation": "unknown"},
+    {"conversation_id": "unknown", "conversation": "conv-managed"}])
+def test_dispatch_missing_scope_never_borrows_ambient(scoped_dispatch, scope):
+    marker = ag._CURRENT_CONVERSATION.set("conv-managed")
+    try:
+        result = ag._execute_tool("codebase_edit", _dispatch_args("codebase_edit"),
+                                  session_ctx=scope)
+        assert scoped_dispatch["executed"] == []
+        assert scoped_dispatch["seen"] == []
+        assert "[NOT RUN]" in result and "no resolvable codebase" in result
+    finally:
+        ag._CURRENT_CONVERSATION.reset(marker)
+
+
+@pytest.mark.parametrize("scope", [
+    {"conversation_id": "conv-managed", "conversation": "conv-external"},
+    {"conversation_id": "", "conversation": "conv-managed"},
+    {"conversation": "conv-managed"}])
+def test_dispatch_uses_the_handler_conversation_alias_rules(scoped_dispatch, scope):
+    result = ag._execute_tool("codebase_read", {"path": "a.txt"},
+                              session_ctx=_session(**scope))
+    assert scoped_dispatch["executed"] == ["managed"], result
+
+
+@pytest.mark.parametrize("tool", ["codebase_edit", "codebase_undo"])
+def test_dispatch_existing_folder_writes_keep_the_existing_policy(scoped_dispatch, tool):
+    marker = ag._CURRENT_CONVERSATION.set("conv-managed")
+    try:
+        result = ag._execute_tool(tool, _dispatch_args(tool),
+                                  session_ctx=_session(conversation_id="conv-external"))
+        assert scoped_dispatch["executed"] == []
+        assert scoped_dispatch["writes"] == [str(scoped_dispatch["folder"] / "x")]
+        assert "[CONFIRMATION REQUIRED]" in result
+        assert any(r.get("class") == action_gate.OUTWARD and r["decision"] == "confirm"
+                   for r in scoped_dispatch["receipts"])
+    finally:
+        ag._CURRENT_CONVERSATION.reset(marker)
+
+
+@pytest.mark.parametrize("target,conversation", [
+    ("managed", "conv-external"), ("external", "conv-managed")])
+def test_dispatch_explicit_codebase_ids_retain_precedence(scoped_dispatch, target, conversation):
+    result = ag._execute_tool("codebase_read", {"path": "a.txt", "codebase_id": target},
+                              session_ctx=_session(conversation_id=conversation))
+    assert scoped_dispatch["executed"] == [target], result
+    assert scoped_dispatch["seen"][0]["codebase_id"] == target
+
+
+def test_dispatch_unknown_explicit_id_does_not_fall_back(scoped_dispatch):
+    result = ag._execute_tool("codebase_read", {"path": "a.txt", "codebase_id": "unknown"},
+                              session_ctx=_session(conversation_id="conv-managed"))
+    assert scoped_dispatch["executed"] == []
+    assert scoped_dispatch["seen"][0]["codebase_id"] == "unknown"
+    assert "[CONFIRMATION REQUIRED]" in result
+
+
+def test_dispatch_keeps_the_approved_target_when_chat_binding_changes(scoped_dispatch, _root):
+    def rebind(ctx):
+        _root["conv-managed"] = "external"
+        return ag._hooks.ALLOW
+
+    ag._hooks.register_pre_hook(rebind, name="test_scope_rebind", priority=90)
+    # The baseline gate can approve A through its ambient scope. The binding
+    # changes only after all real pre-hooks, before the real handler runs.
+    marker = ag._CURRENT_CONVERSATION.set("conv-managed")
+    try:
+        result = ag._execute_tool("codebase_edit", _dispatch_args("codebase_edit"),
+                                  session_ctx=_session(conversation_id="conv-managed"))
+        assert scoped_dispatch["executed"] == ["managed"], result
+        assert _root["conv-managed"] == "external"
+        assert scoped_dispatch["seen"][0]["codebase_id"] == "managed"
+        assert any(r.get("class") == action_gate.INTERNAL and r["decision"] == "allow"
+                   for r in scoped_dispatch["receipts"])
+    finally:
+        ag._CURRENT_CONVERSATION.reset(marker)

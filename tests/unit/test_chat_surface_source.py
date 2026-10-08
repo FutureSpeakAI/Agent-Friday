@@ -26,7 +26,11 @@ def test_panel_and_window_render_the_same_chat_surface():
     src = _read("index.html")
     assert src.count("function ChatSurface(") == 1
     app = _function(src, "App")
-    assert "React.createElement(ChatSurface, {\n    mode: 'panel'" in app
+    native_props = app[app.index("const nativeChatProps = {"):
+                       app.index("const codeChat = {")]
+    assert re.search(r"\bmode:\s*'panel'", native_props)
+    assert "React.createElement(ChatSurface, nativeChatProps)" in app
+    assert "React.createElement(ChatSurface, {...nativeChatProps, mode:'code'," in app
     win = _function(src, "ConversationWindow")
     assert "React.createElement(ChatSurface, {" in win
     assert "mode: 'window'" in win
@@ -74,7 +78,11 @@ def test_windows_resize_from_every_edge():
 def test_mirror_has_the_same_pieces():
     app = _read("ui_parts/app.html")
     assert app.count("function ChatSurface(") == 1
-    assert re.search(r'<ChatSurface\b[^>]*\bmode="panel"', app)
+    native_props = app[app.index("const nativeChatProps = {"):
+                       app.index("const codeChat = {")]
+    assert re.search(r"\bmode:\s*'panel'", native_props)
+    assert "<ChatSurface {...nativeChatProps}/>" in app
+    assert "React.createElement(ChatSurface, {...nativeChatProps, mode:'code'," in app
     assert "function fridayEnterSends(" in app
     assert "fridayEdgeHandles(startResize)" in app
     css = _read("ui_parts/styles_and_scene.html")
