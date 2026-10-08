@@ -17659,10 +17659,264 @@ function VoiceRestrictions(){
     </div>)}
   </div>;
 }
+// The Voice Manifest, rendered. Three rows — EAR / MIND / MOUTH — each showing
+// selected → effective → PROVEN. Every fact here comes from
+// /api/voice/session-info's `manifest` (the same snapshot the HUD, the API and
+// the model's own self-description read); this component computes nothing of
+// its own about readiness. Opening the panel POSTs /api/voice/arm, which runs
+// the three proofs in the background; rows flip green one by one with their
+// measured latency. "Prove voice now" forces a re-proof.
+const VOICE_STAGE_LABEL = { ear: 'Listening', mind: 'Thinking', mouth: 'Speaking' };
+const VOICE_PROOF_GLYPH = {
+  proven: ['●', '#00ff80'], proving: ['◐', '#38bdf8'],
+  unproven: ['○', 'rgba(255,255,255,0.45)'], refused: ['✕', '#ef4444'],
+  cloud: ['☁', 'rgba(255,255,255,0.6)']
+};
+function voiceEffectiveText(st) {
+  const e = st && st.effective || {};
+  if (!e.engine) return st && st.selected && st.selected.engine ? (st.selected.engine === 'seat' ? 'local model' : st.selected.engine) + ' (selected)' : '—';
+  let name = e.engine;
+  if (e.engine === 'faster-whisper') name = 'faster-whisper ' + (e.model || '');
+  else if (e.engine === 'seat') name = (e.model || 'local model');
+  else if (e.engine === 'kokoro') name = 'Kokoro ' + (e.voice || '');
+  else if (e.engine === 'piper') name = 'Piper ' + (e.voice || '');
+  else if (e.engine === 'gemini-live') name = 'Gemini Live';
+  const dev = e.device === 'cuda' ? 'GPU' : e.device === 'cpu' ? 'CPU' : e.device === 'cloud' ? 'cloud' : e.device === 'local' ? (e.window ? ':' + String(e.base || '').split(':').pop() + ' · ' + Math.round(e.window / 1024) + 'k' : 'local') : '';
+  return name.trim() + (dev ? ' · ' + dev : '');
+}
+function VoiceStackRow({ stage, st, onProve, contract }) {
+  const p = st && st.proof || { state: 'unproven' };
+  const [glyph, color] = VOICE_PROOF_GLYPH[p.state] || VOICE_PROOF_GLYPH.unproven;
+  const at = p.at ? new Date(p.at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  let proofText;
+  if (p.state === 'proven') proofText = 'working · checked ' + at + (p.latency_ms != null ? ' · ' + (p.latency_ms / 1000).toFixed(2) + ' s' : '');
+  else if (p.state === 'proving') proofText = 'checking… ' + (st.progress || '');
+  else if (p.state === 'refused') proofText = 'unavailable';
+  else if (p.state === 'cloud') proofText = '';  // the engine name already says cloud
+  else proofText = 'not checked yet' + (st && st.reason ? ' — ' + st.reason : '');
+  const extra = stage === 'mind' && contract && contract.tools ? ' · ' + contract.tools.length + ' tools · knowledge ' + (contract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (contract.memory ? '✓' : '✗') : '';
+  return /*#__PURE__*/React.createElement("div", { style: { display: 'grid', gridTemplateColumns: '84px 1fr', gap: 10, alignItems: 'start', padding: '7px 0', borderBottom: '1px solid var(--st-line)' } },
+    /*#__PURE__*/React.createElement("div", { style: { fontFamily: 'var(--st-font)', fontSize: 12.5, fontWeight: 500, color: 'var(--st-label)', paddingTop: 1 } }, VOICE_STAGE_LABEL[stage]),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, lineHeight: 1.5 } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("span", { style: { color, marginRight: 6 } }, glyph),
+        voiceEffectiveText(st) !== '—' && /*#__PURE__*/React.createElement("b", null, voiceEffectiveText(st)),
+        /*#__PURE__*/React.createElement("span", { style: { opacity: 0.75, marginLeft: 8 } }, proofText + extra)),
+      p.state !== 'unproven' && st && st.reason && p.state !== 'cloud' && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: p.state === 'refused' ? '#ef4444' : 'var(--warn, #e0a030)' } }, st.reason),
+      p.state === 'refused' && st && st.action && /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '4px 10px', marginTop: 4 }, onClick: () => onProve(st.action) }, String(st.action.label || 'Retry').replace(/^Prove\b/, 'Check'))));
+}
+function VoiceStackCard({ s, save, mc }) {
+  const [manifest, setManifest] = useState(null);
+  const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
+  const pollRef = useRef(null);
+  const take = useCallback(d => {
+    if (!d) return;
+    const m = d.manifest || d;
+    if (m && m.stages) setManifest(m);
+    if (m && m.proving) {
+      clearTimeout(pollRef.current);
+      pollRef.current = setTimeout(() => fetch('/api/voice/arm').then(r => r.json()).then(take).catch(() => {}), 1200);
+    }
+  }, []);
+  useEffect(() => {
+    let stop = false;
+    fetch('/api/voice/session-info').then(r => r.json()).then(d => { if (!stop) take(d); }).catch(() => setErr('Could not read the voice manifest.'));
+    apiFetch('/api/voice/arm', { method: 'POST' }).then(r => r.json()).then(d => { if (!stop) take(d); }).catch(() => {});
+    return () => { stop = true; clearTimeout(pollRef.current); };
+  }, [take, s.voice_engine, s.local_voice_tts_engine, s.local_voice_kokoro_voice, s.voice_ear_gpu, s.voice_mouth_gpu]);
+  const proveNow = useCallback(action => {
+    const prove = () => apiFetch('/api/voice/prove', { method: 'POST' }).then(r => r.json()).then(take).catch(() => {});
+    if (action && action.kind === 'settings') {
+      // A settings action either names the setting to change (`set`), which
+      // is saved through the same path every Settings row uses and then
+      // proved again, or names the Settings tab that holds the control.
+      if (action.set && typeof action.set === 'object') {
+        setNote(String(action.label || 'Setting changed') + ': saved. Checking again…');
+        Promise.resolve(save(action.set)).then(prove).catch(() => setNote('That setting could not be saved.'));
+      } else if (action.tab) {
+        window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: action.tab } }));
+      }
+      return;
+    }
+    setNote('');
+    prove();
+  }, [take, save]);
+  const engines = mc && mc.ttsEngines || TTS_ENGINES_FALLBACK;
+  const sel = s.local_voice_tts_engine || 'piper';
+  const stages = manifest && manifest.stages || {};
+  const policyRow = (key, label) => /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 } },
+    /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.7, minWidth: 90 } }, label),
+    [['never', 'Never'], ['if_free', 'If free'], ['required', 'Required']].map(([v, l]) => /*#__PURE__*/React.createElement("button", {
+      key: v, className: `settings-btn ${(s[key] || 'if_free') === v ? 'active' : ''}`, style: { fontSize: 11, padding: '4px 10px' },
+      onClick: () => save({ [key]: v })
+    }, l)));
+  return /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement(StRow, { label: "Voice readiness", desc: "A stage turns green only after it has actually heard, thought or spoken in the last 15 minutes, so green means it works now, not merely that it is installed." },
+      /*#__PURE__*/React.createElement("div", null,
+        err && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.7 } }, err),
+        note && /*#__PURE__*/React.createElement("div", { role: "status", style: { fontSize: 11, opacity: 0.8, marginBottom: 4 } }, note),
+        ['ear', 'mind', 'mouth'].map(k => /*#__PURE__*/React.createElement(VoiceStackRow, { key: k, stage: k, st: stages[k], onProve: proveNow, contract: manifest && manifest.contract })),
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 } },
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '5px 12px' }, onClick: () => proveNow(null) }, manifest && manifest.proving ? 'Checking…' : 'Check voice now'),
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.6 } }, manifest ? (manifest.ready ? 'All three stages are working.' : 'Not ready yet; see the rows above.') + ' Voice models unload after ' + Math.round((manifest.idle_unload_s || 600) / 60) + ' minutes idle.' : 'Checking…')),
+        manifest && manifest.description && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 6, fontStyle: 'italic' } }, ("What " + fridayName() + " is told about herself: “"), manifest.description, "”"))),
+    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Speech recognition", desc: "When listening may use the graphics card. Never: always the processor. If free: the graphics card when enough memory is spare after the display's share. Required: refuse a voice session rather than fall back to the processor." },
+      policyRow('voice_ear_gpu', 'Graphics card')),
+    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Speaking voice engine", desc: "Which synthesizer speaks. Piper runs on the processor and is always available. Kokoro sounds more natural but needs an NVIDIA graphics card (or the processor opt-in below), and refuses rather than quietly running slowly." },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, engines.map(o => {
+          const off = o.available === false;
+          return /*#__PURE__*/React.createElement("button", { key: o.id, className: `settings-btn ${sel === o.id ? 'active' : ''}`, style: { fontSize: 12, padding: '7px 14px', opacity: off ? 0.4 : 1, cursor: off ? 'not-allowed' : 'pointer' }, "aria-disabled": off, title: o.hint || o.label, onClick: off ? undefined : () => save({ local_voice_tts_engine: o.id }) }, o.short || o.label);
+        })),
+        engines.filter(o => o.available === false).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.short || o.label, " unavailable:"), " ", o.hint || 'no reason given')),
+        policyRow('voice_mouth_gpu', 'Graphics card'),
+        sel === 'kokoro' && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 } },
+          /*#__PURE__*/React.createElement("select", { className: "input", style: { width: '100%' }, value: s.local_voice_kokoro_voice || 'af_heart', onChange: e => save({ local_voice_kokoro_voice: e.target.value }) },
+            [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']].map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l))),
+          /*#__PURE__*/React.createElement("button", { className: `settings-btn ${s.local_voice_kokoro_allow_cpu ? 'active' : ''}`, style: { fontSize: 11, padding: '5px 10px', marginTop: 6 }, onClick: () => save({ local_voice_kokoro_allow_cpu: !s.local_voice_kokoro_allow_cpu }) }, s.local_voice_kokoro_allow_cpu ? 'Kokoro on the processor: allowed (default; slower than the card)' : 'Kokoro on the processor: off (Piper speaks when the card is busy)')))));
+}
+// ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
+// One row of modes for the `voice_engine` setting. `auto` is gone from the
+// picker (it is read as `local`). A cloud mode shows its
+// disclosure BEFORE it takes effect: Gemini's four lines here (with the §4.5
+// relay line), a synthesis provider's from /api/voice/cloud/disclosure.
+// Greyed rows carry the reason (no key, offline, local-only, GA rule).
+function VoiceModePicker({ s, save, mc }) {
+  const [providers, setProviders] = useState([]);
+  const [pending, setPending] = useState(null);   // {id, label, lines}
+  useEffect(() => {
+    fetch('/api/voice/cloud/providers').then(r => r.json()).then(d => setProviders(d && d.providers || [])).catch(() => {});
+  }, []);
+  const cur = (s.voice_engine || 'local') === 'auto' ? 'local' : (s.voice_engine || 'local');
+  const eng = id => (mc && mc.voiceEngines || []).filter(o => o.id === id)[0] || null;
+  const gem = eng('gemini');
+  const gpu = eng('local-gpu');
+  const rows = [
+    { id: 'local', label: 'Local', desc: 'Ears, reasoning and voice on this machine. Nothing leaves it.', off: false, reason: null },
+    { id: 'gemini', label: 'Cloud (Gemini Live)', desc: ("Google's speech-to-speech model. Your microphone audio goes to Google. Questions about your own context go through " + fridayName() + "'s local model."), off: !!(gem && gem.available === false), reason: gem && gem.hint }
+  ].concat(providers.map(pv => ({
+    id: pv.name, label: 'Local listening, cloud voice (' + String(pv.label || pv.name).replace(/\s*\(cloud\)\s*$/i, '') + ')',
+    desc: (fridayName() + ' hears and thinks here; ') + pv.label + ' speaks. Only the reply text leaves.',
+    off: pv.selectable === false, reason: pv.reason, provider: pv.name
+  }))).concat(gpu ? [{ id: 'local-gpu', label: 'Local GPU (NeMo, experimental)', desc: 'Nemotron ASR + FastPitch on CUDA. Off by default; kept behind the engine interface.', off: gpu.available === false, reason: gpu.hint }] : []);
+  const choose = row => {
+    if (row.off) return;
+    if (row.id === 'local' || row.id === 'local-gpu') { save({ voice_engine: row.id }); return; }
+    if (row.id === 'gemini') {
+      setPending({ id: 'gemini', label: row.label, lines: [
+        ['Mode', 'Speech-to-speech: Gemini hears, thinks and speaks in one hop, with barge-in and native prosody.'],
+        ['What leaves this machine', ('Your microphone audio and the session context, after the privacy gate. Questions about your own notes, memory or knowledge graph are answered by ' + fridayName() + '’s local model through ask_friday; only the sealed answer is relayed.')],
+        ['Retention', 'Subject to Google’s API data terms for the Live API.'],
+        ['Cost', 'Metered per session in Settings → Spending; the byte receipt is shown after each session.']
+      ] });
+      return;
+    }
+    fetch('/api/voice/cloud/disclosure?provider=' + encodeURIComponent(row.provider)).then(r => r.json()).then(d => {
+      const x = d && d.disclosure || {};
+      setPending({ id: row.id, label: row.label, lines: [
+        ['Mode', (x.mode || '') + ' — ' + (x.mode_detail || '')],
+        ['What leaves this machine', x.egress || ''],
+        ['Retention', typeof x.retention === 'string' ? x.retention : JSON.stringify(x.retention || '')],
+        ['Cost', (x.cost_per_reply_usd != null ? '$' + x.cost_per_reply_usd + ' per reply' : 'unpriced') + (x.cost_projection && x.cost_projection.usd_per_month != null ? ' · ~$' + x.cost_projection.usd_per_month + '/month at your recent volume' : '')]
+      ] });
+    }).catch(() => setPending({ id: row.id, label: row.label, lines: [['Disclosure', 'Could not load the disclosure; the mode was not changed.']] }));
+  };
+  return /*#__PURE__*/React.createElement(StRow, { label: "Mode", desc: "Which stack answers when you press the mic. Cloud modes show what leaves this machine before they take effect." },
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, rows.map(o => /*#__PURE__*/React.createElement("button", {
+        key: o.id, className: `settings-btn ${cur === o.id ? 'active' : ''}`,
+        style: { fontSize: 12, padding: '7px 14px', opacity: o.off ? 0.4 : 1, cursor: o.off ? 'not-allowed' : 'pointer' },
+        "aria-disabled": o.off, title: o.off && o.reason ? o.reason : o.desc, onClick: () => choose(o)
+      }, o.label))),
+      rows.filter(o => o.id === cur).map(o => /*#__PURE__*/React.createElement("div", { key: 'cur', style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, o.desc)),
+      rows.filter(o => o.off && o.reason).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.label, " unavailable:"), " ", o.reason)),
+      pending && /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, marginBottom: 6 } }, "Before switching to ", pending.label),
+        pending.lines.map(([k, v]) => /*#__PURE__*/React.createElement("div", { key: k, style: { marginBottom: 4 } }, /*#__PURE__*/React.createElement("b", null, k, ": "), v)),
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { save({ voice_engine: pending.id }); setPending(null); } }, "Switch to ", pending.label),
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => setPending(null) }, "Keep ", cur)))));
+}
+// ── Settings → Voice → Local voice models ────────────────────────────────
+// One row per downloadable piece of the local voice stack (the ear, the fast
+// reply model, the voice helpers), listed in EVERY voice mode so an owner on
+// cloud voice can prepare local voice. Nothing is fetched until the owner has
+// seen the size and confirmed it; the server downloads only pinned files,
+// checks each against its SHA-256, and resumes a stopped download.
+function voiceArtifactSize(mb) {
+  return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
+}
+function LocalVoiceModels() {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+  const [ask, setAsk] = useState(null);
+  const load = useCallback(() => apiFetch('/api/voice/artifacts').then(r => r.json()).then(d => {
+    setRows(d && d.artifacts || []);
+    setErr('');
+  }).catch(() => setErr('Could not read the list of local voice models.')), []);
+  useEffect(() => { load(); }, [load]);
+  const running = (rows || []).some(r => r.job && r.job.state === 'running');
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(load, 1500);
+    return () => clearInterval(t);
+  }, [running, load]);
+  const start = row => {
+    setAsk(null);
+    setErr('');
+    apiFetch('/api/voice/setup/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: row.id, consent: true })
+    }).then(r => r.json()).then(j => {
+      if (j && j.state === 'error') setErr(j.error || 'The download did not start.');
+      load();
+    }).catch(() => setErr('Could not reach the server to start the download.'));
+  };
+  const stop = () => apiFetch('/api/voice/setup/install/cancel', { method: 'POST' }).then(() => load()).catch(() => {});
+  const byId = {};
+  (rows || []).forEach(r => { byId[r.id] = r; });
+  // What a click downloads: the row plus any not-yet-installed piece it needs.
+  const needs = r => [r].concat((r.requires || []).map(i => byId[i]).filter(x => x && !x.installed));
+  const stateOf = r => {
+    const j = r.job;
+    if (j && j.state === 'running') {
+      const p = j.progress;
+      return ['downloading' + (p && p.total ? ' ' + Math.floor(100 * p.done / p.total) + '%' : '…'), '#38bdf8'];
+    }
+    if (r.installed) return ['installed', '#00ff80'];
+    if (j && j.state === 'error') return ['failed: ' + (j.error || 'no reason given'), '#ef4444'];
+    if (j && j.state === 'cancelled') return ['stopped; Download continues where it stopped', 'var(--st-dim)'];
+    if (!r.installable) return ['not available yet: ' + r.why_not, 'var(--st-dim)'];
+    return ['not installed', 'var(--st-dim)'];
+  };
+  if (rows === null) return React.createElement('div', { style: { fontSize: 11.5, color: 'var(--st-dim)' } }, err || 'Reading the local voice models…');
+  return React.createElement('div', null,
+    err && React.createElement('div', { role: 'alert', style: { fontSize: 11.5, color: '#ef4444', marginBottom: 8 } }, err),
+    rows.map(r => {
+      const [text, color] = stateOf(r);
+      const isRunning = !!(r.job && r.job.state === 'running');
+      const can = !r.installed && r.installable && !isRunning;
+      const group = needs(r);
+      const mb = group.reduce((n, x) => n + (x.size_mb || 0), 0);
+      const redo = r.job && (r.job.state === 'error' || r.job.state === 'cancelled');
+      return React.createElement(StRow, { key: r.id, label: r.label + (r.optional ? ' (optional)' : ''), desc: r.purpose },
+        React.createElement('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 } },
+          React.createElement('span', { style: { opacity: 0.75 } }, voiceArtifactSize(r.size_mb)),
+          React.createElement('span', { role: 'status', style: { color } }, text),
+          can && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: () => setAsk(r.id) }, redo ? 'Continue download' : 'Download'),
+          isRunning && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: stop }, 'Stop')),
+        ask === r.id && React.createElement('div', { style: { marginTop: 8, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
+          React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Download ' + voiceArtifactSize(mb) + '?'),
+          React.createElement('div', null, group.map(x => x.label + ' (' + voiceArtifactSize(x.size_mb) + ')').join(' and ') + ' will be saved on this computer. It comes from ' + (r.source || 'its publisher') + ' under the ' + r.licence + ' licence, and is checked against a fixed checksum before it is used; a file that does not match is deleted. If the download stops, Continue download picks up where it left off.'),
+          React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
+            React.createElement('button', { className: 'settings-btn active', style: { fontSize: 11 }, onClick: () => start(r) }, 'Download ' + voiceArtifactSize(mb)),
+            React.createElement('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => setAsk(null) }, 'Not now'))));
+    }));
+}
 function SettingsTabVoice({s,save}){
   const[showWizard,setShowWizard]=useState(false);
   const mc=useModelCatalog();
-  const engineIcon={'local':'','local-gpu':'','gemini':'','auto':''};
   // Several options only reach the Gemini Live session; showing them in a
   // local mode would offer switches that change nothing.
   const gem=(s.voice_engine||'local')==='gemini';
@@ -17672,18 +17926,7 @@ function SettingsTabVoice({s,save}){
     </div>
     {showWizard&&<VoiceSetupWizard onClose={()=>setShowWizard(false)}/>}
     <StSection title="Voice engine">
-      <StRow label="Engine" desc="Local = on-device, private. Cloud = Gemini Live, most expressive.">
-        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-          {mc.voiceEngines.map(o=>{
-            const off=o.available===false;
-            return(
-            <button key={o.id} className={`settings-btn ${(s.voice_engine||'local')===o.id?'active':''}`}
-              style={{fontSize:12,padding:'7px 14px',opacity:off?0.4:1,cursor:off?'not-allowed':'pointer'}}
-              aria-disabled={off} title={o.hint||o.label}
-              onClick={off?undefined:()=>save({voice_engine:o.id})}>{(engineIcon[o.id]||'')+(o.short||o.label)}</button>
-          )})}
-        </div>
-      </StRow>
+      <VoiceModePicker s={s} save={save} mc={mc}/>
       {(s.voice_engine||'local')==='gemini'&&<StRow label="Gemini Live model" desc="The speech-to-speech model the cloud engine uses.">
         <select className="input" style={{width:'100%'}} value={s.voice_model||''} onChange={e=>save({voice_model:e.target.value})}>
           <option value="">— default —</option>
@@ -17700,13 +17943,16 @@ function SettingsTabVoice({s,save}){
           {['Aoede','Puck','Charon','Kore','Fenrir','Leda','Orus','Zephyr'].map(v=><option key={v}>{v}</option>)}
         </select>
       </StRow>}
-      {((s.voice_engine||'local')!=='gemini')&&<TtsEngineRows s={s} save={save} mc={mc}/>}
+      <VoiceStackCard s={s} save={save} mc={mc}/>
       <PushToTranscribeRows s={s} save={save}/>
       {((s.voice_engine||'local')!=='gemini')&&(s.local_voice_tts_engine||'piper')==='piper'&&<StRow label="Piper voice" desc="The on-device voice the local engines speak with.">
         <select className="input" style={{width:'100%'}} value={s.local_voice_tts_voice||'en_US-amy-medium'} onChange={e=>save({local_voice_tts_voice:e.target.value})}>
           {[['en_US-amy-medium','Amy \u2014 US English (medium)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
         </select>
       </StRow>}
+    </StSection>
+    <StSection title="Local voice models" desc="The pieces of on-device voice, whichever mode is selected now. Nothing downloads until you confirm its size.">
+      <LocalVoiceModels/>
     </StSection>
     <StSection title="Conversation style" desc="These preferences apply to your next voice session.">
       <StRow label="Answer depth" desc="Adaptive follows the request and conversation. You can always ask for a shorter answer or more detail.">

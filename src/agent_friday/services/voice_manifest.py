@@ -256,14 +256,16 @@ def _run_mind(selection: dict, progress) -> dict:
         raise ProofRefused("local_voice_brain_absent",
                            "Local voice can hear you, but no local model is "
                            "loaded to answer.",
-                           {"label": "Load the model", "kind": "settings"})
+                           {"label": "Load the model", "kind": "settings",
+                            "tab": "intelligence"})
     from agent_friday.services import tool_budget
     base = tool_budget._seat_base(seat)
     if not base:
         raise ProofRefused("local_voice_brain_absent",
                            f"The brain seat {seat} is installed but nothing is "
                            "serving it right now.",
-                           {"label": "Load the model", "kind": "settings"})
+                           {"label": "Load the model", "kind": "settings",
+                            "tab": "intelligence"})
     if progress:
         progress(f"asking {seat}")
     contract = compute_contract(seat)
@@ -622,8 +624,10 @@ class VoiceManifest:
             code = getattr(e, "code", None)
             if code and getattr(e, "message", None):
                 refuse_current(str(code), str(e.message),
-                             {"label": "Set GPU to 'if free'", "kind": "settings"}
-                             if code == "local_voice_gpu_refused" else
+                             {"label": "Set GPU to 'if free'", "kind": "settings",
+                              "set": {f"voice_{stage}_gpu": "if_free"}}
+                             if code == "local_voice_gpu_refused"
+                             and stage in ("ear", "mouth") else
                              {"label": "Prove again", "kind": "retry"})
             else:
                 msg, act = plain_language_refusal(e, self._noun(stage))
@@ -650,7 +654,8 @@ class VoiceManifest:
             raise ProofRefused("local_voice_gpu_refused",
                                "GPU policy is 'required' for the ear and no GPU "
                                "engine is admitted in this phase.",
-                               {"label": "Set GPU to 'if free'", "kind": "settings"})
+                               {"label": "Set GPU to 'if free'", "kind": "settings",
+                                "set": {"voice_ear_gpu": "if_free"}})
         if sel.get("device_policy") in _GPU_IF_IT_FITS and effective.get("device") != "cuda":
             reason = "you chose GPU if free; serving on the CPU"
         self._prove_ok("ear", effective, ms,
@@ -701,7 +706,8 @@ class VoiceManifest:
                 self._refuse("mind", "voice_contract_does_not_fit",
                              "The local model's window can't hold Friday's tools "
                              "alongside this conversation. " + contract.get("reason", ""),
-                             {"label": "Raise seat context", "kind": "settings"})
+                             {"label": "Raise seat context", "kind": "settings",
+                              "tab": "intelligence"})
                 self.stages["mind"]["effective"] = effective
                 return
             self._prove_ok("mind", effective, ms,

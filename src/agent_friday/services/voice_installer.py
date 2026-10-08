@@ -241,7 +241,11 @@ def _install_artifact(aid: str) -> None:
 
 def _download(url: str, dest, size_mb: int) -> None:
     """Stream one allowlisted asset to disk with a size line in the log.
-    Skips a file that already exists at a plausible size."""
+    Skips a file that already exists at a plausible size. A transfer that
+    stopped part-way leaves ``<dest>.part``; the next call asks the server
+    for the rest (HTTP Range) and appends, or starts over when the server
+    sends the whole file again. The caller checks the pinned SHA-256."""
+    import urllib.error
     import urllib.request
     from pathlib import Path
     dest = Path(dest)
@@ -249,26 +253,96 @@ def _download(url: str, dest, size_mb: int) -> None:
     if dest.exists() and dest.stat().st_size > size_mb * 1024 * 1024 * 0.8:
         _append_log(f"present: {dest.name} ({dest.stat().st_size // (1024 * 1024)} MB)")
         return
-    _append_log(f"downloading {dest.name} (~{size_mb} MB)…")
     tmp = dest.with_suffix(dest.suffix + ".part")
-    req = urllib.request.Request(url, headers={"User-Agent": "friday-voice-installer"})
-    with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
-        got = 0
-        while True:
-            if _CANCEL.is_set():
-                raise RuntimeError("cancelled")
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk)
-            got += len(chunk)
+    offset = tmp.stat().st_size if tmp.exists() else 0
+    headers = {"User-Agent": "friday-voice-installer"}
+    if offset:
+        headers["Range"] = "bytes=%d-" % offset
+        _append_log(f"resuming {dest.name} from {offset // (1024 * 1024)} MB…")
+    else:
+        _append_log(f"downloading {dest.name} (~{size_mb} MB)…")
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        resp = urllib.request.urlopen(req, timeout=60)
+    except urllib.error.HTTPError as e:
+        if e.code == 416 and offset:
+            # The partial file already holds every byte the server has.
+            tmp.replace(dest)
+            _append_log(f"downloaded {dest.name}: {offset // (1024 * 1024)} MB")
+            return
+        raise
+    with resp as r:
+        resuming = bool(offset) and getattr(r, "status", 200) == 206
+        if not resuming:
+            offset = 0
+        try:
+            length = int(r.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        total = offset + length if length else 0
+        got = offset
+        _set_progress(got, total)
+        with open(tmp, "ab" if resuming else "wb") as f:
+            while True:
+                if _CANCEL.is_set():
+                    raise RuntimeError("cancelled")
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                _set_progress(got, total)
+    if total and got < total:
+        raise RuntimeError("the connection closed early (%d of %d bytes); "
+                           "start again to continue where it stopped" % (got, total))
     tmp.replace(dest)
     _append_log(f"downloaded {dest.name}: {got // (1024 * 1024)} MB")
+
+
+def _set_progress(done: int, total: int) -> None:
+    with _LOCK:
+        _JOB["progress"] = {"done": int(done), "total": int(total)}
+
+
+def artifact_installed(aid: str) -> bool:
+    """Is this artifact on disk now? Pip packages by installed version, a
+    file by its pinned size, an archive by a non-empty target folder."""
+    from pathlib import Path
+    from agent_friday.services import voice_artifacts as va
+    a = va.ARTIFACTS[aid]
+    try:
+        if a["kind"] == "pip":
+            from importlib import metadata
+            return metadata.version(a["package"]) == a.get("version")
+        from agent_friday.core import runtime_dir
+        dest = Path(runtime_dir()) / a["dest"]
+        if a["kind"] == "file":
+            return dest.is_file() and dest.stat().st_size == va.size_bytes(aid)
+        return dest.is_dir() and any(dest.iterdir())
+    except Exception:
+        return False
+
+
+def artifact_rows() -> list:
+    """Every voice artifact for the Settings screen: what it is, its size, its
+    pin, whether it is installed, and the state of its download."""
+    from agent_friday.services import voice_artifacts as va
+    job = status()
+    out = []
+    for row in va.public_rows():
+        row["installed"] = artifact_installed(row["id"])
+        row["job"] = None
+        if job.get("target") == row["id"] and job.get("state") != "idle":
+            row["job"] = {"state": job["state"], "error": job.get("error") or "",
+                          "progress": job.get("progress")}
+        out.append(row)
+    return out
 
 _LOCK = threading.Lock()
 _JOB = {
     "id": 0, "state": "idle", "target": None, "label": "",
     "log": [], "error": "", "started": None, "finished": None,
+    "progress": None,
 }
 _PROC: subprocess.Popen | None = None
 _CANCEL = threading.Event()
@@ -491,7 +565,7 @@ def start(target: str) -> dict:
         _JOB.update({
             "id": _JOB["id"] + 1, "state": "running", "target": target,
             "label": TARGETS[target]["label"], "log": [], "error": "",
-            "started": time.time(), "finished": None,
+            "started": time.time(), "finished": None, "progress": None,
         })
     threading.Thread(target=_run_job, args=(target,),
                      name=f"voice-install-{target}", daemon=True).start()
