@@ -226,7 +226,7 @@ def test_publishing_a_post_card_arms_the_post_and_waits_for_the_content_card(hom
 def test_read_aloud_makes_a_signed_audio_card_from_a_text_card(home, monkeypatch):
     """"Turn this into read aloud": the local voice speaks the card's text into a
     file Media owns, the card is linked made_from, and the file is signed."""
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
     from agent_friday.services import podcast_render as pr
     spoken = []
 

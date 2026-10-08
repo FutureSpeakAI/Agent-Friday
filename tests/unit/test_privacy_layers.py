@@ -106,6 +106,10 @@ class TestDescribeHonesty:
         """The other direction: explicitly enforcing it does make it a layer."""
         monkeypatch.setenv("FRIDAY_PRESIDIO_ENFORCE", "1")
         monkeypatch.setattr(pl, "_module_available", lambda m: True)
+        # Layer 3's runtime is a different layer's state (it needs numpy and a
+        # loaded model); this test is about Presidio, so it must not depend on
+        # the host having either.
+        monkeypatch.setattr(pl, "_embedding_runtime", lambda mod: (True, "stubbed"))
         assert pl.probe_layers()["presidio"]["active"] is True
         assert pl.self_check()["ok"] is True
 

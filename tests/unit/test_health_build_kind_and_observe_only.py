@@ -195,6 +195,9 @@ def test_observe_only_still_says_observe_only(monkeypatch):
 def test_enforced_presidio_is_an_active_layer(monkeypatch):
     monkeypatch.setenv("FRIDAY_PRESIDIO_ENFORCE", "1")
     monkeypatch.setattr(pl, "_module_available", lambda m: True)
+    # Layer 3's runtime needs numpy and a loaded model; this test is about
+    # Presidio and must not depend on the host having either.
+    monkeypatch.setattr(pl, "_embedding_runtime", lambda mod: (True, "stubbed"))
     assert pl.probe_layers()["presidio"]["active"] is True
     assert pl.self_check()["ok"] is True
 

@@ -19,7 +19,7 @@ def _home(tmp_path, monkeypatch):
 
 
 def _produce_fake(eid, monkeypatch):
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:

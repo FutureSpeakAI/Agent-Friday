@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import time
 
-import numpy as np
 import pytest
 
 from agent_friday.services import podcast_render as render
+
+np = pytest.importorskip("numpy", reason="the child speaker returns numpy audio (podcast extra)")
 
 
 @pytest.fixture

@@ -95,7 +95,7 @@ documents = ["PyPDFForm>=5.6", "pyHanko>=0.37", "rapidocr-onnxruntime>=1.2.3", "
 # loadfile`, and without it every `pytest` invocation fails on an unknown
 # argument. It is also the difference between a ~21 minute suite and a ~100
 # minute one.
-dev = ["pytest>=8.0", "pytest-xdist>=3.5", "ruff>=0.5"]
+dev = ["pytest>=8.2", "pytest-xdist>=3.5", "ruff>=0.5"]
 all = [
     "pyttsx3>=2.90",
     "pillow>=12.3.0",

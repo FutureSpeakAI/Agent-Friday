@@ -174,7 +174,7 @@ def test_a_line_repeated_word_for_word_fails_and_is_hard(ds):
 def test_the_writer_echoing_its_continuity_tail_is_cut_at_the_stitch(home, monkeypatch):
     """The live bug: shown the last lines as continuity, the writer repeated
     them (contractions expanded, cites dropped) as new output."""
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:
