@@ -14,10 +14,13 @@ This is a host process with bounded runtime and output, not an operating-system
 sandbox. Provider credentials and the user's configuration do not enter its
 environment.
 
-Select a successful saved build to preview it. The panel serves its frozen
-files, including root asset paths, JavaScript modules and local JSON/WASM,
-from a separate temporary origin inside an opaque frame. External APIs,
-browser storage, service workers, forms and popups are unavailable. Close,
+Select a successful saved build for a layout preview. The panel serves its
+frozen HTML, styles, images and fonts from a separate temporary origin inside
+an opaque frame. JavaScript does not run: JavaScript interactions, dynamic
+data loading and WebAssembly execution are unavailable. Applications that
+depend on JavaScript may appear incomplete or blank. This view checks static
+layout, not application behavior, and is not a general browser network sandbox.
+Browser storage, service workers, forms and popups remain unavailable. Close,
 expiry, changed ownership or a privacy transition invalidates the preview;
 opening it again uses the same saved build. A preview panel acknowledgement
 does not certify that the application rendered correctly.

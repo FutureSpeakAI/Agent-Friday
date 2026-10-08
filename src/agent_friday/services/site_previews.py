@@ -100,11 +100,12 @@ def _headers(preview=None):
     source = "http://" + preview.host if preview else "'none'"
     return {
         "Content-Security-Policy": (
-            "sandbox allow-scripts; default-src 'none'; script-src " + source + " 'unsafe-inline' 'wasm-unsafe-eval'; "
+            "sandbox; default-src 'none'; script-src 'none'; "
             "style-src " + source + " 'unsafe-inline'; img-src " + source + " data:; "
-            "font-src " + source + " data:; media-src " + source + "; connect-src " + source + "; "
+            "font-src " + source + " data:; media-src " + source + "; connect-src 'none'; "
             "worker-src 'none'; webrtc 'block'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'"),
         "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+        "X-DNS-Prefetch-Control": "off",
         "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*",
         "Cross-Origin-Resource-Policy": "cross-origin",
         "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), display-capture=()",
@@ -487,12 +488,13 @@ def wrapper(handle, *, parent_origin):
     source = "http://" + preview.host
     body = ('<!doctype html><html><head><meta charset="utf-8"><title>Frozen build preview</title>'
             '<style>html,body,iframe{margin:0;width:100%;height:100%;border:0}iframe{display:block}</style>'
-            '</head><body><iframe title="Frozen site content" sandbox="allow-scripts" referrerpolicy="no-referrer" src="'
+            '</head><body><iframe title="Frozen site content" sandbox="" referrerpolicy="no-referrer" src="'
             + html.escape(source + "/", quote=True) + '"></iframe></body></html>')
     headers = {
-        "Content-Security-Policy": "sandbox allow-scripts; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; "
+        "Content-Security-Policy": "sandbox; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; "
         "frame-src " + source + "; frame-ancestors 'self'; connect-src 'none'; webrtc 'block'; base-uri 'none'; form-action 'none'",
         "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff",
+        "X-DNS-Prefetch-Control": "off",
         "X-Friday-Site-Preview": "active",
         "Permissions-Policy": _headers(preview)["Permissions-Policy"],
     }

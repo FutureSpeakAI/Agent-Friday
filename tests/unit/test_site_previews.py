@@ -87,7 +87,17 @@ def get(preview, target="/", *, method="GET", host=None, headers=None):
         connection.close()
 
 
-def test_root_assets_modules_data_and_wasm_use_only_frozen_capability_origin(preview_env):
+def policy(headers):
+    directives = {}
+    for part in headers["Content-Security-Policy"].split(";"):
+        tokens = part.split()
+        if tokens:
+            assert tokens[0] not in directives
+            directives[tokens[0]] = tokens[1:]
+    return directives
+
+
+def test_frozen_assets_preserve_bytes_with_scriptless_preview_policy(preview_env):
     result, preview = opened(preview_env)
     assert re.fullmatch(r"p[a-f0-9]{48}\.localhost:[0-9]+", preview.host)
     assert result["site_revision"] == 2
@@ -102,9 +112,15 @@ def test_root_assets_modules_data_and_wasm_use_only_frozen_capability_origin(pre
         assert "Access-Control-Allow-Credentials" not in headers and "Set-Cookie" not in headers
         assert headers["Cross-Origin-Resource-Policy"] == "cross-origin"
         assert headers["Cache-Control"] == "no-store" and headers["Referrer-Policy"] == "no-referrer"
+        assert headers["X-DNS-Prefetch-Control"] == "off"
         csp = headers["Content-Security-Policy"]
-        assert "sandbox allow-scripts" in csp and "allow-same-origin" not in csp
-        assert "connect-src http://" + preview.host + ";" in csp
+        directives = policy(headers)
+        assert directives["sandbox"] == []
+        assert directives["script-src"] == ["'none'"]
+        assert directives["connect-src"] == ["'none'"]
+        assert directives["style-src"] == ["http://" + preview.host, "'unsafe-inline'"]
+        assert directives["img-src"] == directives["font-src"] == ["http://" + preview.host, "data:"]
+        assert "allow-same-origin" not in csp
         assert "webrtc 'block';" in csp
         assert "http://127.0.0.1:5000" not in csp and "frame-src 'none'" in csp
         if path.endswith(".js"):
@@ -120,13 +136,16 @@ def test_wrapper_is_scriptless_exact_source_and_independent_authenticated_handle
     result, preview = opened(preview_env)
     body, headers = site_previews.wrapper(preview.handle, parent_origin="http://127.0.0.1:5000/")
     assert result["preview_url"] == "/api/sites/preview-frame/" + preview.handle
-    assert "<script" not in body and 'sandbox="allow-scripts"' in body
+    assert "<script" not in body and 'sandbox=""' in body and "allow-scripts" not in body
     assert 'src="http://' + preview.host + '/"' in body
     assert "frame-src http://" + preview.host + ";" in headers["Content-Security-Policy"]
-    assert "script-src 'none'" in headers["Content-Security-Policy"]
+    directives = policy(headers)
+    assert directives["sandbox"] == []
+    assert directives["script-src"] == directives["connect-src"] == ["'none'"]
     assert "webrtc 'block';" in headers["Content-Security-Policy"]
     assert "frame-ancestors 'self'" in headers["Content-Security-Policy"]
     assert headers["X-Friday-Site-Preview"] == "active"
+    assert headers["X-DNS-Prefetch-Control"] == "off"
     with pytest.raises(ValueError):
         site_previews.wrapper(preview.handle, parent_origin="http://localhost:5000/")
 

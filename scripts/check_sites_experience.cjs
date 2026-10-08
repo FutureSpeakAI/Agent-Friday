@@ -92,9 +92,9 @@ async function framesForModes(page, section, locator) {
       }
       if(url.pathname===previewPath && req.method()==='HEAD' && !wrapperAlive)return answer(route,{status:'error'},410);
       if(url.pathname===previewPath)return route.fulfill({contentType:'text/html',headers:{
-        'Content-Security-Policy':"sandbox allow-scripts; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; frame-src "+previewOrigin+"; frame-ancestors 'self'",
+        'Content-Security-Policy':"sandbox; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; frame-src "+previewOrigin+"; frame-ancestors 'self'",
         'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Friday-Site-Preview':'active'},
-        body:'<!doctype html><title>Preview wrapper</title><iframe sandbox="allow-scripts" referrerpolicy="no-referrer" src="'+previewOrigin+'/" style="position:fixed;inset:0;width:100%;height:100%;border:0" title="Isolated build"></iframe>'});
+        body:'<!doctype html><title>Preview wrapper</title><iframe sandbox="" referrerpolicy="no-referrer" src="'+previewOrigin+'/" style="position:fixed;inset:0;width:100%;height:100%;border:0" title="Isolated build"></iframe>'});
       if(url.pathname==='/api/sites/preview'){
         assert.ok(['manual','navigation'].includes(body.mode));
         assert.equal(req.headers()['x-friday-preview-mode'],body.mode);
@@ -153,7 +153,7 @@ async function framesForModes(page, section, locator) {
     await framesForModes(page,'sites-overview',page.getByRole('combobox',{name:'Saved site',exact:true}));
     await page.getByRole('combobox',{name:'Saved build',exact:true}).selectOption('build-ready');
     await page.getByRole('button',{name:'Preview this build',exact:true}).click();
-    await expect(page.getByTitle('Frozen site build preview')).toHaveAttribute('sandbox','allow-scripts');
+    await expect(page.getByTitle('Frozen site build preview')).toHaveAttribute('sandbox','');
     await expect(page.getByTitle('Frozen site build preview')).toHaveAttribute('data-build-id','build-ready');
     await framesForModes(page,'sites-preview',page.getByTitle('Frozen site build preview'));
     await page.getByRole('button',{name:'Close preview',exact:true}).click();
@@ -239,14 +239,14 @@ async function framesForModes(page, section, locator) {
     await picker.getByLabel('Account name',{exact:true}).fill('Unfinished account');
     const previewsBeforeBlockedNavigation=requests.filter(r=>r.path==='/api/sites/preview').length;
     await navigate(page,previewTarget());
-    await expect(page.getByText('Finish or cancel the open form before opening another selection.',{exact:true})).toBeVisible();
+    await expect(page.getByRole('alert').filter({hasText:'Finish or cancel the open form before opening another selection.'})).toBeVisible();
     assert.equal(requests.filter(r=>r.path==='/api/sites/preview').length,previewsBeforeBlockedNavigation);
     const savesBeforeSwitch=requests.filter(r=>r.body.action==='save').length;
     await page.getByRole('combobox',{name:'Saved site',exact:true}).selectOption('site-notes');
     await expect(picker.getByRole('button',{name:'Use this domain',exact:true})).toHaveCount(0);
     await expect(picker.getByLabel('Account name',{exact:true})).toHaveValue('Unfinished account');
     await navigate(page,{site_id:'site-studio'});
-    await expect(page.getByText('Finish or cancel the open form before opening another selection.',{exact:true})).toBeVisible();
+    await expect(page.getByRole('alert').filter({hasText:'Finish or cancel the open form before opening another selection.'})).toBeVisible();
     await picker.getByRole('button',{name:'Cancel',exact:true}).click();
     assert.equal(requests.filter(r=>r.path==='/api/sites/preview').length,previewsBeforeBlockedNavigation,'Blocked preview navigation never replays when a form closes');
     await expect(page.getByRole('combobox',{name:'Saved site',exact:true})).toHaveValue('site-notes');
@@ -279,7 +279,7 @@ async function framesForModes(page, section, locator) {
     await domain.getByRole('button',{name:'Edit record 17',exact:true}).click();
     await domain.getByLabel('Value',{exact:true}).fill('sample.github.io');
     await navigate(page,{site_id:'site-notes'});
-    await expect(page.getByText('Finish or cancel the open form before opening another selection.',{exact:true})).toBeVisible();
+    await expect(page.getByRole('alert').filter({hasText:'Finish or cancel the open form before opening another selection.'})).toBeVisible();
     await expect(domain.getByLabel('Value',{exact:true})).toHaveValue('sample.github.io');
     await expect(page.getByRole('combobox',{name:'Saved site',exact:true})).toHaveValue('site-studio');
     await domain.getByRole('button',{name:'Prepare exact change',exact:true}).click();

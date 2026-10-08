@@ -94,16 +94,18 @@ def test_preview_late_privacy_refusal_discards_unreturned_session(client, monkey
 def test_trusted_wrapper_keeps_exact_frame_source_through_core_sanitizer(client, monkeypatch):
     from agent_friday.services import site_previews
     source = "http://p" + "5" * 48 + ".localhost:12345"
-    policy = "sandbox allow-scripts; default-src 'none'; script-src 'none'; frame-src " + source + "; frame-ancestors 'self'; webrtc 'block'"
+    policy = "sandbox; default-src 'none'; script-src 'none'; frame-src " + source + "; frame-ancestors 'self'; webrtc 'block'"
     monkeypatch.setattr(site_previews, "wrapper", lambda *args, **kwargs:
-                        ('<iframe sandbox="allow-scripts" src="' + source + '/"></iframe>',
-                         {"Content-Security-Policy": policy, "Cache-Control": "no-store"}))
+                        ('<iframe sandbox="" src="' + source + '/"></iframe>',
+                         {"Content-Security-Policy": policy, "Cache-Control": "no-store", "X-DNS-Prefetch-Control": "off"}))
     response = client.get("/api/sites/preview-frame/p" + "6" * 48)
     assert response.status_code == 200
     csp = response.headers["Content-Security-Policy"]
     assert "frame-src " + source in csp and "script-src 'none'" in csp
+    assert "sandbox;" in csp and "allow-scripts" not in csp
     assert "webrtc 'block'" in csp
     assert "allow-same-origin" not in csp and "connect-src 'none'" in csp
+    assert response.headers["X-DNS-Prefetch-Control"] == "off"
 
 
 def test_preview_close_needs_page_token_and_does_not_recapture_private_origin(client, monkeypatch):
