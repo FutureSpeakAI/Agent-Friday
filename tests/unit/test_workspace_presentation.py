@@ -270,7 +270,9 @@ def test_legacy_mutations_recheck_admitted_generation_after_reading_state(store,
         store.private = private_at_commit
         return document
     monkeypatch.setattr(studio, "load_ws_doc", changed)
-    with pytest.raises(PermissionError, match="privacy context"):
+    # Restore delegates to revert, which rechecks private admission first.
+    refusal = "Off the record" if name == "restore" and private_at_commit else "privacy context"
+    with pytest.raises(PermissionError, match=refusal):
         legacy_operation(name, previous)()
     assert path.read_bytes() == before and len(store.events) == events
 
