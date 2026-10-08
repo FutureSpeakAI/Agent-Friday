@@ -279,8 +279,8 @@ end;
 // the text is not a version.
 function SequenceForVersion(Raw: String): Int64;
 var
-  S, Part, Lab, C: String;
-  I, Group: Integer;
+  S, Part, Lab: String;
+  Group: Integer;
   Nums: array[0..2] of Int64;
   Number, Stage, Base: Int64;
   HasLabel: Boolean;
