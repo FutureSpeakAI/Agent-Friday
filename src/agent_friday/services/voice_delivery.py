@@ -6,6 +6,50 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _OVERRIDES = ContextVar("friday_spoken_delivery", default=None)
+_LOCAL_SESSION = ContextVar("friday_local_delivery_session", default=None)
+
+
+@contextmanager
+def using_local_session(session, *, is_current):
+    """Expose call preferences only during its owning local agent turn.
+
+    The mutable session stays outside tool arguments and logged caller context.
+    Revoking the shared binding also closes any context copied during the turn.
+    """
+    binding = {"session": session, "conversation_id": session.get("conversation_id"),
+               "origin": session.get("_crew_host_origin"), "is_current": is_current,
+               "open": True}
+    token = _LOCAL_SESSION.set(binding)
+    try:
+        yield
+    finally:
+        binding["open"] = False
+        _LOCAL_SESSION.reset(token)
+
+
+def local_session_for_context(context):
+    """Resolve only the authenticated, undelegated owner of the bound call."""
+    binding = _LOCAL_SESSION.get()
+    if not binding or not binding["open"] or not isinstance(context, dict):
+        return None
+    session = binding["session"]
+    if (session.get("engine") != "local" or binding["origin"] is None
+            or not binding["conversation_id"]
+            or session.get("conversation_id") != binding["conversation_id"]
+            or session.get("_crew_host_origin") is not binding["origin"]
+            or context.get("conversation_id") != binding["conversation_id"]
+            or context.get("_crew_host_origin") is not binding["origin"]
+            or context.get("authenticated") is not True
+            or context.get("is_voice") is not True
+            or context.get("surface") != "voice-local"
+            or any(context.get(key) for key in (
+                "nested_execution", "is_background_task", "task_id", "scheduled",
+                "schedule_id", "grant_scope", "scope", "agent_id",
+                "agent_profile_id", "agent_profile", "crew_agent_id",
+                "crew_revision", "crew_binding", "origin"))
+            or not binding["is_current"]()):
+        return None
+    return session
 
 
 @contextmanager

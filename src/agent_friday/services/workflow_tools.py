@@ -178,11 +178,16 @@ def read_skill(inp):
 
 
 def voice_preferences(inp, session=None):
-    from agent_friday.services.voice_delivery import preference_action
+    from agent_friday.services.voice_delivery import local_session_for_context, preference_action
     data = inp or {}
     if (data.get("scope") == "default" and data.get("action", "inspect") != "inspect"
             and not _private_discovery_allowed()):
         raise ValueError("A scoped background caller cannot change lasting voice preferences; ask from the owner's chat or voice conversation.")
+    if session is None and data.get("scope") != "default":
+        from agent_friday.services import agent
+        session = local_session_for_context(agent._CURRENT_TOOL_CONTEXT.get())
+        if session is not None and not _private_discovery_allowed():
+            raise ValueError("Call preferences belong to the active voice conversation, not delegated work.")
     return json.dumps(preference_action(inp, session), ensure_ascii=False)
 
 

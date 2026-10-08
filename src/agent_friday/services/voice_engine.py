@@ -653,6 +653,7 @@ def _ask_friday_local(question: str, session: dict) -> str:
     from agent_friday.routes.voice import (_build_voice_system_prompt,
                                            _voice_reply_cap, _voice_user_message)
     from agent_friday.services.agent import _generate_agent
+    from agent_friday.services.voice_delivery import session_preferences, using_preferences
     seat = _brain_serving()
     if seat is None:
         if _async_routing(session) == "local_only":
@@ -660,18 +661,22 @@ def _ask_friday_local(question: str, session: dict) -> str:
         return _tool_delegate_to_friday(
             {"request": question, "title": "A question from a voice call"}, session)
     settings = _load_settings() or {}
-    system, _meta = _build_voice_system_prompt(settings, seat=seat)
-    user = _voice_user_message(
-        "Friday's fast voice handed you this question during a live call because "
-        "it needs your full memory or deeper thought. Answer it plainly in a few "
-        "spoken sentences; the voice will say your answer aloud.\n\n" + question,
-        settings, volatile=_meta.get("volatile"))
+    delivery = session_preferences(session)
+    with using_preferences(delivery):
+        system, _meta = _build_voice_system_prompt(settings, seat=seat)
+        user = _voice_user_message(
+            "Friday's fast voice handed you this question during a live call because "
+            "it needs your full memory or deeper thought. Answer in plain spoken prose, "
+            "sized to the question as your voice length rule says; the voice will say "
+            "your answer aloud.\n\n" + question,
+            settings, volatile=_meta.get("volatile"))
+        max_tokens = _voice_reply_cap(settings, question)
     try:
         from agent_friday.services import presence as _presence
-        with _presence.acting_as(_presence.FRIDAY):
+        with _presence.acting_as(_presence.FRIDAY), using_preferences(delivery):
             text, _trace = _generate_agent(
                 [{"role": "user", "content": user}], system=system, model=seat,
-                max_tokens=_voice_reply_cap(settings),
+                max_tokens=max_tokens,
                 session_ctx={"authenticated": True, "provider": "local",
                              "is_voice": True, "surface": "voice-local-deep",
                              "_crew_host_origin": (session or {}).get("_crew_host_origin"),
@@ -687,7 +692,7 @@ def _ask_friday_local(question: str, session: dict) -> str:
 def _tool_ask_friday(inp, session=None):
     """Dispatch the question to the LOCAL agent pipeline with the full contract
     (the same `_generate_agent` a local voice turn uses, on the resident
-    brain seat, reply cap 300), then seal the answer for google-gemini.
+    brain seat, with an intent-sensitive reply budget), then seal for google-gemini.
     From the local voice front it goes to ``_ask_friday_local`` instead.
 
     The seal is applied HERE, not only by the Live tool-call runner, so the
@@ -698,6 +703,7 @@ def _tool_ask_friday(inp, session=None):
     from agent_friday.routes.voice import (  # route-owned prompt + gate
         _build_voice_system_prompt, _gate_voice_tool_result, _voice_reply_cap)
     from agent_friday.services.agent import _generate_agent
+    from agent_friday.services.voice_delivery import session_preferences, using_preferences
     question = str((inp or {}).get("question") or "").strip()
     if not question:
         return "ask_friday needs a question."
@@ -712,25 +718,28 @@ def _tool_ask_friday(inp, session=None):
     if not seat:
         return ("Friday's local model is not loaded right now, so the user's "
                 "context cannot be reached from this session. Say so plainly.")
-    system, _meta = _build_voice_system_prompt(settings, seat=seat)
     # The relay note and the volatile context ride in the USER turn: the
     # seat's template re-prefills the whole prompt on any system-message
     # change, so the system text stays the one the
     # local sessions and the proofs already have in cache.
     from agent_friday.routes.voice import _voice_user_message
-    user = _voice_user_message(
-        "You are answering a question RELAYED from a cloud voice session. "
-        "Answer in plain spoken prose with no markdown, sized to the question as "
-        "your voice length rule says; the answer will be read aloud by another "
-        "model. Do not mention the relay.\n\n"
-        + question, settings, volatile=_meta.get("volatile"))
+    delivery = session_preferences(session)
+    with using_preferences(delivery):
+        system, _meta = _build_voice_system_prompt(settings, seat=seat)
+        user = _voice_user_message(
+            "You are answering a question RELAYED from a cloud voice session. "
+            "Answer in plain spoken prose with no markdown, sized to the question as "
+            "your voice length rule says; the answer will be read aloud by another "
+            "model. Do not mention the relay.\n\n"
+            + question, settings, volatile=_meta.get("volatile"))
+        max_tokens = _voice_reply_cap(settings, question)
     try:
         # Friday's own brain answering her own voice session: her label.
         from agent_friday.services import presence as _presence
-        with _presence.acting_as(_presence.FRIDAY):
+        with _presence.acting_as(_presence.FRIDAY), using_preferences(delivery):
             text, _trace = _generate_agent(
                 [{"role": "user", "content": user}], system=system, model=seat,
-                max_tokens=_voice_reply_cap(settings),
+                max_tokens=max_tokens,
                 session_ctx={"authenticated": True, "provider": "local",
                              "is_voice": True, "surface": "voice-live-relay",
                              "_crew_host_origin": (session or {}).get("_crew_host_origin"),

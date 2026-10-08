@@ -746,11 +746,17 @@ def synthesize(text: str, *, provider: str | None = None,
 
     model = model if model is not None else selected_model(name, s)
     voice = voice_id if voice_id is not None else selected_voice(name, s)
+    from agent_friday.services.voice_delivery import current_overrides, synthesis_plan
+    # Call-bound preferences override the saved pace. A caller with neither
+    # keeps the provider's own voice settings; no audio is retimed locally.
+    speed = None
+    if "voice_speaking_pace" in s or "voice_speaking_pace" in current_overrides():
+        speed = synthesis_plan(text, s)["speed"]
     started = time.time()
     if name == "elevenlabs":
-        audio, mime = _synth_elevenlabs(text, key, model, voice)
+        audio, mime = _synth_elevenlabs(text, key, model, voice, speed=speed)
     else:
-        audio, mime = _synth_inworld(text, key, model, voice)
+        audio, mime = _synth_inworld(text, key, model, voice, speed=speed)
     elapsed_ms = int((time.time() - started) * 1000)
 
     cost = _meter(name, model, text, elapsed_ms, s, session_ctx)
@@ -789,14 +795,17 @@ def _meter(provider: str, model: str, text: str, elapsed_ms: int,
         return None
 
 
-def _synth_elevenlabs(text: str, key: str, model: str, voice: str):
+def _synth_elevenlabs(text: str, key: str, model: str, voice: str, *, speed=None):
     """POST /text-to-speech/{voice_id}. HTTP client imported lazily (C3)."""
     import requests
     url = "%s/text-to-speech/%s" % (PROVIDERS["elevenlabs"]["base_url"], voice)
+    payload = {"text": text, "model_id": model}
+    if speed is not None:
+        payload["voice_settings"] = {"speed": speed}
     try:
         resp = requests.post(
             url, headers={"xi-api-key": key, "accept": "audio/mpeg"},
-            json={"text": text, "model_id": model}, timeout=_TIMEOUT)
+            json=payload, timeout=_TIMEOUT)
     except Exception as e:
         raise CloudVoiceUnavailable(
             "could not reach ElevenLabs",
@@ -808,7 +817,7 @@ def _synth_elevenlabs(text: str, key: str, model: str, voice: str):
     return resp.content, "audio/mpeg"
 
 
-def _synth_inworld(text: str, key: str, model: str, voice: str):
+def _synth_inworld(text: str, key: str, model: str, voice: str, *, speed=None):
     """POST /voice. Inworld authenticates with ``Authorization: Basic <key>``.
 
     Q5 - whether Inworld has an ElevenLabs-style key-id trap - is unverified, so
@@ -817,11 +826,16 @@ def _synth_inworld(text: str, key: str, model: str, voice: str):
     import base64
     import requests
     url = "%s/voice" % PROVIDERS["inworld"]["base_url"]
+    # The response contract below is WAV, while this endpoint defaults to MP3.
+    audio_config = {"audioEncoding": "LINEAR16"}
+    if speed is not None:
+        audio_config["speakingRate"] = speed
     try:
         resp = requests.post(
             url, headers={"Authorization": "Basic %s" % key,
                           "Content-Type": "application/json"},
-            json={"text": text, "voiceId": voice, "modelId": model},
+            json={"text": text, "voiceId": voice, "modelId": model,
+                  "audioConfig": audio_config},
             timeout=_TIMEOUT)
     except Exception as e:
         raise CloudVoiceUnavailable(

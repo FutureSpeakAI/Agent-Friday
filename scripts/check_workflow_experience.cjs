@@ -58,8 +58,15 @@ async function topOfWorkspace(page) {
   const probe = await fetch(base+'/api/seat').then(r=>r.json());
   assert.equal(probe.preview,true,'Refusing a server that is not the synthetic preview');
   if(output) { const relative=path.relative(root,path.resolve(output)); assert.ok(relative.startsWith('..') || path.isAbsolute(relative),'Screenshots stay outside the repository'); fs.mkdirSync(output,{recursive:true}); }
-  const browser = await chromium.launch({headless:true,channel:'chrome'});
+  const executablePath=process.env.FRIDAY_TEST_BROWSER_EXECUTABLE;
+  if(executablePath!==undefined){
+    assert.ok(path.isAbsolute(executablePath),'The explicit test browser must use an absolute path');
+    assert.ok(fs.statSync(executablePath).isFile(),'The explicit test browser must be an existing file');
+  }
+  const browserSelection={requested_executable:executablePath??null,channel:executablePath===undefined?'chrome':null};
+  const browser=await chromium.launch({headless:true,...(executablePath===undefined?{channel:'chrome'}:{executablePath})});
   try {
+    browserSelection.version=browser.version();
     const page = await browser.newPage({viewport:{width:1480,height:1000},reducedMotion:'reduce'});
     page.setDefaultTimeout(15000);
     page.on('pageerror',e=>errors.push(e.message));
@@ -265,7 +272,7 @@ async function topOfWorkspace(page) {
     await missing.getByRole('button',{name:'Browse other artifacts',exact:true}).click();
     await expect(page.getByRole('complementary',{name:'Artifact panel',exact:true})).toHaveAttribute('data-artifact-shown','another-artifact@3');
     assert.deepEqual(errors,[],'No browser errors');
-    if(output)fs.writeFileSync(path.join(output,'workflow-proof.json'),JSON.stringify({frames,actions:requests.map(r=>r.body.action).filter(Boolean),errors},null,2));
+    if(output)fs.writeFileSync(path.join(output,'workflow-proof.json'),JSON.stringify({browser:browserSelection,frames,actions:requests.map(r=>r.body.action).filter(Boolean),errors},null,2));
     console.log('PASS workflow editing, ownership, outcome honesty, scoped actions and responsive display styles');
   } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1;});

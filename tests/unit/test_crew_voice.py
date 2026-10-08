@@ -392,10 +392,10 @@ def test_explicit_cloud_binding_uses_exact_model_and_voice_without_mutating_sett
     monkeypatch.setattr(cloud_voice, "gate_synthesis_input", lambda t, p: t)
     monkeypatch.setattr(cloud_voice, "_meter", lambda *a: 0)
     monkeypatch.setattr(cloud_voice, "_synth_elevenlabs",
-                        lambda t, k, m, v: sent.append((m, v)) or (b"audio", "audio/mpeg"))
+                        lambda t, k, m, v, *, speed=None: sent.append((m, v, speed)) or (b"audio", "audio/mpeg"))
     result = cloud_voice.synthesize("Hi.", provider="elevenlabs", settings=settings,
                                     model="eleven_flash_v2_5", voice_id="agentVoice")
-    assert sent == [("eleven_flash_v2_5", "agentVoice")]
+    assert sent == [("eleven_flash_v2_5", "agentVoice", None)]
     assert result.voice_id == "agentVoice"
     assert settings["elevenlabs_voice_id"] == "defaultVoice"
     with pytest.raises(cloud_voice.CloudVoiceUnavailable):

@@ -2702,6 +2702,18 @@ def _ws_auth_ok(ui_tok_ok: bool) -> bool:
     return bool(session.get("authenticated") or _loopback_trusted() or ui_tok_ok)
 
 
+def _local_voice_owner(requested_id: str | None) -> str:
+    """Bind an existing owner without creating storage for a private call."""
+    from agent_friday.services import conversations
+    if requested_id is not None and not isinstance(requested_id, str):
+        raise ValueError("Voice needs an existing conversation.")
+    cid = (requested_id or "").strip() or conversations.MAIN_ID
+    record = conversations.load(cid)
+    if not cid or not isinstance(record, dict) or record.get("id") != cid:
+        raise ValueError("Voice needs an existing conversation.")
+    return cid
+
+
 def _meter_gemini_live_chunk(chunk, model_name: str) -> bool:
     """Record cost_meter usage from one Gemini Live streaming chunk, if it
     carries usage_metadata. Returns whether a charge was recorded.
@@ -2802,12 +2814,18 @@ if sock is not None:
 
         done = threading.Event()
 
-        # The thread the user has OPEN, carried by the client on the socket.
-        # A list, not a plain name, because the receive loop rebinds it when the
-        # user switches conversations mid-call and _handle_turn must see the change.
-        # None means "no open thread" -- _persist_voice_turn falls back to Main
-        # explicitly for that case rather than sending everyone there.
-        _open_cid = [(request.args.get('conversation_id') or '').strip() or None]
+        # Establish one existing owner before any engine or tool sees this call.
+        # A missing browser selection addresses Main without creating metadata;
+        # an explicit missing owner must never be redirected to another chat.
+        try:
+            _open_cid = [_local_voice_owner(request.args.get('conversation_id'))]
+        except Exception:
+            try:
+                ws.send(json.dumps({"type": "error", "error": "voice_context_unavailable",
+                                    "detail": "Open an available chat and start voice again."}))
+            except Exception:
+                pass
+            return
 
         # Turns now run on their own thread (see _spawn_turn), so audio frames
         # and the loop's heartbeats reach ws.send() concurrently. A WebSocket
@@ -3045,7 +3063,10 @@ if sock is not None:
                 except Exception:
                     _turn_shape = None
                 try:
-                    with _presence.acting_as(_presence.FRIDAY):
+                    from agent_friday.services.voice_delivery import using_local_session
+                    with (_presence.acting_as(_presence.FRIDAY),
+                          using_local_session(_tool_session,
+                              is_current=lambda: not done.is_set() and not cancel.is_set())):
                         reply, _trace = _generate_agent(
                             _local_voice_messages(_tool_session.get("conversation_id"),
                                                   user_text, settings),
