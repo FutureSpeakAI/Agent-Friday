@@ -2,7 +2,7 @@
 
 > **Status:** active, build plan with the spec it serves
 > **Written:** 2026-10-02
-> **Serves:** [`model-soup-advisor.md`](model-soup-advisor.md) (the advisor's roles, licence and telemetry classes, solver), [`bonsai2-floor.md`](bonsai2-floor.md) and [`bonsai2-tiers.json`](bonsai2-tiers.json) (the manifest, the runtime assets, the pick), the owner's direction of 2026-10-02 ("let users select and download their own models as they please ... maybe someone else can run something bigger, or multiples"), and the llmfit evaluation of 2026-10-02 (borrow its ideas, not its engine: real file bytes, the display reserve, per-card budgets, fit at the served context, resume plus checksum).
+> **Serves:** [`model-soup-advisor.md`](model-soup-advisor.md) (the advisor's roles, licence and telemetry classes, solver), [`bonsai2-floor.md`](bonsai2-floor.md) and [`bonsai2-tiers.json`](../../../src/agent_friday/resources/bonsai2-tiers.json) (the manifest, the runtime assets, the pick), the owner's direction of 2026-10-02 ("let users select and download their own models as they please ... maybe someone else can run something bigger, or multiples"), and the llmfit evaluation of 2026-10-02 (borrow its ideas, not its engine: real file bytes, the display reserve, per-card budgets, fit at the served context, resume plus checksum).
 > **Owner rules carried:** zero telemetry (the hardware profile never leaves the machine; catalogue reads are plain public GETs with nothing identifying); no downloads during development without the owner's yes; Bonsai 2 is "Friday's standard", pre-selected only at first setup and never after; the user may pick anything, bigger, or several.
 
 ---

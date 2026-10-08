@@ -82,7 +82,7 @@ every step the way it always has (each verified, none trusting an exit code).
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-Installer.ps1
 ```
 
-82 assertions. Needs a real Python on PATH for the argv round-trip section,
+101 assertions. Needs a real Python on PATH for the argv round-trip section,
 which is the most important part of the file — it will tell you loudly if it
 had to skip.
 
@@ -148,7 +148,7 @@ to remove itself is not removable in practice.
 | `ensure-shortcuts.ps1` | Recreates the shortcuts when setup finds one missing. |
 | `lib/LocalAddress.ps1` | Uninstall: removes the marked hosts-file block (elevated) and untrusts Friday's certificate authority. |
 | `lib/Heal.ps1` | Bounded self-repair. Read the header before changing anything. |
-| `tests/Test-Installer.ps1` | 82 assertions. |
+| `tests/Test-Installer.ps1` | 101 assertions. |
 
 Installed layout on the user's machine, all under `%LOCALAPPDATA%\AgentFriday`:
 `app\` (the source tree), `python\` (private interpreter), `logs\`, `cache\`,
