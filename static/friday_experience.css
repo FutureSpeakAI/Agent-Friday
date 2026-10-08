@@ -740,7 +740,7 @@ body.friday-experience-enabled .fx-board-tools { justify-content: flex-end; }
 body.friday-experience-enabled .fx-board-tools > .fx-action { font-size: 12px; min-height: 30px; padding: 5px 9px; }
 body.friday-experience-enabled .fx-board-tabs { flex-shrink: 0; padding-bottom: 8px; border-bottom: 1px solid var(--fx-line); }
 body.friday-experience-enabled .fx-board-tabs button[aria-pressed="true"] { color: var(--fr-cyan); border-color: color-mix(in srgb, var(--fr-cyan) 40%, transparent); background: var(--fr-cyan-soft); }
-body.friday-experience-enabled .fx-board-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); align-content: start; gap: 12px; flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 2px 4px 4px 2px; }
+body.friday-experience-enabled .fx-board-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); align-content: start; gap: 12px; flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 2px 4px 4px 2px; }
 body.friday-experience-enabled .fx-board-card { display: flex; flex-direction: column; gap: 9px; min-width: 0; min-height: 170px; padding: 14px; border: 1px solid var(--fx-line); border-radius: 10px; background: var(--fx-raised); }
 body.friday-experience-enabled .fx-board-card[data-pinned="true"] { border-color: color-mix(in srgb, var(--fr-cyan) 35%, transparent); }
 body.friday-experience-enabled .fx-board-card-top { align-items: center; }
@@ -767,7 +767,7 @@ body.friday-experience-enabled .fx-board-alert { color: var(--fr-warn); border: 
 body.friday-experience-enabled .fx-board-empty { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 20px 12px; color: var(--fx-muted); }
 body.friday-experience-enabled .fx-board-empty h3 { font: 500 17px/1.4 var(--fr-font-display); color: var(--fr-text); margin: 0 0 8px; }
 body.friday-experience-enabled .fx-board-empty p { max-width: 56ch; font-size: 13px; line-height: 1.6; }
-body.friday-experience-enabled :is(.fx-board-reader, .fx-board-editor, .fx-board-sources) { flex: 1 1 0; display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px; }
+body.friday-experience-enabled :is(.fx-board-reader, .fx-board-editor, .fx-board-sources) { flex: 1 1 0; display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 3px; }
 body.friday-experience-enabled .fx-board-reader-body { flex: 1 0 auto; font: 14px/1.7 var(--fr-font-body); white-space: pre-wrap; overflow-wrap: anywhere; }
 body.friday-experience-enabled .fx-board-panel-heading h3 { margin: 0; font: 500 18px/1.4 var(--fr-font-display); overflow-wrap: anywhere; }
 body.friday-experience-enabled .fx-board-panel-heading > button { flex-shrink: 0; }
@@ -810,7 +810,7 @@ body.friday-experience-enabled .fx-day-resume button { max-width: 100%; text-ove
   /* One stable tool row leaves compact Home space for the actual card. */
   body.friday-experience-enabled .fx-board-heading { align-items: center; flex-wrap: nowrap; }
   body.friday-experience-enabled .fx-board-heading > div:first-child { display: none; }
-  body.friday-experience-enabled .fx-board-tools { flex: 1 1 0; max-width: 100%; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  body.friday-experience-enabled .fx-board-tools { flex: 1 1 0; max-width: 100%; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; }
   body.friday-experience-enabled .fx-board-tools > .fx-action { flex-shrink: 0; }
   body.friday-experience-enabled .fx-board-pending[aria-hidden="true"] { display: none; }
   body.friday-experience-enabled .fx-day-composer { padding: 8px 10px; }
@@ -820,7 +820,7 @@ body.friday-experience-enabled .fx-day-resume button { max-width: 100%; text-ove
 }
 @container friday-desktop (max-height: 300px) {
   /* The normal list scrolls as one board when its chrome leaves no card room. */
-  body.friday-experience-enabled .fx-working-board:not(:has(.fx-board-editor, .fx-board-reader, .fx-board-sources)) { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  body.friday-experience-enabled .fx-working-board:not(:has(.fx-board-editor, .fx-board-reader, .fx-board-sources)) { overflow-y: auto; overscroll-behavior: contain; }
   body.friday-experience-enabled .fx-working-board:not(:has(.fx-board-editor, .fx-board-reader, .fx-board-sources)) > :is(.fx-board-grid, .fx-board-empty) { flex: 0 0 auto; min-height: 100px; overflow: visible; }
   body.friday-experience-enabled .fx-day-heading { display: none; }
   body.friday-experience-enabled .fx-board-heading h2 { font-size: 14px; }
