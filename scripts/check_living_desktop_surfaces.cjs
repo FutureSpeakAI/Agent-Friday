@@ -42,7 +42,8 @@ function writeEvidence(){
   const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const rows=result.cases.map(row=>'<article><h2>'+esc(row.id)+' · '+esc(row.status)+'</h2><p>'+esc(row.error||row.scope||'')+'</p>'+
     (row.image?'<a href="'+esc(row.image)+'"><img loading="lazy" src="'+esc(row.image)+'" alt="'+esc(row.id)+'"></a>':'')+
-    (row.mediaCardImage?'<a href="'+esc(row.mediaCardImage)+'"><img loading="lazy" src="'+esc(row.mediaCardImage)+'" alt="'+esc(row.id)+' first Media card"></a>':'')+'</article>').join('');
+    (row.mediaCardImage?'<a href="'+esc(row.mediaCardImage)+'"><img loading="lazy" src="'+esc(row.mediaCardImage)+'" alt="'+esc(row.id)+' first Media card"></a>':'')+
+    (row.homeCardImage?'<a href="'+esc(row.homeCardImage)+'"><img loading="lazy" src="'+esc(row.homeCardImage)+'" alt="'+esc(row.id)+' first Home card"></a>':'')+'</article>').join('');
   fs.writeFileSync(path.join(output,'index.html'),'<!doctype html><meta charset="utf-8"><title>Friday surface capture</title><style>body{background:#0b101b;color:#ecf3ff;font:16px/1.5 system-ui;margin:30px}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px}article{padding:16px;background:#141e2e;border:1px solid #334057;border-radius:12px}h2{font-size:16px}img{max-width:100%;height:auto}p{overflow-wrap:anywhere}</style><h1>Friday surface capture</h1><p>'+esc(result.status)+' · Automated bounds and sampled keyboard checks. All frames require human visual review. Synthetic preview data only.</p><main>'+rows+'</main>');
 }
 function getLocal(relative){
@@ -322,6 +323,23 @@ async function main(){
         if(view==='day')await expect(surface.getByRole('button',{name:'Add card',exact:true})).toBeEnabled();
         if(view==='workspaces')for(const entry of held)await expect(surface.locator('.fx-workspace-card').filter({hasText:entry.label})).toHaveCount(0);
         await capture(row,page,surface);
+        if(view==='day'){
+          const title=surface.locator('.fx-board-card h3').first();await expect(title).toHaveCount(1);
+          await title.scrollIntoViewIfNeeded();await settle(page);
+          row.homeCardSample=await title.evaluate(element=>{
+            const rect=element.getBoundingClientRect(),board=element.closest('.fx-working-board'),box=board?.getBoundingClientRect();
+            const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
+            return {text:element.textContent.trim(),bounds:{x:rect.x,y:rect.y,w:rect.width,h:rect.height},
+              visible:rect.width>0&&rect.height>0&&rect.x>=-2&&rect.y>=-2&&rect.right<=innerWidth+2&&rect.bottom<=innerHeight+2,
+              insideBoard:!!box&&rect.x>=box.x-2&&rect.y>=box.y-2&&rect.right<=box.right+2&&rect.bottom<=box.bottom+2,
+              hit:!!hit&&!!board&&board.contains(hit)&&(element===hit||element.contains(hit))};
+          });
+          assert.ok(row.homeCardSample.text&&row.homeCardSample.visible&&row.homeCardSample.insideBoard&&row.homeCardSample.hit,'Home card title is clipped or covered: '+JSON.stringify(row.homeCardSample));
+          row.homeCardGeometry=await geometry(page,surface);const image=row.id+'-home-card-visible.png';
+          assert.equal(row.status,'running','Capture case has ended');await page.screenshot({path:path.join(output,image),animations:'disabled',timeout:10000});
+          assert.equal(row.status,'running','Capture case has ended');row.homeCardImage=image;
+          row.scope+='; first Home card title scrolled into view without opening or editing';
+        }
       });
       await runCase('menu-workspace-switcher',viewport,async(page,row)=>{
         const {popup}=await openSwitcher(page),names=await popup.locator('.fx-switcher-option strong').allTextContents();

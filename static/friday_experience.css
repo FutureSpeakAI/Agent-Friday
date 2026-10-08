@@ -819,6 +819,9 @@ body.friday-experience-enabled .fx-day-resume button { max-width: 100%; text-ove
   body.friday-experience-enabled .fx-board-card h3 { order: -1; }
 }
 @container friday-desktop (max-height: 300px) {
+  /* The normal list scrolls as one board when its chrome leaves no card room. */
+  body.friday-experience-enabled .fx-working-board:not(:has(.fx-board-editor, .fx-board-reader, .fx-board-sources)) { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  body.friday-experience-enabled .fx-working-board:not(:has(.fx-board-editor, .fx-board-reader, .fx-board-sources)) > :is(.fx-board-grid, .fx-board-empty) { flex: 0 0 auto; min-height: 100px; overflow: visible; }
   body.friday-experience-enabled .fx-day-heading { display: none; }
   body.friday-experience-enabled .fx-board-heading h2 { font-size: 14px; }
   body.friday-experience-enabled .fx-board-tabs { padding-bottom: 3px; }
