@@ -236,7 +236,7 @@
         quiet(dnsCheck.message), quiet((dnsCheck.resolver || 'Public resolver') + ' · ' + stamp(dnsCheck.checked_at)),
         dnsCheck.checks.map((check, i) => h('div', {key: i, className: 'site-wrap'}, check.type + ' · ' + check.hostname + ' · ' + (check.matches ? 'Matches' : 'Pending or different')))),
       h('details', {className: 'site-disclosure'}, h('summary', null, 'Renewal and auto-renew'),
-        h('div', {className: 'site-actions'}, field('Renewal term', select({value: years, onChange: e => setYears(e.target.value)}, Array.from({length: 10}, (_, i) => h('option', {key: i, value: String(i + 1)}, (i + 1) + ((i + 1) === 1 ? ' year' : ' years')))),
+        h('div', {className: 'site-actions'}, field('Renewal term', select({value: years, onChange: e => setYears(e.target.value)}, Array.from({length: 10}, (_, i) => h('option', {key: i, value: String(i + 1)}, (i + 1) + ((i + 1) === 1 ? ' year' : ' years'))))),
           button('Review renewal price', () => act('prepare_renewal', {years: Number(years)}), {disabled: busy || !connected}),
           button(shownInfo.autorenew_enabled === true ? 'Review turning auto-renew off' : 'Review turning auto-renew on', () => act('prepare_autorenew', {enabled: shownInfo.autorenew_enabled !== true}), {disabled: busy || !connected || shownInfo.autorenew_enabled == null}))),
       currentCache && records !== null && h('div', {className: 'site-records'}, h('div', {className: 'site-heading'}, h('h4', null, 'DNS records'), button('Add a record', () => setEditing({host: '', type: 'CNAME', answer: '', ttl: 300, owner: authority}), {disabled: busy || shownInfo.dns_authority !== 'namecom'})),
