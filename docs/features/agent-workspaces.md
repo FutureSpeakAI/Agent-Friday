@@ -89,6 +89,10 @@ before response publication. The explicit legacy browser service remains
 available to direct internal callers; model tool dispatch never falls back to
 it when workspace permission is missing.
 
+Separate browser profiles and input do not provide a network sandbox. Friday
+filters HTTP(S) URLs and WebSocket destination hosts; WebRTC traffic is outside
+these URL filters.
+
 Native application work requires a separate application integration or isolated
 desktop worker. Drawing additional cursors on the host desktop alone does not
 provide independent native focus or safe parallel application input.

@@ -14,10 +14,11 @@ through an applicant portal, check a school portal, compare flights. The rules:
   * Every page is untrusted input. What Friday reads comes back wrapped as
     data, and the tool result is recorded by services/taint.py, so a value
     copied from a page into an outward action is flagged on its card.
-  * The same URL rules as browse_web (services/web_safety): no loopback,
-    private or link-local address and not Friday's own API. Every navigation
-    is checked in full; every other request the page makes is checked without
-    DNS (`web_safety.check_host_literal`).
+  * Routed HTTP(S) navigation follows the same URL rules as browse_web
+    (services/web_safety): no loopback, private or link-local address and not
+    Friday's own API. Other routed HTTP(S) requests and WebSocket destinations
+    use host checks without DNS (`web_safety.check_host_literal`). These URL
+    filters do not cover WebRTC traffic or provide complete network isolation.
   * Friday never types into a password field. A page that needs a sign-in
     stops the work and asks the owner to sign in in the window himself.
   * Typing into a payment, card, bank or identity-number field waits for an
