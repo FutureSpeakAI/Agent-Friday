@@ -64,7 +64,13 @@ def test_one_control_hides_it_and_a_pill_brings_it_back(rel):
     assert "Hide chat (Ctrl+Alt+C)" in text and "Show chat (Ctrl+Alt+C)" in text, rel
     assert text.count("chat-edge-pill") >= 2, rel
     assert re.search(r"localStorage\.setItem\('friday_chat_hidden', ?'1'\)", text), rel
-    assert re.search(r"const toggleChat ?= ?\(\) ?=> ?\{\s*showChat\(!chatOpen\)", text), rel
+    # Opening uses the draft-preserving Home handoff; hiding stays immediate.
+    assert re.search(r"const toggleChat\s*=\s*\(\)\s*=>\s*\{\s*if\s*\(chatOpen\)\s*showChat\(false\);\s*else\s*showGlobalChat\(\);", text), rel
+    opener = re.search(r"  const showGlobalChat\s*=\s*\(\)\s*=>\s*\{(.*?)\n  \};", text, re.S)
+    assert opener and re.search(r"\bshowChat\(true\);\s*$", opener.group(1)), rel
+    assert re.search(
+        r'(?:data-testid="chat-edge-pill"[^>]*onClick=\{showGlobalChat\}'
+        r'|"data-testid":\s*"chat-edge-pill"[^}]*onClick:\s*showGlobalChat\b)', text), rel
     assert re.search(r"label: ?chatOpen ?\? ?'Hide chat' ?: ?'Show chat'", text), rel
     assert re.search(r"!\(auto ?&& ?chatHiddenByOwner\(\)\)", text), rel
 

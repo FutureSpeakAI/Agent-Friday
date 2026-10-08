@@ -20,7 +20,7 @@ def stores(tmp_path, monkeypatch):
 
     monkeypatch.setattr(desktop_cards, "CARDS_PATH", tmp_path / "cards.json")
     monkeypatch.setattr(workspace_studio, "WS_STUDIO_DIR", tmp_path / "studio")
-    monkeypatch.setattr(off_record, "active", lambda: False)
+    monkeypatch.setattr(off_record, "active", lambda settings=None: False)
     monkeypatch.setattr(boot_guard, "safe_mode", lambda: False)
     events = []
     monkeypatch.setattr(desktop_bus, "broadcast", lambda message, **kw: events.append(message))

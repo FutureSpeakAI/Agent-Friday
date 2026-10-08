@@ -92,8 +92,12 @@ def test_both_copies_of_the_ui_show_the_card_and_send_the_override():
     # The one-turn override on both request bodies (App and the conversation window).
     assert served.count("if (opts.privacyOverride) body.privacy_layer3_override = true;") == 2
     assert "if(opts.privacyOverride)body.privacy_layer3_override=true;" in mirror
-    # A held turn opens the card in both chat surfaces.
-    assert served.count("setPausePending({ kind: 'privacy_hold', message: m, hold: d.privacy_hold })") == 2
+    # Each chat surface opens the card; App also rejects a stale turn's hold.
+    assert served.count("setPausePending({ kind: 'privacy_hold', message: m, hold: d.privacy_hold })") == 1
+    assert served.count("setTurnPause({ kind: 'privacy_hold', message: m, hold: d.privacy_hold })") == 1
+    assert "setTurnPause({kind:'privacy_hold',message:m,hold:d.privacy_hold})" in mirror
+    for html in (served, mirror):
+        assert "const setTurnPause = value => { if (ownsTurn()) setPausePending(value); };" in html
     # Voice: the frame opens the same card, and "send anyway" rides the socket URL.
     assert "m.type === 'privacy_hold'" in served
     assert "_qs.push('privacy_layer3_override=1')" in served

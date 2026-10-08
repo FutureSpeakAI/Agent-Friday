@@ -271,7 +271,7 @@ def test_host_tools_use_active_conversation_and_no_model_supplied_request_id(mon
     finally:
         crew_runtime.HOST_ORIGIN.reset(origin_token)
         agent._CURRENT_CONVERSATION.reset(state)
-    assert calls == [(("conv-test", "Researcher", "Check evidence"), {})]
+    assert calls == [(("conv-test", "Researcher", "Check evidence"), {"project_id": crew_runtime.DEFAULT_PROJECT})]
 
 
 @pytest.mark.parametrize("private_at_start", [False, True])

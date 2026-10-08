@@ -9427,7 +9427,7 @@ function WfEditor({ initial, projects = [], conversations = [], onCancel, onSave
         <label className="wfx-field">Deliverable<select aria-label="Deliverable" className="wfx-in" value={output.kind} onChange={e => setOutput({ ...output, kind: e.target.value })}><option value="reply">Answer in the conversation</option><option value="artifact">Editable artifact</option><option value="file">Saved file</option><option value="code">Code change</option></select></label>
         {output.kind !== 'reply' && <label className="wfx-field">Result title<input aria-label="Result title" className="wfx-in" value={output.title || ''} onChange={e => setOutput({ ...output, title: e.target.value })} placeholder="e.g. Research brief" /></label>}
       </div>
-      {['file','code'].includes(output.kind) && <label className="wfx-field">Expected file or folder<input aria-label="Expected file or folder" className="wfx-in" value={output.path || ''} onChange={e => setOutput({ ...output, path: e.target.value })} placeholder="A location Friday is allowed to use" /></label>}
+      {['file','code'].includes(output.kind) && <label className="wfx-field">Expected file or folder<input aria-label="Expected file or folder" className="wfx-in" value={output.path || ''} onChange={e => setOutput({ ...output, path: e.target.value })} placeholder={'A location ' + fridayName() + ' is allowed to use'} /></label>}
       <label className="wfx-lbl" htmlFor="wf-checks">What should be checked?</label>
       <textarea id="wf-checks" className="wfx-in" rows="2" value={criteria} onChange={e => setCriteria(e.target.value)} placeholder="e.g. Cite the sources, compare with last week, and mark anything uncertain." />
       <details className="wfx-disclosure" open={inputs ? true : undefined}><summary>Sources and notes{inputs ? ' · ' + inputs.split('\n').filter(Boolean).length : ' (optional)'}</summary>
@@ -9455,7 +9455,7 @@ function WfEditor({ initial, projects = [], conversations = [], onCancel, onSave
       <p className="wfx-quiet" data-testid="wf-when-sentence">{wfDescribe(when)}</p>
       {initial.when_note && <p className="wfx-quiet">{initial.when_note}</p>}
       <label className="wfx-field">Notify me<select aria-label="Workflow notifications" className="wfx-in" value={notify} onChange={e => setNotify(e.target.value)}><option value="on_complete">When a run finishes</option><option value="on_change">Only when something changes</option><option value="never">Keep results here; no routine notifications</option></select></label>
-      <p className="wfx-quiet">Approval requests still need your decision. Scheduled work runs while Friday is running on this computer.</p>
+      <p className="wfx-quiet">{'Approval requests still need your decision. Scheduled work runs while ' + FRIDAY_BRAND.name + ' is running on this computer.'}</p>
     </fieldset>
     {err && <div className="wfx-err" role="alert">{err}</div>}
     <div className="wfx-actions wfx-editor-actions"><button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button><button type="button" className="btn wfx-save" disabled={busy} onClick={save}>{busy ? 'Saving…' : isNew ? 'Save workflow' : 'Save changes'}</button></div>

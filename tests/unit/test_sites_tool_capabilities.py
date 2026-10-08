@@ -188,10 +188,11 @@ def test_discovery_exposes_full_procedure_and_honest_limits(monkeypatch):
         assert "not yet checked" in result["availability"]
 
 
-@pytest.mark.parametrize("name", ["site_action", "domain_action", "site action", "domain action"])
+@pytest.mark.parametrize("name", ["site_action", "domain_action", "site-action", "domain-action"])
 @pytest.mark.parametrize("private,generation", [(True, 9), (False, 8)])
 def test_ended_private_origin_is_refused_before_tool_instrumentation(monkeypatch, name, private, generation):
     from agent_friday.services import crew_runtime, off_record
+    assert agent._resolve_tool_name(name)[0] == name.replace("-", "_")
     monkeypatch.setattr(off_record, "active", lambda *args, **kwargs: False)
     monkeypatch.setattr(off_record, "generation", lambda: 9)
     monkeypatch.setattr(agent._hooks, "HookContext", lambda *a, **k: pytest.fail("Private action entered instrumentation"))

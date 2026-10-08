@@ -233,6 +233,9 @@ INTERNAL_TOOLS = frozenset({
     # Crew dispatch binds a saved profile; its individual actions return here.
     # Profile proposals open an unsaved editor and grant no capabilities.
     "list_crew", "ask_crew", "propose_crew_agent",
+    # Steering queues guidance; each worker action remains governed. Talking
+    # uses the bound profile's model and privacy policy with no tool authority.
+    "steer_crew", "talk_crew",
     # Sharing local context with the cloud voice model has its own gate: the
     # payload card (services/local_context), decided once, by the owner.
     "ask_local_for_context", "answer_share_request", "revise_share_request",

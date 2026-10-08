@@ -15,7 +15,7 @@ movement across the glass, the clamps hold, reduced motion keeps only a gentle
 lean, and a lost face eases back in about 300 ms. A static check holds every
 reader of the head state to the camera, the HUD and the dock. Then a real
 browser loads the served page and, for each of the fifteen structures,
-measures the projected size of a unit at its centre at rest and leaned in,
+measures a fixed unit at its world origin at rest and leaned in,
 before and again after a genome step has rebuilt every structure, and that
 the structure stays where it is.
 """
@@ -383,7 +383,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
 MEASURE = r"""
 window.__holo = {
-  // Project a fixed unit at the active structure's centre through the real
+  // Project a fixed unit at the active structure's world origin through the real
   // camera matrix. This includes the frustum's changing focal scale, which
   // an inverse-distance check misses. A fixed unit cancels the structure's
   // breathing and transition scale; `at` is its unchanged world position.
@@ -400,13 +400,17 @@ window.__holo = {
     if (box.isEmpty()) return null;
     const sph = box.getBoundingSphere(new THREE.Sphere());
     if (!(sph.radius > 0.05) || !isFinite(sph.radius)) return null;
+    // A live bounding-box center drifts with NETWORK's moving nodes. Use
+    // the same world anchor across rest/lean/rest so animation cannot change
+    // the sampled depth. The live bounds above still prove geometry exists.
+    const at = g.getWorldPosition(new THREE.Vector3());
     const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
-    const a = sph.center.clone().addScaledVector(right, -0.5).project(cam);
-    const b = sph.center.clone().addScaledVector(right, 0.5).project(cam);
+    const a = at.clone().addScaledVector(right, -0.5).project(cam);
+    const b = at.clone().addScaledVector(right, 0.5).project(cam);
     const unit = Math.abs(b.x - a.x);
     if (!(unit > 0) || !isFinite(unit)) return null;
     return { unit, structure: s.targetStructure,
-             at: g.getWorldPosition(new THREE.Vector3()).toArray(),
+             at: at.toArray(),
              zoom: FridayTracking.head.zoom, z: FridayTracking.head.z };
   },
   // A synthetic head, held until released: no webcam in a test.
@@ -544,7 +548,7 @@ def _unit_at(pg, octaves, samples=3):
 
 def _ratio(pg, octaves):
     """Leaned by `octaves`, how much larger a projected unit at the structure's
-    centre is than at rest, and where it stood each time. Rest is sampled on
+    world origin is than at rest, and where it stood each time. Rest is sampled on
     both sides of the lean."""
     rest, at0 = _unit_at(pg, 0)
     leaned, at1 = _unit_at(pg, octaves)
@@ -607,7 +611,7 @@ def test_eye_still_refuses_a_renderer_that_never_advances(monkeypatch):
 
 
 def _each_structure(pg, label):
-    """For every structure: a unit at its centre grows on screen when leaned
+    """For every structure: a unit at its world origin grows on screen when leaned
     in by one octave, and the structure stays put. Returns what is wrong."""
     ids = pg.evaluate("__holo.structures()")
     assert len(ids) == STRUCTURE_COUNT, ids
@@ -622,7 +626,7 @@ def _each_structure(pg, label):
         ats.append(pg.evaluate("__holo.measure()")["at"])
         # The frustum widens as the eye approaches the glass. The avatar
         # must nevertheless GROW on screen, which only happens when its
-        # centre is in front of the glass. Its world position must not move.
+        # origin is in front of the glass. Its world position must not move.
         if not 1.02 <= ratio <= 3:
             wrong.append("%s: %.2fx projected size (%s)" % (sid, ratio, label))
         if any(max(abs(a - b) for a, b in zip(at, ats[0])) > 1e-9 for at in ats):
@@ -704,7 +708,13 @@ def test_the_action_bus_applies_a_spoken_change_live(page):
         # No face on the camera: a calibrate says so rather than storing a stale width.
         cal = page.evaluate("""() => { const a = { type: 'tracking', op: 'calibrate' };
                                      fridayRunActions([a]); return a.result; }""")
-        assert cal == {"calibrated": None}
+        assert cal == {
+            "ok": False, "verified": False, "saved": False, "width": 0, "calibrated": None,
+            "status": (
+                "Camera identity is unavailable. Calibrate distance for this camera "
+                "when its identity is available."
+            ),
+        }
     finally:
         page.evaluate("__holo.release()")
         page.evaluate("fridayRunActions([{ type: 'tracking', tracking: { zoom_in_max: 1.8 } }])")

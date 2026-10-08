@@ -145,3 +145,46 @@ def test_scoped_task_cannot_persist_voice_preferences_but_may_inspect_them(monke
     assert not writes
     result = json.loads(tools.voice_preferences({"action": "inspect", "scope": "default"}))
     assert result["pace"] == "natural" and not writes
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+def test_live_voice_preferences_wait_for_governance_and_keep_call_binding(monkeypatch, allowed):
+    from agent_friday import core
+    from agent_friday.services import model_router, voice_delivery as delivery
+    events = []
+    defaults = {"voice_response_depth": "adaptive", "voice_speaking_pace": "natural"}
+    session = {"conversation_id": "voice-synthetic", "engine": "gemini"}
+    delivery.initialize_session_preferences(session, defaults)
+    original_action = delivery.preference_action
+
+    def preference_action(inp, bound_session):
+        events.append("handler")
+        assert bound_session is session
+        return original_action(inp, bound_session)
+
+    def pre(ctx):
+        events.append("gate")
+        assert ctx.tool_name == "voice_preferences"
+        assert ctx.session_ctx["conversation_id"] == session["conversation_id"]
+        return agent._hooks.ALLOW if allowed else agent._hooks.DENY("Synthetic preference denial")
+
+    monkeypatch.setattr(delivery, "preference_action", preference_action)
+    monkeypatch.setattr(delivery, "settings_snapshot", lambda: dict(defaults))
+    monkeypatch.setattr(agent._hooks, "run_pre_hooks", pre)
+    monkeypatch.setattr(agent._hooks, "run_post_hooks", lambda ctx, result: result)
+    monkeypatch.setattr(agent._receipts, "record", lambda *a, **kw: None)
+    monkeypatch.setattr(agent._tool_output, "clip_result", lambda name, result: result)
+    monkeypatch.setattr(model_router, "announce_tool", lambda *a, **kw: None)
+    monkeypatch.setattr(core, "_save_settings", lambda data: pytest.fail("Call preference persisted"))
+    reply = voice._voice_tool_run("voice_preferences", {
+        "action": "set", "scope": "session", "depth": "detailed", "pace": "measured"},
+        lambda frame: None, session)
+    if allowed:
+        assert events == ["gate", "handler"]
+        assert json.loads(reply)["scope"] == "session"
+        assert delivery.session_preferences(session) == {
+            "voice_response_depth": "detailed", "voice_speaking_pace": "measured"}
+    else:
+        assert events == ["gate"]
+        assert reply == "Synthetic preference denial"
+        assert delivery.session_preferences(session) == defaults

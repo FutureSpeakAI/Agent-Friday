@@ -43,6 +43,7 @@ ALLOWED = {
         # the name field's default and its example
         "Friday": 4,
         "Every Friday at 4pm, pull together the reader tips from my inbox and sort them by beat": 1,
+        "e.g. Each Friday, turn my project notes into a source-linked brief": 1,  # a weekday schedule
         f" writes one every Friday at 7 PM Central {BS}u2014 her one fully independent space.": 1,
         "this Friday, through another program": 1,                      # a value the server sends
         # the avatar's Evolution section (the avatar session's code)

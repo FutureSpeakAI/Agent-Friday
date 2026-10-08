@@ -31162,7 +31162,7 @@ function WfEditor({
       ...output,
       path: e.target.value
     }),
-    placeholder: "A location Friday is allowed to use"
+    placeholder: ('A location ' + fridayName() + ' is allowed to use')
   })), /*#__PURE__*/React.createElement("label", {
     className: "wfx-lbl",
     htmlFor: "wf-checks"
@@ -31306,7 +31306,7 @@ function WfEditor({
     value: "never"
   }, "Keep results here; no routine notifications"))), /*#__PURE__*/React.createElement("p", {
     className: "wfx-quiet"
-  }, "Approval requests still need your decision. Scheduled work runs while Friday is running on this computer.")), err && /*#__PURE__*/React.createElement("div", {
+  }, ('Approval requests still need your decision. Scheduled work runs while ' + FRIDAY_BRAND.name + ' is running on this computer.'))), err && /*#__PURE__*/React.createElement("div", {
     className: "wfx-err",
     role: "alert"
   }, err), /*#__PURE__*/React.createElement("div", {

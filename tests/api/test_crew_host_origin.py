@@ -97,21 +97,26 @@ def test_public_typed_host_delegation_uses_current_trusted_origin(app, monkeypat
         return jsonify({"response": result["task_id"]})
     with app.test_request_context("/api/chat", method="POST", json={"message": "Synthetic request"}):
         assert chat._traced_turn(host_turn)().get_json()["response"] == "public-task"
-    assert accepted == [(("public-chat", "Reviewer", "Public work"), {})]
+    assert accepted == [(("public-chat", "Reviewer", "Public work"), {"project_id": crew_runtime.DEFAULT_PROJECT})]
     assert crew_runtime.HOST_ORIGIN.get() is None
 
 
 @pytest.mark.parametrize("front", [False, True])
 @pytest.mark.parametrize("origin_kind", ["public", "private-ended", "public-changed"])
-def test_local_socket_carries_admission_origin_to_both_minds(app, monkeypatch, front, origin_kind):
+def test_local_socket_carries_admission_origin_to_both_minds(app, monkeypatch, tmp_path, front, origin_kind):
     import inspect
     from contextlib import nullcontext
     from types import SimpleNamespace
     from agent_friday.routes import voice
-    from agent_friday.services import (agent, crew_runtime, local_seats, notification_policy,
+    from agent_friday.services import (agent, conversations, crew_runtime, local_seats, notification_policy,
                                       off_record, presence, reflex_turn, voice_ear_stream,
                                       voice_engine, voice_receipt, voice_session, voice_workers)
 
+    # The actual socket admission requires this exact existing owner.
+    monkeypatch.setattr(conversations, "FRIDAY_DIR", tmp_path)
+    conversations.create(title="Synthetic voice owner", cid="fixture-chat")
+    owner_path = tmp_path / "conversations" / "fixture-chat" / "conversation.json"
+    owner_before = owner_path.read_bytes()
     state = {"private": origin_kind == "private-ended", "generation": 8}
     monkeypatch.setattr(off_record, "active", lambda *a, **kw: state["private"])
     monkeypatch.setattr(off_record, "generation", lambda: state["generation"])
@@ -206,3 +211,4 @@ def test_local_socket_carries_admission_origin_to_both_minds(app, monkeypatch, f
     assert all(ctx.get("conversation_id") == "fixture-chat" for ctx in contexts)
     assert len(results) == 1
     assert (results[0] == "accepted") if origin_kind == "public" else "CREW DENY" in results[0]
+    assert owner_path.read_bytes() == owner_before

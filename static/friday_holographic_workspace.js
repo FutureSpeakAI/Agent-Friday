@@ -736,7 +736,7 @@
             const tick=()=>{chromeFrame=0;if(destroyed||doc.hidden)return;const now=win.performance.now();if(now-last>=32){last=now;updateLayout();}if(now<chromeUntil)chromeFrame=win.requestAnimationFrame(tick);};
             chromeFrame=win.requestAnimationFrame(tick);
         }
-        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null, structures:null };
+        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null, lean:null, structures:null };
         function fitSceneCamera(sceneState) {
             const stage = destroyed ? null : occupancy.stage;
             const { camera, scene, basePosition, targetLook, structures, keys, delta } = sceneState;
@@ -862,13 +862,33 @@
             const pad=Math.max(8,Math.min(stage.w,stage.h)*.045);
             let desired=stageFill(raw,stage.w,stage.h,pad);
             if (tracking) {
-                // Reserve at most ten percent of growth inside the FINAL
-                // usable rectangle, including its pixel inset on tiny stages.
+                // Reserve the pieces' actual extent at up to ten percent
+                // focal growth: nearer geometry grows faster than the focus.
+                // Keep that headroom inside the FINAL usable rectangle.
                 // Depth-off needs none; reduced motion needs only its gentle
                 // lean. The untracked avatar retains its original full fit.
                 const gain = 1 / Math.max(.1, glass + (1-glass)*zoom);
                 const allowance = Math.min(1.10, Math.max(1, gain));
-                const active = stageFill(raw,stage.w,stage.h,Math.min(12,stage.w/8,stage.h/8),allowance);
+                const inset = Math.min(12,stage.w/8,stage.h/8);
+                const active = stageFill(raw,stage.w,stage.h,inset,allowance);
+                if (raw && glass > 1 && allowance > 1) {
+                    const lean = frameFit.lean || (frameFit.lean = neutral.clone());
+                    lean.copy(neutral);
+                    const probeZoom = Math.min(zoom, (glass-1/allowance)/(glass-1));
+                    const screenDist = Math.max(4, glass*basePosition.distanceTo(targetLook));
+                    lean.position.addScaledVector(targetLook.clone().sub(basePosition).normalize(), screenDist*(1-1/probeZoom));
+                    lean.updateMatrixWorld(true);
+                    // A centered eye moves toward the fixed glass; its wider
+                    // frustum divides both projection scales by the same zoom.
+                    lean.projectionMatrix.elements[0] /= probeZoom;
+                    lean.projectionMatrix.elements[5] /= probeZoom;
+                    const grown = projectedPieces(lean,frameFit.pieces,stage.w,stage.h);
+                    const limit = grown && stageFill(grown,stage.w,stage.h,inset);
+                    if (limit && limit.scale < active.scale) {
+                        const shrink = limit.scale/active.scale;
+                        active.scale = limit.scale; active.x *= shrink; active.y *= shrink;
+                    }
+                }
                 if (active.scale < desired.scale) desired = active;
             }
             const follow=frameFit.ready?1-Math.exp(-frameFit.delta*3):1;

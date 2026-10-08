@@ -1,5 +1,6 @@
 """Hosting identity, real encrypted-store compatibility and safe provider boundaries."""
 import json
+from copy import deepcopy
 
 import pytest
 
@@ -101,7 +102,7 @@ def test_github_configuration_uses_update_for_cname_and_full_tree(monkeypatch):
         commits.append((args, kwargs))
         return "a" * 40
     def http(method, url, **kwargs):
-        calls.append((method, url, kwargs))
+        calls.append((method, url, deepcopy(kwargs)))
         return (404 if method == "GET" else 201 if method == "POST" else 204), {}, ""
     monkeypatch.setattr(adapters, "_gh_commit", commit)
     monkeypatch.setattr(adapters, "_http", http)

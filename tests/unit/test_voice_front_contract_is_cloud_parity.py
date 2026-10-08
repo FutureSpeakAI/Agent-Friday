@@ -96,3 +96,36 @@ def test_compact_guidance_keeps_authority_constraints_and_full_discovery(monkeyp
     assert discovered["guide"] == guide
     assert discovered["instructions"]["input_schema"] == compact["workflow_action"]["parameters"]
     assert "queued is not completed" in discovered["instructions"]["description"]
+
+
+def test_compact_argument_guidance_keeps_permissions_choices_and_uncertainty():
+    compact = {entry["function"]["name"]: entry["function"]["description"].lower()
+               for entry in ve.build_voice_tool_contract()["tools"]}
+    required = {
+        "ask_crew": ("complete request", "invited agent id/unambiguous name", "saved model, permissions and voice",
+                     "await results", "never impersonate", "assigned project id", "omitted=this chat's project"),
+        "talk_crew": ("owner's question", "no tools/task changes", "steer_crew"),
+        "steer_crew": ("owner's instruction", "next step", "queued is not applied"),
+        "revise_share_request": ("user's exact instruction", "ask approval before sending"),
+        "domain_action": ("exact name.com account/domain", "need review", "checkout",
+                          "reconcile uncertain writes"),
+        "ask_local_for_context": ("local", "instead", "private", "owner-approved", "cloud"),
+        "search_past_conversations": ("local-only", "owner-approved", "cloud",
+                                      "inclusive yyyy-mm-dd"),
+        "make_podcast": ("source", "computed", "kind:news_run,routine,run_id",
+                         "voice=local", "owner asks and cloud voices are enabled"),
+        "ask_friday": ("local full question", "knowledge graph", "gated answer", "never guess withheld"),
+        "navigate_to": ("only nav_ok confirms", "id=existing id", "workspace for kind=workspace", "mail_search",
+                        "new_tab=chrome", "max=maximize"),
+        "organize_files": ("approval", "items=paths", "moves=['file => folder']", "replaces=prior card"),
+        "organize_wiki": ("approval", "#n from listed choices", "moves=['page => folder']"),
+        "read_file": ("absolute/home-relative", "offset=1-based(default 1)", "limit≤2000(default 2000)"),
+        "podcast_play": ("omit episode_id for newest finished", "only when user names a show"),
+        "media_play": ("transcript match when available",),
+        "set_workspace_layout": ("true:fullscreen with docked chat", "false:normal", "position="),
+        "undo_action": ("organize receipt_id", "latest organize change", "mail undo needs approval"),
+        "answer_card": ("just-spoken", "organize/undo card", "running is not done"),
+        "revert_workspace": ("undo(default)", "as_of(when=iso time)", "version(version_id)", "reset"),
+    }
+    for name, fragments in required.items():
+        assert all(fragment in compact[name] for fragment in fragments), (name, compact[name])

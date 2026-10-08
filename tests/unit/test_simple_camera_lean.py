@@ -6,7 +6,9 @@ These regressions are not evidence of a physical camera or user comfort.
 """
 import functools
 import http.server
+import json
 import math
+import os
 import pathlib
 import socketserver
 import threading
@@ -117,6 +119,21 @@ def scene(request):
                                    " && fridayDebugScene().transitionProgress>=.999"
                                    " && FridayCamera.state.status==='live'"
                                    " && FridayTracking.head.seen", timeout=60000)
+            # Hold the native dock open before calibration and every lean
+            # comparison. Its 30-second idle hide must not resize the stage
+            # between the two neutral measurements.
+            page.mouse.move(1, request.param[1] - 1)
+            page.wait_for_function("""() => {
+              const dock = document.querySelector('.dock');
+              if (!dock || dock.classList.contains('hidden')) return false;
+              const style = getComputedStyle(dock);
+              if (style.display === 'none') return true; // Responsive Simple chrome.
+              const rect = dock.getBoundingClientRect();
+              return rect.height > 0 && rect.top < innerHeight && style.transform === 'none'
+                && !dock.getAnimations().some(a => a instanceof CSSTransition
+                  && a.effect?.target === dock && a.transitionProperty === 'transform'
+                  && (a.pending || a.playState === 'running'));
+            }""", timeout=10000)
             assert page.evaluate("FridayHolographicWorkspace.cameraCalibration.calibrateCurrent().ok")
             yield page, saved, writes
             page.evaluate("() => fridayVibe.setHologram(false,'lean-regression')")
@@ -177,16 +194,45 @@ def _reset(page):
 
 def test_calibrated_camera_lean_survives_the_final_simple_fit(scene):
     page, _, _ = scene
+    proofs = None
+    if output := os.environ.get("FRIDAY_SIMPLE_LEAN_PROOFS"):
+        proofs = pathlib.Path(output)
+        if not proofs.is_absolute():
+            raise ValueError("FRIDAY_SIMPLE_LEAN_PROOFS must be an absolute private output directory")
+        proofs = proofs.resolve(strict=True)
+        if not proofs.is_dir() or proofs.is_relative_to(REPO):
+            raise ValueError("FRIDAY_SIMPLE_LEAN_PROOFS must be an existing directory outside the checkout")
+        viewport = page.viewport_size
+        prefix = f"simple-lean-{viewport['width']}x{viewport['height']}"
     _reset(page)
     rest = _hold(page, .24)
+    if proofs is not None:
+        with (proofs / f"{prefix}-neutral.png").open("xb") as frame:
+            frame.write(page.screenshot())
     moderate = _hold(page, .30)  # Twenty percent closer, with the reported comfortable dials.
     near = _hold(page, .36)
+    if proofs is not None:
+        with (proofs / f"{prefix}-near.png").open("xb") as frame:
+            frame.write(page.screenshot())
     rest_again = _hold(page, .24)
     far = _hold(page, .16)
+    if proofs is not None:
+        with (proofs / f"{prefix}-far.png").open("xb") as frame:
+            frame.write(page.screenshot())
     maximum = _hold(page, .60)
+    if proofs is not None:
+        with (proofs / f"{prefix}-maximum.png").open("xb") as frame:
+            frame.write(page.screenshot())
+        with (proofs / f"{prefix}.json").open("x", encoding="utf-8") as metadata:
+            json.dump({"evidence": "Synthetic camera; sampled states precede assertions.",
+                       "viewport": viewport,
+                       "states": {"neutral": rest, "moderate": moderate, "near": near,
+                                  "neutral_again": rest_again, "far": far, "maximum": maximum}},
+                      metadata, indent=2)
     for sample in (rest, moderate, near, rest_again, far, maximum):
         assert sample["debug"] is None
         _inside(sample)
+        assert sample["stage"] == rest["stage"], (rest["stage"], sample["stage"])
     neutral = (rest["unit"] + rest_again["unit"]) / 2
     assert moderate["unit"] / neutral >= 1.02, (rest, moderate)
     assert near["unit"] / neutral >= 1.05, (rest, near)

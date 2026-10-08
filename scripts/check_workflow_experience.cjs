@@ -70,6 +70,12 @@ async function topOfWorkspace(page) {
     const page = await browser.newPage({viewport:{width:1480,height:1000},reducedMotion:'reduce'});
     page.setDefaultTimeout(15000);
     page.on('pageerror',e=>errors.push(e.message));
+    const persona='Aster';
+    await page.route('**/api/settings',async route=>{
+      if(route.request().method()!=='GET')return route.continue();
+      const response=await route.fetch(),body=await response.json();
+      return route.fulfill({response,body:JSON.stringify({...body,settings:{...body.settings,agent_name:persona}})});
+    });
     const requests=[]; let workflows=seed(); let failRepeat=true;
     const templates=[{id:'career-search',slug:'career-search',name:'Career search',description:'Find and evaluate selected roles using your career profile.',step_count:3,installed:false}];
     await page.route('**/api/schedules/sample-schedule**',async route=>{
@@ -166,15 +172,35 @@ async function topOfWorkspace(page) {
     await page.getByRole('combobox',{name:'Workflow notifications',exact:true}).selectOption('on_change');
     await page.locator('#wf-inputs').fill('Source notes\nA second source');
     await page.locator('#wf-checks').fill('Cite both sources and distinguish claims from evidence.');
+    const workflowCopy=await page.evaluate(()=>({persona:fridayName(),product:FRIDAY_BRAND.name}));
+    assert.equal(workflowCopy.persona,persona,'Workflow uses the configured synthetic persona');
+    assert.ok(workflowCopy.product&&workflowCopy.product!==persona,'Product naming stays distinct from the persona');
+    const deliverable=page.getByRole('combobox',{name:'Deliverable',exact:true});
+    await deliverable.selectOption('file');
+    const location=page.getByRole('textbox',{name:'Expected file or folder',exact:true});
+    await expect(location).toHaveValue('');
+    await expect(location).toHaveAttribute('placeholder','A location '+persona+' is allowed to use');
+    const scheduled=page.getByText('Approval requests still need your decision. Scheduled work runs while '+workflowCopy.product+' is running on this computer.',{exact:true});
     for(const style of ['simple','classic']){
       await page.evaluate(value=>window.FridayDisplayStyle.set(value),style);
-      await page.setViewportSize({width:1480,height:1000});await capture(page,style+'-workflow-editor');
-      await page.setViewportSize({width:390,height:844});await capture(page,style+'-workflow-editor-compact');
+      for(const width of [1480,390]){
+        await page.setViewportSize({width,height:width===390?844:1000});
+        await location.scrollIntoViewIfNeeded();
+        await expect(location).toBeVisible();await expect(location).toBeInViewport({ratio:1});
+        await scheduled.scrollIntoViewIfNeeded();
+        await expect(scheduled).toBeVisible();await expect(scheduled).toBeInViewport({ratio:1});
+        // Reuse the same four editor frames: wide shows location, compact shows scheduling.
+        if(width===1480){await location.scrollIntoViewIfNeeded();await expect(location).toBeInViewport({ratio:1});}
+        await capture(page,style+'-workflow-editor'+(width===390?'-compact':''));
+      }
     }
+    await deliverable.selectOption('artifact');
+    await expect(location).toHaveCount(0);
     await page.getByRole('button',{name:'Save changes',exact:true}).click();
     await expect(page.getByTestId('wf-editor')).toHaveCount(0);
     const saved=requests.filter(r=>r.pathname.endsWith('/save')).at(-1).body;
     assert.equal(saved.revision,2,'Saving includes the revision that was edited');
+    assert.equal(saved.output.kind,'artifact','Copy inspection preserves the original deliverable');
     assert.equal(saved.project_id,'other-project');assert.equal(saved.conversation_id,'other-chat');assert.equal(saved.notify,'on_change');
     assert.deepEqual(saved.inputs,['Source notes','A second source']);assert.equal(saved.steps[0].retries,2);assert.equal(saved.steps[0].with_context,false);assert.equal(saved.steps[0].seat,'sample-seat');
     await research.getByRole('button',{name:'Details',exact:true}).click();
@@ -272,7 +298,7 @@ async function topOfWorkspace(page) {
     await missing.getByRole('button',{name:'Browse other artifacts',exact:true}).click();
     await expect(page.getByRole('complementary',{name:'Artifact panel',exact:true})).toHaveAttribute('data-artifact-shown','another-artifact@3');
     assert.deepEqual(errors,[],'No browser errors');
-    if(output)fs.writeFileSync(path.join(output,'workflow-proof.json'),JSON.stringify({browser:browserSelection,frames,actions:requests.map(r=>r.body.action).filter(Boolean),errors},null,2));
+    if(output)fs.writeFileSync(path.join(output,'workflow-proof.json'),JSON.stringify({browser:browserSelection,frames,workflowCopy,actions:requests.map(r=>r.body.action).filter(Boolean),errors},null,2));
     console.log('PASS workflow editing, ownership, outcome honesty, scoped actions and responsive display styles');
   } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1;});

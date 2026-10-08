@@ -131,16 +131,21 @@ def test_worker_records_a_stopped_task_as_cancelled_not_complete(client, monkeyp
     monkeypatch.setattr(ag, "_evaluate_output", lambda *a, **k: evaluated.append(1) or "GRADE: PASS")
 
     def fake_generate(messages, system=None, **kw):
+        # Request stop during the running step, after worker admission.
+        assert ag._task_snapshot(tid)["status"] == "running"
+        tj.request_stop(tid)
         # the loop honoured the stop and returned its marker text
         tj.append(tid, "halt", cause="cancelled", detail="stopped after step 2 at the user's request")
         return "[Stopped after step 2 at the user's request.]", []
     monkeypatch.setattr(ag, "_generate_agent", fake_generate)
-    tj.request_stop(tid)
     ag._task_worker(tid, "Tray task", "do the thing")
     snap = ag._task_snapshot(tid)
     assert snap["status"] == "cancelled" and "Stopped after step 2" in snap["result"]
     assert evaluated == [], "a stopped task is not graded"
-    assert not tj.stop_requested(tid), "the stop was consumed"
+    assert not tj.consume_stop(tid), "the worker consumed the one-time stop notification"
+    state = tj.read_state(tid)
+    assert state["status"] == "cancelled" and state["stop_requested"]
+    assert tj.stop_requested(tid), "durable cancellation still prevents readmission"
 
 
 def test_stop_after_step_refuses_a_finished_task_and_an_unknown_one(client):

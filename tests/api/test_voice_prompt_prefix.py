@@ -80,5 +80,7 @@ def test_description_change_changes_the_prefix_only_when_a_proof_changes(monkeyp
     assert a1 == a2
     monkeypatch.setattr(m, "describe_for_model", lambda: "desc B")
     b = rv._build_voice_system_prompt({"orchestrator_model": "seat"})[0]
-    assert b != a1 and b.startswith("You are Agent Friday, a sovereign personal AI assistant "
-                                    "in a LIVE VOICE conversation. desc B")
+    assert a1.count("desc A") == 1
+    assert b == a1.replace("desc A", "desc B")
+    assert ("You are Agent Friday, a sovereign personal AI assistant "
+            "in a LIVE VOICE conversation. desc B") in b
