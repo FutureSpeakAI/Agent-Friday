@@ -200,3 +200,14 @@ def test_a_failing_section_costs_only_that_section(monkeypatch):
     snap = situation.snapshot()
     assert snap["broken"] == {"error": "ZeroDivisionError: division by zero"}
     assert "error" not in snap["machine"]
+
+
+def test_the_disk_line_reads_the_volume_friday_lives_on_not_a_hard_coded_c(monkeypatch):
+    # A POSIX host has no C:, and a Windows host may keep SystemDrive elsewhere
+    # than Friday's data. The section must not depend on either.
+    monkeypatch.setenv("SystemDrive", "Q:")
+    snap = situation.snapshot()
+    assert "error" not in snap["machine"], snap["machine"]
+    disk = snap["machine"]["disk"]
+    assert disk["drive"] and disk["drive"] != "Q:"
+    assert disk["total_gb"] > 0

@@ -103,6 +103,29 @@ def _desktop(now: float) -> dict:
     return desktop_bus.state(now)
 
 
+def _data_volume() -> tuple:
+    """(path to measure, label) for the volume Friday's state lives on.
+
+    Free space there is the number that matters (the vault, the media library
+    and the models all land on it). A hard-coded drive letter does not exist on
+    Linux or macOS, and SystemDrive need not hold Friday's data. The path is
+    the nearest existing ancestor of the state directory, so a first run that
+    has not created it yet still measures the right volume; the label is
+    "C:" on Windows and "/" on POSIX.
+    """
+    from pathlib import Path
+    try:
+        from agent_friday.paths import friday_home
+        probe = Path(os.path.abspath(friday_home()))
+    except Exception:
+        probe = Path(os.path.abspath(os.sep))
+    anchor = probe.anchor or os.path.abspath(os.sep)
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    label = anchor.rstrip("\\/") or anchor
+    return str(probe), label
+
+
 def _machine(now: float) -> dict:
     import psutil
     from agent_friday.services import machine_monitor as mm
@@ -122,9 +145,9 @@ def _machine(now: float) -> dict:
                       "used_gb": round((g.get("used_mib") or 0) / 1024, 1),
                       "util_pct": g.get("util_pct")})
     out["gpu"] = {"cards": cards, "age_s": mm.last_sample_age_s()}
-    drive = os.environ.get("SystemDrive", "C:") + os.sep
-    du = shutil.disk_usage(drive)
-    out["disk"] = {"drive": drive.rstrip("\\/"), "free_gb": _gb(du.free),
+    where, drive = _data_volume()
+    du = shutil.disk_usage(where)
+    out["disk"] = {"drive": drive, "free_gb": _gb(du.free),
                    "total_gb": _gb(du.total)}
     return out
 
