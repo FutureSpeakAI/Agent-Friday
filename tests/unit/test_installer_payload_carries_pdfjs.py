@@ -82,8 +82,8 @@ def test_the_build_checks_every_vendored_library_against_its_manifest_before_it_
     assert "static\\vendor" in SCRIPT and "VERSION.json" in SCRIPT and "Get-FileHash" in SCRIPT
     assert "-FailedStep 'build.vendor'" in SCRIPT, "a failed check aborts through the build report like every other step"
     assert "$vendorLibs -eq 0" in SCRIPT, "no manifest at all is a failure: a check with nothing to check passes for the wrong reason"
-    at = {k: SCRIPT.index(k) for k in ("$mustExist = @(", "Checking the vendored libraries", "$leakPatterns", "CreateFromDirectory")}
-    assert at["$mustExist = @("] < at["Checking the vendored libraries"] < at["$leakPatterns"] < at["CreateFromDirectory"]
+    at = {k: SCRIPT.index(k) for k in ("$mustExist = @(", "Checking the vendored libraries", "$leakPatterns", "Compiling the installer with Inno Setup")}
+    assert at["$mustExist = @("] < at["Checking the vendored libraries"] < at["$leakPatterns"] < at["Compiling the installer with Inno Setup"]
 
 
 def test_the_manifest_the_build_reads_pins_every_file_it_ships():
