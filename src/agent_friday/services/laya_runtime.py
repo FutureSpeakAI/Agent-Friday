@@ -131,11 +131,15 @@ def apply_engine(agent, engine: str, *, threads: Optional[int] = None):
 
     Raises if the engine cannot run here; the caller keeps fp32 then.
     """
-    import torch
+    # torch is imported by the branch that needs it, after every check that
+    # does not: an unchecked or missing ONNX artifact, or an unknown engine,
+    # is refused on a machine that has no torch at all.
     threads = int(threads or default_threads())
     if engine == "torch-fp32":
+        import torch
         torch.set_num_threads(threads)
     elif engine == "torch-int8":
+        import torch
         torch.set_num_threads(threads)
         # The encoder only: it is 28 of the model's 30 transformer layers, and
         # the decision head's fused attention path cannot take quantized
@@ -149,6 +153,7 @@ def apply_engine(agent, engine: str, *, threads: Optional[int] = None):
             raise FileNotFoundError("no ONNX artifact at %s; build it first" % path)
         if not (m.get("agreement_ok_by_engine") or {}).get(engine, m.get("agreement_ok") and engine == "onnx-int8"):
             raise RuntimeError("the %s artifact has not passed its agreement check" % engine)
+        import torch
         cfg = getattr(agent.model.encoder, "config", None)
         agent.model.encoder = _OrtEncoder(path, threads, cfg)
         torch.set_num_threads(threads)
