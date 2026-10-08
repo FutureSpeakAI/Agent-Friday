@@ -10,7 +10,12 @@ import json
 
 def home_cards(inp):
     from agent_friday.services import desktop_cards as cards
+    if not isinstance(inp, dict):
+        return "home_cards error: provide an action object."
     op = inp.get("action", "list")
+    fields = {"list": set(), "board": set(), "save": {"card"}, "remove": {"id"}, "change": {"change"}}
+    if not isinstance(op, str) or op not in fields or set(inp) - ({"action"} | fields[op]):
+        return "home_cards error: use only the fields for the selected action."
     try:
         if op == "list":
             return json.dumps({"cards": cards.list_cards()}, ensure_ascii=False)
@@ -19,7 +24,13 @@ def home_cards(inp):
             return json.dumps({"saved": True, "id": saved["id"], "message": "Card saved to Simple Home."})
         if op == "remove":
             return json.dumps({"removed": cards.remove_card(inp.get("id"))})
-        return "home_cards error: action must be list, save or remove."
+        if op == "board":
+            return json.dumps(cards.read_board(), ensure_ascii=False)
+        if op == "change":
+            result = cards.change_board(inp.get("change"))
+            return json.dumps({"saved": True, "revision": result["revision"],
+                "message": "Home change saved. Source tracking updates from local activity while Home is open; underlying work was not changed."})
+        return "home_cards error: action must be list, save, remove, board or change."
     except cards.CardError as exc:
         return "home_cards error: " + str(exc)
     except OSError:
@@ -48,23 +59,40 @@ def customize_workspace(inp):
         return "The workspace change could not be saved. No success was confirmed."
 
 
+_CARD_SCHEMA = {"type": "object", "properties": {
+    "id": {"type": "string"}, "title": {"type": "string"}, "body": {"type": "string"},
+    "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+    "actions": {"type": "array", "maxItems": 3, "items": {"type": "object", "properties": {
+        "label": {"type": "string"}, "workspace": {"type": "string"},
+        "view": {"type": "string", "enum": ["projects", "activity"]}},
+        "required": ["label"], "additionalProperties": False}}},
+    "required": ["id", "title"], "additionalProperties": False}
+_CHANGE_SCHEMA = {"type": "object", "properties": {
+    "op": {"type": "string", "enum": ["save", "remove", "pin", "snooze", "dismiss", "restore", "reorder", "track", "stop_tracking", "reset_suggestions"]},
+    "expected_revision": {"type": "integer", "minimum": 0}, "card": _CARD_SCHEMA,
+    "id": {"type": "string"}, "pinned": {"type": "boolean"},
+    "until": {"type": "number", "description": "Snooze until this Unix timestamp."},
+    "ids": {"type": "array", "maxItems": 256, "items": {"type": "string"},
+            "description": "Every visible card id in the desired order; pinned cards stay first."},
+    "source": {"type": "object", "properties": {
+        "kind": {"type": "string", "enum": ["task", "calendar", "project", "routine", "schedule", "activity"]},
+        "id": {"type": "string"}}, "required": ["kind", "id"], "additionalProperties": False}},
+    "required": ["op", "expected_revision"], "additionalProperties": False}
+
+
 TOOLS = [
     {"name": "home_cards", "description": (
-        "Read, write or remove Friday's plain-text cards on Simple Home. Save uses a stable id "
-        "and replaces that card; list first to preserve existing content when updating it. "
-        "Actions only open native workspaces; cards cannot run code, send messages or approve anything. "
-        "Use show_my_day to bring Home forward. Saved does not mean the page confirmed display."),
+        "Read or change Simple Home. list/save/remove manage saved text cards; board reads current cards, "
+        "source ids and revision. change requires that revision and one operation. Track only exact listed "
+        "local sources; updates occur while Home is open, never install monitoring. Snooze/dismiss hide; "
+        "stop_tracking freezes a snapshot without stopping work; restore changes visibility only. "
+        "reset_suggestions clears unpinned automatic history: dismissed suggestions may return. "
+        "Actions need label and exactly one workspace or view. Use show_my_day to display Home; saved alone never confirms display."),
      "input_schema": {"type": "object", "properties": {
-         "action": {"type": "string", "enum": ["list", "save", "remove"]},
+         "action": {"type": "string", "enum": ["list", "save", "remove", "board", "change"]},
          "id": {"type": "string"},
-         "card": {"type": "object", "properties": {
-             "id": {"type": "string"}, "title": {"type": "string"}, "body": {"type": "string"},
-             "priority": {"type": "integer", "minimum": 0, "maximum": 100},
-             "actions": {"type": "array", "maxItems": 3, "items": {"type": "object", "properties": {
-                 "label": {"type": "string"}, "workspace": {"type": "string"}},
-                 "required": ["label", "workspace"], "additionalProperties": False}}},
-             "required": ["id", "title"], "additionalProperties": False}},
-         "required": ["action"]}},
+         "card": _CARD_SCHEMA, "change": _CHANGE_SCHEMA},
+         "required": ["action"], "additionalProperties": False}},
     {"name": "customize_workspace", "description": (
         "Apply a reversible native workspace Salon customization immediately: density compact or comfortable, "
         "hex accent color, pinned note, or quick-action prompts. Pass null to clear a field. "

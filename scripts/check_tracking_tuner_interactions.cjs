@@ -64,4 +64,13 @@ function fixture(outcomes) {
   assert.equal(c.live.parallax_strength, .6);
   assert.match(c.messages.at(-1), /not saved/, 'Older success cannot clear a newer failed edit');
   console.log('PASS older same-dial success does not mark a newer failed edit saved');
+
+  const d = fixture([true]);
+  d.saved.neutral_face_width = .31; d.live.neutral_face_width = .24;
+  await d.tuner.save({neutral_face_width:.24, head_response:.2});
+  assert.deepEqual(d.requests, [{head_response:.2}]);
+  assert.equal(d.saved.neutral_face_width, .31, 'A full live cfg must preserve legacy account calibration');
+  await assert.rejects(d.tuner.save({neutral_face_width:.4}), /Calibrate distance/);
+  assert.equal(d.requests.length, 1, 'Distance-only input must use the camera binding control');
+  console.log('PASS browser-local distance never overwrites account calibration through the tuner');
 })().catch(error=>{console.error(error);process.exitCode=1});
