@@ -2,15 +2,15 @@
 
 > **Status:** implemented
 > **Last verified:** 2026-09-06
-> **Design:** [Task visibility](../design/active/task-visibility.md) (rules TV1–TV14)
+> **Design:** task visibility (rules TV1–TV14)
 > **Code:** `services/task_journal.py`, `services/observer_access.py`, `routes/tasks.py`, `core/__init__.py` (`check_auth`)
 
 Every background task Friday runs writes a **journal**: an append-only,
 sequence-numbered record of what it did, decided, called, spent and (by
 default) reasoned, on disk under `~/.friday/tasks/<task_id>/` and encrypted
 under the vault key when a passphrase is set. The task tray in the UI and
-the routes below read the **same record**. An orchestrator such as Fable or
-Astra does not get a different, thinner view of a task than the user; it
+the routes below read the **same record**. An orchestrator agent
+does not get a different, thinner view of a task than the user; it
 gets the same journal with two restrictions, both enforced in code rather
 than by convention:
 

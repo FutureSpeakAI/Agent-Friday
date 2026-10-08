@@ -192,7 +192,7 @@ Trigger an auto-research task to build/enrich a wiki section.
 ## Knowledge Graph
 
 The two-tier knowledge graph over the wiki, SOUL.md, and memory
-([knowledge-system-spec](../design/implemented/knowledge-system-spec.md)).
+(the knowledge system).
 The Knowledge workspace draws it as its Graph view. Tier A (structural) is always available
 and LLM-free; Tier B (semantic) requires a reindex and defaults to
 local-only models.

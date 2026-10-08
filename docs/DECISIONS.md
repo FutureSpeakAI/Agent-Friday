@@ -7,7 +7,6 @@ Records live in [`docs/decisions/`](decisions/); this file is the index.
 
 | Date | Decision | Status |
 |---|---|---|
-| 2026-09-29 | [Delegated decisions for the build-all-specs program](decisions/2026-09-29-program-delegated-decisions.md) — spec recommendations taken unless the owner ruled; the owner's standing rules outrank specs | in force |
 | 2026-09-09 | [Recall can be poisoned by a broken display](decisions/2026-09-09-recall-poisoned-by-broken-display.md) — live state is never answerable from memory | implemented |
 | 2026-09-04 | [Five dead settings](decisions/2026-09-04-five-dead-settings.md) — a control ships only with its enforcement and a test that fails if the enforcement is removed | implemented |
 | 2026-08-24 | [Pending classifier calls](decisions/2026-08-24-pending-classifier-calls.md) | implemented |

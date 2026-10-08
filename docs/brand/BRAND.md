@@ -270,7 +270,7 @@ tokens.
 ## Workspaces and controls
 
 A workspace is the same thing in a desktop window and in its own tab
-([fidelity-audit.md](fidelity-audit.md)).
+(one frame, one set of tokens).
 
 - **One frame.** A workspace's own tools (💬 chat with Friday about it, 🎤 talk to her
   about it, 🕒 its earlier versions), the mark that Friday has customized it, and its body
@@ -296,7 +296,7 @@ A workspace is the same thing in a desktop window and in its own tab
 
 Where the shipped UI had several values for one role, they now share one token.
 Each visible change is a brand decision, recorded in
-`docs/decisions/2026-09-29-program-delegated-decisions.md` as B7 to B15.
+the table below and numbered B7 to B15.
 
 | Decision | Surface | Before | After |
 |---|---|---|---|
@@ -327,5 +327,5 @@ occurrences in `index.html`.
 - **Other one-offs.** The decorative amber `#e0a030` (1) sits outside the token set.
 - **Destructive buttons.** A destructive button is deny magenta in some places (Remove, Delete Range, Clear) and error red in others (Settings danger, Knowledge's Delete, the 3D view's Trash). One of the two is the rule; the semantic migration decides which.
 - **Her name.** Done: the interface reads her name through `fridayName()` (see above). Left by rule: the scene's two lines and the avatar's Evolution section, which belong to the avatar session.
-- **States, headings, shortcuts.** Empty and loading lines have no shared component, section headings mix case, and there is no list of the global shortcuts. See [fidelity-audit.md](fidelity-audit.md).
+- **States, headings, shortcuts.** Empty and loading lines have no shared component, section headings mix case, and there is no list of the global shortcuts.
 - **Literals in general.** `#00d4ff`, `rgba(0,212,255,…)`, `#f59e0b`, `#00ff80` and `#ff0080` are still spelled as literals throughout `index.html` and `ui_parts/app.html`. The tokens exist so those can move to `var(--fr-*)` without a value changing.

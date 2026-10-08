@@ -68,29 +68,14 @@ document it is.
 
 ## Design documents
 
-Design documents carry a status header (`active`, `partially-implemented`,
-`implemented`, `superseded`, `historical`), the date they were last verified
-against the code, and the modules that implement them. Code beats
-documentation: when a design and the tree disagree, the status header and its
-implementation notes say so.
-
-- [`design/active/`](design/active/) — specifications that still drive work, including partially built ones.
-- [`design/implemented/`](design/implemented/) — the design records of shipped subsystems.
-- [`design/historical/`](design/historical/) — superseded designs and position papers whose outcome was a decision, kept for the reasoning.
+[`design/hig/`](design/hig/) holds the Agent Friday™ Human Interface Guidelines,
+the public rules for the interface. The maintainers' working design notes live
+in a private repository; see [`design/README.md`](design/README.md).
 
 ## Decisions
 
 [`decisions/`](decisions/) holds accepted architecture decisions and open
 decision requests, dated.
-
-## Engineering history
-
-[`history/audits/gauntlet-2026-09-03/`](history/audits/gauntlet-2026-09-03/)
-holds the finding register of a whole-repository audit (`findings.jsonl`,
-`claims.jsonl`). Tests under `tests/gauntlet/` cite its finding IDs. The
-register describes the tree on the day it was written; the current state of
-any subsystem is in the documents above, and the incident history of a change
-is in git.
 
 ## Release information
 
@@ -110,6 +95,6 @@ is in git.
 | Provider capabilities | `src/agent_friday/services/provider_registry.py` and `routing/provider_descriptors.py`. |
 | Credential storage | [SECURITY.md](../SECURITY.md), *How credentials are stored*. |
 | Security architecture | [Threat model](security/threat-model.md). |
-| Tool registry | `src/agent_friday/services/agent.py` (`CLAUDE_TOOLS`) and [design/active/one-tool-registry.md](design/active/one-tool-registry.md). |
+| Tool registry | `src/agent_friday/services/agent.py` (`CLAUDE_TOOLS`). |
 | Settings keys | `DEFAULT_SETTINGS` in `src/agent_friday/core/__init__.py`, documented in [Configuration](user-guide/configuration.md). |
 | Known issues | [KNOWN_ISSUES.md](../KNOWN_ISSUES.md). |

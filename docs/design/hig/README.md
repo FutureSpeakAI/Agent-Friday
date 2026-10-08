@@ -1,8 +1,7 @@
 # Agent Friday™ Human Interface Guidelines
 
-> **Status:** proposed, with [`surface-reorg.md`](../active/surface-reorg.md) (the audit
-> that motivates it and the migration that applies it) and the clickable prototypes in
-> [`docs/design/prototypes/surface-reorg/`](../prototypes/surface-reorg/index.html).
+> **Status:** proposed. The audit that motivates it and the migration that applies it
+> are maintainers' working notes (see [`../README.md`](../README.md)).
 > **Last verified:** 2026-09-30 against BRAND.md on `piece/P-BRAND-0` and
 > `unified-shell.md` on `feat/unified-shell`.
 > **Relationship to BRAND.md:** BRAND.md owns the look (palette, type, glass, the mark, the
@@ -79,7 +78,7 @@ words "needs you" or a count.
 2. **Chrome appears when relevant.** The top bar is always present (the shell's piece 2);
    the dock hides after idle and returns at the bottom edge; the landing cluster shows when
    the shell's judge says so (§10.2). Nothing else is on the desktop until the user opens it.
-3. **The top bar carries eight controls** (`surface-reorg.md` §2.3): lockup, context slot,
+3. **The top bar carries eight controls** (the surface audit, §2.3): lockup, context slot,
    model, needs-you pill (only when something is waiting), search, chat, settings,
    connection light. Telemetry (clock, GPU, RAM, CPU, disk, seat held) is one hover or click
    away behind the connection light. The one exception to "hide what is not relevant" is a
