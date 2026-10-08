@@ -220,6 +220,7 @@
 <script src="/static/friday_holographic_workspace.js"></script>
 <script src="/static/friday_workspace_compositions.js"></script>
 <script src="/static/friday_experience.js"></script>
+<script src="/static/friday_appearance.js"></script>
 <script src="/static/friday_crew_playback.js"></script>
 <script src="/static/friday_crew.js"></script>
 <script src="/static/friday_responsive_topbar.js"></script>
@@ -6532,6 +6533,23 @@ window.fridayVibe = {
     },
     setHologram: function(enabled, owner) { return setHologram(!!enabled, owner); },
     getHologramState: function() { return hologramState(); },
+    getTrackedCameraId: function() {
+        if (document.visibilityState === 'hidden') return null;
+        try {
+            const track = videoElement?.srcObject?.getVideoTracks?.().find(t => t.readyState === 'live' && !t.muted);
+            const id = track?.getSettings?.().deviceId;
+            return typeof id === 'string' && id.length > 0 && id.length <= 512 ? id : null;
+        } catch (_) { return null; }
+    },
+    getTrackedFaceWidth: function() {
+        const head = window.FridayTracking?.head;
+        const width = typeof lastFaceBoxW === 'number' ? lastFaceBoxW : 0;
+        const age = typeof lastFaceAt === 'number' && lastFaceAt > 0 ? performance.now() - lastFaceAt : Infinity;
+        const hold = typeof FACE_HOLD_MS === 'number' && typeof faceGapMs === 'number'
+            ? Math.max(FACE_HOLD_MS, 3 * faceGapMs) : 0;
+        return isHologramMode && isFaceVisible && head?.seen && !head.debug
+            && age >= 0 && age <= hold && Number.isFinite(width) && width > .02 ? width : null;
+    },
     releaseHologram: function(owner, revision) {
         if (hologramOwner !== owner || hologramRevision !== revision) return Promise.resolve(false);
         return setHologram(false, owner);

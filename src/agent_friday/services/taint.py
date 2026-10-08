@@ -474,7 +474,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "set_workspace_layout": {},
     "show_my_day": {},
     "set_chat_tray": {},
-    "home_cards": {"card": "detail"},
+    "home_cards": {"card": "detail", "change": "detail"},
     # Saved notes and quick-action prompts return in the Salon system prompt.
     "customize_workspace": {"patch": "memory_write"},
     # Organizing (services/item_actions). Mail always goes on a card, which

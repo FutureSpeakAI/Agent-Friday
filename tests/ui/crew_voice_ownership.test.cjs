@@ -18,6 +18,23 @@ function readSource(file) {
   return sourceCache.get(key);
 }
 
+function bylineHarness(file, available = true) {
+  const source = readSource(file), start = source.indexOf('function ChatSurface(');
+  assert.ok(start >= 0, 'find the real shared ChatSurface');
+  const tail = source.slice(start), next = tail.slice(1).search(/\nfunction [\w$]+\(/);
+  const body = next < 0 ? tail : tail.slice(0, next + 1);
+  const expressions = body.match(/\[[^\]\r\n]+\]\.includes\(m\.meta\?\.kind\)\s*&&\s*window\.FridayCrewByline\s*\?\s*React\.createElement\(window\.FridayCrewByline,\s*\{\s*meta\s*:\s*m\.meta\s*\}\)\s*:\s*\(\s*m\.role\s*===\s*'user'\s*\?\s*'You'\s*:\s*fridayName\(\)\s*\)/g);
+  assert.equal(expressions?.length, 1, 'extract exactly the real shared-chat byline expression');
+  const calls = [];
+  const CrewByline = ({meta}) => { calls.push(meta); return {speaker:meta.speaker_name, meta}; };
+  return {calls, render(message) {
+    return vm.runInNewContext('(' + expressions[0] + ')', {
+      m:message, window:available ? {FridayCrewByline:CrewByline} : {},
+      React:{createElement:(component, props)=>component(props)}, fridayName:()=> 'Friday',
+    });
+  }};
+}
+
 function harness(file) {
   const source = readSource(file), marker = source.indexOf("window.addEventListener('friday:crew-voice',command)");
   const from = source.lastIndexOf('  useEffect(() => {', marker), to = source.indexOf('  const toggleVoice', marker);
@@ -67,6 +84,32 @@ function harness(file) {
 }
 
 for (const file of ['index.html','ui_parts/app.html']) {
+  test(file + ': shared chat labels Crew dialogue with its speaker metadata', () => {
+    const h=bylineHarness(file);
+    for (const kind of ['crew_dialogue','crew_result','crew_speech']) {
+      const meta={kind,speaker_id:'synthetic-agent',speaker_name:'Synthetic collaborator',task_id:'synthetic-task',provider:'synthetic-provider'};
+      const shown=h.render({role:'friday',meta});
+      assert.equal(shown.speaker,meta.speaker_name,'the Crew speaker must replace the ordinary Friday label');
+      assert.equal(shown.meta,meta,'the real predicate must pass the original speaker metadata');
+      assert.equal(h.calls.at(-1),meta);
+    }
+    assert.equal(h.calls.length,3);
+  });
+  test(file + ': shared chat keeps ordinary speaker fallback labels', () => {
+    const h=bylineHarness(file);
+    assert.equal(h.render({role:'friday'}),'Friday');
+    assert.equal(h.render({role:'user'}),'You');
+    assert.equal(h.render({role:'friday',meta:{kind:'ordinary',speaker_name:'Unrelated metadata'}}),'Friday');
+    assert.equal(h.calls.length,0);
+  });
+  test(file + ': shared chat tolerates a missing optional Crew byline', () => {
+    const h=bylineHarness(file,false);
+    for (const kind of ['crew_dialogue','crew_result','crew_speech']) {
+      assert.equal(h.render({role:'friday',meta:{kind,speaker_name:'Synthetic collaborator'}}),'Friday');
+    }
+    assert.equal(h.render({role:'user'}),'You');
+    assert.equal(h.calls.length,0);
+  });
   test(file + ': a popout activates its chat before starting the shared mic', () => {
     const h=harness(file);h.command('start','other');
     assert.deepEqual(h.activations,['other']);assert.equal(h.starts.length,0,'no mic request while main chat still differs');

@@ -7,6 +7,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const {createHash} = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.FRIDAY_DESIGN_PORT || 3188);
 const now = Math.floor(Date.now()/1000);
@@ -129,8 +130,137 @@ const readOnlyFixtures={
  '/api/wiki/structure':{structure:Object.fromEntries(Object.keys(wikiGroups).map(section=>[section,Object.keys(wikiPages).filter(p=>p.startsWith(section+'/')).map(p=>p.split('/')[1])])),recent:wikiNodes.slice(0,4).map(n=>({path:n.provenance.wiki_pages[0],section:n.section,filename:n.provenance.wiki_pages[0].split('/')[1],modified_iso:new Date(now*1000).toISOString()}))},'/api/wiki/pending':{pending:[]},
  '/api/knowledge-graph/graph':wikiGraph,'/api/workflows/overview':{workflows:sampleWorkflows,routines:[],pending_approvals:0}
 };
-const customizations = {};
-const histories = {};
+// These stores implement only the preview's fictional UI contract. They are not
+// a backend test double and never load or save the application's personal data.
+const copy = value => JSON.parse(JSON.stringify(value));
+const timestamp = () => Math.floor(Date.now()/1000);
+const homeSaved = [
+ {id:'sample-home-note',title:'Make room for the next idea',body:'Bring the brief, the references, and one useful question into the conversation. This is your editable sample card.',priority:55,actions:[{label:'Open Library',workspace:'library'}],created_at:now-3600,updated_at:now-1800},
+ {id:'sample-home-later',title:'An idea for later',body:'A small collection of observations could become the next Field Notes edition. This sample card is set aside for one hour.',priority:40,actions:[{label:'Open projects',view:'projects'}],created_at:now-7200,updated_at:now-3600}
+];
+let homeRevision=1, homeOrder=[];
+const homePreferences=new Map([['sample-home-later',{snoozed_until:now+3600}]]), homeTrackers=new Map(), homePins=new Map();
+function homeSources() {
+ const checked=timestamp(), day=isoDay(), source=(kind,label,detail,records,status='local_only')=>({kind,label,status,detail,checked_at:checked,updated_at:now,records,options:records.map(record=>({id:record.id,label:record.title,available:record.available!==false,status:record.available===false?'unimplemented':'local_only'}))});
+ return [
+  source('task','Local tasks','Fictional task records in this preview. No task or model runs.',tasks.map(task=>({id:task.task_id,title:task.name,body:task.description+'\n'+(task.now||task.status),view:'activity'}))),
+  source('calendar','Calendar','Sample local schedule. No calendar account is connected.',sampleCalendarDay(day).events.map(event=>({id:event.id,title:event.title,body:'Sample appointment · '+event.start_time.slice(11,16)+'–'+event.end_time.slice(11,16),workspace:'calendar'})),'cached'),
+  source('project','Projects','Fictional projects saved only in this preview process.',projects.map(project=>({id:project.id,title:project.name,body:project.instructions,view:'projects'}))),
+  source('routine','Routines','Fictional routine snapshots. Following a card does not run the routine.',sampleWorkflows.map(workflow=>({id:workflow.id,title:workflow.name,body:workflow.description,workspace:'workflows'})).concat([{id:'sample-unavailable-routine',title:'A routine that is not ready',body:'This sample has no runnable handler.',workspace:'workflows',available:false}])) ,
+  source('schedule','Schedules','No schedules are configured in the design preview.',[],'missing'),
+  source('activity','Working day','Fictional local activity for layout review.',[{id:day,title:'A little perspective for '+new Date(day+'T12:00:00').toLocaleDateString(undefined,{weekday:'long'}),body:'One review to return to, a clear stretch for focused work, and a few ideas worth keeping nearby.',view:'activity'}])
+ ];
+}
+const sourceKey=scope=>scope.kind+':'+scope.id;
+function sourceHomeCard(scope,prefix='auto') {
+ if(!scope||typeof scope.kind!=='string'||typeof scope.id!=='string')return null;
+ const source=homeSources().find(item=>item.kind===scope.kind), record=source?.records.find(item=>item.id===scope.id);
+ if(!record)return null;
+ const id=prefix+'-'+scope.kind+'-'+scope.id.replace(/[^a-zA-Z0-9_-]/g,'_');
+ return {id,title:record.title,body:record.body,priority:scope.kind==='task'?75:scope.kind==='calendar'?65:50,type:scope.kind,origin:prefix==='track'?'tracked':'automatic',created_at:now,updated_at:now,actions:[{label:record.view==='projects'?'Open projects':record.view==='activity'?'Open activity':'Open '+source.label,...(record.view?{view:record.view}:{workspace:record.workspace})}],source:{kind:scope.kind,id:scope.id,label:source.label,status:record.available===false?'unimplemented':source.status,detail:source.detail,checked_at:source.checked_at,updated_at:source.updated_at},expires_at:null,tracking:null};
+}
+function previewBoard() {
+ const at=timestamp(), privateMode=!!settings.off_record&&settings.off_record_stops_storage!==false;
+ const scopes=[{kind:'activity',id:isoDay()},{kind:'task',id:tasks[0].task_id},{kind:'calendar',id:sampleCalendarDay(isoDay()).events[1].id}];
+ let records=privateMode?[]:scopes.filter(scope=>!Array.from(homeTrackers.values()).some(tracker=>sourceKey(tracker.scope)===sourceKey(scope))).map(scope=>sourceHomeCard(scope)).filter(Boolean);
+ if(!privateMode){
+  for(const [id,snapshot] of homePins)if(!records.some(card=>card.id===id))records.push(copy(snapshot));
+  for(const tracker of homeTrackers.values()){
+   const fresh=tracker.enabled?sourceHomeCard(tracker.scope,'track'):null, card=fresh||copy(tracker.snapshot);
+   card.tracking={enabled:tracker.enabled,scope:tracker.scope,stopped_at:tracker.stopped_at};
+   if(!tracker.enabled)card.source={...card.source,status:'stopped',detail:'Tracking stopped. This is the last sample snapshot; the underlying work is unchanged.'};
+   records.push(card);
+  }
+ }
+ records=records.concat(homeSaved.map(card=>({...copy(card),type:'note',origin:'saved',tracking:null,expires_at:null,source:{kind:'saved',id:card.id,label:'Saved sample card',status:'saved',checked_at:at,updated_at:card.updated_at,detail:'Stored only in this preview process.'}})));
+ const cards=[],hidden_cards=[];
+ for(const original of records){const pref=homePreferences.get(original.id)||{},card={...original,pinned:!!pref.pinned,order:homeOrder.includes(original.id)?homeOrder.indexOf(original.id):null,dismissed:!!pref.dismissed,snoozed_until:pref.snoozed_until||null,expired:false};card.hidden_reason=card.dismissed?'dismissed':card.snoozed_until>at?'snoozed':null;(card.hidden_reason?hidden_cards:cards).push(card);}
+ const order=(a,b)=>Number(b.pinned)-Number(a.pinned)||(a.order??10000)-(b.order??10000)||b.priority-a.priority||a.created_at-b.created_at||a.id.localeCompare(b.id);
+ cards.sort(order);hidden_cards.sort(order);
+ const sources=homeSources().map(({records,...source})=>privateMode?{...source,status:'paused',options:[],detail:'Personal source cards are hidden while off the record.'}:source);
+ const retained=new Set([...homePreferences.keys(),...homeOrder,...homeSaved.map(card=>card.id),...homeTrackers.keys(),...homePins.keys()]).size;
+ return {status:'ok',revision:homeRevision,generated_at:at,cards,hidden_cards,sources,summary:{visible:cards.length,hidden:hidden_cards.length,saved:homeSaved.length,tracking:Array.from(homeTrackers.values()).filter(item=>item.enabled).length,retained,retained_limit:256,suggestion_capacity_full:retained>=256,private:privateMode,cadence:'Updates from local activity while Home is open.'}};
+}
+function previewBoardChange(res,body) {
+ const error=(message,status=400)=>json(res,{status:'error',message},status), board=previewBoard();
+ if(board.summary.private)return error('Off the record is on. Sample Home changes are paused.',403);
+ if(!Number.isInteger(body.expected_revision)||body.expected_revision!==homeRevision)return error('Home changed. Refresh the board and review this action again.',409);
+ const fields={save:['card'],remove:['id'],pin:['id','pinned'],snooze:['id','until'],dismiss:['id'],restore:['id'],reorder:['ids'],track:['source'],stop_tracking:['id'],reset_suggestions:[]};
+ if(!Object.hasOwn(fields,body.op)||Object.keys(body).sort().join('|')!==['op','expected_revision',...fields[body.op]].sort().join('|'))return error('This Home action is not available in the sample preview.');
+ const all=board.cards.concat(board.hidden_cards),card=all.find(item=>item.id===body.id), pref={...(homePreferences.get(body.id)||{})};
+ if(Object.hasOwn(body,'id')&&!card)return error('That card is no longer available. Refresh Home.',409);
+ if(body.op==='save'){
+  const incoming=body.card;
+  if(!incoming||typeof incoming.id!=='string'||!/^[a-zA-Z0-9_-]{1,64}$/.test(incoming.id)||incoming.id.startsWith('auto-')||incoming.id.startsWith('track-')||typeof incoming.title!=='string'||!incoming.title.trim()||incoming.title.length>120||typeof incoming.body!=='string'||incoming.body.length>2000)return error('Use a short title and plain-text details for this sample card.');
+  const previous=homeSaved.find(item=>item.id===incoming.id);
+  if(!previous&&homeSaved.length+homeTrackers.size+homePins.size>=24)return error('The sample board is full. Delete a saved card or stopped snapshot first.');
+  const actions=Array.isArray(incoming.actions)?incoming.actions:[];
+  if(actions.length>3||actions.some(action=>!action||typeof action.label!=='string'||!action.label.trim()||action.label.length>60||!(action.workspace==null?['projects','activity'].includes(action.view):action.view==null&&previewWorkspaces.has(action.workspace))))return error('Choose a native sample workspace or Home destination.');
+  const saved={id:incoming.id,title:incoming.title.trim(),body:incoming.body,priority:Number.isInteger(incoming.priority)?incoming.priority:50,actions:copy(actions),created_at:previous?.created_at||timestamp(),updated_at:timestamp()};
+  if(previous)homeSaved.splice(homeSaved.indexOf(previous),1,saved);else homeSaved.push(saved);
+ }else if(body.op==='track'){
+  const scope=body.source, fresh=scope&&sourceHomeCard(scope,'track');
+  if(!fresh||fresh.source.status==='unimplemented')return error('That sample source is not available to follow.');
+  if(!homeTrackers.has(fresh.id)&&homeSaved.length+homeTrackers.size+homePins.size>=24)return error('The sample board is full. Delete a saved card or stopped snapshot first.');
+  const automatic=all.find(item=>item.origin==='automatic'&&sourceKey(item.source)===sourceKey(scope));
+  if(automatic&&!homeTrackers.has(fresh.id)){if(homePreferences.has(automatic.id))homePreferences.set(fresh.id,homePreferences.get(automatic.id));homePreferences.delete(automatic.id);homeOrder=homeOrder.map(id=>id===automatic.id?fresh.id:id);homePins.delete(automatic.id);}
+  homeTrackers.set(fresh.id,{scope:copy(scope),snapshot:copy(fresh),enabled:true,stopped_at:null});
+ }else if(body.op==='stop_tracking'){
+  const tracker=homeTrackers.get(body.id);if(!tracker)return error('This sample card is not being tracked.');
+  tracker.snapshot=sourceHomeCard(tracker.scope,'track')||tracker.snapshot;tracker.enabled=false;tracker.stopped_at=timestamp();
+ }else if(body.op==='remove'){
+  if(card.origin==='saved')homeSaved.splice(homeSaved.findIndex(item=>item.id===body.id),1);
+  else if(card.tracking&&!card.tracking.enabled)homeTrackers.delete(body.id);
+  else return error('Dismiss a source card or stop its tracking before deleting a snapshot.');
+  homePreferences.delete(body.id);homePins.delete(body.id);homeOrder=homeOrder.filter(id=>id!==body.id);
+ }else if(body.op==='reorder'){
+  if(!Array.isArray(body.ids)||body.ids.some(id=>typeof id!=='string')||new Set(body.ids).size!==body.ids.length||body.ids.slice().sort().join('|')!==board.cards.map(item=>item.id).sort().join('|'))return error('Visible sample cards changed. Refresh before reordering.',409);
+  homeOrder=body.ids.concat(homeOrder.filter(id=>!body.ids.includes(id)));
+ }else if(body.op==='reset_suggestions'){
+  for(const [id,value] of homePreferences)if(id.startsWith('auto-')&&!value.pinned)homePreferences.delete(id);
+  homeOrder=homeOrder.filter(id=>!id.startsWith('auto-')||homePreferences.get(id)?.pinned);
+ }else{
+  if(body.op==='pin'){if(typeof body.pinned!=='boolean')return error('Pinned must be true or false.');if(body.pinned&&card.origin==='automatic'&&!homePins.has(card.id)){if(homeSaved.length+homeTrackers.size+homePins.size>=24)return error('The sample board is full.');homePins.set(card.id,copy(card));}if(!body.pinned)homePins.delete(card.id);pref.pinned=body.pinned;}
+  if(body.op==='snooze'){if(!Number.isFinite(body.until)||body.until<=timestamp()||body.until>timestamp()+366*86400)return error('Choose a future time within the next year.');pref.snoozed_until=body.until;}
+  if(body.op==='dismiss')pref.dismissed=true;
+  if(body.op==='restore'){pref.dismissed=false;pref.snoozed_until=null;}
+  homePreferences.set(body.id,pref);
+ }
+ homeRevision++;return json(res,previewBoard());
+}
+const previewCatalog=fs.readFileSync(path.join(root,'static/workspace_registry.js'),'utf8').match(/\/\*BEGIN JSON\*\/([\s\S]+?)\/\*END JSON\*\//);
+if(!previewCatalog)throw new Error('Workspace registry is unavailable for preview.');
+const previewWorkspaces=new Set(JSON.parse(previewCatalog[1]).workspaces.filter(workspace=>workspace.boundary?.kind==='native'&&(!workspace.held||settings.held_features?.[workspace.held]===true)).map(workspace=>workspace.id));
+const customizations = Object.create(null), histories = Object.create(null), workspaceChats=Object.create(null), studioRevisions=Object.create(null);
+let studioVersion=0;
+function appearanceState(id) {
+ return {workspace:id,revision:Object.hasOwn(studioRevisions,id)?createHash('sha256').update(id+':'+studioRevisions[id]).digest('hex'):'new',customization:copy(customizations[id]||{}),versions:copy(histories[id]||[])};
+}
+function saveAppearance(id,next,label,kind='change') {
+ const version={id:'sample-version-'+(++studioVersion),ts:new Date().toISOString(),label,kind,customization:copy(customizations[id]||{})};
+ histories[id]=(histories[id]||[]).concat(version).slice(-40);customizations[id]=copy(next);studioRevisions[id]=(studioRevisions[id]||0)+1;return version;
+}
+function previewHistory(id) {
+ const versions=histories[id]||[],current=customizations[id]||{};
+ const entries=versions.map((version,index)=>{const after=versions[index+1]?.customization||current,keys=Object.keys(version.customization),changed=Array.from(new Set(keys.concat(Object.keys(after)))).filter(key=>JSON.stringify(version.customization[key])!==JSON.stringify(after[key])).sort();return {version_id:version.id,when:version.ts,label:version.label,kind:version.kind,describes:'state BEFORE: '+version.label,undo_hint:'Restoring this sample version undoes this change and later changes.',keys:keys.sort(),changed,changed_label:changed.join(', ')||'nothing'};}).reverse();
+ return {workspace:id,current:copy(current),current_keys:Object.keys(current).sort(),entries};
+}
+function previewAppearance(res,id,method,body) {
+ const state=appearanceState(id),error=(message,status=400)=>json(res,{status:'error',message},status);
+ if(method==='GET')return ok(res,state);
+ if(method!=='POST')return error('This appearance action is not simulated.',405);
+ if(body.expected_revision!==state.revision)return json(res,{status:'conflict',message:'This workspace changed. Reload its appearance before applying your draft.'},409);
+ const patch=body.patch,validObject=value=>value&&typeof value==='object'&&!Array.isArray(value);
+ if(!validObject(patch)||!Object.keys(patch).length||Object.keys(patch).some(key=>!['note','accent','density','actions'].includes(key))||Object.keys(body).some(key=>!['patch','expected_revision','apply'].includes(key))||body.apply!==undefined&&typeof body.apply!=='boolean')return error('Choose supported appearance fields and whether to apply.');
+ if(patch.note!=null&&(typeof patch.note!=='string'||patch.note.length>1500)||patch.accent!=null&&(typeof patch.accent!=='string'||!/^#[\da-f]{6}$/i.test(patch.accent))||patch.density!=null&&!['comfortable','compact'].includes(patch.density))return error('The sample appearance contains an invalid note, accent or spacing.');
+ if(patch.actions!=null&&(!Array.isArray(patch.actions)||patch.actions.length>8||patch.actions.some(action=>!validObject(action)||Object.keys(action).sort().join('|')!=='label|prompt'||typeof action.label!=='string'||!action.label.trim()||action.label.length>40||typeof action.prompt!=='string'||!action.prompt.trim()||action.prompt.length>400)))return error('Each quick action needs a short label and prompt.');
+ const next=copy(state.customization);for(const [key,value] of Object.entries(patch)){if(value===null)delete next[key];else next[key]=copy(value);}
+ const changed=Object.keys(patch).filter(key=>JSON.stringify(state.customization[key])!==JSON.stringify(next[key]));
+ if(!body.apply)return ok(res,{...state,preview:next,changed,applied:false});
+ if(settings.off_record&&settings.off_record_stops_storage!==false)return error('Off the record is on. The sample appearance was not saved.',403);
+ if(!changed.length)return ok(res,{...state,changed:[],applied:false});
+ const version=saveAppearance(id,next,'Sample workspace appearance');return ok(res,{...appearanceState(id),changed,applied:true,revert_to:version.id});
+}
 const textById = {1:'# Launch brief\n\nCreate a clear, confident home for a fictional creative studio.\n\n## The opening\nLead with the value of the work, then show a useful example.\n\n## Tone\nDirect, welcoming, and precise.',2:'# Visual direction\n\nUse generous space, strong typography, and a deliberate sense of depth.\n\nKeep the material easy to compare.',3:'# Audience notes\n\nPeople arrive with a goal. Help them find the next useful action.\n\nLeave room to explore without losing their place.'};
 // The Library's document reader consumes PDFs; Files exposes the same sample copy as Markdown.
 function sampleLines(d) {
@@ -160,6 +290,19 @@ function ok(res, data={}) { json(res,{status:'ok',...data}); }
 function readBody(req) { return new Promise((resolve,reject)=>{let raw='';req.on('data',b=>{raw+=b;if(raw.length>200000){reject(new Error('Request too large'));req.destroy();}});req.on('end',()=>{try{resolve(raw?JSON.parse(raw):{});}catch(e){reject(e);}});req.on('error',reject);}); }
 function api(req,res,u,b) {
  const p=u.pathname, method=req.method;
+ const blocked=()=>json(res,{status:'blocked',message:'This action is not simulated in the design preview. No live action was taken.'},409);
+ if(method!=='GET'){
+  if(!b||typeof b!=='object'||Array.isArray(b))return json(res,{status:'error',message:'Provide a JSON object for a sample action.'},400);
+  const supported=method==='POST'&&['/api/settings','/api/conversations','/api/projects','/api/chat/stream','/api/desktop/board','/api/desktop/cards'].includes(p)
+   ||['PATCH','DELETE'].includes(method)&&/^\/api\/projects\/[^/]+$/.test(p)
+   ||method==='DELETE'&&/^\/api\/desktop\/cards\/[^/]+$/.test(p)
+   ||method==='POST'&&/^\/api\/workspace\/[^/]+\/(appearance|chat|chat\/clear|revert|reset)$/.test(p);
+  if(!supported)return blocked();
+ }
+ if(p==='/api/desktop/board')return method==='GET'?json(res,previewBoard()):previewBoardChange(res,b);
+ if(p==='/api/desktop/cards')return method==='GET'?ok(res,{cards:copy(homeSaved)}):previewBoardChange(res,{op:'save',expected_revision:homeRevision,card:b});
+ const oldCard=p.match(/^\/api\/desktop\/cards\/([^/]+)$/);
+ if(oldCard&&method==='DELETE')return previewBoardChange(res,{op:'remove',expected_revision:homeRevision,id:decodeURIComponent(oldCard[1])});
  if (p.endsWith('/events') || p==='/api/command-stream') {res.writeHead(204);return res.end();}
  if(method==='GET') {
   if(Object.hasOwn(readOnlyFixtures,p))return ok(res,readOnlyFixtures[p]);
@@ -212,8 +355,41 @@ function api(req,res,u,b) {
  if(p==='/api/approvals'||p==='/api/approvals/pending')return ok(res,{approvals:[],pending:[]});
  if(p==='/api/health')return ok(res,{connected:true,preview:true,model_ready:false});
  if(p==='/api/workspace/customizations')return ok(res,{customizations});
- m=p.match(/^\/api\/workspace\/([^/]+)\/(chat|history|versions|revert|customization)$/);
- if(m){const id=m[1];if(m[2]==='chat'){const prev=customizations[id]||{};histories[id]=(histories[id]||[]).concat([{id:Date.now(),customization:prev}]);const dense=/compact|dense/i.test(b.message||b.prompt||'');customizations[id]={...prev,density:dense?'compact':'comfortable',note:'Appearance adjustment in the sample preview'};return ok(res,{response:'The sample workspace now uses '+(dense?'compact':'comfortable')+' spacing. This preview demonstrates the customization connection; no model was called.',customization:customizations[id]});}return ok(res,{customization:customizations[id]||{},history:histories[id]||[],versions:histories[id]||[]});}
+ m=p.match(/^\/api\/workspace\/([^/]+)\/(appearance|chat|chat\/clear|history|versions|revert|reset|customization)$/);
+ if(m){
+  const id=m[1],action=m[2];
+  if(!previewWorkspaces.has(id))return json(res,{status:'blocked',message:'This workspace is unavailable in the sample preview.'},404);
+  if(action==='appearance')return previewAppearance(res,id,method,b);
+  if(method==='GET'){
+   if(action==='chat')return ok(res,{workspace:id,chat:copy(workspaceChats[id]||[]),customization:copy(customizations[id]||{}),versions:copy(histories[id]||[])});
+   if(action==='history')return ok(res,previewHistory(id));
+   if(action==='versions'||action==='customization')return ok(res,appearanceState(id));
+   return blocked();
+  }
+  if(settings.off_record&&settings.off_record_stops_storage!==false)return json(res,{status:'blocked',message:'Off the record is on. Sample workspace changes are paused.'},403);
+  if(action==='chat'){
+   const message=typeof b.message==='string'?b.message.trim():'';
+   if(!message)return json(res,{status:'error',message:'Message required.'},400);
+   if(!/\b(compact|dense|comfortable)\b/i.test(message))return json(res,{status:'blocked',applied:false,message:'The sample chat only demonstrates compact or comfortable spacing. Use Preview appearance for notes, accents and quick actions. No model or live action runs.'},409);
+   const density=/\b(compact|dense)\b/i.test(message)?'compact':'comfortable',next={...(customizations[id]||{}),density};
+   const applied=customizations[id]?.density!==density,version=applied?saveAppearance(id,next,'Sample '+density+' spacing'):null;
+   const response=(applied?'The sample workspace now uses ':'This sample workspace already uses ')+density+' spacing. This is an in-memory demonstration; no model was called.';
+   workspaceChats[id]=(workspaceChats[id]||[]).concat([{role:'user',text:message,ts:new Date().toISOString()},{role:'friday',text:response,ts:new Date().toISOString(),...(version?{revert_to:version.id,change:version.label}:{})}]).slice(-40);
+   studioRevisions[id]=(studioRevisions[id]||0)+1;
+   return ok(res,{workspace:id,response,applied,revert_to:version?.id||null,change:version?.label||null,customization:copy(customizations[id]||{}),versions:copy(histories[id]||[])});
+  }
+  if(action==='chat/clear'){workspaceChats[id]=[];studioRevisions[id]=(studioRevisions[id]||0)+1;return ok(res,{chat:[]});}
+  if(action==='revert'){
+   const target=(histories[id]||[]).find(version=>version.id===b.version_id);
+   if(!target)return json(res,{status:'error',message:'Sample version not found.'},404);
+   const version=saveAppearance(id,target.customization,'Restore sample version','revert');return ok(res,{...appearanceState(id),applied:true,revert_to:version.id});
+  }
+  if(action==='reset'){
+   const changed=Object.keys(customizations[id]||{}).length>0,version=changed?saveAppearance(id,{},'Reset sample appearance','reset'):null;
+   return ok(res,{...appearanceState(id),applied:changed,revert_to:version?.id||null});
+  }
+  return blocked();
+ }
  if(p==='/api/library/tree'){
   const node=u.searchParams.get('node')||'',d=documents.find(d=>'d:'+d.id===node);
   if(node&&node!=='f:1'&&!d)return json(res,{status:'error',message:'Sample Library node not found'},404);
@@ -254,7 +430,7 @@ function api(req,res,u,b) {
  if(p==='/api/privacy/file-grants')return ok(res,{grants:[],suspended:false,held:[],denied:[]});
  if(p==='/api/models'||p.includes('model-catalog'))return ok(res,{models:[],roles:{orchestrator:[],subagent:[],creative:[],voice:[]},providers:[],local:[],cloud:[]});
  if(p==='/api/seat'||p==='/api/compute/status')return ok(res,{seat:null,preview:true});
- if(method!=='GET')return json(res,{status:'error',message:'This action is not simulated in the design preview. No live action was taken.'},409);
+ if(method!=='GET')return blocked();
  return ok(res,{items:[],data:[],accounts:[],models:[],tasks:[],events:[],notifications:[],processes:[],artifacts:[],codebases:[],workflows:[],schedules:[],connections:[],available:false,preview:true});
 }
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon','.woff':'font/woff','.woff2':'font/woff2','.ttf':'font/ttf','.json':'application/json'};

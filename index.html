@@ -3606,6 +3606,7 @@ window.addEventListener('DOMContentLoaded',function(){
 <link rel="stylesheet" href="/static/friday_holographic_workspace.css"/>
 <link rel="stylesheet" href="/static/friday_workspace_compositions.css"/>
 <link rel="stylesheet" href="/static/friday_shared_surfaces.css"/>
+<link rel="stylesheet" href="/static/friday_appearance.css"/>
 <link rel="stylesheet" href="/static/friday_native_shell.css"/>
 <link rel="stylesheet" href="/static/friday_responsive_topbar.css"/>
 <link rel="stylesheet" href="/static/friday_workspace_tools.css"/>
@@ -3760,6 +3761,7 @@ window.addEventListener('DOMContentLoaded',function(){
 <script src="/static/friday_holographic_workspace.js"></script>
 <script src="/static/friday_workspace_compositions.js"></script>
 <script src="/static/friday_experience.js"></script>
+<script src="/static/friday_appearance.js"></script>
 <script src="/static/friday_crew_playback.js"></script>
 <script src="/static/friday_crew.js"></script>
 <script src="/static/friday_responsive_topbar.js"></script>
@@ -3942,8 +3944,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 fx.hold(head.x, tSec); fy.hold(head.y, tSec); fz.hold(head.z, tSec);
                 head.seen = false;
             }
-            // The calibrated width is a setting, so it survives a reload and
-            // a voice "calibrate" can be persisted like any other dial.
+            // Camera identity and persistence belong to the local binding
+            // controller; this primitive changes only the live tracker.
             function calibrate(boxW) {
                 head.baseline = (boxW && boxW > 0.02) ? boxW : null;
                 cfg.neutral_face_width = head.baseline || 0;
@@ -4171,7 +4173,8 @@ window.addEventListener('DOMContentLoaded',function(){
             }
 
             function apply(next) {
-                Object.assign(cfg, next || {});
+                const calibration = window.FridayHolographicWorkspace?.cameraCalibration;
+                Object.assign(cfg, calibration ? calibration.filterSettings(next || {}) : {...next,neutral_face_width:0});
                 retune();
                 const nfw = Number(cfg.neutral_face_width);
                 head.baseline = (isFinite(nfw) && nfw > 0.02) ? nfw : null;
@@ -4652,6 +4655,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 lastT = -1;
                 if (!raf) raf = requestAnimationFrame(loop);
                 set('live', '');
+                window.FridayHolographicWorkspace?.cameraCalibration?.sync();
             }
             function onEnded() { drop(); set('lost', 'camera stopped'); schedule(); }
             function onMute() {
@@ -4692,6 +4696,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
                 stream = null; track = null; feeding = false;
                 try { videoElement.srcObject = null; } catch (e) {}
+                window.FridayHolographicWorkspace?.cameraCalibration?.sync();
                 if (onLost) onLost();
             }
             function start(frameFn, lostFn) {
@@ -11250,6 +11255,23 @@ window.fridayVibe = {
     },
     setHologram: function(enabled, owner) { return setHologram(!!enabled, owner); },
     getHologramState: function() { return hologramState(); },
+    getTrackedCameraId: function() {
+        if (document.visibilityState === 'hidden') return null;
+        try {
+            const track = videoElement?.srcObject?.getVideoTracks?.().find(t => t.readyState === 'live' && !t.muted);
+            const id = track?.getSettings?.().deviceId;
+            return typeof id === 'string' && id.length > 0 && id.length <= 512 ? id : null;
+        } catch (_) { return null; }
+    },
+    getTrackedFaceWidth: function() {
+        const head = window.FridayTracking?.head;
+        const width = typeof lastFaceBoxW === 'number' ? lastFaceBoxW : 0;
+        const age = typeof lastFaceAt === 'number' && lastFaceAt > 0 ? performance.now() - lastFaceAt : Infinity;
+        const hold = typeof FACE_HOLD_MS === 'number' && typeof faceGapMs === 'number'
+            ? Math.max(FACE_HOLD_MS, 3 * faceGapMs) : 0;
+        return isHologramMode && isFaceVisible && head?.seen && !head.debug
+            && age >= 0 && age <= hold && Number.isFinite(width) && width > .02 ? width : null;
+    },
     releaseHologram: function(owner, revision) {
         if (hologramOwner !== owner || hologramRevision !== revision) return Promise.resolve(false);
         return setHologram(false, owner);
@@ -12174,25 +12196,17 @@ function fridayRunActions(actions) {
       } else if (a.type === 'tracking') {
         // Voice or chat tuning the hologram window (hologram_tools). The
         // server has already persisted the dials; this applies them live.
-        // A calibrate is the one op only the page can do, since only the
-        // page knows how wide the face is right now, so it persists that
-        // itself. The result rides back on the action, into the ack.
+        // Calibration uses a fresh physical face and a browser-local camera
+        // binding. Its confirmed status rides back in the action ack.
         const TK = window.FridayTracking;
         if (TK) {
           if (a.op === 'calibrate') {
-            const seen = typeof isFaceVisible === 'undefined' || isFaceVisible;
-            const w = seen && typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
-            const got = TK.calibrate(w);
-            a.result = { calibrated: got || null };
-            if (got) {
-              apiFetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ settings: { tracking: { neutral_face_width: got } } })
-              }).catch(() => {});
-            }
+            const result = window.FridayHolographicWorkspace?.cameraCalibration?.calibrateCurrent();
+            a.result = result ? {...result,calibrated:result.ok ? result.width : null} : {ok:false,calibrated:null,status:'Camera calibration is unavailable.'};
           } else if (a.op === 'reset') {
-            a.result = { tracking: TK.reset() };
+            const calibration = window.FridayHolographicWorkspace?.cameraCalibration?.resetCurrent();
+            TK.reset();
+            a.result = {tracking:TK.get(),calibration:calibration || {ok:false,saved:false,status:'Camera calibration is unavailable.'}};
           } else if (a.tracking && typeof a.tracking === 'object') {
             TK.apply(a.tracking);
             a.result = { tracking: TK.get() };
@@ -12669,9 +12683,12 @@ function SnapPreview({
   box,
   slot
 }) {
+  const surfaceRef = useRef(null);
+  useFridaySpatialSurface(surfaceRef, () => slot ? fridaySnapBox(fridayDesktopArea(),slot) : box, 'window', !!box);
   if (!box) return null;
   return ReactDOM.createPortal( /*#__PURE__*/React.createElement("div", {
     className: "snap-preview",
+    ref: surfaceRef,
     "data-testid": "snap-preview",
     "data-slot": slot,
     style: {
@@ -12760,6 +12777,7 @@ function SnapMenu({
   const left = Math.max(8, Math.min((window.innerWidth || 1280) - width - 8, r.right - width));
   const requestedBox={x:left,y:Math.round(r.bottom+6),w:width,h:380};
   const shownBox=window.FridayHolographicWorkspace?.constrainRect(requestedBox)||requestedBox;
+  useFridaySpatialSurface(ref, () => ({...requestedBox,h:Math.min(380,ref.current?.scrollHeight||380)}), 'overlay');
   const zone = (slot, grow, label, pick, on, extra) => /*#__PURE__*/React.createElement("button", {
     key: label,
     type: "button",
@@ -12802,6 +12820,7 @@ function SnapMenu({
     ref: ref,
     id: id,
     className: "snap-menu"+(onToggle?" ws-arrange-menu":""),
+    "data-friday-overlay": "menu",
     role: "menu",
     "aria-label": kind === 'tray' ? 'Where the chat goes' : 'Snap layouts',
     "data-testid": "snap-menu",
@@ -13016,9 +13035,11 @@ function fridayToast(msg, opts) {
     if (!host) {
       host = document.createElement('div');
       host.id = 'friday-toast-host';
+      host.setAttribute('data-friday-overlay', 'toast');
+      host.setAttribute('aria-label', 'Notifications');
       host.style.cssText = 'position:fixed;z-index:99999;right:16px;bottom:16px;' +
         'display:flex;flex-direction:column;gap:8px;align-items:flex-end;' +
-        'pointer-events:none;max-width:min(520px,calc(100vw - 32px))';
+        'pointer-events:none;max-width:min(520px,calc(100vw - 32px));max-height:40vh;overflow:auto';
       document.body.appendChild(host);
     }
     var el = document.createElement('div');
@@ -13029,18 +13050,27 @@ function fridayToast(msg, opts) {
       ';border:1px solid ' + (bad ? 'rgba(255,90,110,0.55)' : 'rgba(255,255,255,0.16)') +
       ';box-shadow:0 8px 28px rgba(0,0,0,0.45);white-space:pre-wrap;' +
       'opacity:0;transform:translateY(6px);transition:opacity .16s,transform .16s';
-    el.textContent = text;
-    el.onclick = function () { el.remove(); };
+    var message = document.createElement('span');
+    message.textContent = text;
+    el.appendChild(message);
+    var dismiss = document.createElement('button');
+    dismiss.type = 'button'; dismiss.textContent = '×';
+    dismiss.setAttribute('aria-label', 'Dismiss notification');
+    dismiss.style.cssText = 'margin-left:12px;min-width:28px;min-height:28px;background:transparent;color:inherit;border:1px solid currentColor;border-radius:5px;cursor:pointer';
+    dismiss.onclick = function () { el.remove(); };
+    el.appendChild(dismiss);
     host.appendChild(el);
     requestAnimationFrame(function () {
       el.style.opacity = '1'; el.style.transform = 'translateY(0)';
     });
-    // Long messages need longer than a glance; an error stays until dismissed.
+    // Long messages need longer than a glance. Focus and hover retain them.
     var ms = bad ? 15000 : Math.min(14000, 3200 + text.length * 28);
-    setTimeout(function () {
+    var expire = function () {
+      if (el.contains(document.activeElement) || el.matches(':hover')) { setTimeout(expire, 1000); return; }
       el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
       setTimeout(function () { el.remove(); }, 200);
-    }, ms);
+    };
+    setTimeout(expire, ms);
   } catch (e) { /* a notice that throws is worse than no notice */ }
 }
 window.fridayToast = fridayToast;
@@ -13664,6 +13694,7 @@ function WsToolMenu({
 }) {
   const ref = useRef(null);
   const [box, setBox] = useState(null);
+  useFridaySpatialSurface(ref, () => box, 'overlay');
   React.useLayoutEffect(() => {
     const place = () => {
       const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : {
@@ -13730,6 +13761,7 @@ function WsToolMenu({
     ref: ref,
     id: id,
     className: "ws-tools-menu",
+    "data-friday-overlay": "menu",
     "data-arrange-tucked": arrangeTucked ? 'true' : 'false',
     role: "menu",
     "aria-label": label,
@@ -13881,6 +13913,11 @@ function WsTools({
   }, /*#__PURE__*/React.createElement("div", {
     className: "ws-tools-menu-heading"
   }, /*#__PURE__*/React.createElement(WsPickaxe, null), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Vibe Coding Salon"), /*#__PURE__*/React.createElement("span", null, "Choose what you want to shape"))), /*#__PURE__*/React.createElement("button", {
+    role: "menuitem", disabled: bundle,
+    'aria-label': 'Preview appearance of ' + title,
+    onClick: () => act(() => window.FridayWorkspaceAppearance?.open({id,title,opener:customize.current}))
+  }, React.createElement('span', {className:'ws-menu-icon'}, '◇'), React.createElement('span', null,
+    React.createElement('strong', null, 'Preview appearance'), React.createElement('small', null, bundle ? 'Use the codebase preview for this workspace' : 'Review spacing, accent, notes and quick actions'))), /*#__PURE__*/React.createElement("button", {
     role: "menuitem",
     "aria-label": 'Workspace chat for ' + title,
     onClick: () => act(() => window.fridayOpenWorkspaceChat?.(id, title, emoji))
@@ -14054,6 +14091,31 @@ function WsCustomBody({
     },
     onClick: () => openWsChat(a.prompt)
   }, a.label))), children);
+}
+// Native owners retain their saved rectangles; the shared scene constrains
+// each rendered frame without turning an animation into saved window moves.
+function fridayRenderedBox(ref, fallback) {
+  const bounds = ref.current?.getBoundingClientRect();
+  return bounds && bounds.width > 0 && bounds.height > 0 && [bounds.x,bounds.y,bounds.width,bounds.height].every(Number.isFinite)
+    ? {x:bounds.x,y:bounds.y,w:bounds.width,h:bounds.height} : fallback;
+}
+function useFridaySpatialSurface(ref, requested, kind = 'window', active = true) {
+  const latest = useRef(requested), binding = useRef(null);
+  latest.current = requested;
+  React.useLayoutEffect(() => {
+    const element = active ? ref.current : null;
+    if (binding.current?.element !== element) {
+      binding.current?.release?.(); binding.current = null;
+    }
+    const scene = window.FridayHolographicWorkspace;
+    if (element && !binding.current && scene?.registerSurface) {
+      binding.current = {element, release: scene.registerSurface(element, {
+        kind, getRect: () => typeof latest.current === 'function' ? latest.current() : latest.current
+      })};
+    }
+    if (element) scene?.updateSurface?.(element);
+  });
+  React.useLayoutEffect(() => () => { binding.current?.release?.(); binding.current = null; }, []);
 }
 function FWin({
   id,
@@ -14230,13 +14292,14 @@ function FWin({
   // Resize from any edge or corner; the dragged side moves, the opposite one stays.
   const startResize = (e, dir) => {
     if (snap.slot) return;
+    const visible = fridayRenderedBox(fwinRef, box);
     rStart.current = {
       px: e.clientX,
       py: e.clientY,
-      x: box.x,
-      y: box.y,
-      w: box.w,
-      h: box.h,
+      x: visible.x,
+      y: visible.y,
+      w: visible.w,
+      h: visible.h,
       dir
     };
     setResizing(dir);
@@ -14325,6 +14388,7 @@ function FWin({
     h: size.h
   };
   const box = window.FridayHolographicWorkspace?.constrainRect(requestedBox) || requestedBox;
+  useFridaySpatialSurface(fwinRef, () => snap.slot ? fridaySnapBox(fridayDesktopArea(), snap.slot) : requestedBox);
   const [histOpen, setHistOpen] = useState(false);
   // The browser refused the tab (pop-ups blocked): the window stays and says why.
   const [tabBlocked, setTabBlocked] = useState(false);
@@ -14364,21 +14428,22 @@ function FWin({
     },
     onMouseDown: e => {
       if (e.target.closest('.fwin-btns') || e.button !== 0) return;
+      const visible = fridayRenderedBox(fwinRef, box);
       onFocus();
       // Dragged away, a snapped window is freed at its own size, with the pointer
       // at the same place along its title bar.
       if (snap.slot) {
-        const rel = box.w ? (e.clientX - box.x) / box.w : 0.5;
+        const rel = visible.w ? (e.clientX - visible.x) / visible.w : 0.5;
         dOff.current = {
           x: Math.round(rel * size.w),
-          y: e.clientY - box.y,
+          y: e.clientY - visible.y,
           free: true,
           sx: e.clientX,
           sy: e.clientY
         };
       } else dOff.current = {
-        x: e.clientX - box.x,
-        y: e.clientY - box.y
+        x: e.clientX - visible.x,
+        y: e.clientY - visible.y
       };
       setDragging(true);
     }
@@ -14475,13 +14540,21 @@ function WorkspaceChat({
   label,
   emoji,
   seedPrompt,
-  onClose
+  onClose,
+  onRegisterGuard
 }) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState([]);
   const [showVer, setShowVer] = useState(false);
+  const [decision, setDecision] = useState(null);
+  const [leaveTitle, setLeaveTitle] = useState('');
+  const [mustRefresh, renderMustRefresh] = useState(false);
+  const mustRefreshRef = useRef(false), privateRef = useRef(!!window.__fridayOffRecord);
+  const setMustRefresh = value => { mustRefreshRef.current=value; renderMustRefresh(value); };
+  const [privateMode, setPrivateMode] = useState(!!window.__fridayOffRecord);
+  const leaveAction = useRef(null), leaveGuard = useRef(null), requests = useRef(new Set());
   const setToast = useFridayToast();
   const [pos, setPos] = useState(() => ({
     x: Math.max(20, (window.innerWidth || 1280) - 410),
@@ -14498,6 +14571,8 @@ function WorkspaceChat({
   const endRef = useRef(null);
   const inRef = useRef(null);
   const seededRef = useRef(false);
+  const surfaceRef = useRef(null);
+  useFridaySpatialSurface(surfaceRef, () => ({x:pos.x,y:pos.y,w:390,h:Math.min(620,window.innerHeight*.76)}), 'overlay');
   const flash = t => {
     setToast(t);
   };
@@ -14507,9 +14582,20 @@ function WorkspaceChat({
   useEffect(() => () => {
     alive.current = false;
     operation.current++;
+    requests.current.forEach(controller => controller.abort());
   }, []);
+  useEffect(() => {
+    const privacy = event => {
+      operation.current++; privateRef.current=!!event.detail?.on; setPrivateMode(privateRef.current); setMustRefresh(true);
+      flash('Privacy changed. Your public draft is kept; refresh workspace history before continuing.');
+    };
+    window.addEventListener('friday:off-record', privacy);
+    return () => window.removeEventListener('friday:off-record', privacy);
+  }, []);
+  const publicNow = () => !privateRef.current && !window.__fridayOffRecord;
+  const owns = ticket => alive.current && ticket === operation.current && publicNow();
   const begin = () => {
-    if (busy.current) return false;
+    if (busy.current || decision || mustRefreshRef.current || !publicNow()) return false;
     busy.current = true;
     operation.current++;
     setLoading(true);
@@ -14533,20 +14619,40 @@ function WorkspaceChat({
       removeEventListener('mouseup', up);
     };
   }, [dragging]);
-  const readReply = async r => {
+  const readReply = async (r, kind) => {
     const d = await r.json();
-    if (!r.ok || !d || d.status !== 'ok') throw new Error(d.message || d.error || 'The workspace request failed.');
+    if (!r.ok || !d || d.status !== 'ok') throw new Error(d?.message || d?.error || 'The workspace request failed.');
+    const object = value => !!value && typeof value === 'object' && !Array.isArray(value);
+    const history = value => Array.isArray(value) && value.every(m => object(m) && ['user','friday','assistant'].includes(m.role) && typeof m.text === 'string');
+    const versions = value => Array.isArray(value) && value.every(v => object(v) && typeof v.id === 'string' && typeof v.label === 'string');
+    const customization = value => object(value) && (value.note == null || typeof value.note === 'string') &&
+      (value.accent == null || typeof value.accent === 'string') && (value.css == null || typeof value.css === 'string') &&
+      (value.hidden == null || Array.isArray(value.hidden) && value.hidden.every(s => typeof s === 'string')) &&
+      (value.actions == null || Array.isArray(value.actions) && value.actions.every(a => object(a) && typeof a.label === 'string' && typeof a.prompt === 'string'));
+    const valid = kind === 'clear' ? history(d.chat) && d.chat.length === 0 : customization(d.customization) && versions(d.versions) &&
+      (kind === 'history' ? history(d.chat) : kind === 'reply' ? typeof d.response === 'string' && typeof d.applied === 'boolean' &&
+        (!d.applied || typeof d.revert_to === 'string' && !!d.revert_to) : true);
+    if (!valid) throw new Error('The workspace returned an incomplete result. Refresh its history before trying again.');
     return d;
   };
+  const request = async (path, options, kind) => {
+    const controller = new AbortController(); requests.current.add(controller);
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try { return await fetch('/api/workspace/' + encodeURIComponent(wsId) + '/' + path,{...options,signal:controller.signal}).then(r=>readReply(r,kind)); }
+    catch(error) { if(error.name==='AbortError') throw new Error('The request timed out. Its outcome is uncertain; refresh workspace history before trying again.'); throw error; }
+    finally { clearTimeout(timer); requests.current.delete(controller); }
+  };
   const load = () => {
+    if (busy.current || !publicNow()) return;
     const ticket = ++operation.current;
-    fetch('/api/workspace/' + wsId + '/chat').then(readReply).then(d => {
-      if (!alive.current || ticket !== operation.current) return;
+    request('chat',undefined,'history').then(d => {
+      if (!owns(ticket)) return;
+      setMustRefresh(false);
       setMsgs(d.chat || []);
       setVersions(d.versions || []);
       if (d.customization !== undefined) setCust(wsId, d.customization);
     }).catch(() => {
-      if (alive.current && ticket === operation.current) flash('Could not load workspace history.');
+      if (owns(ticket)) flash('Could not load workspace history.');
     });
   };
   useEffect(() => {
@@ -14554,12 +14660,13 @@ function WorkspaceChat({
   }, [wsId]);
   useEffect(() => {
     endRef.current?.scrollIntoView({
-      behavior: 'smooth'
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
     });
   }, [msgs.length, loading]);
   const send = async override => {
     const m = (override || input).trim();
     if (!m || !begin()) return;
+    const ticket = operation.current;
     setInput('');
     setMsgs(p => [...p, {
       role: 'user',
@@ -14568,7 +14675,7 @@ function WorkspaceChat({
     }]);
     setLoading(true);
     try {
-      const r = await fetch(`/api/workspace/${wsId}/chat`, {
+      const d = await request('chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -14577,9 +14684,8 @@ function WorkspaceChat({
           message: m,
           label
         })
-      });
-      const d = await readReply(r);
-      if (!alive.current) return;
+      }, 'reply');
+      if (!owns(ticket)) { if(alive.current){setMustRefresh(true);setInput(current=>current||m);} return; }
       setMsgs(p => [...p, {
         role: 'friday',
         text: d.response || '[no response]',
@@ -14593,30 +14699,35 @@ function WorkspaceChat({
       if (d.applied) flash('✨ Applied: ' + (d.change || 'change'));
     } catch (e) {
       if (!alive.current) return;
+      setMustRefresh(true);
       setInput(current => current || m);
+      if (!owns(ticket)) return;
       setMsgs(p => [...p, {
         role: 'friday',
-        text: 'Could not apply that request. Your draft is ready to retry.'
+        text: 'The request was not confirmed. Your draft is kept. Refresh workspace history before trying again.'
       }]);
       flash(e.message || 'Workspace request failed');
     }
-    finish();
-    inRef.current?.focus();
+    finally { finish(); if(alive.current)inRef.current?.focus(); }
   };
   // Auto-send a seed prompt (e.g. clicked quick-action) exactly once.
   useEffect(() => {
     if (seedPrompt && !seededRef.current) {
       seededRef.current = true;
+      if (!publicNow()) return;
+      setInput(current => current || seedPrompt);
       send(seedPrompt);
     }
   }, [seedPrompt]);
   const change = async (path, options, onSaved, failure) => {
     if (!begin()) return;
+    const ticket = operation.current;
     try {
-      const d = await fetch('/api/workspace/' + wsId + '/' + path, options).then(readReply);
-      if (alive.current) onSaved(d);
+      const d = await request(path, options, path==='chat/clear'?'clear':'state');
+      if (owns(ticket)) onSaved(d);
+      else if (alive.current) setMustRefresh(true);
     } catch (e) {
-      if (alive.current) flash(failure);
+      if (owns(ticket)) { setMustRefresh(true); flash(failure.replace(/[.!?]+$/, '') + '. Refresh workspace history before trying again.'); }
     } finally {
       finish();
     }
@@ -14638,7 +14749,10 @@ function WorkspaceChat({
     flash('↩ Reverted');
   }, 'Revert failed');
   const reset = () => {
-    if (busy.current || !window.confirm('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?')) return;
+    if (busy.current) return;
+    setDecision('reset');
+  };
+  const applyReset = () => {
     return change('reset', {
       method: 'POST'
     }, d => {
@@ -14652,11 +14766,24 @@ function WorkspaceChat({
     setMsgs([]);
     flash('History cleared');
   }, 'Could not clear history.');
+  const closeStudio = () => leaveGuard.current({proceed:onClose});
+  leaveGuard.current = ({proceed,title}) => {
+    if (busy.current) { flash('This workspace request is still running. Wait for its result before closing.'); return; }
+    if (input.trim()) { leaveAction.current=proceed; setLeaveTitle(title||''); setDecision('close'); } else proceed();
+  };
+  useEffect(() => onRegisterGuard?.(request=>leaveGuard.current(request)), [onRegisterGuard]);
+  const resetQueued = useRef(false);
+  useEffect(() => {
+    if (decision === null && resetQueued.current) { resetQueued.current=false; applyReset(); }
+  }, [decision]);
   const STARTERS = ['Make this layout more compact', 'I don’t like the colors — try a warmer accent', 'Pin a note reminding me what this workspace is for', 'Add quick-action buttons for my common tasks here'];
   return /*#__PURE__*/React.createElement("div", {
     className: "friday-workspace-studio",
+    ref: surfaceRef,
+    "data-friday-overlay": "dialog",
     role: "dialog",
     "aria-label": label + " customization",
+    onKeyDown: e => { if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeStudio();} },
     style: {
       position: 'fixed',
       '--friday-shared-x': pos.x + 'px',
@@ -14732,7 +14859,7 @@ function WorkspaceChat({
     }
   }, "\uD83D\uDD58 ", versions.length), /*#__PURE__*/React.createElement("button", {
     "aria-label": "Close",
-    onClick: onClose,
+    onClick: closeStudio,
     title: "Close",
     style: {
       background: 'none',
@@ -14742,7 +14869,12 @@ function WorkspaceChat({
       fontSize: 18,
       lineHeight: 1
     }
-  }, "\xD7")), showVer && /*#__PURE__*/React.createElement("div", {
+  }, "\xD7")), decision && React.createElement('div',{role:'alert',style:{padding:12,borderBottom:'1px solid var(--fr-glass-edge)'}},
+    React.createElement('p',null,decision==='close'?(leaveTitle?'Discard this unsent workspace draft and open '+leaveTitle+'?':'Discard this unsent workspace draft?'):'Reset this workspace’s appearance to its original settings? Earlier snapshots remain in history.'),
+    React.createElement('button',{type:'button',className:'btn',disabled:loading,onClick:()=>setDecision(null)},'Keep editing'),
+    React.createElement('button',{type:'button',className:'btn',disabled:loading,onClick:()=>{if(busy.current)return;if(decision==='close')leaveAction.current?.();else{resetQueued.current=true;setDecision(null);}}},decision==='close'?'Discard draft':'Reset appearance')),
+  (privateMode||mustRefresh) && React.createElement('p',{role:'status',style:{padding:'0 12px'}},privateMode?'Off the record: workspace changes are paused because this Salon saves history.':'Refresh workspace history to confirm the last result before continuing.'),
+  showVer && /*#__PURE__*/React.createElement("div", {
     style: {
       maxHeight: 160,
       overflowY: 'auto',
@@ -14934,7 +15066,8 @@ function WorkspaceChat({
   }, /*#__PURE__*/React.createElement("textarea", {
     ref: inRef,
     value: input,
-    onChange: e => setInput(e.target.value),
+    onChange: e => { if(publicNow())setInput(e.target.value); },
+    disabled: privateMode,
     onKeyDown: e => fridayEnterSends(e, send),
     placeholder: `Ask ${fridayName()} to change ${label}…`,
     rows: 1,
@@ -14953,14 +15086,14 @@ function WorkspaceChat({
     }
   }), /*#__PURE__*/React.createElement("button", {
     onClick: () => send(),
-    disabled: loading || !input.trim(),
+    disabled: loading || !!decision || mustRefresh || privateMode || !input.trim(),
     className: "btn",
     style: {
       fontSize: 12,
       fontWeight: 600,
       opacity: loading || !input.trim() ? 0.5 : 1
     }
-  }, "Send")), msgs.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Send")), React.createElement('button',{type:'button',className:'btn',disabled:loading||!!decision||privateMode,onClick:load,style:{margin:'4px 12px',alignSelf:'flex-start'}},'Refresh workspace history'), msgs.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '0 12px 8px',
       textAlign: 'right'
@@ -15257,6 +15390,50 @@ function ChatSurface(props) {
     voiceStatus
   } = props;
   const trayMenu = useSnapMenuOpener();
+  const newChatRequest = React.useRef(null);
+  const newChatOwner = React.useRef({alive:true, id:convId, revision:0});
+  const [newChatState, setNewChatState] = React.useState({pending:false, error:'', revision:0});
+  if (newChatOwner.current.id !== convId) {
+    newChatOwner.current.id = convId;
+    newChatOwner.current.revision += 1;
+  }
+  React.useEffect(() => {
+    const owner = newChatOwner.current;
+    owner.alive = true;
+    return () => { owner.alive = false; owner.revision += 1; };
+  }, []);
+  const createNewChat = async () => {
+    if (newChatRequest.current) return;
+    const owner = newChatOwner.current;
+    const ticket = {id:convId, revision:owner.revision, epoch:chatEpoch?.current};
+    const current = () => owner.alive && owner.id === ticket.id &&
+      owner.revision === ticket.revision && chatEpoch?.current === ticket.epoch;
+    newChatRequest.current = ticket;
+    setNewChatState({pending:true, error:'', revision:ticket.revision});
+    try {
+      const response = await apiFetch('/api/conversations', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({title:'New chat'}),
+      });
+      const data = await response.json();
+      const id = data?.conversation?.id;
+      if (!response.ok || data?.status !== 'ok' || typeof id !== 'string' ||
+          !id.trim() || id.trim() !== id || id === ticket.id) throw new Error('Creation not confirmed');
+      // Keep the old turn and draft until creation is confirmed. The normal
+      // selection lifecycle owns its epoch, transcript and composer reset.
+      if (current()) openConversation(id);
+      if (owner.alive) refreshConvs();
+    } catch (_) {
+      if (current()) setNewChatState({pending:true,
+        error:'Could not confirm a new chat. Your current conversation is unchanged. Check the conversation list before retrying.',
+        revision:ticket.revision});
+    } finally {
+      if (newChatRequest.current === ticket) {
+        newChatRequest.current = null;
+        if (owner.alive) setNewChatState(value => ({...value, pending:false}));
+      }
+    }
+  };
   return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, chatBusy: chatLoad,
     onCodebaseAsk: message => sendChat(message, { preserveDraft: true }) }, React.createElement("div", {
     "data-chat-head": "",
@@ -15288,27 +15465,9 @@ function ChatSurface(props) {
       alignItems: 'center'
     }
   }, mode !== 'code' && /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      // A new conversation is not responsible for the old one's turn. Bump the
-      // epoch so any reply still in flight lands in the conversation that
-      // asked for it, and release the composer here immediately.
-      // Create a conversation and switch to it, rather than clearing the ONE
-      // global transcript and deleting a chat the user wants to come back to.
-      // Nothing belonging to any other conversation is touched.
-      chatEpoch.current += 1;
-      setChatLoad(false);
-      setPausePending(null);
-      setChatMsgs([]);
-      apiFetch('/api/conversations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'New chat' }),
-      }).then(r => r.json()).then(d => {
-        const id = (d.conversation || {}).id;
-        if (id) setConvId(id);
-        refreshConvs();
-      }).catch(() => {});
-    },
+    onClick: createNewChat,
+    disabled: newChatState.pending,
+    'aria-busy': newChatState.pending,
     title: "Start a new conversation (the current one is kept)",
     style: {
       background: 'rgba(0,212,255,0.06)',
@@ -15320,7 +15479,7 @@ function ChatSurface(props) {
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "+ New Chat"), mode !== 'code' && /*#__PURE__*/React.createElement("button", {
+  }, newChatState.pending ? "Creating…" : "+ New Chat"), mode !== 'code' && /*#__PURE__*/React.createElement("button", {
     /* HEARTBEAT, ON ONE CLICK.
        The heartbeat runs twice a day and checks calendar and inbox for
        anything time-sensitive. Running it on demand was already possible —
@@ -15482,7 +15641,10 @@ function ChatSurface(props) {
       color: '#999',
       cursor: 'pointer'
     }
-  }, "\u2715"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u2715"))),
+  newChatState.error && newChatState.revision === newChatOwner.current.revision &&
+    React.createElement('div', {role:'alert', style:{color:'#ffab9f',fontSize:11,padding:'8px 14px',overflowWrap:'anywhere'}}, newChatState.error),
+  /*#__PURE__*/React.createElement("div", {
     className: 'fx-chat-transcript',
     style: {
       flex: 1,
@@ -16328,6 +16490,8 @@ function ConversationWindow({
   const snap = useFridaySnap('chat:' + convId, null);
   const requestedBox = snap.box || {x:pos.x,y:pos.y,w:shownW,h:shownH};
   const shownBox = window.FridayHolographicWorkspace?.constrainRect(requestedBox) || requestedBox;
+  const surfaceRef = useRef(null);
+  useFridaySpatialSurface(surfaceRef, () => snap.slot ? fridaySnapBox(fridayDesktopArea(),snap.slot) : requestedBox);
   const snapRef = useRef(snap);
   snapRef.current = snap;
   const menu = useSnapMenuOpener();
@@ -16373,7 +16537,8 @@ function ConversationWindow({
 
   // Resizing from an edge or corner. The bottom edge stops at the dock.
   const startResize = (e, dir) => {
-    rStart.current = { px: e.clientX, py: e.clientY, x: shownBox.x, y: shownBox.y, w: shownBox.w, h: shownBox.h, dir };
+    const visible = fridayRenderedBox(surfaceRef, shownBox);
+    rStart.current = { px: e.clientX, py: e.clientY, ...visible, dir };
     setResizing(dir);
     onFocus && onFocus();
   };
@@ -16626,6 +16791,7 @@ function ConversationWindow({
 
   return /*#__PURE__*/React.createElement("div", {
     className: "chat-win" + (snap.slot ? ' snapped' : ''),
+    ref: surfaceRef,
     "data-chat-window": cid,
     "data-snap": snap.slot || undefined,
     role: "dialog",
@@ -16652,11 +16818,12 @@ function ConversationWindow({
       title: "Drag to move",
       onMouseDown: e => {
         if (e.button !== 0 || e.target.closest('button')) return;
+        const visible = fridayRenderedBox(surfaceRef, shownBox);
         if (snap.box) {
-          const rel = snap.box.w ? (e.clientX - snap.box.x) / snap.box.w : 0.5;
-          dOff.current = { x: Math.round(rel * shownW), y: e.clientY - snap.box.y, free: true, sx: e.clientX, sy: e.clientY };
+          const rel = visible.w ? (e.clientX - visible.x) / visible.w : 0.5;
+          dOff.current = { x: Math.round(rel * shownW), y: e.clientY - visible.y, free: true, sx: e.clientX, sy: e.clientY };
         } else {
-          dOff.current = { x: e.clientX - shownBox.x, y: e.clientY - shownBox.y };
+          dOff.current = { x: e.clientX - visible.x, y: e.clientY - visible.y };
         }
         setDragging(true);
       },
@@ -16887,9 +17054,11 @@ function CommandPalette({
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "cmd-palette-overlay",
+    "data-friday-overlay-backdrop": "",
     onClick: onClose
   }, /*#__PURE__*/React.createElement("div", {
     className: "cmd-palette",
+    "data-friday-overlay": "dialog",
     onClick: e => e.stopPropagation(),
     onKeyDown: onKey
   }, /*#__PURE__*/React.createElement("input", {
@@ -46677,6 +46846,8 @@ function fridayProcessSteps(steps) {
   });
 }
 function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose}) {
+  const surfaceRef = useRef(null);
+  useFridaySpatialSurface(surfaceRef, () => ({x:position.x,y:position.y,w:400,h:320}), 'overlay');
   const traceId = meta?.trace_id || orb.trace_id || null;
   const taskId = meta?.linked_task_id || orb.task_id || null;
   const status = meta?.status || orb.status || 'running';
@@ -46700,7 +46871,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
     setActivityExpanded(!traceId&&!taskId);
     if(bodyRef.current)bodyRef.current.scrollTop=0;
   },[orb.viewRevision]);
-  return rtEl('div', {className:'thread-panel open', role:'region', 'aria-label':'Process: ' + (orb.label || 'Process'),
+  return rtEl('div', {ref:surfaceRef,'data-friday-overlay':'dialog',className:'thread-panel open', role:'region', 'aria-label':'Process: ' + (orb.label || 'Process'),
     style:{'--friday-shared-x':position.x+'px','--friday-shared-y':position.y+'px',width,height,left:x,top:y}, onClick:e=>e.stopPropagation()},
     rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
       rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
@@ -56725,15 +56896,8 @@ function TrackingPanel({
       padding: '7px 14px'
     },
     onClick: () => {
-      const TKx = window.FridayTracking;
-      // Only a face the camera sees right now counts; the last width seen
-      // before the hologram was turned off is a distance nobody sits at.
-      const seen = typeof isFaceVisible === 'undefined' || isFaceVisible;
-      const w = seen && typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
-      const got = TKx ? TKx.calibrate(w) : null;
-      // Persisted as a dial, so the calibration survives a reload.
-      if (got) commit({ neutral_face_width: got });
-      setCalib(got ? 'Set from your current distance.' : 'No face seen. Turn the hologram on and look at the camera.');
+      const result = window.FridayHolographicWorkspace?.cameraCalibration?.calibrateCurrent();
+      setCalib(result?.status || 'Camera calibration is unavailable.');
       setTimeout(() => setCalib(null), 4000);
     }
   }, "Calibrate distance"), /*#__PURE__*/React.createElement("button", {
@@ -56755,8 +56919,10 @@ function TrackingPanel({
       });
       setCfg(next);
       if (TK) TK.apply(next);
+      const persisted = {...next};
+      delete persisted.neutral_face_width;
       save({
-        tracking: next
+        tracking: persisted
       });
     }
   }, "Reset tracking to defaults")), calib && /*#__PURE__*/React.createElement("div", {
@@ -62093,7 +62259,7 @@ function useFridayConversationDrafts(initialId) {
   }
   const [convId, setId] = useState(() => restored.current ? restored.current.id : typeof initialId === 'function' ? initialId() : initialId);
   const [chatIn, setText] = useState(() => restored.current ? new Map(restored.current.entries).get(convId) || '' : '');
-  const drafts = useRef({id:convId,text:chatIn,byId:new Map(restored.current ? restored.current.entries : [])});
+  const drafts = useRef({id:convId,text:chatIn,revision:0,byId:new Map(restored.current ? restored.current.entries : [])});
   const setChatIn = React.useCallback(value => {
     const d = drafts.current;
     d.text = typeof value === 'function' ? value(d.text) : value;
@@ -62104,9 +62270,10 @@ function useFridayConversationDrafts(initialId) {
     if (next === d.id) return;
     d.byId.set(d.id, d.text);
     d.text = d.id === null && !d.byId.has(next) ? d.text : d.byId.get(next) || '';
-    d.id = next; setText(d.text); setId(next);
+    d.id = next; d.revision += 1; setText(d.text); setId(next);
   }, []);
   const getConversationId = React.useCallback(() => drafts.current.id, []);
+  const getConversationRevision = React.useCallback(() => drafts.current.revision, []);
   const navigateWithDrafts = React.useCallback(target => {
     const url = new URL(target, window.location.href), d = drafts.current;
     if (url.origin !== window.location.origin) throw new Error('Workspaces open within this '+FRIDAY_BRAND.name+' window.');
@@ -62121,7 +62288,7 @@ function useFridayConversationDrafts(initialId) {
     }
     window.location.assign(url.href);
   }, []);
-  return {convId,setConvId,chatIn,setChatIn,getConversationId,navigateWithDrafts};
+  return {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts};
 }
 function ExperienceApprovals() {
   const items = useApprovalFeed();
@@ -62169,6 +62336,8 @@ function App() {
   // Workspace Studio: which workspace's contextual chat is open, + the live
   // customization map shared down to every FWin via WsCustomCtx.
   const [wsChat, setWsChat] = useState(null); // {wsId,label,emoji,seed} | null
+  const studioGuard = useRef(null), studioSequence = useRef(0);
+  const registerStudioGuard = useCallback(guard => { studioGuard.current=guard; return()=>{if(studioGuard.current===guard)studioGuard.current=null;}; }, []);
   /* Conversations open as WINDOWS inside the holographic UI, several at once,
      each on its own seat. An array rather than a Set because the order is the
      cascade order - the nth window is offset so it does not land exactly on
@@ -62179,6 +62348,11 @@ function App() {
     ...m,
     [id]: patch || {}
   })), []);
+  useEffect(() => {
+    const saved = event => { const d=event.detail; if(d?.workspace && d.customization) setCust(d.workspace,d.customization); };
+    window.addEventListener('friday:appearance-saved', saved);
+    return () => window.removeEventListener('friday:appearance-saved', saved);
+  }, [setCust]);
   const [zMap, setZMap] = useState({});
   /* An undocked window IS the chat panel, so it opens open. Anywhere else the
      panel starts closed, as it always has. */
@@ -62204,7 +62378,7 @@ function App() {
      `refreshConvs` does `setConvId(cur => cur || d.main_id)` — an effect that
      set it afterwards would race the list and the window could flash Main
      before landing on the thread it was opened for. */
-  const {convId,setConvId,chatIn,setChatIn,getConversationId,navigateWithDrafts} = useFridayConversationDrafts(() => {
+  const {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts} = useFridayConversationDrafts(() => {
     try {
       return new URLSearchParams(window.location.search).get('conversation')
              || null;
@@ -62461,11 +62635,31 @@ function App() {
     } catch (_) {}
   };
 
+  const homeDraftGetter = useRef(null);
+  const registerHomeDraft = React.useCallback(getter => {
+    homeDraftGetter.current = getter;
+    return () => { if (homeDraftGetter.current === getter) homeDraftGetter.current = null; };
+  }, []);
+  const showGlobalChat = () => {
+    if (!chatOpen && experienceEnabled && experienceDesktop) {
+      const draft = homeDraftGetter.current?.();
+      if (draft && typeof draft.text === 'string' && draft.text.trim()) {
+        const current = convList.find(item => item.id === getConversationId() && item.status !== 'archived');
+        if (current && (current.project || null) === (draft.projectId || null)) {
+          setChatIn(previous => previous.trim() ? previous + '\n\n' + draft.text : draft.text);
+          draft.consume?.();
+        } else fridayToast('Your Home draft is kept with its project. Use Continue on Home to open it in that context.');
+      }
+    }
+    showChat(true);
+  };
+
   // A gathered reference prepares a draft in the actual project conversation.
   // It never reads document contents or sends a message on the owner's behalf.
   const experienceDraft = async (text, projectId, options = {}) => {
     if (!String(text || '').trim()) return;
     const sourceConversation = getConversationId();
+    const sourceRevision = getConversationRevision();
     let cid = sourceConversation;
     const personalContext = options.personal === true && !projectId;
     if (projectId || personalContext) {
@@ -62476,13 +62670,13 @@ function App() {
       else {
         const response = await apiFetch('/api/conversations', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:personalContext ? 'New chat' : 'Working with materials',project:projectId || null})});
         const result = await response.json();
-        if (!response.ok || result.status !== 'ok' || !result.conversation || !result.conversation.id) throw new Error(result.error || result.message || 'Could not open the conversation.');
+        if (!response.ok || result.status !== 'ok' || !result.conversation || typeof result.conversation.id !== 'string' || !result.conversation.id.trim()) throw new Error(result.error || result.message || 'Could not open the conversation.');
         if (personalContext ? !!result.conversation.project : result.conversation.project !== projectId) throw new Error(personalContext ? 'A personal conversation could not be opened. Your draft is still here.' : 'This project is no longer available. Refresh Projects and try again.');
         cid = result.conversation.id;
         await refreshConvs();
       }
     }
-    if (getConversationId() !== sourceConversation) throw new Error('The active chat changed. Gathered materials are still here; choose Discuss again.');
+    if (getConversationId() !== sourceConversation || getConversationRevision() !== sourceRevision) throw new Error('The active chat changed. Your draft is still here; choose Continue again.');
     if (cid && cid !== getConversationId()) openConversation(cid);
     setChatIn(previous => previous.trim() ? previous + '\n\n' + String(text) : String(text));
     showChat(true);
@@ -62533,6 +62727,13 @@ function App() {
     w: 0,
     h: 0
   });
+  const chatPanelRef = useRef(null);
+  useFridaySpatialSurface(chatPanelRef, () => {
+    const layout=window.FridayHolographicWorkspace?.layoutRect;
+    const lane=layout?.chat||layout?.content||{x:0,y:60,w:window.innerWidth,h:Math.max(1,window.innerHeight-176)};
+    const w=Math.min(chatW,lane.w), h=chatH?Math.min(chatH,lane.h):lane.h;
+    return {x:chatSide==='left'?lane.x:lane.x+lane.w-w,y:lane.y+lane.h-h,w,h};
+  }, 'chat', chatOpen);
   useEffect(() => {
     if (!chatResize) return;
     // width: panel is right-anchored, so dragging the left edge LEFT (smaller clientX) grows it.
@@ -65959,14 +66160,14 @@ function App() {
   useEffect(() => {
     window.fridayOpenWorkspaceChat = (wsId, label, emoji, seed) => {
       if (!wsId) return;
-      openWs(wsId);
-      setWsChat({
+      const proceed = () => { openWs(wsId); setWsChat({
         wsId,
         label: label || wsId,
         emoji: emoji || '',
         seed: seed || '',
-        key: Date.now()
-      });
+        key: ++studioSequence.current
+      }); };
+      if(studioGuard.current) studioGuard.current({proceed,title:label||wsId}); else proceed();
     };
     return () => {
       if (window.fridayOpenWorkspaceChat) delete window.fridayOpenWorkspaceChat;
@@ -66574,7 +66775,7 @@ function App() {
   // and Right dock it to that side and step a third, a half, two thirds; Up
   // shows it; Down hides it.
   const trayKey = dir => {
-    if (dir === 'up') return showChat(true);
+    if (dir === 'up') return showGlobalChat();
     if (dir === 'down') return showChat(false);
     const n = fridayTrayStep(chatFrac || chatW / vw(), chatSide, dir);
     placeTray(n.side, n.frac);
@@ -66648,7 +66849,7 @@ function App() {
     }
   };
   const toggleChat = () => {
-    showChat(!chatOpen);
+    if (chatOpen) showChat(false); else showGlobalChat();
     if (!chatOpen) {
       setSettingsOpen(false);
       setQuickDraft(false);
@@ -67583,10 +67784,12 @@ function App() {
     label: wsChat.label,
     emoji: wsChat.emoji,
     seedPrompt: wsChat.seed,
+    onRegisterGuard: registerStudioGuard,
     onClose: () => setWsChat(null)
   });
   const shellChatPanel = codeChatActive ? null : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: `chat-panel ${chatOpen ? 'open' : ''}${chatSide === 'left' ? ' left' : ''}`,
+    ref: chatPanelRef,
     "aria-hidden": chatOpen ? undefined : 'true',
     style: chatH ? {
       width: chatW,
@@ -67626,7 +67829,7 @@ function App() {
     "data-testid": "chat-edge-pill",
     title: "Show chat (Ctrl+Alt+C)",
     "aria-label": "Show chat",
-    onClick: () => showChat(true)
+    onClick: showGlobalChat
   }, chatSide === 'left' ? "\u203A" : "\u2039"));
   const shellTrace = /*#__PURE__*/React.createElement(TraceModalHost, null);
   const shellActivity = activityOpen && /*#__PURE__*/React.createElement("div", {
@@ -68744,7 +68947,8 @@ function App() {
       openWorkspaceIds: openWins, activeWorkspaceId: focusWin,
       projects: projList, conversations: convList, activeConversationId: convId,
       tasks: bgTasks, settings: agentSettings, projectsStatus, tasksStatus,
-      enabled: experienceEnabled, desktopVisible: experienceDesktop,
+      enabled: experienceEnabled, desktopVisible: experienceDesktop, chatOpen,
+      onRegisterHomeDraft: registerHomeDraft,
       onShowDesktop: () => setExperienceDesktop(true),
       onOpenWorkspace: target => { const nav = fridayResolveTarget(target); openWs(nav.workspace); fridayNavigate(nav); },
       onOpenConversation: cid => { openConversation(cid); showChat(true); },
@@ -68752,7 +68956,7 @@ function App() {
       onOpenTask: id => { openWs('system'); fridayNavigate({workspace:'system',tab:'task',task:id}); },
       onOpenSettings: () => openWs('settings'),
       onCustomize: id => { const w=wsInfo[id]; if(w && window.fridayOpenWorkspaceChat) window.fridayOpenWorkspaceChat(id,w.label,w.ico); },
-      onOpenSearch: () => setPaletteOpen(true), onShowChat: () => showChat(true),
+      onOpenSearch: () => setPaletteOpen(true), onShowChat: showGlobalChat,
       onDraftChat: experienceDraft, apiFetch,
       renderApprovals: () => React.createElement(ExperienceApprovals)
 }), !experienceEnabled && !STANDALONE_WS && /*#__PURE__*/React.createElement("div", {
