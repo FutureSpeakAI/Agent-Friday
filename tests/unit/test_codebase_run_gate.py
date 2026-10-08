@@ -7,6 +7,8 @@ same gate.
 """
 from __future__ import annotations
 
+import shutil
+
 import pytest
 
 from agent_friday.governance import action_gate
@@ -14,6 +16,10 @@ from agent_friday.services import agent as ag
 from agent_friday.services import approvals
 from agent_friday.services import codebases as cb
 from agent_friday.services import conversations as convs
+
+needs_powershell = pytest.mark.skipif(
+    shutil.which("powershell") is None,
+    reason="the Terminal runs Windows PowerShell (powershell.exe); this host has none")
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +75,7 @@ def test_a_codebase_grant_is_consumed_by_its_scope_only(tmp_path):
     assert action_gate.consume_grant("codebase_run", "codebase:cb-1") is None, "two uses, then nothing"
 
 
+@needs_powershell
 def test_the_first_command_raises_one_card_and_approval_runs_the_task(monkeypatch):
     conv, rec = _bound()
     tok = ag._CURRENT_CONVERSATION.set(conv["id"])
