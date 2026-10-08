@@ -1,6 +1,6 @@
-# Contributing to Agent Friday
+# Contributing to Agent Friday™
 
-Thank you for contributing. This document covers setup, the checks every change
+Thank you for contributing to Agent Friday™. This document covers setup, the checks every change
 must pass, and the parts of the codebase that need extra care. It is written as
 present-tense engineering rules; the reasoning behind a rule, where it matters,
 lives in a linked design or security note rather than here.
@@ -68,10 +68,19 @@ Ubuntu.
 | Gated-prompt callers | `python scripts/check_gated_prompt_callers.py` |
 | Settings readers | `python scripts/check_settings_readers.py` |
 | Stale model names | `python scripts/check_stale_model_names.py` |
+| Brand tokens | `python scripts/check_brand_tokens.py` |
+| Trust in governance | `python scripts/check_trust_in_governance.py` |
+| Documentation links | `python scripts/check_doc_links.py` |
 
 The unit and API suites are hermetic: no live server, no network, no API keys.
 Tests that need a live server (`tests/test_friday_ui.py`, `tests/test_ui_audit.py`)
 or real network are deselected by default; see `pytest.ini`.
+
+## Using an AI coding agent
+
+Agents that read `AGENTS.md` at the repository root get the same rules this
+page gives people. You remain responsible for every line you submit, so read
+the diff before you open the pull request.
 
 ## Submitting a pull request
 
