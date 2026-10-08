@@ -267,6 +267,14 @@ begin
   Result := (Length(C) = 1) and (((C >= 'a') and (C <= 'z')) or ((C >= 'A') and (C <= 'Z')));
 end;
 
+// Drops leading blanks and line breaks (the text after a JSON colon).
+function LeftTrim(S: String): String;
+begin
+  while (Length(S) > 0) and ((Copy(S, 1, 1) = ' ') or (Copy(S, 1, 1) = #9) or (Copy(S, 1, 1) = #13) or (Copy(S, 1, 1) = #10)) do
+    Delete(S, 1, 1);
+  Result := S;
+end;
+
 // 5.14.3 -> 51403; 1.0.0b1 or 1.0.0-beta.1 -> EraFloor + 1000000 + 1; 0 when
 // the text is not a version.
 function SequenceForVersion(Raw: String): Int64;
@@ -278,7 +286,7 @@ var
   HasLabel: Boolean;
 begin
   Result := 0;
-  S := Trim(Raw);
+  S := LeftTrim(Raw);
   if (Length(S) > 0) and ((S[1] = 'v') or (S[1] = 'V')) then Delete(S, 1, 1);
   if (Length(S) = 0) or (not IsDigit(Copy(S, 1, 1))) then Exit;
 
@@ -358,7 +366,7 @@ begin
   P := Pos(':', Rest);
   if P = 0 then Exit;
   Delete(Rest, 1, P);
-  Rest := TrimLeft(Rest);
+  Rest := LeftTrim(Rest);
   if (Length(Rest) > 0) and (Copy(Rest, 1, 1) = '"') then
   begin
     Delete(Rest, 1, 1);

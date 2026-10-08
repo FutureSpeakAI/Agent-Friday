@@ -123,13 +123,24 @@ function Stop-FridayGracefully {
         if (@(Get-ProcessesRunningFrom -Root $InstallRoot).Count -eq 0) { break }
         Start-Sleep -Milliseconds 500
     }
-    $left = @(Get-ProcessesRunningFrom -Root $InstallRoot)
-    foreach ($p in $left) {
-        Write-Log "Still running after $GraceSeconds s, stopping pid $($p.Id) ($($p.ProcessName))" 'WARN'
-        try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { Write-Log "Could not stop pid $($p.Id): $($_.Exception.Message)" 'WARN' }
+    # The tray restarts a server that dies, so more than one pass: what the
+    # first pass stops can bring a process back before the tray itself is gone.
+    $stopped = 0
+    for ($pass = 1; $pass -le 3; $pass++) {
+        $left = @(Get-ProcessesRunningFrom -Root $InstallRoot)
+        if ($left.Count -eq 0) { break }
+        foreach ($p in $left) {
+            Write-Log "Still running after $GraceSeconds s (pass $pass), stopping pid $($p.Id) ($($p.ProcessName))" 'WARN'
+            try { Stop-Process -Id $p.Id -Force -ErrorAction Stop; $stopped++ } catch { Write-Log "Could not stop pid $($p.Id): $($_.Exception.Message)" 'WARN' }
+        }
+        Start-Sleep -Seconds 2
     }
-    if ($left.Count -gt 0) { Start-Sleep -Seconds 2 }
-    return $left.Count
+    $remaining = @(Get-ProcessesRunningFrom -Root $InstallRoot)
+    if ($remaining.Count -gt 0) {
+        throw ("Agent Friday is still running ({0}) and would not close. Close it from the tray icon and run setup again." -f
+               (($remaining | ForEach-Object { $_.ProcessName }) -join ', '))
+    }
+    return $stopped
 }
 
 # --- the data home: backup and before/after check ------------------------

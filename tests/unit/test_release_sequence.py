@@ -8,7 +8,6 @@ the workflow's tag check.
 """
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -19,9 +18,11 @@ from agent_friday import release  # noqa: E402
 
 
 def _pyproject_version() -> str:
-    m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', (REPO / "pyproject.toml").read_text(encoding="utf-8"))
-    assert m
-    return m.group(1)
+    # services/app_version.py is the one reader of the version (see test_one_version_source).
+    from agent_friday.services.app_version import running_version
+    version = running_version(REPO)
+    assert version
+    return version
 
 
 def test_beta_one_is_after_5_14_3_although_its_number_is_lower():

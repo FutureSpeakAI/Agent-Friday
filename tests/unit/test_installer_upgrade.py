@@ -189,3 +189,32 @@ $stopped = Stop-FridayGracefully -InstallRoot '%s' -GraceSeconds 1
 [ordered]@{ running = $n; stopped = $stopped } | ConvertTo-Json -Compress
 """ % (root, root), tmp_path)
     assert out == {"running": 0, "stopped": 0}
+
+
+@needs_powershell
+def test_a_running_friday_is_stopped_by_path_and_a_bystander_is_not(tmp_path):
+    """A stand-in process running from the install folder is stopped; the same
+    program running from anywhere else is left alone."""
+    import os
+    import shutil
+    import subprocess
+
+    ping = Path(os.environ["SystemRoot"]) / "System32" / "ping.exe"
+    root = tmp_path / "AgentFriday"
+    (root / "python").mkdir(parents=True)
+    ours = root / "python" / "pythonw.exe"
+    shutil.copy(ping, ours)
+    bystander = subprocess.Popen([str(ping), "-n", "60", "127.0.0.1"], stdout=subprocess.DEVNULL)
+    try:
+        out = ps_json(HEAD + """
+Start-Process -FilePath '%s' -ArgumentList '-n','60','127.0.0.1' -WindowStyle Hidden | Out-Null
+Start-Sleep -Milliseconds 800
+$before = @(Get-ProcessesRunningFrom -Root '%s').Count
+$stopped = Stop-FridayGracefully -InstallRoot '%s' -GraceSeconds 1
+$after = @(Get-ProcessesRunningFrom -Root '%s').Count
+[ordered]@{ before = $before; stopped = $stopped; after = $after } | ConvertTo-Json -Compress
+""" % (ours, root, root, root), tmp_path)
+        assert out == {"before": 1, "stopped": 1, "after": 0}
+        assert bystander.poll() is None, "a process outside the install folder must not be touched"
+    finally:
+        bystander.kill()
