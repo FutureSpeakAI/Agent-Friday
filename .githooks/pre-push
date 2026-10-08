@@ -4,7 +4,7 @@
 # contain.
 #
 # On 2026-09-24 this repository's history was rewritten with git-filter-repo to
-# remove personal data at Stephen's instruction. The rewrite produced new commit
+# remove personal data at the maintainer's instruction. The rewrite produced new commit
 # hashes for the same work, so the pre-rewrite lineage still exists in local
 # clones -- in this one as the branch `main-old-prescrub` -- and every commit on
 # it carries the unscrubbed values in its tree. Pushing any of it would put that

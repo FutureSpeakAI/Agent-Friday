@@ -32205,7 +32205,7 @@ function TaskRecordsCard() {
   const [saving, setSaving] = useState(false);
   const [obs, setObs] = useState(null); // {token, header} shown once after minting
   const mintObserver = () => {
-    if (!confirm('Mint a read-only observer credential? It lets an orchestrator (Fable, Astra) READ task records: list, journal, digest, events. It cannot steer, stop, delete or change settings. Minting replaces any earlier credential. The token is shown once.')) return;
+    if (!confirm('Mint a read-only observer credential? It lets an orchestrator agent READ task records: list, journal, digest, events. It cannot steer, stop, delete or change settings. Minting replaces any earlier credential. The token is shown once.')) return;
     fetch('/api/tasks/observer-token', {
       method: 'POST'
     }).then(r => r.json()).then(d => {
@@ -32322,7 +32322,7 @@ function TaskRecordsCard() {
       fontSize: 10,
       color: '#888'
     }
-  }, "for Fable / Astra to read task records; see docs/reference/task-observation.md")), obs && obs.token && /*#__PURE__*/React.createElement("div", {
+  }, "for an orchestrator agent to read task records; see docs/reference/task-observation.md")), obs && obs.token && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 6,
       fontSize: 10,
@@ -60086,7 +60086,7 @@ function KnowledgeSettings({
 //     JSX, so the effect could never fire even in principle.
 // The one guard that survived the 2026-09-25 removal of every built-in cap.
 //
-// Stephen: "I want no caps unless I set them myself in the cost metering UI."
+// The owner: "I want no caps unless I set them myself in the cost metering UI."
 // Rounds, time, tokens and spend now have no built-in limit; the only limits
 // are the ones set on this panel. This is the exception, and it is shown here
 // so the exception is HIS to make: it is not a cap on usage -- it fires on a

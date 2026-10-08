@@ -1,6 +1,6 @@
 """A cloud answer is never cut short by a ceiling of ours.
 
-Stephen, 2026-09-25: "We're metering cloud calls, not limiting them."
+The owner, 2026-09-25: "We're metering cloud calls, not limiting them."
 
 These tests assert on the PAYLOAD that leaves the router, not on the helper that
 computes the figure. That distinction is the whole point of the file: the helper

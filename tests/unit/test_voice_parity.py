@@ -1,6 +1,6 @@
 """Voice reaches what chat reaches, and any limit that is voice-only is the owner's.
 
-The policy (2026-09-29, Stephen): a restriction that exists only in voice
+The policy (2026-09-29, the owner): a restriction that exists only in voice
 becomes a setting the owner controls, off by default, unless it protects
 something the constitution requires. Approval cards and the never-send floor
 are NOT voice restrictions — they apply identically to a typed request — so
@@ -22,7 +22,7 @@ def _ids():
 # ── Firing a workflow by voice ─────────────────────────────────────────────
 
 def test_voice_can_start_a_stored_workflow_by_name():
-    """Stephen: voice should fire workflows, including ones with local steps.
+    """The owner: voice should fire workflows, including ones with local steps.
 
     A workflow's steps run wherever the workflow says, which can be the local
     model — so this is how a spoken request reaches private work without any
@@ -143,7 +143,7 @@ def test_every_voice_limit_is_either_the_owners_or_says_why_not():
 
 
 def test_the_exempt_limits_are_the_ones_that_apply_to_chat_too():
-    """Stephen: approval gates and cLaws are not voice restrictions."""
+    """The owner: approval gates and cLaws are not voice restrictions."""
     by_id = {r["id"]: r for r in ve.voice_restrictions({})}
     assert by_id["approvals"]["kind"] == "governance"
     assert "in voice as in chat" in by_id["approvals"]["why"]

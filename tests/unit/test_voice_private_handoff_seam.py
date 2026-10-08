@@ -137,7 +137,7 @@ def test_the_scrub_replaces_identifiers_with_placeholders_not_silence():
 
 
 def test_it_uses_the_existing_pii_gate_rather_than_a_private_copy():
-    """Stephen's instruction: reuse the Privacy Shield, do not add a scrubber."""
+    """The owner's instruction: reuse the Privacy Shield, do not add a scrubber."""
     import inspect
     src = inspect.getsource(lc.scrub)
     assert "_scrub_pii" in src, (
@@ -192,7 +192,7 @@ def test_a_seat_that_is_already_up_answers_without_a_word(monkeypatch):
 
 
 def test_the_sidekick_answers_when_the_main_seat_is_down(monkeypatch):
-    """Stephen's instruction: summon one or use the sidekick."""
+    """The owner's instruction: summon one or use the sidekick."""
     _seats(monkeypatch, installed={"brain": "qwen3:14b", "sidekick": "qwen3:4b"},
            serving=["qwen3:4b"])
     seat, note = lc.pick_local_seat()
