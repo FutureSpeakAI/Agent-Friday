@@ -131,12 +131,12 @@ def render(size: int) -> Image.Image:
         outline(noz_ln, geo.nozzle, w=stroke * 0.85)
     puff_ln = mask()
     detail = mask()
-    if size >= 128:
+    if False:
         outline(detail, [(0.5, 0.43), (0.5, 0.60)], closed=False, w=stroke * 0.55)
         outline(detail, [(0.37, 0.58), (0.63, 0.58)], closed=False, w=stroke * 0.55)
 
-    glow_r = {"tiny": 0, "mid": 0.010, "full": 0.020 if size >= 128 else 0.014}[kind] * S
-    glow_gain = {"tiny": 0, "mid": 0.45, "full": 0.6 if size >= 128 else 0.4}[kind]
+    glow_r = {"tiny": 0, "mid": 0.010, "full": 0.007 if size >= 128 else 0.005}[kind] * S
+    glow_gain = {"tiny": 0, "mid": 0.45, "full": 0.3 if size >= 128 else 0.2}[kind]
     glow_srcs = [(hull_ln, CYAN), (fin_ln, MAGENTA), (flame_ln, VIOLET), (win_ln, CYAN),
                  (noz_ln, CYAN), (puff_ln, CYAN)]
 
