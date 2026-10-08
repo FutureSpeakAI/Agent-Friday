@@ -6,6 +6,7 @@ Here: the voice gates really record holds, the voice frame carries the notice an
 both choices, the live handler shows and says it, and both copies of the UI
 render the card and send the one-turn override.
 """
+import ast
 import inspect
 import pathlib
 
@@ -54,7 +55,27 @@ def test_the_live_handler_shows_and_says_every_hold():
     assert "request.args.get('privacy_layer3_override')" in src
     assert "_hold_scope.__exit__(None, None, None)" in src
     # Shown after every gate that can hold...
-    assert "result = _gate_voice_tool_result(result, fname)\n                            _tell_hold()" in src
+    tree = ast.parse(src)
+    runners = [node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
+               and node.name == "_one" and any(isinstance(call, ast.Call)
+               and isinstance(call.func, ast.Name) and call.func.id == "_voice_tool_with_limit"
+               for call in ast.walk(node))]
+    assert len(runners) == 1
+    runner = runners[0]
+    gates = [node for node in runner.body if isinstance(node, ast.Assign)
+             and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+             and node.value.func.id == "_gate_voice_tool_result"]
+    notices = [node for node in runner.body if isinstance(node, ast.Expr)
+               and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+               and node.value.func.id == "_tell_hold"]
+    payloads = [value for node in ast.walk(runner) if isinstance(node, ast.Dict)
+                for key, value in zip(node.keys, node.values)
+                if isinstance(key, ast.Constant) and key.value == "result"
+                and isinstance(value, ast.Name) and value.id == "result"]
+    assert len(gates) == len(notices) == 1 and payloads
+    # Privacy admission may return a refusal between these steps; every actual
+    # result still shows the hold before entering its provider response.
+    assert all(gates[0].lineno < notices[0].lineno < value.lineno for value in payloads)
     assert "_txt = _gate_voice_text(msg['text'])\n                                    _tell_hold()" in src
     # ...and said aloud in place of the greeting.
     assert "if not _tell_hold() else _sc_hold.VOICE_HOLD_SPOKEN" in src
