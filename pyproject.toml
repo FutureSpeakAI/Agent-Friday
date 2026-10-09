@@ -71,6 +71,11 @@ google = ["google-api-python-client>=2.0", "google-auth-oauthlib>=1.0"]  # Gmail
 local = ["sentence-transformers>=2.2", "chromadb>=0.5"]  # on-device embeddings + memory (Ollama itself is an external binary)
 compression = ["headroom-ai==0.38.0"]  # context compression; reports itself unavailable when its native core is missing
 federation = ["pynacl>=1.5"]           # Ed25519 attestation + source-trust federation
+# Podcast engine and spreadsheet briefings: numpy (audio buffers and the
+# embedding layer of the egress gate), pandas (services/podcast_data.py reads
+# tables), num2words (the listening check reads digits as spoken words; without
+# it the check deletes them). No torch: the speaker is faked or out of process.
+podcast = ["numpy>=1.26", "pandas>=2.1", "num2words>=0.5.13"]
 # Privacy / security extras â€” degrade gracefully when absent
 # presidio-analyzer adds Layer 2 NER classification to the egress gate
 pii = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]
@@ -90,7 +95,7 @@ documents = ["PyPDFForm>=5.6", "pyHanko>=0.37", "rapidocr-onnxruntime>=1.2.3", "
 # loadfile`, and without it every `pytest` invocation fails on an unknown
 # argument. It is also the difference between a ~21 minute suite and a ~100
 # minute one.
-dev = ["pytest>=8.0", "pytest-xdist>=3.5", "ruff>=0.5"]
+dev = ["pytest>=8.2", "pytest-xdist>=3.5", "ruff>=0.5"]
 all = [
     "pyttsx3>=2.90",
     "pillow>=12.3.0",
@@ -105,6 +110,9 @@ all = [
     "pdfplumber>=0.11",
     "PyPDFForm>=5.6",
     "pyHanko>=0.37",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "num2words>=0.5.13",
     "rapidocr-onnxruntime>=1.2.3",
     # Egress-gate Layer 2 NER. This comment used to read "the recommended
     # install ships with the FULL gate, not a weakened one". That is no longer

@@ -35,6 +35,7 @@ def _write(root, rel, body):
 @pytest.fixture
 def fake_stack(tmp_path, monkeypatch):
     """A slow shared package, and fake sentence_transformers/kokoro on top."""
+    pytest.importorskip("numpy", reason="the fake sentence_transformers encodes with numpy (podcast extra)")
     _write(tmp_path, f"{SLOW_PKG}/__init__.py", """
         import sys
         import time
@@ -110,6 +111,7 @@ def test_laya_purge_cannot_break_kokoro(fake_stack, monkeypatch):
 
 
 def test_a_failed_layer3_load_is_retried_not_cached_forever(monkeypatch):
+    pytest.importorskip("numpy", reason="the fake embedder returns numpy arrays (podcast extra)")
     calls = {"n": 0}
 
     class Fake:

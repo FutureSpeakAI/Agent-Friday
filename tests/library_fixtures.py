@@ -120,7 +120,9 @@ def install_fake_encoder(monkeypatch):
     import hashlib
     import re
 
-    import numpy as np
+    import pytest
+
+    np = pytest.importorskip("numpy", reason="the lexical test embedder builds numpy vectors")
 
     from agent_friday.services.library import embed
 

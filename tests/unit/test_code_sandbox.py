@@ -71,7 +71,17 @@ def test_fridays_folder_is_not_reached_by_its_default_path(tmp_path):
     thrown away; Friday's real data folder is untouched."""
     from agent_friday.paths import friday_home
     real = Path(friday_home())
-    before = set(real.rglob("*")) if real.exists() else set()
+    # SQLite creates and removes its -wal/-shm/-journal side files whenever any
+    # in-process store opens or closes a connection, including background
+    # threads of this xdist worker. They say nothing about the sandbox.
+    sidecars = ("-wal", "-shm", "-journal")
+
+    def listing():
+        if not real.exists():
+            return set()
+        return {p for p in real.rglob("*") if not p.name.endswith(sidecars)}
+
+    before = listing()
     code = ("import os\n"
             "p = os.path.expanduser('~/.friday')\n"
             "os.makedirs(p, exist_ok=True)\n"
@@ -81,8 +91,8 @@ def test_fridays_folder_is_not_reached_by_its_default_path(tmp_path):
     assert res["exit_code"] == 0, res
     assert Path(res["stdout"].strip()).resolve() != real.resolve()
     assert not (real / "planted.txt").exists()
-    after = set(real.rglob("*")) if real.exists() else set()
-    assert after == before
+    assert listing() == before
+    assert not (list(real.rglob("planted.txt")) if real.exists() else [])
 
 
 @pytest.mark.skipif(not WIN, reason="Low integrity is a Windows boundary")

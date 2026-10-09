@@ -78,7 +78,7 @@ def _writer(chapter_lines, revised=None):
 
 @pytest.fixture
 def speaker(monkeypatch):
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
     spoken = []
 
     class S:

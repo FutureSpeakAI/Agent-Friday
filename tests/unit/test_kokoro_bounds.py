@@ -11,10 +11,11 @@ instead of hanging the suite.
 import threading
 import time
 
-import numpy as np
 import pytest
 
 from agent_friday.services import kokoro_voice as kv
+
+np = pytest.importorskip("numpy", reason="the fake Kokoro pipelines yield numpy audio (podcast extra)")
 
 
 def _tts(pipeline):

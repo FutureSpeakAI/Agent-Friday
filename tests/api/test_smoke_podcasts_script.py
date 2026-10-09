@@ -20,7 +20,7 @@ spec.loader.exec_module(smoke)
 
 @pytest.fixture
 def deployed(tmp_path, monkeypatch, client):
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
 
     import agent_friday.core as core
     import agent_friday.routes.news as rn

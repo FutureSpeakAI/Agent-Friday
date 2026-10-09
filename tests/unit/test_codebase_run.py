@@ -7,11 +7,16 @@ the live checkout, in `create` or in `run`.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
 
 from agent_friday.services import codebases as cb
+
+needs_powershell = pytest.mark.skipif(
+    shutil.which("powershell") is None,
+    reason="the Terminal runs Windows PowerShell (powershell.exe); this host has none")
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +33,7 @@ def _friday_checkout(tmp_path: Path) -> Path:
     return d
 
 
+@needs_powershell
 def test_a_command_runs_in_the_codebases_own_folder_and_is_kept_as_a_run():
     rec = cb.create("Rent tracker", template="static")
     out = cb.run(rec["id"], "Write-Output ('cwd=' + (Get-Location).Path); Write-Output 'hello'")
@@ -51,6 +57,7 @@ def test_the_same_refusals_as_run_command_apply():
     assert cb.runs(rec["id"]) == [], "a refused command is not a run"
 
 
+@needs_powershell
 def test_output_is_bounded_and_passes_through_the_secret_redactor(monkeypatch):
     rec = cb.create("Rent tracker", template="static")
     out = cb.run(rec["id"], "Write-Output ('x' * 50000)")

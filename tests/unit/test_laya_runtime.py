@@ -131,6 +131,21 @@ def test_an_unchecked_artifact_refuses_to_load(tmp_path):
         laya_runtime.apply_engine(object(), "onnx-int8", threads=1)
 
 
+def test_refusals_come_before_torch_is_imported(monkeypatch):
+    """A host without torch (CI, a lean install) still gets the real refusal."""
+    import sys
+    monkeypatch.setitem(sys.modules, "torch", None)  # `import torch` raises ImportError
+    d = laya_runtime.artifacts_dir()
+    d.mkdir(parents=True)
+    (d / laya_runtime.INT8_NAME).write_bytes(b"x")
+    with pytest.raises(RuntimeError, match="agreement check"):
+        laya_runtime.apply_engine(object(), "onnx-int8", threads=1)
+    with pytest.raises(FileNotFoundError):
+        laya_runtime.apply_engine(object(), "onnx-fp32", threads=1)
+    with pytest.raises(ValueError):
+        laya_runtime.apply_engine(object(), "warp-drive", threads=1)
+
+
 def test_a_broken_fast_engine_falls_back_to_fp32(monkeypatch):
     applied = []
 

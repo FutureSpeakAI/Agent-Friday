@@ -16,6 +16,11 @@ the live server unable to answer. So a test run obeys two rules:
 Targeted runs (``pytest tests/unit/test_x.py``) are never refused. The floors
 are loaded from here and nowhere else; the tests in
 ``tests/unit/test_resource_guard.py`` pin them.
+
+A GitHub Actions runner is not that PC. It is a fresh, single-purpose 4-core,
+16 GB machine with nothing else on it, so a run there takes every core and is
+never refused for room. The exemption needs BOTH ``CI`` and ``GITHUB_ACTIONS``
+to be true, which the runner sets and a developer machine does not.
 """
 from __future__ import annotations
 
@@ -31,6 +36,16 @@ MAX_WORKERS = 2
 MIN_FREE_RAM_GB = 12.0
 MIN_FREE_DISK_GB = 20.0
 _ROOT = Path(__file__).resolve().parent
+
+
+def on_github_actions(env=None) -> bool:
+    """True on a GitHub Actions runner (``CI`` and ``GITHUB_ACTIONS`` both true)."""
+    env = os.environ if env is None else env
+
+    def _true(name):
+        return str(env.get(name, "")).strip().lower() in ("1", "true", "yes")
+
+    return _true("CI") and _true("GITHUB_ACTIONS")
 
 
 def free_ram_gb() -> float | None:
@@ -104,6 +119,8 @@ def refusal(ram, disk) -> str | None:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_xdist_auto_num_workers(config):
+    if on_github_actions():
+        return None  # no opinion: xdist uses the runner's own core count
     return MAX_WORKERS
 
 
@@ -111,6 +128,8 @@ def pytest_xdist_auto_num_workers(config):
 def pytest_cmdline_main(config):
     """Cap ``-n`` before xdist turns it into a worker count. xdist's own
     hook is tryfirst too; this plugin registers later, so it runs first."""
+    if on_github_actions():
+        return
     n = getattr(config.option, "numprocesses", None)
     capped = capped_workers(n)
     if capped != n:
@@ -119,7 +138,7 @@ def pytest_cmdline_main(config):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
-    if hasattr(config, "workerinput"):
+    if hasattr(config, "workerinput") or on_github_actions():
         return
     n = getattr(config.option, "numprocesses", None)
     capped = capped_workers(n)

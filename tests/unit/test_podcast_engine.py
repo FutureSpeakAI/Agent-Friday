@@ -66,7 +66,7 @@ def _fake_writer(script_for_chapter=None, outline=None):
 
 def _fake_speaker(monkeypatch):
     """Speech as a short tone per word, so timings are real sample counts."""
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
     spoken = []
 
     class S:
@@ -382,6 +382,7 @@ def test_a_voice_that_is_not_installed_is_refused_by_name(monkeypatch):
 
 
 def test_kokoro_is_built_from_cached_paths_on_the_cpu(monkeypatch, tmp_path):
+    pytest.importorskip("numpy", reason="the fake pipeline yields numpy audio (podcast extra)")
     built = {}
 
     class KModel:
@@ -430,8 +431,13 @@ def test_kokoro_is_built_from_cached_paths_on_the_cpu(monkeypatch, tmp_path):
 
 
 def test_the_listening_check_reads_numbers_as_spoken():
+    pytest.importorskip("num2words", reason="digits are read as words only when num2words "
+                                            "is installed (podcast extra); without it they are dropped")
     assert render.word_error_rate("In 2019 turnout was 41.6%.",
                                   "in twenty nineteen turnout was forty-one point six percent") == 0.0
+
+
+def test_the_listening_check_scores_plain_words():
     assert render.word_error_rate("Seven to two.", "seven to two") == 0.0
     assert render.word_error_rate("a b c d", "a x c") == 0.5
 
@@ -505,7 +511,7 @@ def test_the_wav_master_is_removed_once_the_mp3_is_checked_and_signed(monkeypatc
 # ── audio identity ──────────────────────────────────────────────────────────
 
 def test_the_intro_and_outro_share_one_short_motif():
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
     intro, outro = render.sting("intro"), render.sting("outro")
     for s in (intro, outro):
         assert 0.5 < len(s) / render.RATE < 2.0            # under two seconds
@@ -514,7 +520,7 @@ def test_the_intro_and_outro_share_one_short_motif():
 
 
 def test_a_sound_in_the_brand_slot_replaces_the_generated_motif(tmp_path, monkeypatch):
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
     slot = tmp_path / "podcast_intro.wav"
     render.write_wav((np.ones(4800, dtype="<i2") * 1000).tobytes(), slot)
     monkeypatch.setattr(render, "AUDIO_SLOT_DIR", tmp_path)
@@ -523,7 +529,7 @@ def test_a_sound_in_the_brand_slot_replaces_the_generated_motif(tmp_path, monkey
 
 
 def test_the_stings_frame_the_episode_and_the_lines_are_timed_after_them(monkeypatch):
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="needs numpy, which the podcast extra installs")
 
     class S:
         def speak(self, text, voice):

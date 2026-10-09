@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("pandas", reason="data mode reads tables with pandas (podcast extra)")
+
 from agent_friday.services import podcast_data as pdm
 from agent_friday.services import podcast_engine as pe
 from agent_friday.services.podcast_sources import SourceError

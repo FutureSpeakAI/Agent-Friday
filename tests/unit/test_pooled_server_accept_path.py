@@ -220,10 +220,13 @@ def test_a_full_queue_is_answered_with_503_by_the_accept_loop():
 
 
 def test_workers_are_started_before_the_first_connection():
-    before = {t.name for t in threading.enumerate()}
+    # Compare thread objects, not names: an earlier test in the same xdist
+    # worker may leave an "http-worker-0" thread alive, and a name set
+    # difference would drop the new worker that shares its name.
+    before = set(threading.enumerate())
     srv = pooled_server.make_pooled_server("127.0.0.1", 0, _ok_app, workers=3)
     try:
-        started = {t.name for t in threading.enumerate()} - before
+        started = {t.name for t in set(threading.enumerate()) - before}
         assert {"http-worker-0", "http-worker-1", "http-worker-2"} <= started
     finally:
         srv.server_close()
