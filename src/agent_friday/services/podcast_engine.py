@@ -725,14 +725,30 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         if weight(problems) < weight(best_problems):
             best, best_problems = lines, problems
     lines, problems = best, best_problems
+    left_out: list = []
+    if any(p["code"] in quality.HARD_CODES for p in problems):
+        lines, problems, left_out = leave_out_failing_stories(docs, lines, problems, problems_of)
+    # Stories the edit pass left out whole (its lede was cut) and that no
+    # line of the script tells.
+    story_list = quality.stories(docs)
+    told = quality.first_mentions(lines, story_list)
+    by = {s["sid"]: s for s in story_list}
+    for c in rejected:
+        st = by.get(c.get("story"))
+        if st and not any(m in told for m in st["cluster"]) and not any(x["sid"] == st["sid"] for x in left_out):
+            left_out.append(_left_out(st, "its opening line was cut by the script check, so the story "
+                                          "could not be told on its own"))
     lines = with_signature(lines, ep, len(chapters), docs)
+    check = {"ok": not problems, "problems": problems,
+             "revisions": revisions, "checks": list(quality.CHECKS)}
+    if left_out:
+        check["left_out"] = left_out
     return {"title": title,
             "chapters": [{"title": str(c.get("title") or "Chapter %d" % (i + 1))[:120],
                           "sources": [s for s in (c.get("sources") or []) if s in valid]}
                          for i, c in enumerate(chapters)],
             "lines": lines, "rejected": rejected, "model": model,
-            "script_check": {"ok": not problems, "problems": problems,
-                             "revisions": revisions, "checks": list(quality.CHECKS)}}
+            "left_out": left_out, "script_check": check}
 
 
 #: Problems a line can be dropped for outright: nothing is lost by not saying it.
@@ -759,6 +775,81 @@ def _drop_dead_lines(lines: list[dict], problems: list[dict],
         else:
             kept.append(ln)
     return kept, cut
+
+
+def without_stories(lines: list[dict], story_list: list[dict], sids) -> tuple[list, list]:
+    """(kept, gone): `lines` without every line that cites, comments on or names
+    a story reported under `sids` (with the other outlets' reports of the same
+    event). A gone line carries `_story`, the sid it was dropped with."""
+    by = {s["sid"]: s for s in story_list}
+    targets = [by[x] for x in sorted(sids) if x in by]
+    kept, gone = [], []
+    for ln in lines:
+        hit = None
+        if not ln.get("signature"):
+            for t in targets:
+                members = [by[m] for m in t["cluster"] if m in by]
+                if set(quality.refs(ln)) & t["cluster"] or any(quality.names_story(ln["text"], m)
+                                                               for m in members):
+                    hit = t["sid"]
+                    break
+        if hit is None:
+            kept.append(ln)
+        else:
+            gone.append(dict(ln, _story=hit))
+    return kept, gone
+
+
+#: What an episode needs left to be worth airing once stories are left out: one
+#: story told, and at least the words below which no episode is made at all.
+MIN_STORIES_AIRED = 1
+
+
+def _left_out(story: dict, reason: str) -> dict:
+    return {"sid": story["sid"], "headline": story["title"], "reason": reason}
+
+
+def _plain_reason(problem: dict) -> str:
+    if problem.get("lacks"):
+        return "its first line lacked " + quality.lacks_in_words(problem["lacks"])
+    return quality.cut_at_boundary(problem.get("message") or problem["code"], 140)
+
+
+def leave_out_failing_stories(docs: list[dict], lines: list[dict], problems: list[dict],
+                              problems_of) -> tuple[list, list, list]:
+    """One weak story does not sink the episode.
+
+    The stories behind the blocking problems that name one (`sid`) are left out
+    of `lines`, and the script is checked again, until nothing blocking is
+    left. Every check keeps its strictness: only the decision about the whole
+    episode changes. Returns (lines, problems, left_out); when something
+    blocking remains that no story explains, or too little is left to air,
+    the original (lines, problems) come back with an empty left_out and the
+    episode is rejected as before."""
+    story_list = quality.stories(docs)
+    by = {s["sid"]: s for s in story_list}
+    cur, cur_problems, left = lines, problems, []
+    for _ in range(len(story_list)):
+        hard = [p for p in cur_problems if p["code"] in quality.HARD_CODES]
+        named = [p for p in hard if p.get("sid") in by]
+        if not named:
+            break
+        sids = {p["sid"] for p in named}
+        cur, gone = without_stories(cur, story_list, sids)
+        if not gone:
+            break
+        done = {s["sid"] for s in left}
+        for p in named:
+            if p["sid"] not in done:
+                left.append(_left_out(by[p["sid"]], _plain_reason(p)))
+                done.add(p["sid"])
+        cur_problems = problems_of(cur)
+    told = quality.first_mentions(cur, story_list)
+    words = sum(len(ln["text"].split()) for ln in cur if not ln.get("signature"))
+    if (any(p["code"] in quality.HARD_CODES for p in cur_problems)
+            or len(told) < MIN_STORIES_AIRED or words < MIN_SCRIPT_WORDS):
+        return lines, problems, []
+    return cur, cur_problems, left
 
 
 def _revise(ep: dict, system: str, docs: list[dict], lines: list[dict], problems: list[dict],
@@ -891,6 +982,9 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
     hurt = quality.safety_clusters(story_list)
     close = quality.close_chapter(n_chapters)
     cut: list = []
+    #: The stories a sentence was cut from while naming them: if one's first
+    #: mention is left without its lede, the story goes whole (see below).
+    lost: set = set()
 
     def drop(text, chapter, why):
         cut.append({"text": text, "chapter": chapter, "reason": "cut by the script check: " + why})
@@ -918,10 +1012,11 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
         pieces = []
         last: list = []
         for sent in quality.sentences(ln["text"]):
+            named = {s["cluster"] for s in story_list if quality.names_story(sent, s)}
             if quality.threads_safety(sent, story_list, in_close=in_close):
                 drop(sent, ch, "a story of violence or a threat, folded into another")
+                lost |= named
                 continue
-            named = {s["cluster"] for s in story_list if quality.names_story(sent, s)}
             mine = [c for c in cited if by[c]["cluster"] in named]
             if not mine:
                 # A sentence that names no story carries on the one before
@@ -931,10 +1026,12 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
             last = mine
             if quality.is_read(sent) and (clusters(mine + list(ln.get("about") or [])) | named) & hurt:
                 drop(sent, ch, "a read on a story of violence")
+                lost |= named
                 continue
             verdict, why = quality.support(sent, mine, story_list, docs, home)
             if verdict == "cut":
                 drop(sent, ch, "credited to a source that does not report %s" % ", ".join(why[:4]))
+                lost |= named
             elif verdict == "own" and clusters(mine) & hurt:
                 drop(sent, ch, "commentary on a story of violence")
             elif verdict == "own":
@@ -1010,7 +1107,20 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
                                     if ln.get("own") else {})))
         out = kept
     # A lede that names its outlet but not when says the day the outlet reported it.
-    return quality.dated_ledes(merge_turns(out), story_list), cut
+    out = quality.dated_ledes(merge_turns(out), story_list)
+    # A cut never leaves a story told without its lede. When a sentence was cut
+    # from a story and what is left of it no longer opens with its outlet, who,
+    # what and when, the lines that remain would be its first mention and fail
+    # the lede check: the whole story is left out instead.
+    if lost:
+        orphans = {p["sid"] for p in quality.lede_problems(out, story_list)
+                   if by.get(p["sid"], {}).get("cluster") in lost}
+        if orphans:
+            out, gone = without_stories(out, story_list, orphans)
+            for ln in gone:
+                drop(ln["text"], ln.get("chapter", 0), "its opening line was cut, so the story is left out")
+                cut[-1]["story"] = ln["_story"]
+    return out, cut
 
 
 _LEDE_RE = re.compile(r"^(?P<who>.{2,80}?) (?:reports?|reported|says|said|confirms?) that (?P<what>.+)$")
@@ -1351,9 +1461,7 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
                 # episode that can be played.
                 _update(eid, script_check=script["script_check"], rejected=script["rejected"],
                         draft_lines=script["lines"], sources=_public_sources(docs))
-                raise render.RenderError(
-                    "script_rejected", "The script failed the script check and was not spoken: "
-                    + "; ".join("%s (%s)" % (p["code"], p["message"][:80]) for p in hard[:4]))
+                raise render.RenderError("script_rejected", quality.failure_message(hard))
             # Counted in words: a solo show merges her sentences into few lines.
             if sum(len(ln["text"].split()) for ln in script["lines"] if not ln.get("signature")) < MIN_SCRIPT_WORDS:
                 raise render.RenderError(
@@ -1362,6 +1470,7 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
             ep = _update(eid, title=script["title"], chapters=script["chapters"],
                          lines=script["lines"], rejected=script["rejected"],
                          script_check=script["script_check"],
+                         left_out=script.get("left_out") or None,
                          format=ep.get("format") or "duo",
                          sources=_public_sources(resolve_heard(docs, script["lines"])),
                          writer_model=script["model"],
@@ -1540,6 +1649,8 @@ def transcript_bytes(ep: dict) -> bytes:
         out.append("Script check: " + ("passed" if sc.get("ok") else
                                        "%d problem(s):" % len(sc.get("problems") or [])))
         out += ["  - " + p["message"] for p in sc.get("problems") or []]
+    out += ["Left out: %s — %s" % (s.get("headline") or "a story", s.get("reason") or "it did not pass the script check")
+            for s in ep.get("left_out") or []]
     op = ep.get("open") or {}
     if op.get("weather_source"):
         out.append("Weather: %s (%s), city level." % (op["weather_source"], op.get("weather_url") or ""))
@@ -1658,6 +1769,9 @@ def _announce(ep: dict) -> None:
         if sc.get("ok") is False:
             body += " · the script check found %d problem%s" % (
                 len(sc.get("problems") or []), "" if len(sc.get("problems") or []) == 1 else "s")
+        left = len(ep.get("left_out") or [])
+        if left:
+            body += " · %d stor%s left out" % (left, "y" if left == 1 else "ies")
         target = episode_home(ep)
         ne.push(title="🎧 " + title, body=body, source="podcasts", kind="info",
                 priority="low", dedupe_key="podcast:" + ep["id"], target=target,

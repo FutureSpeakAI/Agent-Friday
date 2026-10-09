@@ -260,7 +260,10 @@ def test_friday_s_analysis_labelled_as_hers_is_fine(ds):
     assert "misattributed" not in _codes(_check(lines, dd))
 
 
-def test_a_hard_problem_that_survives_revision_fails_the_episode(home, monkeypatch):
+def _briefing_with_writer(home, monkeypatch, mute):
+    """The synthetic briefing, written by a stuck writer whose lines at the
+    `mute` positions say the story without its outlet, every revision. Produced
+    as far as the script (the gate is what is under test)."""
     import podcast_briefing_fixture as fx
     (home / "wiki" / "briefings").mkdir(parents=True)
     (home / "wiki" / "briefings" / (fx.DATE + ".md")).write_text(fx.digest_markdown(), encoding="utf-8")
@@ -268,8 +271,13 @@ def test_a_hard_problem_that_survives_revision_fails_the_episode(home, monkeypat
     (home / "briefing_runs" / (fx.DATE + ".json")).write_text(json.dumps(fx.sidecar()), encoding="utf-8")
     ds = fx.docs()
     bad = good_lines(ds)
-    # A story with no spoken lede: no edit can supply one, so it blocks.
-    bad[2] = dict(bad[2], text="The pledge leaves a governance opening your interviews can use.")
+    said = {2: "The pledge leaves a governance opening your interviews can use.",
+            4: "The data-center spending figure leaves a funding question for your interviews.",
+            6: "The public argument between the two lab chiefs is useful to you.",
+            8: "The shooting at the bar is closer to home than the rest of the news."}
+    for i in mute:
+        # No outlet and nothing that happened: no edit can supply a lede.
+        bad[i] = dict(bad[i], text=said[i])
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:
@@ -283,10 +291,25 @@ def test_a_hard_problem_that_survives_revision_fails_the_episode(home, monkeypat
     monkeypatch.setattr(pe, "_llm_json", llm)
     spoken = []
     monkeypatch.setattr(render, "render_lines", lambda *a, **k: spoken.append(1) or (b"", []))
-    done = pe.produce(podcast_news.queue_for_run("briefing", fx.DATE)["id"])
+    done = pe.produce(podcast_news.queue_for_run("briefing", fx.DATE)["id"], script_only=True)
+    return done, spoken
+
+
+def test_every_story_failing_its_lede_after_revision_fails_the_episode(home, monkeypatch):
+    done, spoken = _briefing_with_writer(home, monkeypatch, mute=(2, 4, 6, 8))
     assert done["status"] == "failed" and done["error"]["code"] == "script_rejected"
-    assert "no_lede" in done["error"]["message"] and not spoken
+    assert "first line lacks the outlet" in done["error"]["message"] and not spoken
     assert any(p["code"] == "no_lede" for p in done["script_check"]["problems"])
+
+
+def test_one_story_failing_its_lede_after_revision_is_left_out_and_the_rest_goes_ahead(home, monkeypatch):
+    done, spoken = _briefing_with_writer(home, monkeypatch, mute=(2,))
+    assert done["status"] == "scripted", done.get("error")
+    assert [s["headline"] for s in done["left_out"]] == [
+        "Tech chiefs sign a voluntary pledge to police their own AI"]
+    said = " ".join(ln["text"] for ln in done["lines"])
+    assert "pledge" not in said and "Example Ledger reports" in said
+    assert not any(p["code"] in q.HARD_CODES for p in done["script_check"]["problems"])
 
 
 def test_a_single_what_to_watch_line_in_the_close_is_not_a_split(ds):
