@@ -256,3 +256,15 @@ def test_cloud_consent_status_in_a_request_answers_within_its_budget(monkeypatch
         assert second["capable"] is True and not second.get("pending")
     assert runs["n"] == 1, "the second page load recomputed the assessment"
     swr_cache.invalidate("consent.capability")
+
+
+def test_the_system_panel_reads_processes_without_starting_powershell(monkeypatch):
+    from agent_friday.routes import core_routes
+    started = []
+    monkeypatch.setattr(core_routes.subprocess, "run",
+                        lambda *a, **k: started.append(a) or (_ for _ in ()).throw(AssertionError("spawned")))
+    rows = core_routes._system_top_processes()
+    assert started == []
+    assert 0 < len(rows) <= 8
+    assert set(rows[0]) == {"Name", "CPU_s", "MemMB"}
+    assert [r["CPU_s"] for r in rows] == sorted((r["CPU_s"] for r in rows), reverse=True)
