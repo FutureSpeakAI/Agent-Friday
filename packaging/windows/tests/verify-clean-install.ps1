@@ -239,6 +239,20 @@ try {
         $t = [regex]::Match($body, '(?is)<title>(.*?)</title>')
         if ($t.Success) { $title = $t.Groups[1].Value.Trim() }
     }
+    if (-not $named) {
+        # Evidence for a failure: who holds port 80, what Friday says about its
+        # listeners, and whether the listener answers on the loopback address.
+        Write-Host "address diagnostics:"
+        Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction SilentlyContinue |
+            ForEach-Object { "  :80 listen {0} pid {1} {2}" -f $_.LocalAddress, $_.OwningProcess, (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } | Write-Host
+        Write-Host ("  serve: " + ($serve | ConvertTo-Json -Depth 6 -Compress))
+        Write-Host ("  status: " + ((Api '/api/local-address') | ConvertTo-Json -Depth 6 -Compress))
+        try {
+            $direct = Invoke-WebRequest -Uri 'http://127.0.0.1/' -Headers @{ Host = $hostName } -UseBasicParsing -TimeoutSec 20
+            Write-Host "  127.0.0.1:80 with Host $hostName -> $($direct.StatusCode) server: $($direct.Headers['Server'])"
+        } catch { Write-Host "  127.0.0.1:80 with Host $hostName -> $($_.Exception.Message)" }
+        Write-Host ("  resolves to: " + ((Resolve-DnsName $hostName -ErrorAction SilentlyContinue | ForEach-Object { $_.IPAddress }) -join ', '))
+    }
     Check 'address' (($null -ne $named) -and ($named.StatusCode -eq 200) -and ($body -match 'FRIDAY')) `
           ("http://$hostName/ -> " + $(if ($named) { "$($named.StatusCode) $($named.Headers['Content-Type']); title: '$title'; server: $($named.Headers['Server'])" } else { "no answer ($namedErr)" }) + "; listener ok: $($serve.ok)")
 
