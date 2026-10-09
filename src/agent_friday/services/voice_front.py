@@ -42,6 +42,42 @@ VOICE_FRONT_PORT = 8125
 #: the first-token deadline). The 2507 Instruct model ignores the flag.
 _NO_THINKING = {"enable_thinking": False}
 
+#: What a spoken turn needs beside the standing prompt and the tool
+#: declarations, in tokens: the chat template's margin, the largest spoken
+#: reply (voice_delivery.reply_budget tops out at 1400) and a few turns of
+#: history plus the volatile context block that rides in the user turn.
+TEMPLATE_MARGIN_TOKENS = 512
+REPLY_RESERVE_TOKENS = 1400
+HISTORY_RESERVE_TOKENS = 1500
+_ENVELOPE_SLACK_TOKENS = 64
+
+
+def context_room(window: int, convo: list, tools) -> int:
+    """Tokens left in ``window`` after ``convo`` and the tool declarations
+    (an estimate: four characters a token, plus the template margin)."""
+    return (int(window)
+            - len(json.dumps({"messages": convo, "tools": tools or []})) // 4
+            - TEMPLATE_MARGIN_TOKENS)
+
+
+def system_budget_tokens(window: int, tools) -> int:
+    """The most the standing system prompt may cost on a front served at
+    ``window`` with ``tools`` declared, so a turn still has its reply and its
+    history. The prompt builder spends it in priority order."""
+    return max(0, int(window) - TEMPLATE_MARGIN_TOKENS
+               - len(json.dumps(tools or [])) // 4
+               - REPLY_RESERVE_TOKENS - HISTORY_RESERVE_TOKENS - _ENVELOPE_SLACK_TOKENS)
+
+
+def model_for_label(label) -> str:
+    """The FRONT_MODELS key whose label is ``label``; otherwise the model with
+    the smallest window, so an unknown front is budgeted for the tightest."""
+    for key, spec in FRONT_MODELS.items():
+        if spec["label"] == label:
+            return key
+    return min(FRONT_MODELS, key=lambda k: FRONT_MODELS[k]["ctx"])
+
+
 #: The models the front can serve. ``sha256`` is the pin the installer
 #: verifies after download; a target whose pin is None is refused (an
 #: unpinned file is never installed). Sizes are the published file sizes.
@@ -64,7 +100,7 @@ FRONT_MODELS = {
         "sha256": "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5",
         "size_mb": 1223,
         "licence": "Apache-2.0",
-        "ctx": 12288,
+        "ctx": 16384,          # the curated tool contract alone needs ~10K
         "role": "co_resident",     # V-A: beside the brain in its voice profile
     },
 }
@@ -298,7 +334,7 @@ class FrontSeat:
         # Fit the oldest history out before sacrificing this utterance. The
         # remaining estimate includes tools and a margin for the chat template.
         def room():
-            return window - len(json.dumps({"messages": convo, "tools": contract.get("tools") or []})) // 4 - 512
+            return context_room(window, convo, contract.get("tools"))
         while len(convo) > 2 and room() < min(int(max_tokens), 1400):
             convo.pop(1)
         allowance = clamp_output(max_tokens, window)

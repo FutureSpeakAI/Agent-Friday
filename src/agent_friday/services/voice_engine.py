@@ -938,10 +938,13 @@ def _voice_tool_names():
 
 #: Ceiling on the rendered voice tool contract (local voice spec §2, P1). The
 #: front model prefills it on every cold start; the 124-tool registry (~22.8K
-#: tokens) is what put local voice at a 63-199 s first token. It stood at 9000
-#: with 359 tokens spare; the See & Touch tools (screen_select, organize_media,
-#: media_cards, the selection parameters) take about 1,000 more, so it is 10000.
-#: That is about 11% more cold prefill on the local front: bench it with
+#: tokens) is what put local voice at a 63-199 s first token. The See & Touch
+#: tools (screen_select, organize_media, media_cards, the selection parameters)
+#: put the compact contract over the former 9000; their descriptions are
+#: condensed (the compact form never changes a schema) and it stands near
+#: 9,700 with the rest of the 10000 as spare. Every front model's window is
+#: budgeted against it (voice_front.system_budget_tokens), so a larger contract shrinks
+#: the front's prompt budget rather than its replies. Bench it with
 #: scripts/bench_voice_turn.py before the next speed pass.
 VOICE_CONTRACT_MAX_TOKENS = 10000
 
@@ -1042,6 +1045,13 @@ _COMPACT_TOOL_DESCRIPTIONS = {
     "query_calendar": "Read today/tomorrow: event times, places, attendees.",
     "podcast_list": "List newest episodes: title/status/length/chapters/privacy.",
     "screenshot": "Capture screen PNG.",
+    "screen_select": "Show the user's open list what you mean: op select/add/remove/clear tick rows; point outlines up to 12; filter sets a chip (key, value; empty clears); fill writes text into a field (field, text). Shows only. To act on ticks call organize_email with selection=screen.",
+    "set_setting": "Change one Settings row by path; op=undo says where the row's own Undo is (30 days).",
+    "organize_calendar": "Shift calendar events by whole days and minutes, keeping their length.",
+    "task_control": "Stop or steer Friday's background work.",
+    "media_cards": "List Media cards (status, where each went) without moving the screen.",
+    "file_access": "Which files/folders cloud models may read.",
+    "organize_media": "Favourite, unfavourite, tag, untag or move Media cards to a project: cards=ids or selection=screen; two or more wait for one approval.",
 }
 
 _COMPACT_PARAMETER_DESCRIPTIONS = {
@@ -1105,6 +1115,10 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
     "search_library": {"scope": None},
     "revert_workspace": {"workspace": None, "mode": None, "when": None, "version_id": None},
     "list_workspace_history": {"limit": None},
+    "screen_select": {"op": None, "scope": None, "from": None, "query": None, "ordinals": None,
+                      "deictic": None, "value": None, "field": None, "text": None},
+    "organize_media": {"action": None, "cards": None, "value": None, "replaces": None, "why": None},
+    "task_control": {"target": "Workflow, task id or words of its name; empty: the one on screen.", "message": "For steer: what to tell it."},
 }
 
 

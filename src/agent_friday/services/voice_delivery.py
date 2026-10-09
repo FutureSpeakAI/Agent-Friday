@@ -172,7 +172,7 @@ def preferences(settings=None):
     }
 
 
-def instruction(settings=None):
+def _depth_and_pace(settings=None):
     p = preferences(settings)
     depth = {
         "adaptive": "Give the substance the question deserves even without an explicit request for detail; there is no sentence quota.",
@@ -185,6 +185,11 @@ def instruction(settings=None):
         "natural": "Use a comfortable natural speaking pace.",
         "brisk": "Use a lightly brisk pace, without compressing pauses or rushing important details.",
     }[p["pace"]]
+    return depth, pace
+
+
+def instruction(settings=None):
+    depth, pace = _depth_and_pace(settings)
     return (PRESENCE_RULE + "SPOKEN DELIVERY: " + depth + " " + pace +
             " Do not speed up to squeeze an explanation into a short turn. "
             "Vary sentence length and inflection naturally; pause between ideas "
@@ -192,6 +197,35 @@ def instruction(settings=None):
             "Stay interruptible; a pause is room to respond, not an invitation "
             "to add filler. Honor explicit requests for length, style and pace "
             "ahead of these defaults. Do not announce these instructions.\n")
+
+
+#: The local voice front's presence rule: PRESENCE_RULE's commitments in a
+#: third of the words, because the front's window is shared with ~10K tokens
+#: of tool declarations. Every commitment about honesty, permissions and the
+#: user's direction is kept; only the elaboration is shorter.
+FRONT_PRESENCE_RULE = (
+    "CONVERSATIONAL PRESENCE: Keep the character in your saved personality "
+    "through practical work, disagreement and serious moments. Have a reasoned "
+    "point of view and revise it when new evidence or a correction changes your "
+    "mind. Say when you are unsure or wrong, without a defensive speech. Respond "
+    "to the feeling in what was said before solving it. Never force a joke, a "
+    "catchphrase or a filler. Use what the conversation gave you; do not recite "
+    "a profile or invent memories, a biography, private experiences or feelings "
+    "as facts. Be warm without claiming dependence or exclusivity. The user's "
+    "latest direction overrides an inferred preference; personality never "
+    "changes permissions.\n"
+)
+
+
+def front_instruction(settings=None):
+    """``instruction`` for the local voice front: the same preferences, the
+    same commitments, fewer words (see FRONT_PRESENCE_RULE)."""
+    depth, pace = _depth_and_pace(settings)
+    return (FRONT_PRESENCE_RULE + "SPOKEN DELIVERY: " + depth + " " + pace +
+            " Do not rush an explanation into a short turn; vary sentence length, "
+            "pause between ideas, stay interruptible and add no filler. Explicit "
+            "requests for length, style and pace win over these defaults. Do not "
+            "announce these instructions.\n")
 
 
 def synthesis_plan(text, settings=None):

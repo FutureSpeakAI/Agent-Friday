@@ -892,8 +892,9 @@ def _mark_if_stale(result, fname, started_at, user_spoke_at, now):
 # The persona, the adaptive length rule, the news rules and the vault-aware
 # personal-questions rule are shared with the briefings: services/voice_persona.py.
 from agent_friday.services.voice_persona import (  # noqa: E402
-    VOICE_ANCHOR_RULES, VOICE_LENGTH_RULE, VOICE_STATE_NOTE_RULE, compose_live_instruction,
-    persona_due, persona_reminder, strip_text_chat_hints, vault_rule,
+    NEWS_EVIDENCE_CONSTITUTION, VOICE_ANCHOR_RULES, VOICE_LENGTH_RULE, VOICE_STATE_NOTE_RULE,
+    compose_live_instruction, persona_block, persona_due, persona_reminder,
+    strip_text_chat_hints, vault_rule,
 )
 
 # Several people may be in the room, and the live model answers every
@@ -2071,50 +2072,111 @@ VOICE_FRONT_HANDOFF_RULE = (
 )
 
 
+#: The news rule for the local voice front: VOICE_ANCHOR_RULES' style
+#: paragraph in fewer words, then the same evidence constitution unchanged.
+VOICE_FRONT_NEWS_RULE = (
+    "DELIVERING THE NEWS: Anchor it. Narrate calmly and with authority: set "
+    "each story in context (what led here, why it matters now), connect related "
+    "stories instead of reading a list, then explain what is going on and what "
+    "to watch, step by step, from the evidence. These are traits of a style, "
+    "not people: never claim to be, or imitate, any real journalist or "
+    "broadcaster. Your character shows in the commentary and the transitions, "
+    "never in the facts.\n"
+    + NEWS_EVIDENCE_CONSTITUTION
+)
+
+#: Longest saved personality the front repeats (it opens AND closes the prompt).
+FRONT_PERSONA_MAX_CHARS = 700
+
+
+def _front_persona_style(style):
+    """The saved personality, cut at a sentence end when it is longer than the
+    front can afford to say twice."""
+    style = (style or "").strip()
+    if len(style) <= FRONT_PERSONA_MAX_CHARS:
+        return style
+    cut = style[:FRONT_PERSONA_MAX_CHARS]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    return (cut[:end + 1] if end > 200 else cut.rstrip()).strip()
+
+
+def _front_prompt_budget(contract, model_label):
+    """Tokens the front's standing prompt may cost, or None when the contract
+    carries no declarations to measure (see voice_front.system_budget_tokens)."""
+    tools = (contract or {}).get("tools")
+    if not tools:
+        return None
+    from agent_friday.services import voice_front as _vf
+    window = _vf.FRONT_MODELS[_vf.model_for_label(model_label)]["ctx"]
+    return _vf.system_budget_tokens(window, tools)
+
+
 def _build_front_system_prompt(settings=None, contract=None, model_label=None):
     """The VOICE FRONT's system prompt (local voice spec P1), prefix-stable.
 
     Unlike the brain's, it carries no 60-word pin: the length rule is the
     same adaptive VOICE_LENGTH_RULE cloud voice follows, the persona opens
-    and closes it the same way, and its context is a ~3K-token digest of the
-    gated local context instead of the ~26K standing prompt. The tool-surface
-    line is rendered from the contract's own names, so the prompt cannot name
-    a tool the session does not hold. Volatile context rides in the user
-    turn, exactly as on the brain path.
+    and closes it the same way, and its context is a bounded digest of the
+    gated local context instead of the ~26K-token standing prompt. The
+    tool-surface line is rendered from the contract's own names, so the prompt
+    cannot name a tool the session does not hold. Volatile context rides in
+    the user turn, exactly as on the brain path.
+
+    The prompt shares the front's window with the tool declarations, so it is
+    budgeted: with a measurable contract it costs at most
+    ``voice_front.system_budget_tokens`` for that front model, and a turn
+    always keeps room for its reply and some history. The rules (authority,
+    approvals, honesty, tool use, the persona, who the owner is) are always
+    present; what the deeper mind holds (the identity document, the long
+    sections) is a pointer to it and whatever digest the budget still buys.
+    The main and cloud prompts are built elsewhere and are not shortened.
     """
     settings = settings if settings is not None else (_load_settings() or {})
     from agent_friday.services import voice_context_digest
     from agent_friday.services.action_policy import seal_system_prompt
+    from agent_friday.services.voice_delivery import front_instruction
     names = list((contract or {}).get("names") or [])
     label = model_label or "a small local model"
-    body = (
-        "You are Agent Friday, a sovereign personal AI assistant, in a LIVE "
-        "VOICE conversation. You are her fast voice, running on this computer "
-        f"({label}): what they say and what you think stays here; tools that "
-        "search the web or the news reach out only for what they look up.\n"
-        "Speak like a person: natural, warm, contractions.\n"
-        + VOICE_LENGTH_RULE +
-        "NEVER use markdown: no asterisks, headers, or bullets; this is read "
-        "aloud. Numbered points are said the way a person says them, inside "
-        "ordinary sentences.\n"
-        "Never state that an action succeeded unless the tool result in this "
-        "turn says so. A withheld, failed, or missing result is reported as "
-        "exactly that.\n"
-        + VOICE_FRONT_HANDOFF_RULE
-        + VOICE_ANCHOR_RULES + "\n"
-        + VOICE_TOOL_CHOREOGRAPHY
-        + ("\nTHE TOOLS YOU HOLD IN THIS CONVERSATION: " + ", ".join(names) + ".\n"
-           if names else "\nYou hold no tools in this conversation.\n")
-        + "\n== WHAT YOU KNOW (a digest; ask_friday reaches the rest) ==\n"
-        + voice_context_digest.build(settings)
-    )
     style = ""
     try:
-        style = _get_voice_style_prompt() or ""
+        style = _front_persona_style(_get_voice_style_prompt() or "")
     except Exception:
         style = ""
-    return seal_system_prompt(compose_live_instruction(style, body, settings),
-                              "voice front prompt")
+
+    def compose(digest_text):
+        body = (
+            "You are Agent Friday, a sovereign personal AI assistant, in a LIVE "
+            "VOICE conversation. You are her fast voice, running on this computer "
+            f"({label}): what they say and what you think stays here; tools that "
+            "search the web or the news reach out only for what they look up.\n"
+            "Speak like a person: natural, warm, contractions.\n"
+            + VOICE_LENGTH_RULE +
+            "NEVER use markdown: no asterisks, headers, or bullets; this is read "
+            "aloud. Numbered points are said the way a person says them, inside "
+            "ordinary sentences.\n"
+            "Never state that an action succeeded unless the tool result in this "
+            "turn says so. A withheld, failed, or missing result is reported as "
+            "exactly that.\n"
+            + VOICE_FRONT_HANDOFF_RULE
+            + VOICE_FRONT_NEWS_RULE + "\n"
+            + VOICE_TOOL_CHOREOGRAPHY
+            + ("\nTHE TOOLS YOU HOLD IN THIS CONVERSATION: " + ", ".join(names) + ".\n"
+               if names else "\nYou hold no tools in this conversation.\n")
+            + "\n== WHAT YOU KNOW (a digest; your deeper mind holds your full memory "
+              "and self-knowledge, and ask_friday reaches it) ==\n"
+            + digest_text
+        )
+        body = front_instruction(settings) + "\n" + body
+        block = persona_block(style)
+        text = f"{block}\n{body}\n\n{block}" if block else body
+        return seal_system_prompt(text, "voice front prompt")
+
+    budget = _front_prompt_budget(contract, model_label)
+    if budget is None:
+        return compose(voice_context_digest.build(settings))
+    spent = len(json.dumps(compose(""))) // 4
+    return compose(voice_context_digest.build(
+        settings, budget_tokens=max(0, budget - spent - 32), front=True))
 
 
 def _local_voice_messages(conversation_id, user_text, settings=None, volatile=None):
