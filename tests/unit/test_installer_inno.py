@@ -253,9 +253,13 @@ def test_the_workflow_has_the_jobs_the_owner_asked_for():
     assert "choco install innosetup" in WORKFLOW
 
 
-def test_the_release_job_publishes_a_prerelease_not_a_draft():
+def test_the_release_job_publishes_the_latest_release_not_a_draft():
+    """Beta 1.0 replaces 5.x: releases/latest (the README's Download link) must
+    land on it, and GitHub skips pre-releases for 'latest'."""
     rel = WORKFLOW[WORKFLOW.index("  release:"):]
-    assert "--prerelease" in rel and "--draft" not in rel
+    assert "--latest" in rel and "--prerelease" not in rel and "--draft" not in rel
+    assert "PLACEHOLDER" in rel and "a placeholder is left in the notes" in rel, \
+        "the notes get the installer's real SHA-256, and a leftover placeholder stops the release"
     assert 'needs: [fresh-install, upgrade]' in rel
     assert "--title \"Agent Friday Beta 1.0\"" in rel and "--notes-file" in rel
     assert ".exe.sha256" in rel and "AgentFriday-Setup-*.exe" in rel

@@ -183,10 +183,20 @@ jobs:
             printf '\n\nBuild sequence: %s\n' "$seq" >> "$RUNNER_TEMP/notes.md"
           fi
           grep -i '^build sequence' "$RUNNER_TEMP/notes.md"
-      - name: Publish the release (a pre-release, not a draft)
+      - name: The notes carry the installer's real SHA-256
+        run: |
+          hash=$(cut -d' ' -f1 artifact/AgentFriday-Setup-*.exe.sha256 | tr -d '\r\n')
+          echo "$hash" | grep -Eq '^[0-9a-fA-F]{64}$' || { echo "no SHA-256 in the .sha256 file"; exit 1; }
+          sed -i "s|<SHA256 PLACEHOLDER[^>]*>|$hash|" "$RUNNER_TEMP/notes.md"
+          if grep -q 'PLACEHOLDER' "$RUNNER_TEMP/notes.md"; then echo "a placeholder is left in the notes"; exit 1; fi
+          grep -n "$hash" "$RUNNER_TEMP/notes.md"
+      # Beta 1.0 replaces the 5.x line, so it is the latest release: the README's
+      # Download link (releases/latest) must land on it, and GitHub skips
+      # pre-releases for "latest". Published, never a draft.
+      - name: Publish the release (latest, not a draft)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
-            --repo "${{ github.repository }}" --verify-tag --prerelease \
+            --repo "${{ github.repository }}" --verify-tag --latest \
             --title "Agent Friday Beta 1.0" --notes-file "$RUNNER_TEMP/notes.md"
