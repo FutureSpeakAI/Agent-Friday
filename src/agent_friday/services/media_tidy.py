@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import agent_friday.core as core
+from agent_friday.paths import contained, safe_name
 from agent_friday.user_errors import exception_text
 
 HANDLER = "media_tidy"
@@ -341,14 +342,20 @@ def trash_list() -> List[Dict[str, Any]]:
 
 def restore(entry: str) -> Dict[str, Any]:
     """Move an entry's files back where they came from (a taken name gets a suffix)."""
-    d = trash_dir() / entry
+    try:
+        d = contained(trash_dir(), safe_name(entry, what="trash entry"))
+    except ValueError:
+        return {"status": "not_found"}
     m = d / "manifest.json"
     if not d.is_dir() or not m.exists():
         return {"status": "not_found"}
     rec = json.loads(m.read_text(encoding="utf-8"))
     back = []
     for f in rec.get("files") or []:
-        src = d / f["name"]
+        try:
+            src = contained(d, safe_name(f["name"], what="file name"))
+        except (ValueError, KeyError, TypeError):
+            continue
         if not src.exists():
             continue
         dest = Path(f["from"])

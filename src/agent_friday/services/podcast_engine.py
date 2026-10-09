@@ -219,11 +219,11 @@ def root() -> Path:
     return p
 
 
-_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}-[0-9a-f]{6}$")
+_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}-[0-9a-f]{6}")
 
 
 def _dir(eid: str) -> Path:
-    if not _ID_RE.match(str(eid or "")):
+    if not _ID_RE.fullmatch(str(eid or "")):
         raise PodcastRefused("not an episode id")
     return root() / eid
 

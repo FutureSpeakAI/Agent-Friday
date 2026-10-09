@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -173,7 +174,14 @@ def _account_id(email: str) -> str:
     return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:16]
 
 
+#: `_account_id` is sixteen lowercase hex digits. A caller-supplied id that is
+#: anything else (a path, a drive, a newline) never reaches the filesystem.
+_ACCOUNT_ID = re.compile(r"[0-9a-f]{16}")
+
+
 def _token_path(account_id: str) -> Path:
+    if not isinstance(account_id, str) or not _ACCOUNT_ID.fullmatch(account_id):
+        raise ValueError("not a Google account id")
     return TOKENS_DIR / f"{account_id}.token.enc"
 
 
@@ -576,6 +584,8 @@ def _revoke_remote(account_id: str) -> bool:
 
 def _raw_credentials(account_id: str):
     """Load the stored credentials object WITHOUT refresh/audit (internal)."""
+    if not isinstance(account_id, str) or not _ACCOUNT_ID.fullmatch(account_id):
+        return None
     p = _token_path(account_id)
     if not p.exists():
         return None
