@@ -22,23 +22,23 @@ Cannot be automated — needs a microphone, speakers, and a live Gemini key.
 2. **Expect:** mic permission prompt → "● LIVE" indicator → Friday greets you.
 3. Speak a sentence; confirm a transcript appears and Friday answers in audio.
 4. **Speaker-echo regression:** with output on *speakers* (not headphones),
-   confirm Friday does NOT cut herself off mid-sentence (NO_INTERRUPTION mode).
-   Settings → Audio & Voice → Interruption Mode = "Speaker" should be default.
-5. **Headphones/barge-in:** switch Interruption Mode to "Headphones", confirm you
-   can interrupt her by speaking.
+   confirm Friday does NOT cut herself off mid-sentence (set Settings → Voice →
+   Listening → Interrupting Friday to Speaker-safe, or Esc only, for the Gemini engine).
+5. **Headphones/barge-in:** with headphones on, set Interrupting Friday to
+   "Talk over her" and confirm you can interrupt her by speaking.
 6. Check no progressive "raspiness" over a 60s+ reply (AudioWorklet ring buffer).
 7. End the session; confirm the socket closes cleanly (no console errors).
 
 Diagnostics if it fails:
 - 1008 "Expected OAuth 2 access token" = invalid/stale key (often a User-scope
   env var shadowing start.bat's rotated `AQ.` key), NOT a model problem.
-- Silent mic vs API failure: check RMS meter in Settings → Microphone → Test (5s).
+- Silent mic vs API failure: check RMS meter from the Test Mic button in the chat input (5s).
 
 ## 2. Google OAuth — Gmail & Calendar
 
 Cannot be automated — needs an interactive Google consent screen.
 
-1. Settings → Connections (or the Messages/Calendar workspace "Connect" button).
+1. Settings → Connections (or the Messages/Calendar workspace "Connect" button), under Google accounts.
 2. Click **Connect Google**. A browser tab opens Google's consent screen.
 3. Approve; confirm redirect back and `~/.friday/google_token.json` is written.
 4. Reopen **Messages** → real Gmail threads load (not the "Google not connected"
@@ -61,7 +61,7 @@ Cannot be automated — needs an interactive Google consent screen.
 Off + non-persistent by default (public-release hardening). Local models can't
 drive it — cloud `_call_claude_agent` tool loop only.
 
-1. Settings → enable computer control (grant the runtime permission prompt).
+1. Settings → Privacy & Data → Computer control: enable it (grant the runtime permission prompt).
 2. In chat ask Friday to "open Notepad" (or move the mouse to a corner).
 3. **Expect:** a permission gate, then the action executes; screenshots are sent
    back as image blocks with scaled coordinates.
@@ -125,8 +125,8 @@ Sonnet 5 is the default orchestrator. Fable 5 is the creative/narrative speciali
       and a **Browse All Models** footer button.
 - [ ] The panel never lists more than ~15 model entries total, and no
       grayed-out/unavailable models appear anywhere in it.
-- [ ] "Browse All Models" opens Settings on the **Providers** tab.
-- [ ] Settings → Connections **Model Browser** auto-populates on open (no
+- [ ] "Browse All Models" opens Settings on **Connections**.
+- [ ] Settings → Models **Model browser** auto-populates on open (no
       empty state) and offers a search box, provider filter, capability
       filter (Tool calling / Vision / Image gen / Video gen / Free /
       Local), and price/context sorting.

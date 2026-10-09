@@ -11,7 +11,7 @@ The groups, top to bottom:
 2. [Voice](#voice)
 3. [Models](#models)
 4. [Spending](#spending)
-5. [Privacy and Data](#privacy-and-data)
+5. [Privacy & Data](#privacy--data)
 6. [Connections](#connections)
 7. [Appearance](#appearance)
 8. [Advanced](#advanced)
@@ -23,7 +23,7 @@ Changes to some settings made by Friday on your behalf ask first on a card of
 their own; see [Approvals and receipts](approvals-and-receipts.md).
 
 Other pages link here: a banner at the top of every group appears when file
-permissions are paused, and sends you to **Privacy and Data, File access**.
+permissions are paused, and sends you to **Privacy & Data, File access**.
 
 ## General
 
@@ -88,7 +88,7 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
   limit or switch it off. Local models keep working. Every halt is logged and
   notified.
 
-## Privacy and Data
+## Privacy & Data
 
 - **Vault.** **Keep vault content off the cloud** strips vault-tier notes from
   cloud prompts and runs questions that touch them on the local model. If no
@@ -100,9 +100,6 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
 - **Library.** Library search, cloud answers (off by default) with a character
   cap, reading on battery, and whether the knowledge graph learns from your
   documents. See [Library](library.md).
-- **Fonts.** **Load fonts from Google Fonts**, which shows Google your PC's
-  address on each page load, and only matters while Friday's own font files are
-  not installed.
 - **What needs your sign-off**, **Scheduled jobs: what they may do on their
   own**, **Stored keys**, **Agent workspaces** and **Computer control**
   (**Allow computer control**). See [Scheduled jobs](scheduled-jobs.md).

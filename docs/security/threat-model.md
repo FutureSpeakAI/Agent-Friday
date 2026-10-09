@@ -158,7 +158,7 @@ cLaws text under the governance key and compares it with the pin in
 and reads continue. Its decisions, and the ring check's, are receipted in the
 one signed file `~/.friday/decision-bom.jsonl`; if an entry cannot be signed
 and written, a ring-2+ call is held rather than logged unsigned. Only the owner
-re-pins, from Settings → Privacy & Approvals (`/api/governance/claws/repin`,
+re-pins, from Settings → Privacy & Data (`/api/governance/claws/repin`,
 which requires a request from this machine carrying the page's token and an
 explicit confirmation, and writes a signed receipt).
 
@@ -496,7 +496,7 @@ it in the cloud, which the owner must accept; voice has its own pipeline. The
 first-run screen's text still describes a fallback to cloud and is out of date.
 There is no switch that turns the egress gate off; unrestricted cloud is the
 only bypass, and it requires the recorded consent in `privacy/cloud_consent.py`.
-The privacy posture is visible in the setup wizard and in Settings → Privacy & Approvals.
+The privacy posture is visible in the setup wizard and in Settings → Privacy & Data.
 
 ---
 

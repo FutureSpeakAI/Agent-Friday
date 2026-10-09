@@ -47,7 +47,7 @@ nothing listens and nothing is sent.
 Twilio bills your account directly: a monthly charge for the number, a charge
 per text, and a charge per minute of calls, plus any registration fees for
 10DLC. Friday records each charge as Twilio prices it, shows totals and the
-current US rates under **Settings > Models > Spending**, and the spending caps apply to
+current US rates under **Settings > Spending**, and the spending caps apply to
 phone sends too. Check Twilio's pricing page for current prices.
 
 ## Setting it up

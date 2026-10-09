@@ -71,7 +71,7 @@ words "needs you" or a count.
    identity. No piece of this system removes, flattens or replaces them; chrome is drawn over
    the scene, never instead of it. Nothing opaque covers it by default. Panels are glass
    (`--fr-glass`, `--fr-glass-blur`, `--fr-glass-edge`). One option exists, **Backdrop**
-   (Settings → Appearance & Hologram): *Holographic*, the default, is the scene as it is;
+   (Settings → Appearance): *Holographic*, the default, is the scene as it is;
    *Calm* turns off the starfield, the grid floor and the grain and leaves the avatar and
    its structures on a quiet gradient ground. The avatar renders in both. The option is the
    avatar session's to build; this system only names the row.
@@ -376,7 +376,7 @@ sampled or summarised by a model.
 - Minimum target 32px in lists, 44px in the dock and on touch.
 - Reduced motion turns the reveal to an instant and stills the scene's chrome (the scene
   itself follows the avatar spec's 3D-off switch).
-- Text size is a setting (Appearance & Hologram); the type scale is BRAND.md's; density
+- Text size is a setting (Appearance); the type scale is BRAND.md's; density
   does not drop below `--fr-row-h-dense`.
 - Budgets, measured and shown in Health: the shell interactive under 3 s; an approval card
   rendered under 300 ms; a workspace's first list under 1 s from cache, 2 s from the source.

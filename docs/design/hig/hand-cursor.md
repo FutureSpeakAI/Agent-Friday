@@ -66,7 +66,7 @@ stays under that slop.
 An alternative to the pinch, for hands that tire or trackers that lose the thumb: hover a
 locked target for 650 ms and it clicks. A ring around the reticle fills over the dwell; leaving
 the target empties it; the same target cannot dwell-click twice without the cursor leaving it.
-Pinch and dwell are the existing "Click method" setting in Settings → Voice & Tracking; the
+Pinch and dwell are the existing "Click method" setting in Settings → Appearance → Head and hand tracking; the
 dwell time is its existing slider.
 
 ### 1.5 Pinch-drag and two-hand zoom
@@ -170,7 +170,7 @@ mode off": the last five are two tools per the voice tool contract, `big_mode(on
 (`BIG_MODE_ON`, `BIG_MODE_OFF`, `CURSOR_MOVED`, `CURSOR_SELECTED`, `CURSOR_NO_TARGET`).
 "Select" on a guarded target answers with the card, never with the action.
 
-## 3. Settings rows (Voice & Tracking → Hand cursor)
+## 3. Settings rows (Appearance → Head and hand tracking)
 
 | Row | Key | Default |
 |---|---|---|

@@ -107,7 +107,7 @@ holds the action.
 
 Local jobs cost nothing in API fees. A job you allow to use the cloud is
 metered like any other cloud call and counts toward your spending caps in
-**Settings > Models > Spending**.
+**Settings > Spending**.
 
 ## Weekly update check
 

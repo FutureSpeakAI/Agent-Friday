@@ -36,7 +36,7 @@ Voice can do anything chat can, unless the user has restricted Friday.
 ## What remains, and why
 
 `voice_engine.voice_restrictions()` returns this list with each entry's
-current state. The Voice & Tracking settings tab shows it.
+current state. The Voice tab in Settings shows it.
 
 | Limit | Kind | Why |
 |---|---|---|

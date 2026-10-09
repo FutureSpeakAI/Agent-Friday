@@ -112,7 +112,7 @@ answer, skip anything, and leave with **Set up later** at any point. It works
 with no model and no key at all.
 
 If you close Friday partway through, it picks up where you left off. Anything
-you skipped waits in **Settings > Connections > Setup checklist**, and
+you skipped waits in **Settings > General > Setup checklist**, and
 **Settings > General > Your profile** can run the chat again. What each part
 does and what is stored where: [The setup chat](setup-chat.md).
 

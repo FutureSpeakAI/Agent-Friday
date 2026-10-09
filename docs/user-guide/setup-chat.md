@@ -95,7 +95,7 @@ other programs' credential files, and never asks for a password in the chat.
 If you paste something that looks like a key into the chat box, it is not
 sent anywhere; Friday offers the secure field for it instead.
 
-Anything you skip waits in **Settings > Connections > Setup checklist**,
+Anything you skip waits in **Settings > General > Setup checklist**,
 with the same cards.
 
 #### One key is enough

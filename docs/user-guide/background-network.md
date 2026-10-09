@@ -19,7 +19,7 @@ conversation content, vault data or personal details.
 | Update check (opt-in) | `api.github.com` | At most once a week, only if you said yes | First-run question, or Settings > About |
 | Connectivity probe | Nothing by default (a routing-table lookup on this PC); `dns.google`, `8.8.8.8`, `1.1.1.1` (TCP 443) only if you opt in | Every 30 seconds | `network_probe` in `settings.json` |
 | News feeds | Built-in RSS feeds (news sites, Google News) | Every 5 minutes | Turn news categories off in the News workspace |
-| Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load, only while Friday's font files are not installed and the setting is on (it is on by default) | Settings > Privacy & Data > Fonts |
+| Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load, only while Friday's font files are not installed and the setting is on (it is on by default) | Set `web_fonts_from_google` to `false` in `settings.json` |
 | MediaPipe scripts and models | `cdn.jsdelivr.net` | Only when you turn on head or hand tracking | Leave tracking off |
 | Embedding model | `huggingface.co` | Never at startup. Once, the first time a feature needs it and it is not already on disk, with a notification | Pre-fetched by the installer's memory tier |
 | Local chat models | `huggingface.co` (weights), `api.github.com` and `github.com` (the model runtime) | Only when you ask: the first-start download you agreed to in setup, or Settings > Models | Choose a cloud model, or do not tick the download box |
@@ -97,9 +97,8 @@ installed on the PC, then a font file in `static/fonts`, then a similar system
 font. Friday ships those font files, so Google Fonts is never requested.
 If the files are removed, Friday adds Google Fonts to the page (every page
 load then asks `fonts.googleapis.com` and `fonts.gstatic.com`) unless
-**Settings > Privacy & Data > Fonts > Load fonts from Google Fonts** is
-off (`web_fonts_from_google: false`), in which case it uses fonts already on
-the PC.
+`web_fonts_from_google` is `false` in `settings.json`, in which case it uses
+fonts already on the PC. Settings has no row for this key.
 The login page for remote access and saved draft pages use only the local
 stylesheet.
 

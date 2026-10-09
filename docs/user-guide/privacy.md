@@ -72,7 +72,7 @@ create a file grant: it is pinned to that file's content and expires. See
 
 No telemetry, analytics or crash reports, and nothing to FutureSpeak.AI. The
 few background connections Friday does make (news feeds, connector health
-checks, Google Fonts until you turn it off or the font files are installed,
+checks, Google Fonts only if Friday's font files are missing (they ship with the app),
 the opt-in update check, and one-time model downloads when a feature first
 needs them) are listed, with how to turn each off, in
 [Background network activity](background-network.md).
