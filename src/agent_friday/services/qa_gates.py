@@ -180,6 +180,25 @@ def evaluate_text(content: str, intent: str, *,
 #  IMAGE EVALUATION  (Gemini vision)
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _score_image_locally(data: bytes, mime: str, intent: str):
+    """Raw scorer reply from the local vision seat, or None when it cannot see.
+    Never raises, never leaves the machine."""
+    try:
+        import base64
+        from agent_friday.services import local_vision
+        res = local_vision.describe(
+            base64.b64encode(data).decode(), mime=mime,
+            prompt=("Intent: %s.\n"
+                    "Score how well this image satisfies the "
+                    "intent. Respond with ONLY JSON: {\"score\": <0.0-1.0>, "
+                    "\"critique\": \"<one sentence>\", \"suggestions\": "
+                    "\"<prompt tweaks, or empty>\"}."
+                    % (intent or "a high-quality, coherent image")))
+        return (res.get("text") or "") if res.get("ok") else None
+    except Exception:
+        return None
+
+
 def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
     """Score a generated image against intent using a Gemini vision model.
 
@@ -191,7 +210,9 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
                 "critique": "vision QA disabled", "suggestions": ""}
     try:
         from agent_friday.services import creative_engine as ce
-        if not ce.is_available():
+        from agent_friday.services.local_only_guard import routing_mode
+        _local_only = routing_mode() == "local_only"
+        if not _local_only and not ce.is_available():
             return {"status": "skipped", "passed": True, "score": None,
                     "critique": "no vision key", "suggestions": ""}
         # Only an actual image, from Friday's creations or one the owner
@@ -206,6 +227,25 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         if data is None:
             return {"status": "skipped", "passed": True, "score": None,
                     "critique": "image not found", "suggestions": ""}
+
+        if _local_only:
+            # Local only: the image and the intent never leave the machine.
+            # Score on the local seat if it can see, else skip -- never cloud.
+            raw = _score_image_locally(data, mime, intent)
+            if raw is None:
+                return {"status": "skipped", "passed": True, "score": None,
+                        "critique": "vision QA skipped: Local only is on and "
+                                    "the local seat cannot see images",
+                        "suggestions": ""}
+            verdict = _parse_score(raw)
+            if verdict["score"] is None:
+                return {"status": "skipped", "passed": True, "score": None,
+                        "critique": "could not parse a score", "suggestions": ""}
+            cfg_t = cfg["threshold"]
+            return {"status": "ok", "passed": verdict["score"] >= cfg_t,
+                    "score": round(verdict["score"], 3), "threshold": cfg_t,
+                    "critique": verdict["critique"],
+                    "suggestions": verdict["suggestions"]}
 
         from google.genai import types
         from agent_friday.services import egress_gate as _eg

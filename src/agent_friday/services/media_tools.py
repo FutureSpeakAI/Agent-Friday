@@ -102,16 +102,72 @@ def _gate_vision_question(question: str, field: str) -> str:
         return _MEDIA_QUESTION_WITHHELD
 
 
-def _record_media_binary_egress(field: str, byte_len: int) -> None:
-    """Record that media bytes left for Gemini — never raises; a ledger
-    failure must not break the tool call, but must not pretend either."""
+def _record_media_binary_egress(field: str, byte_len: int, *,
+                                action: str = "allow",
+                                reason: str = "vision/audio understanding call"
+                                ) -> None:
+    """Record that media bytes left for Gemini (or, with action="block", that
+    they were withheld) — never raises; a ledger failure must not break the
+    tool call, but must not pretend either."""
     try:
         from agent_friday.services import egress_gate as _eg
-        _eg.record_binary_egress("google-gemini", field, action="allow",
-                                 reason="vision/audio understanding call",
-                                 byte_len=byte_len)
+        _eg.record_binary_egress("google-gemini", field, action=action,
+                                 reason=reason, byte_len=byte_len)
     except Exception:
         pass
+
+
+# ── routing mode ────────────────────────────────────────────────────────────
+#
+# The same decision /api/analyze makes for an uploaded image
+# (routes/core_routes.py `_analyze_mode`): the user's model_routing.mode.
+# `local_only` never reaches the cloud; `local_preferred` tries the local seat
+# first; every other mode keeps the cloud path. `_load_settings` already folds
+# the offline overlay (mode forced to local_only while offline) into the mode,
+# and an active `local_only_guard` run (News routines, podcast scripts) is
+# local-only whatever the global mode says. An unreadable setting fails
+# CLOSED: the cloud is reached only on an affirmative read.
+
+_LOCAL_FIRST_MODES = ("local_only", "local_preferred")
+
+
+def _routing_mode() -> str:
+    from agent_friday.services.local_only_guard import routing_mode
+    return routing_mode()
+
+
+def _local_only_withheld(tool: str, what: str, field: str, nbytes: int,
+                         why: str = "") -> str:
+    """The honest result for a cloud-bound look that Local only forbids."""
+    _record_media_binary_egress(
+        field, nbytes, action="block",
+        reason="local_only: %s withheld%s" % (what, (" (%s)" % why) if why else ""))
+    return ("%s: not done. Local only is on, so %s was not sent to a cloud "
+            "model, and this machine cannot do it locally%s. Give the "
+            "conversational seat a model with a vision projector, or switch "
+            "routing to Local preferred to allow the cloud."
+            % (tool, what, (": %s" % why) if why else ""))
+
+
+def _describe_locally(images, prompt: str):
+    """Describe image bytes on the local seat. `images` is a list of
+    (bytes, mime). Returns (text, None) or (None, reason); never raises and
+    never reaches past the local seat's own endpoint."""
+    try:
+        from agent_friday.services import local_vision as _lv
+    except Exception as e:
+        return None, "local vision is unavailable (%s)" % e
+    outs = []
+    for i, (data, mime) in enumerate(images, 1):
+        try:
+            res = _lv.describe(base64.b64encode(data).decode(), mime=mime,
+                               prompt=prompt)
+        except Exception as e:
+            return None, "the local seat failed (%s)" % e
+        if not res.get("ok"):
+            return None, str(res.get("reason") or "the local seat could not read it")
+        outs.append((("frame %d: " % i) if len(images) > 1 else "") + res["text"])
+    return "\n".join(outs), None
 
 
 def _gemini_client():
@@ -172,14 +228,25 @@ def _tool_inspect_image(inp):
         "clothing, colors), composition, art style, and any text or lettering "
         "visible anywhere in the image. If characters are present, describe "
         "each one's distinguishing features.")
+    mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp"}[
+        path.suffix.lower().lstrip(".")]
+    mode = _routing_mode()
+    if mode in _LOCAL_FIRST_MODES:
+        text, why = _describe_locally([(data, mime)], question)
+        if text is not None:
+            # Described on this machine: nothing left it, so there is no
+            # egress to record.
+            return "[%s | %.1f KB | local]\n%s" % (
+                path.name, len(data) / 1024, text.strip())
+        if mode == "local_only":
+            return _local_only_withheld("inspect_image", "that image",
+                                        "inspect_image.image", len(data), why)
     client = _gemini_client()
     if client is None:
         return ("inspect_image error: no vision provider configured "
                 "(GEMINI_API_KEY missing).")
     from google.genai import types
-    mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-            "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp"}[
-        path.suffix.lower().lstrip(".")]
     question = _gate_vision_question(question, "inspect_image.question")
     try:
         resp = client.models.generate_content(
@@ -196,16 +263,11 @@ def _inspect_video_frame(path, inp):
     """Sample frames from a video and describe them (start/middle/end)."""
     dur = _ffprobe_duration(path) or 0.0
     stamps = [0.2, max(0.2, dur / 2), max(0.4, dur - 0.4)] if dur else [0.2]
-    client = _gemini_client()
-    if client is None:
-        return ("inspect_image error: no vision provider configured "
-                "(GEMINI_API_KEY missing).")
-    from google.genai import types
     question = (inp.get("question") or "").strip() or (
         "These are frames from the start, middle and end of one video clip. "
         "Describe what happens across them: subjects, motion, consistency of "
         "characters between frames, and any text/lettering.")
-    parts = [question]
+    frames = []
     _frame_bytes = 0
     import tempfile
     for i, t in enumerate(stamps):
@@ -218,8 +280,7 @@ def _inspect_video_frame(path, inp):
                 timeout=60, check=True)
             _frame_data = Path(frame_path).read_bytes()
             _frame_bytes += len(_frame_data)
-            parts.append(types.Part.from_bytes(
-                data=_frame_data, mime_type="image/png"))
+            frames.append(_frame_data)
         except Exception:
             continue
         finally:
@@ -227,9 +288,28 @@ def _inspect_video_frame(path, inp):
                 os.unlink(frame_path)
             except OSError:
                 pass
-    if len(parts) == 1:
+    if not frames:
         return "inspect_image error: could not extract frames from %s" % path.name
-    parts[0] = _gate_vision_question(parts[0], "inspect_image.question")
+    mode = _routing_mode()
+    if mode in _LOCAL_FIRST_MODES:
+        text, why = _describe_locally([(f, "image/png") for f in frames], question)
+        if text is not None:
+            # Described on this machine: nothing left it, so there is no
+            # egress to record.
+            return "[%s | %.1fs video, %d frames sampled | local]\n%s" % (
+                path.name, dur, len(frames), text.strip())
+        if mode == "local_only":
+            return _local_only_withheld("inspect_image", "those video frames",
+                                        "inspect_image.video_frames",
+                                        _frame_bytes, why)
+    client = _gemini_client()
+    if client is None:
+        return ("inspect_image error: no vision provider configured "
+                "(GEMINI_API_KEY missing).")
+    from google.genai import types
+    parts = [_gate_vision_question(question, "inspect_image.question")]
+    parts += [types.Part.from_bytes(data=f, mime_type="image/png")
+              for f in frames]
     try:
         resp = client.models.generate_content(model="gemini-2.5-flash",
                                               contents=parts)
@@ -272,7 +352,20 @@ def _tool_inspect_audio(inp):
     except Exception as e:
         lines.append("transcript unavailable (%s)" % e)
     question = (inp.get("question") or "").strip()
-    if question:
+    if question and _routing_mode() == "local_only":
+        # The transcript above is the whole of what can be judged on-device;
+        # tone and quality need a cloud listener, which Local only forbids.
+        try:
+            _record_media_binary_egress(
+                "inspect_audio.audio", path.stat().st_size, action="block",
+                reason="local_only: audio withheld from the listen check")
+        except OSError:
+            pass
+        lines.append("listen check unavailable: Local only is on, so the "
+                     "audio was not sent to a cloud model; the transcript "
+                     "and levels above are all that can be judged on this "
+                     "machine.")
+    elif question:
         client = _gemini_client()
         if client is not None:
             from google.genai import types
@@ -370,7 +463,8 @@ TOOLS = [
             "this to verify narration/TTS before shipping — hallucinated or "
             "garbled speech shows up in the transcript. Optional 'question' "
             "additionally plays the audio to a cloud model for a tone/quality "
-            "judgment (e.g. 'does this voice suit a bedtime story?')."),
+            "judgment (e.g. 'does this voice suit a bedtime story?'); under "
+            "Local only that listen check is skipped and said so."),
         "input_schema": {
             "type": "object",
             "properties": {

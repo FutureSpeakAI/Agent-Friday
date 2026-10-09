@@ -69,6 +69,7 @@ from agent_friday.services.model_router import (
     _generate_text,
     _get_friday_system_prompt,
     _predict_route_provider,
+    is_refusal,
 )  # noqa: E501
 from agent_friday.routes._errors import api_error, log_failure
 
@@ -438,7 +439,7 @@ def outreach_suggestions():
 @workflows_bp.route('/api/outreach/draft', methods=['POST'])
 @login_required
 def outreach_draft():
-    """Draft outreach message. Uses Gemini if available, else templated fallback."""
+    """Draft outreach message via the model router, else templated fallback."""
     data = request.get_json(silent=True) or {}
     contact = (data.get('contact') or data.get('name') or '').strip()
     company = (data.get('company') or '').strip()
@@ -460,18 +461,21 @@ def outreach_draft():
 
     draft_text = None
     try:
-        client = get_genai_client()
-        if client:
-            # Gemini is cloud; the prompt embeds user-supplied contact name and
-            # context notes — gate it fail-closed before it leaves the device.
-            from agent_friday.services import egress_gate as _eg
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=_eg.gate_text(prompt, "gemini", "outreach.draft"),
-            )
-            draft_text = (getattr(resp, 'text', None) or '').strip()
+        # The prompt embeds the contact name and the user's notes, so it goes
+        # through the model router (the path content_draft uses), which honours
+        # the routing mode -- Local only keeps it on this machine -- and seals
+        # every cloud leg through the egress gate. A router refusal is not a
+        # draft; it falls through to the template below.
+        draft_text = _generate_text(
+            [{"role": "user", "content": prompt}],
+            max_tokens=600,
+            orb_label="✉ Outreach Draft", workspace='outreach',
+        )
+        if is_refusal(draft_text):
+            draft_text = None
+        draft_text = (draft_text or '').strip()
     except Exception as e:
-        _log.warning("outreach draft Gemini error: %s", e)
+        _log.warning("outreach draft generation error: %s", e)
 
     if not draft_text:
         subject = f"Quick hello — {angle.title()}"

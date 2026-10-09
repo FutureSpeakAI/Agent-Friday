@@ -58,10 +58,23 @@ def _json_or_none(resp):
 # Creative routes — Gemini-direct  (need mock_gemini)
 # ─────────────────────────────────────────────────────────────────────────────
 
+@pytest.fixture
+def routed_stub(patch_app):
+    """poem / code-art run on the routed text provider; record its prompts."""
+    recorded = {"prompts": []}
+
+    def _gen(messages, **kw):
+        recorded["prompts"].append(messages)
+        return "[[gemini-test-stub]]"
+
+    patch_app("_generate_text", _gen)
+    return recorded
+
+
 class TestCreatePoem:
     """POST /api/create/poem — writes a .md file under CREATIONS_DIR."""
 
-    def test_happy_path(self, client, mock_gemini, creations_dir):
+    def test_happy_path(self, client, routed_stub, creations_dir):
         resp = client.post("/api/create/poem", json={"prompt": "A haiku about testing"})
         assert resp.status_code == 200
         data = resp.get_json()
@@ -72,33 +85,32 @@ class TestCreatePoem:
         created = list(creations_dir.glob("friday-text-*.md"))
         assert len(created) == 1, f"Expected 1 .md file, found {created}"
 
-    def test_stub_text_returned(self, client, mock_gemini, creations_dir):
-        """Gemini stub returns [[gemini-test-stub]]; that text should appear in
-        the response (directly from the stubbed generate_content call)."""
+    def test_stub_text_returned(self, client, routed_stub, creations_dir):
+        """The routed text stub returns [[gemini-test-stub]]; that text should
+        appear in the response."""
         resp = client.post("/api/create/poem", json={"prompt": "Test poem"})
         data = resp.get_json()
         assert "[[gemini-test-stub]]" in (data.get("text") or "")
 
-    def test_default_prompt(self, client, mock_gemini, creations_dir):
+    def test_default_prompt(self, client, routed_stub, creations_dir):
         """Route should work with an empty body (uses the built-in default prompt)."""
         resp = client.post("/api/create/poem", json={})
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "ok"
 
-    def test_malformed_json_not_500(self, client, mock_gemini):
+    def test_malformed_json_not_500(self, client, routed_stub):
         resp = client.post("/api/create/poem", data="{bad", content_type="application/json")
         assert resp.status_code < 500
 
-    def test_gemini_was_called(self, client, mock_gemini, creations_dir):
+    def test_router_was_called(self, client, routed_stub, creations_dir):
         client.post("/api/create/poem", json={"prompt": "Digital soul"})
-        # mock_gemini records the contents arg passed to generate_content
-        assert len(mock_gemini["prompts"]) >= 1
+        assert len(routed_stub["prompts"]) >= 1
 
 
 class TestCreateCodeArt:
     """POST /api/create/code-art — writes a .html file."""
 
-    def test_happy_path(self, client, mock_gemini, creations_dir):
+    def test_happy_path(self, client, routed_stub, creations_dir):
         resp = client.post("/api/create/code-art", json={"prompt": "Pulsing circles"})
         assert resp.status_code == 200
         data = resp.get_json()
@@ -109,7 +121,7 @@ class TestCreateCodeArt:
         created = list(creations_dir.glob("friday-codeart-*.html"))
         assert len(created) == 1
 
-    def test_stub_content_on_disk(self, client, mock_gemini, creations_dir):
+    def test_stub_content_on_disk(self, client, routed_stub, creations_dir):
         """The stub returns '[[gemini-test-stub]]'; that should end up in the file."""
         client.post("/api/create/code-art", json={"prompt": "Waves"})
         created = list(creations_dir.glob("friday-codeart-*.html"))
@@ -117,7 +129,7 @@ class TestCreateCodeArt:
         content = created[0].read_text(encoding="utf-8")
         assert "[[gemini-test-stub]]" in content
 
-    def test_malformed_json_not_500(self, client, mock_gemini):
+    def test_malformed_json_not_500(self, client, routed_stub):
         resp = client.post("/api/create/code-art", data="!!!", content_type="application/json")
         assert resp.status_code < 500
 
