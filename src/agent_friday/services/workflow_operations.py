@@ -301,15 +301,10 @@ def execute(action, args=None, context=None):
                 raise UserFacingValueError("The schedule disappeared; reload before trying again.")
             return {"status": "ok", "note": "Schedule resumed." if action == "resume" else "Schedule paused. Work already running is unchanged."}
         if action == "stop":
-            from agent_friday.services import task_journal
-            run = agent.chain_run_status(slug, run_id=args["run_id"]) if args.get("run_id") else agent.chain_run_status(slug)
-            stopped = []
-            for step in (run or {}).get("steps", []):
-                tid = step.get("task_id")
-                if tid and step.get("status") in ACTIVE:
-                    task_journal.request_stop(tid)
-                    task_journal.steer("Stop this workflow after the current tool finishes.", source="user", task_id=tid)
-                    stopped.append(tid)
+            # The one stop (agent.stop_workflow_chain): the running step finishes, the next never starts,
+            # and the run's record and step list say stopped.
+            res = agent.stop_workflow_chain(slug, by="you", run_id=args.get("run_id"))
+            stopped = list(res.get("stopping") or []) if res.get("ok") else []
             if not stopped:
                 raise UserFacingValueError("That run has no active step to stop.")
             return {"status": "ok", "task_ids": stopped, "note": "Stop requested. The current tool can finish; no further step should start."}

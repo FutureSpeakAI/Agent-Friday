@@ -60,14 +60,16 @@ def test_a_run_shows_its_steps_then_one_state_change_at_a_time(world):
 
 def test_each_step_is_told_to_a_live_call_in_counts_never_by_name(world):
     spawn, pushed = world
+    from agent_friday.services import conversations
+    cid = conversations.create(title="Live call")["id"]
     heard = []
-    vlc.register("c-live", lambda text, kind: heard.append((kind, text)))
+    vlc.register(cid, lambda text, kind: heard.append((kind, text)))
     try:
-        tid = agent.run_workflow_chain("Morning brief", conversation_id="c-live")
+        tid = agent.run_workflow_chain("Morning brief", conversation_id=cid)
         _finish(tid)
         agent._advance_task_chain(tid, "done")
     finally:
-        vlc.unregister("c-live") if hasattr(vlc, "unregister") else None
+        vlc.unregister(cid) if hasattr(vlc, "unregister") else None
     assert heard == [("progress", "Step 1 of 3 has started."), ("progress", "Step 2 of 3 has started.")], heard
     assert not [t for _k, t in heard if "Harbor" in t or "Gather" in t]
 
@@ -131,4 +133,10 @@ def test_the_panel_is_mounted_in_the_shell_and_the_commands_reach_it():
     index = (ROOT / "index.html").read_text(encoding="utf-8")
     assert "a.type === 'steps' || a.type === 'step_update'" in index and "new CustomEvent('friday:' + a.type" in index
     assert index.index("friday_stage.js") < index.index("step_panel.js")
-    assert "data-testid\": \"wf-stop\"" in index and "'/api/workflows/chains/' + encodeURIComponent(w.slug) + '/stop'" in index
+    app = (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")
+    # The card's Stop run reaches the one stop: /api/workflows/action -> workflow_operations 'stop' ->
+    # agent.stop_workflow_chain (the same call the step panel's route makes).
+    assert "\"data-testid\": \"wf-stop\"" in index and 'data-testid="wf-stop"' in app
+    assert "onAction('stop', w)" in index and "onAction('stop', w)" in app
+    ops = (ROOT / "src" / "agent_friday" / "services" / "workflow_operations.py").read_text(encoding="utf-8")
+    assert "agent.stop_workflow_chain(" in ops

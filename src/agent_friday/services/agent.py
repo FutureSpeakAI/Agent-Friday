@@ -6012,16 +6012,27 @@ _CHAIN_STOP: dict = {}
 _CHAIN_STOPPED: dict = {}
 
 
-def stop_workflow_chain(name, by="you"):
+_CHAIN_ACTIVE = ('queued', 'queued-for-seat', 'running', 'waiting', 'waiting_approval', 'waiting_for_approval')
+
+
+def _record_chain_stopped(slug, after_step):
+    """Remember that the owner stopped this run: which step it was on and which tasks belong to the run, so a
+    later run of the same workflow is never read as the stopped one."""
+    ids = [s.get('task_id') for s in (chain_run_status(slug) or {}).get('steps') or [] if s.get('task_id')]
+    _CHAIN_STOPPED[slug] = {"after_step": after_step, "at": _time.time(), "tasks": ids}
+
+
+def stop_workflow_chain(name, by="you", run_id=None):
     """Stop a running workflow: the step that is running finishes (it is asked to stop at its next checkpoint),
     the next never starts, and the run's record says `stopped`. {"ok", "slug", "stopping", "after_step"} or
-    {"ok": False, "reason"}. Stopping only ever ends work, so it needs no approval."""
+    {"ok": False, "reason"}. Stopping only ever ends work, so it needs no approval. The one stop: the owner's
+    click, chat and voice, and the workflow tool's `stop` action all come through here."""
     chain = load_workflow_chain(name)
     if not chain:
         return {"ok": False, "reason": "there is no workflow called %r" % str(name)[:60]}
     slug = chain.get('slug') or _chain_slug(name)
-    st = chain_run_status(slug) or {}
-    running = [s for s in st.get('steps') or [] if s.get('status') in ('queued', 'running')]
+    st = (chain_run_status(slug, run_id=run_id) if run_id else chain_run_status(slug)) or {}
+    running = [s for s in st.get('steps') or [] if s.get('status') in _CHAIN_ACTIVE]
     if not running:
         return {"ok": False, "reason": "it is not running"}
     from agent_friday.services import task_journal as _tjm
@@ -6043,7 +6054,7 @@ def stop_workflow_chain(name, by="you"):
             _task_set(tid, status='cancelled', ended=_time.time(),
                       result='[Stopped at your request before it started.]')
         stopping.append(tid)
-    _CHAIN_STOPPED[slug] = {"after_step": running[-1].get('index', 0), "at": _time.time()}
+    _record_chain_stopped(slug, running[-1].get('index', 0))
     return {"ok": True, "slug": slug, "stopping": stopping, "after_step": running[-1].get('index', 0)}
 
 
@@ -6334,14 +6345,15 @@ def chain_run_status(name, run_id=None):
     # Stopped by the owner: a step that was stopped, or a stop that landed between steps. What never started
     # is skipped, and the reason says who stopped it.
     _rec = _CHAIN_STOPPED.get(slug)
-    if state not in ('running', 'completed', 'completed_unverified') and (
-            'stopped' in statuses or (_rec and latest and (latest[0].get('created') or 0) <= _rec['at'])):
+    _mine = bool(_rec and latest and any(t.get('task_id') in (_rec.get('tasks') or []) for t in latest))
+    if state not in ('running', 'completed', 'completed_unverified') and ('stopped' in statuses or _mine):
         state = 'stopped'
         for x in out_steps:
             if x['status'] == 'pending':
                 x['status'] = 'skipped'
                 x['reason'] = 'stopped by you'
             elif x['status'] in ('stopped', 'cancelled'):
+                x['status'] = 'stopped'
                 x['reason'] = x.get('reason') or 'stopped by you'
     owner = latest[0] if latest else {}
     last = (next((row for row in reversed(selected) if row.get('task_id')), {})
@@ -6646,6 +6658,16 @@ def _advance_task_chain_once(task_id, result_text):
     with TASKS_LOCK:
         t = dict(TASKS.get(task_id) or {})
     result_text = (result_text or '').strip()
+    stopped_by_owner = bool(t.get('chain') and (_journal().stop_requested(task_id) or t.get('stop_requested')
+                                                or _CHAIN_STOP.get(t['chain'])))
+    if stopped_by_owner:
+        # The owner stopped the run while this step was finishing: the next never starts, the run's record says
+        # stopped, and the step list shows it.
+        _CHAIN_STOP.pop(t['chain'], None)
+        _task_log(task_id, "Chain stopped at your request: the next step did not start.")
+        _record_chain_stopped(t['chain'], int(t.get('chain_step', 0)))
+        _chain_sync(task_id)
+        return None
     if _journal().stop_requested(task_id) or t.get('stop_requested') or t.get('status') in ('cancelled', 'timeout', 'interrupted'):
         return None
 
@@ -6670,7 +6692,7 @@ def _advance_task_chain_once(task_id, result_text):
             _task_log(task_id, f"Chain stopped at your request: step {nxt + 1}/{len(steps)} did not start.")
             _journal().decision("chain_stop", f"stopped before step {nxt + 1}/{len(steps)}", task_id=task_id,
                                 reason="the owner asked to stop", alternatives=["advance"])
-            _CHAIN_STOPPED[chain_slug] = {"after_step": int(t.get('chain_step', 0)), "at": _time.time()}
+            _record_chain_stopped(chain_slug, int(t.get('chain_step', 0)))
             _chain_sync(task_id)
             return None
         if chain and nxt < len(steps):
