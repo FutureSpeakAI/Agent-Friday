@@ -1,6 +1,6 @@
 # Updating and uninstalling
 
-Agent Friday™ Beta 1.0 installs for your Windows account only. The program
+Agent Friday™ Beta 1.0.1 installs for your Windows account only. The program
 lives in `%LOCALAPPDATA%\AgentFriday`. Your notes, conversations, settings and
 vault live in `%USERPROFILE%\.friday`. The installer is not code-signed, so
 Windows SmartScreen warns the first time you run it.
@@ -17,7 +17,7 @@ to the release page. Friday never downloads or installs anything itself. The
 request carries nothing about you or your PC.
 
 Releases are ordered by a build sequence number, not by version number. Beta
-1.0 (`1.0.0b1`) has a lower version number than the 5.x releases it replaces,
+1.0.1 (`1.0.1b1`) has a lower version number than the 5.x releases it replaces,
 but a higher build sequence, so Friday never offers you an older 5.x build as an
 update. With the check off, watch the
 [releases page](https://github.com/FutureSpeakAI/Agent-Friday/releases).

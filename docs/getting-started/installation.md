@@ -7,7 +7,7 @@ installing without the wizard. Install from source is in
 
 ## What setup does
 
-`AgentFriday-Setup-1.0.0-beta.1.exe` is one file of about 640 MB. It installs
+`AgentFriday-Setup-1.0.1-beta.1.exe` is one file of about 640 MB. It installs
 for the current Windows account, needs no administrator rights, and sends
 nothing anywhere. It carries:
 
@@ -48,8 +48,8 @@ under OneDrive.
 ## Upgrading
 
 Run the new installer over the old one. Setup compares builds by their build
-sequence, so a 5.x installation is always treated as older than Beta 1.0, and
-Beta 1.0 never offers to "update" you back to a 5.x build. Before it changes
+sequence, so a 5.x installation or a Beta 1.0 installation is always treated as older than Beta 1.0.1, and
+Beta 1.0.1 never offers to "update" you back to an older build. Before it changes
 anything, setup stops Friday and copies the data folder to a dated folder under
 `.friday-backups`. When it finishes, it checks that the data folder has every
 file it had before and that the vault's key files are unchanged. A newer
@@ -60,7 +60,7 @@ version already installed is never replaced by an older setup program.
 For managed machines and test runs, the setup program accepts these options:
 
 ```
-AgentFriday-Setup-1.0.0-beta.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=setup.log
+AgentFriday-Setup-1.0.1-beta.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=setup.log
 ```
 
 | Option | Meaning |

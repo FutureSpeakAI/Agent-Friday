@@ -121,7 +121,7 @@ Check 'shortcuts' ($lnk.Desktop -and $lnk.StartMenu) `
 
 $apps = $null
 try { $apps = Get-ItemProperty -Path $AppsKey -ErrorAction Stop } catch { }
-Check 'apps' ($null -ne $apps -and $apps.DisplayName -eq 'Agent Friday Beta 1.0' -and [string]$apps.DisplayVersion -match '^1\.0\.0-beta\.1$') `
+Check 'apps' ($null -ne $apps -and $apps.DisplayName -eq 'Agent Friday Beta 1.0.1' -and [string]$apps.DisplayVersion -match '^1\.0\.1-beta\.1$') `
       $(if ($apps) { "$($apps.DisplayName) $($apps.DisplayVersion)" } else { 'no Apps entry' })
 
 $firstRun = $null
@@ -150,7 +150,7 @@ try {
     }
 
     $health = Api '/api/health'
-    Check 'health' ([string]$health.version -eq '1.0.0b1') "version: $($health.version); release: $($health.release_name)"
+    Check 'health' ([string]$health.version -eq '1.0.1b1') "version: $($health.version); release: $($health.release_name)"
 
     # First run: the consent flow comes first, the vault second, and the
     # update check is asked rather than assumed.
@@ -295,7 +295,7 @@ if ($reExit -eq 0 -and (Test-Path $py)) {
 }
 $keptAgain = (Test-Path -LiteralPath $sentinel) -and ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $sentinelHash)
 Check 'reinstall' (($reExit -eq 0) -and $lnkRe.Desktop -and $lnkRe.StartMenu -and ($null -ne $manifestRe) -and
-                   ([int64]$manifestRe.build_sequence -gt 51403) -and ($null -ne $healthRe) -and ([string]$healthRe.version -eq '1.0.0b1') -and $keptAgain) `
+                   ([int64]$manifestRe.build_sequence -gt 51403) -and ($null -ne $healthRe) -and ([string]$healthRe.version -eq '1.0.1b1') -and $keptAgain) `
       ("exit $reExit; shortcuts: $($lnkRe.Desktop)/$($lnkRe.StartMenu); build sequence: " +
        $(if ($manifestRe) { $manifestRe.build_sequence } else { 'no manifest' }) + "; health version: " +
        $(if ($healthRe) { $healthRe.version } else { 'no answer' }) + "; data kept: $keptAgain")

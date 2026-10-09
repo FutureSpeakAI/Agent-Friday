@@ -1,6 +1,6 @@
 # Known Issues
 
-**For Agent Friday™ Beta 1.0 (1.0.0b1).**
+**For Agent Friday™ Beta 1.0.1 (1.0.1b1).**
 
 This file lists what is broken, unverified, or deliberately limited in a way
 you may hit. Each entry was checked against the code on that date. Fixed
@@ -114,7 +114,7 @@ you hit something that is not here, please open an issue.
 
 Listed separately from "broken". These are not claims that things work.
 
-- **Beta 1.0 has had little time on real computers.** Please report what you
+- **Beta 1.0.1 has had little time on real computers.** Please report what you
   find.
 - **The phone has not carried real traffic.** Texts, voicemail and approvals
   by text are unit-tested; live calls have run only against a simulated

@@ -1,20 +1,34 @@
-# Agent Friday™ Beta 1.0
+# Agent Friday™ Beta 1.0.1
 
 *FutureSpeak.AI™*
 
-Agent Friday™ is a private AI agent that runs on your own Windows PC. Beta 1.0
-is the first release of the app. It is a **pre-release**: it is meant to be
-tried, and it has rough edges, listed below.
+Agent Friday™ is a private AI agent that runs on your own Windows PC. Beta 1.0.1
+follows Beta 1.0, the first release of the app. It is a **pre-release**: it is
+meant to be tried, and it has rough edges, listed below.
+
+## Local voice now runs on Ternary Bonsai 1.7B
+
+<!-- BONSAI-SECTION: written by the release lead after the voice branch lands -->
+
+## Upgrading
+
+Run this installer over an existing Beta 1.0 (v1.0.0-beta.1) or 5.x install,
+including 5.14.3. It upgrades in place. Before it changes anything, setup stops
+Friday and backs up your data folder to a dated folder under `.friday-backups`
+in your user folder, and your vault is part of that backup. When it finishes, it
+checks that your data folder has every file it had before and that your vault's
+key files are unchanged. Both upgrade paths are tested before each release.
+Details are in [Upgrading from 5.x](#upgrading-from-5x) below.
 
 ## Download and install
 
-Download `AgentFriday-Setup-1.0.0-beta.1.exe` (about 640 MB) from the assets
+Download `AgentFriday-Setup-1.0.1-beta.1.exe` (about 640 MB) from the assets
 below. The same hash is in the `.sha256` file beside it.
 
 **SHA-256:** `<SHA256 PLACEHOLDER: filled in when the release is published>`
 
 1. Check the file. In PowerShell:
-   `Get-FileHash .\AgentFriday-Setup-1.0.0-beta.1.exe -Algorithm SHA256`.
+   `Get-FileHash .\AgentFriday-Setup-1.0.1-beta.1.exe -Algorithm SHA256`.
    The `Hash` must match the line above.
 2. Double-click the file. It installs for your Windows account only, needs no
    administrator rights, and brings its own Python and every package, so you
@@ -68,8 +82,8 @@ anything, setup stops Friday and copies your data to a dated folder under
 data folder has every file it had before and that your vault's key files are
 unchanged. Your notes, settings and passphrase are never deleted by an update.
 
-Beta 1.0 (1.0.0b1) is numerically lower than 5.14.3 and is newer. Friday and
-the setup program order releases by build sequence, so a 5.x build is never
+Beta 1.0.1 (1.0.1b1) is numerically lower than 5.14.3 and is newer. Friday and
+the setup program order releases by build sequence, so a 5.x build or Beta 1.0 is never
 offered to this beta as an upgrade.
 
 ## Uninstalling
@@ -92,4 +106,4 @@ matter:
 - It has had little time on real computers. Please report what you find at
   [github.com/FutureSpeakAI/Agent-Friday/issues](https://github.com/FutureSpeakAI/Agent-Friday/issues).
 
-Build sequence: 101000001
+Build sequence: 101000101

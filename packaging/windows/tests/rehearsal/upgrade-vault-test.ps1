@@ -55,7 +55,9 @@
     UPGRADING WITH THE INNO SETUP PROGRAM (-UpgradeExe)
     ---------------------------------------------------
     Beta 1.0 ships as AgentFriday-Setup-<tag>.exe, not a zip. With -UpgradeExe
-    the base is still a published release zip (v5.14.3 ships one), and the
+    the base is a published release: a zip (v5.14.3 ships one, -BaseZip) or a
+    setup program (Beta 1.0 and later, -BaseExe, installed silently with the
+    same switches the fresh-install job uses and no model download). The
     upgrade is the new exe run silently over it, with /DIR pointing at the same
     root. On top of the questions above it then asks:
 
@@ -68,7 +70,8 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string] $BaseZip,
+    [string] $BaseZip = '',
+    [string] $BaseExe = '',
     [string] $UpgradeZip = '',
     [string] $UpgradeExe = '',
     [Parameter(Mandatory)][string] $Root,
@@ -80,6 +83,10 @@ $ProgressPreference    = 'SilentlyContinue'
 
 if ((-not $UpgradeZip) -and (-not $UpgradeExe)) { throw 'give -UpgradeZip or -UpgradeExe' }
 if ($UpgradeZip -and $UpgradeExe) { throw 'give -UpgradeZip or -UpgradeExe, not both' }
+if ((-not $BaseZip) -and (-not $BaseExe)) { throw 'give -BaseZip or -BaseExe' }
+if ($BaseZip -and $BaseExe) { throw 'give -BaseZip or -BaseExe, not both' }
+if ($BaseExe -and $UpgradeZip) { throw '-BaseExe is upgraded with -UpgradeExe, not -UpgradeZip' }
+$BaseFile = $(if ($BaseExe) { $BaseExe } else { $BaseZip })
 
 function Note($m) { Write-Host ("[{0}] {1}" -f $Label, $m) }
 
@@ -99,8 +106,10 @@ Note "real profile   : $RealHome"
 Note "redirected to  : $FakeHome"
 
 # --- Extract both assets --------------------------------------------------
-Note "extracting base    : $(Split-Path -Leaf $BaseZip)"
-Expand-Archive -LiteralPath $BaseZip -DestinationPath $BaseDir -Force
+if ($BaseZip) {
+    Note "extracting base    : $(Split-Path -Leaf $BaseZip)"
+    Expand-Archive -LiteralPath $BaseZip -DestinationPath $BaseDir -Force
+}
 if ($UpgradeZip) {
     Note "extracting upgrade : $(Split-Path -Leaf $UpgradeZip)"
     Expand-Archive -LiteralPath $UpgradeZip -DestinationPath $UpDir -Force
@@ -114,8 +123,13 @@ function Find-Installer([string] $dir) {
     return $p.FullName
 }
 
-$baseInstaller = Find-Installer $BaseDir
-Note "base installer : $baseInstaller"
+$baseInstaller = ''
+if ($BaseZip) {
+    $baseInstaller = Find-Installer $BaseDir
+    Note "base installer : $baseInstaller"
+} else {
+    Note "base installer : $BaseExe (Inno Setup, silent)"
+}
 $upInstaller = ''
 if ($UpgradeZip) {
     $upInstaller = Find-Installer $UpDir
@@ -168,18 +182,18 @@ function Get-ShellFolderAsInstalled([string] $name) {
 }
 
 # --- The new setup program, silent, over the same root ----------------------
-function Invoke-InnoUpgrade {
-    $log = Join-Path $Root 'run-upgrade.log'
+function Invoke-InnoSetup([string] $exe, [string] $tag) {
+    $log = Join-Path $Root "run-$tag.log"
     $env:USERPROFILE = $FakeHome
     $env:HOME        = $FakeHome
     $env:HOMEDRIVE   = (Split-Path -Qualifier $FakeHome)
     $env:HOMEPATH    = (Split-Path -NoQualifier $FakeHome)
     $env:FRIDAY_SKIP_MODEL = '1'
     try {
-        $p = Start-Process -FilePath $UpgradeExe -PassThru -Wait -NoNewWindow `
+        $p = Start-Process -FilePath $exe -PassThru -Wait -NoNewWindow `
              -RedirectStandardOutput $log -RedirectStandardError "$log.err" `
              -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-',
-                             "/DIR=`"$InstallRoot`"", "/LOG=`"$(Join-Path $Root 'setup-upgrade.log')`"",
+                             "/DIR=`"$InstallRoot`"", "/LOG=`"$(Join-Path $Root "setup-$tag.log")`"",
                              '/ModelsCloud=1', '/SkipMemory=1', '/SkipJudgment=1')
         return $p.ExitCode
     } finally {
@@ -190,7 +204,7 @@ function Invoke-InnoUpgrade {
 
 # --- 1. Base install ------------------------------------------------------
 Note 'installing BASE (this pulls Python + deps; several minutes)'
-$rc = Invoke-Installer $baseInstaller 'base'
+if ($BaseExe) { $rc = Invoke-InnoSetup $BaseExe 'base' } else { $rc = Invoke-Installer $baseInstaller 'base' }
 Note "base installer exit = $rc"
 
 $AppDir = Join-Path $InstallRoot 'app'
@@ -302,7 +316,7 @@ Note "app version before upgrade : $verBefore"
 Note 'installing UPGRADE over the same InstallRoot'
 $legacyArp = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentFriday'
 $legacyArpBefore = Test-Path $legacyArp
-if ($UpgradeExe) { $rc2 = Invoke-InnoUpgrade } else { $rc2 = Invoke-Installer $upInstaller 'upgrade' }
+if ($UpgradeExe) { $rc2 = Invoke-InnoSetup $UpgradeExe 'upgrade' } else { $rc2 = Invoke-Installer $upInstaller 'upgrade' }
 Note "upgrade installer exit = $rc2"
 
 # --- 4. The three questions ----------------------------------------------
@@ -493,7 +507,7 @@ if ($UpgradeExe) {
 
 $summary = [ordered]@{
     label                 = $Label
-    base_zip              = (Split-Path -Leaf $BaseZip)
+    base_zip              = (Split-Path -Leaf $BaseFile)
     upgrade_zip           = $(if ($UpgradeZip) { Split-Path -Leaf $UpgradeZip } else { Split-Path -Leaf $UpgradeExe })
     base_exit             = $rc
     upgrade_exit          = $rc2

@@ -106,7 +106,7 @@ Settings. The check only notifies; it never downloads anything.
 
 **Will it offer to install an old 5.x build?**
 No. Releases are ordered by a build sequence, and every 5.x build is older than
-Beta 1.0.
+Beta 1.0.x.
 
 **Does uninstalling delete my notes?**
 Not unless you say so. Uninstall asks, and the default keeps your data. See

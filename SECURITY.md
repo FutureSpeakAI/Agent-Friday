@@ -58,15 +58,15 @@ Out of scope:
 
 ## Supported versions
 
-Agent Friday™ Beta 1.0 (version `1.0.0b1`) is the first release and the only
-supported line. The 5.x versions were alpha builds and are not supported.
+Agent Friday™ Beta 1.0.1 (version `1.0.1b1`) is the latest release and the only
+supported one. Beta 1.0 and the 5.x versions are not supported.
 Security fixes land on `main` and ship in the next tagged release. They are not
 back-ported.
 
 | Version | Supported |
 |---|---|
-| Beta 1.0 (`1.0.0b1`) and later releases, the latest only | Yes |
-| 5.x and anything older | No. Upgrade by running the new installer; your data is kept. |
+| Beta 1.0.1 (`1.0.1b1`) and later releases, the latest only | Yes |
+| Beta 1.0 (`1.0.0b1`), 5.x and anything older | No. Upgrade by running the new installer; your data is kept. |
 
 Watch the repository's releases for security notes.
 

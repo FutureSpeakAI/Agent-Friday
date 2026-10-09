@@ -35,7 +35,7 @@ conversation content, vault data or personal details.
 **What it does:** Asks GitHub for the list of published Agent Friday releases
 and, if a newer build exists, shows you a notification with a link. Releases
 are compared by build sequence, not by version number, so Friday never offers
-an older build, such as a 5.x release, to a Beta 1.0 install.
+an older build, such as a 5.x release, to a Beta 1.0.x install.
 
 **How often:** The scheduler looks every 6 hours, but a request is made only
 when the last successful check was at least 7 days ago.

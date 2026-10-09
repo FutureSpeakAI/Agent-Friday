@@ -67,8 +67,8 @@ def running_version(app_root: Optional[Path] = None) -> Optional[str]:
 def running_sequence(app_root: Optional[Path] = None) -> Optional[int]:
     """The release ordering number of the code ON DISK, or None.
 
-    Releases are ordered by build sequence, never by version number: Beta 1.0
-    (1.0.0b1) is numerically below the 5.x line it replaces. Derived from
+    Releases are ordered by build sequence, never by version number: Beta 1.0.x
+    (1.0.1b1) is numerically below the 5.x line it replaces. Derived from
     `running_version`, so it can only ever describe the files actually present;
     see `agent_friday.release` for the ordering.
     """
@@ -77,7 +77,7 @@ def running_sequence(app_root: Optional[Path] = None) -> Optional[int]:
 
 
 def display_version(app_root: Optional[Path] = None) -> Optional[str]:
-    """What the app shows a person as its version: "Agent Friday Beta 1.0"
+    """What the app shows a person as its version: "Agent Friday Beta 1.0.1"
     for the Beta build, the plain version for anything else, None if unknown."""
     from agent_friday.release import BUILD_SEQUENCE, RELEASE_NAME, sequence_for_version
     v = running_version(app_root)

@@ -34,9 +34,9 @@ that names the file to start.
 ### Setup says a newer version is installed
 
 Setup compares build sequence, not the version number, and it never replaces a
-newer build with an older one. Nothing was changed. Beta 1.0 (1.0.0b1) looks
-numerically lower than 5.14.3 but is newer, so it installs over any 5.x
-release.
+newer build with an older one. Nothing was changed. Beta 1.0.1 (1.0.1b1) looks
+numerically lower than 5.14.3 but is newer, so it installs over Beta 1.0 and any
+5.x release.
 
 ## Models and memory
 

@@ -1,5 +1,5 @@
 ; ============================================================================
-;  Agent Friday Beta 1.0 - Windows setup program (Inno Setup 6.3 or newer)
+;  Agent Friday Beta 1.0.1 - Windows setup program (Inno Setup 6.3 or newer)
 ;
 ;  Built by packaging\windows\build-installer.ps1, which stages the payload and
 ;  passes the defines below. Do not compile this by hand without them.
@@ -16,8 +16,8 @@
 ;      first-run.json and Friday's own downloader fetches the files on first
 ;      start, with progress, resume and sha256 verification.
 ;
-;  Releases are ordered by BUILD SEQUENCE, not version number: Beta 1.0 is
-;  1.0.0b1, numerically below the 5.x line it replaces. The arithmetic below
+;  Releases are ordered by BUILD SEQUENCE, not version number: Beta 1.0.x is
+;  1.0.1b1, numerically below the 5.x line it replaces. The arithmetic below
 ;  restates src\agent_friday\release.py; a test holds the two together.
 ;
 ;  Silent install, for CI and managed machines:
@@ -53,7 +53,7 @@
 #endif
 
 #define AppName "Agent Friday"
-#define ReleaseName "Agent Friday Beta 1.0"
+#define ReleaseName "Agent Friday Beta 1.0.1"
 #define AppPublisher "FutureSpeak.AI"
 #define AppGuid "BE782F40-3D1C-4F12-8635-4F7561938F75"
 #define UninstKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{" + AppGuid + "}_is1"

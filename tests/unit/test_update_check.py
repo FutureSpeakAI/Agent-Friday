@@ -292,7 +292,7 @@ def test_draft_is_ignored(captured, monkeypatch):
 
 
 # ── Releases are ordered by build sequence, not by version number ────────────
-# Agent Friday Beta 1.0 is 1.0.0b1: numerically below the 5.x line it replaces.
+# Agent Friday Beta 1.0.x is 1.0.1b1: numerically below the 5.x line it replaces.
 
 def test_a_newer_sequence_is_an_update_even_when_the_version_number_is_lower(captured, monkeypatch):
     """The final 1.0.0 follows 5.14.3 although 1 < 5."""
@@ -317,6 +317,9 @@ def test_5_14_3_is_never_offered_to_a_beta_install(captured, monkeypatch):
         assert result["reason"] == "up_to_date", running
 
 
+# The published Beta 1.0 release: tag v1.0.0-beta.1, notes line "Build sequence: 101000001".
+BETA_1_0_SEQUENCE = 101_000_001
+
 OLD_TAGS = ["v4.4.0", "v4.5.0", "v5.14.3", "v1.1.5", "v1.2.0"]
 
 
@@ -324,7 +327,7 @@ def test_old_line_releases_are_never_offered_to_a_beta_install(captured, monkeyp
     """Releases published before Beta 1.0 carry no sequence line; they are the
     old line whatever their tag, so none ranks above the Beta."""
     calls, fake = captured
-    beta = _release("v1.0.0-beta.1", prerelease=True, seq=release.BUILD_SEQUENCE)
+    beta = _release("v1.0.0-beta.1", prerelease=True, seq=BETA_1_0_SEQUENCE)
     fake.reply = _Resp([_release(t) for t in OLD_TAGS] + [beta])
     for running in ("1.0.0b1", "1.0.0-beta.1"):
         monkeypatch.setattr(uc, "running_version", lambda *a, _v=running, **k: _v)
@@ -348,7 +351,7 @@ def test_a_stable_5_14_3_install_is_never_offered_anything_older(captured, monke
 def test_a_4_5_0_install_is_offered_5_14_3_but_not_beta(captured, monkeypatch):
     calls, fake = captured
     fake.reply = _Resp([_release("v4.5.0"), _release("v5.14.3"),
-                        _release("v1.0.0-beta.1", prerelease=True, seq=release.BUILD_SEQUENCE)])
+                        _release("v1.0.0-beta.1", prerelease=True, seq=BETA_1_0_SEQUENCE)])
     monkeypatch.setattr(uc, "running_version", lambda *a, **k: "4.5.0")
     result = uc.check_for_update()
     assert result["update_available"] is True and result["latest_version"] == "5.14.3"

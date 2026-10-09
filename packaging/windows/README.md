@@ -25,7 +25,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
 Produces `dist\AgentFriday-Setup-<tag>.exe` (for example
-`AgentFriday-Setup-1.0.0-beta.1.exe`) and its `.sha256`. That one file is the
+`AgentFriday-Setup-1.0.1-beta.1.exe`) and its `.sha256`. That one file is the
 thing you send; the user double-clicks it. It is built with Inno Setup 6.3 or
 newer (`ISCC.exe`, found under Program Files or via `-IsccPath`; GitHub's
 windows-latest runners have it), carries its own Python, Friday's files and

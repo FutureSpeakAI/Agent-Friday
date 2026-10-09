@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.  
 Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
-> **Note:** Agent Friday™ Beta 1.0 is the first release of the app. The 5.x
+> **Note:** Agent Friday™ Beta 1.0 was the first release of the app. The 5.x
 > entries below are the alpha line it replaces, kept as a record. Entries for
 > 5.7.0 and 5.8.1 are not recorded, because those releases were tagged
 > without a changelog entry. Where a 5.x entry points to the release notes, it
@@ -11,7 +11,21 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ---
 
-## [1.0.0-beta.1] - Agent Friday Beta 1.0 (unreleased)
+## [1.0.1-beta.1] - Agent Friday Beta 1.0.1 (unreleased)
+
+Agent Friday™ Beta 1.0.1 (version `1.0.1b1`, tag `v1.0.1-beta.1`, build
+sequence 101000101) follows Beta 1.0. It installs over Beta 1.0 and over 5.x in
+place, with the data backed up first.
+
+<!-- BONSAI-SECTION: written by the release lead after the voice branch lands -->
+
+### Changed
+
+- Upgrade CI now proves upgrades from both v1.0.0-beta.1 and v5.14.3.
+
+---
+
+## [1.0.0-beta.1] - Agent Friday Beta 1.0
 
 Agent Friday™ Beta 1.0 (version `1.0.0b1`, tag `v1.0.0-beta.1`) is a private AI
 agent that runs on a Windows PC. It is a pre-release: it is meant to be tried,

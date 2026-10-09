@@ -52,6 +52,7 @@ SEQUENCE_TABLE = {
     "2.0.0": 20000, "3.1.0": 30100, "4.4.0": 40400, "4.5.0": 40500, "v4.5.0": 40500,
     "5.9.0": 50900, "5.14.3": 51403, "v5.14.3": 51403, "5.14.3+meta": 51403,
     "1.0.0b1": 101_000_001, "1.0.0-beta.1": 101_000_001, "v1.0.0-beta.1": 101_000_001,
+    "1.0.1b1": 101_000_101, "v1.0.1-beta.1": 101_000_101,
     "v1.0.0-rc.2": 101_000_051, "1.0.0": 101_000_099, "1.2.0": 101_020_099, "1.1.5": 101_010_599,
     "6.0.0": 106_000_099,
 }
@@ -65,7 +66,7 @@ def test_the_shared_sequence_table():
 def test_old_line_installs_are_older_than_beta_and_the_final_release():
     seq = release.sequence_for_version
     for old in ("2.0.0", "3.1.0", "4.4.0", "4.5.0", "5.14.3"):
-        assert seq(old) < release.BUILD_SEQUENCE < seq("1.0.0"), old
+        assert seq(old) < release.BUILD_SEQUENCE < seq("1.0.1"), old
     assert seq("4.5.0") < seq("5.14.3")
 
 
@@ -109,3 +110,23 @@ def test_the_app_reports_its_release_name_for_this_build(tmp_path):
     (tmp_path / "pyproject.toml").write_text('version = "5.14.3"\n', encoding="utf-8")
     assert av.display_version(tmp_path) == "5.14.3"
     assert av.running_sequence(tmp_path) == 51403
+
+
+def test_beta_1_0_1_is_after_beta_1_0_which_is_after_5_14_3():
+    seq = release.sequence_for_version
+    assert seq("1.0.1b1") == 101_000_101
+    assert seq("v1.0.1-beta.1") == 101_000_101
+    assert seq("1.0.0b1") == 101_000_001
+    assert seq("5.14.3") == 51403
+    assert seq("1.0.1b1") > seq("1.0.0b1") > seq("5.14.3")
+    # the final 1.0.0 (101_000_099) sits between the two betas, and 1.0.1 follows both
+    assert seq("1.0.0b1") < seq("1.0.0") < seq("1.0.1b1") < seq("1.0.1")
+
+
+def test_published_notes_order_beta_1_0_1_above_beta_1_0():
+    newer = {"tag_name": "v1.0.1-beta.1", "body": "notes\nBuild sequence: 101000101\n"}
+    older = {"tag_name": "v1.0.0-beta.1", "body": "notes\nBuild sequence: 101000001\n"}
+    legacy = {"tag_name": "v5.14.3", "body": "no line"}
+    assert release.sequence_of_release(newer) == 101_000_101
+    assert release.sequence_of_release(older) == 101_000_001
+    assert release.sequence_of_release(newer) > release.sequence_of_release(older) > release.sequence_of_release(legacy)

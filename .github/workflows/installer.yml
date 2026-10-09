@@ -9,8 +9,9 @@ name: installer
 #                    menu, /api/health, uninstall keeping the person's data,
 #                    reinstall over it
 #                    (packaging/windows/tests/verify-clean-install.ps1)
-#   upgrade          install the PREVIOUS published release the way that release
-#                    ships (a zip and Install Agent Friday.cmd), create a vault,
+#   upgrade          a matrix over BOTH previous releases, v5.14.3 and v1.0.0-beta.1:
+#                    install that release the way it ships (a zip and Install Agent
+#                    Friday.cmd for 5.x, the setup program for Beta 1.0), create a vault,
 #                    upgrade in place with the new exe, prove the passphrase and
 #                    the data survive, the data was backed up first, and the
 #                    shortcuts landed
@@ -19,7 +20,7 @@ name: installer
 #                    exe, its SHA-256 and RELEASE_NOTES.md.
 #
 # Pushing a version tag is the release decision. The release job runs only
-# after the fresh-install and upgrade jobs have passed.
+# after the fresh-install job and every leg of the upgrade matrix have passed.
 #
 # The setup program is unsigned and sends nothing anywhere. The model page is
 # answered with the cloud option in CI, so no model is downloaded.
@@ -28,9 +29,9 @@ on:
   workflow_dispatch:
     inputs:
       previous:
-        description: "Published release to upgrade from (tag)"
+        description: "Published release to upgrade from (tag); leave empty to prove both v5.14.3 and v1.0.0-beta.1"
         required: false
-        default: "v5.14.3"
+        default: ""
   push:
     tags: ["v*"]
 
@@ -40,9 +41,6 @@ permissions:
 concurrency:
   group: installer-${{ github.ref }}
   cancel-in-progress: false
-
-env:
-  PREVIOUS_RELEASE: ${{ github.event.inputs.previous || 'v5.14.3' }}
 
 jobs:
   build:
@@ -57,7 +55,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          # pyproject spells a beta 1.0.0b1 (PEP 440); the tag spells it 1.0.0-beta.1.
+          # pyproject spells a beta 1.0.1b1 (PEP 440); the tag spells it 1.0.1-beta.1.
           $v = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           $m = [regex]::Match($v, '^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$')
           if (-not $m.Success) { throw "pyproject version $v is not a version this workflow understands" }
@@ -128,6 +126,14 @@ jobs:
     needs: build
     runs-on: windows-latest
     timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both previous lines must upgrade in place: 5.14.3 (a zip) and Beta 1.0
+        # (a setup program). A manual run may name a single base instead.
+        base: ${{ fromJSON(github.event.inputs.previous && format('["{0}"]', github.event.inputs.previous) || '["v5.14.3","v1.0.0-beta.1"]') }}
+    env:
+      PREVIOUS_RELEASE: ${{ matrix.base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -141,22 +147,36 @@ jobs:
         run: |
           # v5.14.3 ships one asset, AgentFriday-Setup-5.14.3.zip: unzip it and
           # run Install Agent Friday.cmd (the rehearsal drives the install.ps1 inside it).
-          gh release view $env:PREVIOUS_RELEASE -R ${{ github.repository }} --json assets --jq '.assets[].name'
-          gh release download $env:PREVIOUS_RELEASE -R ${{ github.repository }} -p "AgentFriday-Setup-*.zip" -D previous
+          # Beta 1.0 and later ship AgentFriday-Setup-<tag>.exe, installed silently.
+          $names = @(gh release view $env:PREVIOUS_RELEASE -R ${{ github.repository }} --json assets --jq '.assets[].name')
+          $names
+          if ($names -match '^AgentFriday-Setup-.*\.exe$') {
+            gh release download $env:PREVIOUS_RELEASE -R ${{ github.repository }} -p "AgentFriday-Setup-*.exe" -D previous
+          } else {
+            gh release download $env:PREVIOUS_RELEASE -R ${{ github.repository }} -p "AgentFriday-Setup-*.zip" -D previous
+          }
+          if ($LASTEXITCODE -ne 0) { throw "could not download the $env:PREVIOUS_RELEASE installer" }
       - name: Upgrade in place; the vault must still decrypt and the data must be backed up first
         shell: powershell
         run: |
-          $base = Get-ChildItem previous\AgentFriday-Setup-*.zip | Select-Object -First 1
           $up = Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1
+          $exeBase = Get-ChildItem previous\AgentFriday-Setup-*.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($exeBase) {
+            $baseArgs = @('-BaseExe', $exeBase.FullName)
+          } else {
+            $zipBase = Get-ChildItem previous\AgentFriday-Setup-*.zip | Select-Object -First 1
+            $baseArgs = @('-BaseZip', $zipBase.FullName)
+          }
           powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\rehearsal\upgrade-vault-test.ps1 `
-            -BaseZip $base.FullName -UpgradeExe $up.FullName -Root "$env:RUNNER_TEMP\upgrade" -Label ci
+            @baseArgs -UpgradeExe $up.FullName -Root "$env:RUNNER_TEMP\upgrade" -Label "ci-$env:PREVIOUS_RELEASE"
           exit $LASTEXITCODE
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: upgrade-evidence
+          name: upgrade-evidence-${{ matrix.base }}
           path: |
             ${{ runner.temp }}/upgrade/RESULT.json
+            ${{ runner.temp }}/upgrade/setup-base.log
             ${{ runner.temp }}/upgrade/setup-upgrade.log
           if-no-files-found: ignore
 
@@ -190,7 +210,7 @@ jobs:
           sed -i "s|<SHA256 PLACEHOLDER[^>]*>|$hash|" "$RUNNER_TEMP/notes.md"
           if grep -q 'PLACEHOLDER' "$RUNNER_TEMP/notes.md"; then echo "a placeholder is left in the notes"; exit 1; fi
           grep -n "$hash" "$RUNNER_TEMP/notes.md"
-      # Beta 1.0 replaces the 5.x line, so it is the latest release: the README's
+      # Beta 1.0.x replaces the 5.x line, so it is the latest release: the README's
       # Download link (releases/latest) must land on it, and GitHub skips
       # pre-releases for "latest". Published, never a draft.
       - name: Publish the release (latest, not a draft)
@@ -199,4 +219,4 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
             --repo "${{ github.repository }}" --verify-tag --latest \
-            --title "Agent Friday Beta 1.0" --notes-file "$RUNNER_TEMP/notes.md"
+            --title "Agent Friday Beta 1.0.1" --notes-file "$RUNNER_TEMP/notes.md"

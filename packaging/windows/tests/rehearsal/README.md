@@ -126,3 +126,10 @@ assertion that the passphrase's location is not inside `$InstallRoot`, and a run
 of this harness pointed at the new location. Neither alone is sufficient — a
 static check cannot prove no installer step reaches the path, and a single run
 only exercises the paths it happens to take.
+
+For a Beta 1.0 or later base, which ships a setup program rather than a zip,
+give `-BaseExe` instead of `-BaseZip` (the two are mutually exclusive). The
+harness installs it silently (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, with
+`/ModelsCloud=1` so no model is downloaded), then runs the same vault, data and
+upgrade checks. The installer workflow runs it once per base, v5.14.3 and
+v1.0.0-beta.1.

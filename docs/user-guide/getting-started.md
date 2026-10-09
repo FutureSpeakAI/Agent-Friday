@@ -1,7 +1,7 @@
 # Getting started
 
 This page takes you from download to your first conversation with Agent
-Friday™ Beta 1.0 on Windows. The full installer reference, including source
+Friday™ Beta 1.0.1 on Windows. The full installer reference, including source
 installs, is in [Installation](../getting-started/installation.md).
 
 ## What you need
@@ -41,7 +41,7 @@ it and tells you whether she can think.
 
 ## Install
 
-1. Download `AgentFriday-Setup-1.0.0-beta.1.exe` from the
+1. Download `AgentFriday-Setup-1.0.1-beta.1.exe` from the
    [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest).
 2. Double-click it. It installs for your Windows user only and needs no
    administrator rights. The setup program is not code-signed, so Windows

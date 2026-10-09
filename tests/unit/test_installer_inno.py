@@ -52,10 +52,10 @@ def test_the_app_id_is_a_fixed_guid():
 
 
 def test_the_name_the_version_and_the_output_file():
-    assert '#define ReleaseName "Agent Friday Beta 1.0"' in SCRIPT
+    assert '#define ReleaseName "Agent Friday Beta 1.0.1"' in SCRIPT
     assert setup_value("AppName") == "{#ReleaseName}"
     assert setup_value("OutputBaseFilename") == "AgentFriday-Setup-{#AppTag}"
-    assert release.RELEASE_NAME == "Agent Friday Beta 1.0"
+    assert release.RELEASE_NAME == "Agent Friday Beta 1.0.1"
 
 
 def test_the_rocket_icon_is_used_everywhere():
@@ -202,8 +202,8 @@ def test_the_json_setup_writes_is_the_json_the_app_reads(tmp_path, monkeypatch):
     # the layout WriteFirstRun produces, with a pick as the probe writes it
     pick = json.dumps({"tier": "T1", "packing": "PTQ1_0", "n_gpu_layers": 0, "context": 8192, "kv": "f16",
                        "slots": 1, "batch": "-b 2048 -ub 512", "mmproj": False, "profile": "cpu"}, separators=(",", ":"))
-    text = ('{\r\n  "schema": 1,\r\n  "written_by": "installer",\r\n  "release": "1.0.0b1",\r\n'
-            '  "build_sequence": 101000001,\r\n  "cloud": false,\r\n  "consent_download": true,\r\n'
+    text = ('{\r\n  "schema": 1,\r\n  "written_by": "installer",\r\n  "release": "1.0.1b1",\r\n'
+            '  "build_sequence": 101000101,\r\n  "cloud": false,\r\n  "consent_download": true,\r\n'
             '  "total_bytes": 7000000000,\r\n  "hardware": { "tier": "T1", "ram_mib": 16384, "vram_mib": 0, "disk_free_mib": 90000 },\r\n'
             '  "seats": {\r\n'
             '    "fast_responder": { "model_id": "qwen3-4b-instruct-2507", "packing": "Q4_K_M" },\r\n'
@@ -250,8 +250,8 @@ def test_the_old_zip_path_is_gone():
 
 def test_the_tag_check_accepts_the_beta_tag_against_the_pep440_version():
     assert "(a|b|rc)" in WORKFLOW and "-$word.$($m.Groups[3].Value)" in WORKFLOW
-    # the same normalisation, run: 1.0.0b1 -> v1.0.0-beta.1
-    m = re.match(r"^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$", "1.0.0b1")
+    # the same normalisation, run: 1.0.1b1 -> v1.0.1-beta.1
+    m = re.match(r"^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$", "1.0.1b1")
     word = {"a": "alpha", "b": "beta", "rc": "rc"}[m.group(2)]
     assert "v%s-%s.%s" % (m.group(1), word, m.group(3)) == release.RELEASE_TAG
 
@@ -259,21 +259,38 @@ def test_the_tag_check_accepts_the_beta_tag_against_the_pep440_version():
 def test_the_workflow_has_the_jobs_the_owner_asked_for():
     for job in ("build:", "fresh-install:", "upgrade:", "release:"):
         assert re.search(r"^  %s" % job, WORKFLOW, flags=re.M), job
-    assert 'default: "v5.14.3"' in WORKFLOW and "|| 'v5.14.3'" in WORKFLOW
     assert "AgentFriday-Setup-*.zip" in WORKFLOW, "v5.14.3 ships a zip"
     assert "-UpgradeExe" in WORKFLOW and "-Setup $exe.FullName" in WORKFLOW
     assert "choco install innosetup" in WORKFLOW
 
 
+def test_the_upgrade_job_proves_both_previous_releases():
+    """Upgrades are proved from v5.14.3 (a zip) and from Beta 1.0 (a setup program);
+    a manual run may name a single base. The release waits for every leg."""
+    upgrade = WORKFLOW[WORKFLOW.index("  upgrade:"):WORKFLOW.index("  release:")]
+    assert "matrix:" in upgrade and "fail-fast: false" in upgrade
+    assert '["v5.14.3","v1.0.0-beta.1"]' in upgrade, "both bases are the default"
+    assert "github.event.inputs.previous" in upgrade, "the manual input still overrides to a single base"
+    assert "-BaseExe" in upgrade and "-BaseZip" in upgrade
+    assert "AgentFriday-Setup-*.exe" in upgrade and "AgentFriday-Setup-*.zip" in upgrade
+    assert "name: upgrade-evidence-${{ matrix.base }}" in upgrade, "one evidence artifact per leg"
+    assert "needs: [fresh-install, upgrade]" in WORKFLOW[WORKFLOW.index("  release:"):]
+    harness = (REPO / "packaging" / "windows" / "tests" / "rehearsal" / "upgrade-vault-test.ps1").read_text(encoding="utf-8")
+    assert "[string] $BaseExe" in harness and "give -BaseZip or -BaseExe, not both" in harness
+    for switch in ("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/ModelsCloud=1", "/SkipMemory=1", "/SkipJudgment=1"):
+        assert switch in harness, switch
+    assert "Invoke-InnoSetup $BaseExe 'base'" in harness and "Invoke-InnoSetup $UpgradeExe 'upgrade'" in harness
+
+
 def test_the_release_job_publishes_the_latest_release_not_a_draft():
-    """Beta 1.0 replaces 5.x: releases/latest (the README's Download link) must
+    """Beta 1.0.x replaces 5.x: releases/latest (the README's Download link) must
     land on it, and GitHub skips pre-releases for 'latest'."""
     rel = WORKFLOW[WORKFLOW.index("  release:"):]
     assert "--latest" in rel and "--prerelease" not in rel and "--draft" not in rel
     assert "PLACEHOLDER" in rel and "a placeholder is left in the notes" in rel, \
         "the notes get the installer's real SHA-256, and a leftover placeholder stops the release"
     assert 'needs: [fresh-install, upgrade]' in rel
-    assert "--title \"Agent Friday Beta 1.0\"" in rel and "--notes-file" in rel
+    assert "--title \"Agent Friday Beta 1.0.1\"" in rel and "--notes-file" in rel
     assert ".exe.sha256" in rel and "AgentFriday-Setup-*.exe" in rel
     assert "Build sequence" in rel, "the notes carry the line the updater orders releases by"
 

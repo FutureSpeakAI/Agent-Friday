@@ -3,12 +3,12 @@
 ## Versioning
 
 Agent Friday's version is defined once, in `pyproject.toml`
-(`project.version`, PEP 440: `1.0.0b1`); `package.json` mirrors it for the
-Playwright tooling in npm's spelling (`1.0.0-beta.1`). Tags are the same
-version in tag spelling, `v1.0.0-beta.1`, on `main`; the workflow normalises
+(`project.version`, PEP 440: `1.0.1b1`); `package.json` mirrors it for the
+Playwright tooling in npm's spelling (`1.0.1-beta.1`). Tags are the same
+version in tag spelling, `v1.0.1-beta.1`, on `main`; the workflow normalises
 one to the other and refuses a mismatch.
 
-Releases are **ordered by build sequence, not by version number**: Beta 1.0 is
+Releases are **ordered by build sequence, not by version number**: Beta 1.0.x is
 numerically below the 5.x line it replaces. `BUILD_SEQUENCE` in
 `src/agent_friday/release.py` is bumped by every release (a test holds it equal
 to the sequence computed from the pyproject version), the setup program and the
@@ -43,17 +43,17 @@ The full matrix, with what each path can and cannot do, is in
    checks `/api/health` and first run (no login on localhost, the consent flow,
    scheduled jobs on a local seat, the phone off, agent.<name> once its hosts
    entry exists), uninstalls keeping the data, verifies the data is
-   byte-identical, and reinstalls; `upgrade` installs the previous published
-   release the way that release ships (a zip), creates a vault, upgrades in
+   byte-identical, and reinstalls; `upgrade` runs once for each of the two previous lines, v5.14.3 and v1.0.0-beta.1:
+   it installs that published release the way it ships (a zip for 5.x, the setup program for Beta 1.0), creates a vault, upgrades in
    place with the new exe, and requires the passphrase and data to survive, a
-   backup to exist, and the shortcuts to land. Both upload their evidence.
+   backup to exist, and the shortcuts to land. The release waits for every leg. Both jobs upload their evidence.
    Certificate trust raises a Windows security dialog and is checked by hand on
    a real machine.
 5. Commit, tag `v<version>`, and push the tag by name (never `--tags`). The
    tag must match `pyproject.toml`; the workflow refuses a mismatch.
 6. The tag runs the same workflow. When both verification jobs pass, the
    release job (the only job with write permission) publishes a **pre-release**
-   titled "Agent Friday Beta 1.0" carrying the exe, its SHA-256 and
+   titled "Agent Friday Beta 1.0.1" carrying the exe, its SHA-256 and
    `RELEASE_NOTES.md`. It is public the moment it is created. Pushing the tag
    is the release decision.
 

@@ -5,8 +5,8 @@
     Everything an in-place upgrade does around the file copy:
 
       * work out what is already installed, and how it ranks against this
-        release by BUILD SEQUENCE (never by version number: Beta 1.0 is
-        1.0.0b1, below the 5.x line it replaces);
+        release by BUILD SEQUENCE (never by version number: Beta 1.0.x is
+        1.0.1b1, below the 5.x line it replaces);
       * stop a running Friday, politely, by the exact processes that run from
         the install folder (never by a name pattern);
       * copy the person's data to a timestamped backup folder BEFORE any file
