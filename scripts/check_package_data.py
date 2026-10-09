@@ -26,6 +26,8 @@ REQUIRED_PATTERNS = (
     "agent_friday/seed/skills/job_scanner/SKILL.md",
     "agent_friday/SELF.md",
     "agent_friday/VOICE_DEMO.md",
+    "agent_friday/resources/model_shortlist.json",
+    "agent_friday/resources/bonsai2-tiers.json",
 )
 
 

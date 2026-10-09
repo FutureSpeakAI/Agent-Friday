@@ -110,6 +110,28 @@ def download():
         return api_error(e, "Couldn't start the download", shape="bare")
 
 
+@models_screen_bp.route("/api/models/first-run", methods=["GET"])
+@login_required
+def first_run_status():
+    """The models the installer's picker chose, and how their download is going."""
+    try:
+        from agent_friday.services import first_run_models as frm
+        return jsonify(public_result(frm.status(), "Couldn't read the first-run download"))
+    except Exception as e:
+        return api_error(e, "Couldn't read the first-run download", shape="bare")
+
+
+@models_screen_bp.route("/api/models/first-run/retry", methods=["POST"])
+@login_required
+def first_run_retry():
+    """Start the first-run download again after it stopped; it resumes."""
+    try:
+        from agent_friday.services import first_run_models as frm
+        return jsonify(public_result(frm.run_at_boot(), "Couldn't restart the first-run download"))
+    except Exception as e:
+        return api_error(e, "Couldn't restart the first-run download", shape="bare")
+
+
 @models_screen_bp.route("/api/models/downloads", methods=["GET"])
 @login_required
 def downloads():

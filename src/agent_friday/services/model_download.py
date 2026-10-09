@@ -319,10 +319,15 @@ def runtime_binary(name: str = "prism-fork") -> Path | None:
 
 def start_model(model_id: str, packing: str | None = None, *, profile: dict | None = None,
                 with_companions: bool = True, with_runtime: bool = True,
-                engine_override: str | None = None, start_thread: bool = True) -> dict:
+                engine_override: str | None = None, start_thread: bool = True,
+                serve_override: dict | None = None) -> dict:
     """Queue a shortlist model: its weights, its companions, and the runtime
     it needs if that is not installed. Returns the job (status `refused`
-    with a reason when it may not start)."""
+    with a reason when it may not start).
+
+    `serve_override` replaces the shortlist's serving numbers (`serve_num_ctx`,
+    `serve_args`) in the model's record: the installer's hardware pick uses it
+    so a 16 GB computer is not registered with a context only a large card holds."""
     m = sl.get(model_id)
     if not m:
         return {"status": "refused", "error": "%r is not on the shortlist" % model_id}
@@ -349,7 +354,8 @@ def start_model(model_id: str, packing: str | None = None, *, profile: dict | No
         "bytes_total": total, "bytes_done": 0, "rate_mib_s": None, "eta_s": None,
         "needs_runtime": needs_runtime, "engine": engine_override, "error": None,
         "started_at": time.time(), "finished_at": None, "orb_pid": None,
-        "serve": m.get("serve") or {}, "licence": m.get("licence"),
+        "serve": (serve_override if serve_override is not None else (m.get("serve") or {})),
+        "licence": m.get("licence"),
     }
     try:
         from agent_friday.core import process_register

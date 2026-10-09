@@ -56,10 +56,70 @@ function Get-SpecialDir {
     return ''
 }
 
+function Get-KnownFolderPath {
+    <#  The Windows shell's own answer for a known folder: the folder as it is
+        NOW, wherever it has been redirected to (OneDrive's Known Folder Move
+        puts the Desktop under OneDrive, and a Documents-style redirect can put
+        it on another drive). Returns '' when the shell cannot say. #>
+    param([Parameter(Mandatory)][ValidateSet('Desktop', 'Programs', 'Startup')][string] $Name)
+    $ids = @{ Desktop  = 'B4BFCC3A-DB2C-424C-B029-7FE99A87C641'
+              Programs = 'A77F5D77-2E2B-44C3-A6A2-ABA601054A51'
+              Startup  = 'B97D20BB-F46A-4C97-BA10-5E3608430854' }
+    try {
+        if (-not ('AgentFriday.KnownFolder' -as [type])) {
+            Add-Type -Namespace 'AgentFriday' -Name 'KnownFolder' -ErrorAction Stop -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("shell32.dll")]
+private static extern int SHGetKnownFolderPath(
+    [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPStruct)] System.Guid rfid,
+    uint dwFlags, System.IntPtr hToken, out System.IntPtr ppszPath);
+public static string Get(string guid) {
+    System.IntPtr p;
+    int hr = SHGetKnownFolderPath(new System.Guid(guid), 0, System.IntPtr.Zero, out p);
+    if (hr != 0) return "";
+    string s = System.Runtime.InteropServices.Marshal.PtrToStringUni(p);
+    System.Runtime.InteropServices.Marshal.FreeCoTaskMem(p);
+    return s;
+}
+'@
+        }
+        return [string][AgentFriday.KnownFolder]::Get($ids[$Name])
+    } catch { return '' }
+}
+
 function Get-DesktopDir {
-    $fb = ''
-    if ($env:USERPROFILE) { $fb = Join-Path $env:USERPROFILE 'Desktop' }
-    return (Get-SpecialDir -Name 'Desktop' -Fallback $fb)
+    <#  The Desktop folder this person actually sees. Never assumes
+        %USERPROFILE%\Desktop: with OneDrive's Known Folder Move that folder
+        exists and is empty while the real Desktop is under OneDrive, so a link
+        written there lands somewhere nobody looks.
+
+        Order: .NET's answer, the shell's known-folder answer, the registry's
+        User Shell Folders value, and only then the folders a default profile
+        has (OneDrive\Desktop if present, else the profile's own Desktop). #>
+    $d = Get-SpecialDir -Name 'Desktop'
+    if ($d) { return $d }
+    $k = Get-KnownFolderPath -Name 'Desktop'
+    if ($k) {
+        try { if (-not (Test-Path -LiteralPath $k)) { New-Item -ItemType Directory -Force -Path $k -ErrorAction Stop | Out-Null } } catch { }
+        if (Test-Path -LiteralPath $k) { Write-Log "Desktop resolved by the shell's known-folder lookup: $k" 'WARN'; return $k }
+    }
+    try {
+        $reg = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' -ErrorAction Stop).Desktop
+        if ($reg) {
+            $reg = [Environment]::ExpandEnvironmentVariables([string]$reg)
+            if (Test-Path -LiteralPath $reg) { Write-Log "Desktop resolved from the registry: $reg" 'WARN'; return $reg }
+        }
+    } catch { }
+    foreach ($base in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
+        if ($base) {
+            $c = Join-Path $base 'Desktop'
+            if (Test-Path -LiteralPath $c) { Write-Log "Desktop resolved under OneDrive: $c" 'WARN'; return $c }
+        }
+    }
+    if ($env:USERPROFILE) {
+        $c = Join-Path $env:USERPROFILE 'Desktop'
+        if (Test-Path -LiteralPath $c) { Write-Log "Desktop resolved to the profile folder: $c" 'WARN'; return $c }
+    }
+    return ''
 }
 
 function Get-StartMenuDir {
@@ -133,7 +193,20 @@ function Install-Shortcuts {
         $p = New-Shortcut -LinkPath (Join-Path $desktop 'Agent Friday.lnk') `
                           -TargetPath $launcher -WorkingDirectory $InstallRoot `
                           -Description 'Start Agent Friday' -IconLocation $IconPath
+        if (-not $p) {
+            # The link did not land. Ask the shell where the Desktop is NOW and
+            # try that folder before giving up: the first answer can be a
+            # folder that no longer exists or cannot be written.
+            $alt = Get-KnownFolderPath -Name 'Desktop'
+            if ($alt -and ($alt -ne $desktop) -and (Test-Path -LiteralPath $alt)) {
+                Write-Log "Desktop shortcut failed in $desktop; retrying in the shell's Desktop $alt" 'WARN'
+                $p = New-Shortcut -LinkPath (Join-Path $alt 'Agent Friday.lnk') `
+                                  -TargetPath $launcher -WorkingDirectory $InstallRoot `
+                                  -Description 'Start Agent Friday' -IconLocation $IconPath
+            }
+        }
         if ($p) { $created += $p }
+        else { Write-Log 'The desktop shortcut was not created.' 'FAIL' }
     } else {
         Write-Log 'No usable Desktop folder; the desktop shortcut was not created.' 'WARN'
     }
@@ -455,8 +528,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\autostart.ps1"
 
     $uninstall = @"
 @echo off
-rem Removes Agent Friday from this computer.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\uninstall.ps1"
+rem Removes Agent Friday from this computer. The setup program's own
+rem uninstaller does it when there is one; the script is the fallback.
+if exist "%~dp0unins000.exe" (
+  start "" "%~dp0unins000.exe"
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\uninstall.ps1"
+)
 "@
 
     $map = @{

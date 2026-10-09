@@ -302,5 +302,7 @@ def test_installer_icon_exists_with_alpha_and_the_usual_sizes():
     sizes = im.info.get("sizes")
     assert {(16, 16), (32, 32), (48, 48), (256, 256)} <= set(sizes)
     assert im.convert("RGBA").getpixel((0, 0))[3] == 0
+    # The setup program, the shortcuts and the Apps entry all use the rocket at
+    # assets/icons/futurespeak.ico; the scripts it drives point at it too.
     for script in ("install.ps1", "autostart.ps1"):
-        assert "assets\\friday.ico" in _read(f"packaging/windows/{script}")
+        assert "assets\\icons\\futurespeak.ico" in _read(f"packaging/windows/{script}")

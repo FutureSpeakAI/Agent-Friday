@@ -327,7 +327,7 @@ def report_at_startup(logger: Optional[logging.Logger] = None) -> dict:
             lg.warning("  privacy layer INACTIVE: %s - %s", d["label"], d["reason"])
         if chk["frozen"]:
             lg.warning(
-                "  running from a frozen build: check AgentFriday.spec 'excludes' "
+                "  running from a frozen build: check which packages it left out "
                 "and requirements.txt before trusting any four-layer claim."
             )
     return chk

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-friday"
-version = "5.14.3"
+version = "1.0.0b1"
 description = "Agent Friday by FutureSpeak.AI â€” a sovereign, provider-agnostic desktop AI agent."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -154,4 +154,4 @@ where = ["src"]
 # is only for the non-code files (config.yaml, SKILL.md) that packages.find
 # does not pick up on its own. See agent_friday/seed/__init__.py.
 [tool.setuptools.package-data]
-agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md", "SELF.md", "VOICE_DEMO.md", "resources/*.wav"]
+agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md", "SELF.md", "VOICE_DEMO.md", "resources/*.wav", "resources/*.json"]

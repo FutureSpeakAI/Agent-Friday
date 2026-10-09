@@ -8,7 +8,7 @@ and its layout. It is not what the person installing Friday sees.
 ## What this is for
 
 Someone with a stock Windows 11 laptop and none of Python, git or Ollama
-installed should be able to double-click one thing, answer a few plain
+installed should be able to double-click one file, answer a few plain
 questions, and end up talking to Friday.
 
 The path before this required Python (with the PATH checkbox ticked), git, a
@@ -24,9 +24,16 @@ cd packaging\windows
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
-Produces `dist\AgentFriday-Setup-<version>.zip`, about 21 MB. That zip is the
-thing you send. The user unzips it anywhere and double-clicks
-**Install Agent Friday.cmd**. Nothing else is needed on their machine.
+Produces `dist\AgentFriday-Setup-<tag>.exe` (for example
+`AgentFriday-Setup-1.0.0-beta.1.exe`) and its `.sha256`. That one file is the
+thing you send; the user double-clicks it. It is built with Inno Setup 6.3 or
+newer (`ISCC.exe`, found under Program Files or via `-IsccPath`; GitHub's
+windows-latest runners have it), carries its own Python, Friday's files and
+the pre-built wheels, needs no administrator rights, and is unsigned.
+
+To look at the wizard screens without installing anything, compile and run the
+exe to the model page and cancel, or read the page in
+`installer\AgentFriday.iss` (`[Code]`, "The model page").
 
 The build needs no Python of its own — it uses the embeddable interpreter it
 just downloaded to build the wheels. It **aborts** rather than producing a
@@ -35,8 +42,50 @@ degraded artifact if the payload is incomplete, if a vendored library under
 Library's pdf.js, 204 files, rides this way), if the wheelhouse comes out empty,
 or if anything credential-shaped survives into the payload.
 
+**The wheelhouse is complete.** After building the pure-Python wheels, the build
+runs `pip download` for every file in `requirements\` (core, recommended,
+memory, judgment) into the wheelhouse, then resolves each file again with
+`--no-index` and aborts if anything is missing. The setup program therefore
+installs every Python package offline (`install.ps1` passes `--no-index` when a
+wheelhouse is shipped; a missing wheel fails naming it; `-AllowNetwork` /
+`/AllowNetwork=1` restores the index as an explicit fallback). OfficeCLI and the
+judgment checkpoint still download while setup runs.
+
 Useful flags: `-NoBundlePython` (installer downloads Python on the target
-instead), `-NoWheelhouse` (accept the source-build fallback deliberately).
+instead), `-NoWheelhouse` (accept the source-build fallback deliberately),
+`-IsccPath`.
+
+### What the setup program does
+
+`installer\AgentFriday.iss` owns the wizard, the Desktop and Start menu
+shortcuts, the autostart entry (named "Agent Friday"; the old "FRIDAY Desktop"
+one is removed on upgrade), the Apps list entry and the uninstaller.
+`install.ps1` stays the engine: setup unpacks the payload to its temporary
+folder and runs `install.ps1 -Unattended -SkipOllama -InnoManaged`, which does
+every step the way it always has (each verified, none trusting an exit code).
+
+- **Model page.** `installer\probe-hardware.ps1` (using `lib\ModelPicker.ps1`)
+  reads memory, the graphics card and free disk, applies the pick rules of
+  `src\agent_friday\resources\bonsai2-tiers.json`, and lists only the Bonsai
+  models that fit, for two required jobs: the deep thinker (Bonsai) and the fast
+  responder (the Qwen3 voice front from `resources\voice_front_options.json`,
+  sized with the speech ear and sherpa-onnx). The
+  recommended one is labelled and never preselected; a cloud option and an
+  explicit download-consent checkbox sit on the same page. Setup downloads no
+  weights: it writes `first-run.json` beside the install, and
+  `agent_friday.services.first_run_models` fetches them on first start through
+  the Models screen's downloader (resume, sha256, disk floor).
+- **Upgrade.** `lib\Upgrade.ps1`: rank the installed release by build sequence
+  (never by version number), stop Friday by the processes that run from the
+  install folder, copy the data home to `~\.friday-backups\upgrade-<stamp>`,
+  snapshot it, and after the install compare file counts and the SHA-256 of the
+  vault's key files. A newer installed release is never replaced.
+- **Uninstall.** Asks whether to keep the person's data (default: keep), then
+  runs `uninstall.ps1 -InnoManaged`, which removes caches, shortcuts, the
+  hosts entry and certificate (with consent) and leaves the data and its
+  passphrase together.
+- **Silent install** (CI): see the header of the `.iss`. The cloud option is
+  the default, so nothing is downloaded.
 
 ## Running the tests
 
@@ -44,7 +93,7 @@ instead), `-NoWheelhouse` (accept the source-build fallback deliberately).
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-Installer.ps1
 ```
 
-82 assertions. Needs a real Python on PATH for the argv round-trip section,
+101 assertions. Needs a real Python on PATH for the argv round-trip section,
 which is the most important part of the file — it will tell you loudly if it
 had to skip.
 
@@ -92,8 +141,9 @@ to remove itself is not removable in practice.
 
 | Path | What |
 |---|---|
-| `Install Agent Friday.cmd` | Double-click entry point. Exists so nobody is told to run `Set-ExecutionPolicy`. |
-| `install.ps1` | The twelve-step flow. |
+| `installer/AgentFriday.iss` | The Inno Setup script: wizard, model page, shortcuts, uninstaller. |
+| `installer/probe-hardware.ps1` | Run by the model page; writes the models that fit. |
+| `install.ps1` | The twelve-step engine, run by the setup program. |
 | `uninstall.ps1` | Read its header before changing it. |
 | `autostart.ps1` | The visible on/off switch. |
 | `build-installer.ps1` | Produces the artifact. |
@@ -103,14 +153,18 @@ to remove itself is not removable in practice.
 | `lib/Python.ps1` | Embeddable CPython. Three traps documented in its header. |
 | `lib/Deps.ps1` | The three dependency tiers. |
 | `lib/Ollama.ps1` | Install-and-verify cascade, graceful fallback. |
-| `lib/Shortcuts.ps1` | Shortcuts, autostart, Add/Remove Programs. |
+| `lib/Shortcuts.ps1` | Shortcut helpers (the Desktop is resolved through the shell, never assumed), autostart. |
+| `lib/ModelPicker.ps1` | Hardware facts and the Bonsai pick. |
+| `lib/Upgrade.ps1` | Build-sequence ordering, stop, backup, before/after data check. |
+| `ensure-shortcuts.ps1` | Recreates the shortcuts when setup finds one missing. |
 | `lib/LocalAddress.ps1` | Uninstall: removes the marked hosts-file block (elevated) and untrusts Friday's certificate authority. |
 | `lib/Heal.ps1` | Bounded self-repair. Read the header before changing anything. |
-| `tests/Test-Installer.ps1` | 82 assertions. |
+| `tests/Test-Installer.ps1` | 101 assertions. |
 
 Installed layout on the user's machine, all under `%LOCALAPPDATA%\AgentFriday`:
 `app\` (the source tree), `python\` (private interpreter), `logs\`, `cache\`,
-`tools\`, `install-manifest.json`, and four `.cmd` launchers.
+`tools\`, `install-manifest.json`, `first-run.json` (until its models arrive),
+`AgentFriday.ico`, `unins000.exe`, and four `.cmd` launchers.
 
 ---
 

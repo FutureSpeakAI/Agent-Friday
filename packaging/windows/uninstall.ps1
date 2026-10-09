@@ -59,7 +59,13 @@ param(
     # Non-interactive, for tests. Preserves data (the safe default).
     [switch] $Unattended,
     # Remove her notes too. Interactive runs ask; this is for tests.
-    [switch] $RemoveEverything
+    [switch] $RemoveEverything,
+    # Run by the Inno Setup uninstaller, which removes the install folder
+    # itself and asks its own questions. Everything else here still happens.
+    [switch] $InnoManaged,
+    # With -Unattended: the person agreed, in the setup program, to Windows'
+    # administrator prompt for the hosts-file entry and its certificate prompt.
+    [switch] $AllowElevation
 )
 
 $ErrorActionPreference = 'Stop'
@@ -134,6 +140,8 @@ function Move-SelfOutOfHarmsWay {
               '-InstallRoot', $Root, '-Relaunched')
     if ($Unattended)       { $args += '-Unattended' }
     if ($RemoveEverything) { $args += '-RemoveEverything' }
+    if ($InnoManaged)      { $args += '-InnoManaged' }
+    if ($AllowElevation)   { $args += '-AllowElevation' }
     Start-Process -FilePath 'powershell.exe' -ArgumentList $args -NoNewWindow -Wait
     exit 0
 }
@@ -346,8 +354,8 @@ $null = Invoke-Step -Id 'uninstall.shortcuts' -Title 'Removing the shortcuts' `
         if ($manifest -and $manifest.shortcuts) { $targets += @($manifest.shortcuts) }
         # Belt and braces for an install whose manifest is missing or stale.
         $targets += @(
-            (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Agent Friday.lnk'),
-            (Join-Path ([Environment]::GetFolderPath('Startup')) 'Agent Friday.lnk')
+            (Join-Path (Get-DesktopDir) 'Agent Friday.lnk'),
+            (Join-Path (Get-StartupDir) 'Agent Friday.lnk')
         )
         foreach ($t in ($targets | Sort-Object -Unique)) {
             if ($t -and (Test-Path -LiteralPath $t)) {
@@ -360,7 +368,7 @@ $null = Invoke-Step -Id 'uninstall.shortcuts' -Title 'Removing the shortcuts' `
         if (Test-Path -LiteralPath $sm) { Remove-Item -LiteralPath $sm -Recurse -Force -ErrorAction SilentlyContinue }
     } `
     -Verify {
-        (-not (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Agent Friday.lnk'))) -and
+        (-not (Test-Path -LiteralPath (Join-Path (Get-DesktopDir) 'Agent Friday.lnk'))) -and
         (-not (Test-Autostart)) -and
         (-not (Test-Path -LiteralPath (Get-StartMenuDir)))
     }
@@ -479,11 +487,19 @@ $null = Invoke-Step -Id 'uninstall.caches' -Title 'Removing the downloaded voice
 
 Say-Step "Undoing Friday's local address"
 if ($hostsBlockPresent) {
-    if ($Unattended) {
+    if ($Unattended -and -not $AllowElevation) {
         Say-Note "Friday's entry is still in this PC's hosts file."
         Say-Detail 'Removing it needs administrator permission, which an unattended run does not ask for.'
         Add-InstallWarning ("The hosts-file block between '" + $script:FridayHostsBegin +
                             "' and its end marker was left in place (unattended run; needs elevation).")
+    } elseif ($Unattended) {
+        # The setup program already asked, and the person said yes.
+        if (Invoke-FridayHostsRemovalElevated) {
+            Say-Ok 'Removed from the hosts file.'
+        } else {
+            Say-Note "The hosts-file entry is still there (the permission prompt was declined or failed)."
+            Add-InstallWarning 'The hosts-file block could not be removed; the permission prompt was declined or failed.'
+        }
     } else {
         Say ''
         Say "  Friday added its local address (agent.<name>) to this PC's hosts"
@@ -517,7 +533,7 @@ if ($fridayCaTrusted.Count -gt 0) {
     # Unattended: attempted with a short wait, because Windows' confirmation
     # has nobody to answer it; whatever is left is reported below.
     $certWait = 300
-    if ($Unattended) { $certWait = 60 }
+    if ($Unattended -and -not $AllowElevation) { $certWait = 60 }
     $left = @(Remove-FridayTrustedCertificates -Thumbprints $fridayCaTrusted -TimeoutSeconds $certWait)
     if ($left.Count -eq 0) {
         Say-Ok 'Windows no longer trusts the certificate Friday made.'
@@ -546,7 +562,7 @@ if ($removeData) {
             if (Test-Path -LiteralPath $FridayDir) {
                 Remove-Item -LiteralPath $FridayDir -Recurse -Force -ErrorAction SilentlyContinue
             }
-            $creations = Join-Path ([Environment]::GetFolderPath('Desktop')) 'friday-creations'
+            $creations = Join-Path (Get-DesktopDir) 'friday-creations'
             if (Test-Path -LiteralPath $creations) {
                 Remove-Item -LiteralPath $creations -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -589,6 +605,7 @@ $null = Invoke-Step -Id 'uninstall.registry' -Title 'Removing Friday from the in
 #  9. The install folder itself
 # =========================================================================
 
+if (-not $InnoManaged) {
 $null = Invoke-Step -Id 'uninstall.root' -Title 'Removing Friday''s program files' `
     -HumanFailure 'Most of Friday was removed, but one folder would not delete. Something on the computer is still using a file inside it.' `
     -HumanFix 'Restart the computer and run the uninstaller once more from Settings, Apps, Installed apps.' `
@@ -605,6 +622,7 @@ $null = Invoke-Step -Id 'uninstall.root' -Title 'Removing Friday''s program file
         }
     } `
     -Verify { -not (Test-Path -LiteralPath $InstallRoot) }
+}
 
 # =========================================================================
 

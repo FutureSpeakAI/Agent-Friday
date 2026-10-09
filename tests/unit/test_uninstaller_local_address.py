@@ -107,10 +107,15 @@ def test_uninstaller_undoes_the_address_before_it_can_delete_the_record():
     block = text[step:data]
     assert "Remove-FridayTrustedCertificates" in block
     assert "Invoke-FridayHostsRemovalElevated" in block
-    # Unattended: the elevated edit is skipped and reported, the cert attempted.
-    unattended = block[block.index("if ($Unattended)"):block.index("} else {")]
+    # Unattended, without the person's agreement: the elevated edit is skipped
+    # and reported, the cert attempted.
+    unattended = block[block.index("if ($Unattended -and -not $AllowElevation)"):block.index("} elseif ($Unattended) {")]
     assert "Invoke-FridayHostsRemovalElevated" not in unattended
     assert "Add-InstallWarning" in unattended
+    # Unattended after the setup program's own question was answered yes
+    # (-AllowElevation): the elevated edit is asked for, never done silently.
+    agreed = block[block.index("} elseif ($Unattended) {"):block.index("Friday added its local address")]
+    assert "Invoke-FridayHostsRemovalElevated" in agreed
     lib = LIB.read_text(encoding="utf-8-sig")
     assert "'-user', '-delstore', 'Root'" in lib
     assert "-Verb RunAs" in lib

@@ -2,7 +2,7 @@
 
 > **Status:** active, specification with measurements
 > **Written:** 2026-09-30
-> **Implementation:** none. This document and [`bonsai2-tiers.json`](bonsai2-tiers.json) (version 2: download manifest with sha256, per-backend release assets, the structured pick, the detection commands) are inputs to the installer section of the first-run and onboarding master spec and to [`model-soup-advisor.md`](model-soup-advisor.md).
+> **Implementation:** none. This document and [`bonsai2-tiers.json`](../../../src/agent_friday/resources/bonsai2-tiers.json) (version 2: download manifest with sha256, per-backend release assets, the structured pick, the detection commands) are inputs to the installer section of the first-run and onboarding master spec and to [`model-soup-advisor.md`](model-soup-advisor.md).
 > **Owner's direction (verbatim, 2026-09-29):** "bonsai2 is our standard now, not Gemma. not Qwen..only bonsai2. [...] whatever the lowest range is, that is applications floor. All the other local models are out for suggested installation on first setup. We should support any models the user wishes."
 > **Method:** STORM. Six simulated experts argued each section against the tree, the publisher's card and the September logs on the reference machine: an on-device inference engineer, a llama.cpp maintainer, an Apple Silicon ML engineer, a low-end-hardware user, a privacy reviewer and a generative-media engineer. Where they disagreed the disagreement is recorded, not smoothed.
 > **Provenance tags.** **MEASURED-2026-09-18** and **MEASURED-2026-09-30** were measured on the reference machine (RTX 4070 12 GB, i7-10700F, 32 GB DDR4, Windows 11). **PUBLISHED** is from a cited public source. **TREE** was read from the code at `02035ba6`. **ESTIMATE** is arithmetic on tagged inputs with the formula shown. **UNMEASURED** means no evidence exists yet; the installer must not promise a number for an UNMEASURED row until it has benchmarked on that device (§7.4).
@@ -151,7 +151,7 @@ Decode on a ternary model is memory-bandwidth-bound: each generated token stream
 
 where 0.7 is the fraction of theoretical bandwidth the publisher's community AVX2 kernels reached on a single-channel DDR5 laptop: 8.3 tok/s decode, up from 3.9 with the generic kernel, on an i7-13620H (**PUBLISHED**, issue #196). For partial offload (T4a) the estimate is `1 / (f_gpu / gpu_tok_s + f_cpu / cpu_tok_s)`, with `f_gpu` the fraction of weight bytes on the card, and the layer count is `floor(64 × (usable VRAM − KV − compute) ÷ 5,671)`, clamped so that fewer than 24 layers means the CPU tier instead. GPU tiers are interpolated by memory bandwidth between the published card (L4 32.1, RTX 4090 91.1, RTX 5090 120.5 tok/s for `PTQ1_0`) and the measured RTX 4070. Prompt processing on CPU is about twice decode (16 versus 8.3 in the same issue); on GPU it is the published PP512 figure. Seat memory is weights + KV cache at the served context (64 KiB per token at f16, half at q8_0; **PUBLISHED**, atomic.chat guide, consistent with the header in §1.2) + compute buffer (about 400 MiB at `-ub 512`, about 1,200 at `-ub 2048`) + 630 MiB mmproj only when vision is on.
 
-The machine-readable form of this table, with every tag, is [`bonsai2-tiers.json`](bonsai2-tiers.json).
+The machine-readable form of this table, with every tag, is [`bonsai2-tiers.json`](../../../src/agent_friday/resources/bonsai2-tiers.json).
 
 ### 3.2 The table
 

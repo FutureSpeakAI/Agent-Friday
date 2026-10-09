@@ -7,8 +7,8 @@ to determine its sensitivity (that would be circular and catastrophic).
 HOW MANY LAYERS ARE ACTUALLY RUNNING IS AN EMPIRICAL QUESTION - ASK, DON'T ASSUME.
 This docstring used to open "Four layers", which was false in every environment
 that has ever existed: `presidio-analyzer` was not in requirements.txt (Layer 2
-had never once run anywhere), and `sentence_transformers` is in AgentFriday.spec's
-`excludes` (so Layer 3 is absent from the shipped .exe). Both were loaded inside
+had never once run anywhere), and `sentence_transformers` was left out of the old
+frozen build (so Layer 3 was absent from that .exe). Both were loaded inside
 bare `except Exception: _X = None` handlers with no logging, so the shortfall was
 silent. The packaged binary ran two layers while this text promised four.
 
@@ -101,7 +101,7 @@ _API_KEY_RE = _secret_patterns.PROVIDER_KEY_RE
 #
 # They are nominally covered by Layer 2 (Presidio PHONE_NUMBER / LOCATION),
 # which is not enforced in any environment, and by Layer 3 embeddings, which
-# AgentFriday.spec `excludes` from the frozen build AND which the vault path
+# the old frozen build left out AND which the vault path
 # switches off outright (vault_access.classify passes use_embeddings=False).
 # Without these patterns, the only thing standing between
 # "emergency contact: 555-1234" and a cloud provider is the literal English
@@ -252,8 +252,8 @@ _EMBEDDER_ERROR = ""
 def _layer3_expected() -> bool:
     """Is Layer 3 installed here, so that not having it is a fault?
 
-    The packaged .exe leaves sentence_transformers out on purpose (AgentFriday.spec);
-    there the layer is absent by design and reported as such by privacy_layers.
+    A frozen build leaves sentence_transformers out on purpose; there the layer
+    is absent by design and reported as such by privacy_layers.
     """
     try:
         import importlib.util

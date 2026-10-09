@@ -35,7 +35,7 @@ if (-not $InstallRoot) {
     else { $InstallRoot = Join-Path $env:LOCALAPPDATA 'AgentFriday' }
 }
 
-$icon = Join-Path $InstallRoot 'app\assets\friday.ico'
+$icon = Join-Path $InstallRoot 'app\assets\icons\futurespeak.ico'
 if (-not (Test-Path -LiteralPath $icon)) { $icon = '' }
 
 Say-Banner

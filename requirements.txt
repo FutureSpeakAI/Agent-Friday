@@ -27,7 +27,7 @@ pdfplumber>=0.11            # PDF text extraction for /api/analyze-file. NOT OPT
                             # services/capability_preflight.py now fails loudly if it goes missing again.
 sentence-transformers>=2.2   # local embeddings for semantic context pruning (all-MiniLM-L6-v2) AND Layer 3 of the
                              # sensitivity classifier (services/sensitivity_classifier.py::_embedding_tier).
-                             # WARNING - NOT PRESENT IN THE FROZEN BUILD: it is in AgentFriday.spec's `excludes`
+                             # WARNING - NOT PRESENT IN A FROZEN BUILD: the old PyInstaller recipe excluded it
                              # because it drags in torch (4.4 GB measured on-disk vs a 152 MB .exe). So the packaged
                              # app runs Layers 1a+1b only. That is a deliberate size trade-off, not an oversight;
                              # services/privacy_layers.py reports the real layer count at startup so the binary can

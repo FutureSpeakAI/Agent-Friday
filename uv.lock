@@ -18,7 +18,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent-friday"
-version = "5.14.3"
+version = "1.0.0b1"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

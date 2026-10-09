@@ -2,9 +2,11 @@
 <#
     Agent Friday - build the Windows installer artifact.
 
-    Run this on a machine that has a normal Python 3.12 with pip. It produces
-    dist\AgentFriday-Setup-<version>.zip, which is the thing you actually send
-    someone: unzip it anywhere, double-click "Install Agent Friday.cmd", done.
+    Run this on a machine that has Inno Setup 6.3 or newer (ISCC.exe). It
+    stages the payload, then compiles dist\AgentFriday-Setup-<tag>.exe, the one
+    file you send someone: it carries its own Python, Friday's files and the
+    pre-built wheels, and needs nothing else on the other computer. A SHA-256
+    file is written beside it. The setup program is unsigned.
 
     WHAT THIS DOES THAT THE INSTALLER DELIBERATELY DOES NOT
     -------------------------------------------------------
@@ -42,7 +44,9 @@ param(
     # Skip fetching the embeddable Python. The installer will download it on
     # the target machine instead.
     [switch] $NoBundlePython,
-    [switch] $NoWheelhouse
+    [switch] $NoWheelhouse,
+    # Where ISCC.exe is, when it is not under Program Files\Inno Setup 6.
+    [string] $IsccPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,7 +73,7 @@ $version = '0.0.0'
 $m = [regex]::Match((Get-Content -LiteralPath (Join-Path $RepoRoot 'pyproject.toml') -Raw), '(?m)^version\s*=\s*"([^"]+)"')
 if ($m.Success) { $version = $m.Groups[1].Value }
 
-Set-StepTotal 5
+Set-StepTotal 6
 Say-Banner -Version $version
 Say "Building the Windows installer artifact."
 Say "  repo   : $RepoRoot"
@@ -558,12 +562,62 @@ if ($NoWheelhouse) {
         Say-Note ("Could not build: " + ($failed -join ', '))
     }
 
+    # --- Every runtime wheel, so the install is offline ---------------------
+    #
+    # The setup program installs from this folder with --no-index. So the folder
+    # must hold a wheel for everything the installer will ask pip for: each
+    # requirements file, with its whole dependency tree. Download them here
+    # (same interpreter, same platform as the target: CPython 3.12, win_amd64),
+    # then PROVE coverage by resolving every file again with the index switched
+    # off. A build whose wheelhouse has a hole stops here.
+    # The wheels built above (the sdist-only family); the pure-Python check
+    # below applies to these only, never to the platform wheels collected here.
+    $ownWheelNames = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    $tierFiles = @('core', 'recommended', 'memory', 'judgment') |
+        ForEach-Object { Join-Path (Join-Path $Here 'requirements') "$_.txt" }
+    $pipCommon = @('--only-binary=:all:', '--disable-pip-version-check', '--no-input')
+    if (-not $embedZip) {
+        Say-Problem -What 'The wheelhouse cannot be completed without the bundled interpreter (-NoBundlePython).' `
+                    -WhatToDo 'Build without -NoBundlePython, or pass -NoWheelhouse to accept a setup that needs the internet.'
+        Complete-Install -Failed -FailedStep 'build.wheelhouse' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+        exit 1
+    }
+    foreach ($tf in $tierFiles) {
+        Say-Working ("Collecting the wheels for " + (Split-Path -Leaf $tf) + ' (a large download the first time).')
+        $dl = Invoke-Native -FilePath $buildPy -Arguments (@('-m', 'pip', 'download') + $pipCommon +
+            @('--dest', $Wheels, '--find-links', $Wheels, '-r', $tf)) -TimeoutSeconds 7200
+        if ($dl.ExitCode -ne 0) {
+            Say-Problem -What ("Could not collect wheels for $(Split-Path -Leaf $tf): " + (($dl.Combined -split "`r?`n") | Select-Object -Last 3) -join ' ') `
+                        -WhatToDo 'Check the network and build again. A wheelhouse with a hole is never shipped.'
+            Write-Log "BUILD ABORTED - pip download failed for $tf" 'FAIL'
+            Complete-Install -Failed -FailedStep 'build.wheelhouse' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+            exit 1
+        }
+    }
+    foreach ($tf in $tierFiles) {
+        $chk = Invoke-Native -FilePath $buildPy -Arguments (@('-m', 'pip', 'install', '--dry-run', '--no-index') + $pipCommon +
+            @('--find-links', $Wheels, '-r', $tf)) -TimeoutSeconds 1800
+        if ($chk.ExitCode -ne 0) {
+            $why = (($chk.Combined -split "`r?`n") | Where-Object { $_ -match 'No matching distribution|ERROR' } | Select-Object -First 3) -join ' '
+            Say-Problem -What ("The wheelhouse does not cover $(Split-Path -Leaf $tf): $why") `
+                        -WhatToDo 'Do not ship this artifact. Build again; if it repeats, a requirement has no wheel for CPython 3.12 on Windows.'
+            Write-Log "BUILD ABORTED - wheelhouse does not cover $tf" 'FAIL'
+            Complete-Install -Failed -FailedStep 'build.wheelhouse' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+            exit 1
+        }
+    }
+    $allWheels = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl')
+    $wheelMb = [math]::Round((($allWheels | Measure-Object -Property Length -Sum).Sum) / 1MB)
+    Say-Ok "$($allWheels.Count) wheels ($wheelMb MB) cover every requirement; the install resolves from them offline."
+    Write-Log "Wheelhouse covers core, recommended, memory and judgment: $($allWheels.Count) wheels, $wheelMb MB" 'OK'
+
     # The throwaway interpreter must not end up inside the artifact - it would
     # double the download and ship a second Python nobody asked for.
     $bpRootClean = Join-Path $Staging 'buildpy'
     if (Test-Path -LiteralPath $bpRootClean) { Remove-Item -LiteralPath $bpRootClean -Recurse -Force }
 
-    $built = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl' -ErrorAction SilentlyContinue)
+    $built = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl' -ErrorAction SilentlyContinue |
+               Where-Object { $ownWheelNames -contains $_.Name })
     if ($built.Count -eq 0) {
         # ABORT rather than warn. An empty wheelhouse means the artifact
         # silently falls back to building sdists on her laptop - the exact
@@ -588,7 +642,7 @@ if ($NoWheelhouse) {
             Write-Log "Removed non-universal wheel: $($b.Name)" 'WARN'
             Remove-Item -LiteralPath $b.FullName -Force
         }
-        $kept = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl')
+        $kept = @($built | Where-Object { Test-Path -LiteralPath $_.FullName })
         Say-Ok "$($kept.Count) universal wheel(s): $(($kept | ForEach-Object { $_.Name -replace '-py[23].*','' }) -join ', ')"
     }
 }
@@ -598,36 +652,124 @@ if ($NoWheelhouse) {
 # =========================================================================
 
 Say-Step 'Assembling the installer'
-foreach ($f in @('install.ps1','uninstall.ps1','autostart.ps1','sources.json','healing.json','Install Agent Friday.cmd','README.md')) {
+foreach ($f in @('install.ps1','uninstall.ps1','autostart.ps1','ensure-shortcuts.ps1','sources.json','healing.json')) {
     $src = Join-Path $Here $f
-    if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $Staging -Force }
+    if (-not (Test-Path -LiteralPath $src)) {
+        Say-Problem -What "The installer file $f is missing from packaging\windows." -WhatToDo 'This is a bug in the repository, not in your checkout. Do not ship this artifact.'
+        Write-Log "BUILD ABORTED - installer file missing: $f" 'FAIL'
+        Complete-Install -Failed -FailedStep 'build.installerfiles' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+        exit 1
+    }
+    Copy-Item -LiteralPath $src -Destination $Staging -Force
 }
 Copy-Item -LiteralPath (Join-Path $Here 'lib')          -Destination $Staging -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $Here 'requirements') -Destination $Staging -Recurse -Force
 Say-Ok 'Assembled.'
 
 # =========================================================================
-#  5. Zip
+#  5. Compile the setup program
 # =========================================================================
 
-Say-Step 'Packing'
-$zipOut = Join-Path $OutputDir "AgentFriday-Setup-$version.zip"
-if (Test-Path -LiteralPath $zipOut) { Remove-Item -LiteralPath $zipOut -Force }
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($Staging, $zipOut,
-    [System.IO.Compression.CompressionLevel]::Optimal, $false)
+Say-Step 'Compiling the installer with Inno Setup'
 
-$sizeMb = [math]::Round((Get-Item $zipOut).Length / 1MB, 1)
-$hash = Get-Sha256 $zipOut
+# --- The release's names and numbers, from the one place that owns them ----
+function ConvertTo-ReleaseTag {
+    <#  1.0.0b1 (PEP 440, as pyproject.toml spells it) -> 1.0.0-beta.1 (the tag
+        and the file name). A plain 5.14.3 stays as it is. #>
+    param([Parameter(Mandatory)][string] $Pep440)
+    $mm = [regex]::Match($Pep440, '^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$')
+    if (-not $mm.Success) { throw "Cannot turn the version '$Pep440' into a release tag." }
+    if (-not $mm.Groups[2].Success) { return $mm.Groups[1].Value }
+    $word = @{ a = 'alpha'; b = 'beta'; rc = 'rc' }[$mm.Groups[2].Value]
+    return ('{0}-{1}.{2}' -f $mm.Groups[1].Value, $word, $mm.Groups[3].Value)
+}
+
+$releasePy = Join-Path $RepoRoot 'src\agent_friday\release.py'
+$seqMatch = [regex]::Match((Get-Content -LiteralPath $releasePy -Raw), '(?m)^BUILD_SEQUENCE\s*=\s*([0-9_]+)')
+if (-not $seqMatch.Success) {
+    Say-Problem -What 'BUILD_SEQUENCE could not be read from src\agent_friday\release.py.' -WhatToDo 'Restore the line, then build again.'
+    Complete-Install -Failed -FailedStep 'build.sequence' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+$buildSequence = [int64]($seqMatch.Groups[1].Value -replace '_', '')
+
+# The same arithmetic, written a second time in lib\Upgrade.ps1 for the
+# installer's own use. They must agree about THIS release before it ships.
+. (Join-Path $Here 'lib\Upgrade.ps1')
+$sequenceFromVersion = Get-BuildSequence -Version $version
+if ($sequenceFromVersion -ne $buildSequence) {
+    Say-Problem -What ("release.py says build sequence $buildSequence but the version $version in pyproject.toml works out to $sequenceFromVersion. " +
+                       'The setup program would mis-rank this release against the ones before it, so the build has stopped.') `
+                -WhatToDo 'Bump BUILD_SEQUENCE in src\agent_friday\release.py (and RELEASE_TAG) together with the version in pyproject.toml.'
+    Write-Log "BUILD ABORTED - sequence mismatch: release.py=$buildSequence pyproject=$sequenceFromVersion" 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.sequence' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+$releaseTag = ConvertTo-ReleaseTag -Pep440 $version
+$stageNumber = [int64]($buildSequence % 100)
+$fileVersion = ''
+$fv = [regex]::Match($releaseTag, '^(\d+)\.(\d+)\.(\d+)')
+$fileVersion = '{0}.{1}.{2}.{3}' -f $fv.Groups[1].Value, $fv.Groups[2].Value, $fv.Groups[3].Value, $stageNumber
+
+# --- Find Inno Setup ------------------------------------------------------
+$iscc = $null
+if ($IsccPath) {
+    if (Test-Path -LiteralPath $IsccPath) { $iscc = $IsccPath }
+} else {
+    $pf86 = ${env:ProgramFiles(x86)}
+    $candidates = @(
+        $(if ($pf86) { Join-Path $pf86 'Inno Setup 6\ISCC.exe' }),
+        $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe' }),
+        $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe' })
+    ) | Where-Object { $_ }
+    foreach ($cand in $candidates) { if (Test-Path -LiteralPath $cand) { $iscc = $cand; break } }  # not $c: that is $script:C, the colour table
+    if (-not $iscc) {
+        $onPath = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+        if ($onPath) { $iscc = $onPath.Source }
+    }
+}
+if (-not $iscc) {
+    Say-Problem -What 'Inno Setup 6 (ISCC.exe) was not found, so the setup program cannot be compiled.' `
+                -WhatToDo 'Install it (winget install JRSoftware.InnoSetup, or choco install innosetup) or pass -IsccPath. GitHub''s windows-latest runners already have it.'
+    Write-Log 'BUILD ABORTED - ISCC.exe not found' 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.iscc' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+Write-Log "Using Inno Setup compiler: $iscc"
+
+$issPath = Join-Path $Here 'installer\AgentFriday.iss'
+$exeName = "AgentFriday-Setup-$releaseTag.exe"
+$exeOut = Join-Path $OutputDir $exeName
+if (Test-Path -LiteralPath $exeOut) { Remove-Item -LiteralPath $exeOut -Force }
+
+Say-Working "Compiling $exeName (this compresses the payload and takes a few minutes)."
+$compile = Invoke-Native -FilePath $iscc -Arguments @(
+    "/DAppVersion=$version", "/DAppTag=$releaseTag", "/DBuildSequence=$buildSequence",
+    "/DAppFileVersion=$fileVersion", "/DStageDir=$Staging", "/DRepoRoot=$RepoRoot",
+    "/DOutDir=$OutputDir", $issPath
+) -TimeoutSeconds 1800
+if ($compile.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $exeOut)) {
+    $tail = (($compile.Combined -split "`r?`n") | Select-Object -Last 12) -join ' | '
+    Say-Problem -What "Inno Setup could not compile the installer (exit $($compile.ExitCode)). $tail" `
+                -WhatToDo 'The full compiler output is in dist\build.log.'
+    Write-Log "BUILD ABORTED - ISCC exit $($compile.ExitCode)" 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.iscc' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+
+# --- The checksum travels beside the file --------------------------------
+$hash = (Get-FileHash -LiteralPath $exeOut -Algorithm SHA256).Hash.ToLowerInvariant()
+[System.IO.File]::WriteAllText("$exeOut.sha256", "$hash  $exeName`n", (New-Object System.Text.ASCIIEncoding))
+$sizeMb = [math]::Round((Get-Item -LiteralPath $exeOut).Length / 1MB, 1)
 
 Say ''
-Say-Ok "AgentFriday-Setup-$version.zip  ($sizeMb MB)"
-Say "        $zipOut"
+Say-Ok "$exeName  ($sizeMb MB)"
+Say "        $exeOut"
 Say "        SHA-256 $hash"
 Say ''
-Say '  Send that zip. She unzips it anywhere and double-clicks'
-Say '  "Install Agent Friday.cmd". Nothing else is needed on her machine -'
-Say '  no Python, no git, no Ollama.'
+Say '  Send that one file. It carries its own Python, Friday''s files and the'
+Say '  pre-built wheels; nothing else is needed on the other computer. It is'
+Say '  unsigned, so Windows SmartScreen may ask the person to confirm.'
 Say ''
 
 Complete-Install -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')

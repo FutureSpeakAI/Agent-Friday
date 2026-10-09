@@ -1078,10 +1078,9 @@ def cmd_update():
             console.print(f"  Installed version:  [bold]{installed.get('version', 'unknown')}[/bold]")
         console.print(f"  This build:         [bold]{_app_version()}[/bold]\n")
         console.print("  [bold]To update:[/bold]")
-        console.print("    1. Download the newest [bold]AgentFriday-Setup-*.zip[/bold] from")
+        console.print("    1. Download the newest [bold]AgentFriday-Setup-*.exe[/bold] from")
         console.print(f"       {RELEASES_URL}")
-        console.print("    2. Unzip it anywhere.")
-        console.print("    3. Double-click [bold]Install Agent Friday.cmd[/bold].")
+        console.print("    2. Double-click it. It updates Friday in place.")
         console.print("\n  Your notes, settings and connected accounts are kept — the")
         console.print("  installer replaces Friday's own files and nothing under ~/.friday.\n")
         # Say the quiet part: anyone who upgraded in place before 5.6.5 may be

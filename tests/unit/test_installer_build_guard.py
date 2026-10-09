@@ -29,7 +29,7 @@ def test_build_refuses_untracked_or_modified_payload_files():
     assert "-FailedStep 'build.trackedtree'" in text, "guard must abort through the build report like every other step"
     guard_at = text.index("Verifying the payload is the committed tree")
     scan_at = text.index("$leakPatterns")
-    zip_at = text.index("CreateFromDirectory")
+    zip_at = text.index("Compiling the installer with Inno Setup")
     assert guard_at < scan_at < zip_at, "guard must run before the credential scan and long before the zip"
 
 

@@ -1542,6 +1542,89 @@ function useFridayToast() {
   return show;
 }
 
+// First-run model download, chosen in the installer. A small card at the lower
+// left while the chosen models arrive, so the wait is visible. It reads
+// /api/models/first-run, which only has something to say on an install that
+// asked for local models; it stays hidden otherwise and costs one request.
+function fridayFirstRunModelsCard(st) {
+  try {
+    var card = document.getElementById('friday-first-run-models');
+    var state = st && st.state;
+    if (!st || state === 'none' || state === 'cloud' || state === 'declined' || state === 'done') {
+      if (card) card.remove();
+      return;
+    }
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'friday-first-run-models';
+      card.setAttribute('role', 'status');
+      card.setAttribute('data-friday-overlay', 'first-run-models');
+      card.style.cssText = 'position:fixed;z-index:99990;left:16px;bottom:104px;' +
+        'max-width:min(330px,calc(100vw - 32px));padding:10px 13px;border-radius:8px;' +
+        'font-family:JetBrains Mono,monospace;font-size:12px;line-height:1.55;color:#e8eef8;' +
+        'background:rgba(18,22,30,0.94);border:1px solid rgba(255,255,255,0.16);' +
+        'box-shadow:0 8px 28px rgba(0,0,0,0.45)';
+      document.body.appendChild(card);
+    }
+    card.innerHTML = '';
+    var title = document.createElement('div');
+    title.style.fontWeight = '600';
+    title.textContent = state === 'failed'
+      ? 'Your models did not finish downloading'
+      : 'Downloading the models you chose';
+    card.appendChild(title);
+    (st.seats || []).forEach(function (r) {
+      var line = document.createElement('div');
+      var pct = r.bytes_total ? Math.min(100, Math.round(100 * (r.bytes_done || 0) / r.bytes_total)) : 0;
+      var gb = r.bytes_total ? ' (' + (r.bytes_total / 1073741824).toFixed(1) + ' GB)' : '';
+      var what = r.state === 'installed' ? 'ready'
+        : r.state === 'failed' ? 'stopped' + (r.error ? ': ' + r.error : '')
+        : r.state === 'waiting' ? 'waiting'
+        : (r.phase === 'verifying' ? 'checking the download' : pct + '%');
+      line.textContent = r.label + ' — ' + (r.model_label || r.model_id) + gb + ': ' + what;
+      card.appendChild(line);
+    });
+    var note = document.createElement('div');
+    note.style.cssText = 'opacity:.7;margin-top:4px';
+    note.textContent = state === 'failed'
+      ? 'Nothing was lost. It picks up where it stopped.'
+      : 'Each file is checked against the publisher’s checksum. It picks up where it stopped if interrupted.';
+    card.appendChild(note);
+    if (state === 'failed') {
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.textContent = 'Try again';
+      btn.style.cssText = 'margin-top:6px;cursor:pointer;font-family:inherit;font-size:11px;' +
+        'min-height:28px;padding:3px 12px;border-radius:5px;color:#fff;' +
+        'background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.3)';
+      btn.onclick = function () {
+        btn.disabled = true;
+        (window.apiFetch || window.fetch)('/api/models/first-run/retry', { method: 'POST' })
+          .then(function () { fridayFirstRunModelsPoll(); }).catch(function () { btn.disabled = false; });
+      };
+      card.appendChild(btn);
+    }
+  } catch (e) { /* a progress card must never break the app */ }
+}
+window.fridayFirstRunModelsCard = fridayFirstRunModelsCard;
+
+function fridayFirstRunModelsPoll() {
+  try {
+    (window.apiFetch || window.fetch)('/api/models/first-run')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        fridayFirstRunModelsCard(d);
+        var s = d && d.state;
+        // Quick while something is arriving, slower after a failure, and not
+        // at all when there is nothing to wait for (the request file does not
+        // change under a running session).
+        if (s === 'running') setTimeout(fridayFirstRunModelsPoll, 4000);
+        else if (s === 'failed') setTimeout(fridayFirstRunModelsPoll, 30000);
+      })
+      .catch(function () { setTimeout(fridayFirstRunModelsPoll, 60000); });
+  } catch (e) {}
+}
+setTimeout(fridayFirstRunModelsPoll, 2500);
+
 function fridayEscapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function fridayFallbackMd(md){
   const lines=String(md||'').replace(/\r\n/g,'\n').split('\n');
@@ -20664,7 +20747,7 @@ function SettingsTabAbout(){
   return <div>
     <div style={{textAlign:'center',padding:'24px 16px 20px',background:'var(--fr-glass)',borderRadius:10,border:'1px solid var(--fr-glass-edge)',marginBottom:24}}>
       <div style={{marginBottom:10}}><FridayLockup size={20}/></div>
-      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>{'v'+(h?.version||'5.0.0')} · Desktop OS · Sovereign AI</div>
+      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>{h?.release_name || ('v'+(h?.version||'5.0.0'))} · Desktop OS · Sovereign AI</div>
       <div className="fr-trademark" data-testid="trademark-notice">{window.FRIDAY_BRAND.notice}</div>
     </div>
     <StSection title="System">

@@ -29,21 +29,40 @@ Headroom's native Rust core delivers 60-95% token compression. Without it, Frida
 
 | Method | Supported | Platforms | Notes |
 |---|---|---|---|
-| **Windows installer zip** (`AgentFriday-Setup-<version>.zip`) | **Yes — primary** | Windows 10/11 | Embedded CPython, source payload, wheelhouse. No Python, Git or terminal needed. Installs Ollama and sizes a local model to your GPU, or recommends a cloud key. Take the newest zip; every older one is superseded. |
+| **Windows setup program** (`AgentFriday-Setup-<version>.exe`) | **Yes — primary** | Windows 10/11 | One file, built with Inno Setup, carrying its own CPython, the source payload and the wheelhouse. No Python, Git or terminal needed. Its model page offers the Bonsai models that fit your computer, or a cloud model. Unsigned. Take the newest; every older one is superseded. |
 | **Source checkout** (`pip install -e .`) | **Yes** | Windows, macOS, Linux | The developer path and the only path on macOS/Linux. Feature differences by platform are in the README. |
 | **Wheel** (`python -m build`, `pip install agent_friday-*.whl`) | Yes, for the Python package, CLI and bundled seed skills — **not the web UI** | Windows, macOS, Linux | Not published to PyPI; build it yourself (`pip install build` first). The wheel does not carry `index.html`, `static/` or `assets/`, so the API boots but `/` and the UI's assets return 404 and `friday doctor` reports the installation check as failed. Use the source checkout or the Windows installer for the UI. CI verifies the wheel carries the seed skills' data files. |
-| **One-line installers** (`scripts/install.sh`, `install.ps1`, `install.bat`) | Yes, as a convenience over the source path | Linux/macOS/WSL2, Windows | They clone this repository and run `friday setup`. Read them before piping anything to a shell. |
-| **`AgentFriday.exe`** (PyInstaller) | **No** | — | The recipe (`AgentFriday.spec`) is kept for reference. The last published binary is from July 2026 and predates current privacy fixes; do not use it. Any `.exe` in a checkout's `dist/` is that same build. |
+| **One-line installer** (`scripts/install.sh`) | Yes, as a convenience over the source path | Linux/macOS/WSL2 | It clones this repository and runs `friday setup`. Read it before piping anything to a shell. |
+| **`AgentFriday.exe`** (PyInstaller) | **No** | — | Retired. The last published binary is from July 2026 and predates current privacy fixes; do not use it. Any `.exe` in a checkout's `dist/` is that same build. The Windows setup program above is a different file and is supported. |
 
 ### The Windows installer
 
-Download the zip from the
-[latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest),
-unzip it anywhere, and double-click **Install Agent Friday.cmd**. SmartScreen
-may warn on first launch; see the note below. Everything installs per-user
-under `%LOCALAPPDATA%\AgentFriday`; no administrator rights are used.
+Download `AgentFriday-Setup-<version>.exe` from the
+[latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest)
+and double-click it. SmartScreen may warn on first launch; see the note below.
+Everything installs per-user under `%LOCALAPPDATA%\AgentFriday`; no
+administrator rights are used.
 
-Upgrading over an existing install keeps everything under `~/.friday`. Two
+The model page lists only models that fit this computer (memory, graphics
+card and free disk, read locally; nothing is sent), in two jobs: a *fast
+responder* for voice and quick replies (a Qwen3 voice model, fetched with the
+speech ear; the 1.7B sits beside the deep thinker on smaller machines, the 4B
+where there is room), and a *deep thinker* (a Bonsai model). The
+recommended choice is labelled, never preselected. Setup itself downloads no
+model: with the box ticked, Friday's own downloader fetches them on first
+start, with progress, checksums and resume. Choosing a cloud model downloads
+nothing.
+
+Releases are ordered by a build sequence, not by version number: Beta 1.0
+(version `1.0.0b1`) is newer than 5.14.3, and the setup program and the update
+check both know it.
+
+Upgrading over an existing install keeps everything under `~/.friday`. Before
+touching a file, setup stops Friday, copies your data to a timestamped folder
+under `%USERPROFILE%\.friday-backups`, and afterwards checks that the data
+folder holds the same files and that the vault's key files are byte-identical.
+Silent installs: see the header of `packaging/windows/installer/AgentFriday.iss`.
+Older installer defects are worth knowing if your install predates them. Two
 older installer defects are worth knowing if your install predates them:
 5.6.0–5.6.4 did not replace application files on upgrade (running the current
 installer repairs it), and 5.6.5 deleted a vault passphrase that lived only in
@@ -83,20 +102,16 @@ cd Agent-Friday
 
 ## Unsigned-script warnings (Windows SmartScreen · PowerShell · macOS Gatekeeper)
 
-Agent Friday's installers are open-source scripts, not code-signed binaries, so
-a fresh OS may warn you before running them. This is expected for any unsigned
-script — here's how to proceed safely. (Always read a script before running it;
-ours are short and plain-text.)
+Agent Friday's installers are not code-signed, so a fresh OS may warn you
+before running them. This is expected for any unsigned program — here's how to
+proceed safely. The Windows setup program's checksum is published beside it
+(`AgentFriday-Setup-<version>.exe.sha256`); compare it before you run the file.
 
-### Windows — PowerShell execution policy
+### Windows — SmartScreen
 
-If `.\scripts\install.ps1` fails with *"running scripts is disabled on this system"*,
-run it once with a bypass scoped to that single command (it does **not** change
-your machine's policy):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
-```
+If SmartScreen says "Windows protected your PC", choose **More info → Run
+anyway** after checking the checksum. Setup needs no administrator rights; if
+Windows asks for them, say no.
 
 If you downloaded the repo as a ZIP, Windows may mark files as "blocked." Clear
 that flag first:
@@ -154,10 +169,8 @@ pip install -e ".[all]"
 
 Prefer a leaner install? `pip install -e .` lands just the core dependencies
 (server + UI + Anthropic/Gemini paths); the heavier extras stay out and the
-features that need them degrade gracefully. Of the one-line installers,
-`scripts\install.bat` runs the `.[all]` path for you and falls back to
-`requirements.txt` automatically if it errors; `scripts\install.ps1` and
-`scripts/install.sh` install from `requirements.txt` directly.
+features that need them degrade gracefully. The one-line installer
+`scripts/install.sh` installs from `requirements.txt` directly.
 
 `requirements.txt` remains as a direct fallback:
 

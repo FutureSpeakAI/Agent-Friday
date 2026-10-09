@@ -10,6 +10,51 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [1.0.0b1] - Agent Friday Beta 1.0 (unreleased)
+
+Beta 1.0 is numerically below the 5.x line it replaces. Releases are now ordered
+by a **build sequence** (`src/agent_friday/release.py`), not by version number,
+and both the setup program and the weekly update check use it: 5.14.3 is never
+offered to a Beta install, and Beta 1.0 counts as newer than 5.14.3.
+
+### Added
+
+- **One-file Windows setup program** (`AgentFriday-Setup-1.0.0-beta.1.exe`,
+  Inno Setup 6, per-user, unsigned) replacing the zip and `Install Agent
+  Friday.cmd`. It carries its own Python, Friday's files and the wheels.
+- **Hardware-aware model page.** Reads memory, graphics card and free disk
+  locally and lists only the models that fit, for two required jobs: the fast
+  responder (a Qwen3 voice front, with the speech ear) and the deep thinker (a
+  Bonsai model). The recommendation is labelled, never
+  preselected. A cloud option and an explicit consent box sit on the same
+  page. Setup downloads no model: Friday's downloader fetches the choices on
+  first start with progress, sha256 verification and resume
+  (`services/first_run_models.py`).
+- **Safer upgrades.** Setup ranks the installed release by build sequence,
+  stops Friday by the processes that run from the install folder, copies the
+  data home to `~/.friday-backups` first, and afterwards checks the file count
+  and the vault key files' hashes.
+- **Shortcuts that land.** The Desktop shortcut follows a OneDrive-redirected
+  Desktop; setup verifies both shortcuts exist and repairs through the shell's
+  known folders when one does not.
+- **Uninstall asks whether to keep your data**, defaulting to keep.
+
+### Changed
+
+- The autostart entry is named "Agent Friday" (the old "FRIDAY Desktop" entry
+  is removed on upgrade).
+- `bonsai2-tiers.json` moved to `src/agent_friday/resources/` and ships in the
+  package.
+- Release workflow publishes a pre-release (exe, SHA-256, notes) when the
+  version tag is pushed and the install and upgrade checks pass.
+
+### Removed
+
+- The zip and `Install Agent Friday.cmd` path, `scripts/install.ps1`,
+  `scripts/install.bat` and the stale `AgentFriday.spec`.
+
+---
+
 ## [5.14.3] - 2026-09-26
 
 A security release. The repository's CodeQL backlog (706 alerts) is resolved,

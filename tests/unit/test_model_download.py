@@ -248,7 +248,7 @@ def test_outbound_requests_carry_nothing_identifying(store, tmp_path, monkeypatc
 # ── the shortlist and the runtime assets ─────────────────────────────────────
 
 def test_the_shortlist_bonsai_entry_matches_the_tier_manifest():
-    tiers = json.load(open(Path(__file__).resolve().parents[2] / "docs" / "design" / "active" /
+    tiers = json.load(open(Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "resources" /
                            "bonsai2-tiers.json", encoding="utf-8"))
     manifest = {m["file"]: m for m in tiers["model_family"]["bonsai2"]["manifest"] if m.get("sha256")}
     sl.reload_for_tests()

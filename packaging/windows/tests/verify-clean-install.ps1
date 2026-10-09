@@ -2,17 +2,26 @@
 <#
     Fresh-machine verification of a built installer.
 
-    Installs the zip into the CURRENT profile of a machine that has never seen
-    Friday, starts the installed server, checks what a first-time person gets,
-    then uninstalls and checks what is left behind. It is written for a
-    disposable CI runner (a fresh Windows VM per job) and refuses to run
-    anywhere else, because it installs into the real profile, writes the
-    hosts file and removes what it installed.
+    Runs the setup program (AgentFriday-Setup-<tag>.exe) silently in the
+    CURRENT profile of a machine that has never seen Friday, starts the
+    installed server, checks what a first-time person gets, uninstalls keeping
+    the person's data, checks what is left behind, and installs again over the
+    kept data. It is written for a disposable CI runner (a fresh Windows VM per
+    job) and refuses to run anywhere else, because it installs into the real
+    profile, writes the hosts file and removes what it installed.
+
+    The model page is answered with the cloud option (/ModelsCloud=1), so
+    nothing is downloaded in CI.
 
     What it checks, each recorded in RESULT.json:
 
-      install   the installer's own verified steps finished
+      install   the setup program exited 0 and Friday's files are in place
+      shortcuts the Desktop shortcut (wherever Windows says the Desktop is)
+                and the Start menu shortcut exist
+      apps      the Apps list has the setup program's entry, at this release
+      first-run first-run.json records the cloud choice and no download
       localhost Friday answers on http://127.0.0.1:<port>/ with no login
+      health    /api/health answers and reports this release
       consent   first run opens on the vault-first consent flow, and the
                 weekly update check is a question, not a default
       setup-chat the setup chat starts at its first stage
@@ -27,11 +36,13 @@
                 in Settings writes). Trusting Friday's certificate raises a
                 Windows security dialog, so it is not automated here.
       uninstall the install folder, shortcuts and Apps entry are gone, and
-                ~/.friday (the person's own data) is kept
+                ~/.friday (the person's own data) is kept, byte for byte
+      reinstall setup runs again over the kept data; Friday starts and answers
+                /api/health; the kept data is still there
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string] $Zip,
+    [Parameter(Mandatory)][string] $Setup,
     [Parameter(Mandatory)][string] $WorkDir,
     [int] $Port = 3000,
     [int] $BootSeconds = 420
@@ -52,7 +63,6 @@ function Check([string] $name, [bool] $ok, [string] $detail) {
 }
 
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
-$Unpacked    = Join-Path $WorkDir 'unpacked'
 $InstallRoot = Join-Path $env:LOCALAPPDATA 'AgentFriday'
 $FridayDir   = Join-Path $env:USERPROFILE '.friday'
 $ServerLog   = Join-Path $WorkDir 'server.log'
@@ -60,35 +70,70 @@ $ServerLog   = Join-Path $WorkDir 'server.log'
 if (Test-Path $InstallRoot) { throw "not a fresh machine: $InstallRoot exists" }
 if (Test-Path $FridayDir)   { throw "not a fresh machine: $FridayDir exists" }
 
-# ── Install ────────────────────────────────────────────────────────────────
-Expand-Archive -LiteralPath $Zip -DestinationPath $Unpacked -Force
-$installer = Get-ChildItem -LiteralPath $Unpacked -Recurse -Filter 'install.ps1' -File |
-             Where-Object { $_.FullName -notmatch '\\payload\\' } | Select-Object -First 1
-if (-not $installer) { throw 'no install.ps1 in the zip' }
-
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer.FullName `
-    -Unattended -SkipOllama -SkipMemory -SkipJudgment *> (Join-Path $WorkDir 'install.log')
-$installExit = $LASTEXITCODE
+$AppsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{BE782F40-3D1C-4F12-8635-4F7561938F75}_is1'
 $py = Join-Path $InstallRoot 'python\python.exe'
+$env:FRIDAY_PORT = "$Port"
+$env:PYTHONUTF8 = '1'
+
+function Invoke-Setup([string] $tag) {
+    $log = Join-Path $WorkDir "setup-$tag.log"
+    $p = Start-Process -FilePath $Setup -PassThru -Wait `
+         -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/LOG=`"$log`"",
+                         '/ModelsCloud=1', '/SkipMemory=1', '/SkipJudgment=1')
+    return $p.ExitCode
+}
+
+function Test-ShortcutsLanded {
+    # The Desktop is wherever Windows says it is (OneDrive may have moved it).
+    $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Agent Friday.lnk'
+    $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Agent Friday\Agent Friday.lnk'
+    return [pscustomobject]@{ Desktop = (Test-Path -LiteralPath $desk); StartMenu = (Test-Path -LiteralPath $menu);
+                              DesktopPath = $desk; StartMenuPath = $menu }
+}
+
+function Start-InstalledServer([string] $logName) {
+    $log = Join-Path $WorkDir $logName
+    return Start-Process -FilePath $py -ArgumentList @('server.py') `
+        -WorkingDirectory (Join-Path $InstallRoot 'app') -PassThru -WindowStyle Hidden `
+        -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+}
+
+function Wait-ForFriday($proc) {
+    $deadline = (Get-Date).AddSeconds($BootSeconds)
+    $got = $null
+    while ((Get-Date) -lt $deadline -and -not $proc.HasExited) {
+        try {
+            $got = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 10
+            if ($got.StatusCode -eq 200) { break }
+        } catch { Start-Sleep -Seconds 3 }
+    }
+    return $got
+}
+
+# ── Install ────────────────────────────────────────────────────────────────
+$installExit = Invoke-Setup 'fresh'
 Check 'install' (($installExit -eq 0) -and (Test-Path $py) -and (Test-Path (Join-Path $InstallRoot 'app\server.py'))) `
       "exit $installExit; interpreter present: $(Test-Path $py)"
 
-# ── Start the installed server ─────────────────────────────────────────────
-$env:FRIDAY_PORT = "$Port"
-$env:PYTHONUTF8 = '1'
-$server = Start-Process -FilePath $py -ArgumentList @('server.py') `
-    -WorkingDirectory (Join-Path $InstallRoot 'app') -PassThru -WindowStyle Hidden `
-    -RedirectStandardOutput $ServerLog -RedirectStandardError "$ServerLog.err"
+$lnk = Test-ShortcutsLanded
+Check 'shortcuts' ($lnk.Desktop -and $lnk.StartMenu) `
+      "desktop $($lnk.DesktopPath): $($lnk.Desktop); start menu $($lnk.StartMenuPath): $($lnk.StartMenu)"
 
+$apps = $null
+try { $apps = Get-ItemProperty -Path $AppsKey -ErrorAction Stop } catch { }
+Check 'apps' ($null -ne $apps -and $apps.DisplayName -eq 'Agent Friday Beta 1.0' -and [string]$apps.DisplayVersion -match '^1\.0\.0-beta\.1$') `
+      $(if ($apps) { "$($apps.DisplayName) $($apps.DisplayVersion)" } else { 'no Apps entry' })
+
+$firstRun = $null
+try { $firstRun = Get-Content -LiteralPath (Join-Path $InstallRoot 'first-run.json') -Raw | ConvertFrom-Json } catch { }
+Check 'first-run' (($null -ne $firstRun) -and ($firstRun.cloud -eq $true) -and ($firstRun.consent_download -eq $false) -and
+                   (-not (Test-Path (Join-Path $FridayDir 'runtime\models')))) `
+      $(if ($firstRun) { "cloud: $($firstRun.cloud); consent: $($firstRun.consent_download)" } else { 'no first-run.json' })
+
+# ── Start the installed server ─────────────────────────────────────────────
+$server = Start-InstalledServer 'server.log'
 $base = "http://127.0.0.1:$Port"
-$page = $null
-$deadline = (Get-Date).AddSeconds($BootSeconds)
-while ((Get-Date) -lt $deadline -and -not $server.HasExited) {
-    try {
-        $page = Invoke-WebRequest -Uri "$base/" -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 10
-        if ($page.StatusCode -eq 200) { break }
-    } catch { Start-Sleep -Seconds 3 }
-}
+$page = Wait-ForFriday $server
 
 try {
     $served = ($null -ne $page) -and ($page.StatusCode -eq 200)
@@ -103,6 +148,9 @@ try {
         if ($null -ne $body) { $req.Body = ($body | ConvertTo-Json -Compress); $req.ContentType = "application/json" }
         return (Invoke-WebRequest @req).Content | ConvertFrom-Json
     }
+
+    $health = Api '/api/health'
+    Check 'health' ([string]$health.version -eq '1.0.0b1') "version: $($health.version); release: $($health.release_name)"
 
     # First run: the consent flow comes first, the vault second, and the
     # update check is asked rather than assumed.
@@ -200,18 +248,57 @@ finally {
     Start-Sleep -Seconds 3
 }
 
-# ── Uninstall ──────────────────────────────────────────────────────────────
-$uninstaller = Join-Path $InstallRoot 'tools\uninstall.ps1'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $uninstaller -Unattended -InstallRoot $InstallRoot `
-    *> (Join-Path $WorkDir 'uninstall.log')
-$gone = (Get-Date).AddSeconds(240)
-while ((Get-Date) -lt $gone -and (Test-Path $InstallRoot)) { Start-Sleep -Seconds 3 }
-$arp = Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentFriday'
-$desktopLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Agent Friday.lnk'
+# ── Uninstall, keeping the person's data ───────────────────────────────────
+# A sentinel in the data home, hashed now: the setup program's uninstaller must
+# leave it byte for byte, and so must the reinstall.
+$sentinel = Join-Path $FridayDir 'ci-sentinel.txt'
+Set-Content -LiteralPath $sentinel -Value "kept on purpose $(Get-Date -Format o)" -Encoding ascii
+$sentinelHash = (Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash
+$vaultCfg = Join-Path $FridayDir 'vault\.vault_config.json'
+$vaultHashBefore = $(if (Test-Path -LiteralPath $vaultCfg) { (Get-FileHash -LiteralPath $vaultCfg -Algorithm SHA256).Hash } else { '' })
+
+$uninstaller = Join-Path $InstallRoot 'unins000.exe'
+if (-not (Test-Path -LiteralPath $uninstaller)) { throw "the setup program left no uninstaller at $uninstaller" }
+# The uninstaller hands off to a copy of itself and returns, so wait for the
+# folder to go rather than for the process.
+Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$(Join-Path $WorkDir 'uninstall.log')`"") | Out-Null
+$gone = (Get-Date).AddSeconds(300)
+while ((Get-Date) -lt $gone -and ((Test-Path $InstallRoot) -or (Test-Path $AppsKey))) { Start-Sleep -Seconds 3 }
+$lnkAfter = Test-ShortcutsLanded
 $programs = [Environment]::GetFolderPath('Programs')
 $menuLeft = @(Get-ChildItem -LiteralPath $programs -Recurse -Filter '*Friday*' -ErrorAction SilentlyContinue)
-Check 'uninstall' ((-not (Test-Path $InstallRoot)) -and (-not $arp) -and (-not (Test-Path $desktopLnk)) -and ($menuLeft.Count -eq 0) -and (Test-Path $FridayDir)) `
-      ("install folder gone: $(-not (Test-Path $InstallRoot)); Apps entry gone: $(-not $arp); shortcuts left: $($menuLeft.Count + [int](Test-Path $desktopLnk)); ~/.friday kept: $(Test-Path $FridayDir)")
+$keptOk = (Test-Path -LiteralPath $sentinel) -and ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $sentinelHash)
+$vaultSame = ($vaultHashBefore -eq '') -or ((Test-Path -LiteralPath $vaultCfg) -and ((Get-FileHash -LiteralPath $vaultCfg -Algorithm SHA256).Hash -eq $vaultHashBefore))
+Check 'uninstall' ((-not (Test-Path $InstallRoot)) -and (-not (Test-Path $AppsKey)) -and (-not $lnkAfter.Desktop) -and ($menuLeft.Count -eq 0) -and $keptOk -and $vaultSame) `
+      ("install folder gone: $(-not (Test-Path $InstallRoot)); Apps entry gone: $(-not (Test-Path $AppsKey)); desktop shortcut gone: $(-not $lnkAfter.Desktop); " +
+       "start menu leftovers: $($menuLeft.Count); data kept byte for byte: $keptOk; vault config unchanged: $vaultSame")
+
+# ── Reinstall over the kept data ───────────────────────────────────────────
+$reExit = Invoke-Setup 'reinstall'
+$lnkRe = Test-ShortcutsLanded
+$manifestRe = $null
+try { $manifestRe = Get-Content -LiteralPath (Join-Path $InstallRoot 'install-manifest.json') -Raw | ConvertFrom-Json } catch { }
+$serverRe = $null
+$healthRe = $null
+if ($reExit -eq 0 -and (Test-Path $py)) {
+    $serverRe = Start-InstalledServer 'server-reinstall.log'
+    try {
+        $pageRe = Wait-ForFriday $serverRe
+        if ($pageRe -and $pageRe.StatusCode -eq 200) {
+            $tokenRe = [regex]::Match($pageRe.Content, 'window\.__FRIDAY_API_TOKEN="([^"]+)"').Groups[1].Value
+            $healthRe = (Invoke-WebRequest -Uri "$base/api/health" -Headers @{ 'X-Friday-Token' = $tokenRe } -UseBasicParsing -TimeoutSec 60).Content | ConvertFrom-Json
+        }
+    } finally {
+        if ($serverRe -and -not $serverRe.HasExited) { Stop-Process -Id $serverRe.Id -Force }
+        Start-Sleep -Seconds 3
+    }
+}
+$keptAgain = (Test-Path -LiteralPath $sentinel) -and ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $sentinelHash)
+Check 'reinstall' (($reExit -eq 0) -and $lnkRe.Desktop -and $lnkRe.StartMenu -and ($null -ne $manifestRe) -and
+                   ([int64]$manifestRe.build_sequence -gt 51403) -and ($null -ne $healthRe) -and ([string]$healthRe.version -eq '1.0.0b1') -and $keptAgain) `
+      ("exit $reExit; shortcuts: $($lnkRe.Desktop)/$($lnkRe.StartMenu); build sequence: " +
+       $(if ($manifestRe) { $manifestRe.build_sequence } else { 'no manifest' }) + "; health version: " +
+       $(if ($healthRe) { $healthRe.version } else { 'no answer' }) + "; data kept: $keptAgain")
 
 $Results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $WorkDir 'RESULT.json') -Encoding UTF8
 $failed = @($Results.Keys | Where-Object { -not $Results[$_].ok })
