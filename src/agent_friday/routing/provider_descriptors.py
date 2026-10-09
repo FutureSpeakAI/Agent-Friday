@@ -708,7 +708,12 @@ def _live_ollama_has(prov: dict, model_id: str) -> bool:
     try:
         from agent_friday.routing.ollama_manager import get_manager
         mgr = get_manager(prov.get("base_url") or "http://localhost:11434")
-        if not mgr.is_available():
+        # Resolving a provider name runs inside every settings load, which every
+        # request makes. It reads the daemon's last known state and never waits
+        # on a connection: an unanswered probe reads as "not there" until it
+        # finishes, and the next resolution sees the real answer.
+        peek = getattr(mgr, "peek_available", None)
+        if not (peek() if peek is not None else mgr.is_available()):
             return False
         for m in (mgr.list_models() or []):
             name = m.get("name") if isinstance(m, dict) else str(m)

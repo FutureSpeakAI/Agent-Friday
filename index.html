@@ -48998,13 +48998,25 @@ function CloudConsentGate({ onDone }) {
   const [saving, setSaving] = React.useState(false);
 
   React.useEffect(() => {
-    fetch('/api/privacy/cloud-consent').then(r => r.json()).then(setStatus)
+    let alive = true, timer = null, tries = 0;
+    const load = () => fetch('/api/privacy/cloud-consent').then(r => r.json()).then(d => {
+      if (!alive) return;
+      // The server is still measuring this machine: the screen waits for the
+      // measurement rather than showing a verdict nobody has reached.
+      if (d && d.needs_prompt && d.capability && d.capability.pending && tries++ < 20) {
+        timer = setTimeout(load, 1500);
+        return;
+      }
+      setStatus(d);
+    })
       // A failed fetch must not strand the user behind a blank gate with no
       // way forward — but must also not silently grant unrestricted access.
       // Falling through to onDone() leaves cloud_consent unanswered, so the
       // gate simply asks again next load; is_unrestricted_cloud() stays
       // gated in the meantime.
       .catch(() => onDone());
+    load();
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
 
   if (!status || !status.needs_prompt) return null;

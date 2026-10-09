@@ -78,6 +78,39 @@ def _run(cmd, timeout=15):
         return ""
 
 
+#: How long a reading of something that does not change while the program runs
+#: (the CPU model, the memory module type, the attached displays) is reused.
+#: Each costs a PowerShell start, 1-10 s on a loaded 4-core machine, and the
+#: callers sit on request paths.
+STATIC_FACT_TTL_S = 600.0
+_STATIC_FACTS: dict = {}
+_STATIC_LOCK = threading.Lock()
+
+
+def _static_fact(key, reader, ttl: float = STATIC_FACT_TTL_S):
+    """``reader()`` at most once per ``ttl`` seconds.
+
+    Keyed by the module's ``_run`` as well as the name, so a test that
+    substitutes the process runner gets its own answer and not an earlier one.
+    A reading that raised is not kept.
+    """
+    k = (key, id(_run), id(subprocess.run))
+    now = time.time()
+    with _STATIC_LOCK:
+        hit = _STATIC_FACTS.get(k)
+        if hit is not None and (now - hit[0]) < ttl:
+            return hit[1]
+    value = reader()
+    with _STATIC_LOCK:
+        _STATIC_FACTS[k] = (time.time(), value)
+    return value
+
+
+def reset_static_facts() -> None:
+    with _STATIC_LOCK:
+        _STATIC_FACTS.clear()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  OS / CPU / RAM
 # ─────────────────────────────────────────────────────────────────────────────
@@ -104,10 +137,11 @@ def detect_cpu() -> dict:
     except Exception:
         pass
     if _os_family() == "windows":
-        out = _run(["powershell", "-NoProfile", "-Command",
-                    "(Get-CimInstance Win32_Processor | "
-                    "Select-Object -First 1 Name,NumberOfCores | "
-                    "ConvertTo-Json -Compress)"])
+        out = _static_fact("cpu", lambda: _run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-CimInstance Win32_Processor | "
+             "Select-Object -First 1 Name,NumberOfCores | "
+             "ConvertTo-Json -Compress)"]))
         try:
             d = json.loads(out)
             model = d.get("Name", model) or model
@@ -149,10 +183,11 @@ def detect_memory_bandwidth() -> dict:
     """
     cls, gb_s, method = "unknown", None, "heuristic-smbios"
     if _os_family() == "windows":
-        out = _run(["powershell", "-NoProfile", "-Command",
-                    "(Get-CimInstance Win32_PhysicalMemory | "
-                    "Select-Object Speed,SMBIOSMemoryType | "
-                    "ConvertTo-Json -Compress)"])
+        out = _static_fact("memory", lambda: _run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-CimInstance Win32_PhysicalMemory | "
+             "Select-Object Speed,SMBIOSMemoryType | "
+             "ConvertTo-Json -Compress)"]))
         try:
             d = json.loads(out)
             mods = d if isinstance(d, list) else [d]
@@ -800,11 +835,63 @@ def get(force: bool = False, measure_disk_rate: bool = False) -> dict:
     the callers that matter (routing, health) are on hot paths.
     """
     now = time.time()
-    if (not force and not measure_disk_rate
-            and _MEMO["profile"] is not None
-            and (now - _MEMO["at"]) < _MEMO_TTL_S):
+    plain = not force and not measure_disk_rate
+    if plain and _MEMO["profile"] is not None and (now - _MEMO["at"]) < _MEMO_TTL_S:
         return _MEMO["profile"]
 
+    if plain:
+        # A request never re-detects the machine. It is handed the last profile
+        # while one thread refreshes it; with none yet, it joins the one
+        # detection in flight rather than starting its own, and gives up on
+        # that after _DETECT_WAIT_S and reads the profile saved on disk.
+        if _MEMO["profile"] is not None and _in_request():
+            _refresh_in_background()
+            return _MEMO["profile"]
+        if not _DETECT_LOCK.acquire(timeout=_DETECT_WAIT_S):
+            return _MEMO["profile"] or load_cached() or _detect_once(
+                force, measure_disk_rate, now)
+        try:
+            if _MEMO["profile"] is not None and (time.time() - _MEMO["at"]) < _MEMO_TTL_S:
+                return _MEMO["profile"]
+            return _detect_once(force, measure_disk_rate, now)
+        finally:
+            _DETECT_LOCK.release()
+    return _detect_once(force, measure_disk_rate, now)
+
+
+#: One detection at a time; see ``get``.
+_DETECT_LOCK = threading.Lock()
+_DETECT_WAIT_S = 20.0
+_refreshing = threading.Event()
+
+
+def _in_request() -> bool:
+    try:
+        from flask import has_request_context
+        return bool(has_request_context())
+    except Exception:
+        return False
+
+
+def _refresh_in_background() -> None:
+    """Re-detect on a thread of our own, one at a time."""
+    if _refreshing.is_set():
+        return
+    _refreshing.set()
+
+    def _run_refresh():
+        try:
+            with _DETECT_LOCK:
+                _detect_once(False, False, time.time())
+        except Exception:
+            _log.debug("background hardware refresh failed", exc_info=True)
+        finally:
+            _refreshing.clear()
+
+    threading.Thread(target=_run_refresh, daemon=True, name="hardware-refresh").start()
+
+
+def _detect_once(force: bool, measure_disk_rate: bool, now: float) -> dict:
     # The on-disk profile is read even when forcing. `force` means "re-detect
     # now", not "discard what was measured": the GPU idle floor can only be
     # taken at a known-idle moment, so a forced re-detect that dropped it would
@@ -880,7 +967,20 @@ _DISPLAY_HIDPI_EXTRA_MIB = 128   # per monitor above 2560 wide
 _DISPLAY_INDIRECT_EXTRA_MIB = 256
 
 
+#: The attached displays change when someone plugs a monitor in, not second to
+#: second. Reading them starts PowerShell and two WMI queries.
+DISPLAY_FACT_TTL_S = 120.0
+
+
 def detect_displays() -> dict:
+    """Attached monitors and adapters, read at most once per
+    ``DISPLAY_FACT_TTL_S``. See ``_read_displays``."""
+    import copy
+    return copy.deepcopy(_static_fact("displays", _read_displays,
+                                      ttl=DISPLAY_FACT_TTL_S))
+
+
+def _read_displays() -> dict:
     """Attached monitors and adapters. Best-effort; never raises.
 
     Returns {count, hidpi, indirect, adapters:[{name,status,indirect}], ok}.
