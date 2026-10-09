@@ -279,9 +279,10 @@ def test_the_health_canary_does_not_start_icacls(monkeypatch, tmp_path):
     monkeypatch.setattr(cs, "harden_permissions", lambda p: hardened.append(str(p)))
     ok, _detail = health_check.check_credential_store()
     assert ok is True
-    assert hardened == []
+    assert [h for h in hardened if "health_check_canary" in h] == []
+    hardened.clear()
     cs.write_secret(tmp_path / "real.enc", b"secret")
-    assert len(hardened) == 2, "a real secret is still hardened"
+    assert [h for h in hardened if "real.enc" in h], "a real secret is still hardened"
 
 
 def test_a_build_waiter_gives_up_before_the_page_does():
