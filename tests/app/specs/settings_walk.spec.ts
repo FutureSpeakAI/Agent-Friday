@@ -219,6 +219,9 @@ test.describe('Settings walk', () => {
   });
 
   test('every safe control keeps its change: read back from the saved settings and after a reload', async ({ page }, info) => {
+    // Every control in every section, including Models (~870 rows), each saved, read back and reloaded:
+    // about 6 minutes on a fast PC and two to three times that on a 4-core CI runner.
+    test.setTimeout(2_400_000);
     const forbidden: string[] = [];
     const external: string[] = [];
     await page.route('**/*', route => {
