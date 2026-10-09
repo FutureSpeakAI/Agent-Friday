@@ -400,3 +400,91 @@ Stack-trace alerts are otherwise fixed, never dismissed as "won't fix". Any that
 | 6 | js/tainted-format-string | index.html:6273 | FIX | Action-bus log uses `'%s'` with `actions.length`. The same change is mirrored in ui_parts/app.html. |
 | 5 | js/tainted-format-string | ui_parts/app.html:417 | FIX | Mirror of alert 6. |
 
+## Beta 1.0 release report (PR #36, alerts 920 to 1019)
+
+Line numbers are those CodeQL reported against the pull-request merge commit; the code named in each row is the statement at or next to that line. **FIX** rows close when CodeQL no longer finds the flow; if one stays open because the guard is not modelled (`paths.contained`, `routes/_errors.api_error` and `public_result`, `user_errors.error_text`), it is dismissed as a false positive and the reason names that guard.
+
+### Path injection
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 921 | py/path-injection | services/workflow_overview.py:621 | FIX | Real. A saved-workflow request's `slug` was normalised by `_chain_slug` for the lookup (`load_workflow_chain`) and then used raw in `<workflows>/<slug>.json`, so `../name` reached a file outside the folder (read for the rollback copy, unlinked or rewritten on a failed save). The slug is now refused unless it equals `_chain_slug(slug)`, and the target is joined with `paths.contained`. Test: `tests/unit/test_codeql_beta_containment.py`. |
+| 920 | py/path-injection | services/workflow_overview.py:621 | FIX | Same statement, second flow. |
+| 932, 931, 930, 929, 928, 927 | py/path-injection | services/workspace_studio.py:175-186 | FIX (hardening) | The id is checked by `_WS_ID` (`[a-z0-9][a-z0-9_-]{0,47}`), which has no separator, dot or colon, so it could not leave the folder. `$` accepted a trailing newline, so the check is now `fullmatch` and `_ws_path` joins through `paths.contained`. |
+| 926 | py/path-injection | services/workspace_studio.py:64 | FIX (hardening) | `_doc_bytes` reads only paths from `_ws_path`; same change. |
+| 925, 924, 923, 922 | py/path-injection | services/workspace_bundles.py:250-390 | FIX (hardening) | `check_ws_id` allows only `[a-z0-9-]`, 64 characters, and `_version_dir` allows only 64 hex digits. Now `fullmatch` and `paths.contained` in `_dir`. |
+
+### Stack-trace exposure
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 979, 978, 977, 976, 975, 974, 973, 972 | py/stack-trace-exposure | routes/workspace_studio.py | FIX | `str(exc)` of PermissionError, ValueError and the conflict error went into the body. The deliberate messages (privacy context, off the record, conflict, invalid id or patch) are `UserFacing` errors in `services/workspace_studio.py` and still show; any other exception goes through `api_error`. Envelope unchanged (`status`, `message`; the conflict keeps `status: conflict`). |
+| 971, 970 | py/stack-trace-exposure | routes/workspace_bundles.py | FIX | `_bad(e)` took exception text. Refusals (`BrandRefused`, `ManifestRefused`, `NativeWorkspace`, `SmokeFailed`) are `UserFacing` errors with their messages; other exceptions go through `_fail` / `api_error`. `status: refused` and `blocker` are kept. |
+| 969, 968 | py/stack-trace-exposure | tests/api/test_crew_host_origin.py | FALSE_POSITIVE | Test code. The `RuntimeError("Synthetic host failure")` is raised by the test's own stub and asserted with `pytest.raises`; no response carries it. |
+| 967, 966 | py/stack-trace-exposure | routes/sites.py | FIX | `_bad(exc)` took exception text. The Sites services raise `UserFacingValueError` and `UserFacingPermissionError` for their messages; everything else goes through `api_error`. |
+| 965 | py/stack-trace-exposure | routes/remote_image.py | FIX | `RemoteImageRefused` is a `UserFacingValueError` (its text is the owner-facing refusal reason); the route answers through `error_text`, so any other exception text would be hidden. Dismiss if it stays open. |
+| 964, 963 | py/stack-trace-exposure | routes/publish.py | FIX | `_this_pc()` returned `str(e)` of a hosting failure in `line` and `error`; now an error id (the cause is logged). |
+| 962, 961, 960 | py/stack-trace-exposure | routes/publish.py | FIX | `_bad(e)` took exception text; services raise `UserFacingValueError`, other exceptions go through `api_error`. |
+| 959 | py/stack-trace-exposure | routes/news.py:1072 | FALSE_POSITIVE | The failure path is `api_error`; the success path returns `public_result(out, ...)`, which swaps every `exception_text` value for an error id. |
+| 958 | py/stack-trace-exposure | routes/memory_proposals.py:34 | FALSE_POSITIVE | `jsonify(public_result(result, ...))`; the except path is `api_error`. |
+| 957, 956, 955, 954, 953, 952, 951 | py/stack-trace-exposure | routes/media.py | FIX | Service results go through `public_result`; `media_index`, `media_tidy` and `media_previews` mark exception text with `exception_text`, or store an error id for text that is written to disk. Open and reveal use `api_error`. |
+| 950 | py/stack-trace-exposure | routes/federation.py:667 | FIX | `api_error(..., shape="ok")`; the trust-agent validation message is a `UserFacingValueError`. |
+| 949, 948 | py/stack-trace-exposure | routes/domains.py | FIX | `_reply` used `str(exc)`; domain services raise `UserFacingValueError` / `UserFacingPermissionError`, other exceptions go through `api_error`. |
+| 947, 946, 945, 944 | py/stack-trace-exposure | routes/desktop.py | FIX | `CardError` (and `BoardConflict`) are `UserFacingValueError`; the routes use `api_error` (conflict keeps `code: board_changed`). |
+| 943 | py/stack-trace-exposure | routes/crew_rooms.py:13 | FIX | `CrewRoomError` already was a `UserFacingValueError`; the route now uses `api_error` for it too. |
+| 942, 941, 940 | py/stack-trace-exposure | routes/conversations.py | FIX | Project file errors go through `api_error`; the services raise `UserFacing` errors for the cap, name and off-the-record messages. |
+| 939 | py/stack-trace-exposure | routes/codebases.py:31 | FIX | `_bad(e)` took exception text; `codebases` raises `UserFacingValueError`, `NothingToUndo` is a `UserFacingRuntimeError`; a git failure (`RuntimeError` with stderr) is now hidden behind an error id. |
+| 938 | py/stack-trace-exposure | routes/chat.py:2559 | FALSE_POSITIVE | `jsonify(public_result({...}))`; exception text in the result is marked and replaced. |
+| 937, 936, 935, 934 | py/stack-trace-exposure | routes/avatar.py | FIX | `str(e)` of ValueError replaced by `api_error`; `avatar_genome` and `avatar_growth` raise `UserFacingValueError` for their messages. |
+| 933 | py/stack-trace-exposure | routes/artifacts.py:24 | FIX | `_bad(e)` took exception text; `artifacts` and `plans` raise `UserFacingValueError`, other exceptions go through `api_error`. |
+
+Test: `tests/api/test_codeql_beta_alerts.py` (a deliberate message still shows; a library or operating-system error is hidden and carries an `error_id`; envelopes unchanged).
+
+### Regular expressions (polynomial-redos)
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 994 | py/polynomial-redos | services/workspace_studio.py:319 | FIX | Selector comment strip is a linear scan (`_strip_comments`); the selector is also capped at 200 characters. |
+| 993 | py/polynomial-redos | services/workspace_studio.py:309 | FALSE_POSITIVE | `@import[^;]*;?` cannot fail once it matches `@import`, and `re.sub` does not overlap matches, so the first match consumes the rest: linear. Timed: 1,100 repeated `@import` (the 8,000-character cap) 0.00 s. |
+| 992 | py/polynomial-redos | services/workspace_studio.py:304 | FALSE_POSITIVE | The sanitiser loop. CSS is cut to 8,000 characters first (`css[:8000]`). Worst measured input at the cap: repeated `url(` 0.4 s; the other removals 0.00 s. Bounded, not unbounded. |
+| 991 | py/polynomial-redos | services/workspace_studio.py:258 | FIX | `_scoped_css` strips comments with the linear `_strip_comments` (identical output, fuzzed against the old pattern). |
+| 990 | py/polynomial-redos | services/site_hosting.py:85 | FALSE_POSITIVE | `fullmatch` on `[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+`: the `/` separates two classes that do not contain it, so there is one way to match; linear. |
+| 989 | py/polynomial-redos | services/publish_web.py:411 | FIX | `_SCRIPT_SRC_RE` and `_IMPORT_URL_RE` (read by `collect_imports`): no scan across the next `<`, and adjacent `\s*` merged. |
+| 988 | py/polynomial-redos | services/publish_web.py:338 | FALSE_POSITIVE | `re.match(r"data:image/...;base64,(.+)$", src, re.S)` is anchored at the start and `.+` runs to the end once: linear. |
+| 987, 986 | py/polynomial-redos | services/publish_web.py:252, :248 | FIX | `<head ...>` and `<html ...>` scans no longer run across the next `<` (and no longer match `<header>`). |
+| 985 | py/polynomial-redos | services/publish_hosting.py:370 | FALSE_POSITIVE | `fullmatch` with a project name `[a-z0-9][a-z0-9-]{0,57}` (bounded) and a repository `[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+` (the `/` is in neither class): linear. |
+| 984 | py/polynomial-redos | services/podcast_quality.py:287 | FIX | Figures: runs of 40+ digits and separators are cut first. `META_RE` (found by timing, 4 s on 4,000 characters) is now a sentence-by-sentence scan with identical matches. |
+| 983 | py/polynomial-redos | services/credential_paths.py:747 | FIX | `GetFolderPath\s*\([^)]*\)` retried every opener to the end of the command. `$HOME`, `${HOME}` and GetFolderPath are one left-to-right pass with the same results (fuzzed). Sensitive subsystem. |
+| 982 | py/polynomial-redos | brand.py:233 | FIX | `_SPOKEN_MARK` is anchored at the start of a whitespace run; same output. |
+| 981 | py/polynomial-redos | services/artifacts.py:442 | FIX | The fenced-block fallback scans once (`_replace_fences`); an open fence is left as it is. |
+| 980 | py/polynomial-redos | governance/action_gate.py:796 | FIX | `_EMAIL_IN_ARGS` is anchored at the start of a local-part run (same truth value). Sensitive subsystem. |
+
+Test: `tests/unit/test_codeql_beta_regexes.py` (50,000-character hostile input under half a second, results unchanged on ordinary input).
+
+### Other rules
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 1019 | py/http-response-splitting | tests/unit/test_agent_browser_concurrency.py:49 | FALSE_POSITIVE | Test fixture server; `worker` is checked against `{"alpha", "beta", "none"}` before it reaches the header. |
+| 1018 | py/http-response-splitting | services/published_server.py:147 | FIX (hardening) | The Content-Type is a `mimetypes` table value plus a fixed suffix, never request text. `_send` now also replaces a value containing CR or LF with `application/octet-stream`. Dismiss if it stays open. |
+| 1017 | py/cookie-injection | tests/unit/test_agent_browser_concurrency.py:49 | FALSE_POSITIVE | Same fixture: `worker` is one of three allow-listed words. |
+| 1016 | py/overly-large-range | services/library/textclean.py:9 | FALSE_POSITIVE | The ranges are the C0 and C1 control characters and the zero-width and bidi controls, listed on purpose to be stripped. |
+| 1015 | py/overly-large-range | services/library/envelope.py:27 | FALSE_POSITIVE | Same character classes, same purpose. |
+| 1014 | py/incomplete-url-substring-sanitization | tests/unit/test_publish_web.py:187 | TEST_ONLY | Asserts that a refusal message names `cdn.example.com`; no URL is validated. |
+| 1013 | py/incomplete-url-substring-sanitization | tests/unit/test_publish_hosting.py:105 | TEST_ONLY | Asserts the status line names the tunnel host. |
+| 1012 | py/incomplete-url-substring-sanitization | tests/unit/test_podcast_pass4.py:438 | TEST_ONLY | A stub resolver: `if "news.google.com" in url` chooses a canned reply. |
+| 1011 | py/incomplete-url-substring-sanitization | tests/unit/test_news_seen.py:53 | TEST_ONLY | Asserts an update note names a host. |
+| 1010 | py/incomplete-url-substring-sanitization | tests/unit/test_news_links.py:160 | TEST_ONLY | A stub resolver, as 1012. |
+| 1009 | py/incomplete-url-substring-sanitization | tests/unit/test_news_discuss.py:89 | TEST_ONLY | Asserts that no source URL starts with a blocked host. |
+| 1008, 1007 | py/incomplete-url-substring-sanitization | tests/api/test_cross_site_requests_are_refused.py:130 | TEST_ONLY | Asserts which origins the response lists. |
+| 1006 | py/incomplete-url-substring-sanitization | tests/unit/test_artifact_panel_ui_files.py:77 | TEST_ONLY | Asserts the CSP text pins one package host. |
+| 1005 | py/incomplete-url-substring-sanitization | services/news_links.py:188 | FALSE_POSITIVE | Not a host check: `"news.google.com" not in real` only tells a decoded Google News link from the publisher address it resolved to, before caching it. The address is fetched later through `web_safety.safe_get`, which owns the host rules. |
+| 1004 | py/insecure-protocol | services/site_verification.py:79 | FIX (hardening) | `ssl.create_default_context()` already refuses TLS before 1.2 and verifies the host name; the minimum is now set explicitly. Dismiss if it stays open. |
+| 1003 | py/insecure-protocol | services/publish_adapters.py:147 | FIX (hardening) | Same. |
+| 1002 | py/weak-sensitive-data-hashing | notifications_engine.py:153 | FALSE_POSITIVE | The SHA-1 is a lookup key for a dismissal ledger (`thing:` plus a collapse or dedupe key), not a credential or an integrity check. Changing it would orphan every stored dismissal. |
+| 1001 | py/clear-text-logging-sensitive-data | services/model_router.py:2152 | FALSE_POSITIVE | `[prompt-cache]` line: llama.cpp timing counters and the model id. |
+| 1000 | py/clear-text-logging-sensitive-data | services/agent.py:14749 | FALSE_POSITIVE | Model id, `finish_reason` and tool names. |
+| 999 | py/clear-text-storage-sensitive-data | tests/unit/test_credential_self_shares.py:88 | TEST_ONLY | Test writes a fake `.aws/credentials` into a temporary home to prove it is withheld. |
+| 998 | py/clear-text-storage-sensitive-data | notifications_engine.py:139 | FALSE_POSITIVE | Notification queue and dismissal ledger, ordinary local app state (as 705). |
+| 997, 996 | py/clear-text-storage-sensitive-data | services/conversations.py:312, :76 | FALSE_POSITIVE | The conversation store is the owner's own chat history in Friday's data folder, which is what the feature stores. |
+| 995 | py/clear-text-storage-sensitive-data | services/codebases.py:100 | FALSE_POSITIVE | The codebase record holds labels, providers and caps only; a guest key's secret goes to the credential store (`add_guest_key`). |
