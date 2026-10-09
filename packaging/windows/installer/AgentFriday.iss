@@ -156,7 +156,8 @@ type
 const
   // BEGIN SEQUENCE ARITHMETIC (agent_friday/release.py; held equal by a test)
   EraFloor = 100000000;
-  LegacyMajor = 5;
+  LegacyMajorLow = 2;
+  LegacyMajorHigh = 5;
   // END SEQUENCE ARITHMETIC
   MegaByte = 1048576;
   DiskFloorMib = 10240;
@@ -277,7 +278,7 @@ begin
   Result := S;
 end;
 
-// 5.14.3 -> 51403; 1.0.0b1 or 1.0.0-beta.1 -> EraFloor + 1000000 + 1; 0 when
+// 5.14.3 -> 51403 (unlabelled 2.x through 5.x are the old line); 1.0.0b1 or 1.0.0-beta.1 -> EraFloor + 1000000 + 1; 0 when
 // the text is not a version.
 function SequenceForVersion(Raw: String): Int64;
 var
@@ -336,8 +337,10 @@ begin
     Number := StrToInt64Def(Part, 0);
   end;
 
-  if (not HasLabel) and (Nums[0] = LegacyMajor) then
+  if (not HasLabel) and (Nums[0] >= LegacyMajorLow) and (Nums[0] <= LegacyMajorHigh) then
   begin
+    if Nums[1] > 99 then Nums[1] := 99;
+    if Nums[2] > 99 then Nums[2] := 99;
     Result := Nums[0] * 10000 + Nums[1] * 100 + Nums[2];
     Exit;
   end;

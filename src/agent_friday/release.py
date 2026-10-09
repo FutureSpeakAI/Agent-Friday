@@ -6,13 +6,30 @@ Beta install that 5.14.3 is an upgrade, and would let the Beta installer treat
 a 5.14.3 machine as newer than itself. Releases are ordered by a monotonically
 increasing **build sequence** instead:
 
-  * the 5.x line (tags ``v5.x.y``, no pre-release label) maps to
-    ``major * 10000 + minor * 100 + patch``; 5.14.3 is 51403, and the whole
-    line stays below ``ERA_FLOOR``;
+  * the old line (every release before Beta 1.0: 2.x through 5.x) maps to
+    ``major * 10000 + minor * 100 + patch`` (minor and patch clamped to 99,
+    major to 9999); 4.5.0 is 40500, 5.14.3 is 51403, and the whole line stays
+    below ``ERA_FLOOR``;
   * every later release sits above ``ERA_FLOOR`` and orders by
     ``ERA_FLOOR + major * 1_000_000 + minor * 10_000 + patch * 100 + stage``
     where ``stage`` is the beta number (``beta.N`` -> N), 50 + N for a release
     candidate, and 99 for the final release.
+
+Two entry points apply that rule to two kinds of input.
+
+``sequence_of_release`` places a published GitHub release. A release carries
+a ``Build sequence: N`` line in its notes (the installer workflow adds it to
+every release from Beta 1.0 on), and that number wins. A release WITHOUT the
+line is the old line by definition, whatever its tag says, so v4.4.0, v4.5.0
+or an old v1.2.0 can never rank above Beta 1.0 and be offered to it.
+
+``sequence_for_version`` places a version string found on disk. Unlabelled
+majors 2 through 5 are the old line. Labelled versions (beta, rc, ...) and
+unlabelled major 1 or 6 and up stay in the new era, so a future final 1.0.0
+(101_000_099) ranks above the Beta. An unlabelled 1.x is new-era because
+installs of the earlier 1.x tags predate 4.4 and are not upgrade sources; the
+installer stamps ``build_sequence`` beside the version in its manifest, and
+that stamp wins over this arithmetic whenever it is present.
 
 ``BUILD_SEQUENCE`` is the number this tree stamps on what it ships; the
 installer writes it beside the version, and a published release carries it as
@@ -53,6 +70,15 @@ _STAGE_BASE = {"a": 1, "alpha": 1, "b": 1, "beta": 1, "dev": 1, "pre": 1,
 _SEQUENCE_LINE = re.compile(r"(?im)^\s*build[ _-]sequence\s*[:=]\s*(\d{1,12})\s*$")
 
 
+#: Majors whose unlabelled versions belong to the old line on disk.
+LEGACY_MAJORS = range(2, 6)
+
+
+def legacy_sequence(major: int, minor: int, patch: int) -> int:
+    """The old-line sequence; always below ``ERA_FLOOR``."""
+    return min(major, 9999) * 10_000 + min(minor, 99) * 100 + min(patch, 99)
+
+
 def sequence_for_version(raw: Optional[str]) -> Optional[int]:
     """The build sequence a version string or release tag stands for, or None
     when it is not a version at all.
@@ -69,8 +95,8 @@ def sequence_for_version(raw: Optional[str]) -> Optional[int]:
     patch = int(m.group(3) or 0)
     label = (m.group(4) or "").lower()
     number = int(m.group(5)) if m.group(5) else 0
-    if label == "" and major == 5:
-        return major * 10_000 + minor * 100 + patch
+    if label == "" and major in LEGACY_MAJORS:
+        return legacy_sequence(major, minor, patch)
     if label:
         base = _STAGE_BASE.get(label, 1)
         stage = base + max(0, number - 1)
@@ -83,8 +109,9 @@ def sequence_for_version(raw: Optional[str]) -> Optional[int]:
 def sequence_of_release(release: dict) -> Optional[int]:
     """The build sequence of a GitHub release payload.
 
-    The ``Build sequence: N`` line in the release notes wins; a release without
-    one (every 5.x release) is placed by its tag.
+    The ``Build sequence: N`` line in the release notes wins. A release without
+    one is the old line by definition and is placed by the legacy formula on
+    its tag's numbers, whatever the tag's label or major.
     """
     if not isinstance(release, dict):
         return None
@@ -92,7 +119,10 @@ def sequence_of_release(release: dict) -> Optional[int]:
     m = _SEQUENCE_LINE.search(body)
     if m:
         return int(m.group(1))
-    return sequence_for_version(release.get("tag_name"))
+    m = _VERSION.match(str(release.get("tag_name") or ""))
+    if not m:
+        return None
+    return legacy_sequence(int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0))
 
 
 def is_prerelease_version(raw: Optional[str]) -> bool:

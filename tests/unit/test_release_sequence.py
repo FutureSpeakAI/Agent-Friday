@@ -47,6 +47,38 @@ def test_order_within_the_5x_line_is_by_number():
     assert seq("5.14.3") < release.ERA_FLOOR
 
 
+#: The table the three implementations (Python, Upgrade.ps1, the .iss) share.
+SEQUENCE_TABLE = {
+    "2.0.0": 20000, "3.1.0": 30100, "4.4.0": 40400, "4.5.0": 40500, "v4.5.0": 40500,
+    "5.9.0": 50900, "5.14.3": 51403, "v5.14.3": 51403, "5.14.3+meta": 51403,
+    "1.0.0b1": 101_000_001, "1.0.0-beta.1": 101_000_001, "v1.0.0-beta.1": 101_000_001,
+    "v1.0.0-rc.2": 101_000_051, "1.0.0": 101_000_099, "1.2.0": 101_020_099, "1.1.5": 101_010_599,
+    "6.0.0": 106_000_099,
+}
+
+
+def test_the_shared_sequence_table():
+    for raw, want in SEQUENCE_TABLE.items():
+        assert release.sequence_for_version(raw) == want, raw
+
+
+def test_old_line_installs_are_older_than_beta_and_the_final_release():
+    seq = release.sequence_for_version
+    for old in ("2.0.0", "3.1.0", "4.4.0", "4.5.0", "5.14.3"):
+        assert seq(old) < release.BUILD_SEQUENCE < seq("1.0.0"), old
+    assert seq("4.5.0") < seq("5.14.3")
+
+
+def test_a_release_without_a_sequence_line_is_the_old_line_whatever_its_tag():
+    seq = release.sequence_of_release
+    for tag, want in (("v4.4.0", 40400), ("v4.5.0", 40500), ("v5.14.3", 51403), ("v2.0.0", 20000),
+                      ("v1.1.5", 10105), ("v1.2.0", 10200), ("v1.0.0-beta.1", 10000), ("v9999.999.999", 99_999_999)):
+        got = seq({"tag_name": tag, "body": "no line"})
+        assert got == want and got < release.ERA_FLOOR, (tag, got)
+        assert got < release.BUILD_SEQUENCE
+    assert seq({"tag_name": "not a version", "body": ""}) is None
+
+
 def test_a_non_version_has_no_sequence():
     assert release.sequence_for_version("not a version") is None
     assert release.sequence_for_version("") is None

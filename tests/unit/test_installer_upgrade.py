@@ -27,7 +27,8 @@ UPGRADE = read_text(LIB / "Upgrade.ps1")
 HEAD = ". '%s'\n. '%s'\n" % (LIB / "Common.ps1", LIB / "Upgrade.ps1")
 
 TABLE = ["5.14.3", "v5.14.3", "5.9.0", "1.0.0b1", "v1.0.0-beta.1", "1.0.0", "v1.0.0-rc.2", "v1.0.0-beta.2",
-         "1.1.0b1", "6.0.0", "5.14.3+meta", "1.0.0rc1", "not a version"]
+         "1.1.0b1", "6.0.0", "5.14.3+meta", "1.0.0rc1", "not a version",
+         "4.5.0", "4.4.0", "2.0.0", "3.1.0", "1.2.0", "1.1.5", "5.200.300"]
 
 
 @needs_powershell
@@ -41,6 +42,18 @@ def test_powershell_and_python_rank_every_version_the_same(tmp_path):
 
 def test_the_script_keeps_the_era_floor_the_python_module_defines():
     assert re.search(r"\$script:EraFloor = %d\b" % release.ERA_FLOOR, UPGRADE)
+
+
+@needs_powershell
+def test_an_installed_4_5_0_is_older_than_beta_and_the_setup_upgrades_it(tmp_path):
+    root, home = tmp_path / "AgentFriday", tmp_path / "home"
+    _install(root, "4.5.0")
+    _data_home(home)
+    out = ps_json(HEAD + """
+$r = Invoke-UpgradePreflight -InstallRoot '%s' -NewSequence %d
+[ordered]@{ seq = $r.Existing.Sequence } | ConvertTo-Json -Compress
+""" % (root, release.BUILD_SEQUENCE), tmp_path, env={"FRIDAY_HOME": str(home), "FRIDAY_BACKUP_ROOT": str(tmp_path / "b")})
+    assert out["seq"] == 40500 < release.BUILD_SEQUENCE
 
 
 def _install(root: Path, version: str) -> None:

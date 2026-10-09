@@ -30,6 +30,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from agent_friday import release  # noqa: E402
 from agent_friday.services import update_check as uc  # noqa: E402
 
 
@@ -50,7 +51,7 @@ class _Resp:
         return self._payload
 
 
-def _release(tag, *, draft=False, prerelease=False, published="2026-08-01T00:00:00Z"):
+def _release(tag, *, draft=False, prerelease=False, published="2026-08-01T00:00:00Z", seq=None):
     return {
         "tag_name": tag,
         "name": f"Agent Friday {tag}",
@@ -58,7 +59,7 @@ def _release(tag, *, draft=False, prerelease=False, published="2026-08-01T00:00:
         "prerelease": prerelease,
         "published_at": published,
         "html_url": f"https://github.com/FutureSpeakAI/Agent-Friday/releases/tag/{tag}",
-        "body": "release notes",
+        "body": "release notes" + (f"{chr(10)}{chr(10)}Build sequence: {seq}{chr(10)}" if seq else ""),
     }
 
 
@@ -296,7 +297,7 @@ def test_draft_is_ignored(captured, monkeypatch):
 def test_a_newer_sequence_is_an_update_even_when_the_version_number_is_lower(captured, monkeypatch):
     """The final 1.0.0 follows 5.14.3 although 1 < 5."""
     calls, fake = captured
-    fake.reply = _Resp([_release("v1.0.0"), _release("v5.14.3")])
+    fake.reply = _Resp([_release("v1.0.0", seq=101_000_099), _release("v5.14.3")])
     monkeypatch.setattr(uc, "running_version", lambda *a, **k: "5.14.3")
 
     result = uc.check_for_update()
@@ -316,9 +317,53 @@ def test_5_14_3_is_never_offered_to_a_beta_install(captured, monkeypatch):
         assert result["reason"] == "up_to_date", running
 
 
+OLD_TAGS = ["v4.4.0", "v4.5.0", "v5.14.3", "v1.1.5", "v1.2.0"]
+
+
+def test_old_line_releases_are_never_offered_to_a_beta_install(captured, monkeypatch):
+    """Releases published before Beta 1.0 carry no sequence line; they are the
+    old line whatever their tag, so none ranks above the Beta."""
+    calls, fake = captured
+    beta = _release("v1.0.0-beta.1", prerelease=True, seq=release.BUILD_SEQUENCE)
+    fake.reply = _Resp([_release(t) for t in OLD_TAGS] + [beta])
+    for running in ("1.0.0b1", "1.0.0-beta.1"):
+        monkeypatch.setattr(uc, "running_version", lambda *a, _v=running, **k: _v)
+        result = uc.check_for_update()
+        assert result["update_available"] is False, (running, result)
+        assert result["latest_version"] == "1.0.0-beta.1", result
+
+
+def test_a_stable_5_14_3_install_is_never_offered_anything_older(captured, monkeypatch):
+    calls, fake = captured
+    tags = OLD_TAGS + ["v2.0.0"]
+    fake.reply = _Resp([_release(t) for t in tags])
+    monkeypatch.setattr(uc, "running_version", lambda *a, **k: "5.14.3")
+    result = uc.check_for_update()
+    assert result["update_available"] is False, result
+    assert result["latest_version"] == "5.14.3"
+    for t in tags:
+        assert release.sequence_of_release(_release(t)) <= 51403, t
+
+
+def test_a_4_5_0_install_is_offered_5_14_3_but_not_beta(captured, monkeypatch):
+    calls, fake = captured
+    fake.reply = _Resp([_release("v4.5.0"), _release("v5.14.3"),
+                        _release("v1.0.0-beta.1", prerelease=True, seq=release.BUILD_SEQUENCE)])
+    monkeypatch.setattr(uc, "running_version", lambda *a, **k: "4.5.0")
+    result = uc.check_for_update()
+    assert result["update_available"] is True and result["latest_version"] == "5.14.3"
+
+
+def test_the_release_job_adds_the_sequence_line_to_every_release():
+    """Every release from Beta 1.0 on carries the line; without it a release
+    is the old line by definition."""
+    wf = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "installer.yml").read_text(encoding="utf-8")
+    assert "Build sequence: %s" in wf and "BUILD_SEQUENCE" in wf
+
+
 def test_a_beta_install_is_offered_the_next_beta(captured, monkeypatch):
     calls, fake = captured
-    fake.reply = _Resp([_release("v1.0.0-beta.2", prerelease=True), _release("v5.14.3")])
+    fake.reply = _Resp([_release("v1.0.0-beta.2", prerelease=True, seq=101_000_002), _release("v5.14.3")])
     monkeypatch.setattr(uc, "running_version", lambda *a, **k: "1.0.0b1")
 
     result = uc.check_for_update()

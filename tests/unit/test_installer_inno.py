@@ -140,9 +140,11 @@ def test_the_script_refuses_to_replace_a_newer_install():
 
 def test_the_sequence_arithmetic_is_the_python_modules():
     block = SCRIPT[SCRIPT.index("BEGIN SEQUENCE ARITHMETIC"):SCRIPT.index("END SEQUENCE ARITHMETIC")]
-    assert "EraFloor = %d" % release.ERA_FLOOR in block and "LegacyMajor = 5" in block
+    assert "EraFloor = %d" % release.ERA_FLOOR in block and "LegacyMajorLow = 2" in block and "LegacyMajorHigh = 5" in block
     fn = SCRIPT[SCRIPT.index("function SequenceForVersion"):SCRIPT.index("function JsonText")]
-    assert "Nums[0] * 10000 + Nums[1] * 100 + Nums[2]" in fn, "the 5.x line: major*10000 + minor*100 + patch"
+    assert "Nums[0] * 10000 + Nums[1] * 100 + Nums[2]" in fn, "the old line: major*10000 + minor*100 + patch"
+    assert "Nums[0] >= LegacyMajorLow" in fn and "Nums[0] <= LegacyMajorHigh" in fn
+    assert "Nums[1] > 99" in fn and "Nums[2] > 99" in fn, "minor and patch are clamped below the era floor"
     assert "EraFloor + Nums[0] * 1000000 + Nums[1] * 10000 + Nums[2] * 100 + Stage" in fn
     assert "Base := 1" in fn and "Base := 50" in fn and "Stage := 99" in fn and "> 49" in fn and "> 98" in fn
     assert re.search(r"\(Lab = 'rc'\) or \(Lab = 'c'\)", fn)
