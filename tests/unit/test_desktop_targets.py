@@ -24,7 +24,7 @@ MANIFEST = {"workspaces": {
     "settings": {"label": "Settings", "key": "tab", "keys": ["tab", "section"], "sections": [
         {"id": "general", "label": "General"},
         {"id": "intelligence", "label": "Models", "aliases": ["models", "model"]},
-        {"id": "accounts", "label": "Connections", "aliases": ["phone", "keys"]},
+        {"id": "connections", "label": "Connections", "aliases": ["accounts", "phone", "keys"]},
         {"id": "costs", "label": "Spending"},
         {"id": "advanced", "label": "Advanced"}]},
     "studio": {"label": "Studio", "key": "view", "sections": [
@@ -87,7 +87,7 @@ def test_settings_by_tab_label_or_alias():
 def test_settings_section_is_found_by_its_title(monkeypatch):
     monkeypatch.setattr(dt, "settings_parts", lambda: {
         "costs": ["Spend", "Budget alerts", "Hard stop"],
-        "accounts": ["Setup checklist", "PHONE"]})
+        "connections": ["Model providers", "PHONE"]})
     r = dt.resolve_settings("the hard stop")
     assert r["target"] == {"workspace": "settings", "tab": "costs", "section": "Hard stop"}
     assert r["verify"] == {"workspace": "settings", "key": "section", "value": "Hard stop"}
@@ -106,7 +106,8 @@ def test_settings_parts_are_read_from_the_served_ui():
     parts = dt.settings_parts()
     assert "Hard stop" in parts["costs"] and "Budget alerts" in parts["costs"]
     assert "Identity" in parts["general"]
-    assert "Setup checklist" in parts["accounts"]
+    assert "Setup checklist" in parts["general"]
+    assert "PHONE" in parts["connections"]
     assert "Vault" in parts["privacy"]
 
 
