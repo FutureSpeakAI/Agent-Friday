@@ -64,13 +64,17 @@ def test_the_head_is_a_real_share_of_the_prompt(per_message):
     assert shared // 4 >= 1000, "the stable head is too small to be worth caching: %d tokens" % (shared // 4)
 
 
-def test_the_workspace_block_stays_in_the_head(per_message):
-    ws = {"name": "news", "data": {"headline": "x"}, "focus": "the front page"}
-    p1, _ = mr._build_context_prompt("one", workspace="news", workspace_context=ws, provider="local")
-    p2, _ = mr._build_context_prompt("two", workspace="news", workspace_context=ws, provider="local")
+def test_the_workspace_never_enters_the_head_and_the_head_stays_the_same(per_message):
+    """What the owner's screen shows changes between turns, so it is not in the cached head at all: the chat
+    routes append it to the volatile tail (services/screen_stage.chat_tail). The head is the same from turn to
+    turn for the same workspace."""
+    import inspect
+    assert "workspace_context" not in inspect.signature(mr._build_context_prompt).parameters
+    p1, _ = mr._build_context_prompt("one", workspace="news", provider="local")
+    p2, _ = mr._build_context_prompt("two", workspace="news", provider="local")
     h1, _ = _split(p1)
     h2, _ = _split(p2)
-    assert h1 == h2 and "== ACTIVE WORKSPACE" in h1 and "the front page" in h1
+    assert h1 == h2 and "== ACTIVE WORKSPACE" not in p1
 
 
 def test_every_per_message_section_is_below_the_marker(per_message):

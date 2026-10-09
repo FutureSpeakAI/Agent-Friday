@@ -33,6 +33,18 @@ def _block(src, start):
             j = src.index("\n", j)
         elif src.startswith("/*", j):
             j = src.index("*/", j) + 1
+        elif c == "/" and src[:j].rstrip()[-1:] in "(,=:[!&|?{};":
+            # a regular expression literal: /"/g holds a quote that is not a string
+            j += 1
+            in_class = False
+            while j < n and (in_class or src[j] != "/"):
+                if src[j] == "\\":
+                    j += 1
+                elif src[j] == "[":
+                    in_class = True
+                elif src[j] == "]":
+                    in_class = False
+                j += 1
         elif c == "{":
             depth += 1
         elif c == "}":

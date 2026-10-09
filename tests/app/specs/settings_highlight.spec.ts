@@ -4,7 +4,7 @@
 // fixtures served by page.route; every non-GET request is recorded. Proves in a real page: highlight() scrolls to
 // and outlines the row with the 2px --fr-cyan ring and clears it on the next input; the provenance line under a
 // row names Friday's proposal with an Undo; Undo posts to the undo route once and the line says it was undone.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');

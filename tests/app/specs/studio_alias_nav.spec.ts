@@ -4,7 +4,7 @@
 // root, path and file. Files and creations now open the Files browser inside the Library workspace
 // ("Browse this PC"). SCRATCH server only (FRIDAY_BASE must be set; the live :3000 is refused).
 // The folder scan is a fixture served by page.route; nothing on this PC is read.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');

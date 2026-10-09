@@ -6,7 +6,7 @@
 // badges are numbered in the order asked and stop at 12, the outline fades on the owner's next input,
 // a spoken filter shows as a chip "by Friday" and its x removes the filter and updates the list, and
 // reduced motion keeps a fade.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');

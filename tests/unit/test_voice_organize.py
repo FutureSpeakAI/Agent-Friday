@@ -244,8 +244,15 @@ def test_an_ambiguous_page_is_numbered_on_screen_not_read_to_the_cloud(wiki, mon
     assert len(listed) == 2 and listed[1].startswith("2. ")
     second = listed[1][3:]
     out = ve._voice_tool_run("organize_wiki", {"action": "archive", "pages": ["#2"]}, _say, call)
-    assert out.startswith("DONE: Archived 1 page."), out
+    # archiving even one page waits for one card; the card's words are counts, never the page's name
+    assert out.startswith("CARD_RAISED"), out
     assert "Reyes" not in out and "birthday" not in out, out
+    assert not (wiki / "_archived").exists(), "nothing is archived before the owner's yes"
+    card = next(r for r in ap.list_approvals(kind="governed_action")
+                if (r.get("payload") or {}).get("handler") == ia.HANDLER and r.get("status") == "pending")
+    ap.decide(card["approval_id"], "approve")
+    rec = ia.wait_for(card["approval_id"], 10)
+    assert rec and rec["status"] == "complete", rec
     assert (wiki / "_archived" / second).is_file(), "#2 is the second page on the screen"
 
 

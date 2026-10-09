@@ -129,11 +129,16 @@ def test_a_declined_batch_changes_nothing(roots):
 
 def test_trash_keeps_the_file_intact_in_fridays_trash(roots, tmp_path):
     out = ia.organize_files("trash", items=["Downloads/w2.pdf"])
-    assert out["status"] == "complete", out
+    assert out["status"] == "pending_approval", out     # even one file waits for one card
+    assert (roots["downloads"] / "w2.pdf").exists(), "nothing moves before the owner's yes"
+    assert not (tmp_path / "friday-trash").exists() or not list((tmp_path / "friday-trash").rglob("w2.pdf"))
+    ap.decide(out["approval_id"], "approve")
+    rec = ia.wait_for(out["approval_id"], 10)
+    assert rec and rec["status"] == "complete", rec
     assert not (roots["downloads"] / "w2.pdf").exists()
     kept = list((tmp_path / "friday-trash").rglob("w2.pdf"))
     assert len(kept) == 1 and kept[0].read_bytes() == b"%PDF-1 w2"
-    ia.undo(out["receipt_id"])
+    ia.undo(rec["receipt_id"])
     assert (roots["downloads"] / "w2.pdf").read_bytes() == b"%PDF-1 w2"
 
 

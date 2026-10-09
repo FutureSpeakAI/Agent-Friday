@@ -166,6 +166,9 @@ def test_delayed_folder_choices_fit_before_observer_delivery(page):
           };
         }""", {"fake": FAKE, "assistantName": assistant_name})
         isolated.add_script_tag(path=str(REPO / "static/friday_workspace_compositions.js"))
+        # The served page loads the shared See & Touch layer before any workspace (index.html); the Library
+        # reads window.fridayStage when it renders.
+        isolated.add_script_tag(path=str(REPO / "static/friday_stage.js"))
         isolated.add_script_tag(path=str(REPO / "static/library_ws.js"))
         isolated.evaluate("""() => {
           window.__libraryRoot = ReactDOM.createRoot(document.getElementById('fixture'));

@@ -311,8 +311,14 @@ def test_partial_tracking_settings_preserve_siblings_on_disk(tmp_path, monkeypat
     core._invalidate_settings_cache()
 
 
-def test_spoken_tracking_change_cannot_replace_a_newer_sibling_dial(monkeypatch):
-    from agent_friday.services import hologram_tools
+def test_spoken_tracking_change_cannot_replace_a_newer_sibling_dial(tmp_path, monkeypatch, friday_dir):
+    from agent_friday.governance import action_gate as ag
+    from agent_friday.services import approvals as ap, dissent_gate as dg, hologram_tools
+    from agent_friday.services import setting_proposals as sp
+    monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
+    monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
+    monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
+    monkeypatch.setattr(sp, "_store", lambda: tmp_path / "setting_changes.json")
     state = {**hologram_tools._defaults(), "head_smoothing": .3}
     stale = dict(state)
     writes, pushed = [], []
@@ -325,7 +331,16 @@ def test_spoken_tracking_change_cannot_replace_a_newer_sibling_dial(monkeypatch)
     monkeypatch.setattr(hologram_tools, "current", current)
     monkeypatch.setattr(hologram_tools, "persist", persist)
     monkeypatch.setattr(hologram_tools, "push", lambda action: pushed.append(action) or {"delivered": True})
-    hologram_tools.handle({"action": "set", "parallax_strength": .4})
+    # A setting change waits for the owner's own yes: nothing is written or pushed before it.
+    held = hologram_tools.handle({"action": "set", "parallax_strength": .4})
+    assert held.startswith("SETTING_NEEDS_YES"), held
+    assert writes == [] and pushed == []
+    # The yes re-runs the tool with the approval in effect (setting_proposals._on_decision does this).
+    tok = sp._APPROVED.set(True)
+    try:
+        hologram_tools.handle({"action": "set", "parallax_strength": .4})
+    finally:
+        sp._APPROVED.reset(tok)
     assert state["head_smoothing"] == .85
     assert writes == [{"parallax_strength": .4}]
     assert pushed == [{"type": "tracking", "tracking": {"parallax_strength": .4}}]

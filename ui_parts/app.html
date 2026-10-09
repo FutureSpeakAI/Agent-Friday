@@ -9599,7 +9599,7 @@ function WfCard({ w, onAction, onToggle, onEdit, onDelete, busy }) {
     <div className="wfx-meta"><span>{w.when_text || wfDescribe(w.when)}{paused ? ' · paused' : ''}</span><span>{state ? <><span className="wfx-dot" style={{ background: st ? st.color : 'var(--fr-dim)' }} />{st ? st.label : String(state).replaceAll('_', ' ')}{!w.running && last.at ? ' ' + wfAgo(last.at) : ''}</> : "Hasn't run yet"}</span>{w.when && w.enabled && w.next_run && !w.running && <span>Next: {wfNext(w.next_run)}</span>}{w.project_name && <span>{w.project_name}</span>}</div>
     {w.asks_first && w.asks_first.length > 0 && <div className="wfx-shield">Asks you before it can {wfJoin(w.asks_first)}</div>}
     <div className="wfx-actions wfx-card-actions">
-      {active ? w.slug ? <button type="button" className="btn" disabled={busy} onClick={() => onAction('stop', w)}>Stop run</button> : <button type="button" className="btn" disabled>Run in progress</button> : <button type="button" className="btn wfx-go" disabled={busy} onClick={() => onAction(last ? 'repeat' : 'run', w)}>{busy ? 'Working…' : last ? 'Do again' : 'Run now'}</button>}
+      {active ? w.slug ? <button type="button" className="btn" disabled={busy} data-testid="wf-stop" onClick={() => onAction('stop', w)}>Stop run</button> : <button type="button" className="btn" disabled>Run in progress</button> : <button type="button" className="btn wfx-go" disabled={busy} onClick={() => onAction(last ? 'repeat' : 'run', w)}>{busy ? 'Working…' : last ? 'Do again' : 'Run now'}</button>}
       {active && last && (last.task_ids || []).length > 0 && <button type="button" className="btn" onClick={() => wfOpenTask(last.task_ids[last.task_ids.length - 1])}>View progress</button>}
       <button type="button" className="btn" disabled={busy || active} onClick={() => onEdit(w)}>Edit</button>
       <button type="button" className="wfx-link" onClick={() => setOpen(v => !v)} aria-expanded={open}>{open ? 'Hide details' : 'Details'}</button>
@@ -21650,7 +21650,7 @@ const SETTINGS_TABS = [{
 }];
 fridayDeclareNav('settings', {
   key: 'tab',
-  keys: ['tab', 'section'],
+  keys: ['tab', 'section', 'row'],
   sections: SETTINGS_TABS.map(t => ({
     id: t.id,
     label: t.label,

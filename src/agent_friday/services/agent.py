@@ -689,7 +689,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
     {"name": "query_trust_graph", "description": "Look up a person in the trust graph by name or alias and return their entry (scores, evidence count, last interaction).",
      "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
-    {"name": "annotate_calendar_events", "description": "Append location, phone or note to EVERY matching calendar event, preserving existing values and returning prior values for undo. Edits the whole recurring series; dry_run previews changes. For a read-only token, explain that Google needs reconnection for event editing and offer to start it. Never substitute a map, directions or another action for the requested edit.",
+    {"name": "annotate_calendar_events", "description": "Append location, phone or note to EVERY matching calendar event, keeping existing values and returning prior values for undo. Edits the whole recurring series; dry_run previews. For a read-only token, explain Google needs reconnection for event editing and offer to start it. Never substitute a map, directions or another action for the edit.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "Text to match against event titles/descriptions, e.g. 'dentist'."},
          "location": {"type": "string", "description": "Address to add to the event's location field."},
@@ -697,7 +697,7 @@ CLAUDE_TOOLS = [
          "note": {"type": "string", "description": "Any other line to add to the description."},
          "apply_to_series": {"type": "boolean", "description": "Default true — edit the whole recurring series rather than a single occurrence."},
          "dry_run": {"type": "boolean", "description": "Preview the changes without writing."},
-         "account_id": {"type": "string", "description": "Which connected Google account's calendar to write to (id, email or label). Required when more than one account can write; the tool will say so and list them."}},
+         "account_id": {"type": "string"}},
       "required": ["query"]}},
     {"name": "create_calendar_event", "description": "Create a new event on the user's Google Calendar. Times are ISO 8601. If the token is read-only, say so plainly and offer to reconnect Google.",
      "input_schema": {"type": "object", "properties": {
@@ -705,7 +705,7 @@ CLAUDE_TOOLS = [
          "end": {"type": "string", "description": "ISO 8601 end. Defaults to one hour after start."},
          "location": {"type": "string"}, "description": {"type": "string"},
          "attendees": {"type": "array", "items": {"type": "string"}},
-         "account_id": {"type": "string", "description": "Which connected Google account's calendar to write to (id, email or label). Required when more than one account can write; the tool will say so and list them."}},
+         "account_id": {"type": "string"}},
       "required": ["title", "start"]}},
     {"name": "update_calendar_event", "description": "Change one event by id: title, time, location or description. Use annotate_calendar_events for additions across events. Clearing requires specific user confirmation and allow_clearing=true; otherwise refused.",
      "input_schema": {"type": "object", "properties": {
@@ -713,26 +713,26 @@ CLAUDE_TOOLS = [
          "start": {"type": "string"}, "end": {"type": "string"},
          "location": {"type": "string"}, "description": {"type": "string"},
          "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."},
-         "account_id": {"type": "string", "description": "Which connected Google account's calendar to write to (id, email or label). Required when more than one account can write; the tool will say so and list them."}},
+         "account_id": {"type": "string"}},
       "required": ["event_id"]}},
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string"}}, "required": ["query"]}},
-    {"name": "find_free_slots", "description": "Read-only: find slots free on EVERY connected calendar/account, within working hours/time zone, notice and event buffers. Offer returned slots; for email, put their labels in draft_email, which requires card approval before sending. Disclose any listed unreadable calendars as unchecked.",
+    {"name": "find_free_slots", "description": "Read-only: find slots free on EVERY connected calendar/account within working hours, time zone, notice and buffers. Offer returned slots; for email put their labels in draft_email (card approval before sending). Disclose unreadable calendars as unchecked.",
      "input_schema": {"type": "object", "properties": {
-         "duration_minutes": {"type": "integer", "description": "Meeting length. Default 30."},
-         "window_start": {"type": "string", "description": "Earliest day or time, ISO 8601 (e.g. 2026-10-05). Default now."},
-         "window_end": {"type": "string", "description": "Last day (inclusive) or time, ISO 8601. Default a week after window_start."},
-         "count": {"type": "integer", "description": "How many slots to offer. Default 3."},
-         "min_notice_hours": {"type": "number", "description": "No slot sooner than this. Default from settings."},
-         "buffer_minutes": {"type": "integer", "description": "Clear time kept before and after existing events. Default from settings."}}}},
+         "duration_minutes": {"type": "integer"},
+         "window_start": {"type": "string"},
+         "window_end": {"type": "string"},
+         "count": {"type": "integer"},
+         "min_notice_hours": {"type": "number"},
+         "buffer_minutes": {"type": "integer"}}}},
     {"name": "hold_slots", "description": "With the user's go-ahead, place tentative 'Hold: <title>' events on their OWN calendar while a guest chooses. Holds invite/notify nobody. Keep the returned series_id for book_slot.",
      "input_schema": {"type": "object", "properties": {
          "title": {"type": "string", "description": "What the meeting is, e.g. 'Call with Dana'."},
          "slots": {"type": "array", "items": {"type": "object", "properties": {
              "start": {"type": "string"}, "end": {"type": "string"}}, "required": ["start", "end"]},
              "description": "The slots from find_free_slots (start and end)."},
-         "account_id": {"type": "string", "description": "Which connected Google account's calendar holds them (id, email or label). Required when more than one account can write; the tool will say so and list them."}},
+         "account_id": {"type": "string"}},
       "required": ["title", "slots"]}},
     {"name": "book_slot", "description": "Book the guest's chosen hold as a real event, invite attendees and release the series' other holds. Sending invitations requires the user's approval.",
      "input_schema": {"type": "object", "properties": {
@@ -742,12 +742,12 @@ CLAUDE_TOOLS = [
          "title": {"type": "string"},
          "attendees": {"type": "array", "items": {"type": "string"}, "description": "Email addresses to invite."},
          "description": {"type": "string"}, "location": {"type": "string"},
-         "account_id": {"type": "string", "description": "The same account the holds were placed on."}},
+         "account_id": {"type": "string"}},
       "required": ["series_id", "title"]}},
     {"name": "release_holds", "description": "Remove a series' remaining holds, e.g. after a decline. Removes only events Friday marked as that series' holds; leaves other events alone.",
      "input_schema": {"type": "object", "properties": {
          "series_id": {"type": "string"},
-         "account_id": {"type": "string", "description": "The same account the holds were placed on."}},
+         "account_id": {"type": "string"}},
       "required": ["series_id"]}},
     {"name": "query_calendar", "description": "Read today's and tomorrow's Google Calendar events. Built-in integration: 'not connected' needs one-time OAuth; offer setup, never claim calendar access is unavailable.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -758,7 +758,7 @@ CLAUDE_TOOLS = [
     {"name": "read_doc", "description": "Read a Google Doc's text or Sheet's first-tab values by id from search_drive. Omit account_id to try connected accounts until one has access.",
      "input_schema": {"type": "object", "properties": {
          "file_id": {"type": "string"},
-         "account_id": {"type": "string", "description": "From a prior search_drive hit's account_id; omit to auto-try all connected accounts."},
+         "account_id": {"type": "string"},
          "mime_type": {"type": "string", "description": "From a prior search_drive hit's mime_type; skips an extra lookup if provided."},
      }, "required": ["file_id"]}},
     {"name": "list_tasks", "description": "Read open Google Tasks across all connected accounts. For 'not connected', offer one-time OAuth; report individual permission errors per account. Pass returned account_id/tasklist_id to complete_task/update_task/delete_task; never guess them.",
@@ -766,22 +766,22 @@ CLAUDE_TOOLS = [
     {"name": "complete_task", "description": "Complete one Google Task in its account/tasklist. Required account_id and tasklist_id must come from list_tasks, never guesses. Missing write-capable Tasks permission returns a per-account error.",
      "input_schema": {"type": "object", "properties": {
          "task_id": {"type": "string"},
-         "tasklist_id": {"type": "string", "description": "From the task's tasklist_id in a prior list_tasks result."},
-         "account_id": {"type": "string", "description": "From the task's account_id in a prior list_tasks result."}},
+         "tasklist_id": {"type": "string"},
+         "account_id": {"type": "string"}},
       "required": ["task_id", "tasklist_id", "account_id"]}},
     {"name": "create_task", "description": "Create a Google Task in one connected account. Required account_id must come from list_tasks or connected accounts, never a guess.",
      "input_schema": {"type": "object", "properties": {
          "title": {"type": "string"},
-         "account_id": {"type": "string", "description": "Which connected account to create it in — required, never guessed."},
-         "tasklist_id": {"type": "string", "description": "Defaults to the account's default list if omitted."},
+         "account_id": {"type": "string"},
+         "tasklist_id": {"type": "string"},
          "notes": {"type": "string"},
          "due": {"type": "string", "description": "RFC3339 timestamp, e.g. 2026-09-01T00:00:00Z"}},
       "required": ["title", "account_id"]}},
     {"name": "update_task", "description": "Update a Google Task's title/notes/due/status. Required account_id and tasklist_id must come from list_tasks, never guesses. Use complete_task just to mark done.",
      "input_schema": {"type": "object", "properties": {
          "task_id": {"type": "string"},
-         "tasklist_id": {"type": "string", "description": "From the task's tasklist_id in a prior list_tasks result."},
-         "account_id": {"type": "string", "description": "From the task's account_id in a prior list_tasks result."},
+         "tasklist_id": {"type": "string"},
+         "account_id": {"type": "string"},
          "title": {"type": "string"},
          "notes": {"type": "string"},
          "due": {"type": "string"},
@@ -790,8 +790,8 @@ CLAUDE_TOOLS = [
     {"name": "delete_task", "description": "Permanently delete a Google Task; cannot undo. Required account_id and tasklist_id must come from list_tasks, never guesses.",
      "input_schema": {"type": "object", "properties": {
          "task_id": {"type": "string"},
-         "tasklist_id": {"type": "string", "description": "From the task's tasklist_id in a prior list_tasks result."},
-         "account_id": {"type": "string", "description": "From the task's account_id in a prior list_tasks result."}},
+         "tasklist_id": {"type": "string"},
+         "account_id": {"type": "string"}},
       "required": ["task_id", "tasklist_id", "account_id"]}},
     {"name": "search_contacts", "description": "Read-only: search all connected Google Contacts by name, email or phone substring. Omit query for recent contacts.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
@@ -803,7 +803,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Keywords to match across headline/snippet/source. Blank = top current stories."}, "limit": {"type": "integer", "description": "Max stories to return (1-25, default 8)."}}}},
     {"name": "run_command", "description": "Run a non-destructive PowerShell command on the system. Destructive commands (rm, del, format, shutdown, reg delete, etc.) are blocked.",
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
-    {"name": "run_sandboxed", "description": "Run Python for calculations, analysis or experiments; prefer over run_command. Separate process has time/memory limits, no Friday secrets, no writes to user files/Friday data and no subprocesses. Output files are discarded: print needed results. It CAN read user-accessible files; network blocking is Python-only, NOT Windows-enforced, so EVERY run needs user approval. backend='windows_sandbox' uses an already-installed disposable Windows Sandbox VM with networking off. Returns stdout, stderr, exit code and containment details.",
+    {"name": "run_sandboxed", "description": "Run Python for calculations, analysis or experiments; prefer over run_command. Separate process with time/memory limits, no Friday secrets, no writes to user files/Friday data, no subprocesses. Output files are discarded: print needed results. It CAN read user-accessible files; network blocking is Python-only, NOT Windows-enforced, so EVERY run needs user approval. backend='windows_sandbox' uses an installed disposable Windows Sandbox VM with networking off. Returns stdout, stderr, exit code and containment details.",
      "input_schema": {"type": "object", "properties": {
          "code": {"type": "string", "description": "Python 3 source to run as a script."},
          "timeout_seconds": {"type": "integer", "description": "Wall-clock limit, 1-120 (default 30)."},
@@ -831,7 +831,7 @@ CLAUDE_TOOLS = [
                       "required": ["model"]}},
     {"name": "navigate", "description": "Open a named built-in workspace on the user's desktop. Use for requests to open, show or switch workspaces; operate the interface rather than give directions. Workspaces: " + _ws_registry.tool_list() + ".",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
-    {"name": "navigate_to", "description": "Open a specific workspace tab, mail thread/search, Studio file, creation, news story, Knowledge page/node, Settings section, calendar day/meeting, contact, post or Media card (kind=card). Pass the user's words as query or a known exact id. new_tab opens a maximized Chrome tab; max fills the desktop. No approval for navigation. NAV_OK confirms display; NAV_PARTIAL opened something else; NAV_FAIL supplies the reason and closest matches.",
+    {"name": "navigate_to", "description": "Open a workspace tab, mail thread/search, Studio file, creation, news story, Knowledge page/node, Settings section, calendar day/meeting, contact, post or Media card (kind=card). Pass the user's words as query or a known exact id. new_tab opens a maximized Chrome tab; max fills the desktop. No approval. NAV_OK confirms display; NAV_PARTIAL opened something else; NAV_FAIL gives the reason and closest matches.",
      "input_schema": {"type": "object", "properties": {
          "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post", "card"]},
          "new_tab": {"type": "boolean", "description": "Open it in its own Chrome tab, maximized."},
@@ -848,21 +848,21 @@ CLAUDE_TOOLS = [
          "pin": {"type": "boolean"}}}},
     {"name": "set_setting", "description": "Change one Settings row by its path; op=undo changes nothing and says where the row's own Undo is (30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string"}}, "required": ["path"]}},
-    {"name": "task_control", "description": "Stop or steer work Friday is doing in the background. op=stop ends a running workflow or task after the step it is on: the step that is running finishes, the next never starts, nothing already done is undone. With no target it stops the steps shown on the user's screen. op=steer sends a running task a message without stopping it. target: a workflow name, a task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what actually happened.",
+    {"name": "task_control", "description": "Stop or steer background work. op=stop ends a running workflow or task after the step it is on: that step finishes, the next never starts, nothing done is undone; with no target it stops the steps on the user's screen. op=steer messages a running task without stopping it. target: workflow name, task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what happened.",
      "input_schema": {"type": "object", "properties": {
          "op": {"type": "string", "enum": ["stop", "steer"]},
          "target": {"type": "string", "description": "A workflow name, a task id or words from a task's name; empty for what is on their screen."},
          "message": {"type": "string", "description": "For op=steer: what to tell the task."}},
          "required": ["op"]}},
-    {"name": "screen_select", "description": "Show the user's open list what you mean. op select/add/remove/clear ticks rows in the Message Center so they see the checks appear; op point outlines and numbers up to 12 rows in the Message Center, News, Media or the Library (the second one = the second thing you just pointed at); op=filter sets a filter chip through the workspace's own filter (key and value; an empty value removes it); op=fill writes text into a field the screen offers (a reply, a quick-add line, a workflow's steps) so the user reads it and sends or saves it themselves. Shows only: changes no mail and needs no approval. scope=screen picks among the rows shown; scope=all searches the whole inbox. match: category (newsletters, promotions, unread, a news category, a status or project...), lane, unread, from, older_than (days), ordinals, status, kind, project, folder, query (a Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / POINT_OK / FILTER_OK report what the page confirmed. To act on the ticks, call organize_email with selection=screen.",
+    {"name": "screen_select", "description": "Show what you mean on the user's open list. op select/add/remove/clear ticks Message Center rows; point outlines and numbers up to 12 rows in Message Center, News, Media or Library (the second one = the second thing just pointed at); filter sets a chip through the workspace's own filter (key, value; empty removes); fill writes text into a field the screen offers (reply, quick-add line, workflow steps) for the user to send or save themselves. Shows only: changes no mail, needs no approval. scope=screen picks among rows shown; scope=all searches the whole inbox. match: category, lane, unread, from, older_than (days), ordinals, status, kind, project, folder, query (Gmail search), deictic (this|these). SELECT_OK / SELECT_PARTIAL / POINT_OK / FILTER_OK report what the page confirmed. To act on ticks call organize_email with selection=screen.",
      "input_schema": {"type": "object", "properties": {
-         "workspace": {"type": "string", "description": "messages, news, media or library; default the one in front."},
+         "workspace": {"type": "string"},
          "op": {"type": "string", "enum": ["select", "add", "remove", "clear", "point", "filter", "fill"]},
          "field": {"type": "string", "description": "For op=fill: the field's key as the screen lists it (reply.body, compose.subject, quickadd, name, step.1.prompt, steer.<task>...)."},
-         "text": {"type": "string", "description": "For op=fill: what to write. It is written into the field; nothing is sent or saved."},
-         "mode": {"type": "string", "enum": ["replace", "insert"], "description": "For op=fill: replace what is there, or add after it."},
+         "text": {"type": "string"},
+         "mode": {"type": "string", "enum": ["replace", "insert"]},
          "key": {"type": "string", "description": "For op=filter: lane, unread, q, folder, account (mail); category, sort (news); status, kind, project, q (media); folder (library)."},
-         "value": {"type": "string", "description": "For op=filter: the value; empty removes the chip."},
+         "value": {"type": "string"},
          "scope": {"type": "string", "enum": ["screen", "all"]},
          "match": {"type": "object", "properties": {
              "category": {"type": "string"}, "lane": {"type": "string"}, "unread": {"type": "boolean"},
@@ -871,7 +871,7 @@ CLAUDE_TOOLS = [
              "status": {"type": "string"}, "kind": {"type": "string"}, "project": {"type": "string"},
              "folder": {"type": "string"}, "query": {"type": "string"},
              "deictic": {"type": "string", "enum": ["this", "these"]}}},
-         "label": {"type": "string", "description": "Short name for the selection chip, e.g. Newsletters."}},
+         "label": {"type": "string"}},
          "required": ["op"]}},
     {"name": "set_chat_tray", "description": "Show/hide chat or dock it left/right in a third, half or two thirds of the screen; the workspace uses the rest. Hidden chat leaves an edge pill. No approval for this screen change. CHAT_OK: briefly report the change. CHAT_NOT_APPLIED: explain no Friday page was available.",
      "input_schema": {"type": "object", "properties": {
@@ -894,7 +894,7 @@ CLAUDE_TOOLS = [
                                                   "right_third", "left_two_thirds", "right_two_thirds"],
                       "description": "With fullscreen_chat false: the part of the screen the window takes."}},
       "required": ["fullscreen_chat"]}},
-    {"name": "organize_email", "description": "Archive/label/move/star/read/unread/Trash/restore/spam Gmail. Pick mail with selection=screen (exactly the conversations ticked on their screen), query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or search_email thread_ids. Read/unread, star/unstar and label/unlabel happen at once (receipt_id; undo_action puts it back). Anything else waits for ONE batch card: say its readback in one sentence; ask yes/no/change. Revise by calling again with replaces=card_id. Approve on-card or use answer_card for spoken approval.",
+    {"name": "organize_email", "description": "Archive/label/move/star/read/unread/Trash/restore/spam Gmail. Pick mail with selection=screen (exactly the conversations ticked on their screen), query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or search_email thread_ids. Read/unread, star/unstar and label/unlabel happen at once (receipt_id; undo_action puts it back). Anything else waits for ONE batch card: say its readback in one sentence; ask yes/no/change. Revise by calling again with replaces=card_id. Approve on-card or with answer_card.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["archive", "inbox", "read", "unread", "star", "unstar", "label", "unlabel", "move", "trash", "restore", "spam", "not_spam"]},
          "query": {"type": "string", "description": "A Gmail search, e.g. from:linkedin.com older_than:1m"},
@@ -902,41 +902,41 @@ CLAUDE_TOOLS = [
          "selection": {"type": "string", "enum": ["screen"], "description": "screen: exactly the conversations ticked on the user's screen now, instead of query or thread_ids."},
          "label": {"type": "string", "description": "For label, unlabel and move."},
          "account": {"type": "string", "description": "Only this account (label or address)."},
-         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
-         "why": {"type": "string", "description": "One short line for the card."}},
+         "replaces": {"type": "string"},
+         "why": {"type": "string"}},
       "required": ["action"]}},
     {"name": "organize_files", "description": "Move/rename/trash files or create folders within Documents, Downloads, Desktop, Creations or Projects. Use paths like Documents/Taxes/w2.pdf or search_files full paths. One file moved or renamed changes now; trash, batches, any Projects item or cloud-synced destination require ONE approval card. Nothing is deleted/overwritten; trash goes to Friday's trash; undo_action restores.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["move", "rename", "trash", "new_folder"]},
          "items": {"type": "array", "items": {"type": "string"}, "description": "The files or folders."},
          "to": {"type": "string", "description": "Destination folder (move), or the folder to make (new_folder)."},
-         "new_name": {"type": "string", "description": "For rename."},
+         "new_name": {"type": "string"},
          "moves": {"type": "array", "items": {"type": "string"}, "description": "To sort into several folders in one card: 'file => folder' each."},
          "selection": {"type": "string", "enum": ["screen"], "description": "screen: the files ticked, open or pointed at on the user's screen, instead of items."},
-         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
-         "why": {"type": "string", "description": "One short line for the card."}},
+         "replaces": {"type": "string"},
+         "why": {"type": "string"}},
       "required": ["action"]}},
     {"name": "organize_calendar", "description": "Move calendar events later or earlier by whole days and minutes, keeping their length. ONE card lists each old and new time; nothing moves before the user's own yes. selection screen takes the ticked or pointed-at events. Guests are not notified; undoable. update_calendar_event edits one event's title or place.",
      "input_schema": {"type": "object", "properties": {"selection": {"type": "string"}, "events": {"type": "array", "items": {"type": "string"}}, "days": {"type": "integer"}, "minutes": {"type": "integer"}}}},
-    {"name": "organize_media", "description": "Favourite, unfavourite, tag, untag or move to a project the user's Media cards. One card changes now; two or more wait for ONE approval card (read it back, then answer_card). Pick the cards with selection=screen (ticked, open or pointed at on their screen) or by id in cards. undo_action puts a change back.",
+    {"name": "organize_media", "description": "Favourite, unfavourite, tag, untag or move to a project the user's Media cards. One card changes now; two or more wait for ONE approval card (read it back, then answer_card). Pick with selection=screen (ticked, open or pointed at) or card ids in cards. undo_action puts it back.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["favourite", "unfavourite", "tag", "untag", "project"]},
          "cards": {"type": "array", "items": {"type": "string"}, "description": "Card ids (the id of a Media card)."},
          "selection": {"type": "string", "enum": ["screen"], "description": "screen: the cards ticked, open or pointed at on the user's screen."},
          "value": {"type": "string", "description": "The tag, or the project name (empty for none)."},
-         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
-         "why": {"type": "string", "description": "One short line for the card."}},
+         "replaces": {"type": "string"},
+         "why": {"type": "string"}},
       "required": ["action"]}},
     {"name": "organize_wiki", "description": "Move/rename/tag/untag/archive/trash Knowledge pages by title or path (people/dana.md). Resolve ambiguous numbered choices with the user, then #1/#2. Renames update links. One page moved, renamed or tagged changes now; archive, trash or batches require ONE approval card. Archive hides from the graph; trash uses Friday trash; undo_action restores.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["move", "rename", "tag", "untag", "archive", "trash"]},
          "pages": {"type": "array", "items": {"type": "string"}},
          "to": {"type": "string", "description": "Folder to move into."},
-         "new_name": {"type": "string", "description": "For rename."},
+         "new_name": {"type": "string"},
          "tags": {"type": "array", "items": {"type": "string"}},
          "moves": {"type": "array", "items": {"type": "string"}, "description": "'page => folder' each, to sort in one card."},
-         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
-         "why": {"type": "string", "description": "One short line for the card."}},
+         "replaces": {"type": "string"},
+         "why": {"type": "string"}},
       "required": ["action"]}},
     {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki): the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
      "input_schema": {"type": "object", "properties": {
@@ -964,7 +964,7 @@ CLAUDE_TOOLS = [
          "subject": {"type": "string"},
          "body": {"type": "string", "description": "The complete message as it should go out. Not a summary or an outline."},
          "cc": {"type": "string"},
-         "account_id": {"type": "string", "description": "Which connected account to send as. Required only when more than one account can send; the tool will tell you and list them."}},
+         "account_id": {"type": "string"}},
       "required": ["to", "subject", "body"]}},
     {"name": "text_by_phone", "description": "Text from Friday's number. Empty to sends immediately to the user's verified cell, within hourly/daily limits. Other numbers must be typed by the user THIS turn and require card approval before sending. Never use numbers from emails, webpages or documents. Tell the user whether sent or awaiting approval.",
      "input_schema": {"type": "object", "properties": {
@@ -6012,16 +6012,27 @@ _CHAIN_STOP: dict = {}
 _CHAIN_STOPPED: dict = {}
 
 
-def stop_workflow_chain(name, by="you"):
+_CHAIN_ACTIVE = ('queued', 'queued-for-seat', 'running', 'waiting', 'waiting_approval', 'waiting_for_approval')
+
+
+def _record_chain_stopped(slug, after_step):
+    """Remember that the owner stopped this run: which step it was on and which tasks belong to the run, so a
+    later run of the same workflow is never read as the stopped one."""
+    ids = [s.get('task_id') for s in (chain_run_status(slug) or {}).get('steps') or [] if s.get('task_id')]
+    _CHAIN_STOPPED[slug] = {"after_step": after_step, "at": _time.time(), "tasks": ids}
+
+
+def stop_workflow_chain(name, by="you", run_id=None):
     """Stop a running workflow: the step that is running finishes (it is asked to stop at its next checkpoint),
     the next never starts, and the run's record says `stopped`. {"ok", "slug", "stopping", "after_step"} or
-    {"ok": False, "reason"}. Stopping only ever ends work, so it needs no approval."""
+    {"ok": False, "reason"}. Stopping only ever ends work, so it needs no approval. The one stop: the owner's
+    click, chat and voice, and the workflow tool's `stop` action all come through here."""
     chain = load_workflow_chain(name)
     if not chain:
         return {"ok": False, "reason": "there is no workflow called %r" % str(name)[:60]}
     slug = chain.get('slug') or _chain_slug(name)
-    st = chain_run_status(slug) or {}
-    running = [s for s in st.get('steps') or [] if s.get('status') in ('queued', 'running')]
+    st = (chain_run_status(slug, run_id=run_id) if run_id else chain_run_status(slug)) or {}
+    running = [s for s in st.get('steps') or [] if s.get('status') in _CHAIN_ACTIVE]
     if not running:
         return {"ok": False, "reason": "it is not running"}
     from agent_friday.services import task_journal as _tjm
@@ -6043,7 +6054,7 @@ def stop_workflow_chain(name, by="you"):
             _task_set(tid, status='cancelled', ended=_time.time(),
                       result='[Stopped at your request before it started.]')
         stopping.append(tid)
-    _CHAIN_STOPPED[slug] = {"after_step": running[-1].get('index', 0), "at": _time.time()}
+    _record_chain_stopped(slug, running[-1].get('index', 0))
     return {"ok": True, "slug": slug, "stopping": stopping, "after_step": running[-1].get('index', 0)}
 
 
@@ -6334,14 +6345,15 @@ def chain_run_status(name, run_id=None):
     # Stopped by the owner: a step that was stopped, or a stop that landed between steps. What never started
     # is skipped, and the reason says who stopped it.
     _rec = _CHAIN_STOPPED.get(slug)
-    if state not in ('running', 'completed', 'completed_unverified') and (
-            'stopped' in statuses or (_rec and latest and (latest[0].get('created') or 0) <= _rec['at'])):
+    _mine = bool(_rec and latest and any(t.get('task_id') in (_rec.get('tasks') or []) for t in latest))
+    if state not in ('running', 'completed', 'completed_unverified') and ('stopped' in statuses or _mine):
         state = 'stopped'
         for x in out_steps:
             if x['status'] == 'pending':
                 x['status'] = 'skipped'
                 x['reason'] = 'stopped by you'
             elif x['status'] in ('stopped', 'cancelled'):
+                x['status'] = 'stopped'
                 x['reason'] = x.get('reason') or 'stopped by you'
     owner = latest[0] if latest else {}
     last = (next((row for row in reversed(selected) if row.get('task_id')), {})
@@ -6646,6 +6658,16 @@ def _advance_task_chain_once(task_id, result_text):
     with TASKS_LOCK:
         t = dict(TASKS.get(task_id) or {})
     result_text = (result_text or '').strip()
+    stopped_by_owner = bool(t.get('chain') and (_journal().stop_requested(task_id) or t.get('stop_requested')
+                                                or _CHAIN_STOP.get(t['chain'])))
+    if stopped_by_owner:
+        # The owner stopped the run while this step was finishing: the next never starts, the run's record says
+        # stopped, and the step list shows it.
+        _CHAIN_STOP.pop(t['chain'], None)
+        _task_log(task_id, "Chain stopped at your request: the next step did not start.")
+        _record_chain_stopped(t['chain'], int(t.get('chain_step', 0)))
+        _chain_sync(task_id)
+        return None
     if _journal().stop_requested(task_id) or t.get('stop_requested') or t.get('status') in ('cancelled', 'timeout', 'interrupted'):
         return None
 
@@ -6670,7 +6692,7 @@ def _advance_task_chain_once(task_id, result_text):
             _task_log(task_id, f"Chain stopped at your request: step {nxt + 1}/{len(steps)} did not start.")
             _journal().decision("chain_stop", f"stopped before step {nxt + 1}/{len(steps)}", task_id=task_id,
                                 reason="the owner asked to stop", alternatives=["advance"])
-            _CHAIN_STOPPED[chain_slug] = {"after_step": int(t.get('chain_step', 0)), "at": _time.time()}
+            _record_chain_stopped(chain_slug, int(t.get('chain_step', 0)))
             _chain_sync(task_id)
             return None
         if chain and nxt < len(steps):
@@ -6793,9 +6815,9 @@ CLAUDE_TOOLS.append({
     "input_schema": {
         "type": "object",
         "properties": {
-            "name": {"type": "string", "description": "Short, human-readable task title (e.g., 'Research Bobby Tahir')."},
-            "description": {"type": "string", "description": "Optional one-line subtitle shown in the Task Tray."},
-            "prompt": {"type": "string", "description": "The full instruction the background agent should execute."},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "prompt": {"type": "string"},
             "tier": {
                 "type": "string",
                 "enum": ["small_local", "large_local", "cloud_frontier"],
@@ -7009,7 +7031,7 @@ def _tool_deep_research(inp):
 
 CLAUDE_TOOLS.append({
     "name": "deep_research",
-    "description": "Start a deep-research job in the background: Friday plans sub-questions, searches and reads the web on local models, verifies every quote against the page it came from, and reports back with a cited report. Use for questions that need many sources and would take a person hours; use search_web for a quick lookup. Returns a task id at once; the report arrives later and the job resumes after a restart.",
+    "description": "Start a background deep-research job: Friday plans sub-questions, searches and reads the web on local models, verifies every quote against its page, and reports back with a cited report. Use for questions needing many sources that would take a person hours; use search_web for a quick lookup. Returns a task id at once; the report arrives later and the job resumes after a restart.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -7093,7 +7115,7 @@ def _tool_correct_wiki(inp):
 
 CLAUDE_TOOLS.append({
     "name": "propose_wiki_update",
-    "description": "Propose an update to the user's personal wiki when you learn new information about them. The update is queued as PENDING and the user approves it from the Knowledge workspace — it is NOT applied immediately. Use this whenever you learn a new fact about the user, their work, family, preferences, or projects that should outlive the current conversation.",
+    "description": "Propose an update to the user's wiki when you learn something new about them (work, family, preferences, projects) that should outlive this conversation. Queued as PENDING for approval in the Knowledge workspace; NOT applied immediately.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -7122,23 +7144,14 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "generate_image",
     "description": (
-        "Generate an image from a text prompt with the image model set in the "
-        "creative seat (an on-device model, a Higgsfield or kie.ai model, or "
-        "Google's Gemini Nano Banana models) and save it to the user's creations "
-        "folder. Use this whenever the user asks you to 'draw', "
-        "'create/make/generate an image/picture/art of', 'paint', 'illustrate', "
-        "or design a visual. An on-device model sends nothing out; a cloud model "
-        "receives the prompt after the egress check. The result file shows up in "
-        "the Studio gallery; tell the user it's ready and give the title, or say "
-        "plainly why nothing was made. A holographic progress orb appears while "
-        "it renders."),
+        "Generate an image from a text prompt with the image model in the creative seat (on-device, Higgsfield, kie.ai or Gemini Nano Banana) and save it to the creations folder. Use for 'draw', 'make/generate an image/picture/art of', 'paint', 'illustrate', or design a visual. An on-device model sends nothing out; a cloud model gets the prompt after the egress check. The file shows in the Studio gallery; tell the user it is ready with the title, or say plainly why nothing was made."),
     "input_schema": {
         "type": "object",
         "properties": {
-            "prompt": {"type": "string", "description": "Vivid description of the image to generate."},
-            "model": {"type": "string", "description": "Optional image model id for this call, overriding the creative seat, e.g. 'gemini-nano-banana-pro' (highest quality) or 'gemini-nano-banana-2' (faster)."},
-            "style": {"type": "string", "description": "Optional style preset: photorealistic, cinematic, digital-art, watercolor, oil-painting, anime, 3d-render, neon, minimalist, sketch — or free-text."},
-            "aspect_ratio": {"type": "string", "description": "Optional aspect ratio: 1:1 (default), 3:4, 4:3, 9:16, 16:9."},
+            "prompt": {"type": "string"},
+            "model": {"type": "string"},
+            "style": {"type": "string"},
+            "aspect_ratio": {"type": "string"},
             "n": {"type": "integer", "description": "How many COPIES of the same prompt to render (1-8, default 1). Each gets its own random seed, so they vary. For DIFFERENT images use `prompts` instead."},
             "prompts": {"type": "array", "items": {"type": "string"},
                         "description": "Two or more DISTINCT prompts rendered as one batch, in a single GPU session. Use this whenever the user asks for several different images at once ('three different images of X, Y and Z') — do NOT call this tool repeatedly, which is slower and reloads the models between every render."},
@@ -7149,21 +7162,15 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "generate_video",
     "description": (
-        "Generate a REAL video from a text prompt (optionally seeded by an image) "
-        "using Google Veo, and save it to the user's creations folder. Use when "
-        "the user asks you to 'make/create/generate a video/clip/animation of' "
-        "something, or to 'animate' an existing creation. Video rendering takes "
-        "roughly 1-3 minutes; a progress orb shows the estimate. For image-to-"
-        "video, pass image_path (an absolute path or a filename already in the "
-        "creations folder). You CAN make video — do not say you can't."),
+        "Generate a REAL video from a text prompt (optionally seeded by an image) with Google Veo, saved to the creations folder. Use for 'make/generate a video/clip/animation of' something, or 'animate' a creation. Rendering takes ~1-3 minutes; a progress orb shows the estimate. For image-to-video pass image_path (absolute, or a creations filename). You CAN make video; do not say you can't."),
     "input_schema": {
         "type": "object",
         "properties": {
-            "prompt": {"type": "string", "description": "Description of the video / motion to generate."},
-            "model": {"type": "string", "description": "Video model — 'veo' (default). Optional."},
-            "aspect_ratio": {"type": "string", "description": "Optional: 16:9 (default) or 9:16."},
-            "duration_seconds": {"type": "integer", "description": "Optional clip length in seconds (model-dependent, typically 4-8)."},
-            "image_path": {"type": "string", "description": "Optional seed image for image-to-video: an absolute path or a creation filename (e.g. 'friday-image-20260621-120000-ab12.png')."},
+            "prompt": {"type": "string"},
+            "model": {"type": "string"},
+            "aspect_ratio": {"type": "string"},
+            "duration_seconds": {"type": "integer"},
+            "image_path": {"type": "string"},
         },
         "required": ["prompt"],
     },
@@ -7171,29 +7178,18 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "generate_music",
     "description": (
-        "Compose a music track and save it to the creations folder. Use when "
-        "the user asks you to 'make/write/compose a song/track/beat/score/"
-        "jingle'. When a music service is available (Google Lyria, or the "
-        "Higgsfield audio model set in the creative seat) the result is real, "
-        "playable audio. When none is (no key, or an installed SDK without "
-        "batch Lyria), the result is a written preview describing the track, "
-        "not audio. The result's `output` field says which one was made "
-        "('audio' or 'written_preview'); tell the user exactly that, and never "
-        "describe a written preview as a song they can listen to. Lyrics with "
-        "[verse]/[chorus] tags enable vocals; a seed image sets the mood (an "
-        "image from outside the creations folder needs the owner's approval "
-        "to upload)."),
+        "Compose a music track and save it to the creations folder. Use for 'make/write/compose a song/track/beat/score/jingle'. With a music service (Google Lyria, or the Higgsfield audio model in the creative seat) the result is real, playable audio; with none (no key, or an SDK without batch Lyria) it is a written preview, not audio. The result's `output` field says which ('audio' or 'written_preview'); tell the user exactly that, and never call a written preview a song. Lyrics with [verse]/[chorus] tags enable vocals; a seed image sets the mood (one from outside the creations folder needs the owner's approval to upload)."),
     "input_schema": {
         "type": "object",
         "properties": {
             "prompt": {"type": "string", "description": "Description of the music: genre, mood, instruments, tempo, references."},
-            "model": {"type": "string", "description": "Music model: 'lyria-clip' (≤30s, default) or 'lyria-pro' (full song)."},
-            "mode": {"type": "string", "description": "'instrumental' (default) or 'song' (with vocals — pass lyrics)."},
+            "model": {"type": "string"},
+            "mode": {"type": "string"},
             "lyrics": {"type": "string", "description": "Optional custom lyrics. Use [verse]/[chorus]/[bridge] section tags. Enables vocal synthesis."},
-            "duration_seconds": {"type": "integer", "description": "Optional length in seconds (clip model caps at 30)."},
-            "language": {"type": "string", "description": "Optional vocal language code (default 'en')."},
-            "negative_prompt": {"type": "string", "description": "Optional things to avoid, e.g. 'no drums'."},
-            "seed_image_path": {"type": "string", "description": "Optional image (path or creation filename) to transfer mood from."},
+            "duration_seconds": {"type": "integer"},
+            "language": {"type": "string"},
+            "negative_prompt": {"type": "string"},
+            "seed_image_path": {"type": "string"},
         },
         "required": ["prompt"],
     },
@@ -7201,26 +7197,16 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "compose_timeline",
     "description": (
-        "Assemble existing video clips and a music/audio track into a finished, "
-        "exported production using FFmpeg — cuts/crossfades, music ducking under "
-        "dialogue, and platform exports (YouTube 16:9, Instagram Reel / TikTok "
-        "9:16, WebM, GIF preview, audio-only MP3). Use when the user asks you to "
-        "'edit/assemble/stitch/cut these clips together', 'add music to this "
-        "video', or 'export a reel/vertical version'. Each clip may be a "
-        "creation filename, an absolute path, a path relative to either "
-        "creations folder (subfolders fine, e.g. 'storybook/clips/clip1.mp4'), "
-        "or an object {file, in, out} for per-clip trims; optionally add a "
-        "music filename/path. The source clips' content hashes are signed into "
-        "the production's provenance."),
+        "Assemble existing video clips and a music/audio track into an exported production with FFmpeg: cuts/crossfades, music ducking under dialogue, platform exports (YouTube 16:9, Reel/TikTok 9:16, WebM, GIF preview, MP3). Use for 'edit/stitch these clips', 'add music to this video', 'export a vertical version'. A clip is a creation filename, an absolute or creations-relative path, or {file, in, out} for trims; optionally add a music file. The clips' content hashes are signed into the production's provenance."),
     "input_schema": {
         "type": "object",
         "properties": {
-            "clips": {"type": "array", "description": "Ordered list of clips: filenames/paths, or {file, in, out} objects for per-clip trims."},
-            "music": {"type": "string", "description": "Optional music/audio creation filename to lay under the video."},
-            "transition": {"type": "string", "description": "Transition between clips: 'cut' (default), 'crossfade', or 'fadeblack'."},
-            "title": {"type": "string", "description": "Optional title-card text shown at the start."},
-            "exports": {"type": "array", "description": "Export presets, e.g. ['mp4-1080p','mp4-vertical-9x16','gif-preview']. Default mp4-1080p.", "items": {"type": "string"}},
-            "clip_seconds": {"type": "number", "description": "Optional per-clip length in seconds (default 6)."},
+            "clips": {"type": "array"},
+            "music": {"type": "string"},
+            "transition": {"type": "string"},
+            "title": {"type": "string"},
+            "exports": {"type": "array", "items": {"type": "string"}},
+            "clip_seconds": {"type": "number"},
         },
         "required": ["clips"],
     },
@@ -7228,19 +7214,13 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "create_presentation",
     "description": (
-        "Create a REAL, polished slide deck as a self-contained HTML file in the "
-        "user's creations folder (opens in the Studio gallery; arrow keys / space "
-        "navigate, N toggles speaker notes, printing exports to PDF). Use when "
-        "the user asks you to 'make/build/create a presentation/slideshow/deck/"
-        "slides about X'. You write the outline; a fixed template renders it — "
-        "the result is always clean and works offline. You CAN make slide decks "
-        "— do not say you can't."),
+        "Create a REAL slide deck as a self-contained HTML file in the creations folder (Studio gallery; arrow keys/space navigate, N toggles speaker notes, printing exports PDF). Use for 'make a presentation/slideshow/deck/slides about X'. You write the outline; a fixed template renders it, offline. You CAN make slide decks; do not say you can't."),
     "input_schema": {
         "type": "object",
         "properties": {
-            "topic": {"type": "string", "description": "What the deck is about — include audience and key points to hit if known."},
-            "slides": {"type": "integer", "description": "Content slide count (3-16, default 8)."},
-            "style": {"type": "string", "description": "Optional tone/style hints, e.g. 'investor pitch', 'technical deep-dive', 'playful'."},
+            "topic": {"type": "string"},
+            "slides": {"type": "integer"},
+            "style": {"type": "string"},
         },
         "required": ["topic"],
     },
@@ -7248,22 +7228,7 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "office",
     "description": (
-        "Create and edit REAL Office files — .docx, .xlsx, .pptx — locally, with "
-        "no Microsoft Office and nothing sent anywhere. Use this when the user "
-        "wants a file they can open in Word/Excel/PowerPoint or attach to an "
-        "email. (`create_presentation` makes a self-contained HTML deck instead; "
-        "use that when they want something that opens in a browser.)\n"
-        "Pass one officecli command line in `command`. Verbs: create, view, get, "
-        "query, set, add, remove, move, swap, validate, batch, save, help, "
-        "load_skill. Paths inside a document are 1-based: /slide[1]/shape[2], "
-        "/body/p[3], /Sheet1/A1. Props are key=value.\n"
-        "GIVE LENGTHS A UNIT — x=2cm, width=20cm, size=28pt. A bare number is "
-        "EMU, which is about a 1600th of a centimetre, so `width=600` makes a "
-        "shape a few millimetres wide and the text renders one letter per line.\n"
-        "Files live in Friday's documents folder; use a bare filename. Start with "
-        "`help` or `help pptx shape` if unsure of a verb or property. When you "
-        "think a document is done, call `office_check` — it is not finished until "
-        "that passes."),
+        "Create and edit REAL .docx, .xlsx, .pptx files locally; no Office needed, nothing sent anywhere. (`create_presentation` makes a browser HTML deck instead.) Pass one officecli command line in `command`. Verbs: create, view, get, query, set, add, remove, move, swap, validate, batch, save, help, load_skill. Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=value. GIVE LENGTHS A UNIT (x=2cm, size=28pt): a bare number is EMU, ~1600th of a centimetre. Files live in Friday's documents folder; use a bare filename. Try `help` or `help pptx shape` when unsure. A document is not finished until `office_check` passes."),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -7304,18 +7269,13 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "create_website",
     "description": (
-        "Create a REAL multi-page website as ONE self-contained HTML file (hash "
-        "navigation between pages, responsive, works offline, deploys anywhere) "
-        "saved to the user's creations folder and viewable in the Studio "
-        "gallery. Use when the user asks you to 'make/build/create a website/"
-        "site/landing page for X'. You write the content spec; a fixed template "
-        "renders it. You CAN build websites — do not say you can't."),
+        "Create a REAL multi-page website as ONE self-contained HTML file (hash navigation, responsive, offline, deploys anywhere) in the creations folder, viewable in the Studio gallery. Use for 'make a website/site/landing page for X'. You write the content spec; a fixed template renders it. You CAN build websites; do not say you can't."),
     "input_schema": {
         "type": "object",
         "properties": {
-            "brief": {"type": "string", "description": "What the site is for: product/subject, audience, pages wanted, key messages."},
-            "pages": {"type": "integer", "description": "Page count (1-6, default 4). First page is the landing page."},
-            "style": {"type": "string", "description": "Optional tone/style hints, e.g. 'startup landing', 'portfolio', 'documentation'."},
+            "brief": {"type": "string"},
+            "pages": {"type": "integer"},
+            "style": {"type": "string"},
         },
         "required": ["brief"],
     },
@@ -8020,16 +7980,16 @@ CLAUDE_TOOLS.extend([
         "name": "move_mouse",
         "description": "Move the mouse cursor to a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Data).",
         "input_schema": {"type": "object", "properties": {
-            "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot image."},
-            "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot image."},
+            "x": {"type": "integer"},
+            "y": {"type": "integer"},
         }, "required": ["x", "y"]},
     },
     {
         "name": "click",
         "description": "Click at a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Data).",
         "input_schema": {"type": "object", "properties": {
-            "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot image."},
-            "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot image."},
+            "x": {"type": "integer"},
+            "y": {"type": "integer"},
             "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Mouse button; left when omitted."},
         }, "required": ["x", "y"]},
     },
@@ -8302,24 +8262,19 @@ CLAUDE_TOOLS.extend([
     {
         "name": "creative_project",
         "description": (
-            "Manage the user's creative project Series Bible — persistent memory "
-            "for a video series, card deck, album, storybook, etc. Characters you "
-            "add here (with a visual description) automatically propagate their "
-            "look to every image/video you generate, so the same character stays "
-            "consistent. Actions: create, activate, add_character, add_location, "
-            "add_continuity, show, list."),
+            "Manage the user's creative project Series Bible: persistent memory for a video series, card deck, album, storybook. Characters added with a visual description propagate their look to every image/video you generate. Actions: create, activate, add_character, add_location, add_continuity, show, list."),
         "input_schema": {
             "type": "object",
             "properties": {
                 "action": {"type": "string", "description": "create | activate | add_character | add_location | add_continuity | show | list"},
-                "name": {"type": "string", "description": "Project/character/location name."},
-                "type": {"type": "string", "description": "Project type (video-series, card, album, storybook, …) for action=create."},
-                "visual_description": {"type": "string", "description": "Canonical look of a character (action=add_character)."},
-                "voice_profile": {"type": "string", "description": "Voice/tone profile of a character (action=add_character)."},
-                "description": {"type": "string", "description": "Location description (action=add_location)."},
-                "note": {"type": "string", "description": "Continuity fact to log (action=add_continuity)."},
-                "scene": {"type": "string", "description": "Optional scene label for a continuity note."},
-                "project_id": {"type": "string", "description": "Target project id; defaults to the active project."},
+                "name": {"type": "string"},
+                "type": {"type": "string"},
+                "visual_description": {"type": "string"},
+                "voice_profile": {"type": "string"},
+                "description": {"type": "string"},
+                "note": {"type": "string"},
+                "scene": {"type": "string"},
+                "project_id": {"type": "string"},
             },
             "required": ["action"],
         },
@@ -8327,11 +8282,7 @@ CLAUDE_TOOLS.extend([
     {
         "name": "start_creative_pipeline",
         "description": (
-            "Run a multi-stage creative pipeline that chains workspaces with typed "
-            "hand-offs and shows milestone progress (e.g. 'research-brief-draft-"
-            "review' or 'concept-storyboard-shots'). It pauses at checkpoints so "
-            "the user can steer. Use when the user asks to take something from idea "
-            "to finished piece in stages, or asks for a 'pipeline'/'workflow'."),
+            "Run a multi-stage creative pipeline chaining workspaces with typed hand-offs and milestone progress (e.g. 'research-brief-draft-review', 'concept-storyboard-shots'). It pauses at checkpoints so the user can steer. Use for idea-to-finished-piece in stages, or a 'pipeline'/'workflow' request."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -8485,13 +8436,7 @@ CLAUDE_TOOLS.extend([
     {
         "name": "fill_pdf_form",
         "description": (
-            "Fill a PDF form's fields and save the result as a NEW PDF in Friday's "
-            "forms folder; the original is never changed. Legal and demographic "
-            "questions (SSN, date of birth, race/ethnicity, gender, disability, "
-            "veteran status, criminal history) are filled only with a value the "
-            "user typed in their own message; signature and attestation fields "
-            "are never filled. Unfilled sensitive fields come back as questions: "
-            "ask the user, do not guess."),
+            "Fill a PDF form's fields and save a NEW PDF in Friday's forms folder; the original is never changed. Legal and demographic questions (SSN, date of birth, race/ethnicity, gender, disability, veteran status, criminal history) are filled only with a value the user typed in their own message; signature and attestation fields are never filled. Unfilled sensitive fields come back as questions: ask, do not guess."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -8510,14 +8455,7 @@ CLAUDE_TOOLS.extend([
     {
         "name": "sign_pdf",
         "description": (
-            "Ask to sign a PDF. This NEVER signs by itself: it raises an approval "
-            "card showing the file, the page (with a preview) and where the "
-            "signature goes, and the signed copy is made only when the user "
-            "approves it. mode 'stamp' places the user's saved signature image; "
-            "mode 'digital' makes a cryptographic signature with the user's "
-            "certificate. Both are set by the user in Settings. Coordinates are "
-            "PDF points from the page's bottom-left; omit them for the "
-            "bottom-right corner."),
+            "Ask to sign a PDF. This NEVER signs by itself: it raises an approval card showing the file, page (with preview) and signature position, and the signed copy is made only when the user approves. mode 'stamp' places the saved signature image; 'digital' makes a cryptographic signature with the user's certificate (both set in Settings). Coordinates are PDF points from the bottom-left; omit for the bottom-right corner."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -8611,8 +8549,7 @@ def _tool_browser_close(_inp):
     return _bs.tool_close()
 
 
-_BROWSER_EL = {"type": "integer",
-               "description": "The element's number from the latest browser_read."}
+_BROWSER_EL = {"type": "integer"}
 
 CLAUDE_TOOLS.extend([
     {
@@ -9309,14 +9246,14 @@ CLAUDE_TOOLS.extend([
         "input_schema": {
             "type": "object",
             "properties": {
-                "body": {"type": "string", "description": "The post text (markdown) — the canonical body the composer adapts per platform."},
-                "platforms": {"type": "array", "items": {"type": "string"}, "description": "Target platforms: linkedin, twitter, instagram, youtube, bluesky, mastodon, reddit, substack, medium, tiktok, federation."},
-                "title": {"type": "string", "description": "Optional working title (used by platforms with a title field)."},
-                "publish_at": {"type": "string", "description": "When to publish: ISO-8601 UTC or a natural phrase like 'tomorrow morning'. Omit to leave a draft (or set optimal_time)."},
-                "optimal_time": {"type": "boolean", "description": "Let the best-times engine pick the next optimal slot."},
-                "timezone": {"type": "string", "description": "IANA timezone for interpreting publish_at (default: the user's settings timezone)."},
-                "assets": {"type": "array", "items": {"type": "string"}, "description": "Optional creation filenames from the Studio gallery to attach."},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags (e.g. nsfw) — mapped to platform sensitivity flags."},
+                "body": {"type": "string"},
+                "platforms": {"type": "array", "items": {"type": "string"}},
+                "title": {"type": "string"},
+                "publish_at": {"type": "string"},
+                "optimal_time": {"type": "boolean"},
+                "timezone": {"type": "string"},
+                "assets": {"type": "array", "items": {"type": "string"}},
+                "tags": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["body", "platforms"],
         },
@@ -9324,20 +9261,14 @@ CLAUDE_TOOLS.extend([
     {
         "name": "content_schedule_post",
         "description": (
-            "Schedule or reschedule an existing content post by id. Composes "
-            "any platform target that hasn't been adapted yet, then sets the "
-            "publish time: publish_at (ISO-8601 UTC or a natural phrase) or "
-            "optimal_time (default when no time is given — the best-times "
-            "engine picks). The post goes out only after the user approves "
-            "the card showing its exact text. Returns the resolved instant "
-            "and a Queue deep link; warns about same-platform conflicts."),
+            "Schedule or reschedule a content post by id. Composes any unadapted platform target, then sets publish_at (ISO-8601 UTC or natural phrase) or optimal_time (default when no time given). Goes out only after the user approves the card showing its exact text. Returns the resolved instant and a Queue link; warns about same-platform conflicts."),
         "input_schema": {
             "type": "object",
             "properties": {
-                "post_id": {"type": "string", "description": "The ContentPost id (from content_create_post / content_post_status)."},
-                "publish_at": {"type": "string", "description": "ISO-8601 UTC or a natural phrase ('tomorrow morning', 'in 2 hours')."},
-                "optimal_time": {"type": "boolean", "description": "Pick the next optimal slot from the best-times engine."},
-                "timezone": {"type": "string", "description": "IANA timezone for interpreting publish_at."},
+                "post_id": {"type": "string"},
+                "publish_at": {"type": "string"},
+                "optimal_time": {"type": "boolean"},
+                "timezone": {"type": "string"},
             },
             "required": ["post_id"],
         },
@@ -9361,22 +9292,16 @@ CLAUDE_TOOLS.extend([
     {
         "name": "content_repurpose",
         "description": (
-            "Turn one piece of content into a spread of platform-native "
-            "drafts — e.g. a blog post becomes a LinkedIn post + X thread + "
-            "Bluesky/Mastodon posts + newsletter section, each written for "
-            "its platform (never the same caption pasted N times). Source: "
-            "body text or the post_id of an existing content post. Creates "
-            "DRAFTs only — review/edit, then schedule with "
-            "content_schedule_post."),
+            "Turn one piece of content into platform-native drafts (e.g. a blog post becomes LinkedIn + X thread + Bluesky/Mastodon posts + newsletter section), each written for its platform. Source: body text or the post_id of an existing post. Creates DRAFTs only; review, then schedule with content_schedule_post."),
         "input_schema": {
             "type": "object",
             "properties": {
-                "body": {"type": "string", "description": "The source text to repurpose (or pass post_id instead)."},
-                "post_id": {"type": "string", "description": "Existing ContentPost id to repurpose (body/title/assets are pulled from it)."},
-                "platforms": {"type": "array", "items": {"type": "string"}, "description": "Custom spread; omit for the default spread by content kind."},
-                "title": {"type": "string", "description": "Optional title override."},
-                "assets": {"type": "array", "items": {"type": "string"}, "description": "Optional creation filenames to fan out with the spread."},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags."},
+                "body": {"type": "string"},
+                "post_id": {"type": "string"},
+                "platforms": {"type": "array", "items": {"type": "string"}},
+                "title": {"type": "string"},
+                "assets": {"type": "array", "items": {"type": "string"}},
+                "tags": {"type": "array", "items": {"type": "string"}},
             },
         },
     },
@@ -9614,7 +9539,7 @@ CLAUDE_TOOLS.extend([
             "phone": {"type": "string"},
             "company": {"type": "string"},
             "job_title": {"type": "string"},
-            "account_id": {"type": "string", "description": "Which connected account; required when more than one can save."},
+            "account_id": {"type": "string"},
             "resource_name": {"type": "string", "description": "Only to update an existing contact."},
         }},
     },

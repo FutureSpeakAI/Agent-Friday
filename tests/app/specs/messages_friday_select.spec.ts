@@ -9,7 +9,7 @@
 // names who selected, the owner can edit and clear, held rows turn amber and release, done rows leave
 // with an Undo, declined rows keep their ticks, the owner's own bulk button makes no card request,
 // reduced motion is a 120 ms fade, and every state is announced politely.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');

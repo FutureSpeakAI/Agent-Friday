@@ -31519,6 +31519,7 @@ function WfCard({
     type: "button",
     className: "btn",
     disabled: busy,
+    "data-testid": "wf-stop",
     onClick: () => onAction('stop', w)
   }, "Stop run") : /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -61134,7 +61135,7 @@ const SETTINGS_TABS = [{
 }];
 fridayDeclareNav('settings', {
   key: 'tab',
-  keys: ['tab', 'section'],
+  keys: ['tab', 'section', 'row'],
   sections: SETTINGS_TABS.map(t => ({
     id: t.id,
     label: t.label,

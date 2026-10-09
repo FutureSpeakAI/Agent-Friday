@@ -197,11 +197,24 @@ def test_a_solo_writer_is_told_so_and_a_speaker_b_line_is_friday_s(home, monkeyp
     assert "One host" in llm.calls[0]["system"] and "Emma" not in llm.calls[0]["system"]
 
 
-def test_the_host_format_is_the_owners_setting_with_the_default_shown(home):
+def test_the_host_format_is_the_owners_setting_with_the_default_shown(home, monkeypatch):
+    from agent_friday.governance import action_gate as ag
+    from agent_friday.services import approvals as ap, dissent_gate as dg
+    from agent_friday.services import setting_proposals as sp
+    monkeypatch.setattr(ap, "APPROVALS_FILE", home / "approvals.json")
+    monkeypatch.setattr(dg, "EVENTS_PATH", home / "dissent_events.jsonl")
+    monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
+    monkeypatch.setattr(sp, "_store", lambda: home / "setting_changes.json")
     out = json.loads(podcast_tools._tool_podcast_format({}))
     assert out["formats"]["briefing"] == {"format": "solo", "recommended": "solo"}
+    # a setting change waits for the owner's own yes: nothing is saved before it
     out = json.loads(podcast_tools._tool_podcast_format({"routine": "briefing", "format": "duo"}))
-    assert out["status"] == "ok" and pe.format_for("briefing") == "duo"
+    assert out["status"] == "needs_yes" and pe.format_for("briefing") == "solo"
+    assert "podcasts" not in SAVED.get("s", {})
+    card = next(r for r in ap.list_approvals(kind="governed_action")
+                if (r.get("payload") or {}).get("handler") == sp.HANDLER and r.get("status") == "pending")
+    ap.decide_with_outcome(card["approval_id"], "approve", decided_by="owner")
+    assert pe.format_for("briefing") == "duo"
     assert SAVED["s"]["podcasts"]["format"]["briefing"] == "duo"
     assert json.loads(podcast_tools._tool_podcast_format({}))["formats"]["briefing"] == \
         {"format": "duo", "recommended": "solo"}

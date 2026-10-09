@@ -191,12 +191,18 @@ def format_for(routine: str = "") -> str:
     return got if got in FORMATS else RECOMMENDED_FORMAT[key]
 
 
-def set_format(routine: str, fmt: str) -> None:
+def check_format(routine: str, fmt: str) -> None:
+    """Refuse a show or a format that does not exist, before anything asks the owner about it."""
     key = routine or "any"
     if key not in RECOMMENDED_FORMAT:
         raise PodcastRefused("no such show %r; one of: %s" % (routine, ", ".join(RECOMMENDED_FORMAT)))
     if fmt not in FORMATS:
         raise PodcastRefused("a show is \"solo\" (%s alone) or \"duo\" (two hosts)" % her_name())
+
+
+def set_format(routine: str, fmt: str) -> None:
+    key = routine or "any"
+    check_format(routine, fmt)
     from agent_friday.core import _save_settings
     _save_settings({"podcasts": {"format": {key: fmt}}})
 

@@ -97,7 +97,13 @@ def test_undo_puts_each_event_back_at_its_old_time(world):
     assert state["e1"]["start"] != EVENTS["e1"]["start"]
     rec = journal.latest(None)
     res = ia.undo(rec["receipt_id"])
-    assert res["status"] == "complete"
+    assert res["status"] == "pending_approval", res     # putting events back writes to Google: a card
+    assert state["e1"]["start"] != EVENTS["e1"]["start"], "nothing is put back before the yes"
+    card = [c for c in _pending() if c["status"] == "pending"]
+    assert len(card) == 1 and card[0]["payload"]["domain"] == "calendar_undo"
+    ap.decide_with_outcome(card[0]["approval_id"], "approve", decided_by="owner")
+    back = ia.wait_for(card[0]["approval_id"], 10)
+    assert back and back["status"] == "complete", back
     assert state["e1"]["start"] == EVENTS["e1"]["start"] and state["e2"]["end"] == EVENTS["e2"]["end"]
 
 

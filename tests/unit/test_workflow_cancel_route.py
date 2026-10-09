@@ -136,7 +136,11 @@ def test_the_route_is_the_owners_click_and_answers_honestly(world):
 
 
 def test_the_run_remembers_the_conversation_it_reports_to_through_every_step(world):
-    tid = agent.run_workflow_chain("Morning brief", conversation_id="conv-7")
+    from agent_friday.services import conversations
+    # A conversation that exists is kept as the owner; one that does not is replaced by a new chat (the
+    # workflow operations never deliver into a chat that is not there).
+    cid = conversations.create(title="Morning brief chat")["id"]
+    tid = agent.run_workflow_chain("Morning brief", conversation_id=cid)
     _finish(tid)
     agent._advance_task_chain(tid, "ok")
-    assert [c[3] for c in world.calls] == ["conv-7", "conv-7"]
+    assert [c[3] for c in world.calls] == [cid, cid]

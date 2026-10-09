@@ -164,7 +164,7 @@
       .fm-row.held::before { box-shadow:inset 2px 0 0 var(--fr-warn); }
       @keyframes fr-tick-in { from { opacity:0; transform:scale(.8); } to { opacity:1; transform:scale(1); } }
       @keyframes fr-ground-in { from { opacity:0; } to { opacity:1; } }
-      /* Friday's sweep: opacity and scale only, staggered top to bottom so all of it ends inside 350 ms
+      /* The sweep: opacity and scale only, staggered top to bottom so all of it ends inside 350 ms
          (--fr-reveal); reduced motion is a 120 ms fade, never nothing. */
       .fm-row.sel.fr-sweep input[type=checkbox] { animation:fr-tick-in 140ms ease-out both; animation-delay:var(--fr-d, 0ms); }
       .fm-row.sel.fr-sweep::before { animation:fr-ground-in 140ms ease-out both; animation-delay:var(--fr-d, 0ms); }
