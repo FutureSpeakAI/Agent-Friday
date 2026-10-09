@@ -141,6 +141,8 @@ def make_handler(root: str, limiter: _RateLimit):
             return (self.headers.get("CF-Connecting-IP") or self.client_address[0] or "").strip()
 
         def _send(self, status: int, body: bytes = b"", ctype: str = "text/plain; charset=utf-8", head_only=False):
+            if "\r" in ctype or "\n" in ctype:
+                ctype = "application/octet-stream"
             self.send_response(status)
             for k, v in HEADERS.items():
                 self.send_header(k, v)
