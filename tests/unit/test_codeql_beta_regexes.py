@@ -222,3 +222,12 @@ def test_css_sanitiser_still_keeps_an_inline_image_and_drops_the_rest():
                            ".ws-custom-root{background:url(http://x/y.png)}")
     assert "data:image/png;base64,AAAA" in out
     assert "http" not in out and "y.png" not in out
+
+
+def test_embedded_image_needs_bytes_and_is_checked_without_a_pattern_over_them():
+    import pytest
+    from agent_friday.services import publish_web as pw
+    for src in ("data:image/png;base64,", "data:text/html;base64,AA", "", "x" * N):
+        with pytest.raises(pw.Refused):
+            _fast(pw.pack, {"kind": "image", "title": "t", "content": {"src": src}, "conversation_id": "c",
+                            "artifact_id": "a", "version": 1})

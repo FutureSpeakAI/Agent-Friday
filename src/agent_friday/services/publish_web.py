@@ -336,12 +336,12 @@ def pack(rec: dict, *, mark: Optional[bool] = None) -> Bundle:
         files["data.csv"] = _csv(cols, rows).encode("utf-8")
     elif kind == "image":
         src = str((content or {}).get("src") or "")
-        m = re.match(r"data:image/(png|jpe?g|gif|webp|svg\+xml);base64,(.+)$", src, re.S)
-        if not m:
+        m = re.match(r"data:image/(png|jpe?g|gif|webp|svg\+xml);base64,", src)
+        if not m or m.end() >= len(src):
             raise Refused("the image has no embedded bytes to publish")
         ext = {"jpeg": "jpg", "svg+xml": "svg"}.get(m.group(1), m.group(1))
         try:
-            data = base64.b64decode(m.group(2))
+            data = base64.b64decode(src[m.end():])
         except Exception:
             raise Refused("the image data could not be decoded")
         if ext == "svg" and not _svg_is_inert(data.decode("utf-8", "replace")):
