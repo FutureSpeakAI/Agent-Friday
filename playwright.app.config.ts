@@ -46,6 +46,7 @@ process.env.FRIDAY_BASE = target.baseURL;
 
 export default defineConfig({
   webServer,
+  globalSetup: target.scratch ? require.resolve("./tests/app/setup.js") : undefined,
   globalTeardown: target.scratch ? require.resolve("./tests/app/teardown.js") : undefined,
   testDir: './tests/app',
   timeout: 600_000,          // vision judging on a local model is slow
