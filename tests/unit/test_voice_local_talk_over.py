@@ -162,6 +162,17 @@ def _cleanup():
     del _OPEN[:], _RELEASE[:], _MINDS[:]
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _warm_the_turn_tail():
+    """A turn ends by asking `off_record.active()`, whose first call in a process
+    imports `agent_friday.core` (seconds on a cold or busy machine). That import
+    belongs to process start, not to the barge these tests time: it is paid here,
+    once, before any turn runs, so a test waits only on the barge itself."""
+    from agent_friday.services import off_record
+    off_record.active()
+    yield
+
+
 def _detector(**kw):
     from agent_friday.routes.voice import LiveBargeDetector
     return LiveBargeDetector(**{"grace_ms": 800, "sustain_ms": 200, **kw})
