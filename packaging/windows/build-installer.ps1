@@ -73,7 +73,7 @@ $version = '0.0.0'
 $m = [regex]::Match((Get-Content -LiteralPath (Join-Path $RepoRoot 'pyproject.toml') -Raw), '(?m)^version\s*=\s*"([^"]+)"')
 if ($m.Success) { $version = $m.Groups[1].Value }
 
-Set-StepTotal 5
+Set-StepTotal 6
 Say-Banner -Version $version
 Say "Building the Windows installer artifact."
 Say "  repo   : $RepoRoot"
@@ -722,7 +722,7 @@ if ($IsccPath) {
         $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe' }),
         $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe' })
     ) | Where-Object { $_ }
-    foreach ($c in $candidates) { if (Test-Path -LiteralPath $c) { $iscc = $c; break } }
+    foreach ($cand in $candidates) { if (Test-Path -LiteralPath $cand) { $iscc = $cand; break } }  # not $c: that is $script:C, the colour table
     if (-not $iscc) {
         $onPath = Get-Command ISCC.exe -ErrorAction SilentlyContinue
         if ($onPath) { $iscc = $onPath.Source }
