@@ -76,8 +76,16 @@ def test_alternate_data_stream_and_trailing_dot_are_denied():
 
 def test_env_var_path_is_denied(monkeypatch):
     monkeypatch.setenv("FRIDAY_TEST_HOME_VAR", str(core.HOME))
-    assert cred.check("%FRIDAY_TEST_HOME_VAR%\\.ssh\\id_work")
     assert cred.check("$FRIDAY_TEST_HOME_VAR/.ssh/id_work")
+    assert cred.check("${FRIDAY_TEST_HOME_VAR}/.ssh/id_work")
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows shell syntax: a backslash separates path parts and %VAR% expands only there; on a POSIX path a backslash is an ordinary character, and the POSIX spelling of this case runs on every platform")
+def test_percent_env_var_path_is_denied(monkeypatch):
+    monkeypatch.setenv("FRIDAY_TEST_HOME_VAR", str(core.HOME))
+    assert cred.check("%FRIDAY_TEST_HOME_VAR%\\.ssh\\id_work")
 
 
 def test_a_key_renamed_to_anything_is_denied_by_content(test_home):
@@ -192,7 +200,9 @@ def test_encoded_command_is_decoded_and_scanned():
 
 def test_a_wildcard_that_expands_to_a_key_is_refused(test_home):
     _write(test_home / "Documents" / "keys" / "notes1.txt")
-    assert cred.scan_command(f'Get-Content "{test_home}\\Documents\\keys\\notes*.txt"')
+    # the path in the platform's own spelling: backslashes on Windows, slashes elsewhere
+    pattern = test_home / "Documents" / "keys" / "notes*.txt"
+    assert cred.scan_command(f'Get-Content "{pattern}"')
 
 
 @pytest.mark.parametrize("cmd", [

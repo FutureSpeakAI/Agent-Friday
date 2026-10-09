@@ -11,6 +11,7 @@ import os
 import random
 import re
 import secrets
+import sys
 import time
 from pathlib import Path
 
@@ -31,6 +32,13 @@ def _mk(p: Path, body="x"):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body, encoding="utf-8")
     return p
+
+
+#: A backslash separates path parts, and %VAR% expands, only in Windows shells.
+#: On a POSIX path a backslash is an ordinary character, so these spellings name
+#: no credential there; each has a slash-spelled twin that runs on every platform.
+WINDOWS_PATHS = pytest.mark.skipif(
+    sys.platform != "win32", reason="Windows shell syntax: a backslash separates path parts and %VAR% expands only there; on a POSIX path a backslash is an ordinary character, and the POSIX spelling of this case runs on every platform")
 
 
 @pytest.fixture
@@ -75,10 +83,13 @@ def test_a_folder_named_in_the_same_pipeline_is_still_its_root(
 
 @pytest.mark.parametrize("cmd", [
     "cd ..; cd ..; Get-ChildItem -Recurse | Get-Content",
-    "Set-Location ..\\..; Get-ChildItem -Recurse | Get-Content",
+    "Set-Location ../..; Get-ChildItem -Recurse | Get-Content",
+    pytest.param("Set-Location ..\\..; Get-ChildItem -Recurse | Get-Content",
+                 marks=WINDOWS_PATHS),
     "pushd ../..; ls -R | xargs cat",
     "cd ..; cd ..; 7z a out.7z .",
-    "cd ..\\.. && dir /s | findstr x",
+    "cd ../.. && dir /s | findstr x",
+    pytest.param("cd ..\\.. && dir /s | findstr x", marks=WINDOWS_PATHS),
     "sl ~; Get-ChildItem -Recurse | Get-Content",
 ])
 def test_a_walk_after_cd_starts_where_the_chain_has_moved_to(profile, cmd):
@@ -195,7 +206,9 @@ def test_a_project_env_file_elsewhere_is_not_the_apps_secret_file(profile, app_d
 @pytest.mark.parametrize("tool,args", [
     ("read_file", lambda d: {"path": str(d / ".env")}),
     ("read_file", lambda d: {"path": str(d / "secrets.yaml")}),
-    ("run_command", lambda d: {"command": f"type {d}\\.env"}),
+    pytest.param("run_command", lambda d: {"command": f"type {d}\\.env"},
+                 marks=WINDOWS_PATHS),
+    ("run_command", lambda d: {"command": f"cat {d}/.env"}),
     ("run_command", lambda d: {"command": f"cat {d}/secrets.yaml"}),
 ])
 def test_the_tools_return_a_refusal_not_the_apps_keys(app_dir, tool, args):

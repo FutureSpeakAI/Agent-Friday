@@ -7,6 +7,7 @@ resolves to. All values are synthetic.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,13 @@ def _mk(p: Path, body="x"):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body, encoding="utf-8")
     return p
+
+
+#: A backslash separates path parts only in Windows shells; on a POSIX path it is
+#: an ordinary character, so a backslash-spelled lookup is not the lookup there.
+#: Its slash-spelled twin runs on every platform.
+WINDOWS_PATHS = pytest.mark.skipif(
+    sys.platform != "win32", reason="Windows shell syntax: a backslash separates path parts and %VAR% expands only there; on a POSIX path a backslash is an ordinary character, and the POSIX spelling of this case runs on every platform")
 
 
 @pytest.fixture
@@ -58,7 +66,8 @@ def test_a_walk_from_the_home_directory_is_refused_from_a_project_folder(
 
 @pytest.mark.parametrize("cmd", [
     "cat ~/.ssh/config",
-    "Get-Content $HOME\\.ssh\\known_hosts",
+    "Get-Content $HOME/.ssh/known_hosts",
+    pytest.param("Get-Content $HOME\\.ssh\\known_hosts", marks=WINDOWS_PATHS),
     "cat ~/.ssh/id_ed25519.pub",
     "Get-Content {home}\\.ssh\\id_ed25519.pub",
     "type %USERPROFILE%\\.ssh\\id_rsa.pub",

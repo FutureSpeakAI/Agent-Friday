@@ -8,6 +8,7 @@ All values are synthetic.
 """
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -58,7 +59,8 @@ _WALKS = [
     "tar -cf out.tar -C {home} .",
     "Compress-Archive -Path {home} -DestinationPath out.zip",
     "Compress-Archive -Path $HOME -DestinationPath out.zip",
-    "Copy-Item {home}\\* D:\\out -Recurse",
+    "Copy-Item {home}{sep}* D:\\out -Recurse",
+    "cp -r {home}/* /tmp/out",
     "Get-ChildItem {parent} -Recurse | Get-Content",
 ]
 
@@ -66,7 +68,8 @@ _WALKS = [
 @pytest.mark.parametrize("cmd", _WALKS)
 def test_a_recursive_read_from_above_a_credential_folder_is_refused(profile, monkeypatch, cmd):
     monkeypatch.chdir(profile)
-    cmd = cmd.replace("{home}", str(profile)).replace("{parent}", str(profile.parent))
+    cmd = (cmd.replace("{home}", str(profile)).replace("{parent}", str(profile.parent))
+           .replace("{sep}", os.sep))
     assert cred.scan_command(cmd), cmd
 
 
