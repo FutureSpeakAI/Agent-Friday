@@ -116,7 +116,9 @@ def test_nothing_in_the_installer_scripts_assumes_the_desktop_is_under_the_profi
     body = SHORTCUTS[SHORTCUTS.index("function Get-DesktopDir"):SHORTCUTS.index("function Get-StartMenuDir")]
     body = body[body.index("#>"):]
     assert body.index("Get-SpecialDir") < body.index("Get-KnownFolderPath") < body.index("User Shell Folders") \
-        < body.index("OneDrive") < body.index("USERPROFILE"), "the profile folder is the last resort, not the first"
+        < body.index("USERPROFILE"), "the profile folder is the last resort, not the first"
+    assert "OneDrive" not in body.split("#>", 1)[1], "Windows' own answer is never overridden by a OneDrive guess"
+    assert "0x8000u" in SHORTCUTS, "the shell lookup creates a missing Desktop (KF_FLAG_CREATE) instead of answering empty"
     assert "$fb = Join-Path $env:USERPROFILE 'Desktop'" not in SHORTCUTS
 
 
@@ -278,16 +280,25 @@ def test_the_release_notes_carry_the_build_sequence_the_updater_reads():
 
 @needs_powershell
 def test_a_shortcut_is_created_where_asked_and_the_desktop_is_resolved_through_the_shell(tmp_path):
+    # A profile that has no Desktop folder yet: the shell lookup used to answer empty here, so the
+    # three sources disagreed and a link could land where Windows does not show it.
+    home = tmp_path / "home"
+    home.mkdir()
     link = tmp_path / "out" / "Agent Friday.lnk"
     target = tmp_path / "Agent Friday.cmd"
     target.write_text("@echo off\r\n", encoding="utf-8")
     got = ps_json(". '%s'\n. '%s'\n$p = New-Shortcut -LinkPath '%s' -TargetPath '%s' -WorkingDirectory '%s'\n"
                   "$d = Get-DesktopDir\n$k = Get-KnownFolderPath -Name 'Desktop'\n"
-                  "[ordered]@{ made = [bool]$p; exists = (Test-Path -LiteralPath '%s'); desktop = $d; known = $k; net = [Environment]::GetFolderPath('Desktop') } | ConvertTo-Json -Compress\n"
-                  % (LIB / "Common.ps1", LIB / "Shortcuts.ps1", link, target, tmp_path, link), tmp_path)
+                  "$n = New-Shortcut -LinkPath (Join-Path $d 'Agent Friday.lnk') -TargetPath '%s' -WorkingDirectory '%s'\n"
+                  "$l = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Agent Friday.lnk'\n$landed = Test-Path -LiteralPath $l\n"
+                  "if ($landed) { Remove-Item -LiteralPath $l -Force }\n"
+                  "[ordered]@{ made = [bool]$p; exists = (Test-Path -LiteralPath '%s'); desktop = $d; known = $k; net = [Environment]::GetFolderPath('Desktop'); landed = $landed } | ConvertTo-Json -Compress\n"
+                  % (LIB / "Common.ps1", LIB / "Shortcuts.ps1", link, target, tmp_path, target, tmp_path, link), tmp_path,
+                  env={"USERPROFILE": str(home), "HOME": str(home)})
     assert got["made"] and got["exists"]
     assert got["desktop"], "a Desktop folder was found"
     assert got["known"].lower() == got["net"].lower() == got["desktop"].lower(), "the shell, .NET and Get-DesktopDir agree on this machine"
+    assert got["landed"], "the shortcut is where GetFolderPath says the Desktop is"
 
 
 # ── offline install from the bundled wheelhouse ──────────────────────────────

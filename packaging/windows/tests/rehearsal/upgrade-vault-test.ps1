@@ -147,6 +147,26 @@ function Invoke-Installer([string] $script, [string] $tag) {
     }
 }
 
+# --- Windows' own answer for a folder, in the profile the installer ran in -
+# The Desktop known folder is %USERPROFILE%\Desktop in the registry, so Windows
+# answers differently once USERPROFILE is redirected. The shortcut is checked
+# where Windows says the Desktop is FOR THE PROFILE THE INSTALLER RAN AS, not
+# for the runner's real profile it was deliberately kept away from.
+function Get-ShellFolderAsInstalled([string] $name) {
+    $ps = (Get-Command powershell.exe).Source
+    $env:USERPROFILE = $FakeHome
+    $env:HOME        = $FakeHome
+    $env:HOMEDRIVE   = (Split-Path -Qualifier $FakeHome)
+    $env:HOMEPATH    = (Split-Path -NoQualifier $FakeHome)
+    try {
+        $out = & $ps -NoProfile -ExecutionPolicy Bypass -Command "[Environment]::GetFolderPath('$name')"
+        return ([string]($out | Select-Object -First 1)).Trim()
+    } finally {
+        $env:USERPROFILE = $RealHome
+        $env:HOME        = $RealHome
+    }
+}
+
 # --- The new setup program, silent, over the same root ----------------------
 function Invoke-InnoUpgrade {
     $log = Join-Path $Root 'run-upgrade.log'
@@ -461,8 +481,8 @@ if ($UpgradeExe) {
     try { $manifest = Get-Content -LiteralPath (Join-Path $InstallRoot 'install-manifest.json') -Raw | ConvertFrom-Json } catch { }
     $inno.manifest_build_sequence = $(if ($manifest -and $manifest.PSObject.Properties.Match('build_sequence').Count) { [int64]$manifest.build_sequence } else { 0 })
     $inno.manifest_installed_by = $(if ($manifest -and $manifest.PSObject.Properties.Match('installed_by').Count) { $manifest.installed_by } else { '' })
-    $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Agent Friday.lnk'
-    $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Agent Friday\Agent Friday.lnk'
+    $desk = Join-Path (Get-ShellFolderAsInstalled 'Desktop') 'Agent Friday.lnk'
+    $menu = Join-Path (Get-ShellFolderAsInstalled 'Programs') 'Agent Friday\Agent Friday.lnk'
     $inno.desktop_shortcut = Test-Path -LiteralPath $desk
     $inno.start_menu_shortcut = Test-Path -LiteralPath $menu
     $inno.legacy_apps_entry_before = $legacyArpBefore
