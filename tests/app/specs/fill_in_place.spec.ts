@@ -40,6 +40,11 @@ async function openMessages(page: Page) {
   await page.locator('.fm-row').first().waitFor({ timeout: 60000 });
   return writes;
 }
+// The owner types where a reply is written: above the signature and the quoted original, not inside the quote.
+async function typeInReply(page: Page) {
+  await page.locator('.fm-editor').click();
+  await page.keyboard.press('Control+Home');
+}
 const run = (page: Page, a: unknown) => page.evaluate(x => (window as any).fridayStage.run(x), a) as Promise<any>;
 
 test('a reply is written above the quote, Send is untouched, and no write request is made', async ({ page }) => {
@@ -53,7 +58,10 @@ test('a reply is written above the quote, Send is untouched, and no write reques
   const out = await run(page, { type: 'fill', workspace: 'messages', field: 'reply.body', text: 'Tuesday works. See you at noon.', mode: 'replace' });
   expect(out.result.ok).toBe(true);
   await expect(page.locator('.fm-editor')).toContainText('Tuesday works. See you at noon.');
-  await expect(page.locator('.fm-editor .fm-quote, .fm-editor')).toContainText('Can we do lunch Tuesday?');   // the quoted original stays
+  await expect(page.locator('.fm-editor .fm-quote')).toContainText('Can we do lunch Tuesday?');   // the quoted original stays
+  const order = await page.locator('.fm-editor').evaluate(el => { const t = el.innerText; return [t.indexOf('Tuesday works'), t.indexOf('Can we do lunch')]; });
+  expect(order[0]).toBeGreaterThanOrEqual(0);
+  expect(order[0]).toBeLessThan(order[1]);                  // the reply sits above the quote
   await expect(page.locator('[data-testid=fr-fill-reply\\.body]')).toContainText('wrote this');
   const send = page.getByRole('button', { name: /Send/ }).first();
   await expect(send).toBeEnabled();
@@ -64,13 +72,13 @@ test('Undo puts the reply back as it was, and an edit by the owner makes it thei
   await openMessages(page);
   await page.locator('.fm-row').first().click();
   await page.getByRole('button', { name: /Reply$/ }).first().click();
-  await page.locator('.fm-editor').click();
+  await typeInReply(page);
   await page.keyboard.type('draft by me');
   await run(page, { type: 'fill', workspace: 'messages', field: 'reply.body', text: 'Friday wrote this', mode: 'replace' });
   await page.locator('[data-testid=fr-fill-reply\\.body] button', { hasText: 'Undo' }).click();
   await expect(page.locator('.fm-editor')).toContainText('draft by me');
   await run(page, { type: 'fill', workspace: 'messages', field: 'reply.body', text: 'Friday again', mode: 'replace' });
-  await page.locator('.fm-editor').click();
+  await typeInReply(page);
   await page.keyboard.type(' plus mine');
   await expect(page.locator('[data-testid=fr-fill-reply\\.body]')).toHaveCount(0);
 });
