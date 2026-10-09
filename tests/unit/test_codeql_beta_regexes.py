@@ -193,3 +193,32 @@ def test_figures_pattern_is_bounded_per_start():
     from agent_friday.services import podcast_quality as pq
     _fast(pq._entities, "T", ("1" * 39 + "x") * (N // 40))
     _fast(pq._entities, "T", "$" + "1," * (N // 2))
+
+
+def test_css_url_scan_is_linear_at_the_sanitiser_cap():
+    from agent_friday.services import workspace_studio as ws
+    cap = 8000
+    for css in ("url(" + " " * cap, "url(" * (cap // 4), "url('" * (cap // 5),
+                "url(' " + "' " * (cap // 2), "a" * cap, "a:" * (cap // 2), "a." * (cap // 2)):
+        _fast(ws._sanitize_css, css)
+
+
+def test_css_url_scan_finds_what_the_pattern_found():
+    import random
+    import re
+    from agent_friday.services import workspace_studio as ws
+    old = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.I | re.S)
+    rng = random.Random(11)
+    parts = ["url(", "URL(", ")", "'", '"', " ", "\n", "a", "data:image/png;base64,AA", "x", "//h/p", "(", "u"]
+    for _ in range(6000):
+        text = "".join(rng.choice(parts) for _ in range(rng.randint(1, 16)))
+        expected = old.sub(lambda m: "<%s>" % m.group(2).strip(), text)
+        assert ws._replace_css_urls(text, lambda t: "<%s>" % t.strip()) == expected, text
+
+
+def test_css_sanitiser_still_keeps_an_inline_image_and_drops_the_rest():
+    from agent_friday.services import workspace_studio as ws
+    out = ws._sanitize_css(".ws-custom-root{background:url( 'data:image/png;base64,AAAA' )}"
+                           ".ws-custom-root{background:url(http://x/y.png)}")
+    assert "data:image/png;base64,AAAA" in out
+    assert "http" not in out and "y.png" not in out

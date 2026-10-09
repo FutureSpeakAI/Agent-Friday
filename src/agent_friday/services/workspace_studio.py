@@ -199,8 +199,10 @@ def _save_current_doc(ws_id, doc):
 # ── customization sanitation ───────────────────────────────────────────────
 
 _DATA_IMAGE_URL = re.compile(r"^data:image/[a-z0-9.+-]+[;,][a-z0-9+/=%;,._-]*$", re.I)
-_CSS_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.I | re.S)
-_CSS_REMOTE = re.compile(r"(?:[a-z][a-z0-9+.-]*:)?//[^\s)'\";,]*", re.I)
+_CSS_URL_OPEN = re.compile(r"url\(", re.I)
+# A scheme is at most 32 characters, so a long run of letters is not retried
+# at every length from every start.
+_CSS_REMOTE = re.compile(r"(?:[a-z][a-z0-9+.-]{0,31}:)?//[^\s)'\";,]*", re.I)
 _CSS_FETCHERS = re.compile(r"(?:-webkit-)?(?:image-set|cross-fade)\s*\(|\bsrc\s*\(", re.I)
 _KEPT_MARK = "\x01"
 
@@ -291,6 +293,45 @@ def _scoped_css(css):
     return "\n".join(rules)
 
 
+def _replace_css_urls(css, fn):
+    """Replace every `url( ... )` with `fn(target)`; a linear scan.
+
+    The span is the one `url\\(\\s*(['"]?)(.*?)\\1\\s*\\)` matched: with a
+    leading quote, up to the first closing quote that is followed by `)`;
+    failing that (or with no quote), up to the first `)`. A pattern would try
+    the blanks around the target three ways at every start."""
+    out, pos = [], 0
+    while True:
+        m = _CSS_URL_OPEN.search(css, pos)
+        if m is None:
+            break
+        j = m.end()
+        while j < len(css) and css[j].isspace():
+            j += 1
+        end = target = None
+        quote = css[j] if j < len(css) and css[j] in "'\"" else ""
+        if quote:
+            k = css.find(quote, j + 1)
+            while k >= 0:
+                n = k + 1
+                while n < len(css) and css[n].isspace():
+                    n += 1
+                if n < len(css) and css[n] == ")":
+                    end, target = n + 1, css[j + 1:k]
+                    break
+                k = css.find(quote, k + 1)
+        if end is None:
+            close = css.find(")", j)
+            if close < 0:
+                break       # no `)` anywhere after this opener, so none after a later one
+            end, target = close + 1, css[j:close]
+        out.append(css[pos:m.start()])
+        out.append(fn(target))
+        pos = end
+    out.append(css[pos:])
+    return "".join(out)
+
+
 def _sanitize_css(css):
     """Reduce model- or file-supplied CSS to something inert inside a <style>
     element of Friday's own page.
@@ -308,8 +349,8 @@ def _sanitize_css(css):
     css = css.replace("<", "").replace("\\", "")
     kept = []
 
-    def _url(m):
-        target = m.group(2).strip()
+    def _url(target):
+        target = target.strip()
         if _DATA_IMAGE_URL.match(target):
             kept.append("url(" + target + ")")
             return "%s%d%s" % (_KEPT_MARK, len(kept) - 1, _KEPT_MARK)
@@ -318,7 +359,7 @@ def _sanitize_css(css):
     prev = None
     while prev != css:
         prev = css
-        css = _CSS_URL.sub(_url, css)
+        css = _replace_css_urls(css, _url)
         css = re.sub(r"javascript\s*:|vbscript\s*:", "", css, flags=re.I)
         css = re.sub(r"expression\s*\(", "(", css, flags=re.I)
         css = re.sub(r"@import[^;]*;?", "", css, flags=re.I)
