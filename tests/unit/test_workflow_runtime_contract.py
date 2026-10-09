@@ -741,3 +741,16 @@ def test_unfiled_run_owner_is_fixed_through_delivery_retry_and_recovery(monkeypa
     assert ag.TASKS[task]['status'] == 'failed'
     with pytest.raises(task_resume.ResumeRefused, match='destination chat'):
         task_resume.resume(task)
+
+
+def test_the_newest_run_wins_even_when_the_clock_does_not_tick_between_runs(fake_spawn, monkeypatch):
+    # The Windows clock ticks every ~15 ms, so back-to-back runs share one time.time().
+    monkeypatch.setattr(ag._time, 'time', lambda: 1_700_000_000.0)
+    saved = ag.save_workflow_chain(definition(steps=[{'name': 'Write', 'prompt': 'Write report'}]))
+    one = ag.run_workflow_chain(saved['slug'])
+    two = ag.run_workflow_chain(saved['slug'])
+    ag.TASKS[one]['status'] = 'complete'
+    ag.TASKS[two]['status'] = 'completed_unverified'
+    assert ag.TASKS[two]['run_created'] > ag.TASKS[one]['run_created']
+    assert ag.chain_run_status(saved['slug'])['run_id'] == ag.TASKS[two]['run_id']
+    assert ag.chain_run_status(saved['slug'])['state'] == 'completed_unverified'
