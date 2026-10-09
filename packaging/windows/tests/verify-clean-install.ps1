@@ -222,8 +222,15 @@ try {
     Add-Content -LiteralPath $hostsPath -Value ("`r`n# >>> Agent Friday local address >>>`r`n127.0.0.1`t$hostName`r`n# <<< Agent Friday local address <<<`r`n")
     ipconfig /flushdns | Out-Null
     $serve = Api '/api/local-address/serve' 'POST' @{ on = $true }
+    # The listener may need a moment after it is switched on and IIS is
+    # stopped: ask up to three times, and keep the last error so a failure
+    # names its cause. The pass condition is unchanged.
     $named = $null
-    try { $named = Invoke-WebRequest -Uri "http://$hostName/" -UseBasicParsing -TimeoutSec 20 } catch { }
+    $namedErr = ''
+    foreach ($attempt in 1..3) {
+        try { $named = Invoke-WebRequest -Uri "http://$hostName/" -UseBasicParsing -TimeoutSec 20; break }
+        catch { $namedErr = "attempt ${attempt}: $($_.Exception.Message)"; Start-Sleep -Seconds 3 }
+    }
     # Content is a byte array for some content types; read the raw body as text.
     $body = ''
     $title = ''
@@ -233,7 +240,7 @@ try {
         if ($t.Success) { $title = $t.Groups[1].Value.Trim() }
     }
     Check 'address' (($null -ne $named) -and ($named.StatusCode -eq 200) -and ($body -match 'FRIDAY')) `
-          ("http://$hostName/ -> " + $(if ($named) { "$($named.StatusCode) $($named.Headers['Content-Type']); title: '$title'; server: $($named.Headers['Server'])" } else { 'no answer' }) + "; listener ok: $($serve.ok)")
+          ("http://$hostName/ -> " + $(if ($named) { "$($named.StatusCode) $($named.Headers['Content-Type']); title: '$title'; server: $($named.Headers['Server'])" } else { "no answer ($namedErr)" }) + "; listener ok: $($serve.ok)")
 
     # Last, because it finishes first-run setup: "Set up later" from the
     # first stage completes setup with defaults.
