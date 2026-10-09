@@ -214,11 +214,13 @@ def _own_refusal(tool_name: str, tool_input: dict) -> Optional[str]:
                     "machine as the owner; Friday does not run it for a session")
     try:
         from agent_friday.paths import friday_home
-        home_str = str(Path(friday_home()).resolve())
+        # Both sides in one spelling (forward slashes, lower case): a POSIX
+        # home is written with "/" and a Windows one with "\\", and a command
+        # may use either separator on either platform.
+        home_str = str(Path(friday_home()).resolve()).replace("\\", "/").lower()
         for key in ("command", "file_path", "path", "notebook_path", "url"):
-            val = str(tool_input.get(key) or "")
-            if val and (home_str.lower() in val.replace("/", "\\").lower()
-                        or ".friday" in val.lower()):
+            val = str(tool_input.get(key) or "").replace("\\", "/").lower()
+            if val and (home_str in val or ".friday" in val):
                 return ("refused: this touches Friday's own data folder (its state, "
                         "its approvals, this session's own gate); nothing there is "
                         "the session's to read or change")
