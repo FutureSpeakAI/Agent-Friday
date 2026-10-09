@@ -203,6 +203,7 @@ def public_rows() -> list:
         out.append({"id": aid, "label": a["label"], "size_mb": a["size_mb"],
                     "size_bytes": size_bytes(aid), "purpose": PURPOSE.get(aid, ""),
                     "pinned": ok, "licence": a["licence"], "source": a.get("source"),
+                    "kind": a["kind"],
                     "optional": bool(a.get("optional")),
                     "requires": list(a.get("requires") or []),
                     "installable": ok, "why_not": why})

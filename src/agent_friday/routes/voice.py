@@ -2722,7 +2722,8 @@ def voice_setup_install():
     from agent_friday.services import voice_installer
     # A voice artifact is a download of the owner's disk space and bandwidth:
     # it starts only from an explicit click that was shown its size.
-    if (voice_installer.TARGETS.get(target) or {}).get("artifact")             and data.get("consent") is not True:
+    needs_consent = bool((voice_installer.TARGETS.get(target) or {}).get("artifact"))
+    if needs_consent and data.get("consent") is not True:
         return jsonify({"state": "error",
                         "error": "Downloading needs your confirmation first. "
                                  "Nothing was downloaded."}), 400

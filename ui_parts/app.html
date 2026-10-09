@@ -18039,6 +18039,16 @@ function VoiceModePicker({ s, save, mc }) {
 // cloud voice can prepare local voice. Nothing is fetched until the owner has
 // seen the size and confirmed it; the server downloads only pinned files,
 // checks each against its SHA-256, and resumes a stopped download.
+// What pins an artifact: files and archives are checked against a SHA-256;
+// pip packages are pinned by version only, so the copy must not say checksum.
+function voiceArtifactPinCopy(group) {
+  const hasPip = group.some(x => x.kind === 'pip');
+  const hasFile = group.some(x => x.kind !== 'pip');
+  const sum = 'is checked against a fixed checksum before it is used; a file that does not match is deleted';
+  if (hasPip && hasFile) return ', and the files ' + sum.replace(/^is /, 'are ') + '. The packages are installed at a fixed version.';
+  if (hasPip) return ', and is installed at a fixed version.';
+  return ', and ' + sum + '.';
+}
 function voiceArtifactSize(mb) {
   return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
 }
@@ -18103,7 +18113,7 @@ function LocalVoiceModels() {
           isRunning && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: stop }, 'Stop')),
         ask === r.id && React.createElement('div', { style: { marginTop: 8, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
           React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Download ' + voiceArtifactSize(mb) + '?'),
-          React.createElement('div', null, group.map(x => x.label + ' (' + voiceArtifactSize(x.size_mb) + ')').join(' and ') + ' will be saved on this computer. It comes from ' + (r.source || 'its publisher') + ' under the ' + r.licence + ' licence, and is checked against a fixed checksum before it is used; a file that does not match is deleted. If the download stops, Continue download picks up where it left off.'),
+          React.createElement('div', null, group.map(x => x.label + ' (' + voiceArtifactSize(x.size_mb) + ')').join(' and ') + ' will be saved on this computer. It comes from ' + (r.source || 'its publisher') + ' under the ' + r.licence + ' licence' + voiceArtifactPinCopy(group) + ' If the download stops, Continue download picks up where it left off.'),
           React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
             React.createElement('button', { className: 'settings-btn active', style: { fontSize: 11 }, onClick: () => start(r) }, 'Download ' + voiceArtifactSize(mb)),
             React.createElement('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => setAsk(null) }, 'Not now'))));
@@ -21741,6 +21751,20 @@ function SettingsWS() {
     save,
     msg
   } = useSettings();
+  const contentRef = useRef(null);
+  // The heading's height, published to the scroll container so scroll-padding tracks it.
+  useEffect(() => {
+    const box = contentRef.current;
+    const head = box && box.querySelector('.fx-settings-heading');
+    if (!head) return undefined;
+    const apply = () => box.style.setProperty('--st-head-h', (getComputedStyle(head).position === 'sticky' ? head.offsetHeight + 8 : 0) + 'px');
+    apply();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(apply);
+    ro.observe(head);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [tab]);
   const TABS = settingsShowHeldFeatures() ? SETTINGS_TABS_WITH_HELD : SETTINGS_TABS;
   const cur = TABS.filter(t => t.id === tab)[0] || TABS[0];
   const ok = msg && msg.indexOf('Error') !== 0;
@@ -21791,22 +21815,27 @@ function SettingsWS() {
     onClick: () => setTab(t.id)
   }, t.label)))), /*#__PURE__*/React.createElement("div", {
     className: 'fx-settings-content',
+    ref: contentRef,
     style: {
       flex: 1,
       overflowY: 'auto',
-      minWidth: 0
+      minWidth: 0,
+      // Anything scrolled or focused into view stops below the sticky heading, never under it.
+      scrollPaddingTop: 'var(--st-head-h, 0px)'
     }
   }, /*#__PURE__*/React.createElement("header", {
     className: "fx-settings-heading",
     style: {
       position: 'sticky',
       top: 0,
-      zIndex: 2,
+      zIndex: 20,
       display: 'flex',
       alignItems: 'flex-start',
       gap: 16,
       padding: '20px 28px 14px',
-      background: 'rgb(9,13,24)',
+      // Opaque: the panel's own solid surface token, so rows scrolling under it never show through.
+      background: 'var(--fr-surface)',
+      isolation: 'isolate',
       borderBottom: '1px solid var(--st-line)'
     }
   }, /*#__PURE__*/React.createElement("div", {
