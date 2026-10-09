@@ -17,8 +17,8 @@ test('the Library takes a file target, shows the folder and reports the chosen f
   await page.route('**/api/studio-files/roots', r => r.fulfill(json({ roots: [{ id: 'documents', label: 'Documents', available: true }] })));
   await page.route('**/api/studio-files/scan?*', r => r.fulfill(json({
     path: 'Finance', label: 'Documents', truncated: false, skipped: 0, elapsed_ms: 1,
-    items: [{ rel: 'Finance/budget.xlsx', name: 'budget.xlsx', ext: '.xlsx', size: 1200, mtime: 1759000000, dir: false },
-            { rel: 'Finance/notes.txt', name: 'notes.txt', ext: '.txt', size: 40, mtime: 1759000000, dir: false }],
+    // the scan route's own shape: entries of [relative path, is a folder, size, modified]
+    entries: [['Finance/budget.xlsx', 0, 1200, 1759000000], ['Finance/notes.txt', 0, 40, 1759000000]],
   })));
   await page.goto(`${BASE}/w/library`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => (window as any).fridayNavigate, null, { timeout: 60000 });

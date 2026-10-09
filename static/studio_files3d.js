@@ -2545,12 +2545,14 @@
       else if (b.requestFullscreen) b.requestFullscreen().catch(() => say('Full screen was refused by the browser.'));
     };
 
+    const deepLinkedRef = useRef(false);
     useEffect(() => {
       api('/api/studio-files/roots').then(r => r.json()).then(d => {
         const rs = (d.roots || []).filter(r => r.available);
         setRoots(rs);
         const want = window.__files3dOpen && rs.find(r => r.id === window.__files3dOpen.root);
         if (want) { openPending(); return; }
+        if (deepLinkedRef.current) return;   // a deep link already chose the folder before the roots arrived
         if (props.root && rs.find(r => r.id === props.root)) { setRoot(props.root); setPath(props.path || ''); return; }
         const pref = rs.find(r => r.id === recall('root')) || rs.find(r => r.id === 'creations') || rs[0];
         if (pref) setRoot(pref.id);
@@ -2564,6 +2566,7 @@
       const o = window.__files3dOpen;
       if (!o) return;
       window.__files3dOpen = null;
+      deepLinkedRef.current = true;
       if (VIEWS.some(v => v.id === o.arrangement)) setView(o.arrangement);
       pendingFileRef.current = o.file ? (o.path ? o.path + '/' + o.file : o.file) : null;
       if (o.root === rootRef.current && (o.path || '') === pathRef.current && itemsRef.current.length) {
