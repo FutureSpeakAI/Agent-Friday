@@ -37,9 +37,9 @@ def desktop_board():
         origin = cards._admit()
         return jsonify(cards.change_board(request.get_json(silent=True), origin=origin))
     except cards.BoardConflict as exc:
-        return jsonify({"status": "error", "code": "board_changed", "message": str(exc)}), 409
+        return api_error(exc, "The Home board changed", 409, code="board_changed")
     except cards.CardError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        return api_error(exc, "That Home change was not valid", 400)
     except Exception as exc:
         return api_error(exc, "Couldn't read Home" if request.method == "GET" else "Couldn't save the Home change")
 
@@ -56,7 +56,7 @@ def desktop_cards():
         card = cards.upsert_card(request.get_json(silent=True), origin=origin)
         return jsonify({"status": "ok", "card": card})
     except cards.CardError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        return api_error(exc, "That Home change was not valid", 400)
     except Exception as exc:
         return api_error(exc, "Couldn't load Home cards" if request.method == "GET" else "Couldn't save the Home card")
 
@@ -69,7 +69,7 @@ def desktop_card_remove(card_id):
     try:
         return jsonify({"status": "ok", "removed": cards.remove_card(card_id)})
     except cards.CardError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        return api_error(exc, "That Home change was not valid", 400)
     except Exception as exc:
         return api_error(exc, "Couldn't remove the Home card")
 

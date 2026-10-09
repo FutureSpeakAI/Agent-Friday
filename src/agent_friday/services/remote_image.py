@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services import web_safety
 
 MAX_BYTES = 5 * 1024 * 1024
@@ -27,7 +28,7 @@ _MAGIC = {
 }
 
 
-class RemoteImageRefused(ValueError):
+class RemoteImageRefused(UserFacingValueError):
     """The picture will not be fetched or shown. The message is for the owner."""
 
 

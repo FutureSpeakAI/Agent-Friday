@@ -12,6 +12,7 @@ import time
 import uuid
 from datetime import date
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services import namecom, sites_privacy
 
 LOCK = threading.RLock()
@@ -29,9 +30,9 @@ def read():
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        raise ValueError("Saved domain data could not be read. Nothing was replaced.") from None
+        raise UserFacingValueError("Saved domain data could not be read. Nothing was replaced.") from None
     if not isinstance(data, dict) or data.get("version") != 1 or any(not isinstance(data.get(k), dict) for k in ("accounts", "inventory", "operations")):
-        raise ValueError("Saved domain data has an unsupported format.")
+        raise UserFacingValueError("Saved domain data has an unsupported format.")
     return data
 
 
@@ -54,13 +55,13 @@ def require_recording():
     from agent_friday.core import _load_settings
     from agent_friday.services import off_record
     if off_record.active(_load_settings() or {}):
-        raise ValueError("Domain management needs a durable record. Leave off-the-record mode first.")
+        raise UserFacingValueError("Domain management needs a durable record. Leave off-the-record mode first.")
 
 
 def account(account_id, state=None):
     found = (state or read())["accounts"].get(str(account_id))
     if not found:
-        raise ValueError("Choose a saved Name.com account.")
+        raise UserFacingValueError("Choose a saved Name.com account.")
     return copy.deepcopy(found)
 
 
@@ -83,22 +84,22 @@ def connect(*, label, username="", token="", environment="production", account_i
     generation = sites_privacy.admit({"_sites_origin": _origin if _origin is not None else sites_privacy.capture()})
     from agent_friday.services import credential_store
     if not isinstance(label, str) or not label.strip() or len(label) > 100:
-        raise ValueError("Give this account a short name.")
+        raise UserFacingValueError("Give this account a short name.")
     if environment not in namecom.BASES:
-        raise ValueError("Choose production or sandbox.")
+        raise UserFacingValueError("Choose production or sandbox.")
     if not isinstance(username, str) or not isinstance(token, str) or len(username) > 200 or len(token) > 4096:
-        raise ValueError("Use a valid API username and token.")
+        raise UserFacingValueError("Use a valid API username and token.")
     username, token = username.strip(), token.strip()
     if token and (not username or ":" in username or any(ord(c) < 33 for c in username + token)):
-        raise ValueError("Enter the API username and token from Name.com API settings.")
+        raise UserFacingValueError("Enter the API username and token from Name.com API settings.")
     identity = hashlib.sha256((environment + "\0" + username).encode()).hexdigest() if token else None
     with LOCK:
         state = read()
         prior = account(account_id, state) if account_id else None
         if prior and (type(revision) is not int or revision != prior["revision"]):
-            raise ValueError("This account changed. Refresh it before connecting.")
+            raise UserFacingValueError("This account changed. Refresh it before connecting.")
         if prior and prior.get("identity_hash") and identity != prior["identity_hash"]:
-            raise ValueError("A different API username or environment needs a new named account.")
+            raise UserFacingValueError("A different API username or environment needs a new named account.")
         aid = prior["account_id"] if prior else "acct_" + uuid.uuid4().hex
         rev = prior["revision"] + 1 if prior else 1
         if token:
@@ -138,7 +139,7 @@ def disconnect(account_id, revision, *, _origin=None):
         state = read()
         rec = account(account_id, state)
         if type(revision) is not int or revision != rec["revision"]:
-            raise ValueError("This account changed. Refresh before disconnecting.")
+            raise UserFacingValueError("This account changed. Refresh before disconnecting.")
         old_revision = rec["revision"]
         rec.update(revision=old_revision + 1, connection_status="not_connected", sync_status="disconnected")
         state["accounts"][account_id] = rec
@@ -155,13 +156,13 @@ def client(rec, *, generation):
     sites_privacy.require_generation(generation)
     from agent_friday.services import credential_store
     if rec.get("connection_status") != "verified":
-        raise ValueError("Connect this named account in Sites first.")
+        raise UserFacingValueError("Connect this named account in Sites first.")
     raw = credential_store.get_provider_key(_key(rec["account_id"], rec["revision"]))
     try:
         secret = json.loads(raw or "")
         result = namecom.Client(rec["account_id"], secret["username"], secret["token"], rec["environment"], _request_guard=lambda: sites_privacy.require_generation(generation))
     except (ValueError, KeyError, TypeError):
-        raise ValueError("This account's saved credential is unavailable. Reconnect it in Sites.") from None
+        raise UserFacingValueError("This account's saved credential is unavailable. Reconnect it in Sites.") from None
     sites_privacy.require_generation(generation)
     return result
 
@@ -196,21 +197,21 @@ def import_inventory(account_id, entries, *, _origin=None):
     require_recording()
     generation = sites_privacy.admit({"_sites_origin": _origin if _origin is not None else sites_privacy.capture()})
     if not isinstance(entries, list) or not 1 <= len(entries) <= 1000:
-        raise ValueError("Import between 1 and 1000 domain rows.")
+        raise UserFacingValueError("Import between 1 and 1000 domain rows.")
     now, checked = time.time(), []
     for item in entries:
         if not isinstance(item, dict) or set(item) - {"domain", "next_date_kind", "next_date", "source"}:
-            raise ValueError("Each imported row needs a domain, date kind and date.")
+            raise UserFacingValueError("Each imported row needs a domain, date kind and date.")
         kind = item.get("next_date_kind")
         if kind not in {"renews", "expires"}:
-            raise ValueError("Keep each imported date labeled Renews or Expires.")
+            raise UserFacingValueError("Keep each imported date labeled Renews or Expires.")
         try:
             when = date.fromisoformat(item.get("next_date", "")).isoformat()
         except (ValueError, TypeError):
-            raise ValueError("Use an imported date in YYYY-MM-DD form.") from None
+            raise UserFacingValueError("Use an imported date in YYYY-MM-DD form.") from None
         source = item.get("source", "user_import")
         if not isinstance(source, str) or len(source) > 200:
-            raise ValueError("Use a short source label.")
+            raise UserFacingValueError("Use a short source label.")
         checked.append((namecom.domain_name(item.get("domain")), {"next_date_kind": kind, "next_date": when, "source": source, "captured_at": now, "verified": False}))
     with LOCK:
         state = read()

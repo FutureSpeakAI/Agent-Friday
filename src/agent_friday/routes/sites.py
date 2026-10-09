@@ -4,6 +4,8 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error
+from agent_friday.user_errors import UserFacingPermissionError
 import agent_friday.core as core
 from agent_friday.services import sites_operations as sites
 from agent_friday.services import sites_privacy
@@ -20,8 +22,14 @@ def preview_response_headers(response):
     return response
 
 
-def _bad(message, code=400):
-    return jsonify({"status": "error", "error": str(message)}), code
+def _bad(message: str, code=400):
+    return jsonify({"status": "error", "error": message}), code
+
+
+def _fail(exc, code=400):
+    """A refused request. A `UserFacingError` shows its message; any other
+    exception is logged and answered with a short error id."""
+    return api_error(exc, "Couldn't complete that Sites request", code, key="error")
 
 
 def _object():
@@ -35,7 +43,7 @@ def _object():
 
 def _local():
     if not core._is_local_request() or not core._api_token_valid(request.headers.get("X-Friday-Token")):
-        raise PermissionError("Use Sites on this PC for hosting account actions.")
+        raise UserFacingPermissionError("Use Sites on this PC for hosting account actions.")
 
 
 @sites_bp.route("/api/sites", methods=["GET"])
@@ -45,7 +53,7 @@ def sites_overview():
     try:
         generation = sites_privacy.capture().generation
     except ValueError as exc:
-        return _bad(exc)
+        return _fail(exc)
     rows = []
     for path in sites._root().glob("site-*/site.json"):
         try:
@@ -58,7 +66,7 @@ def sites_overview():
         sites_privacy.require_generation(generation)
         return jsonify({"status": "ok", "sites": rows})
     except ValueError as exc:
-        return _bad(exc)
+        return _fail(exc)
 
 
 @sites_bp.route("/api/sites/action", methods=["POST"])
@@ -80,9 +88,9 @@ def site_action():
         result = sites.execute(body.get("action"), args, {"conversation_id": cid, "_sites_origin": origin})
         return jsonify(result)
     except (ValueError, KeyError) as exc:
-        return _bad(exc)
+        return _fail(exc)
     except PermissionError as exc:
-        return _bad(exc, 403)
+        return _fail(exc, 403)
     except Exception:
         return _bad("The Sites action could not finish. Check the operation before trying again.", 503)
 
@@ -119,7 +127,7 @@ def site_preview_session():
         response.headers["Cache-Control"] = "no-store"
         return response
     except PermissionError as exc:
-        return _bad(exc, 403)
+        return _fail(exc, 403)
     except (ValueError, KeyError):
         if result is not None:
             site_previews.close(result["preview_url"].rsplit("/", 1)[-1])
@@ -140,10 +148,10 @@ def site_preview_frame(handle):
             site_previews.close(handle)
             return jsonify({"status": "ok"})
         if not core._is_local_request():
-            raise PermissionError("Open the preview in Friday on this PC.")
+            raise UserFacingPermissionError("Open the preview in Friday on this PC.")
         body, headers = site_previews.wrapper(handle, parent_origin=request.host_url)
     except PermissionError as exc:
-        return _bad(exc, 403)
+        return _fail(exc, 403)
     except (ValueError, OSError, KeyError):
         return _bad("That frozen preview expired. Open it again from Sites.", 410)
     response = Response(body, content_type="text/html; charset=utf-8")
@@ -168,9 +176,9 @@ def sites_hosting():
         sites_privacy.require_generation(generation)
         return jsonify({"status": "ok", "connection": connection})
     except ValueError as exc:
-        return _bad(exc)
+        return _fail(exc)
     except PermissionError as exc:
-        return _bad(exc, 403)
+        return _fail(exc, 403)
     except Exception:
         return _bad("The hosting connection could not be saved securely.", 503)
 
@@ -187,8 +195,8 @@ def sites_disconnect(connection_id):
         sites_privacy.require_generation(generation)
         return jsonify({"status": "ok", "connection": connection})
     except ValueError as exc:
-        return _bad(exc)
+        return _fail(exc)
     except PermissionError as exc:
-        return _bad(exc, 403)
+        return _fail(exc, 403)
     except Exception:
         return _bad("The hosting connection could not be disconnected.", 503)

@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import agent_friday.core as core
+from agent_friday.user_errors import log_failure
 
 VERSION = "v1"
 SIZE = 512                      #: the long edge of a preview
@@ -235,7 +236,7 @@ def _run_one(c: Dict[str, Any]) -> None:
     except Exception as e:  # one bad file never stops the pass
         with _LOCK:
             _STATE["failed"] += 1
-            _STATE["last"] = f"{c.get('id')}: {str(e)[:160]}"
+            _STATE["last"] = "%s: failed (error %s)" % (c.get('id'), log_failure(e, "Media preview"))
     finally:
         with _LOCK:
             _QUEUED.discard(c.get("id"))
@@ -297,7 +298,7 @@ def build(card: Dict[str, Any]) -> Dict[str, Any]:
             elif suffix in TEXT_SUFFIXES or kind in ("draft", "article", "doc"):
                 img = _text(p, det)
         except Exception as e:
-            det["error"] = str(e)[:200]
+            det["error"] = "The preview could not be built (error %s)" % log_failure(e, "Media preview")
     _provenance_details(card, det)
     if img is not None:
         img = _fit(img, SIZE)
@@ -656,7 +657,7 @@ def _page(p: Path, det: Dict[str, Any]):
     try:
         br = _browser()
     except Exception as e:
-        det["browser"] = f"unavailable: {str(e)[:120]}"
+        det["browser"] = "unavailable (error %s)" % log_failure(e, "Media preview browser")
         return _text_card(title or p.stem, text[:400])
     if br is None:
         return _text_card(title or p.stem, text[:400])

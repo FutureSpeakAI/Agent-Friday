@@ -10,6 +10,7 @@ import ipaddress
 import re
 import time
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services import namecom, sites_privacy
 
 TYPES = {"A": 1, "AAAA": 28, "CNAME": 5, "MX": 15, "TXT": 16, "SRV": 33}
@@ -24,7 +25,7 @@ def _query(hostname, kind, *, generation):
         try:
             sites_privacy.require_generation(generation)
             if response.status_code != 200 or len(response.content) > 100_000:
-                raise ValueError("The public DNS resolver did not return a usable response.")
+                raise UserFacingValueError("The public DNS resolver did not return a usable response.")
             data = response.json()
         finally:
             try:
@@ -33,9 +34,9 @@ def _query(hostname, kind, *, generation):
                 sites_privacy.require_generation(generation)
     except requests.RequestException:
         sites_privacy.require_generation(generation)
-        raise ValueError("The public DNS resolver is unavailable. No DNS result was verified.") from None
+        raise UserFacingValueError("The public DNS resolver is unavailable. No DNS result was verified.") from None
     if not isinstance(data, dict) or data.get("Status") not in {0, 3} or data.get("TC"):
-        raise ValueError("Public DNS is unresolved or returned an incomplete answer.")
+        raise UserFacingValueError("Public DNS is unresolved or returned an incomplete answer.")
     return [r["data"] for r in data.get("Answer", []) if isinstance(r, dict) and r.get("type") == TYPES[kind]
             and str(r.get("name", "")).rstrip(".").lower() == hostname and isinstance(r.get("data"), str)]
 
@@ -62,13 +63,13 @@ def verify(domain, required, *, generation):
     sites_privacy.require_generation(generation)
     domain = namecom.domain_name(domain)
     if not isinstance(required, list) or not 1 <= len(required) <= 20:
-        raise ValueError("Check between 1 and 20 explicit DNS records.")
+        raise UserFacingValueError("Check between 1 and 20 explicit DNS records.")
     records = [namecom.record_payload(r) for r in required]
     grouped = {}
     for record in records:
         host = (record["host"] + "." if record["host"] else "") + domain
         if len(host) > 253:
-            raise ValueError("The complete DNS hostname is too long.")
+            raise UserFacingValueError("The complete DNS hostname is too long.")
         grouped.setdefault((host, record["type"]), []).append(record)
     checks = []
     for (host, kind), wanted in grouped.items():

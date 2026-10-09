@@ -12,6 +12,7 @@ import time
 from urllib.parse import urlsplit
 from contextvars import ContextVar
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services import sites_privacy
 
 DNS_TIMEOUT = 3
@@ -48,7 +49,7 @@ def _addresses(hostname):
     addresses = sorted({row[4][0] for row in answers})
     if not addresses or any(not ipaddress.ip_address(address).is_global or ipaddress.ip_address(address).is_multicast
                             for address in addresses):
-        raise ValueError("Verification refuses private, loopback, link-local or reserved network destinations.")
+        raise UserFacingValueError("Verification refuses private, loopback, link-local or reserved network destinations.")
     return addresses
 
 
@@ -65,18 +66,20 @@ def _fetch_marker(url):
     _current()
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.port not in (None, 443) or parsed.username or parsed.password:
-        raise ValueError("Verification requires a plain HTTPS hostname.")
+        raise UserFacingValueError("Verification requires a plain HTTPS hostname.")
     hostname = parsed.hostname.encode("idna").decode("ascii")
     addresses = _addresses(hostname)
     path = parsed.path.rstrip("/") + "/.well-known/friday-deployment.json"
     if any(ord(ch) < 33 or ord(ch) > 126 for ch in path + hostname):
-        raise ValueError("Invalid verification path.")
+        raise UserFacingValueError("Invalid verification path.")
     # Connect to the validated IP itself. TLS still verifies the original
     # hostname, preventing a second DNS lookup from rebinding to a local API.
     _current()
     with socket.create_connection((addresses[0], 443), timeout=5) as raw:
         _current()
-        with ssl.create_default_context().wrap_socket(raw, server_hostname=hostname) as secure:
+        context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        with context.wrap_socket(raw, server_hostname=hostname) as secure:
             # Independently close a slow-drip header/body stream even if every
             # individual socket read arrives before its ordinary timeout.
             deadline = threading.Timer(HTTP_DEADLINE, _close_socket, args=(secure,))
@@ -96,7 +99,7 @@ def _fetch_marker(url):
                 body = response.read(65537)
                 _current()
                 if len(body) > 65536:
-                    raise ValueError("Verification response exceeded its limit.")
+                    raise UserFacingValueError("Verification response exceeded its limit.")
                 return {"http_status": 200, "addresses": [addresses[0]], "marker": json.loads(body)}
             finally:
                 deadline.cancel()

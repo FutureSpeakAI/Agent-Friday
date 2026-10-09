@@ -4,6 +4,8 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 import agent_friday.core as core
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error
+from agent_friday.user_errors import UserFacingPermissionError, UserFacingValueError
 from agent_friday.services import domain_accounts as accounts, domain_operations as operations, sites_privacy
 
 domains_bp = Blueprint("domains", __name__)
@@ -11,15 +13,15 @@ domains_bp = Blueprint("domains", __name__)
 
 def _local():
     if not core._is_local_request() or not core._api_token_valid(request.headers.get("X-Friday-Token")):
-        raise PermissionError("Use the Sites page on this PC for domain account actions.")
+        raise UserFacingPermissionError("Use the Sites page on this PC for domain account actions.")
 
 
 def _body():
     if request.content_length and request.content_length > 250_000:
-        raise ValueError("This domain request is too large.")
+        raise UserFacingValueError("This domain request is too large.")
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
-        raise ValueError("Provide a domain request.")
+        raise UserFacingValueError("Provide a domain request.")
     return body
 
 
@@ -27,9 +29,9 @@ def _reply(fn):
     try:
         return jsonify(fn())
     except PermissionError as exc:
-        return jsonify(status="error", message=str(exc)), 403
+        return api_error(exc, "That domain action was refused", 403)
     except ValueError as exc:
-        return jsonify(status="error", message=str(exc)), 400
+        return api_error(exc, "That domain request was not valid", 400)
     except Exception:
         # Never include credential-bearing provider/transport exception text.
         return jsonify(status="error", message="The domain operation could not finish. Inspect its recorded state before retrying."), 500
@@ -55,7 +57,7 @@ def domain_connect():
         origin = sites_privacy.capture()
         body = _body()
         if set(body) - {"label", "username", "token", "environment", "account_id", "revision"}:
-            raise ValueError("Use the named account form fields.")
+            raise UserFacingValueError("Use the named account form fields.")
         return {"status": "ok", "account": accounts.connect(**body, _origin=origin)}
     return _reply(perform)
 
@@ -68,7 +70,7 @@ def domain_disconnect(account_id):
         origin = sites_privacy.capture()
         body = _body()
         if set(body) - {"revision"}:
-            raise ValueError("Use the saved account revision.")
+            raise UserFacingValueError("Use the saved account revision.")
         return {"status": "ok", "account": accounts.disconnect(account_id, body.get("revision"), _origin=origin)}
     return _reply(perform)
 
@@ -81,7 +83,7 @@ def domain_import():
         origin = sites_privacy.capture()
         body = _body()
         if set(body) - {"account_id", "entries"}:
-            raise ValueError("Use the selected account and imported rows.")
+            raise UserFacingValueError("Use the selected account and imported rows.")
         return {"status": "ok", "inventory": accounts.import_inventory(body.get("account_id"), body.get("entries"), _origin=origin)}
     return _reply(perform)
 
@@ -106,7 +108,7 @@ def domain_action():
         origin = sites_privacy.capture()
         body = _body()
         if set(body) - {"action", "args", "conversation_id"}:
-            raise ValueError("Provide an action and its arguments.")
+            raise UserFacingValueError("Provide an action and its arguments.")
         # Authority is created here, never accepted from JSON tool arguments.
         context = {"surface": "sites_ui", "conversation_id": body.get("conversation_id") or None, "_sites_origin": origin}
         return operations.execute(body.get("action"), body.get("args"), context)

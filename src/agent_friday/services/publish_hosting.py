@@ -44,6 +44,8 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+from agent_friday.user_errors import UserFacingValueError
+
 _log = logging.getLogger(__name__)
 
 _LOCK = threading.RLock()
@@ -362,16 +364,16 @@ def connect_adapter(adapter: str, token: str, *, account_id: str = "", project: 
     logged or returned."""
     if adapter == "cloudflare_pages":
         if not account_id or not project:
-            raise ValueError("Cloudflare Pages needs an account id and a project name")
+            raise UserFacingValueError("Cloudflare Pages needs an account id and a project name")
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,57}", project):
-            raise ValueError("a Pages project name is lowercase letters, digits and dashes")
+            raise UserFacingValueError("a Pages project name is lowercase letters, digits and dashes")
         rec = {"token": token, "account_id": account_id, "project": project}
     elif adapter == "github_pages":
         if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
-            raise ValueError("GitHub Pages needs a repository as owner/name")
+            raise UserFacingValueError("GitHub Pages needs a repository as owner/name")
         rec = {"token": token, "repo": repo, "branch": branch or "gh-pages"}
     else:
-        raise ValueError("unknown adapter %r" % adapter)
+        raise UserFacingValueError("unknown adapter %r" % adapter)
     _store_secret(adapter, json.dumps(rec))
 
 

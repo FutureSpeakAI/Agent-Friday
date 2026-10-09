@@ -22,18 +22,25 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error
 from agent_friday.services import codebases as cb
 
 codebases_bp = Blueprint("codebases", __name__)
 
 
-def _bad(msg, code=400):
-    return jsonify({"status": "error", "error": str(msg)}), code
+def _bad(msg: str, code=400):
+    return jsonify({"status": "error", "error": msg}), code
+
+
+def _fail(exc, code=400):
+    """A refused request. A `UserFacingError` shows its message; any other
+    exception is logged and answered with a short error id."""
+    return api_error(exc, "Couldn't complete that codebase request", code, key="error")
 
 
 @codebases_bp.errorhandler(ValueError)
 def _bad_value(e):
-    return _bad(e)
+    return _fail(e)
 
 
 @codebases_bp.errorhandler(KeyError)
@@ -136,9 +143,9 @@ def codebase_undo(cid):
     try:
         st = cb.undo(cid)
     except cb.NothingToUndo as e:
-        return _bad(e, 409)
+        return _fail(e, 409)
     except RuntimeError as e:
-        return _bad(e, 409)
+        return _fail(e, 409)
     return jsonify({"status": "ok", "step": st})
 
 
@@ -179,7 +186,7 @@ def codebase_quick_style(cid):
     try:
         st = cb.quick_style(cid, str(body.get("selector") or ""), prop, value)
     except RuntimeError as e:
-        return _bad(e, 409)
+        return _fail(e, 409)
     return jsonify({"status": "ok", "step": st})
 
 

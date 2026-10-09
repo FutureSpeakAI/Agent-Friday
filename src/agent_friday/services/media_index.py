@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import agent_friday.core as core
+from agent_friday.user_errors import clip, exception_text, log_failure, result_text
 
 STATUSES = ("idea", "draft", "review", "scheduled", "published", "kept")
 STATUS_WORD = {"idea": "Idea", "draft": "Draft", "review": "In review", "scheduled": "Scheduled", "published": "Published", "kept": "Kept"}
@@ -974,7 +975,7 @@ def ensure_fresh(reason: str = "", sync: Optional[bool] = None) -> Dict[str, Any
         try:
             reindex(reason)
         except Exception as e:
-            _STATE.update({"state": "ready", "finished": time.time(), "error": str(e)[:200]})
+            _STATE.update({"state": "ready", "finished": time.time(), "error": clip(exception_text(e), 200)})
         finally:
             _FRESH_LOCK.release()
 
@@ -1551,7 +1552,7 @@ def publish(card_id: str, requested_by: str = "user") -> Dict[str, Any]:
             action_description="Publish it. The receipt stays on the card; unpublish from the card any time.",
         )
     except Exception as e:  # the gate is the rule; without it nothing is published
-        return {"status": "error", "message": f"The approval gate is unavailable: {e}"}
+        return {"status": "error", "message": exception_text(e, "The approval gate is unavailable: %s")}
     act = getattr(v, "action", "deny")
     if act == "allow":
         return complete_publish(card_id, approval_id=None)
@@ -1712,7 +1713,7 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
                 return {"status": "error", "message": "Nothing to read from yet."}
             ep = pe.create([ref], title=title, length="standard", origin="user", instructions=f"Made from the Media card \"{title}\".")
         except Exception as e:
-            msg = getattr(e, "user_message", None) or str(e)
+            msg = result_text(e)
             return {"status": "error", "message": msg}
         with _LOCK:
             con = _connect()
@@ -1756,7 +1757,7 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
             brief = (body.strip() or title)[:4000]
             r = showcase_engine.generate_website(brief, pages=None, style=None, workspace="media")
         except Exception as e:
-            return {"status": "error", "message": getattr(e, "user_message", None) or str(e)}
+            return {"status": "error", "message": result_text(e)}
         if not r or r.get("status") != "ok":
             return {"status": "error", "message": (r or {}).get("message") or "Could not make the page."}
         fn = (r.get("files") or [{}])[0].get("filename") or ""
@@ -1806,7 +1807,7 @@ def turn_capabilities() -> Dict[str, Any]:
         cap = lv.i2v_available()
         gated["video"] = {"available": bool(cap.get("available")), "backend": cap.get("backend"), "reason": cap.get("reason") or ""}
     except Exception as e:
-        gated["video"] = {"available": False, "backend": None, "reason": "The local video backend could not be loaded (%s)." % str(e)[:120]}
+        gated["video"] = {"available": False, "backend": None, "reason": exception_text(e, "The local video backend could not be loaded (%s).")}
     v = be.get("voice") or {}
     gated["audio"] = {"available": bool(v.get("available")), "backend": v.get("name"), "reason": v.get("reason") or ""}
     o = be.get("office") or {}
@@ -1956,7 +1957,7 @@ def make_deck(c: Dict[str, Any]) -> Dict[str, Any]:
         if not office_engine.available():
             return {"status": "unavailable", "message": "The office tool is not installed on this computer, so slides cannot be made here yet."}
     except Exception as e:
-        return {"status": "unavailable", "message": "The office tool is unavailable: %s" % e}
+        return {"status": "unavailable", "message": exception_text(e, "The office tool is unavailable: %s")}
     body = (c.get("body") or "").strip()
     if not body and not c.get("title"):
         return {"status": "error", "message": "Nothing to make slides from yet."}
@@ -1975,7 +1976,7 @@ def make_deck(c: Dict[str, Any]) -> Dict[str, Any]:
         try:
             r = _office(argv)
         except Exception as e:
-            return {"status": "error", "message": getattr(e, "user_message", None) or str(e)}
+            return {"status": "error", "message": result_text(e)}
         if not r.get("ok"):
             return {"status": "error", "message": (r.get("stderr") or r.get("stdout") or "The office tool refused.")[:300]}
         if path is None:
@@ -2069,7 +2070,7 @@ def read_aloud(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
         from agent_friday.services import podcast_render as pr
         voices = pr.installed_voices()
     except Exception as e:
-        return {"status": "unavailable", "message": "The local voice is not installed on this computer (%s)." % e}
+        return {"status": "unavailable", "message": exception_text(e, "The local voice is not installed on this computer (%s).")}
     if not voices:
         return {"status": "unavailable", "message": "No local voice is installed on this computer; nothing is downloaded to read aloud."}
     voice = "af_heart" if "af_heart" in voices else voices[0]
@@ -2108,7 +2109,7 @@ def read_aloud(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
             _sign(Path(rec["file"]), "audio", [{"kind": "card", "ref": c["id"], "title": c["title"]}], "media.read_aloud")
             rec["status"] = "kept"; rec["extra"] = {"duration_s": seconds, "voice": voice}
         except Exception as e:
-            rec["status"] = "draft"; rec["extra"] = {"badges": ["failed"], "error": str(e)[:200], "voice": voice}
+            rec["status"] = "draft"; rec["extra"] = {"badges": ["failed"], "error": "The read-aloud could not be made (error %s)" % log_failure(e, "Media read aloud"), "voice": voice}
         _write_media_record(cid, rec)
         with _LOCK:
             con = _connect()

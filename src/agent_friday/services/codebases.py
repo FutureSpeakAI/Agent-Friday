@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent_friday.paths import contained, safe_name
+from agent_friday.user_errors import UserFacingRuntimeError, UserFacingValueError
 
 _log = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ _TEXT_EXT = (".html", ".htm", ".css", ".js", ".mjs", ".jsx", ".ts", ".tsx", ".js
              ".svg", ".csv", ".yaml", ".yml", ".toml", ".py")
 
 
-class NothingToUndo(Exception):
+class NothingToUndo(UserFacingRuntimeError):
     """Every step has been undone already; only the starting point is left."""
 
 
@@ -253,7 +254,7 @@ def template_files(template: str, title: str) -> dict:
             "icon.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" rx=\"14\" fill=\"#0b0e14\"/><circle cx=\"32\" cy=\"32\" r=\"16\" fill=\"none\" stroke=\"#00d4ff\" stroke-width=\"4\"/></svg>\n",
             "README.md": "# %s\n\nA workspace bundle for Friday (workspace-ecosystem.md §4.2). One HTML file, no build step.\n" % title,
         }
-    raise ValueError("unknown template %r; one of %s" % (template, ", ".join(TEMPLATES)))
+    raise UserFacingValueError("unknown template %r; one of %s" % (template, ", ".join(TEMPLATES)))
 
 
 # ── creating ─────────────────────────────────────────────────────────────────
@@ -261,7 +262,7 @@ def template_files(template: str, title: str) -> dict:
 def create(title: str, template: str = "static", *, conversation_id: Optional[str] = None,
            existing_path: Optional[str] = None, files: Optional[dict] = None) -> dict:
     if existing_path and is_friday_checkout(existing_path):
-        raise ValueError(_NOT_HERSELF)
+        raise UserFacingValueError(_NOT_HERSELF)
     """A new codebase from a template, or an existing folder on a salon branch.
     ``files`` seeds the tree in place of the template's files (an installed
     bundle's version, say) while the record keeps the template's name."""
@@ -272,7 +273,7 @@ def create(title: str, template: str = "static", *, conversation_id: Optional[st
     if existing_path:
         folder = Path(os.path.expanduser(str(existing_path)))
         if not folder.is_dir():
-            raise ValueError("that folder does not exist: %s" % existing_path)
+            raise UserFacingValueError("that folder does not exist: %s" % existing_path)
         folder = folder.resolve()
         if not (folder / ".git").exists():
             _git(folder, "init", "-q")
@@ -287,13 +288,13 @@ def create(title: str, template: str = "static", *, conversation_id: Optional[st
                "seats": dict(DEFAULT_SEATS), "key_profile": "mine"}
     else:
         if template not in TEMPLATES:
-            raise ValueError("unknown template %r; one of %s" % (template, ", ".join(TEMPLATES)))
+            raise UserFacingValueError("unknown template %r; one of %s" % (template, ", ".join(TEMPLATES)))
         repo = _dir(cid) / "repo"
         repo.mkdir(parents=True, exist_ok=False)
         _git(repo, "init", "-q", "-b", "main")
         for path, content in (files if files is not None else template_files(template, title)).items():
             if not path or ".." in path.split("/") or path.startswith(("/", "\\", ".git", ".friday")) or "\\" in path:
-                raise ValueError("not a file path inside the codebase: %r" % path)
+                raise UserFacingValueError("not a file path inside the codebase: %r" % path)
             (repo / path).parent.mkdir(parents=True, exist_ok=True)
             (repo / path).write_text(content, encoding="utf-8", newline="\n")
         (repo / ".gitignore").write_text(".friday/\nnode_modules/\n", encoding="utf-8", newline="\n")
@@ -405,10 +406,10 @@ def for_conversation(conversation_id: Optional[str]) -> Optional[dict]:
 def _check_rel(repo: Path, rel: str) -> Path:
     s = str(rel or "")
     if not s or "\x00" in s or "\\" in s or s.startswith("/") or ":" in s:
-        raise ValueError("invalid path %r" % rel)
+        raise UserFacingValueError("invalid path %r" % rel)
     first = s.split("/", 1)[0]
     if first in (".git", ".friday") or any(part in ("", ".", "..") for part in s.split("/")):
-        raise ValueError("invalid path %r" % rel)
+        raise UserFacingValueError("invalid path %r" % rel)
     return contained(repo, s)
 
 
@@ -672,7 +673,7 @@ def set_engine(cid: str, engine: str, *, by: str = "you") -> dict:
     if engine in ("claude", "claude_code", "claudes_agent", "claude_s_agent"):
         engine = "claude_agent"
     if engine not in ENGINES:
-        raise ValueError("engine must be 'friday' or 'claude_agent'")
+        raise UserFacingValueError("engine must be 'friday' or 'claude_agent'")
     old = rec["seats"].get("engine") or "friday"
     rec["seats"]["engine"] = engine
     _save(rec)
@@ -765,7 +766,7 @@ def _announce(cid: str, st: dict) -> None:
 def diff(cid: str, sha: str) -> str:
     repo = repo_path(cid)
     if not re.fullmatch(r"[0-9a-f]{7,40}", str(sha or "")):
-        raise ValueError("invalid commit")
+        raise UserFacingValueError("invalid commit")
     return _git(repo, "show", "--format=", "--no-color", sha).stdout
 
 
@@ -957,22 +958,22 @@ def add_guest_key(cid: str, label: str, provider: str, key: str, *, cap_usd: Opt
     label = " ".join(str(label or "").split())
     provider = str(provider or "").strip().lower()
     if not label or len(label) > 40 or label.lower() == "mine":
-        raise ValueError("a guest key needs a short name for whose it is (not 'mine')")
+        raise UserFacingValueError("a guest key needs a short name for whose it is (not 'mine')")
     if provider not in GUEST_PROVIDERS:
-        raise ValueError("guest keys are supported for %s only, for now" % ", ".join(GUEST_PROVIDERS))
+        raise UserFacingValueError("guest keys are supported for %s only, for now" % ", ".join(GUEST_PROVIDERS))
     if not str(key or "").strip():
-        raise ValueError("the key itself is missing")
+        raise UserFacingValueError("the key itself is missing")
     keys = guest_keys(cid)
     if any(k["label"].lower() == label.lower() for k in keys):
-        raise ValueError("this codebase already has a key called %r; remove it first" % label)
+        raise UserFacingValueError("this codebase already has a key called %r; remove it first" % label)
     cap = None
     if cap_usd not in (None, "", 0, "0"):
         try:
             cap = round(float(cap_usd), 2)
         except (TypeError, ValueError):
-            raise ValueError("the cap must be a dollar amount")
+            raise UserFacingValueError("the cap must be a dollar amount")
         if cap <= 0:
-            raise ValueError("the cap must be a dollar amount above zero")
+            raise UserFacingValueError("the cap must be a dollar amount above zero")
     from agent_friday.services import credential_store as _cs
     name = _store_name(cid, label)
     _cs.set_provider_key(name, str(key).strip())
@@ -1105,10 +1106,10 @@ def set_seat(cid: str, which: str, model: str, *, by: str = "you") -> dict:
         raise KeyError(cid)
     field = SEAT_WHICH.get(str(which or "").strip().lower())
     if not field:
-        raise ValueError("which must be 'small' or 'heavy'")
+        raise UserFacingValueError("which must be 'small' or 'heavy'")
     model = " ".join(str(model or "").split())
     if field == "small_edit_seat" and not model:
-        raise ValueError("the small-edit seat needs a model, or 'local' for the resident brain")
+        raise UserFacingValueError("the small-edit seat needs a model, or 'local' for the resident brain")
     if field == "heavy_seat" and not model:
         model = None
     old = rec["seats"].get(field)
@@ -1129,7 +1130,7 @@ def set_key_profile(cid: str, profile: str, *, by: str = "you") -> dict:
     profile = " ".join(str(profile or "").split())
     known = [k["label"] for k in guest_keys(cid)]
     if profile != "mine" and profile not in known:
-        raise ValueError("no guest key called %r on this codebase; add one under Settings \u2192 Connections first" % profile)
+        raise UserFacingValueError("no guest key called %r on this codebase; add one under Settings \u2192 Connections first" % profile)
     old = rec.get("key_profile") or "mine"
     rec["key_profile"] = profile
     rec.pop("key_rejected", None)
@@ -1281,7 +1282,7 @@ def quick_value(action: str, font_px) -> tuple:
 def _check_selector(selector: str) -> str:
     s = " ".join(str(selector or "").split())
     if not s or not _SELECTOR_RE.match(s) or any(c in s for c in "{};/\\"):
-        raise ValueError("that is not a plain CSS selector")
+        raise UserFacingValueError("that is not a plain CSS selector")
     return s
 
 
@@ -1296,7 +1297,7 @@ def set_pick(cid: str, pick: dict) -> dict:
     text = " ".join(str(pick.get("text") or "").split())[:200]
     snippet = str(pick.get("snippet") or "")
     if len(snippet) > 400:
-        raise ValueError("the snippet is too long")
+        raise UserFacingValueError("the snippet is too long")
     rect = pick.get("rect") if isinstance(pick.get("rect"), dict) else None
     if rect is not None:
         rect = {k: float(rect.get(k) or 0) for k in ("x", "y", "w", "h")}
@@ -1333,10 +1334,10 @@ def quick_style(cid: str, selector: str, prop: str, value: str) -> dict:
     prop = str(prop or "").strip().lower()
     value = " ".join(str(value or "").split())
     if prop not in SAFE_PROPS:
-        raise ValueError("%r is not one of the simple properties a quick edit may set" % prop)
+        raise UserFacingValueError("%r is not one of the simple properties a quick edit may set" % prop)
     low = value.lower()
     if not _VALUE_RE.match(value) or "url(" in low or "expression" in low or "javascript" in low:
-        raise ValueError("that value is not a plain CSS value")
+        raise UserFacingValueError("that value is not a plain CSS value")
     repo = repo_path(cid)
     changes: dict = {}
     target = "styles.css" if (repo / "styles.css").is_file() else "friday-pick.css"
@@ -1353,7 +1354,7 @@ def quick_style(cid: str, selector: str, prop: str, value: str) -> dict:
     changes[target] = current.rstrip("\n") + "\n%s { %s: %s; }\n" % (sel, prop, value)
     st = step(cid, changes, "You styled %s: %s %s" % (sel, prop, value), author="you", model="", key_profile="")
     if st is None:
-        raise RuntimeError("that rule is already there")
+        raise UserFacingRuntimeError("that rule is already there")
     return st
 
 

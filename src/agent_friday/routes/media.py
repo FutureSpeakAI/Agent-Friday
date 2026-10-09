@@ -39,6 +39,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
 
+from agent_friday.routes._errors import api_error, public_result
 from agent_friday.services import media_index as mi
 
 media_bp = Blueprint('media', __name__)
@@ -99,7 +100,7 @@ def media_list():
         res["previews"] = mp.status()
     except Exception:
         res["previews"] = {"pending": 0, "done": 0}
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't complete that Media request"))
 
 
 @media_bp.route('/api/media', methods=['POST'])
@@ -124,13 +125,13 @@ def media_reindex():
 
 @media_bp.route('/api/media/status', methods=['GET'])
 def media_status():
-    return jsonify({"status": "ok", "indexing": mi.status()})
+    return jsonify(public_result({"status": "ok", "indexing": mi.status()}, "Couldn't complete that Media request"))
 
 
 @media_bp.route('/api/media/turns', methods=['GET'])
 def media_turns():
     """What this PC can turn a card into, and why not when it cannot."""
-    return jsonify({"status": "ok", "turns": mi.turn_capabilities()})
+    return jsonify(public_result({"status": "ok", "turns": mi.turn_capabilities()}, "Couldn't complete that Media request"))
 
 
 @media_bp.route('/api/media/previews/status', methods=['GET'])
@@ -164,7 +165,7 @@ def media_collections():
 def media_collection_save():
     b = _json()
     res = mi.save_collection(str(b.get('name') or ''), b.get('filters') or {}, b.get('id') or None)
-    return jsonify(res), (200 if res.get("status") == "ok" else 400)
+    return jsonify(public_result(res, "Couldn't complete that Media request")), (200 if res.get("status") == "ok" else 400)
 
 
 @media_bp.route('/api/media/collections/<collection_id>', methods=['GET'])
@@ -174,13 +175,13 @@ def media_collection_get(collection_id):
     except ValueError:
         limit = 200
     res = mi.collection_query(collection_id, limit=limit)
-    return jsonify(res), (200 if res.get("status") == "ok" else 404)
+    return jsonify(public_result(res, "Couldn't complete that Media request")), (200 if res.get("status") == "ok" else 404)
 
 
 @media_bp.route('/api/media/collections/<collection_id>', methods=['DELETE'])
 def media_collection_delete(collection_id):
     res = mi.delete_collection(collection_id)
-    return jsonify(res), (200 if res.get("status") == "ok" else 404)
+    return jsonify(public_result(res, "Couldn't complete that Media request")), (200 if res.get("status") == "ok" else 404)
 
 
 @media_bp.route('/api/media/tidy', methods=['GET'])
@@ -198,7 +199,7 @@ def media_tidy_propose():
     ids = [str(x) for x in b.get('ids')] if isinstance(b.get('ids'), list) else None
     res = media_tidy.propose(requested_by="user", ids=ids)
     code = {"pending": 202, "denied": 403, "error": 500, "nothing": 200}.get(res.get("status"), 200)
-    return jsonify(res), code
+    return jsonify(public_result(res, "Couldn't complete that Media request")), code
 
 
 @media_bp.route('/api/media/trash', methods=['GET'])
@@ -213,7 +214,7 @@ def media_trash_restore(entry):
     if "/" in entry or "\\" in entry or ".." in entry:
         return jsonify({"status": "denied"}), 400
     res = media_tidy.restore(entry)
-    return jsonify(res), (200 if res.get("status") == "ok" else 404)
+    return jsonify(public_result(res, "Couldn't complete that Media request")), (200 if res.get("status") == "ok" else 404)
 
 
 @media_bp.route('/api/media/bulk', methods=['POST'])
@@ -222,7 +223,7 @@ def media_bulk():
     ids = [str(x) for x in (b.get('ids') or [])][:500]
     res = mi.bulk(ids, project=b.get('project') if 'project' in b else None, add_tags=b.get('add_tags') or None,
                   remove_tags=b.get('remove_tags') or None, favorite=b.get('favorite') if 'favorite' in b else None)
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't complete that Media request"))
 
 
 @media_bp.route('/api/media/<card_id>', methods=['PATCH'])
@@ -232,14 +233,14 @@ def media_patch(card_id):
                    favorite=b.get('favorite') if 'favorite' in b else None,
                    tags=[str(t) for t in b.get('tags')] if isinstance(b.get('tags'), list) else None)
     code = {"not_found": 404, "denied": 403, "error": 400}.get(res.get("status"), 200)
-    return jsonify(res), code
+    return jsonify(public_result(res, "Couldn't complete that Media request")), code
 
 
 @media_bp.route('/api/media/<card_id>', methods=['DELETE'])
 def media_delete(card_id):
     res = mi.delete(card_id)
     code = {"not_found": 404, "denied": 403, "error": 400}.get(res.get("status"), 200)
-    return jsonify(res), code
+    return jsonify(public_result(res, "Couldn't complete that Media request")), code
 
 
 @media_bp.route('/api/media/<card_id>/body', methods=['PUT'])
@@ -247,21 +248,21 @@ def media_body(card_id):
     b = _json()
     res = mi.set_body(card_id, str(b.get('text') or ''))
     code = {"not_found": 404, "denied": 403, "error": 400}.get(res.get("status"), 200)
-    return jsonify(res), code
+    return jsonify(public_result(res, "Couldn't complete that Media request")), code
 
 
 @media_bp.route('/api/media/<card_id>/publish', methods=['POST'])
 def media_publish(card_id):
     res = mi.publish(card_id)
     code = {"not_found": 404, "denied": 403, "error": 500, "pending": 202}.get(res.get("status"), 200)
-    return jsonify(res), code
+    return jsonify(public_result(res, "Couldn't complete that Media request")), code
 
 
 @media_bp.route('/api/media/<card_id>/unpublish', methods=['POST'])
 def media_unpublish(card_id):
     res = mi.unpublish(card_id)
     code = {"not_found": 404, "denied": 403}.get(res.get("status"), 200)
-    return jsonify(res), code
+    return jsonify(public_result(res, "Couldn't complete that Media request")), code
 
 
 @media_bp.route('/api/media/<card_id>/turn-into', methods=['POST'])
@@ -269,7 +270,7 @@ def media_turn_into(card_id):
     b = _json()
     res = mi.turn_into(card_id, str(b.get('kind') or ''))
     code = {"not_found": 404, "denied": 403, "error": 400, "unavailable": 501}.get(res.get("status"), 200)
-    return jsonify(res), code
+    return jsonify(public_result(res, "Couldn't complete that Media request")), code
 
 
 @media_bp.route('/api/media/<card_id>/file', methods=['GET'])
@@ -326,7 +327,7 @@ def media_open(card_id):
         else:
             _sp.Popen(["xdg-open", str(p)])
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)[:200]}), 500
+        return api_error(e, "Couldn't open that file")
     return jsonify({"status": "ok", "path": str(p)})
 
 
@@ -345,7 +346,7 @@ def media_reveal(card_id):
         else:
             _sp.Popen(["xdg-open", str(p.parent)])
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)[:200]}), 500
+        return api_error(e, "Couldn't show that file in its folder")
     return jsonify({"status": "ok", "path": str(p)})
 
 

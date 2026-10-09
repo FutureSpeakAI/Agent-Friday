@@ -46,6 +46,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_friday.paths import safe_name
+from agent_friday.user_errors import UserFacingValueError
 
 #: The kinds the panel renders. `image` and `svg` are the spec's one row.
 KINDS = ("markdown", "table", "chart", "html", "diff", "image", "svg")
@@ -109,22 +110,22 @@ def _dir(cid: str, aid: str) -> Path:
 def _normalise(kind: str, content):
     """One shape per kind, so every renderer and every diff sees the same thing."""
     if kind not in KINDS:
-        raise ValueError("unknown artifact kind %r; one of %s" % (kind, ", ".join(KINDS)))
+        raise UserFacingValueError("unknown artifact kind %r; one of %s" % (kind, ", ".join(KINDS)))
     if kind in ("markdown", "html", "diff", "svg"):
         if content is None:
             content = ""
         if not isinstance(content, str):
-            raise ValueError("%s content must be text" % kind)
+            raise UserFacingValueError("%s content must be text" % kind)
         return content
     if kind == "image":
         if isinstance(content, str):
             return {"src": content, "alt": ""}
         if isinstance(content, dict) and isinstance(content.get("src"), str):
             return {"src": content["src"], "alt": str(content.get("alt") or "")}
-        raise ValueError("image content must be a data: URL or {src, alt}")
+        raise UserFacingValueError("image content must be a data: URL or {src, alt}")
     if kind == "table":
         if not isinstance(content, dict):
-            raise ValueError("table content must be {columns, rows}")
+            raise UserFacingValueError("table content must be {columns, rows}")
         rows = content.get("rows") or []
         cols = content.get("columns")
         if rows and isinstance(rows[0], dict):
@@ -145,11 +146,11 @@ def _normalise(kind: str, content):
         return out
     if kind == "chart":
         if not isinstance(content, dict):
-            raise ValueError("chart content must be a spec: {type, rows|series, x, y}")
+            raise UserFacingValueError("chart content must be a spec: {type, rows|series, x, y}")
         out = dict(content)
         out["type"] = str(out.get("type") or "bar").lower()
         return out
-    raise ValueError("unknown artifact kind %r" % kind)  # pragma: no cover
+    raise UserFacingValueError("unknown artifact kind %r" % kind)  # pragma: no cover
 
 
 def _text_of(content) -> str:

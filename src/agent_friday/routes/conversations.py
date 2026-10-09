@@ -43,6 +43,7 @@ from flask import Blueprint, jsonify, request
 
 from agent_friday.services import conversations as _conv
 from agent_friday.services import projects as _proj
+from agent_friday.routes._errors import api_error
 
 conversations_bp = Blueprint("conversations", __name__)
 
@@ -355,10 +356,10 @@ def project_add_file(pid):
     try:
         entry = _proj.add_file(pid, name, blob)
     except RuntimeError as e:          # off the record: nothing is written
-        return jsonify({"status": "error", "error": str(e)}), 409
+        return api_error(e, "Couldn't add that file", 409, key="error")
     except ValueError as e:
         code = 413 if "large" in str(e) or "cap" in str(e) else 400
-        return jsonify({"status": "error", "error": str(e)}), code
+        return api_error(e, "Couldn't add that file", code, key="error")
     return jsonify({"status": "ok", "file": entry}), 201
 
 
@@ -382,7 +383,7 @@ def project_remove_file(pid, name):
     try:
         removed = _proj.remove_file(pid, name)
     except RuntimeError as e:
-        return jsonify({"status": "error", "error": str(e)}), 409
+        return api_error(e, "Couldn't remove that file", 409, key="error")
     if not removed:
         return jsonify({"status": "error", "error": "no such file"}), 404
     return jsonify({"status": "ok", "removed": name})

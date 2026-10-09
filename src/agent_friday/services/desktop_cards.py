@@ -17,6 +17,7 @@ import threading
 import time
 from pathlib import Path
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.core import FRIDAY_DIR
 
 CARDS_PATH = FRIDAY_DIR / "desktop_cards.json"
@@ -28,7 +29,7 @@ _LOCK = threading.RLock()
 _log = logging.getLogger("friday.desktop_cards")
 
 
-class CardError(ValueError):
+class CardError(UserFacingValueError):
     """A card input or operation the owner can correct."""
 
 

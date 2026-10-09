@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent_friday.paths import contained, safe_name
+from agent_friday.user_errors import UserFacingValueError
 
 _log = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ def slug_for(title: str) -> str:
 def _check_slug(slug: str) -> str:
     slug = safe_name(slug, what="slug")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,47}", slug):
-        raise ValueError("invalid slug")
+        raise UserFacingValueError("invalid slug")
     return slug
 
 
@@ -609,7 +610,7 @@ def request_publish(cid: str, aid: str, *, adapter: Optional[str] = None, versio
         raise KeyError(aid)
     adapter = adapter or default_adapter()
     if adapter not in ADAPTER_LABELS:
-        raise ValueError("unknown publish adapter %r" % adapter)
+        raise UserFacingValueError("unknown publish adapter %r" % adapter)
     label = ADAPTER_LABELS[adapter]
     try:
         bundle = pack(rec, mark=mark)
@@ -739,7 +740,7 @@ def unpublish(slug: str) -> bool:
             except Exception:
                 # Remote timeouts can be ambiguous. Keep the local receipt and
                 # mirror so a failed request cannot be presented as taken down.
-                raise ValueError("Remote take-down was not confirmed. The saved publication remains listed; check the host before retrying.") from None
+                raise UserFacingValueError("Remote take-down was not confirmed. The saved publication remains listed; check the host before retrying.") from None
         _write_index([i for i in items if i.get("slug") != slug])
     return True
 

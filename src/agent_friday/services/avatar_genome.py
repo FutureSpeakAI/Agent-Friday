@@ -46,6 +46,7 @@ import time
 from pathlib import Path
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import UserFacingValueError
 
 AVATAR_DIR = FRIDAY_DIR / "avatar"
 _LOCK = threading.RLock()
@@ -892,7 +893,7 @@ def rollback(content_hash) -> dict:
     if step is None:
         raise KeyError(content_hash)
     if verify_step(step) == "tampered":
-        raise ValueError("that step failed verification")
+        raise UserFacingValueError("that step failed verification")
     update_state(active=content_hash)
     return step
 
@@ -930,7 +931,7 @@ def delete(content_hash, *, now=None) -> None:
     be switched away from first."""
     with _LOCK:
         if state().get("active") == content_hash:
-            raise ValueError("switch to another look before deleting this one")
+            raise UserFacingValueError("switch to another look before deleting this one")
         src = _path_for(content_hash)
         if not src.exists():
             raise KeyError(content_hash)
