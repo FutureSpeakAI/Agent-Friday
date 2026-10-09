@@ -31,16 +31,20 @@ What actually closes it:
     a perfectly public URL is allowed to 302 to loopback and a front-door-only
     check never sees the second request.
 
-KNOWN RESIDUAL RISK, stated rather than papered over: between our resolution
-and the HTTP client's own resolution there is a DNS-rebinding window. Closing
-it fully means pinning the validated address into the socket, which breaks TLS
-hostname verification unless rebuilt carefully. Not closed here; the exposure
-is a single-user desktop app fetching pages, and every hop is re-validated.
+  * the address that was judged is the address that is dialled. `pinned`
+    resolves the host once, judges every answer, and makes the connection
+    dial only those addresses, so a name that answers a public address to the
+    check and a private one to the connection (DNS rebinding) never reaches
+    the second. TLS is untouched: the URL, the Host header, SNI and the
+    certificate check still use the host name. Every redirect hop is vetted
+    and pinned on its own.
 """
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import socket
+import threading
 from urllib.parse import urljoin, urlparse
 
 # Hosts that never resolve to anything routable but are worth naming, so the
@@ -88,32 +92,37 @@ def resolve_all(host: str) -> list[str]:
     return sorted({i[4][0] for i in infos})
 
 
-def check_url(url: str) -> tuple[bool, str]:
-    """Decide whether `url` may be fetched. Returns (ok, reason).
+def _vet(url: str) -> tuple[bool, str, str, list[str]]:
+    """Judge `url`. Returns (ok, reason, host, addresses).
+
+    `addresses` is the set the host resolved to, every one of them judged safe
+    (the host itself for an IP literal); it is empty whenever `ok` is False.
+    `pinned` connects to exactly these addresses, so the answer that was
+    judged is the answer that is dialled.
 
     Fail-closed: anything that cannot be parsed, resolved or judged is refused.
     """
     raw = (url or "").strip()
     if not raw:
-        return False, "no URL was provided"
+        return False, "no URL was provided", "", []
     try:
         p = urlparse(raw)
     except Exception as e:
-        return False, f"the URL could not be parsed ({e})"
+        return False, f"the URL could not be parsed ({e})", "", []
 
     if p.scheme not in ("http", "https"):
         return False, (
             f"only http and https can be fetched (got {p.scheme or 'no scheme'!r}) — "
             f"file://, gopher:// and friends are refused"
-        )
+        ), "", []
     if p.username or p.password:
-        return False, "the URL carries embedded credentials, which is refused"
+        return False, "the URL carries embedded credentials, which is refused", "", []
 
     host = (p.hostname or "").strip().strip("[]").lower()
     if not host:
-        return False, "the URL has no host"
+        return False, "the URL has no host", "", []
     if host in _ALWAYS_REFUSE_HOSTS or host.endswith(_ALWAYS_REFUSE_SUFFIXES):
-        return False, f"{host!r} is this machine or the local network"
+        return False, f"{host!r} is this machine or the local network", host, []
 
     # An IP literal needs no DNS and must be judged directly — otherwise
     # getaddrinfo happily "resolves" 127.0.0.1 to itself and the literal case
@@ -121,17 +130,17 @@ def check_url(url: str) -> tuple[bool, str]:
     try:
         ipaddress.ip_address(host)
         if not _address_is_safe(host):
-            return False, f"{host} is a private, loopback or link-local address"
-        return True, "ok"
+            return False, f"{host} is a private, loopback or link-local address", host, []
+        return True, "ok", host, [host]
     except ValueError:
         pass
 
     try:
         addrs = resolve_all(host)
     except Exception as e:
-        return False, f"{host!r} could not be resolved ({e})"
+        return False, f"{host!r} could not be resolved ({e})", host, []
     if not addrs:
-        return False, f"{host!r} resolved to no addresses"
+        return False, f"{host!r} resolved to no addresses", host, []
 
     unsafe = [a for a in addrs if not _address_is_safe(a)]
     if unsafe:
@@ -139,8 +148,87 @@ def check_url(url: str) -> tuple[bool, str]:
             f"{host!r} resolves to a private, loopback or link-local address "
             f"({', '.join(unsafe)}) — this is how an internal service gets "
             f"reached through a public-looking name"
-        )
-    return True, "ok"
+        ), host, []
+    return True, "ok", host, list(addrs)
+
+
+def check_url(url: str) -> tuple[bool, str]:
+    """Decide whether `url` may be fetched. Returns (ok, reason)."""
+    ok, why, _host, _addrs = _vet(url)
+    return ok, why
+
+
+# ── Pinning: the address that was judged is the address that is dialled ─────
+#
+# `check_url` alone leaves a window: the HTTP client resolves the name again
+# when it connects, and a name with a short TTL can answer a public address to
+# the check and a private one to the connection (DNS rebinding). `pinned`
+# closes it without touching TLS: urllib3 is told which addresses to dial for
+# the vetted host, while the URL, the Host header, SNI and certificate
+# verification keep the host name.
+_pin = threading.local()
+_install_lock = threading.Lock()
+
+
+def _host_keys(host: str) -> list[str]:
+    keys = [host]
+    try:
+        keys.append(host.encode("idna").decode("ascii"))
+    except Exception:
+        pass
+    return [k.rstrip(".").lower() for k in keys]
+
+
+def _install_pin_hook() -> None:
+    """Wrap urllib3's connect once; the wrapper only acts on a thread that is
+    inside `pinned` and only for the vetted host."""
+    from urllib3.util import connection as _conn
+    with _install_lock:
+        if getattr(_conn.create_connection, "_friday_pin_hook", False):
+            return
+        original = _conn.create_connection
+
+        def create_connection(address, *args, **kwargs):
+            pins = getattr(_pin, "map", None)
+            if pins:
+                host, port = address[0], address[1]
+                addrs = pins.get(str(host).strip("[]").rstrip(".").lower())
+                if addrs is not None:
+                    last: Exception | None = None
+                    for ip in addrs:
+                        try:
+                            return original((ip, port), *args, **kwargs)
+                        except OSError as e:
+                            last = e
+                    raise last or OSError(f"no vetted address for {host!r} accepted a connection")
+            return original(address, *args, **kwargs)
+
+        create_connection._friday_pin_hook = True  # type: ignore[attr-defined]
+        _conn.create_connection = create_connection
+
+
+@contextlib.contextmanager
+def pinned(url: str):
+    """Vet `url`, then make every connection to its host on this thread dial
+    only the vetted addresses. Raises `UnsafeURLError` for a refused URL.
+
+    Wrap exactly one request (one redirect hop) in it: each hop is vetted and
+    pinned on its own. A request made through a proxy dials the proxy, not the
+    host, and is not pinned; the proxy is the owner's own setting.
+    """
+    ok, why, host, addrs = _vet(url)
+    if not ok:
+        raise UnsafeURLError(f"refusing to fetch {url!r}: {why}")
+    _install_pin_hook()
+    previous = getattr(_pin, "map", None)
+    merged = dict(previous or {})
+    for key in _host_keys(host):
+        merged[key] = list(addrs)
+    _pin.map = merged
+    try:
+        yield addrs
+    finally:
+        _pin.map = previous
 
 
 def check_host_literal(host: str) -> tuple[bool, str]:
@@ -186,10 +274,10 @@ def safe_get(url: str, *, timeout: float = 15, headers: dict | None = None,
     import requests
 
     current = (url or "").strip()
-    assert_safe(current)
     for _hop in range(MAX_REDIRECT_HOPS + 1):
-        resp = requests.get(current, timeout=timeout, headers=headers or {},
-                            allow_redirects=False, stream=stream)
+        with pinned(current):
+            resp = requests.get(current, timeout=timeout, headers=headers or {},
+                                allow_redirects=False, stream=stream)
         if resp.status_code not in (301, 302, 303, 307, 308):
             return resp
         loc = resp.headers.get("location") or ""
