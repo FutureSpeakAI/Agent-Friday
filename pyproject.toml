@@ -42,6 +42,11 @@ dependencies = [
     # self-contained page. Pure Python, no compiled deps; the publish route and
     # its tests import it, so a lean install must carry it.
     "markdown>=3.5",
+    # Transitive (requests, Google OAuth), floored at the releases that fix known
+    # advisories: urllib3 unbounded chunk lines, proxy TLS and deflate loops;
+    # oauthlib PKCE timing and RevocationEndpoint JSONP injection.
+    "urllib3>=2.8.0",
+    "oauthlib>=4.0.0",
 ]
 
 # â”€â”€ Optional capability groups â€” install only what you need â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
