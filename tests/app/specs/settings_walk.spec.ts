@@ -57,17 +57,37 @@ const NEVER = [
 ];
 
 /** A control whose row says any of this is looked at, never changed. */
-const GUARDED = /phone|twilio|texting|sms|voicemail|your cell|computer control|vault|passphrase|erase|delete|forget|clear|remove|disconnect|certificate|signature|key|token|secret|password|download|install|update|check for|cloud|unrestricted|budget|hard stop|alert|federation|economy|wallet|google|oauth|connect|publish|substack|mcp|salon|workspaces? (permission|history)|export|calibrate|elevenlabs|gemini|microphone|camera|webcam|listener|local address|grant/i;
+const GUARDED = /phone|twilio|texting|sms|voicemail|your cell|computer control|vault|passphrase|erase|delete|forget|clear|remove|disconnect|certificate|signature|key|token|secret|password|download|install|update|check for|cloud|unrestricted|budget|hard stop|alert|federation|economy|wallet|google|oauth|connect|publish|substack|mcp|salon|workspaces? (permission|history)|export|calibrate|elevenlabs|gemini|microphone|camera|webcam|listener|local address|grant|off the record|send|texts?|by text|invites?/i;
+
+/**
+ * Whole groups the walk looks at and never changes: forms that create a standing permission or reach another
+ * service (a scheduled job's grants, file and computer access, agent workspaces, local hosting, Google accounts, the
+ * texting registration, and the Models browser, whose pickers filter a list and are not settings). Their pickers feed a button that is not pressed here, so changing one saves nothing by design.
+ */
+const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspaces|published pages|google accounts|texting registration|model browser|permission|grant/i;
+/** Sections that are accounts and phone lines from top to bottom: opened and listed, never changed. */
+const LOOK_ONLY_SECTIONS = new Set(['connections']);
 
 /** The only free-text fields the walk types into. Everything else is present-only. */
 const TEXT_OK = /^(name|language|speaking style)\b/i;
 
 type Row = {
-  section: string; kind: string; label: string; action: string;
+  section: string; group: string; kind: string; label: string; action: string;
   posted: string; apiPersisted: string; uiPersisted: string; result: 'pass' | 'fail' | 'info'; detail: string;
 };
 
 async function openSettings(page: Page) {
+  // A fresh scratch home has finished no setup, so the first-run consent flow would cover Settings.
+  // The walk is of Settings after setup, as the owner uses it; the settings themselves stay real.
+  await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
+  // The same holds for the cloud-consent question a fresh home asks once. The walk answers it the careful way
+  // ("cloud_guarded": sensitive material stays held back, as while unanswered) in the scratch home, so the gate
+  // does not appear over Settings after a reload.
+  const cc = await (await page.request.get(`${BASE}/api/privacy/cloud-consent`, { timeout: 120_000 })).json();
+  if (cc.needs_prompt) {
+    const r = await page.request.post(`${BASE}/api/privacy/cloud-consent`, { data: { choice: 'cloud_guarded' }, timeout: 120_000 });
+    expect(r.ok(), 'recording the careful cloud-consent answer in the scratch home').toBeTruthy();
+  }
   await page.goto(`${BASE}/w/settings`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.st-root', { timeout: 60000 });
 }
@@ -114,7 +134,9 @@ async function discover(page: Page) {
         : kind === 'switch' ? ((e.innerText || '').trim().split('\n')[0] || '').slice(0, 90)
         : rowText(e);
       e.setAttribute('data-walk-id', String(n));
-      out.push({ id: n, kind, label, visible: r.width > 0 && r.height > 0, disabled: !!e.disabled });
+      const sec = e.closest('[data-st-section]');
+      const group = sec ? (sec.getAttribute('data-st-section') || '') : '';
+      out.push({ id: n, kind, label, group, visible: r.width > 0 && r.height > 0, disabled: !!e.disabled });
       n++;
     });
     return out;
@@ -137,6 +159,8 @@ async function savedSettings(page: Page): Promise<any> {
 
 test.describe('Settings walk', () => {
   test.setTimeout(900_000);
+  // A control that cannot be acted on is a finding, reported in its row, not a wait for the whole test's budget.
+  test.use({ actionTimeout: 10_000 });
 
   test('every section opens, and every old section id still lands on the right one', async ({ page }) => {
     await openSettings(page);
@@ -225,14 +249,14 @@ test.describe('Settings walk', () => {
       for (const c of controls) {
         const key = c.kind + '|' + c.label;
         const nth = (seen[key] = (seen[key] || 0) + 1) - 1;
-        const base = { section: sec.label, kind: c.kind, label: c.label };
+        const base = { section: sec.label, group: c.group || '', kind: c.kind, label: c.label };
         const loc = page.locator(`[data-walk-id="${c.id}"]`);
         if (!c.visible || c.disabled || (await loc.count()) === 0) {
           rows.push({ ...base, action: 'skipped', posted: '', apiPersisted: '', uiPersisted: '', result: 'info',
             detail: c.disabled ? 'disabled' : 'not visible or re-rendered' });
           continue;
         }
-        const guarded = GUARDED.test(c.label);
+        const guarded = GUARDED.test(c.label) || GUARDED_GROUP.test(c.group || '') || LOOK_ONLY_SECTIONS.has(sec.id);
         const mutable = (c.kind === 'switch' || c.kind === 'select' || c.kind === 'slider' || c.kind === 'checkbox'
           || (c.kind === 'text' && TEXT_OK.test(c.label))) && !guarded;
         if (!mutable) {
@@ -241,13 +265,18 @@ test.describe('Settings walk', () => {
           continue;
         }
         const before = posted.length;
+        // The save this control causes, if it saves through /api/settings at all: observed, not slept for.
+        const settingsSaved = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings',
+          { timeout: 30_000 }).catch(() => null);
         let value = '';
         try {
           if (c.kind === 'switch') {
             const was = await loc.getAttribute('aria-checked');
             await loc.click();
             value = was === 'true' ? 'false' : 'true';
-            await expect(loc).toHaveAttribute('aria-checked', value, { timeout: 6000 });
+            // A switch shows the new state once the server has confirmed the save.
+            await settingsSaved;
+            await expect(loc).toHaveAttribute('aria-checked', value, { timeout: 10_000 });
           } else if (c.kind === 'checkbox') {
             const was = await loc.isChecked();
             await loc.setChecked(!was);
@@ -255,7 +284,8 @@ test.describe('Settings walk', () => {
           } else if (c.kind === 'select') {
             const opts = await loc.locator('option').evaluateAll(os => os.map(o => (o as HTMLOptionElement).value));
             const cur = await loc.inputValue();
-            const next = opts.find(v => v !== cur && v !== '');
+            // never a cloud destination: the walk does not send the owner's knowledge anywhere
+            const next = opts.find(v => v !== cur && v !== '' && !/cloud/i.test(v));
             if (!next) {
               rows.push({ ...base, action: 'present', posted: '', apiPersisted: '', uiPersisted: '', result: 'pass', detail: 'one option only' });
               continue;
@@ -279,7 +309,10 @@ test.describe('Settings walk', () => {
             detail: 'the control did not respond: ' + String(e.message || e).split('\n')[0] });
           continue;
         }
-        await page.waitForTimeout(700);
+        // Controls that keep their value elsewhere (their own route) never POST /api/settings: give those a short look.
+        // A slider also saves on blur, so a response seen here can belong to the control before: wait for this
+        // control's own POST to be sent, not for any response.
+        await expect.poll(() => posted.length, { timeout: 2500 }).toBeGreaterThan(before).catch(() => undefined);
         const mine = posted.slice(before);
         expectedUi.push({ label: c.label, kind: c.kind, value, nth });
         const saved = mine.map(m => m && m.settings).filter(Boolean);
@@ -290,10 +323,13 @@ test.describe('Settings walk', () => {
           continue;
         }
         const keys = Object.keys(Object.assign({}, ...saved));
-        const now = await savedSettings(page);
+        // The saved settings are read until they show what this control sent (the save is the server's to finish).
+        let now = await savedSettings(page);
+        await expect.poll(async () => { now = await savedSettings(page); return saved.every(s => deepContains(now, s)); },
+          { timeout: 8000 }).toBe(true).catch(() => undefined);
         const api = saved.every(s => deepContains(now, s));
         rows.push({ ...base, action: 'changed', posted: keys.join(', '), apiPersisted: api ? 'yes' : 'NO', uiPersisted: '?',
-          result: api ? 'pass' : 'fail', detail: api ? 'GET /api/settings has the new value' : 'GET /api/settings does not show what was saved' });
+          result: api ? 'pass' : 'fail', detail: api ? 'GET /api/settings has the new value' : 'GET /api/settings does not show what was saved: saved ' + JSON.stringify(saved).slice(0, 160) + ' now ' + JSON.stringify(keys.reduce((o: any, k) => (o[k] = now[k], o), {})).slice(0, 160) });
       }
       page.off('request', onReq);
 
@@ -327,8 +363,8 @@ test.describe('Settings walk', () => {
     const out = info.outputPath('settings_walk.json');
     fs.mkdirSync(info.outputDir, { recursive: true });
     fs.writeFileSync(out, JSON.stringify(rows, null, 2));
-    const md = ['# Settings walk', '', '| Section | Kind | Control | Action | Saved keys | Settings API | After reload | Result |', '|---|---|---|---|---|---|---|---|']
-      .concat(rows.map(r => `| ${r.section} | ${r.kind} | ${r.label.replace(/\|/g, '/')} | ${r.action} | ${r.posted} | ${r.apiPersisted} | ${r.uiPersisted} | ${r.result.toUpperCase()} |`));
+    const md = ['# Settings walk', '', '| Section | Group | Kind | Control | Action | Saved keys | Settings API | After reload | Result |', '|---|---|---|---|---|---|---|---|---|']
+      .concat(rows.map(r => `| ${r.section} | ${r.group.replace(/\|/g, '/')} | ${r.kind} | ${r.label.replace(/\|/g, '/')} | ${r.action} | ${r.posted} | ${r.apiPersisted} | ${r.uiPersisted} | ${r.result.toUpperCase()} |`));
     fs.writeFileSync(info.outputPath('settings_walk.md'), md.join('\n') + '\n');
     await info.attach('settings_walk.md', { path: info.outputPath('settings_walk.md') });
     await info.attach('settings_walk.json', { path: out });

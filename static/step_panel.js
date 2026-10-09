@@ -72,7 +72,8 @@
         const t = e.target || {};
         const tag = String(t.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable) return;
-        if (document.querySelector('[role=dialog],[aria-modal=true]')) return;
+        // a dialog that is shut (aria-hidden, inert, hidden: the top bar's pull-out stays in the page) does not hold Esc
+        if (Array.from(document.querySelectorAll('[role=dialog],[aria-modal=true]')).some(d => !d.closest('[aria-hidden=true],[inert],[hidden]'))) return;
         stop();
       };
       document.addEventListener('keydown', onKey);

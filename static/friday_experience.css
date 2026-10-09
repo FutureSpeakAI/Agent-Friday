@@ -543,7 +543,7 @@ body.friday-experience-enabled .fx-settings-rail { width: 208px !important; padd
 body.friday-experience-enabled .st-rail-btn { padding: 10px 12px; min-height: 40px; border-left: 0; border-radius: 8px; color: var(--fr-label); font-size: 13px; }
 body.friday-experience-enabled .st-rail-btn.on { color: var(--fr-cyan); background: var(--fr-cyan-soft); }
 body.friday-experience-enabled .fx-settings-content { min-width: 0; }
-body.friday-experience-enabled .fx-settings-heading { background: var(--fx-panel) !important; padding: 24px 28px 20px !important; }
+body.friday-experience-enabled .fx-settings-heading { background: var(--fr-surface) !important; padding: 24px 28px 20px !important; }
 body.friday-experience-enabled .fx-settings-heading h2 { font: 600 25px/1.2 var(--fr-font-body) !important; letter-spacing: -.03em; }
 body.friday-experience-enabled .fx-settings-sections { padding: 28px !important; max-width: 980px !important; }
 body.friday-experience-enabled [data-st-section] { margin-bottom: 32px; }

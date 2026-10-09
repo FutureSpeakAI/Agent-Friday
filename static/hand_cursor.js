@@ -313,7 +313,8 @@
   function pinchClick(t, ev, now) {
     const held = ev.guarded === true;
     const row = t && t.el && t.el.closest ? t.el.closest('[data-fr-pinch="tick"]') : null;
-    if (!row || (t.el.matches && t.el.matches('input,button,a,select,textarea'))) { clickTarget(t, ev.point, now, held); return; }
+    // a real control inside the row is clicked as itself; the row being a button (a Media card) is still a row
+    if (!row || (t.el !== row && t.el.matches && t.el.matches('input,button,a,select,textarea'))) { clickTarget(t, ev.point, now, held); return; }
     if (Core.pinchIntent(ev.durationMs, 700) === 'open') {
       clickTarget({ el: row, rect: row.getBoundingClientRect() }, ev.point, now, held);
       // a row that opens on a double click (a Media card: one click selects it) says so
@@ -321,7 +322,12 @@
       return;
     }
     const box = row.querySelector('[data-fr-tick]');
-    if (box) clickTarget({ el: box, rect: box.getBoundingClientRect() }, Core.center(box.getBoundingClientRect()), now, held);
+    if (box) {
+      const ticked = clickTarget({ el: box, rect: box.getBoundingClientRect() }, Core.center(box.getBoundingClientRect()), now, held);
+      // The tick box fades in on a mouse hover, which a hand never makes. When the row itself is reachable at the
+      // pinch, the tick is a plain click on its box.
+      if (!ticked && box.isConnected && targetUsable({ el: row, rect: row.getBoundingClientRect() }, ev.point)) { try { box.click(); } catch (e) { /* ignore */ } }
+    }
     // a list whose rows have no checkbox of their own (static/friday_stage.js domList) hears the tick as an event
     else if (row.hasAttribute('data-fr-ref')) { try { row.dispatchEvent(new CustomEvent('friday:row-tick', { bubbles: true, detail: { ref: row.getAttribute('data-fr-ref') } })); } catch (e) { /* ignore */ } }
   }
