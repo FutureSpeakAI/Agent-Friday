@@ -16,6 +16,7 @@ tzdata>=2024.1               # IANA tz database for zoneinfo on Windows (Front P
 requests>=2.31
 psutil>=7.2.2                   # hardware detection (RAM) for the onboarding Hardware step + /api/health/full (ollama_manager.detect_hardware); degrades to wmic/proc fallback if absent
 pyyaml>=6.0
+markdown>=3.5                # Markdown artifacts rendered to a self-contained page for Publish (services/publish_web.py); pure Python
 pdfplumber>=0.11            # PDF text extraction for /api/analyze-file. NOT OPTIONAL: the PDF branch of
                             # routes/core_routes.py::analyze_file has always been written as though this
                             # were installed, and its ImportError fallback told the USER to run

@@ -763,7 +763,7 @@ $null = Invoke-Step -Id 'deps.core' -Title 'Installing the parts Friday cannot r
         Test-ModulesImportable -InstallRoot $InstallRoot -Modules @(
             'flask','flask_sock','requests','yaml','bs4','feedparser','rich','colorama',
             'cryptography','psutil','anthropic','google.genai','keyring','pystray','PIL','pynput',
-            'googleapiclient','google_auth_oauthlib'
+            'googleapiclient','google_auth_oauthlib','markdown'
         )
     }
 

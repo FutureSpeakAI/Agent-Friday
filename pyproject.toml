@@ -38,6 +38,10 @@ dependencies = [
     # never a size argument for leaving it out. The `pdf` extra below is kept as
     # a no-op alias so existing install scripts that name it do not break.
     "pdfplumber>=0.11",
+    # Publishing a Markdown artifact (services/publish_web.py) renders it to a
+    # self-contained page. Pure Python, no compiled deps; the publish route and
+    # its tests import it, so a lean install must carry it.
+    "markdown>=3.5",
 ]
 
 # â”€â”€ Optional capability groups â€” install only what you need â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
