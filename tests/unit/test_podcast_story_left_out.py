@@ -175,9 +175,9 @@ def test_one_story_that_cannot_be_fixed_is_left_out_and_the_rest_airs(monkeypatc
     said = _body(done)
     assert "Jackson" not in said and "The Guardian reports" in said and "Cbsriverton" in said
     assert [s["sid"] for s in done["left_out"]] == [hill]
-    assert done["left_out"][0]["headline"].startswith("Jackson holds a slight lead")
+    assert done["left_out"][0]["headline"].startswith("Jackson holds slight lead")
     assert "outlet" in done["left_out"][0]["reason"]
-    assert "Left out: Jackson holds a slight lead" in pe.transcript_bytes(done).decode("utf-8-sig")
+    assert "Left out: Jackson holds slight lead" in pe.transcript_bytes(done).decode("utf-8-sig")
     # The check itself is as strict as ever: the same lines, unedited, still fail it.
     probs = q.script_problems(pe.with_signature(lines, {"id": "x", "hosts": pe.DEFAULTS["hosts"],
                                                         "format": "solo"}, 3, ds),
@@ -241,7 +241,9 @@ def test_a_refused_episode_says_so_in_full_in_the_episode_and_keeps_every_proble
     lines, *_ = _plain_lines(ds, mute=every)
     done = _episode(monkeypatch, ds, lines)
     msg = done["error"]["message"]
-    assert "lacks the outlet" in msg and "Jackson holds" in msg
+    # The message names whole problems while they fit and counts the rest;
+    # every problem stays in the episode's script check.
+    assert "lacks the outlet" in msg and msg.endswith("more.")
     assert not re.search(r"\w…", msg)
     assert len([p for p in done["script_check"]["problems"] if p["code"] == "no_lede"]) == 4
 

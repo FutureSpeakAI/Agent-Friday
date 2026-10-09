@@ -1006,7 +1006,8 @@ def cut_at_boundary(text: str, limit: int) -> str:
     end = max(room.rfind(". "), room.rfind("? "), room.rfind("! "))
     if end >= limit // 2:
         return room[:end + 1] + " …"
-    return room.rstrip(" ,;:-–—\"'(") + "…"
+    # A space before the ellipsis: the last word is whole, and reads so.
+    return room.rstrip(" ,;:-–—\"'(") + " …"
 
 
 def lacks_in_words(lacks: list[str]) -> str:
