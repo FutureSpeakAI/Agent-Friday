@@ -1,6 +1,6 @@
 """An approved card runs the action it describes, exactly once.
 
-Stephen, 2026-09-25, after an itinerary that never reached his calendar: five
+The owner, 2026-09-25, after an itinerary that never reached their calendar: five
 `create_calendar_event` cards and two `write_file` cards were all approved by the
 owner, and not one of them ran. Every card in that conversation ended as
 `status: approved, consumed: false`.
@@ -74,7 +74,7 @@ def _card(ap, *, tool="create_calendar_event", inp=None, cid=None):
 # ── the headline ───────────────────────────────────────────────────────────
 
 def test_approving_a_card_runs_the_action(store, ran):
-    """The failure Stephen hit: approve, and nothing happens."""
+    """The failure the owner hit: approve, and nothing happens."""
     from agent_friday.services import approval_executor as ex
     ex.register()
     rec = _card(store)

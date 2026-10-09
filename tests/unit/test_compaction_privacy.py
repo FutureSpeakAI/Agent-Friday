@@ -49,7 +49,7 @@ def cloud_calls(monkeypatch):
 
 @pytest.fixture
 def settings(monkeypatch):
-    """Stephen's shape: a cloud subagent model, local-preferred routing, and
+    """The owner's shape: a cloud subagent model, local-preferred routing, and
     compaction on with a window small enough to fire."""
     s = {
         "subagent_model": "claude-opus-5-5",

@@ -123,7 +123,7 @@ def test_budget_spent_thinking_is_reported_as_that_not_as_an_empty_reply(monkeyp
     # ceiling ("1800-token output budget") and name `max_tokens` as the
     # remedy, on the reasoning that the reader cannot infer it. They cannot
     # act on it either: `max_tokens` is not reachable from the chat, and
-    # Stephen met this text at the end of a 19-minute turn that produced
+    # The owner met this text at the end of a 19-minute turn that produced
     # nothing. The remedy now belongs to the code -- the loop re-issues the
     # round with a bigger budget and the thinking turned off -- so the message
     # owns the failure and offers to continue instead.

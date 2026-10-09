@@ -5,12 +5,10 @@ The local sibling of the existing `test_resolve_engine_local_only_never_cloud`
 guards the case where they did nothing at all except pick the option whose name
 promises the system will choose sensibly.
 
-Why this test exists rather than a comment: `voice-system-spec.md` section 7.2
-used to permit `auto` to reach Tier 3 "(cloud only if key present AND not
-local-only)". That parenthetical is deleted. `voice-mode.md` open item 1 put it
-plainly - "the present behaviour is a setting that lies to the person who chose
-it." A word that reads as "pick whichever works" must not be able to mean "send
-your voice to a vendor."
+Why this test exists rather than a comment: `auto` used to be allowed to reach
+the cloud tier when a key was present and local-only was off. A setting that
+lies to the person who chose it is a bug. A word that reads as "pick whichever
+works" must not be able to mean "send your voice to a vendor."
 
 If someone restores the cloud branch for `auto`, this file goes red.
 """
@@ -91,25 +89,3 @@ class TestAutoNeverReachesCloud:
         assert "local only" in (out.get("reason") or "").lower(), (
             "the reason string must state the scope, because the label the "
             "user picked says 'Automatic (local only)'")
-
-
-class TestTheSpecAndTheCodeAgree:
-    """The parenthetical is gone from the spec, not just from the code.
-
-    A spec that still permits what the code refuses is how the next
-    implementer restores the bug in good faith.
-    """
-
-    def test_spec_no_longer_permits_auto_to_reach_cloud(self):
-        from pathlib import Path
-        root = Path(__file__).resolve().parents[2]
-        spec = (root / "docs" / "design" / "active"
-                / "voice-system-spec.md").read_text(encoding="utf-8")
-        auto_rows = [ln for ln in spec.splitlines()
-                     if ln.startswith("| `auto`")]
-        assert auto_rows, "the `auto` row vanished from section 7.2 entirely"
-        row = auto_rows[0]
-        assert "cloud only if key present" not in row, (
-            "voice-system-spec.md section 7.2 still permits `auto` to reach "
-            "Tier 3; the code refuses it. One of them is lying to the reader.")
-        assert "Never cloud" in row

@@ -1,7 +1,7 @@
 """A reasoning seat gets room to think AND to answer, and a round that runs out
 is carried rather than handed back as advice.
 
-Stephen, 2026-09-25, after a 19-minute turn with 25 tool calls ended with
+The owner, 2026-09-25, after a 19-minute turn with 25 tool calls ended with
 nothing:
 
   "[bonsai2:27b used its entire 4096-token output budget thinking and never
@@ -369,7 +369,7 @@ def test_a_cloud_seat_is_not_held_to_the_ordinary_budget():
     not billed -- so what the empty id actually bought was every cloud answer
     cut off at 4,096 tokens.
 
-    Stephen, 2026-09-25: "We're metering cloud calls, not limiting them." Spend
+    The owner, 2026-09-25: "We're metering cloud calls, not limiting them." Spend
     is the spending limit's business, on the costs panel, where he sets it.
 
     The assertion is kept rather than deleted so the reversal is legible, and it

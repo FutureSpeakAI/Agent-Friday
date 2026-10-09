@@ -13,7 +13,6 @@ from agent_friday.services import origin_gate
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
 _MODEL = (_ROOT / "docs/security/threat-model.md").read_text(encoding="utf-8")
-_MATRIX = (_ROOT / "docs/design/north-star/GAP-MATRIX.md").read_text(encoding="utf-8")
 
 
 def _flat(text):
@@ -58,11 +57,6 @@ def test_csp_claim_matches_the_shipped_csp():
 
 def test_creation_asset_exception_matches_the_gate():
     assert origin_gate.ASSET_PREFIXES == ("/api/creations/",)
-
-
-def test_ns_26_18_2_row_is_not_claimed_shipped_without_the_section():
-    row = next(l for l in _MATRIX.splitlines() if l.startswith("| NS-26.18-2 "))
-    assert "threat-model.md" in row and "section 7" in row.lower()
 
 
 def test_verified_date_is_current():

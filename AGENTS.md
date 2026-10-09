@@ -1,8 +1,8 @@
 # Engineering instructions for AI coding agents
 
 These are the standing rules for any AI coding agent working in this repository.
-They are deliberately short. Everything here is also true for humans.
-Claude Code loads this file through `CLAUDE.md`; other agents read it directly.
+They are deliberately short. Everything here is also true for humans; see
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup and the pull request process.
 
 ## The repository is public
 
@@ -21,29 +21,17 @@ Claude Code loads this file through `CLAUDE.md`; other agents read it directly.
 
 - Plan before building. A task of three or more steps, or one with an
   architectural decision, starts with a written plan: the steps, how each
-  will be verified, and the spec it serves. The plan is a document, not an
-  interactive gate; an unattended session writes it and proceeds. When
-  something goes sideways, stop and re-plan before the next edit.
-- Check the plan, not the owner. Before implementation, check the plan
-  against the spec and the critic's bar. Engineering decisions are made,
-  logged in the plan and owned by the session. Only product intent, money
-  and publishing go to the owner.
-- Keep the main context clean. Research, exploration and parallel analysis
-  go to subagents, one task each; keep the conclusion, not the file dumps.
+  will be verified, and the spec it serves. When something goes sideways,
+  stop and re-plan before the next edit.
 - Simplicity first, minimal impact. Fix the root cause; no temporary fixes
   and no unrelated edits. For a non-trivial change, ask once whether a more
   elegant way exists and take it. A simple, obvious fix skips the question.
-- A bug report is worked from the logs, the errors and the failing tests,
-  without hand-holding.
-- Track the plan as checkable items, tick them as they land, summarise each
-  step, and close with a review: what changed, how it was verified, what is
-  left.
-- Deterministic rules live in code, not in prompts. A rule a program can
-  check is enforced by one: the pytest plugin, the pre-commit hook and the
-  Claude Code guard hook (`scripts/hooks/friday_guard.py`, which blocks
-  rather than asks). A gate confirms that every required check actually ran,
-  from machine-written receipts: exit codes, never summaries. The model
-  handles only the judgement left over.
+- A bug report is worked from the logs, the errors and the failing tests.
+- Track the plan as checkable items, tick them as they land, and close with a
+  review: what changed, how it was verified, what is left.
+- Deterministic rules live in code, not in prompts. A rule a program can check
+  is enforced by one: the pytest plugin, the pre-commit hook and the static
+  checks listed below.
 
 ## Verify before claiming
 
@@ -57,41 +45,20 @@ Claude Code loads this file through `CLAUDE.md`; other agents read it directly.
 - Before calling anything done: diff the behaviour between main and the
   change, run the checks, read the logs, and ask whether a staff engineer
   would approve it.
-- Distinguish "refused by policy" from "not implemented". Several designs in
-  `docs/design/historical/` record a deliberate decision not to build; do not
-  turn them back into backlog.
+- Distinguish "refused by policy" from "not implemented". Some designs record
+  a deliberate decision not to build; do not turn them back into backlog.
 
-## Resource discipline
+## Running tests
 
-The live Friday, its local model seat and every test run share one PC.
-
-- One full test suite at a time, through `scripts/run_suite_guarded.py` and
-  nothing else. It starts only with at least 12 GB of free RAM and 20 GB of
-  free disk, takes `SUITE_LOCK`, caps xdist at two workers while the local
-  model seat is up, and writes a receipt from pytest's real exit code. Every
-  other pytest call says `-n 0`, `-n 1` or `-n 2`; the guard hook blocks a
-  call that says nothing, whatever the checkout, because `pytest.ini`
-  defaults to `-n auto` and an older base has no guard to cap it. The machine
-  has one memory budget: under 8 GB free, a new run is refused while another
-  pytest process runs anywhere, unless it is a single named file at `-n 0`;
-  under 4 GB nothing runs.
-- No WSL or Docker start below the memory floor; the guard hook blocks them.
-
-## Lessons
-
-A private lessons file lives outside the repository, one general line per
-lesson. Read it at session start. After any correction from the owner, the
-orchestrator or the critic, append one line: the rule, then the incident that
-taught it. Each machine wires the file in privately: `CLAUDE.md` imports
-`~/.claude/friday-desktop.local.md` when it exists, and other agents use their
-own global instruction file. Never copy the lessons into the tree.
+`pytest.ini` defaults to `-n auto`. On a small machine pass `-n 0`, `-n 1` or
+`-n 2` explicitly, and run one full suite at a time.
 
 ## Required checks
 
 ```
 pytest tests/unit tests/api -q          # the documented suite
 python scripts/check_imports.py         # module-level import smoke test
-ruff check --select E9,F63,F7,F82 .     # fatal-rule lint
+ruff check --select E9,F63,F7,F82 .    # fatal-rule lint
 python scripts/check_gated_prompt_callers.py
 python scripts/check_settings_readers.py
 python scripts/check_stale_model_names.py
@@ -119,10 +86,8 @@ regenerate `index.html` in a way that drops components. See
 
 ## Git
 
-- Work on a branch, in a worktree. A checkout that serves the live app is
-  never edited, switched, reset or used to run servers; the guard hook blocks
-  it, and the deploy lane's token file is the one bypass.
-- Force-pushes and history rewrites are blocked everywhere.
+- Work on a branch, never on `main` directly.
+- Force-pushes and history rewrites are not allowed on shared branches.
 - Do not push, tag, delete branches, or change repository settings without
   explicit instruction.
 - Commit messages describe the change and the invariant it protects, not the

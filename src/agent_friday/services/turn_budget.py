@@ -48,7 +48,7 @@ from typing import Any, Dict, Optional
 
 #: NO BUILT-IN ROUND CAP.
 #:
-#: Stephen, 2026-09-25: "why 999? How about making it unlimited? I bet we get
+#: The owner, 2026-09-25: "why 999? How about making it unlimited? I bet we get
 #: local models that can run way longer, and soon." And on the rest: "I want no
 #: caps unless I set them myself in the cost metering UI."
 #:
@@ -104,7 +104,7 @@ REPEAT_LIMIT_DEFAULT = 3
 #: The figures this module used to SHIP in DEFAULT_SETTINGS. They were never
 #: anybody's choice -- they were written into every install's settings.json the
 #: first time it saved, so removing them from the defaults is not enough on its
-#: own: an existing machine would keep the caps Stephen just abolished, and the
+#: own: an existing machine would keep the caps the owner just abolished, and the
 #: whole change would be cosmetic for the one person running it.
 #:
 #: A value that still matches one of these exactly is therefore treated as the
@@ -483,7 +483,7 @@ def limit_message(kind: str, *, detail: str = "", used: int = 0,
 
 # ── Output budget: how much the model may WRITE in one round ────────────────
 #
-# Stephen, 2026-09-25, after a 19-minute turn ended with no answer at all:
+# The owner, 2026-09-25, after a 19-minute turn ended with no answer at all:
 #
 #   "[bonsai2:27b used its entire 4096-token output budget thinking and never
 #    began the answer (16637 characters of reasoning, no reply). Raise
@@ -552,7 +552,7 @@ def output_tokens_for(model: str = "", *, num_ctx: Optional[int] = None,
     if asked is None:
         # A CLOUD MODEL GETS ITS OWN MAXIMUM.
         #
-        # Stephen, 2026-09-25: "We're metering cloud calls, not limiting them."
+        # The owner, 2026-09-25: "We're metering cloud calls, not limiting them."
         # A `max_tokens` we pick is our cap, and one below the model's real
         # ceiling truncates a long answer in a way that reads as the model
         # giving up. So when the catalog knows the figure, that figure is used;
@@ -583,7 +583,7 @@ def cloud_output_tokens(model: str = "", *, seat: str = "") -> Optional[int]:
     """What to send as `max_tokens` to a model WE DO NOT SERVE, or None to send
     no ceiling at all.
 
-    Stephen, 2026-09-25: "We're metering cloud calls, not limiting them." A
+    The owner, 2026-09-25: "We're metering cloud calls, not limiting them." A
     `max_tokens` we choose IS our cap, and one below the model's real ceiling
     truncates a long answer in a way that reads as the model giving up. So:
 
@@ -664,7 +664,7 @@ def ran_long_message(*, model: str = "", rounds: int = 0) -> str:
 # ── Bounded deliberation ────────────────────────────────────────────────────
 #
 # The budget fix gives a reasoning seat room to think AND answer. It does not
-# stop the seat from spending that room badly, and Stephen's trace showed
+# stop the seat from spending that room badly, and the owner's trace showed
 # exactly that: the plan was already sound -- Higgsfield image, save_output, an
 # HTML resume in the creations folder, a relative path, offer PDF, and a
 # correct refusal to open files without permission -- and then the model kept

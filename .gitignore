@@ -92,6 +92,10 @@ asimovs-mind/
 skills-lock.json
 /AGENT_BEST_PRACTICES.md
 /SCRUB_REPORT.md
+rsi-history.log
+friday_startup.*
+launch_now.*
+do_commit.*
 
 # ── Generated art assets (built locally, not source) ─────────────────────
 assets/palette/
@@ -161,7 +165,6 @@ secrets.toml
 *.db
 *.sqlite
 *.jsonl
-!docs/history/**/*.jsonl
 *.har
 cookies.*
 *transcript*.json

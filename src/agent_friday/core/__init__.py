@@ -2563,7 +2563,7 @@ DEFAULT_SETTINGS = {
     # key: `turn_budget` is read before anything else, so a shipped 999 would
     # have limited every turn no matter what the module defaults said.
     #
-    # Stephen, 2026-09-25: "I want no caps unless I set them myself in the cost
+    # The owner, 2026-09-25: "I want no caps unless I set them myself in the cost
     # metering UI." So these groups exist but stay empty, and a figure appears
     # only when he puts one there.
     "turn_budget": {

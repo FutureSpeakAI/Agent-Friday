@@ -1,7 +1,7 @@
 """observer_access — the scoped, durable, READ-ONLY credential for orchestrators.
 
 Design: docs/design/active/task-visibility.md §4.5 and the maintainer's
-ruling on its Q5. Fable and Astra observe running work; steer and cancel
+ruling on its Q5. Orchestrator agents observe running work; steer and cancel
 stay with the user. A credential that can read a journal and also cancel a
 task would be a different product than the one approved, so read-only is
 enforced structurally, not by convention:

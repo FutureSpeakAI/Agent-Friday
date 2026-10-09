@@ -955,8 +955,8 @@ def test_the_summary_of_old_turns_and_the_voice_distillation_never_see_a_library
     assert "Margaret" not in seen["t"] and cite.ELIDED in seen["t"]
     got = {}
     monkeypatch.setattr(voice_engine, "_spawn_task", lambda **kw: got.update(kw))
-    voice_engine._spawn_voice_distill_unchecked([("what does the lease say", answer), ("and my name", "You are Stephen.")])
-    assert "Margaret" not in got["prompt"] and cite.ELIDED in got["prompt"] and "You are Stephen." in got["prompt"]
+    voice_engine._spawn_voice_distill_unchecked([("what does the lease say", answer), ("and my name", "You are Sam.")])
+    assert "Margaret" not in got["prompt"] and cite.ELIDED in got["prompt"] and "You are Sam." in got["prompt"]
 
 
 def test_a_spoken_answer_that_read_the_library_is_saved_marked_and_indexed_as_a_stand_in(tmp_path, monkeypatch):

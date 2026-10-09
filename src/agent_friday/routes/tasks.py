@@ -504,7 +504,7 @@ def api_agent_steer():
     The message is injected as a new user turn after the current agent pass finishes.
 
     `source` names who is steering, for the record only. It is recorded as
-    `agent:<name>` when given (an orchestrator such as Fable or Astra acting
+    `agent:<name>` when given (an orchestrator agent acting
     on the user's behalf from the user's own session), otherwise `user`. It
     grants nothing: the read-only observer credential cannot reach this
     route at all (core.check_auth), so a steer always comes from the user's

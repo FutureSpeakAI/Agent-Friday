@@ -1,6 +1,6 @@
 """Nothing limits a turn except what the owner set, and a stuck model still stops.
 
-Stephen, 2026-09-25: "why 999? How about making it unlimited? I bet we get local
+The owner, 2026-09-25: "why 999? How about making it unlimited? I bet we get local
 models that can run way longer, and soon." And: "I want no caps unless I set
 them myself in the cost metering UI."
 

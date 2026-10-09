@@ -4,7 +4,7 @@ SENSITIVE SUBSYSTEM (AGENTS.md): this exercises the cloud-egress gate in
 privacy/. Read the rule in privacy/public_provenance.py before changing
 anything here.
 
-2026-09-25: Stephen asked Friday to put a weekend itinerary on his calendar. The
+2026-09-25: the owner asked Friday to put a weekend itinerary on their calendar. The
 first event was refused as ``cloud_denied_tier_TIER_2`` because the venue's
 street address -- read minutes earlier from the restaurant's own public website
 -- was tagged ``[PII:addr]``. The theatre and concert events in the same batch

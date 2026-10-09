@@ -1,7 +1,7 @@
 """
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SUPERSEDED 2026-09-25. Stephen: "why 999? How about making it unlimited?"
+# SUPERSEDED 2026-09-25. The owner: "why 999? How about making it unlimited?"
 # and "I want no caps unless I set them myself in the cost metering UI."
 #
 # The tests below asserted the CAPS this file was written to raise. Raising a

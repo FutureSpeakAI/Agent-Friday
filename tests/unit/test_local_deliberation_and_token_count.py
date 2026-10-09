@@ -1,6 +1,6 @@
 """The local seat decides and acts, and its token counter tells the truth.
 
-Two findings from the tail of Stephen's 19-minute resume turn, 2026-09-25.
+Two findings from the tail of the owner's 19-minute resume turn, 2026-09-25.
 
 THE REASONING WAS SOUND AND NEVER LANDED. The plan was right — Higgsfield image,
 `save_output`, an HTML resume in the creations folder, a relative path, offer
