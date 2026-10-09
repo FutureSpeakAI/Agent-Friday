@@ -2222,12 +2222,8 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
     # content and connectivity here would let "read this aloud" and the News
     # audio briefing send spoken text to Gemini TTS with Local-Only Mode on,
     # so model_routing.mode is consulted before any cloud call.
-    try:
-        _local_only = str(((_load_settings() or {}).get('model_routing') or {})
-                          .get('mode') or '').strip().lower() == 'local_only'
-    except Exception:
-        _local_only = False
-    if _local_only:
+    # An unreadable setting counts as local-only: the check fails closed.
+    if _voice_local_only():
         _buf = _synthesize_tts_wav_local(text)
         if _buf is not None:
             return _buf
