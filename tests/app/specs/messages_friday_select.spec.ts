@@ -123,14 +123,33 @@ test('a card that was pending before a reload still holds its rows (I9)', async 
   await expect(page.locator('.fm-row.held')).toHaveCount(1);
 });
 
+// The sweep class lasts about half a second, so a slow machine can lose it between the ack and a later read.
+// Read the animation the moment the class appears, in the page, before any round trip.
+async function watchSweep(page: Page) {
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__sweep = null;
+    const read = () => {
+      if (w.__sweep) return;
+      const rows = Array.from(document.querySelectorAll('.fm-row.sel.fr-sweep'));
+      if (!rows.length) return;
+      w.__sweep = rows.map(r => { const cs = getComputedStyle(r.querySelector('input') as Element);
+        return { name: cs.animationName, dur: cs.animationDuration, delay: cs.animationDelay }; });
+    };
+    new MutationObserver(read).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+  });
+}
+const sweepSeen = async (page: Page) => {
+  await page.waitForFunction(() => !!(window as any).__sweep);
+  return page.evaluate(() => (window as any).__sweep) as Promise<{ name: string; dur: string; delay: string }[]>;
+};
+
 test('reduced motion: no scale, a 120 ms fade', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openMessages(page);
+  await watchSweep(page);
   await select(page, NEWSLETTER_REFS);
-  const css = await page.locator('.fm-row.sel.fr-sweep input[type=checkbox]').first().evaluate(el => {
-    const cs = getComputedStyle(el);
-    return { name: cs.animationName, dur: cs.animationDuration, delay: cs.animationDelay };
-  });
+  const css = (await sweepSeen(page))[0];
   expect(css.name).toBe('fr-ground-in');
   expect(css.dur).toBe('0.12s');
   expect(css.delay).toBe('0s');
@@ -138,11 +157,9 @@ test('reduced motion: no scale, a 120 ms fade', async ({ page }) => {
 
 test('motion: staggered, opacity and scale only, ending inside 350 ms', async ({ page }) => {
   await openMessages(page);
+  await watchSweep(page);
   await select(page, NEWSLETTER_REFS);
-  const rows = await page.locator('.fm-row.sel.fr-sweep').evaluateAll(els => els.map(el => {
-    const cs = getComputedStyle(el.querySelector('input') as Element);
-    return { name: cs.animationName, end: parseFloat(cs.animationDelay) * 1000 + parseFloat(cs.animationDuration) * 1000 };
-  }));
+  const rows = (await sweepSeen(page)).map(r => ({ name: r.name, end: parseFloat(r.delay) * 1000 + parseFloat(r.dur) * 1000 }));
   expect(rows.length).toBeGreaterThan(10);
   for (const r of rows) { expect(r.name).toBe('fr-tick-in'); expect(r.end).toBeLessThanOrEqual(350.5); }
 });
