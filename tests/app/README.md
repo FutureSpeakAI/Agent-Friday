@@ -10,6 +10,7 @@ the app.
     npm run test:smoke    # ~30s — does the app work at all
     npm run test:app      # full suite, including machine-vision judging
     npm run test:vision   # just the vision tier
+    npm run test:settings # the Settings walk: every control, kept after a reload
 
 Tests never write to the owner's live Friday. By default the suite starts a
 scratch server on 127.0.0.1:3197 with a temporary `FRIDAY_HOME` (Playwright's

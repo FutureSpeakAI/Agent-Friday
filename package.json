@@ -7,7 +7,8 @@
     "test:app": "playwright test --config=playwright.app.config.ts",
     "test:smoke": "playwright test --config=playwright.app.config.ts smoke.spec.ts seams.spec.ts",
     "test:vision": "playwright test --config=playwright.app.config.ts vision.spec.ts",
-    "test": "playwright test --config=playwright.app.config.ts smoke.spec.ts seams.spec.ts"
+    "test:settings": "playwright test --config=playwright.app.config.ts settings_walk.spec.ts --workers=1",
+    "test": "playwright test --config=playwright.app.config.ts smoke.spec.ts seams.spec.ts settings_walk.spec.ts"
   },
   "keywords": [],
   "author": "FutureSpeak.AI",

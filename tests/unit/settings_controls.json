@@ -1,0 +1,4956 @@
+[
+ {
+  "section": "General",
+  "panel": "General",
+  "label": "Name",
+  "kind": "text input (saves on blur)",
+  "keys": [
+   "agent_name"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "name = (s or {}).get(\"agent_name\") or \"AGENT FRIDAY\"",
+  "status": "ok",
+  "note": "Also read client-side: index.html fridaySetName(agentSettings.agent_name) renames every UI label; server readers also in services/podcast_engine.py (host name), services/federation.py (display name), services/agent.py (browser label). PARTIAL: the chat system prompt is not given the name (services/context_injection.py _preferences_block assigns name = settings.get('agent_name') and never uses it), so 'what she calls herself in chat and voice' holds for labels, not for the model's own self-reference unless the Personality text says it."
+ },
+ {
+  "section": "General",
+  "panel": "General",
+  "label": "Personality",
+  "kind": "textarea (saves on blur)",
+  "keys": [
+   "personality"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/chat.py",
+  "reader_needle": "personality = _load_agent_personality()",
+  "status": "ok",
+  "note": "Writes SOUL.md through services/soul.py (validated, versioned); read into the chat and voice prompts via core._load_agent_personality."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Add <host> to this PC",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/local-address/hosts-entry",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "def start_hosts_job",
+  "status": "ok",
+  "note": "Windows UAC prompt runs the hosts-file edit. Windows only (button hidden elsewhere)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Remove it from this PC",
+  "kind": "link button",
+  "keys": [],
+  "route": "POST /api/local-address/hosts-entry",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "def hosts_script",
+  "status": "ok",
+  "note": "Same job, remove mode."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Turn on <Name>'s local address",
+  "kind": "button",
+  "keys": [
+   "local_address.serve"
+  ],
+  "route": "POST /api/local-address/serve",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "if _block().get(\"serve\"):",
+  "status": "ok",
+  "note": "Opens the 443/80 loopback proxy now and again at every boot (boot() reads the key)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Turn <Name>'s listener off",
+  "kind": "link button",
+  "keys": [
+   "local_address.serve"
+  ],
+  "route": "POST /api/local-address/serve",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "def stop_listeners",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Enable secure local address",
+  "kind": "button (opens consent card)",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setConsent(true)",
+  "status": "ok",
+  "note": "UI-only step: reveals the consent card; nothing is changed until 'Trust' is pressed."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Trust <Name>'s certificate",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/local-address/trust",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "def start_trust_job",
+  "status": "ok",
+  "note": "Windows shows its own Security Warning first."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Not now",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "'Not now'",
+  "status": "ok",
+  "note": "Closes the consent card (UI only)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Stop trusting <Name>'s certificate",
+  "kind": "link button",
+  "keys": [],
+  "route": "POST /api/local-address/untrust",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "def start_untrust_job",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "I added <callback> and <callback> as Authorized redirect URIs in my Google Cloud project.",
+  "kind": "checkbox (UI gate)",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setRegistered(e.target.checked)",
+  "status": "ok",
+  "note": "Local gate that enables the next button; its value is sent as confirmed:true."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Use <host> for Google sign-in",
+  "kind": "button",
+  "keys": [
+   "google_oauth.redirect_base_override"
+  ],
+  "route": "POST /api/local-address/google",
+  "reader_file": "src/agent_friday/services/calendar_engine.py",
+  "reader_needle": "override = (_load_settings().get('google_oauth') or {}).get('redirect_base_override')",
+  "status": "ok",
+  "note": "Also read by services/google_accounts.py. Shown only for Web-type Google clients."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Return Google sign-in to localhost",
+  "kind": "link button",
+  "keys": [
+   "google_oauth.redirect_base_override"
+  ],
+  "route": "POST /api/local-address/google",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "override = (_load_settings().get('google_oauth') or {}).get('redirect_base_override')",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Change the address / Use a different address",
+  "kind": "link button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setCustom(st.custom_host || '')",
+  "status": "ok",
+  "note": "UI only: reveals the address field."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Address",
+  "kind": "text input",
+  "keys": [
+   "local_address.host"
+  ],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "'aria-label': 'Address'",
+  "status": "ok",
+  "note": "Draft text; written by Save below."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Save",
+  "kind": "button",
+  "keys": [
+   "local_address.host"
+  ],
+  "route": "POST /api/local-address/host",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "custom = str(block.get(\"host\") or \"\").strip().lower()",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Back to the name",
+  "kind": "button",
+  "keys": [
+   "local_address.host"
+  ],
+  "route": "POST /api/local-address/host",
+  "reader_file": "src/agent_friday/services/local_address.py",
+  "reader_needle": "custom = str(block.get(\"host\") or \"\").strip().lower()",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Cancel",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setCustom(null)",
+  "status": "ok",
+  "note": "Closes the address field (UI only)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Local address",
+  "label": "Check again",
+  "kind": "link button",
+  "keys": [],
+  "route": "GET /api/local-address?refresh=1",
+  "reader_file": "src/agent_friday/routes/local_address.py",
+  "reader_needle": "la.status(refresh=fresh)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Workspaces",
+  "label": "Show all workspaces",
+  "kind": "toggle",
+  "keys": [
+   "show_all_workspaces"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "const showAllWorkspaces = agentSettings.show_all_workspaces !== false;",
+  "status": "duplicate-accepted",
+  "note": "Same key is also written by the 'Show all workspaces' quick toggle in the gear dropdown (index.html App: saveAgentSettings({show_all_workspaces: !showAllWorkspaces})); that row greys out and points to Settings once the dock is arranged by hand. Reader is client-only (dockArrangement(): ignored once dock_custom is non-empty). The two writers are a deliberate shortcut pair, not a conflict."
+ },
+ {
+  "section": "General",
+  "panel": "General · Muted notifications",
+  "label": "Unmute",
+  "kind": "button (per muted kind)",
+  "keys": [
+   "notification_mutes"
+  ],
+  "route": "POST /api/notifications/mute",
+  "reader_file": "src/agent_friday/services/notification_policy.py",
+  "reader_needle": "return set((_load_settings() or {}).get(\"notification_mutes\") or [])",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Setup-question answer fields (one per question)",
+  "kind": "text inputs",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "edits[q.id] !== undefined ? edits[q.id] : q.answer",
+  "status": "ok",
+  "note": "Drafts only; saved by the two buttons below. Secret-shaped text is refused client-side and server-side (_guard_text)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Save answers",
+  "kind": "button",
+  "keys": [],
+  "route": "PUT /api/setup-chat/profile/answers",
+  "reader_file": "src/agent_friday/services/setup_profile.py",
+  "reader_needle": "def synthesize",
+  "status": "ok",
+  "note": "Answers are stored encrypted (setup_profile.record_answer) and only feed the style synthesis; they never enter the prompt, as the section text says."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Save and rebuild my style",
+  "kind": "button",
+  "keys": [
+   "communication_style",
+   "response_length"
+  ],
+  "route": "PUT /api/setup-chat/profile/answers",
+  "reader_file": "src/agent_friday/services/context_injection.py",
+  "reader_needle": "style = settings.get(\"communication_style\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Style sliders (one per style axis, with the Pushback floor)",
+  "kind": "range inputs",
+  "keys": [],
+  "route": "POST /api/setup-chat/style/preview",
+  "reader_file": "src/agent_friday/services/setup_chat.py",
+  "reader_needle": "def style_preview",
+  "status": "ok",
+  "note": "Live preview only; persisted by 'Save style'."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Save style",
+  "kind": "button",
+  "keys": [
+   "communication_style",
+   "response_length"
+  ],
+  "route": "POST /api/setup-chat/profile/style",
+  "reader_file": "src/agent_friday/services/context_injection.py",
+  "reader_needle": "length = settings.get(\"response_length\")",
+  "status": "ok",
+  "note": "apply_style rewrites the SOUL.md block and sets the two response settings; both are read into every prompt."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Run the setup chat again",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/setup-chat/rerun",
+  "reader_file": "src/agent_friday/services/setup_chat.py",
+  "reader_needle": "def rerun",
+  "status": "ok",
+  "note": "Listener in App (index.html: window.addEventListener('friday:setup-chat-rerun', h)) POSTs the route and opens the chat."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Delete my profile / Confirm: delete my answers and style",
+  "kind": "two-step danger button",
+  "keys": [],
+  "route": "DELETE /api/setup-chat/profile",
+  "reader_file": "src/agent_friday/services/setup_profile.py",
+  "reader_needle": "def delete_profile",
+  "status": "ok",
+  "note": "Second click confirms; state is local (confirmDel)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Research me on the public web / Search again",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setSeeding(true)",
+  "status": "ok",
+  "note": "Opens the seeds card (UI only)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Seed fields: Your name as it appears in public / Handles / Your own websites / Employer",
+  "kind": "text inputs",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "field('employer', 'Employer (optional)'",
+  "status": "ok",
+  "note": "Drafts; sent by Start the search."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Start the search",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/setup-chat/research/start",
+  "reader_file": "src/agent_friday/services/setup_research.py",
+  "reader_needle": "def start(",
+  "status": "ok",
+  "note": "Disabled until a name or handle is typed. Uses a local or confirmed-cloud reader (setup_reader.choose)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Skip (research seeds)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "onClick: onSkip",
+  "status": "ok",
+  "note": "Closes the seeds card (UI only)."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Accept all / Reject all",
+  "kind": "buttons",
+  "keys": [],
+  "route": "POST /api/setup-chat/research/review",
+  "reader_file": "src/agent_friday/services/setup_research.py",
+  "reader_needle": "def review(",
+  "status": "ok",
+  "note": "Accepted claims are ingested into the knowledge graph with provenance."
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Accept / Reject (per finding)",
+  "kind": "buttons",
+  "keys": [],
+  "route": "POST /api/setup-chat/research/review",
+  "reader_file": "src/agent_friday/services/setup_research.py",
+  "reader_needle": "def review(",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Your profile",
+  "label": "Edit / Save and accept / Cancel (per finding)",
+  "kind": "buttons + text input",
+  "keys": [],
+  "route": "POST /api/setup-chat/research/review",
+  "reader_file": "src/agent_friday/services/setup_research.py",
+  "reader_needle": "def review(",
+  "status": "ok",
+  "note": "Edit and Cancel are local; Save and accept posts the edited wording."
+ },
+ {
+  "section": "General",
+  "panel": "General · Setup checklist",
+  "label": "Expand/collapse chevron (per item)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "\"aria-expanded\": open",
+  "status": "ok",
+  "note": "UI only."
+ },
+ {
+  "section": "General",
+  "panel": "General · Setup checklist",
+  "label": "API key / credential fields (per item)",
+  "kind": "password+text inputs",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "autoComplete: f.secret ? 'new-password' : 'off'",
+  "status": "ok",
+  "note": "Cleared after every request (setVals({}))."
+ },
+ {
+  "section": "General",
+  "panel": "General · Setup checklist",
+  "label": "A label for this account (optional)",
+  "kind": "text input",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "Work, Personal",
+  "status": "ok",
+  "note": "Sent with the Google connect call as label."
+ },
+ {
+  "section": "General",
+  "panel": "General · Setup checklist",
+  "label": "Also: <optional permission> (optional, off unless you tick it)",
+  "kind": "checkbox (Gmail send / modify scopes)",
+  "keys": [],
+  "route": "",
+  "reader_file": "src/agent_friday/routes/google_accounts.py",
+  "reader_needle": "include_send",
+  "status": "ok",
+  "note": "include_send/include_modify go in the /api/google/accounts/connect body."
+ },
+ {
+  "section": "General",
+  "panel": "General · Setup checklist",
+  "label": "Connect / Save securely / Add another account",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/providers/<name>/key",
+  "reader_file": "src/agent_friday/services/credential_store.py",
+  "reader_needle": "def get_provider_key",
+  "status": "ok",
+  "note": "Endpoints are generated server-side in services/setup_connections.py; all of them exist (checked). Same writers as the Connections tab."
+ },
+ {
+  "section": "General",
+  "panel": "General · Setup checklist",
+  "label": "Skip / Undo skip",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/setup/connections/<id>/skip",
+  "reader_file": "src/agent_friday/routes/setup_chat.py",
+  "reader_needle": "scx.checklist(st.get(\"skipped_connections\") or [])",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "General · Setup checklist",
+  "label": "Get a key / Docs / provider links",
+  "kind": "links",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "scSafeUrl(c.signup_url)",
+  "status": "ok",
+  "note": "Open external pages in a new tab; scSafeUrl allow-lists http(s)."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · What answers you",
+  "label": "Local only | Local preferred | Cloud only (routing mode)",
+  "kind": "three-button choice group",
+  "keys": [
+   "model_routing.mode"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routing/model_router.py",
+  "reader_needle": "return self.config.get(\"mode\", \"cloud_only\")",
+  "status": "ok",
+  "note": "core._save_settings drops any mode change that does not carry owner_routing_change, and this is the only caller that sets it. Also written by setup chat/wizard (not Settings). Read on every turn by routing/model_router.ModelRouter.mode."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · What answers you",
+  "label": "Re-answer",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/privacy/cloud-consent?assess=1",
+  "reader_file": "src/agent_friday/routes/privacy_consent.py",
+  "reader_needle": "payload[\"capability\"] = cloud_consent.assess_local_capability()",
+  "status": "ok",
+  "note": "Read-only capability assessment; opens the choice card. Same component is mounted a second time in the Privacy tab as PrivacyCloudConsent (index.html), so the record can be re-answered from two tabs."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · What answers you",
+  "label": "Keep it local and private | Cloud with safeguards on | Allow unrestricted cloud",
+  "kind": "choice buttons",
+  "keys": [
+   "model_routing.cloud_consent"
+  ],
+  "route": "POST /api/privacy/cloud-consent",
+  "reader_file": "src/agent_friday/services/egress_gate.py",
+  "reader_needle": "return cloud_consent.is_unrestricted_cloud()",
+  "status": "removed",
+  "note": "Second copy of the cloud-consent choice removed from Models; it links to Privacy & Data."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · What answers you",
+  "label": "Cancel (consent card)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "onClick: () => setAssess(null)",
+  "status": "ok",
+  "note": "UI only."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Everyday conversation",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.reasoning.model",
+   "capability_routing.reasoning.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/chat.py",
+  "reader_needle": "model=settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,",
+  "status": "duplicate-accepted",
+  "note": "core._sync_capability_routing mirrors reasoning <-> orchestrator_model, so three controls write one seat: this row, Model browser 'Use for chat' (writes orchestrator_model) and the top-bar QuickSwitch. Local seats additionally read the key in services/local_seats._configured. Gated by _check_local_model_seat_gate / _check_local_only_seats / _check_seat_installed (a refusal shows in the red line under the heading)."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Deep thinking (on demand)",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.heavy_hitter.model",
+   "capability_routing.heavy_hitter.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_seats.py",
+  "reader_needle": "configured = ((cr.get(key) or {}).get(\"model\")) or None",
+  "status": "ok",
+  "note": "_ROLE_TO_CAPABILITY maps the 'heavy' local role to heavy_hitter; also feeds the residency plan through seat_binding.overrides_from_settings."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Quick reflexes",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.local.model",
+   "capability_routing.local.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/work_plan.py",
+  "reader_needle": "key = {\"heavy\": \"heavy_hitter\", \"reflex\": \"local\",",
+  "status": "ok",
+  "note": "Also read by services/local_seats._configured_local_model. Consumed as a work-plan class model and a residency seat."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Background & research",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.subagent.model",
+   "capability_routing.subagent.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/chat.py",
+  "reader_needle": "model=_load_settings().get('subagent_model') or 'claude-sonnet-5',",
+  "status": "duplicate-accepted",
+  "note": "Mirrors subagent_model; Model browser 'Use for sub-tasks' writes the flat key. Same duplicate pair as Everyday conversation."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Memory keeper",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.memory_manager.model",
+   "capability_routing.memory_manager.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/memory_proposals.py",
+  "reader_needle": "entry = cr.get(\"memory_manager\") or {}",
+  "status": "fixed",
+  "note": "Help text now says it runs when asked, not on its own; the seat and its manual route stay."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Images",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.creative_image.model",
+   "capability_routing.creative_image.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/creative_engine.py",
+  "reader_needle": "cr = (s.get(\"capability_routing\") or {}).get(\"creative_image\") or {}",
+  "status": "duplicate-accepted",
+  "note": "Mirrors creative_model; Model browser 'Image' writes the flat key. Same pair as above."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Video",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.creative_video.model",
+   "capability_routing.creative_video.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/creative_engine.py",
+  "reader_needle": "cr = (s.get(\"capability_routing\") or {}).get(\"creative_video\") or {}",
+  "status": "duplicate-accepted",
+  "note": "Model browser 'Video' (useAsVideo) writes exactly the same key through save()."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Music",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.creative_music.model",
+   "capability_routing.creative_music.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/music_engine.py",
+  "reader_needle": "return ((cr.get(\"creative_music\") or {}).get(\"model\") or \"\").strip()",
+  "status": "ok",
+  "note": "Only used when a caller does not pass model= explicitly (resolve_music_model); the daily-creation path still passes its own model, so the seat governs only the default path."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Live voice",
+  "kind": "seat picker button",
+  "keys": [
+   "capability_routing.voice.model",
+   "capability_routing.voice.provider"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/voice_engine.py",
+  "reader_needle": "return _load_settings().get(\"voice_model\") or LIVE_MODEL",
+  "status": "duplicate-resolved",
+  "note": "Models row is now a link to Voice (the one home)"
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Seat picker: Search all N models... box",
+  "kind": "text input (filter)",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "placeholder: 'Search all ' + all.length + ' models…'",
+  "status": "ok",
+  "note": "UI filter."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Seat picker: Show/Hide N that cannot do this job",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setShowUnfit(v => !v)",
+  "status": "ok",
+  "note": "UI filter."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model for each job",
+  "label": "Seat picker: model row (click to choose)",
+  "kind": "list item buttons",
+  "keys": [
+   "capability_routing.<role>"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_seats.py",
+  "reader_needle": "configured = ((cr.get(key) or {}).get(\"model\")) or None",
+  "status": "ok",
+  "note": "Writes through the role row's pick(); status follows the role."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Let <Name> decide (OpenRouter auto router)",
+  "label": "Cost priority: Low | Medium | High | Very high | Max",
+  "kind": "five-button choice group",
+  "keys": [
+   "model_routing.auto_router_cost_tier"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/model_router.py",
+  "reader_needle": "tier = str(routing.get(\"auto_router_cost_tier\") or \"\").strip().lower()",
+  "status": "ok",
+  "note": "Rendered only when some job is bound to openrouter/auto (SettingsTabIntelligence condition). model_routing is deep-merged server-side, so a one-key patch is safe. The 'Needs an OpenRouter key' text says 'Settings -> Connections', which is now the right tab name."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Your stack",
+  "label": "x (remove from preview, per pick)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "onClick: () => onRemovePick(p)",
+  "status": "ok",
+  "note": "UI only: removes a hypothetical pick from the stack preview."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Show me the numbers / Hide the numbers",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setNumbers(!numbers)",
+  "status": "ok",
+  "note": "UI only."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Pretend I have: GB of graphics memory | GB of RAM",
+  "kind": "two number-ish text inputs",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "placeholder: 'GB of graphics memory'",
+  "status": "ok",
+  "note": "Drafts for Recalculate."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Recalculate",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/models/whatif",
+  "reader_file": "src/agent_friday/services/model_fit.py",
+  "reader_needle": "def what_if",
+  "status": "ok",
+  "note": "Local arithmetic on a pretend card; labelled SIMULATED. Also drives the Your stack preview via onPretend."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Back to this computer",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/models/catalog?beside=1",
+  "reader_file": "src/agent_friday/services/model_catalog_rows.py",
+  "reader_needle": "def catalog_payload",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Search by name or publisher",
+  "kind": "text input (filter)",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "'aria-label': 'Search models'",
+  "status": "ok",
+  "note": "Client-side filter of the loaded catalogue."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Fit: any | runs well | tight | partly on CPU",
+  "kind": "chip buttons",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "chip(fitFilter, setFitFilter, 'runs_well', 'runs well')",
+  "status": "ok",
+  "note": "Client-side filter."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Licence: any | permissive | restricted",
+  "kind": "chip buttons",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "chip(licFilter, setLicFilter, 'permissive', 'permissive')",
+  "status": "ok",
+  "note": "Client-side filter."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Why? / Hide why (per file)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setWhy(why === key ? null : key)",
+  "status": "ok",
+  "note": "UI only."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Get (per file)",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/models/fetch/preflight?model=<id>",
+  "reader_file": "src/agent_friday/services/model_download.py",
+  "reader_needle": "def start_model",
+  "status": "ok",
+  "note": "Opens the pre-fetch card at the bottom of 'Local models' (not next to the catalogue row); 'Fetch' there starts the download."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Add to stack (per file)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/models/stack/preview",
+  "reader_file": "src/agent_friday/services/model_stack.py",
+  "reader_needle": "def preview",
+  "status": "ok",
+  "note": "Preview only; nothing is downloaded or loaded."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Measure / Measure again (installed model)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/models/<id>/bench",
+  "reader_file": "src/agent_friday/services/model_bench.py",
+  "reader_needle": "def bench(",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Go back to the previous version",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/models/<id>/rollback",
+  "reader_file": "src/agent_friday/services/model_remove.py",
+  "reader_needle": "def rollback",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Remove / remove anyway",
+  "kind": "danger button (two-step when it holds a job)",
+  "keys": [],
+  "route": "DELETE /api/models/<id>[?force=1]",
+  "reader_file": "src/agent_friday/services/model_remove.py",
+  "reader_needle": "def remove(",
+  "status": "ok",
+  "note": "Refuses (needs_replacement) while the model holds a seat unless forced; message tells the user to pick a replacement first."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Any model: paste a Hugging Face id (publisher/model)",
+  "kind": "text input (Enter submits)",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "'aria-label': 'Any model'",
+  "status": "ok",
+  "note": "Draft for Check it."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Find a model",
+  "label": "Check it",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/models/check",
+  "reader_file": "src/agent_friday/services/model_catalog_rows.py",
+  "reader_needle": "def check_hf_repo",
+  "status": "ok",
+  "note": "One anonymous Hugging Face metadata read; result rows join the list and can be fetched."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Local models",
+  "label": "Get / Fetch (per local model row)",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/models/fetch/preflight?model=<id>",
+  "reader_file": "src/agent_friday/services/model_download.py",
+  "reader_needle": "def start_model",
+  "status": "ok",
+  "note": "Opens the pre-fetch card."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Local models",
+  "label": "Fetch (pre-fetch card)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/models/download",
+  "reader_file": "src/agent_friday/services/model_download.py",
+  "reader_needle": "def start_model",
+  "status": "ok",
+  "note": "Non-text rows with no automated fetch just print a message (image/voice/embed weights are installed manually). Refused (409) while the system drive is below its disk floor."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Local models",
+  "label": "Cancel / Close (pre-fetch card)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "onClick: onClose,",
+  "status": "ok",
+  "note": "UI only."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "Search all providers - llama, deepseek, sonnet...",
+  "kind": "text input (Enter submits)",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "if (e.key === 'Enter') runSearch();",
+  "status": "ok",
+  "note": "Query box for Search."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "Search",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/models/search",
+  "reader_file": "src/agent_friday/routes/platform.py",
+  "reader_needle": "want_provider = (request.args.get(\"provider\") or \"\").strip()",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "All providers (provider filter)",
+  "kind": "select",
+  "keys": [],
+  "route": "GET /api/models/search?provider=",
+  "reader_file": "src/agent_friday/routes/platform.py",
+  "reader_needle": "want_provider = (request.args.get(\"provider\") or \"\").strip()",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "All capabilities (capability filter)",
+  "kind": "select",
+  "keys": [],
+  "route": "GET /api/models/search?tools|free|local|modality=",
+  "reader_file": "src/agent_friday/routes/platform.py",
+  "reader_needle": "want_local = (request.args.get(\"local\") or \"\") in (\"1\", \"true\", \"yes\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "Available first (sort)",
+  "kind": "select",
+  "keys": [],
+  "route": "GET /api/models/search?sort=",
+  "reader_file": "src/agent_friday/routes/platform.py",
+  "reader_needle": "sort = (request.args.get(\"sort\") or \"\").strip().lower()",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "Use for chat",
+  "kind": "button (per model)",
+  "keys": [
+   "orchestrator_model"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/chat.py",
+  "reader_needle": "model=settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,",
+  "status": "duplicate-accepted",
+  "note": "Duplicate of Model for each job > Everyday conversation (capability_routing.reasoning) and the top-bar QuickSwitch; _sync_capability_routing keeps them equal. Unlike the row picker it shows no seat-confirmation line, only the generic 'Error' in the heading when the server refuses."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "Use for sub-tasks",
+  "kind": "button (per model)",
+  "keys": [
+   "subagent_model"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/chat.py",
+  "reader_needle": "model=_load_settings().get('subagent_model') or 'claude-sonnet-5',",
+  "status": "duplicate-accepted",
+  "note": "Duplicate of Model for each job > Background & research (capability_routing.subagent)."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "Image",
+  "kind": "button (per image model)",
+  "keys": [
+   "creative_model"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/creative_engine.py",
+  "reader_needle": "return cr.get(\"model\") or s.get(\"creative_model\")",
+  "status": "duplicate-accepted",
+  "note": "Duplicate of Model for each job > Images (capability_routing.creative_image)."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · Model browser",
+  "label": "Video",
+  "kind": "button (per video model)",
+  "keys": [
+   "capability_routing.creative_video"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/creative_engine.py",
+  "reader_needle": "cr = (s.get(\"capability_routing\") or {}).get(\"creative_video\") or {}",
+  "status": "duplicate-accepted",
+  "note": "Writes the very same key as Model for each job > Video."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Models · Turn limits (mounted in Advanced via IntelligenceDiagnostics)",
+  "label": "Advanced (disclosure)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "onClick: () => setOpen(o => !o)",
+  "status": "ok",
+  "note": "UI only."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Models · Turn limits (mounted in Advanced via IntelligenceDiagnostics)",
+  "label": "Rounds per turn",
+  "kind": "number input (saves on blur)",
+  "keys": [
+   "turn_budget.rounds.default"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "_round_cap = max_iters if max_iters else _tb.rounds_for(str(model or \"\"))",
+  "status": "ok",
+  "note": "Read by rounds_for() on both the cloud loop (_call_claude_agent_run) and the OpenAI-compatible loop. The whole group is posted each time, which is correct because the server only deep-merges one level."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Models · Turn limits (mounted in Advanced via IntelligenceDiagnostics)",
+  "label": "Rounds - local seat only",
+  "kind": "number input",
+  "keys": [
+   "turn_budget.rounds.local"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "max_iters = _tb.rounds_for(\"local\")",
+  "status": "ok",
+  "note": "Only the OpenAI-compatible loop (_oai_agentic_loop_run) asks for the 'local' figure."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Models · Turn limits (mounted in Advanced via IntelligenceDiagnostics)",
+  "label": "Rounds - unattended work",
+  "kind": "number input",
+  "keys": [
+   "turn_budget.rounds.scheduled"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/turn_budget.py",
+  "reader_needle": "ceiling = _positive(blk, \"scheduled\")",
+  "status": "ok",
+  "note": "Applies where turn_budget.unattended() is entered (scheduled jobs); min() with the seat figure."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Models · Turn limits (mounted in Advanced via IntelligenceDiagnostics)",
+  "label": "Time limit per turn",
+  "kind": "number input",
+  "keys": [
+   "turn_budget.wall_clock_s.default"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "_wall_s = _tb.wall_clock_for(\"local\")",
+  "status": "ok",
+  "note": "PARTIAL: wall_clock_for() is called only in the OpenAI-compatible loop (_oai_agentic_loop_run) and with the literal seat 'local'; the Anthropic cloud loop _call_claude_agent_run never builds a WallClock, and a figure under another seat name is not read. The label says 'A turn cannot run past this' without that scope."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Models · Turn limits (mounted in Advanced via IntelligenceDiagnostics)",
+  "label": "Token ceiling per turn",
+  "kind": "number input",
+  "keys": [
+   "turn_budget.tokens.default"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "_tok_cap = _tb.token_budget_for(\"local\")",
+  "status": "ok",
+  "note": "PARTIAL: same scope as the time limit; only _oai_agentic_loop_run builds a TokenBudget; the Anthropic cloud loop has none."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Models · This machine (IntelligenceDiagnostics, mounted in Advanced)",
+  "label": "I need my machine",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/machine/level",
+  "reader_file": "src/agent_friday/services/stand_down.py",
+  "reader_needle": "def resume",
+  "status": "ok",
+  "note": "Stands Friday down (unloads local models, pauses jobs). The Resume side is the banner, not this tab."
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Today | Last 7 days | This month (range)",
+  "kind": "three-button choice group",
+  "keys": [],
+  "route": "GET /api/costs/summary?range=",
+  "reader_file": "src/agent_friday/routes/costs.py",
+  "reader_needle": "rng = request.args.get('range', 'today')",
+  "status": "ok",
+  "note": "View filter only; nothing persisted. Panel re-polls every 8 s."
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Daily (budget alert toggle)",
+  "kind": "toggle pill",
+  "keys": [
+   "cost_budget.daily_enabled"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/cost_meter.py",
+  "reader_needle": "if b[\"daily_enabled\"] and b[\"daily\"] > 0:",
+  "status": "ok",
+  "note": "Alert-only (80% warns, 100% alerts, never blocks). Checked after every metered call (cost_meter record path -> _check_budget_alerts). set_budget accepts the key via BUDGET_KEYS."
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Daily alert amount ($)",
+  "kind": "number input (saves on blur)",
+  "keys": [
+   "cost_budget.daily"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/cost_meter.py",
+  "reader_needle": "pct = today / b[\"daily\"] * 100",
+  "status": "ok",
+  "note": "Local edits are overwritten by the 8-second refresh (refreshCosts -> setCostBudget(d.budget)) if the field is still focused when it ticks; blur saves the value."
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Monthly (budget alert toggle)",
+  "kind": "toggle pill",
+  "keys": [
+   "cost_budget.monthly_enabled"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/cost_meter.py",
+  "reader_needle": "if b[\"monthly_enabled\"] and b[\"monthly\"] > 0:",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Monthly alert amount ($)",
+  "kind": "number input (saves on blur)",
+  "keys": [
+   "cost_budget.monthly"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/cost_meter.py",
+  "reader_needle": "pct = month / b[\"monthly\"] * 100",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Daily stop (hard stop toggle)",
+  "kind": "toggle pill",
+  "keys": [
+   "cost_budget.hard_stop_daily_enabled"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/spend_guard.py",
+  "reader_needle": "if hs[f\"{p}_enabled\"] and hs[p] > 0 and spend[p] >= hs[p]:",
+  "status": "ok",
+  "note": "spend_guard.check() is called at the cloud choke points (services/model_router.py, voice live-session start, tasks in services/agent.py, cloud_spill, creative_engine, firecrawl, phone/service.py) and raises SpendCapReached."
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Daily stop amount ($)",
+  "kind": "number input (saves on blur)",
+  "keys": [
+   "cost_budget.hard_stop_daily"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/spend_guard.py",
+  "reader_needle": "return {p: float(b.get(f\"hard_stop_{p}\") or 0) for p in PERIODS} | {",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Monthly stop (hard stop toggle)",
+  "kind": "toggle pill",
+  "keys": [
+   "cost_budget.hard_stop_monthly_enabled"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/spend_guard.py",
+  "reader_needle": "f\"{p}_enabled\": bool(b.get(f\"hard_stop_{p}_enabled\")) for p in PERIODS}",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Monthly stop amount ($)",
+  "kind": "number input (saves on blur)",
+  "keys": [
+   "cost_budget.hard_stop_monthly"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/spend_guard.py",
+  "reader_needle": "return {p: float(b.get(f\"hard_stop_{p}\") or 0) for p in PERIODS} | {",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Allow a cloud model (scheduled jobs without a local model)",
+  "kind": "toggle pill",
+  "keys": [
+   "scheduled_cloud.allow",
+   "scheduled_cloud.answered",
+   "scheduled_cloud.at"
+  ],
+  "route": "POST /api/costs/scheduled-cloud",
+  "reader_file": "src/agent_friday/services/scheduler.py",
+  "reader_needle": "if not cfg.get(\"allow\"):",
+  "status": "ok",
+  "note": "scheduled_cloud is deep-merged by _save_settings; scheduler._cloud_model_for runs the built-in jobs on the chosen cloud model only when this is true and no local seat serves."
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Cloud heartbeat every: 1h | 2h | 4h | 6h | 8h | 12h | 24h",
+  "kind": "seven-button choice group",
+  "keys": [
+   "scheduled_cloud.heartbeat_every_minutes"
+  ],
+  "route": "POST /api/costs/scheduled-cloud",
+  "reader_file": "src/agent_friday/services/scheduler.py",
+  "reader_needle": "return not _sc.heartbeat_slot_open(rec, now)",
+  "status": "ok",
+  "note": "Cadences come from scheduled_cloud.HEARTBEAT_CADENCES (60..1440). Not shown when the section is hidden (needs d.settings and d.estimate)."
+ },
+ {
+  "section": "Spending",
+  "panel": "Spending",
+  "label": "Stop a turn that is going in circles (STUCK-MODEL GUARD)",
+  "kind": "toggle pill (On/Off)",
+  "keys": [
+   "cost_budget.loop_guard_enabled"
+  ],
+  "route": "POST /api/costs/budget",
+  "reader_file": "src/agent_friday/services/turn_budget.py",
+  "reader_needle": "if \"loop_guard_enabled\" in blk:",
+  "status": "ok",
+  "note": "Listed in cost_meter.BUDGET_KEYS (without it the POST would be dropped). Read by both agent loops (_tb.loop_guard_enabled()). The text above this switch says 'only the limits you set above' but the Models tab's Turn limits (Advanced) are where the other limits live."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab)",
+  "label": "Copy Peer Card",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "navigator.clipboard.writeText(JSON.stringify(identity, null, 2))",
+  "status": "ok",
+  "note": "Clipboard only; the card comes from GET /api/federation/identity."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab)",
+  "label": "https://agent.example.com/api/federation/identity (peer URL)",
+  "kind": "text input",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setDiscoverUrl(e.target.value)",
+  "status": "ok",
+  "note": "Draft for Discover Agent."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab)",
+  "label": "Discover Agent",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/federation/discover",
+  "reader_file": "src/agent_friday/services/federation.py",
+  "reader_needle": "def discover_peer(url: str, timeout: int = 10)",
+  "status": "ok",
+  "note": "Route is behind held_features.federation_route_gate."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab)",
+  "label": "ask | allow | block (per peer)",
+  "kind": "select",
+  "keys": [],
+  "route": "POST /api/federation/peers/<id>/pref",
+  "reader_file": "src/agent_friday/routes/federation.py",
+  "reader_needle": "if peer and peer.get(\"fed_pref\") == \"block\":",
+  "status": "ok",
+  "note": "PARTIAL: only 'block' is consumed (_handle_federation_message and settings sync skip blocked peers). Nothing distinguishes 'ask' from 'allow', so two of the three options are the same behaviour; the setPref catch swallows errors silently."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab) · Blocking instances",
+  "label": "Agent pubkey (Ed25519 hex)",
+  "kind": "text input",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "placeholder: \"Agent pubkey (Ed25519 hex) *\"",
+  "status": "ok",
+  "note": "Draft for Submit Assessment."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab) · Blocking instances",
+  "label": "Harm category",
+  "kind": "select",
+  "keys": [],
+  "route": "",
+  "reader_file": "src/agent_friday/services/defederation.py",
+  "reader_needle": "VALID_HARM_CATEGORIES = frozenset({",
+  "status": "ok",
+  "note": "UI list equals the server's VALID_HARM_CATEGORIES (checked)."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab) · Blocking instances",
+  "label": "Recommendation (MONITOR | RESTRICT | DEFEDERATE)",
+  "kind": "select",
+  "keys": [],
+  "route": "",
+  "reader_file": "src/agent_friday/services/defederation.py",
+  "reader_needle": "VALID_RECOMMENDATIONS = frozenset({\"MONITOR\", \"RESTRICT\", \"DEFEDERATE\"})",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab) · Blocking instances",
+  "label": "Severity 0-1",
+  "kind": "number input",
+  "keys": [],
+  "route": "",
+  "reader_file": "src/agent_friday/services/defederation.py",
+  "reader_needle": "DEFEDERATE_THRESHOLD      = 0.66",
+  "status": "ok",
+  "note": "Feeds the consensus score."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab) · Blocking instances",
+  "label": "Evidence content hash (SHA-256) | Evidence timestamp (ISO-8601) | Reasoning",
+  "kind": "inputs + textarea",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "placeholder: \"Evidence timestamp (ISO-8601)\"",
+  "status": "ok",
+  "note": "Drafts; Submit sends them as one evidence item."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab) · Blocking instances",
+  "label": "Submit Assessment",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/defederation/assess",
+  "reader_file": "src/agent_friday/services/federation_transport.py",
+  "reader_needle": "if is_defederated(sender_pub):",
+  "status": "ok",
+  "note": "Consensus is consumed at the transport layer: messages from a defederated sender are rejected (federation_transport.py)."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Federation (held tab) · Blocking instances",
+  "label": "Withdraw (per assessment)",
+  "kind": "button (confirm dialog)",
+  "keys": [],
+  "route": "POST /api/defederation/withdraw/<id>",
+  "reader_file": "src/agent_friday/services/defederation.py",
+  "reader_needle": "def withdraw_assessment",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Wallet",
+  "label": "Claim Genesis Grant",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/economy/wallet/genesis",
+  "reader_file": "src/agent_friday/services/economy.py",
+  "reader_needle": "def apply_genesis_bonus",
+  "status": "ok",
+  "note": "Failure toast reads d.error only, but the server's 'already claimed' answer is {ok:false, message}, so the toast ends 'Claim failed: ' with no reason."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Wallet",
+  "label": "Leaderboard / Hide Leaderboard",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/economy/leaderboard",
+  "reader_file": "src/agent_friday/routes/federation.py",
+  "reader_needle": "def get_leaderboard",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Wallet",
+  "label": "Recipient agent ID | Amount in psi | Reason (optional)",
+  "kind": "inputs",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "placeholder: \"Reason (optional)\"",
+  "status": "ok",
+  "note": "Drafts for Send."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Wallet",
+  "label": "Send psi",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/economy/transfer",
+  "reader_file": "src/agent_friday/services/economy.py",
+  "reader_needle": "def transfer(",
+  "status": "ok",
+  "note": "Moves compute credits between agent wallets. Not exercised in this audit."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Workspace budgets",
+  "label": "Edit (per workspace)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setEditing(b.workspace);",
+  "status": "ok",
+  "note": "Opens the policy editor (UI only)."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Workspace budgets",
+  "label": "Monthly cap (m-psi)",
+  "kind": "number input",
+  "keys": [],
+  "route": "POST /api/budget/policy",
+  "reader_file": "src/agent_friday/services/budget_enforcer.py",
+  "reader_needle": "if current_spend + amount_mψ > policy[\"monthly_cap_mψ\"]:",
+  "status": "ok",
+  "note": "Enforced by budget_enforcer.reserve_budget, called from services/orchestrator.py before each worker starts. Cap applies to orchestrator workers only, not to chat or the dollar budgets in Spending."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Workspace budgets",
+  "label": "Per-task cap (m-psi)",
+  "kind": "number input",
+  "keys": [],
+  "route": "POST /api/budget/policy",
+  "reader_file": "src/agent_friday/services/budget_enforcer.py",
+  "reader_needle": "\"per_task_cap_mψ\": policy[\"per_task_cap_mψ\"],",
+  "status": "fixed",
+  "note": "reserve_budget now refuses a reservation above the per-task cap."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Workspace budgets",
+  "label": "Warn %",
+  "kind": "number input",
+  "keys": [],
+  "route": "POST /api/budget/policy",
+  "reader_file": "src/agent_friday/services/budget_enforcer.py",
+  "reader_needle": "warn_pct = policy.get(\"warn_pct\", 80)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Workspace budgets",
+  "label": "Save",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/budget/policy",
+  "reader_file": "src/agent_friday/services/budget_enforcer.py",
+  "reader_needle": "def reserve_budget",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Workspace budgets",
+  "label": "Cancel",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "onClick: () => setEditing(null)",
+  "status": "ok",
+  "note": "UI only."
+ },
+ {
+  "section": "Held (hidden unless held_features.federation)",
+  "panel": "Economy (held tab) · Workspace budgets",
+  "label": "+ Add Policy",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setEditing('default');",
+  "status": "ok",
+  "note": "Always opens the editor on workspace 'default' (there is no workspace-name field), so it can only edit 'default'; a policy for any other workspace cannot be created from this panel."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Voice setup / Hide voice setup",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setShowWizard(w => !w)",
+  "status": "ok",
+  "note": "Toggle for the wizard below; no setting written."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Voice setup wizard: Install / Download / Install GPU tier (~6 GB)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/voice/setup/install",
+  "reader_file": "src/agent_friday/services/voice_installer.py",
+  "reader_needle": "def start(target",
+  "status": "ok",
+  "note": "Targets voice-local-lite, tier1-models, voice-local-gpu carry no \"artifact\" flag so no consent body is required; the wizard offers them straight from a step row. Label says ~6 GB, TARGETS says disk_gb 12.0 for voice-local-gpu (copy mismatch)."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Voice setup wizard: Cancel",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/voice/setup/install/cancel",
+  "reader_file": "src/agent_friday/services/voice_installer.py",
+  "reader_needle": "def cancel(",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Voice setup wizard: Refresh",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/voice/setup/status",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "def voice_setup_status",
+  "status": "ok",
+  "note": "Read-only action."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Voice setup wizard: Test TTS",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/voice/setup/test",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "_synthesize_tts_wav(text, allow_local=True)",
+  "status": "ok",
+  "note": "Plays returned WAV in the page."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Voice setup wizard: Close",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "onClose && /*#__PURE__*/React.createElement(\"button\"",
+  "status": "ok",
+  "note": "UI state only; counted for completeness."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Mode: Local",
+  "kind": "radio-button",
+  "keys": [
+   "voice_engine"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "pref = str(settings.get(\"voice_engine\") or \"local\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Mode: Cloud (Gemini Live)",
+  "kind": "radio-button+confirm",
+  "keys": [
+   "voice_engine"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "if pref == \"gemini\":",
+  "status": "ok",
+  "note": "Disclosure card shown first. Row greyed when no key/offline (reason from mc.voiceEngines)."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Mode: Local GPU (NeMo, experimental)",
+  "kind": "radio-button",
+  "keys": [
+   "voice_engine"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_voice.py",
+  "reader_needle": "\"local-gpu\", \"gpu\", \"nemo\", \"nvidia-nemo\"",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Mode: Local listening, cloud voice (<provider>)  [ElevenLabs; Inworld is greyed]",
+  "kind": "radio-button+confirm",
+  "keys": [
+   "voice_engine"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/cloud_voice.py",
+  "reader_needle": "if pref.startswith(\"cloud:\"):",
+  "status": "fixed",
+  "note": "voice_engine accepts a registered cloud voice provider (core_routes._check_voice_enums)."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Mode: disclosure cancel (\"Keep <current>\")",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setPending(null)",
+  "status": "ok",
+  "note": "UI state only."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Gemini Live model",
+  "kind": "select",
+  "keys": [
+   "voice_model"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/voice_engine.py",
+  "reader_needle": "_load_settings().get(\"voice_model\") or LIVE_MODEL",
+  "status": "ok",
+  "note": "Shown only in Cloud (Gemini Live) mode. routes/voice.py auto-rewrites a retired id at 1794."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Gemini voice",
+  "kind": "select",
+  "keys": [
+   "tts_voice"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/voice_engine.py",
+  "reader_needle": "(_load_settings() or {}).get(\"tts_voice\") or LIVE_VOICE",
+  "status": "ok",
+  "note": "Shown only in Gemini mode. Also read as the Gemini TTS voice at voice_engine.py:2303."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Voice readiness: Check voice now",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/voice/prove",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "m.prove_async(stages)",
+  "status": "ok",
+  "note": "Panel also POSTs /api/voice/arm on mount (routes/voice.py:2341) and reads GET /api/voice/session-info (2319)."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Voice readiness: per-stage fix button (label from server, e.g. \"Check again\" / \"Use the card if free\")",
+  "kind": "button",
+  "keys": [
+   "voice_ear_gpu or other key named by the server action"
+  ],
+  "route": "POST /api/settings then POST /api/voice/prove",
+  "reader_file": "src/agent_friday/services/voice_manifest.py",
+  "reader_needle": "\"set\": {\"voice_ear_gpu\": \"if_free\"}",
+  "status": "ok",
+  "note": "Dynamic: the key comes from the manifest, so it can only write what voice_manifest offers."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Speech recognition > Graphics card: Never / If free / Required",
+  "kind": "segmented-buttons",
+  "keys": [
+   "voice_ear_gpu"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/voice_workers.py",
+  "reader_needle": "policy = str(selection.get(\"device_policy\") or \"if_free\")",
+  "status": "ok",
+  "note": "Shown only when the mode is not Gemini. voice_manifest.py:123 turns the setting into selection.device_policy."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Speaking voice engine: Piper / Kokoro (buttons from the catalog)",
+  "kind": "segmented-buttons",
+  "keys": [
+   "local_voice_tts_engine"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_voice.py",
+  "reader_needle": "engine = str(settings.get(\"local_voice_tts_engine\") or \"piper\")",
+  "status": "ok",
+  "note": "Unavailable engines are greyed with the reason. Shown only when the mode is not Gemini."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Speaking voice engine > Graphics card: Never / If free / Required",
+  "kind": "segmented-buttons",
+  "keys": [
+   "voice_mouth_gpu"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/voice_workers.py",
+  "reader_needle": "policy = str(selection.get(\"device_policy\") or \"preferred\")",
+  "status": "ok",
+  "note": "Server default \"preferred\" vs UI default \"if_free\" (UI highlights if_free when unset): the manifest maps both to if_free (voice_manifest.py:103 _policy default), so consistent."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Kokoro voice",
+  "kind": "select",
+  "keys": [
+   "local_voice_kokoro_voice"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_voice.py",
+  "reader_needle": "settings.get(\"local_voice_kokoro_voice\") or DEFAULT_KOKORO_VOICE",
+  "status": "ok",
+  "note": "Shown only when engine is Kokoro."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Kokoro on the processor: allowed / off",
+  "kind": "toggle",
+  "keys": [
+   "local_voice_kokoro_allow_cpu"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/voice_workers.py",
+  "reader_needle": "(_load_settings() or {}).get(\"local_voice_kokoro_allow_cpu\", True)",
+  "status": "ok",
+  "note": "Shown only when engine is Kokoro. DEFAULT_SETTINGS is True so the button reads \"allowed\" by default; UI shows !!undefined as off before the first settings load (cosmetic)."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Push-to-Transcribe: On everywhere / Off",
+  "kind": "toggle-button",
+  "keys": [
+   "push_to_transcribe"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/friday_tray.py",
+  "reader_needle": "want = bool(s.get(\"push_to_transcribe\", True))",
+  "status": "ok",
+  "note": "Tray loop re-applies settings (friday_tray.py:659 self.ptt.apply())."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Shortcut: Alt+T / Ctrl+Shift+Space / Ctrl+Alt+D / Alt+Grave",
+  "kind": "preset-buttons",
+  "keys": [
+   "push_to_transcribe_hotkey"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/friday_tray.py",
+  "reader_needle": "hotkey = str(s.get(\"push_to_transcribe_hotkey\") or \"alt+t\")",
+  "status": "ok",
+  "note": "Shown only while the feature is on. Bad hotkeys are refused by the tray (parse_hotkey), not by the settings route."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Shortcut: free-text field",
+  "kind": "text-input",
+  "keys": [
+   "push_to_transcribe_hotkey"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/friday_tray.py",
+  "reader_needle": "hotkey = str(s.get(\"push_to_transcribe_hotkey\") or \"alt+t\")",
+  "status": "duplicate-accepted",
+  "note": "Same key as the four preset buttons directly above it (same row). Intended: presets plus custom entry; not a problem to remove, only noted. Server accepts any string; tray refuses an unparsable one silently except in its log."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Hold before it listens: 100 / 150 / 250 / 400 ms",
+  "kind": "preset-buttons",
+  "keys": [
+   "push_to_transcribe_hold_ms"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/friday_tray.py",
+  "reader_needle": "hold_ms = int(s.get(\"push_to_transcribe_hold_ms\") or 150)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Piper voice",
+  "kind": "select (one option)",
+  "keys": [
+   "local_voice_tts_voice"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_voice.py",
+  "reader_needle": "PiperTTS(settings.get(\"local_voice_tts_voice\") or DEFAULT_PIPER_VOICE)",
+  "status": "ok",
+  "note": "The list has exactly one entry (Amy, medium), so the control cannot change anything today. Reader exists; offer more voices or drop the select."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Local voice models: Download / Continue download (per model)",
+  "kind": "button+confirm",
+  "keys": [],
+  "route": "POST /api/voice/setup/install {target, consent:true}",
+  "reader_file": "src/agent_friday/services/voice_installer.py",
+  "reader_needle": "_install_artifact(spec[\"artifact\"])",
+  "status": "ok",
+  "note": "Rows come from GET /api/voice/artifacts (routes/voice.py:2737). Download is only fetched after the size confirmation; \"Not now\" (55546) closes it."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Local voice models: Stop",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/voice/setup/install/cancel",
+  "reader_file": "src/agent_friday/services/voice_installer.py",
+  "reader_needle": "def cancel(",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Answer depth",
+  "kind": "select",
+  "keys": [
+   "voice_response_depth"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/voice_delivery.py",
+  "reader_needle": "depth = s.get(\"voice_response_depth\", \"adaptive\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Speaking pace",
+  "kind": "select",
+  "keys": [
+   "voice_speaking_pace"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/voice_delivery.py",
+  "reader_needle": "pace = s.get(\"voice_speaking_pace\", \"adaptive\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Interrupting <name>: Talk over her / Esc only (Speaker-safe in Gemini)",
+  "kind": "segmented-buttons",
+  "keys": [
+   "voice_interruption_mode"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "mode = str(settings.get(\"voice_interruption_mode\") or \"auto\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Who is talking: Just me / Several people",
+  "kind": "segmented-buttons",
+  "keys": [
+   "voice_room_mode"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "v = str((settings or {}).get(\"voice_room_mode\") or \"one\")",
+  "status": "ok",
+  "note": "Shown only in Gemini mode."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Pause before <name> replies",
+  "kind": "slider(saved)",
+  "keys": [
+   "voice_silence_ms"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "_num_setting(settings, \"voice_silence_ms\", 500)",
+  "status": "ok",
+  "note": "Shown only when the mode is not Gemini."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Expressive speech",
+  "kind": "toggle",
+  "keys": [
+   "voice_affective"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "live_affective = live_settings.get(\"voice_affective\", _model_is_25)",
+  "status": "ok",
+  "note": "Gemini mode only. Server silently ignores it on models without affective dialog (voice.py:3904)."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "<name> may speak first",
+  "kind": "toggle",
+  "keys": [
+   "voice_proactive"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "live_proactive = live_settings.get(\"voice_proactive\", _model_is_25)",
+  "status": "ok",
+  "note": "Gemini mode only. Forced off while a call is on (voice.py:3640)."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Keep long sessions going",
+  "kind": "toggle",
+  "keys": [
+   "voice_context_compression"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "live_context_compression = live_settings.get(\"voice_context_compression\")",
+  "status": "ok",
+  "note": "Gemini mode only."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Use tools while talking",
+  "kind": "toggle",
+  "keys": [
+   "voice_tools"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "live_voice_tools = live_settings.get(\"voice_tools\", True)",
+  "status": "ok",
+  "note": "Gemini mode only; voice_engine.py:1575 also reports it among voice limits."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Variety (slider) + \"use the model default\" link",
+  "kind": "slider(saved)+link",
+  "keys": [
+   "voice_temperature"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "live_temperature = live_settings.get(\"voice_temperature\")",
+  "status": "ok",
+  "note": "Gemini mode only."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Speaking style",
+  "kind": "text-input",
+  "keys": [
+   "voice_style_prompt"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "live_style = _get_voice_style_prompt()",
+  "status": "ok",
+  "note": "Gemini mode only."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Language",
+  "kind": "text-input",
+  "keys": [
+   "voice_language"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/voice.py",
+  "reader_needle": "live_language, live_language_name = _live_language(_get_voice_language())",
+  "status": "ok",
+  "note": "Gemini mode only. Free text, no validation."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Calls: Stand back on her own / Ask me first / Don't",
+  "kind": "radio-buttons",
+  "keys": [
+   "call_mode"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/call_watch.py",
+  "reader_needle": "(_load_settings() or {}).get(\"call_mode\") or \"automatic\"",
+  "status": "ok",
+  "note": "Other writers of the same key (not Settings controls): first-run chip (index.html:48812) and the call_mode voice tool (services/call_tools.py:50)."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Parallax strength",
+  "kind": "slider",
+  "keys": [
+   "tracking.parallax_strength"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "fin(cfg.parallax_strength",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Viewing distance",
+  "kind": "slider",
+  "keys": [
+   "tracking.viewing_distance_cm"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.viewing_distance_cm",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Screen width",
+  "kind": "slider",
+  "keys": [
+   "tracking.screen_width_cm"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.screen_width_cm",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Depth effect",
+  "kind": "slider",
+  "keys": [
+   "tracking.depth_strength"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.depth_strength",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Lean in, at most",
+  "kind": "slider",
+  "keys": [
+   "tracking.zoom_in_max"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.zoom_in_max",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Lean back, at most",
+  "kind": "slider",
+  "keys": [
+   "tracking.zoom_out_max"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.zoom_out_max",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Head smoothing",
+  "kind": "slider",
+  "keys": [
+   "tracking.head_smoothing"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "clamp01(cfg.head_smoothing)",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Head response",
+  "kind": "slider",
+  "keys": [
+   "tracking.head_response"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "clamp01(cfg.head_response)",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Holographic cues",
+  "kind": "slider",
+  "keys": [
+   "tracking.holo_cues"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "TK.cfg.holo_cues",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Hand cursor > Sensitivity",
+  "kind": "slider",
+  "keys": [
+   "tracking.hand_gain"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.hand_gain",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Hand cursor > Acceleration",
+  "kind": "slider",
+  "keys": [
+   "tracking.hand_accel"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.hand_accel",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Hand cursor > Active region",
+  "kind": "slider",
+  "keys": [
+   "tracking.hand_region"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.hand_region",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Hand cursor > Dead zone",
+  "kind": "slider",
+  "keys": [
+   "tracking.hand_deadzone"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.hand_deadzone",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Hand cursor > Hand smoothing",
+  "kind": "slider",
+  "keys": [
+   "tracking.hand_smoothing"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "clamp01(cfg.hand_smoothing)",
+  "status": "ok",
+  "note": "Client-side engine reads the live config; boot load index.html:4403 applies settings.tracking."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Clicking: Pinch / Dwell (hover to click)",
+  "kind": "radio-buttons",
+  "keys": [
+   "tracking.click_method"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "static/hand_cursor.js",
+  "reader_needle": "c.click_method === 'dwell'",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Pinch closes at",
+  "kind": "slider",
+  "keys": [
+   "tracking.pinch_enter"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.pinch_enter",
+  "status": "ok",
+  "note": "Shown only for Pinch. Dwell/pinch branches in the engine read cfg directly."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Pinch opens at",
+  "kind": "slider",
+  "keys": [
+   "tracking.pinch_exit"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "cfg.pinch_exit",
+  "status": "ok",
+  "note": "Shown only for Pinch."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Dwell time",
+  "kind": "slider",
+  "keys": [
+   "tracking.dwell_ms"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "static/hand_cursor.js",
+  "reader_needle": "dwellMs: Math.max(200, +c.dwell_ms || 700)",
+  "status": "ok",
+  "note": "Shown only for Dwell."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Snap to targets",
+  "kind": "toggle",
+  "keys": [
+   "tracking.snap"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "static/hand_cursor.js",
+  "reader_needle": "c.snap === false",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Snap reach",
+  "kind": "slider",
+  "keys": [
+   "tracking.snap_radius"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "static/hand_cursor.js",
+  "reader_needle": "engageRadius: +c.snap_radius || 40",
+  "status": "ok",
+  "note": "Shown only while Snap is on."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Two-hand zoom",
+  "kind": "toggle",
+  "keys": [
+   "tracking.two_hand_zoom"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "FridayTracking.cfg.two_hand_zoom ? 2 : 1",
+  "status": "ok",
+  "note": "Takes effect the next time hand tracking starts (as the copy says)."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Big mode: With hand tracking / Always / Never",
+  "kind": "radio-buttons",
+  "keys": [
+   "big_mode"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "static/hand_cursor.js",
+  "reader_needle": "bigSetting = s.big_mode",
+  "status": "ok",
+  "note": "Server also reads it for the voice tool (services/hand_cursor_tools.py:48). Other writer: that tool."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Calibrate distance",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "static/friday_holographic_workspace.js",
+  "reader_needle": "function calibrateCurrent",
+  "status": "ok",
+  "note": "Per-camera, per-browser by design; status text shown for 4 s."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Voice & Tracking",
+  "label": "Reset tracking to defaults",
+  "kind": "button",
+  "keys": [
+   "tracking.* (all but dock_depth, debug_overlay, neutral_face_width)"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "Object.assign({}, DEFAULTS)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "Display style: Simple / Classic (Advanced is disabled, \"In development\")",
+  "kind": "radio-buttons",
+  "keys": [],
+  "route": "",
+  "reader_file": "static/friday_display_style.js",
+  "reader_needle": "scope.FridayDisplayStyle = api",
+  "status": "ok",
+  "note": "Per-browser preference by design (the panel says \"Saved in this browser\"). Mounted only when window.FridayDisplayStyleOptions exists."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "Dock: per-workspace Show/Hide checkbox",
+  "kind": "checkbox (one per workspace)",
+  "keys": [
+   "dock_custom"
+  ],
+  "route": "POST /api/settings (via window.fridaySaveDock)",
+  "reader_file": "index.html",
+  "reader_needle": "function dockArrangement(custom, showAll)",
+  "status": "ok",
+  "note": "Single writer by design (fridaySaveDock). General tab has \"Show all workspaces\" (show_all_workspaces) which stops applying once dock_custom is configured, per the panel text."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "Dock: Move up / Move down arrows",
+  "kind": "buttons",
+  "keys": [
+   "dock_custom"
+  ],
+  "route": "POST /api/settings (via window.fridaySaveDock)",
+  "reader_file": "index.html",
+  "reader_needle": "function dockArrangement(custom, showAll)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "Dock: Reset to default",
+  "kind": "button",
+  "keys": [
+   "dock_custom"
+  ],
+  "route": "POST /api/settings (via window.fridaySaveDock)",
+  "reader_file": "index.html",
+  "reader_needle": "function dockArrangement(custom, showAll)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "Dock: Earlier versions of <workspace> (clock button)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "window.addEventListener('friday:open-ws-history', onOpen)",
+  "status": "ok",
+  "note": "Opens the WorkspaceHistory overlay (rows below)."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "Dock depth",
+  "kind": "slider",
+  "keys": [
+   "tracking.dock_depth"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "window.FridayTracking.cfg.dock_depth",
+  "status": "ok",
+  "note": "Feeds the --dock-k CSS variable (index.html:4248 dockDepthK)."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "Show my day: Smart / Always / Never",
+  "kind": "radio-buttons",
+  "keys": [
+   "landing_mode"
+  ],
+  "route": "POST /api/settings (and event friday:landing)",
+  "reader_file": "index.html",
+  "reader_needle": "agentSettings.landing_mode",
+  "status": "ok",
+  "note": "Other writers (not Settings controls): the start-screen itself (index.html:67461) and the show_my_day voice tool (services/agent.py:3458)."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "3D dazzle: Off / Subtle / Full",
+  "kind": "radio-buttons",
+  "keys": [
+   "studio_dazzle"
+  ],
+  "route": "POST /api/settings (and event friday-dazzle)",
+  "reader_file": "static/studio_files3d.js",
+  "reader_needle": "studio_dazzle",
+  "status": "ok",
+  "note": "Copy says \"every 3D view\" but only Files 3D, Records 3D, Library shelves and window open/close animations read it; avatar, galaxy and other scenes do not. studio_files3d.js:2676 also writes the key from its own control."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
+  "label": "Knowledge graph > Constellation grouping",
+  "kind": "select",
+  "keys": [
+   "knowledge_graph.community_mode"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/knowledge_graph/wiki_graph.py",
+  "reader_needle": "kg_settings().get(\"community_mode\", \"auto\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Proposed work: step execution picker (\"same as workflow\" / While I'm away / Now, locally / Now, in the cloud)",
+  "kind": "select (per step)",
+  "keys": [],
+  "route": "POST /api/work/proposals/<id>/decide (per_task)",
+  "reader_file": "src/agent_friday/services/workflow_plan.py",
+  "reader_needle": "want = per_task.get(t[\"id\"], execution)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Proposed work: While I'm away / Now, locally / Now, in the cloud",
+  "kind": "buttons",
+  "keys": [],
+  "route": "POST /api/work/proposals/<id>/decide",
+  "reader_file": "src/agent_friday/services/workflow_plan.py",
+  "reader_needle": "item = wq.enqueue(",
+  "status": "ok",
+  "note": "Blocked options are disabled with the vault reason."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Proposed work: Choose for me",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/work/proposals/<id>/decide {choose_for_me:true}",
+  "reader_file": "src/agent_friday/services/workflow_plan.py",
+  "reader_needle": "choose_for_me or not execution",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Proposed work: Not now",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/work/proposals/<id>",
+  "reader_file": "src/agent_friday/services/workflow_plan.py",
+  "reader_needle": "prop[\"status\"] = \"dismissed\"",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Queue: x (Remove from the queue)",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/work/queue/<id>",
+  "reader_file": "src/agent_friday/services/work_queue.py",
+  "reader_needle": "def cancel(item_id",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Queue: Run now (per class batch)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/work/queue/drain {class, force:true}",
+  "reader_file": "src/agent_friday/services/work_queue.py",
+  "reader_needle": "def drain(cls",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "This machine: I need my machine",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/machine/level {level:\"yield\"}",
+  "reader_file": "src/agent_friday/services/stand_down.py",
+  "reader_needle": "def stand_down(",
+  "status": "ok",
+  "note": "The Resume path is the stand-down banner (fridayStandDownBanner), not a Settings control."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Turn limits: Rounds per turn",
+  "kind": "number-input",
+  "keys": [
+   "turn_budget.rounds.default"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/turn_budget.py",
+  "reader_needle": "blk = (_cfg().get(\"rounds\") or {})",
+  "status": "ok",
+  "note": "Collapsed behind the \"Advanced\" disclosure button; 0 means unset."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Turn limits: Rounds - local seat only",
+  "kind": "number-input",
+  "keys": [
+   "turn_budget.rounds.local"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/turn_budget.py",
+  "reader_needle": "blk = (_cfg().get(\"rounds\") or {})",
+  "status": "ok",
+  "note": "Collapsed behind the \"Advanced\" disclosure button; 0 means unset."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Turn limits: Rounds - unattended work",
+  "kind": "number-input",
+  "keys": [
+   "turn_budget.rounds.scheduled"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/turn_budget.py",
+  "reader_needle": "blk = (_cfg().get(\"rounds\") or {})",
+  "status": "ok",
+  "note": "Collapsed behind the \"Advanced\" disclosure button; 0 means unset."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Turn limits: Time limit per turn",
+  "kind": "number-input",
+  "keys": [
+   "turn_budget.wall_clock_s.default"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/turn_budget.py",
+  "reader_needle": "_cfg().get(\"wall_clock_s\")",
+  "status": "ok",
+  "note": "Collapsed behind the \"Advanced\" disclosure button; 0 means unset."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Turn limits: Token ceiling per turn",
+  "kind": "number-input",
+  "keys": [
+   "turn_budget.tokens.default"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/turn_budget.py",
+  "reader_needle": "_cfg().get(\"tokens\")",
+  "status": "ok",
+  "note": "Collapsed behind the \"Advanced\" disclosure button; 0 means unset."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Turn limits: Advanced disclosure",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "setOpen(o => !o)",
+  "status": "ok",
+  "note": "UI state only."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Knowledge graph indexing: Reindex nightly",
+  "kind": "toggle",
+  "keys": [
+   "knowledge_graph.nightly_reindex"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/knowledge_graph/integration.py",
+  "reader_needle": "settings.get(\"nightly_reindex\"",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Sources to index: Wiki",
+  "kind": "toggle",
+  "keys": [
+   "knowledge_graph.index_sources.wiki"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/knowledge_graph/indexer.py",
+  "reader_needle": "src_cfg.get(\"wiki\", True)",
+  "status": "ok",
+  "note": "Affects the semantic (Tier B) index and, for SOUL.md, the structure too (wiki_graph.py:183). The Wiki switch does not change the Tier A structure rebuild."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Sources to index: SOUL.md",
+  "kind": "toggle",
+  "keys": [
+   "knowledge_graph.index_sources.soul"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/knowledge_graph/indexer.py",
+  "reader_needle": "src_cfg.get(\"soul\", True)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Sources to index: Conversations",
+  "kind": "toggle",
+  "keys": [
+   "knowledge_graph.index_sources.conversations"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/knowledge_graph/indexer.py",
+  "reader_needle": "src_cfg.get(\"conversations\", True)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Sources to index: Memories",
+  "kind": "toggle",
+  "keys": [
+   "knowledge_graph.index_sources.cognitive"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/knowledge_graph/indexer.py",
+  "reader_needle": "src_cfg.get(\"cognitive\", True)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Knowledge graph indexing: Rebuild structure",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/knowledge-graph/reindex {tier:\"A\"}",
+  "reader_file": "src/agent_friday/services/knowledge_graph/wiki_graph.py",
+  "reader_needle": "def rebuild_tier_a",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Knowledge graph indexing: Run semantic index",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/knowledge-graph/reindex {tier:\"B\"}",
+  "reader_file": "src/agent_friday/services/knowledge_graph/indexer.py",
+  "reader_needle": "def reindex_tier_b",
+  "status": "ok",
+  "note": "Starts a background thread; progress shown in the Knowledge workspace."
+ },
+ {
+  "section": "Advanced",
+  "panel": "Advanced",
+  "label": "Tracking diagnostics: Tracking debug overlay",
+  "kind": "toggle",
+  "keys": [
+   "tracking.debug_overlay"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "if (!TK || !TK.cfg.debug_overlay) return;",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Privacy (KnowledgeSettings part=privacy)",
+  "label": "Where knowledge indexing runs (On this machine / In the cloud)",
+  "kind": "select",
+  "keys": [
+   "knowledge_graph.indexing_mode"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/knowledge_graph/indexer.py",
+  "reader_needle": "indexing_mode = str(settings.get(\"indexing_mode\", \"local\"))",
+  "status": "ok",
+  "note": "KnowledgeSettings part=\"privacy\", mounted in the Privacy tab, not in these three tabs."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Workspace history overlay (opened from Dock panel clock button)",
+  "label": "History: Undo the last change",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/workspace/<id>/undo",
+  "reader_file": "src/agent_friday/services/workspace_studio.py",
+  "reader_needle": "def undo_last(ws_id)",
+  "status": "ok",
+  "note": "Mounted by the workspace window (index.html:14631) and the standalone tab (62614); reached from Settings via the Dock clock button."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Workspace history overlay (opened from Dock panel clock button)",
+  "label": "History: Back to baseline",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/workspace/<id>/reset",
+  "reader_file": "src/agent_friday/services/workspace_studio.py",
+  "reader_needle": "def reset_customization(ws_id)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Appearance",
+  "panel": "Workspace history overlay (opened from Dock panel clock button)",
+  "label": "History: Undo this and everything after (per entry)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/workspace/<id>/revert {version_id}",
+  "reader_file": "src/agent_friday/services/workspace_studio.py",
+  "reader_needle": "def revert_customization(ws_id, version_id",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Appearance",
+  "panel": "Workspace history overlay (opened from Dock panel clock button)",
+  "label": "History: Close",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "index.html",
+  "reader_needle": "onClick: onClose",
+  "status": "ok",
+  "note": "UI state only."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Vault",
+  "label": "Vault passphrase (min 6 chars)",
+  "kind": "text input (password)",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Only feeds the Encrypt vault button; shown only while the vault is not armed."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Vault",
+  "label": "Encrypt vault",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/vault/passphrase",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "_passphrase = _vp.resolve()[0]",
+  "status": "ok",
+  "note": "Re-derives the AES key (agent._VAULT_KEY reset) so encryption engages without restart."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Vault",
+  "label": "Keep vault content off the cloud",
+  "kind": "toggle",
+  "keys": [
+   "model_routing.vault_local_only"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/privacy/vault_policy.py",
+  "reader_needle": "cfg.get(\"vault_local_only\", DEFAULT_LOCAL_ONLY)",
+  "status": "ok",
+  "note": "Default True when absent; UI reads !== false so display matches. Separate display bug: routes/intelligence.py:1022 posture reports vault_local_only False when the key is absent (Models tab line \"vault may reach the cloud\") - see Findings."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Cloud consent",
+  "label": "Re-answer",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/privacy/cloud-consent",
+  "reader_file": "src/agent_friday/privacy/cloud_consent.py",
+  "reader_needle": "def assess_local_capability",
+  "status": "duplicate-resolved",
+  "note": "home; Models links here"
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Cloud consent",
+  "label": "Keep it local and private",
+  "kind": "button",
+  "keys": [
+   "model_routing.cloud_consent"
+  ],
+  "route": "POST /api/privacy/cloud-consent",
+  "reader_file": "src/agent_friday/services/avatar_growth.py",
+  "reader_needle": "cc.CHOICE_LOCAL",
+  "status": "duplicate-resolved",
+  "note": "home; Models links here"
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Cloud consent",
+  "label": "Cloud with safeguards on",
+  "kind": "button",
+  "keys": [
+   "model_routing.cloud_consent"
+  ],
+  "route": "POST /api/privacy/cloud-consent",
+  "reader_file": "src/agent_friday/services/egress_gate.py",
+  "reader_needle": "cloud_consent.is_unrestricted_cloud()",
+  "status": "duplicate-resolved",
+  "note": "home; Models links here"
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Cloud consent",
+  "label": "Allow unrestricted cloud",
+  "kind": "button",
+  "keys": [
+   "model_routing.cloud_consent"
+  ],
+  "route": "POST /api/privacy/cloud-consent",
+  "reader_file": "src/agent_friday/services/egress_gate.py",
+  "reader_needle": "cloud_consent.is_unrestricted_cloud()",
+  "status": "duplicate-resolved",
+  "note": "home; Models links here"
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Cloud consent",
+  "label": "Cancel (consent panel)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Closes the choice panel."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Wiki sections kept off the cloud",
+  "label": "Per-section checkbox (one per wiki section)",
+  "kind": "checkbox list",
+  "keys": [
+   "wiki_encrypted_sections"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/wiki_engine.py",
+  "reader_needle": "get(\"wiki_encrypted_sections\")",
+  "status": "ok",
+  "note": "Section list from GET /api/wiki/structure (routes/wiki.py:100). Whole section is MISSING from ui_parts/app.html (see Findings)."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access",
+  "label": "Remove (per permission row)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/privacy/file-grants/<id>/revoke",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "_fg.on_file_read(p, result)",
+  "status": "ok",
+  "note": "UI does not check the response status before saying \"Removed\" (minor)."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access",
+  "label": "Re-grant (retired-key notice)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/privacy/file-grants/notices/<id>/regrant",
+  "reader_file": "src/agent_friday/services/file_grant_requests.py",
+  "reader_needle": "def regrant_notice",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access",
+  "label": "Leave it off / Hide this notice",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/privacy/file-grants/notices/<id>/dismiss",
+  "reader_file": "src/agent_friday/services/file_grants.py",
+  "reader_needle": "def resolve_notice",
+  "status": "ok",
+  "note": "By design only closes the question; moves no line and lifts no suspension."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access",
+  "label": "Start file access fresh",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/privacy/file-grants/start-fresh",
+  "reader_file": "src/agent_friday/services/file_grants.py",
+  "reader_needle": "def start_fresh",
+  "status": "ok",
+  "note": "Shown only while grants are suspended."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access",
+  "label": "Path of a file or folder",
+  "kind": "text input",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Feeds Add."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access",
+  "label": "File / Folder",
+  "kind": "select",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Feeds Add."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access",
+  "label": "Lasts (1/7/30 days)",
+  "kind": "select",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Folder grants only; server caps at 30 days (file_grants.create_scope_grant:806)."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access",
+  "label": "Add",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/privacy/file-grants",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "_fg.on_file_read(p, result)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "File access (banner on every tab)",
+  "label": "Open File access",
+  "kind": "button/link",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Link only; section title \"File access\" exists in this tab so fridayScrollToSettingsSection (61124) finds it."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Library",
+  "label": "Include everything <name> already tracks (Recommended)",
+  "kind": "toggle",
+  "keys": [],
+  "route": "POST /api/library/tracked",
+  "reader_file": "src/agent_friday/services/library/runtime.py",
+  "reader_needle": "def index_scope",
+  "status": "ok",
+  "note": "Not a settings key; consent stored in the library grants ledger."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Library",
+  "label": "Library search",
+  "kind": "toggle",
+  "keys": [
+   "library_search"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/library/tools.py",
+  "reader_needle": "s.get(\"library_search\") is False",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Library",
+  "label": "Let a cloud model write Library answers",
+  "kind": "toggle",
+  "keys": [
+   "library_cloud_answers"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/library/tools.py",
+  "reader_needle": "settings.get(\"library_cloud_answers\", False)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Library",
+  "label": "Most of your documents' text one cloud answer may send",
+  "kind": "select",
+  "keys": [
+   "library_cloud_char_cap"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/library/tools.py",
+  "reader_needle": "settings.get(\"library_cloud_char_cap\", CLOUD_CAP_DEFAULT)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Library",
+  "label": "Read documents while on battery",
+  "kind": "toggle",
+  "keys": [
+   "library_index_on_battery"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/library/runtime.py",
+  "reader_needle": "get(\"library_index_on_battery\", False)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Library",
+  "label": "Let the knowledge graph learn from Library documents",
+  "kind": "toggle",
+  "keys": [
+   "library_kg_learn"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/knowledge_graph/indexer.py",
+  "reader_needle": "get(\"library_kg_learn\")",
+  "status": "duplicate-accepted",
+  "note": "Second writer: Library workspace \"chooseKg\" -> POST /api/settings {library_kg_learn} (static/library_ws.js:443). Same key, same route, same on/off values."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Fonts",
+  "label": "Load fonts from Google Fonts",
+  "kind": "toggle",
+  "keys": [
+   "web_fonts_from_google"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/web_fonts.py",
+  "reader_needle": "get(\"web_fonts_from_google\", True)",
+  "status": "removed",
+  "note": "Inert: the font files ship in the tree, so the setting is never consulted. Row removed; the key stays for the server."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "What needs your sign-off",
+  "label": "Off / Shadow / On",
+  "kind": "segmented buttons",
+  "keys": [
+   "decision_backend",
+   "decision_shadow"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/decisions.py",
+  "reader_needle": "get(\"decision_backend\")",
+  "status": "ok",
+  "note": "Values come from GET /api/decisions/gate_status (routes/core_routes.py:392) .modes."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "What needs your sign-off",
+  "label": "Yes / No (Teach the scanner)",
+  "kind": "button pair",
+  "keys": [],
+  "route": "POST /api/decisions/labels",
+  "reader_file": "src/agent_friday/routes/core_routes.py",
+  "reader_needle": "laya_labels.evidence()",
+  "status": "ok",
+  "note": "By design measurement-only: labels never change a verdict; they score keyword vs Laya."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Laya chat pilot",
+  "label": "Try Laya chat preparation",
+  "kind": "toggle",
+  "keys": [
+   "laya_pilot_enabled"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/laya_pilot.py",
+  "reader_needle": "cfg.get(\"laya_pilot_enabled\") is not True",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Laya chat pilot",
+  "label": "Refresh measurements",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/decisions/laya_pilot",
+  "reader_file": "src/agent_friday/routes/core_routes.py",
+  "reader_needle": "laya_pilot.snapshot()",
+  "status": "ok",
+  "note": "Read-only refresh."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Scheduled jobs: what they may do on their own",
+  "label": "Revoke (per grant)",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/governance/grants/<id>",
+  "reader_file": "src/agent_friday/governance/action_gate.py",
+  "reader_needle": "g = _use_grant(tool_name, ctx)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Scheduled jobs: what they may do on their own",
+  "label": "Choose a scheduled job...",
+  "kind": "select",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Options from GET /api/schedules (routes/scheduler.py:15)."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Scheduled jobs: what they may do on their own",
+  "label": "Action checkboxes (one per outward tool)",
+  "kind": "checkbox list",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Options from GET /api/governance/outward-tools (routes/goals.py:353)."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Scheduled jobs: what they may do on their own",
+  "label": "Lasts (1/7/30 days)",
+  "kind": "select",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Scheduled jobs: what they may do on their own",
+  "label": "Uses",
+  "kind": "number input",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Scheduled jobs: what they may do on their own",
+  "label": "Grant",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/governance/grants",
+  "reader_file": "src/agent_friday/governance/action_gate.py",
+  "reader_needle": "g = _use_grant(tool_name, ctx)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Friday's rules on this PC",
+  "label": "Re-confirm <name>'s rules on this PC",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/governance/claws/repin",
+  "reader_file": "src/agent_friday/governance/action_gate.py",
+  "reader_needle": "claws.pin.json",
+  "status": "ok",
+  "note": "Enabled only when state == mismatch. Needs a local request plus X-Friday-Token."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Stored keys",
+  "label": "Vault passphrase (keystore)",
+  "kind": "text input (password)",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Shown only when a vault passphrase is already set."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Stored keys",
+  "label": "Protect with vault passphrase / Remove passphrase protection",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/security/keystore/wrap",
+  "reader_file": "src/agent_friday/services/keystore.py",
+  "reader_needle": "wrap = doc.get(\"wrap\") or \"none\"",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Agent workspaces",
+  "label": "Allow agent workspaces / Enabled - turn off",
+  "kind": "switch",
+  "keys": [],
+  "route": "PUT /api/browser/workspaces/permission",
+  "reader_file": "src/agent_friday/services/browser_authority.py",
+  "reader_needle": "permission.get(\"enabled\") is not True",
+  "status": "duplicate-accepted",
+  "note": "Same component also mounted in onboarding SetupFinishCard (index.html:50071). One shared component and store, so no state skew; benign."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Agent workspaces",
+  "label": "Refresh permission",
+  "kind": "button (error only)",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Appears only after an error."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Computer control",
+  "label": "Allow computer control",
+  "kind": "toggle",
+  "keys": [
+   "computer_control_enabled"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/routes/control.py",
+  "reader_needle": "get('computer_control_enabled', False)",
+  "status": "ok",
+  "note": "Gear-menu row \"Computer Control\" (index.html ~69030) is a link to this tab, not a second writer."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Computer control",
+  "label": "Grant",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/control/permission",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "if not _CC_PERMISSION.is_set():",
+  "status": "ok",
+  "note": "Disabled until pyautogui is installed and the toggle is on."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Computer control",
+  "label": "Revoke",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/control/permission",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "if not _CC_PERMISSION.is_set():",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Computer control",
+  "label": "Access for <app> (Observe/Act/None, per app)",
+  "kind": "select",
+  "keys": [],
+  "route": "POST /api/control/app-grants",
+  "reader_file": "src/agent_friday/governance/action_gate.py",
+  "reader_needle": "_dg.classify(tool_name, a)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Computer control",
+  "label": "Remove <app> (x)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/control/app-grants",
+  "reader_file": "src/agent_friday/governance/action_gate.py",
+  "reader_needle": "_dg.classify(tool_name, a)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Computer control",
+  "label": "App program name",
+  "kind": "text input",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Feeds Add."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Computer control",
+  "label": "Access for the new app",
+  "kind": "select",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Feeds Add."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Computer control",
+  "label": "Add (app)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/control/app-grants",
+  "reader_file": "src/agent_friday/governance/action_gate.py",
+  "reader_needle": "_dg.classify(tool_name, a)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Knowledge indexing",
+  "label": "Where knowledge indexing runs",
+  "kind": "select",
+  "keys": [
+   "knowledge_graph.indexing_mode"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/knowledge_graph/indexer.py",
+  "reader_needle": "settings.get(\"indexing_mode\", \"local\")",
+  "status": "ok",
+  "note": "No other writer of indexing_mode. KnowledgeSettings is mounted in two more tabs (index.html:61468 and :61483, other parts) that write other keys of the same block (nightly_reindex, index_sources, community_mode) and POST /api/knowledge-graph/reindex; those belong to the Appearance/Advanced audits. Models tab shows this value read-only (index.html:54292). The block is NOT in _DEEP_MERGED_BLOCKS (core/__init__.py:3288), so every part re-sends the full block."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Published pages (window.FridayPublishSettings)",
+  "label": "Check now",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/publish/status",
+  "reader_file": "src/agent_friday/routes/publish.py",
+  "reader_needle": "_ph.status(refresh=refresh)",
+  "status": "ok",
+  "note": "Mounted index.html:56401; not in the assignment list but lives in this tab."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Published pages (window.FridayPublishSettings)",
+  "label": "Local hosting is on / OFF (switch)",
+  "kind": "toggle",
+  "keys": [],
+  "route": "POST /api/publish/this-pc/<action>",
+  "reader_file": "src/agent_friday/services/publish_hosting.py",
+  "reader_needle": "def set_enabled",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Published pages (window.FridayPublishSettings)",
+  "label": "Default host",
+  "kind": "select",
+  "keys": [
+   "publish_default_adapter"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/publish_web.py",
+  "reader_needle": "get(\"publish_default_adapter\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Published pages (window.FridayPublishSettings)",
+  "label": "Small \"Made with ...\" mark on published pages",
+  "kind": "toggle",
+  "keys": [
+   "publish_mark"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/publish_web.py",
+  "reader_needle": "get(\"publish_mark\", True)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Published pages (window.FridayPublishSettings)",
+  "label": "Take down (per page)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/publish/<slug>/unpublish",
+  "reader_file": "src/agent_friday/services/publish_web.py",
+  "reader_needle": "def unpublish",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Published pages (window.FridayPublishSettings)",
+  "label": "Connect / Disconnect / Save and connect (Cloudflare Pages, GitHub Pages)",
+  "kind": "buttons + text inputs",
+  "keys": [],
+  "route": "POST /api/publish/connect",
+  "reader_file": "src/agent_friday/services/publish_hosting.py",
+  "reader_needle": "def connect_adapter",
+  "status": "ok",
+  "note": "Two adapters, same form; token typed on screen only."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Conversation logging",
+  "label": "Log conversations and tool use",
+  "kind": "toggle",
+  "keys": [
+   "context_logging_enabled"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/core/__init__.py",
+  "reader_needle": "s.get('context_logging_enabled', True)",
+  "status": "duplicate-resolved",
+  "note": "gear-menu row is now a link to this one"
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Conversation logging",
+  "label": "Go off the record",
+  "kind": "toggle",
+  "keys": [
+   "off_record"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/off_record.py",
+  "reader_needle": "s.get(\"off_record\")",
+  "status": "duplicate-resolved",
+  "note": "kept as a quick toggle in the gear menu; both now re-read after a save"
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Conversation logging",
+  "label": "Artifact panel beside the chat",
+  "kind": "toggle",
+  "keys": [
+   "artifact_panel_enabled"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/core/__init__.py",
+  "reader_needle": "\"artifact_panel_enabled\": True",
+  "status": "fixed",
+  "note": "The chat shell and artifact_put now honour the switch."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Conversation logging",
+  "label": "Keep the log for (Forever / 1 year / 6 months / 90 days / 30 days)",
+  "kind": "button group",
+  "keys": [
+   "context_retention_days"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/core/__init__.py",
+  "reader_needle": "get(\"context_retention_days\", 0)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Conversation logging",
+  "label": "Export conversation log (ZIP)",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/context/export",
+  "reader_file": "src/agent_friday/routes/context.py",
+  "reader_needle": "def context_export",
+  "status": "ok",
+  "note": "The System workspace Context Log has the same export button (index.html:32677); same route, no state."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Your data",
+  "label": "Export all my data (ZIP)",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/data/export",
+  "reader_file": "src/agent_friday/routes/insights.py",
+  "reader_needle": "def data_export",
+  "status": "ok",
+  "note": "GET navigation passes the origin gate (only unsafe methods and upgrades are guarded, origin_gate.is_guarded)."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Your data",
+  "label": "Type ERASE",
+  "kind": "text input",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Gates the Erase button."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Your data",
+  "label": "Erase everything",
+  "kind": "button (danger)",
+  "keys": [],
+  "route": "POST /api/data/erase",
+  "reader_file": "src/agent_friday/routes/insights.py",
+  "reader_needle": "def data_erase",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Add provider / Close",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "UI-only toggle that shows or hides AddProviderForm."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Provider row (click to expand)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "UI-only expander (onClick setExpanded)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "API key field + Save key / Replace key",
+  "kind": "input+button",
+  "keys": [],
+  "route": "POST /api/providers/<name>/key",
+  "reader_file": "src/agent_friday/routing/provider_descriptors.py",
+  "reader_needle": "return _stored_key(p) or _env_key(p)",
+  "status": "ok",
+  "note": "Key encrypted in the credential store; provider_api_key resolves stored key before env. Only shown for auth.type=env_var providers."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Remove key",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/providers/<name>/key",
+  "reader_file": "src/agent_friday/routing/provider_descriptors.py",
+  "reader_needle": "return _stored_key(p) or _env_key(p)",
+  "status": "ok",
+  "note": "Falls back to an environment key if one exists (provider_key_source then reads 'environment')."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Get a key",
+  "kind": "link",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Link only; signup_url comes from the descriptor (provider_descriptors.py:515)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Test Connection",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/providers/<name>/test",
+  "reader_file": "src/agent_friday/routes/platform.py",
+  "reader_needle": "def api_provider_test",
+  "status": "ok",
+  "note": "Action (probe, optional 1-token ping); changes no state, so there is no consuming reader."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Refresh models",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/providers/<name>/models/refresh",
+  "reader_file": "src/agent_friday/services/model_discovery.py",
+  "reader_needle": "def cached_models",
+  "status": "ok",
+  "note": "Only shown when discovery.mode=='api'. The refreshed cache is read by api_providers_list and the model catalog via cached_models."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Enable / Disable",
+  "kind": "button",
+  "keys": [
+   "providers/<name>.json enabled"
+  ],
+  "route": "PATCH /api/providers/<name>",
+  "reader_file": "src/agent_friday/services/provider_registry.py",
+  "reader_needle": "if not p or not p.get(\"enabled\", True):",
+  "status": "ok",
+  "note": "Per-provider descriptor file, not settings.json. is_provider_available gates routing and pickers."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Reset / Remove (builtin / custom)",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/providers/<name>",
+  "reader_file": "src/agent_friday/services/provider_registry.py",
+  "reader_needle": "def remove_provider",
+  "status": "ok",
+  "note": "Builtins revert to the shipped default; customs are deleted. Confirm dialog first."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Template (Add provider)",
+  "kind": "select",
+  "keys": [],
+  "route": "",
+  "reader_file": "src/agent_friday/services/provider_registry.py",
+  "reader_needle": "def get_templates",
+  "status": "ok",
+  "note": "Template list comes from GET /api/providers/templates (platform.py:187)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Name (Add provider)",
+  "kind": "input",
+  "keys": [
+   "providers/<name>.json name"
+  ],
+  "route": "POST /api/providers",
+  "reader_file": "src/agent_friday/services/provider_registry.py",
+  "reader_needle": "if not p or not p.get(\"enabled\", True):",
+  "status": "ok",
+  "note": "Lower-cased client side; validated by POST /api/providers/validate first (platform.py:212)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Base URL (Add provider)",
+  "kind": "input",
+  "keys": [
+   "providers/<name>.json base_url"
+  ],
+  "route": "POST /api/providers",
+  "reader_file": "src/agent_friday/services/model_discovery.py",
+  "reader_needle": "base = (prov.get(\"base_url\") or \"\").rstrip(\"/\")",
+  "status": "ok",
+  "note": "Also consumed by the provider adapters at call time."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "API Key (Add provider)",
+  "kind": "input",
+  "keys": [],
+  "route": "POST /api/providers/<name>/key",
+  "reader_file": "src/agent_friday/routing/provider_descriptors.py",
+  "reader_needle": "return _stored_key(p) or _env_key(p)",
+  "status": "ok",
+  "note": "Posted before the descriptor is registered; stripped from the descriptor."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Classification: Cloud / Local",
+  "kind": "radio",
+  "keys": [
+   "providers/<name>.json classification"
+  ],
+  "route": "POST /api/providers",
+  "reader_file": "src/agent_friday/routing/model_router.py",
+  "reader_needle": "classification_of(prov) == \"local\"",
+  "status": "ok",
+  "note": "Local only honoured for a private base_url (classification_of in provider_descriptors.py:154); otherwise cloud."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Cancel (Add provider)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Model providers",
+  "label": "Save & Enable (Add provider)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/providers/validate then POST /api/providers",
+  "reader_file": "src/agent_friday/services/provider_registry.py",
+  "reader_needle": "if not p or not p.get(\"enabled\", True):",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Use my own Google sign-in ->",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/google/oauth/byo",
+  "reader_file": "src/agent_friday/services/google_oauth_client.py",
+  "reader_needle": "def save_byo",
+  "status": "ok",
+  "note": "Opens the walkthrough card. Present in index.html only (app.html lacks BYO)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Open this step",
+  "kind": "link",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Link only."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Copy all (permissions)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Client ID",
+  "kind": "input",
+  "keys": [],
+  "route": "POST /api/google/oauth/byo",
+  "reader_file": "src/agent_friday/services/google_oauth_client.py",
+  "reader_needle": "def active_client",
+  "status": "ok",
+  "note": "Stored encrypted, never echoed."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Client secret",
+  "kind": "input",
+  "keys": [],
+  "route": "POST /api/google/oauth/byo",
+  "reader_file": "src/agent_friday/services/google_oauth_client.py",
+  "reader_needle": "def active_client",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Save (BYO)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/google/oauth/byo",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "goc.active_client(discover=_google_client_config)",
+  "status": "ok",
+  "note": "Disabled until both fields filled. DELETE /api/google/oauth/byo exists but no UI control calls it (see Findings)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Close (BYO)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Copy (OAuth Redirect URI)",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Continue to Google",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Opens the consent popup built by POST /connect."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Not now",
+  "kind": "button",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Use my own Google sign-in instead",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/google/oauth/byo",
+  "reader_file": "src/agent_friday/services/google_oauth_client.py",
+  "reader_needle": "def save_byo",
+  "status": "ok",
+  "note": "Same as the top-level BYO button; shown only when the bundled client is active."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Reconnect",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/google/accounts/connect",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "scopes = list(GOOGLE_MULTI_SCOPES)",
+  "status": "ok",
+  "note": "Shown only for unhealthy accounts. Does not request send/modify (by design)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Reconnect with sending",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/google/accounts/connect {mailbox:true}",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "scopes.append(GMAIL_MODIFY)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Remove (account)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/google/accounts/<id>/remove",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "def remove_account",
+  "status": "ok",
+  "note": "Confirm dialog; revokes at Google best-effort and deletes the token."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Gmail / Cal / Drive pills",
+  "kind": "toggle",
+  "keys": [
+   "accounts.json services.<gmail|calendar|drive>"
+  ],
+  "route": "POST /api/google/accounts/<id>/services",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "if not r.get(\"services\", {}).get(service, True):",
+  "status": "ok",
+  "note": "Read by the account iterators that every mail/calendar/drive fetch goes through (google_accounts.py:739, 890, 1125)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Label (e.g. Personal, Work)",
+  "kind": "input",
+  "keys": [
+   "accounts.json label"
+  ],
+  "route": "POST /api/google/accounts/connect {label}",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "m[\"account_label\"] = rec.get(\"label\")",
+  "status": "ok",
+  "note": "Used as the account label on merged mail and calendar results."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "+ Add Account",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/google/accounts/connect",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "scopes = list(GOOGLE_MULTI_SCOPES)",
+  "status": "ok",
+  "note": "Returns auth_url; the pre-brief card gates opening Google."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Refresh",
+  "kind": "button",
+  "keys": [],
+  "route": "GET /api/google/accounts",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "def list_accounts",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Let Friday send mail from this account",
+  "kind": "checkbox",
+  "keys": [],
+  "route": "POST /api/google/accounts/connect {include_send}",
+  "reader_file": "src/agent_friday/services/google_accounts.py",
+  "reader_needle": "scopes.append(GMAIL_SEND)",
+  "status": "ok",
+  "note": "Per-connection and never remembered; applies to the next Add Account only."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Connect / Enable manual mode",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/content/platforms/<name>/connect",
+  "reader_file": "src/agent_friday/services/platforms/__init__.py",
+  "reader_needle": "def configure_platform",
+  "status": "ok",
+  "note": "OAuth platforms return connect_url; token platforms open the paste form. Manual mode is dead for Substack (see Findings)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Re-authenticate",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/content/platforms/<name>/connect",
+  "reader_file": "src/agent_friday/services/platforms/__init__.py",
+  "reader_needle": "def configure_platform",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Test post",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/content/platforms/<name>/test",
+  "reader_file": "src/agent_friday/routes/content_pipeline.py",
+  "reader_needle": "def content_platform_test",
+  "status": "ok",
+  "note": "Action; no state."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Disconnect",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/content/platforms/<name>",
+  "reader_file": "src/agent_friday/routes/content_pipeline.py",
+  "reader_needle": "adapter.clear_credentials()",
+  "status": "ok",
+  "note": "Confirm dialog."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Handle / Instance / App password / Access token fields",
+  "kind": "input",
+  "keys": [],
+  "route": "POST /api/content/platforms/<name>/connect",
+  "reader_file": "src/agent_friday/services/platforms/__init__.py",
+  "reader_needle": "credential_store.set_provider_key(f\"platform_{mod}\", secret_value)",
+  "status": "ok",
+  "note": "Verified live before claiming success."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Save & connect",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/content/platforms/<name>/connect",
+  "reader_file": "src/agent_friday/services/platforms/__init__.py",
+  "reader_needle": "def configure_platform",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Enable manual handoff",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/content/platforms/<name>/connect {}",
+  "reader_file": "src/agent_friday/services/platforms/substack.py",
+  "reader_needle": "def _publication_url",
+  "status": "fixed",
+  "note": "Substack handoff now takes and saves the publication address."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Pause all publishing / resume",
+  "kind": "button",
+  "keys": [
+   "platforms.json pause_all"
+  ],
+  "route": "POST /api/content/pause",
+  "reader_file": "src/agent_friday/services/platforms/__init__.py",
+  "reader_needle": "return bool(load_config().get(\"pause_all\", False))",
+  "status": "ok",
+  "note": "Second UI for the same flag: Content > Queue tab pauseAll (index.html:44086). Different surface, not Settings."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Conflict window (hours)",
+  "kind": "input",
+  "keys": [
+   "content.conflict_window_hours"
+  ],
+  "route": "POST /api/settings (via Save)",
+  "reader_file": "src/agent_friday/routes/content_pipeline.py",
+  "reader_needle": "cs[\"conflict_window_hours\"]",
+  "status": "ok",
+  "note": "Input is initialised to '2' and never loaded from the saved setting, so Save overwrites the saved value with the shown one (see Findings)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Publishing channels (window.MediaChannelsSettings -> ContentAccountsTab)",
+  "label": "Staging host (field + Save)",
+  "kind": "input+button",
+  "keys": [
+   "content.staging_base_url"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/routes/content_pipeline.py",
+  "reader_needle": "\"staging_base_url\": str(c.get(\"staging_base_url\") or \"\")",
+  "status": "fixed",
+  "note": "Prefilled from the saved value; Instagram falls back to the saved staging host."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Signing",
+  "label": "Choose a signature image",
+  "kind": "file",
+  "keys": [
+   "vault: signing/signature_image.bin"
+  ],
+  "route": "POST /api/documents/signing/image",
+  "reader_file": "src/agent_friday/services/pdf_signing.py",
+  "reader_needle": "image = _read(_IMAGE)",
+  "status": "ok",
+  "note": "Local-origin only. Read when stamping an approved signature (pdf_signing.py:343)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Signing",
+  "label": "Remove (signature image)",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/documents/signing/image",
+  "reader_file": "src/agent_friday/services/pdf_signing.py",
+  "reader_needle": "if mode == \"stamp\" and _read(_IMAGE) is None:",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Signing",
+  "label": "Choose a certificate file",
+  "kind": "file",
+  "keys": [],
+  "route": "POST /api/documents/signing/certificate (with Save)",
+  "reader_file": "src/agent_friday/services/pdf_signing.py",
+  "reader_needle": "p12 = _read(_CERT)",
+  "status": "ok",
+  "note": "Chosen file is held in a ref until Save is pressed."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Signing",
+  "label": "Certificate passphrase",
+  "kind": "input",
+  "keys": [],
+  "route": "POST /api/documents/signing/certificate",
+  "reader_file": "src/agent_friday/services/pdf_signing.py",
+  "reader_needle": "pw = (_read(_PASS) or b\"\").decode(\"utf-8\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Signing",
+  "label": "Save (certificate)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/documents/signing/certificate",
+  "reader_file": "src/agent_friday/services/pdf_signing.py",
+  "reader_needle": "p12 = _read(_CERT)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Signing",
+  "label": "Remove (certificate)",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/documents/signing/certificate",
+  "reader_file": "src/agent_friday/services/pdf_signing.py",
+  "reader_needle": "p12 = _read(_CERT)",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "General",
+  "panel": "Accounts & Keys > Muted notifications",
+  "label": "Unmute",
+  "kind": "button",
+  "keys": [
+   "settings.notification_mutes"
+  ],
+  "route": "POST /api/notifications/mute {unmute:true}",
+  "reader_file": "src/agent_friday/services/notification_policy.py",
+  "reader_needle": "def is_muted",
+  "status": "ok",
+  "note": "The only place to reverse a tray 'Mute this kind'. Mounted in the General tab in app.html, in Accounts & Keys in index.html."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Friday's browser",
+  "label": "Close (Window)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/browser/close",
+  "reader_file": "src/agent_friday/services/browser_session.py",
+  "reader_needle": "def close_session",
+  "status": "ok",
+  "note": "Only shown while the window is open."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Friday's browser",
+  "label": "Clear Friday's browser profile",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/browser/profile/clear",
+  "reader_file": "src/agent_friday/services/browser_session.py",
+  "reader_needle": "def clear_profile",
+  "status": "ok",
+  "note": "Confirm dialog."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Phone line",
+  "kind": "toggle",
+  "keys": [
+   "phone/config.json enabled"
+  ],
+  "route": "POST /api/phone/config {patch}",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "if cfg.get(\"enabled\") and config.get_secret(\"auth_token\"):",
+  "status": "ok",
+  "note": "Also gates every send (service.py:163) and starts/stops the webhook listener."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Account SID",
+  "kind": "input+button",
+  "keys": [
+   "phone/config.json account_sid"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/config.py",
+  "reader_needle": "if cfg.get(\"account_sid\") and cfg.get(\"api_key_sid\") and secret:",
+  "status": "ok",
+  "note": "Also checked against the webhook AccountSid (ingress.py:113)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "API key SID",
+  "kind": "input+button",
+  "keys": [
+   "phone/config.json api_key_sid"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/config.py",
+  "reader_needle": "if cfg.get(\"account_sid\") and cfg.get(\"api_key_sid\") and secret:",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "API key secret",
+  "kind": "input+button",
+  "keys": [
+   "phone/secrets/api_key_secret.bin"
+  ],
+  "route": "POST /api/phone/secret",
+  "reader_file": "src/agent_friday/phone/config.py",
+  "reader_needle": "secret = get_secret(\"api_key_secret\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Auth token",
+  "kind": "input+button",
+  "keys": [
+   "phone/secrets/auth_token.bin"
+  ],
+  "route": "POST /api/phone/secret",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "config.get_secret(\"auth_token\")",
+  "status": "ok",
+  "note": "Used to verify Twilio webhook signatures."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Friday's number",
+  "kind": "input+button",
+  "keys": [
+   "phone/config.json phone_number"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "if not cfg.get(\"phone_number\"):",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Your cell number",
+  "kind": "input+button",
+  "keys": [
+   "phone/config.json owner_cell"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "if target != cfg.get(\"owner_cell\"):",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Text me a code",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/phone/verify/start {method:sms}",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "def confirm_owner_cell",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Call me with a code",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/phone/verify/start {method:call}",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "def confirm_owner_cell",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "6-digit code + Confirm",
+  "kind": "input+button",
+  "keys": [
+   "phone/config.json owner_cell_verified"
+  ],
+  "route": "POST /api/phone/verify/confirm",
+  "reader_file": "src/agent_friday/phone/config.py",
+  "reader_needle": "def verified_owner_cell",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Check SMS and voice with Twilio",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/phone/check-number",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "def check_number",
+  "status": "ok",
+  "note": "Action; saves number.json which the panel displays."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Public address of the phone tunnel",
+  "kind": "input+button",
+  "keys": [
+   "phone/config.json public_base_url"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/ingress.py",
+  "reader_needle": "base = cfg.get(\"public_base_url\") or \"\"",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Point the number at Friday",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/phone/point-webhooks",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "_client().point_number_at(info[\"number_sid\"], cfg[\"public_base_url\"])",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Texting registration Status",
+  "kind": "select",
+  "keys": [
+   "phone/config.json a2p_10dlc_status"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "if cfg.get(\"a2p_10dlc_status\") != \"approved\":",
+  "status": "ok",
+  "note": "Self-reported; gates a warning on outbound texts, not delivery."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Answer my texts",
+  "kind": "toggle",
+  "keys": [
+   "phone/config.json sms_conversation"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "if not config.load().get(\"sms_conversation\"):",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Approve by text",
+  "kind": "toggle",
+  "keys": [
+   "phone/config.json sms_approvals"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "if not (cfg.get(\"enabled\") and cfg.get(\"sms_approvals\") and config.verified_owner_cell()):",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Voicemail",
+  "kind": "toggle",
+  "keys": [
+   "phone/config.json voicemail"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/ingress.py",
+  "reader_needle": "if cfg.get(\"voicemail\", True):",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Live calls from your cell (early)",
+  "kind": "toggle",
+  "keys": [
+   "phone/config.json live_calls"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/ingress.py",
+  "reader_needle": "if cfg.get(\"live_calls\") and owner and p.get(\"From\") == owner:",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Ask Twilio to forget",
+  "kind": "toggle",
+  "keys": [
+   "phone/config.json redact_after_delivery"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "if not sid or not config.load().get(\"redact_after_delivery\"):",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Greeting",
+  "kind": "input+button",
+  "keys": [
+   "phone/config.json greeting"
+  ],
+  "route": "POST /api/phone/config",
+  "reader_file": "src/agent_friday/phone/ingress.py",
+  "reader_needle": "cfg.get(\"greeting\") or config.DEFAULTS[\"greeting\"]",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Read current rates",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/phone/refresh-prices",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "def refresh_prices",
+  "status": "ok",
+  "note": "Action; the panel then shows prices.json."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Phone",
+  "label": "Send one test text to my cell",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/phone/test-sms",
+  "reader_file": "src/agent_friday/phone/service.py",
+  "reader_needle": "def request_sms",
+  "status": "ok",
+  "note": "Creates an approval card only."
+ },
+ {
+  "section": "About",
+  "panel": "About",
+  "label": "Check for new versions weekly",
+  "kind": "toggle",
+  "keys": [
+   "schedule sch_update_check.enabled"
+  ],
+  "route": "POST /api/updates/enabled",
+  "reader_file": "src/agent_friday/services/scheduler.py",
+  "reader_needle": "if not rec.get(\"enabled\", True):",
+  "status": "ok",
+  "note": "Writes the schedule record, not settings.json. Also written by onboarding ConsentFlow (index.html:48805), outside Settings."
+ },
+ {
+  "section": "About",
+  "panel": "About",
+  "label": "Check now",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/updates/check",
+  "reader_file": "src/agent_friday/services/update_check.py",
+  "reader_needle": "def run_update_check",
+  "status": "ok",
+  "note": "The only network action in the panel."
+ },
+ {
+  "section": "About",
+  "panel": "About",
+  "label": "Open the release page",
+  "kind": "link",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": "Shown only when an update is available."
+ },
+ {
+  "section": "About",
+  "panel": "About",
+  "label": "GitHub",
+  "kind": "link",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "About",
+  "panel": "About",
+  "label": "Threat model",
+  "kind": "link",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "About",
+  "panel": "About",
+  "label": "Headroom (acknowledgment link)",
+  "kind": "link",
+  "keys": [],
+  "route": "",
+  "reader_file": "",
+  "reader_needle": "",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Small edits: field + Set",
+  "kind": "input+button",
+  "keys": [
+   "codebase.seats.small_edit_seat"
+  ],
+  "route": "POST /api/codebases/<id>/seats {which:small}",
+  "reader_file": "src/agent_friday/services/codebases.py",
+  "reader_needle": "small = (rec.get(\"seats\") or {}).get(\"small_edit_seat\") or \"local\"",
+  "status": "ok",
+  "note": "seat_for returns None when no heavy seat is set (codebases.py:1186), so a non-local small seat has no effect until a Big seat exists. Handler line is in static/friday_salon.js."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Big edits: field + Set",
+  "kind": "input+button",
+  "keys": [
+   "codebase.seats.heavy_seat"
+  ],
+  "route": "POST /api/codebases/<id>/seats {which:heavy}",
+  "reader_file": "src/agent_friday/services/codebases.py",
+  "reader_needle": "heavy = (rec.get(\"seats\") or {}).get(\"heavy_seat\")",
+  "status": "ok",
+  "note": "Consumed by routes/chat.py:1382 and :2947 via seat_for_conversation."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Big edits: Clear",
+  "kind": "button",
+  "keys": [
+   "codebase.seats.heavy_seat"
+  ],
+  "route": "POST /api/codebases/<id>/seats {which:heavy, model:''}",
+  "reader_file": "src/agent_friday/services/codebases.py",
+  "reader_needle": "heavy = (rec.get(\"seats\") or {}).get(\"heavy_seat\")",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Engine: Friday / Claude's agent",
+  "kind": "button",
+  "keys": [
+   "codebase.seats.engine"
+  ],
+  "route": "POST /api/codebases/<id>/engine",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "if (rec.get(\"seats\") or {}).get(\"engine\") != \"claude_agent\":",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "your key / <name>'s key",
+  "kind": "button",
+  "keys": [
+   "codebase.key_profile"
+  ],
+  "route": "POST /api/codebases/<id>/key",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "g = _cb.guest_key_for_turn(session_ctx or {})",
+  "status": "ok",
+  "note": "routes/chat.py:1813 and :2993 copy key_profile into the turn context."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Remove (guest key)",
+  "kind": "button",
+  "keys": [],
+  "route": "DELETE /api/codebases/<id>/keys/<label>",
+  "reader_file": "src/agent_friday/services/codebases.py",
+  "reader_needle": "def guest_key_secret",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Whose key (name)",
+  "kind": "input",
+  "keys": [],
+  "route": "POST /api/codebases/<id>/keys",
+  "reader_file": "src/agent_friday/services/codebases.py",
+  "reader_needle": "def guest_key_secret",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Provider (Anthropic)",
+  "kind": "select",
+  "keys": [],
+  "route": "POST /api/codebases/<id>/keys",
+  "reader_file": "src/agent_friday/services/codebases.py",
+  "reader_needle": "def guest_key_secret",
+  "status": "ok",
+  "note": "Single option."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "The key",
+  "kind": "input",
+  "keys": [],
+  "route": "POST /api/codebases/<id>/keys",
+  "reader_file": "src/agent_friday/services/codebases.py",
+  "reader_needle": "def guest_key_secret",
+  "status": "ok",
+  "note": "Cleared from the page after posting."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Cap $ (theirs, optional)",
+  "kind": "input",
+  "keys": [],
+  "route": "POST /api/codebases/<id>/keys",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "over = _cb.guest_key_over_cap(g[\"codebase\"], g[\"label\"])",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > The Salon (window.FridaySalonSettings, static/friday_salon.js)",
+  "label": "Add (guest key)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/codebases/<id>/keys",
+  "reader_file": "src/agent_friday/services/agent.py",
+  "reader_needle": "g = _cb.guest_key_for_turn(session_ctx or {})",
+  "status": "ok",
+  "note": ""
+ }
+]
