@@ -132,18 +132,8 @@ _LOCAL_FIRST_MODES = ("local_only", "local_preferred")
 
 
 def _routing_mode() -> str:
-    try:
-        from agent_friday.services import local_only_guard as _guard
-        if _guard.is_active():
-            return "local_only"
-    except Exception:
-        return "local_only"
-    try:
-        from agent_friday import core
-        return str(((core._load_settings() or {}).get("model_routing") or {})
-                   .get("mode") or "smart").lower()
-    except Exception:
-        return "local_only"
+    from agent_friday.services.local_only_guard import routing_mode
+    return routing_mode()
 
 
 def _local_only_withheld(tool: str, what: str, field: str, nbytes: int,

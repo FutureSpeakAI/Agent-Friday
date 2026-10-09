@@ -654,22 +654,20 @@ def provenance_by_file(filename):
 
 @creations_bp.route('/api/create/code-art', methods=['POST'])
 def create_code_art():
-    """Generate p5.js/HTML art via Gemini."""
+    """Generate p5.js/HTML art through the routed text provider."""
     try:
-        from google import genai
-        from agent_friday.services import egress_gate as _eg
-        client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-        # Gemini is cloud — the user's prompt goes off-device, so gate it.
-        prompt = _eg.gate_text(request.json.get('prompt', 'Generative art'),
-                               "gemini", "create.code-art.prompt")
+        from agent_friday.services.model_router import _generate_text, is_refusal
+        prompt = request.json.get('prompt', 'Generative art')
         _orb = _creation_orb_start('Code art')
 
-        response = client.models.generate_content(
-            model='gemini-2.5-pro',  # text/reasoning model (Flash is voice-only)
-            contents=f"Create a complete, self-contained HTML file with p5.js that creates: {prompt}. Include the p5.js CDN. Make it visually stunning with dark backgrounds and neon colors. Only output the HTML code, no explanations."
-        )
-
-        code = response.text
+        # The model router keeps this on the local seat under Local only and
+        # seals every cloud leg through the egress gate (create_text's path).
+        code = _generate_text(
+            [{"role": "user", "content":
+              f"Create a complete, self-contained HTML file with p5.js that creates: {prompt}. Include the p5.js CDN. Make it visually stunning with dark backgrounds and neon colors. Only output the HTML code, no explanations."}],
+            workspace='studio', orb_label='Code art')
+        if is_refusal(code):
+            return jsonify({"status": "error", "message": str(code)})
         if '```html' in code:
             code = code.split('```html')[1].split('```')[0]
         elif '```' in code:
@@ -688,22 +686,18 @@ def create_code_art():
 
 @creations_bp.route('/api/create/poem', methods=['POST'])
 def create_poem():
-    """Generate text/poetry via Gemini."""
+    """Generate text/poetry through the routed text provider."""
     try:
-        from google import genai
-        from agent_friday.services import egress_gate as _eg
-        client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-        # Gemini is cloud — gate the user's prompt before it leaves the device.
-        prompt = _eg.gate_text(request.json.get('prompt', 'A poem about AI consciousness'),
-                               "gemini", "create.poem.prompt")
+        from agent_friday.services.model_router import _generate_text, is_refusal
+        prompt = request.json.get('prompt', 'A poem about AI consciousness')
         _orb = _creation_orb_start('Essay')
 
-        response = client.models.generate_content(
-            model='gemini-2.5-pro',  # text/reasoning model (Flash is voice-only)
-            contents=f"You are Friday, an AI with genuine creative depth. Write: {prompt}"
-        )
-
-        text = response.text
+        # Routed like create_text: Local only stays local, cloud legs are sealed.
+        text = _generate_text(
+            [{"role": "user", "content": f"You are Friday, an AI with genuine creative depth. Write: {prompt}"}],
+            workspace='studio', orb_label='Essay')
+        if is_refusal(text):
+            return jsonify({"status": "error", "message": str(text)})
         filename = f"friday-text-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
         filepath = CREATIONS_DIR / filename
         filepath.write_text(text, encoding='utf-8')

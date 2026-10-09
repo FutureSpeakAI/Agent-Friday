@@ -748,6 +748,20 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     except Exception as _li_err:                 # never break the cloud path
         log.warning("local image dispatch skipped: %s", _li_err)
 
+    # Every branch below sends the prompt to a cloud provider (Higgsfield,
+    # kie.ai, Gemini). Local only never reaches one: with no on-device image
+    # model installed, say so rather than send the prompt off the machine.
+    from agent_friday.services.local_only_guard import routing_mode as _routing_mode
+    if _routing_mode() == "local_only":
+        return {
+            "status": "unavailable",
+            "message": ("Image generation is not done: Local only is on and no "
+                        "on-device image model is installed, so the prompt was "
+                        "not sent to a cloud provider. Install a local image "
+                        "model in Settings → Models, or switch routing to "
+                        "allow the cloud."),
+        }
+
     # ── Higgsfield-seated image models. ───────────────────────────────────
     # Checked BEFORE `is_available()` for the same reason the local branch is:
     # that function asks whether the *Gemini* client is configured, and a
