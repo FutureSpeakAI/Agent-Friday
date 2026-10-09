@@ -3573,6 +3573,8 @@ function PodcastBadges({ ep }) {
     sc.ok === true ? pill('✓ script checked', PODCAST_C.ok, 'Checked before it was spoken: ' + (sc.checks || []).join(', ') + '.') : null,
     sc.ok === false ? pill('⚠ script: ' + (sc.problems || []).length + ' problem' + ((sc.problems || []).length === 1 ? '' : 's'), PODCAST_C.error,
       'The script check found problems the writer could not fix:\n' + (sc.problems || []).map(p => '• ' + p.message).join('\n')) : null,
+    (ep.left_out || []).length ? pill((ep.left_out || []).length + ' left out', PODCAST_C.dim,
+      'Stories left out because they did not pass the script check:\n' + ep.left_out.map(x => '• ' + x.headline + ' — ' + x.reason).join('\n')) : null,
     chk.ok === true ? pill('✓ audio matches script', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script. This checks the audio, not the writing.') : null,
     chk.ok === false ? pill('⚠ audio differs from script', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
     ep.mode === 'data' ? pill('📊 data mode', PODCAST_C.accent, 'Every number is from a computation over your data') : null);
@@ -3955,6 +3957,17 @@ function PodcastButton({ sources, title, compact, className }) {
     style: className ? undefined : { fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.font }
   }, label);
 }
+// A reason the owner reads: whole words, cut between items with an ellipsis, never inside a word.
+function podcastReason(msg, max) {
+  const t = String(msg || '').replace(/\s+/g, ' ').trim();
+  max = max || 260;
+  if (t.length <= max) return t;
+  let cut = t.slice(0, max - 1);
+  if (t.charAt(max - 1) !== ' ') cut = cut.replace(/\s+\S*$/, '');
+  const stop = Math.max(cut.lastIndexOf('; '), cut.lastIndexOf('. '));
+  if (stop > max / 2) cut = cut.slice(0, stop + 1);
+  return cut.replace(/[\s,;:–—"'(]+$/, '') + '…';
+}
 // What a run's episode is doing, in plain words: progress while it is made, a
 // reason in a sentence while it waits (never memory figures), and whether it failed.
 function podcastStatusText(ep) {
@@ -3963,7 +3976,7 @@ function podcastStatusText(ep) {
   if (st === 'writing') return 'Writing today’s episode…' + (pr && pr.stage === 'writing' ? ' ' + pr.done + ' of ' + pr.of + ' parts' : '');
   if (st === 'speaking') return 'Making today’s episode…' + (pr && pr.stage === 'speaking' ? ' ' + pr.done + ' of ' + pr.of + ' segments' : '');
   if (st === 'checking') return 'Checking today’s episode…';
-  if (st === 'failed') return 'Today’s episode could not be made' + (((ep.error || {}).message) ? ': ' + String(ep.error.message).slice(0, 140) : '.');
+  if (st === 'failed') return 'Today’s episode could not be made' + (((ep.error || {}).message) ? ': ' + podcastReason(ep.error.message) : '.');
   const why = String((ep && (ep.waiting_reason || '')) || '');
   // A wait is said plainly; a reason carrying memory figures is an internal one.
   if (st === 'waiting' && why && !/\d+(\.\d+)?\s*[GM]B/i.test(why)) return 'Waiting to make today’s episode: ' + why;

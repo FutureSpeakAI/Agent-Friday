@@ -691,8 +691,9 @@ def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool =
                 or len(_words(window)) < MIN_LEDE_WORDS:
             missing.append("what happened")
         if missing:
-            out.append(_p("no_lede", "\"%s\" is first mentioned without a spoken lede; it lacks %s."
-                          % (s["title"][:90], ", ".join(missing)), i, s["sid"]))
+            out.append(dict(_p("no_lede", "\"%s\" is first mentioned without a spoken lede; it lacks %s."
+                               % (s["title"][:90], ", ".join(missing)), i, s["sid"]),
+                            title=s["title"], lacks=list(missing)))
     return out
 
 
@@ -991,6 +992,51 @@ REASONING_RE = re.compile(
 
 HARD_CODES = frozenset({"reasoning_leak", "duplicate_line", "misattributed", "story_split",
                         "close_recap", "safety_threaded", "no_lede"})
+
+
+def cut_at_boundary(text: str, limit: int) -> str:
+    """`text` whole when it fits in `limit` characters, else cut at the last
+    sentence end (or word end) that fits, with an ellipsis. Never mid-word."""
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    room = text[:max(0, limit - 1)]          # one character stays for the ellipsis
+    if text[len(room):len(room) + 1] != " ":        # the cut falls inside a word: drop it
+        room = room.rsplit(" ", 1)[0] if " " in room else ""
+    end = max(room.rfind(". "), room.rfind("? "), room.rfind("! "))
+    if end >= limit // 2:
+        return room[:end + 1] + " …"
+    return room.rstrip(" ,;:-–—\"'(") + "…"
+
+
+def lacks_in_words(lacks: list[str]) -> str:
+    """What a lede is missing, as a phrase: "the outlet (The Verge) named aloud and what happened"."""
+    plain = []
+    for m in lacks:
+        found = re.match(r"the outlet, named aloud \((.*)\)$", m)
+        plain.append("the outlet (%s) named aloud" % found.group(1) if found else m)
+    return plain[0] if len(plain) == 1 else ", ".join(plain[:-1]) + " and " + plain[-1]
+
+
+def plain_problem(p: dict, *, title_limit: int = 60) -> str:
+    """One problem in plain words for the owner: a story by its headline and
+    what its first line lacks. The full problem stays in the episode's details."""
+    if p.get("lacks"):
+        return "\"%s\" (its first line lacks %s)" % (
+            cut_at_boundary(p.get("title") or "a story", title_limit), lacks_in_words(p["lacks"]))
+    return cut_at_boundary(p.get("message") or p.get("code") or "a problem", 110)
+
+
+def failure_message(problems: list[dict], *, limit: int = 240) -> str:
+    """Why the script was not spoken, in a sentence the owner can read whole:
+    complete problems, as many as fit, then a count of the rest."""
+    text = "The script failed the script check and was not spoken: "
+    items = [plain_problem(p) for p in problems]
+    for k, item in enumerate(items):
+        if k and len(text) + len(item) + 24 > limit:
+            return text.rstrip("; ") + "; and %d more." % (len(items) - k)
+        text += item + ("; " if k < len(items) - 1 else "")
+    return text if text.endswith((".", "!", "?", "…")) else text + "."
 
 
 def reasoning_problems(lines: list[dict]) -> list[dict]:
