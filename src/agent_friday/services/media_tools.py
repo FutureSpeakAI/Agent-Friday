@@ -245,9 +245,8 @@ def _tool_inspect_image(inp):
     if mode in _LOCAL_FIRST_MODES:
         text, why = _describe_locally([(data, mime)], question)
         if text is not None:
-            _record_media_binary_egress(
-                "inspect_image.image", len(data), action="allow",
-                reason="described on-device; nothing left the machine")
+            # Described on this machine: nothing left it, so there is no
+            # egress to record.
             return "[%s | %.1f KB | local]\n%s" % (
                 path.name, len(data) / 1024, text.strip())
         if mode == "local_only":
@@ -305,9 +304,8 @@ def _inspect_video_frame(path, inp):
     if mode in _LOCAL_FIRST_MODES:
         text, why = _describe_locally([(f, "image/png") for f in frames], question)
         if text is not None:
-            _record_media_binary_egress(
-                "inspect_image.video_frames", _frame_bytes, action="allow",
-                reason="described on-device; nothing left the machine")
+            # Described on this machine: nothing left it, so there is no
+            # egress to record.
             return "[%s | %.1fs video, %d frames sampled | local]\n%s" % (
                 path.name, dur, len(frames), text.strip())
         if mode == "local_only":

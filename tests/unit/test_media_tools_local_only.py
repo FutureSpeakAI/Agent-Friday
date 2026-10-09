@@ -99,7 +99,7 @@ def test_local_only_image_uses_the_local_seat_never_the_cloud(
     assert cloud_calls == [], "an image reached Gemini under Local only"
     assert "a red square (local)" in out
     assert seat and seat[0][1] == "what colour?"
-    assert ("inspect_image.image", "allow") in ledger
+    assert not any(f == "inspect_image.image" for f, _a in ledger)  # nothing left the machine
 
 
 def test_local_only_image_without_a_seat_refuses_honestly(
@@ -173,7 +173,7 @@ def test_local_only_video_frames_stay_local(
     assert cloud_calls == [], "video frames reached Gemini under Local only"
     assert len(seat) == 3
     assert "3 frames sampled" in out and "a red square (local)" in out
-    assert ("inspect_image.video_frames", "allow") in ledger
+    assert not any(f == "inspect_image.video_frames" for f, _a in ledger)  # nothing left the machine
 
 
 def test_local_only_video_frames_without_a_seat_refuse(
