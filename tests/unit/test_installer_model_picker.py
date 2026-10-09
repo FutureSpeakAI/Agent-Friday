@@ -280,8 +280,9 @@ def test_next_is_blocked_until_both_seats_and_the_consent_are_chosen():
 
 
 def test_the_silent_default_downloads_nothing():
-    start = ISS.index("if WizardSilent then")
-    block = ISS[start:ISS.index("if CloudCheck.Checked then Exit;", start)]
+    # The branch that records a silent install's choices, not the model page's early exit.
+    start = ISS.index("// Command line only.")
+    block = ISS[start:ISS.index("end", ISS.index("if ChosenCloud then", start))]
     assert "ModelsCloud|0" in block and "ConsentDownload|0" in block
     assert "(not ChosenConsent)" in block, "models without consent fall back to cloud"
 
