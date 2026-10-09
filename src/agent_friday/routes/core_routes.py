@@ -1143,20 +1143,29 @@ def _system_top_processes():
     except ImportError:
         psutil = None
     if psutil is not None:
-        rows = []
-        for p in psutil.process_iter(["name", "cpu_times", "memory_info"]):
+        # CPU time is one cheap call per process. Memory is read only for the
+        # eight that are shown: asking every process for it (hundreds on a
+        # busy machine) cost seconds of CPU.
+        ranked = []
+        for p in psutil.process_iter(["name", "cpu_times"]):
             try:
                 t = p.info.get("cpu_times")
-                m = p.info.get("memory_info")
                 if t is None or p.pid == 0:    # pid 0 is idle time, not a program
                     continue
-                rows.append({"Name": p.info.get("name") or "",
-                             "CPU_s": round(float(t.user) + float(t.system), 1),
-                             "MemMB": round((m.rss if m else 0) / 2**20, 1)})
+                ranked.append((float(t.user) + float(t.system), p))
             except (psutil.Error, OSError):
                 continue
-        rows.sort(key=lambda r: r["CPU_s"], reverse=True)
-        return rows[:8]
+        ranked.sort(key=lambda r: r[0], reverse=True)
+        rows = []
+        for cpu_s, p in ranked[:8]:
+            try:
+                rss = p.memory_info().rss
+            except (psutil.Error, OSError):
+                rss = 0
+            rows.append({"Name": p.info.get("name") or "",
+                         "CPU_s": round(cpu_s, 1),
+                         "MemMB": round(rss / 2**20, 1)})
+        return rows
     proc_cmd = 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Name,@{N="CPU_s";E={[math]::Round($_.CPU,1)}},@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'
     proc_result = subprocess.run(['powershell', '-Command', proc_cmd], capture_output=True, text=True, timeout=10, creationflags=_POPEN_FLAGS)
     procs = json.loads(proc_result.stdout) if proc_result.stdout.strip() else []
