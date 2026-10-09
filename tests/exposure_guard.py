@@ -18,6 +18,7 @@ tests/unit/test_no_public_exposure_under_tests.py can prove they are live.
 """
 from __future__ import annotations
 
+import ntpath
 import os
 import socket
 import subprocess
@@ -27,8 +28,8 @@ class PublicExposureRefused(RuntimeError):
     """A test tried to start a tunnel or bind a public host."""
 
 
-#: Binaries that publish a local port to the internet. Matched by basename,
-#: case-insensitively, with or without .exe, in argv lists and shell strings.
+#: Binaries that publish a local port to the internet. Matched by basename
+#: (either path separator), case-insensitively, with or without .exe, in argv lists and shell strings.
 TUNNEL_BINARIES = frozenset({
     "cloudflared", "ngrok", "caddy", "tailscale", "frpc", "localtunnel", "lt",
     "bore", "zrok", "pagekite", "expose", "loophole",
@@ -49,7 +50,10 @@ def names_in(argv) -> set:
             return set()
     out = set()
     for a in parts:
-        base = os.path.basename(str(a)).lower()
+        # ntpath splits on both "\\" and "/", so a Windows-style path naming a
+        # tunnel binary is caught on a POSIX runner too, where os.path would
+        # take the whole string for one file name.
+        base = ntpath.basename(str(a)).lower()
         if base.endswith(".exe"):
             base = base[:-4]
         out.add(base)

@@ -12,6 +12,8 @@ keep the seats, because reloading a 27B costs the better part of a minute and
 nobody asked for the memory back (P-BRAIN-SEAT). Only a quit releases them.
 """
 import json
+import sys
+
 import pytest
 
 ra = pytest.importorskip("agent_friday.services.residency_arbiter")
@@ -137,6 +139,16 @@ def test_no_arbiter_is_reported_not_crashed(settings, receipts, monkeypatch):
 
 # ── The wiring ─────────────────────────────────────────────────────────────
 
+#: friday_tray imports pystray, which pyproject declares for win32 only and
+#: whose import selects an OS tray backend a headless Linux runner lacks. Only
+#: the two tests that read the tray's source need it; on Windows the import
+#: still runs for real, so a broken tray fails both Windows legs.
+needs_windows_tray = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="friday_tray is a Windows-only tray app (pystray is win32-only)")
+
+
+@needs_windows_tray
 def test_the_tray_quit_releases_before_it_stops_the_server():
     """Order matters: stop_server terminates the process, and on Windows a
     terminated process runs no atexit handler, so asking afterwards asks
@@ -149,6 +161,7 @@ def test_the_tray_quit_releases_before_it_stops_the_server():
         "it has to be released BEFORE the server is terminated")
 
 
+@needs_windows_tray
 def test_the_tray_restart_does_not_release():
     import inspect
     from agent_friday import friday_tray
