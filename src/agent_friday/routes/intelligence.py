@@ -434,6 +434,16 @@ def reset_ollama_probe_state_for_tests():
     _OLLAMA_CACHE = (0.0, None)
 
 
+#: One dial at a time. Every caller that arrives while a probe is out waits for
+#: it and reads its verdict, so a burst of requests dials a dead daemon once.
+_OLLAMA_PROBE_LOCK = threading.Lock()
+
+#: A loopback listener accepts in well under a millisecond, so a connect that
+#: has not completed in this long is a closed port (which Windows refuses only
+#: after ~2 s). The read timeout is the generous one.
+_OLLAMA_CONNECT_TIMEOUT_S = 0.5
+
+
 def _ollama_sizes():
     """On-disk size per local model — the basis for the wake estimate.
 
@@ -441,32 +451,45 @@ def _ollama_sizes():
     longer, because a failure is the expensive one.
     """
     global _OLLAMA_CACHE
-    now = time.time()
-    stamp, hit = _OLLAMA_CACHE
-    if hit is not None and (now - stamp) < _OLLAMA_OK_TTL_S:
-        return hit
-    if hit is None and stamp and (now - stamp) < _OLLAMA_DOWN_BACKOFF_S:
-        # Known down, recently. Answer without touching the socket.
-        return {}
-    # The daemon address is the model_routing.ollama_url setting, the same
-    # one dispatch uses; local_call.ollama_url() reads it and never raises.
-    from agent_friday.services.local_call import ollama_url
-    host = ollama_url()
-    sizes = {}
-    try:
-        import requests
-        r = requests.get(f"{host.rstrip('/')}/api/tags", timeout=3)
-        for m in (r.json() or {}).get("models", []):
-            if m.get("name"):
-                sizes[m["name"]] = int(m.get("size") or 0)
-    except Exception:
-        # Record the failure, not an empty success: an empty dict cached as a
-        # hit would look like "Ollama is running and has no models", which is a
-        # different and wronger thing to display.
-        _OLLAMA_CACHE = (now, None)
-        return {}
-    _OLLAMA_CACHE = (now, sizes)
-    return sizes
+
+    def _cached():
+        now = time.time()
+        stamp, hit = _OLLAMA_CACHE
+        if hit is not None and (now - stamp) < _OLLAMA_OK_TTL_S:
+            return hit
+        if hit is None and stamp and (now - stamp) < _OLLAMA_DOWN_BACKOFF_S:
+            # Known down, recently. Answer without touching the socket.
+            return {}
+        return None
+
+    got = _cached()
+    if got is not None:
+        return got
+    with _OLLAMA_PROBE_LOCK:
+        got = _cached()          # the caller ahead of us may have just answered
+        if got is not None:
+            return got
+        now = time.time()
+        # The daemon address is the model_routing.ollama_url setting, the same
+        # one dispatch uses; local_call.ollama_url() reads it and never raises.
+        from agent_friday.services.local_call import ollama_url
+        host = ollama_url()
+        sizes = {}
+        try:
+            import requests
+            r = requests.get(f"{host.rstrip('/')}/api/tags",
+                             timeout=(_OLLAMA_CONNECT_TIMEOUT_S, 3))
+            for m in (r.json() or {}).get("models", []):
+                if m.get("name"):
+                    sizes[m["name"]] = int(m.get("size") or 0)
+        except Exception:
+            # Record the failure, not an empty success: an empty dict cached as
+            # a hit would look like "Ollama is running and has no models", which
+            # is a different and wronger thing to display.
+            _OLLAMA_CACHE = (now, None)
+            return {}
+        _OLLAMA_CACHE = (now, sizes)
+        return sizes
 
 
 # Measured on this class of machine: an NVMe-resident weight file reaches VRAM
@@ -1095,7 +1118,7 @@ def api_intelligence():
 # save changes settings.json, which is part of the card's key, so a pick in
 # Settings shows on the very next read.
 CARD_FRESH_S = 15.0
-CARD_WAIT_S = 45.0
+CARD_WAIT_S = 20.0
 _card_lock = threading.Lock()
 _card: dict = {"payload": None, "at": 0.0, "key": None, "building": None}
 

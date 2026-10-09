@@ -165,7 +165,10 @@ def check_credential_store() -> Tuple[bool, str]:
     canary_path = core.FRIDAY_DIR / "security" / ".health_check_canary"
     canary_value = b"friday-health-check-canary"
     try:
-        method = cs.write_secret(canary_path, canary_value)
+        # The canary holds a constant and is deleted below; the round trip is
+        # what is being proved, and hardening it would start two icacls
+        # processes on every health computation.
+        method = cs.write_secret(canary_path, canary_value, harden=False)
         readback = cs.read_secret(canary_path)
         if readback != canary_value:
             return False, "credential store round trip returned different bytes than were written"

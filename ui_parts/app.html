@@ -392,6 +392,93 @@ if (typeof document !== 'undefined') {
   if (window.__FRIDAY_STANDALONE__) {/* one workspace, nothing else to warm */} else if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
 }
 // ── end panel data cache ──────────────────────────────────────────────────
+// ── Poll guard ────────────────────────────────────────────────────────────
+// The tray, the orbs, the task list and the recording indicator each poll
+// /api/processes, /api/tasks or /api/meetings/status on a timer of their own
+// (1.5 s to 3 s), and each timer starts the next request whether or not the
+// last one has come back. While the server answers slowly the requests pile
+// up, and every one is work it does for a page that has stopped waiting. So:
+// one request per path at a time, with every caller that arrives meanwhile
+// sharing its answer; and after an answer that took longer than SLOW_MS the
+// path rests for as long as that answer took (at most REST_MAX_MS). During the
+// rest a caller gets the previous answer marked `X-Friday-Stale: 1` while it
+// is under STALE_MAX_MS old, and a failed fetch after that, which these
+// pollers already show as "reconnecting".
+const FRIDAY_POLLED_PATHS = /^\/api\/(?:processes|tasks|meetings\/status)$/;
+(function installPollGuard() {
+  if (window.__fridayPollGuard) return;
+  const rawFetch = window.fetch.bind(window);
+  const SLOW_MS = 1500, REST_MAX_MS = 30000, STALE_MAX_MS = 20000;
+  const flights = new Map(); // path -> Promise<snap>
+  const lastGood = new Map(); // path -> {at, snap}
+  const restUntil = new Map(); // path -> ms
+  const stats = {
+    shared: 0,
+    rested: 0,
+    served_stale: 0
+  };
+  const toResponse = (snap, stale) => new Response(snap.status === 204 || snap.status === 304 ? null : snap.body, {
+    status: snap.status,
+    statusText: snap.statusText,
+    headers: Object.assign({
+      'Content-Type': snap.type || 'application/json'
+    }, stale ? {
+      'X-Friday-Stale': '1'
+    } : {})
+  });
+  const read = (path, input, init) => {
+    const t0 = Date.now();
+    const p = rawFetch(input, init).then(r => r.text().then(body => ({
+      status: r.status,
+      statusText: r.statusText,
+      type: r.headers.get('content-type') || '',
+      body
+    }))).then(snap => {
+      const took = Date.now() - t0;
+      if (snap.status === 200) lastGood.set(path, {
+        at: Date.now(),
+        snap
+      });
+      if (took > SLOW_MS) restUntil.set(path, Date.now() + Math.min(took, REST_MAX_MS));else restUntil.delete(path);
+      return snap;
+    }).finally(() => {
+      if (flights.get(path) === p) flights.delete(path);
+    });
+    flights.set(path, p);
+    return p;
+  };
+  window.fetch = function (input, init) {
+    if (typeof input !== 'string') return rawFetch(input, init);
+    let u;
+    try {
+      u = new URL(input, window.location.href);
+    } catch (e) {
+      return rawFetch(input, init);
+    }
+    if (u.origin !== window.location.origin || u.search || !FRIDAY_POLLED_PATHS.test(u.pathname)) return rawFetch(input, init);
+    if (init && ((init.method || 'GET').toUpperCase() !== 'GET' || init.signal)) return rawFetch(input, init);
+    const path = u.pathname;
+    if (flights.has(path)) {
+      stats.shared++;
+      return flights.get(path).then(s => toResponse(s));
+    }
+    if ((restUntil.get(path) || 0) > Date.now()) {
+      stats.rested++;
+      const good = lastGood.get(path);
+      if (good && Date.now() - good.at <= STALE_MAX_MS) {
+        stats.served_stale++;
+        return Promise.resolve(toResponse(good.snap, true));
+      }
+      return Promise.reject(new TypeError('Failed to fetch'));
+    }
+    return read(path, input, init).then(s => toResponse(s));
+  };
+  window.__fridayPollGuard = {
+    stats,
+    flights: () => flights.size
+  };
+})();
+// ── end poll guard ────────────────────────────────────────────────────────
 // The dock's workspaces, each with its name, icon, group, accent, one-line
 // description and the other words people use for it, come from ONE registry:
 // static/workspace_registry.js, loaded in the head, the same list the server's

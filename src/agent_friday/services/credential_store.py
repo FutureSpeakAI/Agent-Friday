@@ -267,11 +267,15 @@ def unprotect(blob: bytes) -> bytes:
     return blob
 
 
-def write_secret(path: Path, data: bytes) -> str:
+def write_secret(path: Path, data: bytes, *, harden: bool = True) -> str:
     """Atomically write an encrypted secret to `path`, hardening its permissions.
 
     Returns the protection method used. The plaintext never touches disk
     unencrypted (the temp file holds the already-protected blob).
+
+    ``harden=False`` skips the permission change, which on Windows is two
+    ``icacls`` launches. It is for a file that exists for the length of one
+    round trip and holds nothing (the health check's canary), never a secret.
 
     `protect()` is called before anything touches `path` (including creating
     its parent directory) so that a fail-closed raise (nothing can encrypt)
@@ -283,9 +287,11 @@ def write_secret(path: Path, data: bytes) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes(blob)
-    harden_permissions(tmp)
+    if harden:
+        harden_permissions(tmp)
     tmp.replace(path)
-    harden_permissions(path)
+    if harden:
+        harden_permissions(path)
     return method
 
 

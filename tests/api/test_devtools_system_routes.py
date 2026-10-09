@@ -1096,11 +1096,16 @@ class TestSystemInfo:
         # With mocked subprocess stdout="", json.loads("") fails → empty lists
         assert "disks" in data or "status" in data
 
-    def test_powershell_called_not_executed(self, client, _block_subprocess):
-        """Confirm a powershell command was recorded (not executed)."""
-        client.get("/api/system")
+    def test_no_powershell_is_started(self, client, _block_subprocess):
+        """Disks and the busiest processes are read in-process (psutil). A
+        PowerShell launch costs a second of CPU on a quiet machine and several
+        times that on a loaded one, and this route is polled."""
+        from agent_friday.services import swr_cache
+        swr_cache.invalidate("system.processes")
+        data = client.get("/api/system").get_json()
         cmds = [c["cmd"] for c in _block_subprocess.calls if isinstance(c.get("cmd"), list)]
-        assert any("powershell" in str(cmd).lower() for cmd in cmds)
+        assert not any("powershell" in str(cmd).lower() for cmd in cmds)
+        assert isinstance(data.get("processes"), list) and data["processes"]
 
 
 class TestHealth:

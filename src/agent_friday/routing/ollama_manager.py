@@ -4,6 +4,7 @@ Singleton, lazy-init, thread-safe.
 """
 
 import json
+import socket
 import subprocess
 import sys
 import threading
@@ -27,8 +28,27 @@ DEFAULT_NUM_CTX = 8192
 # long after the work is done.
 DEFAULT_KEEP_ALIVE = "5m"
 
+#: A request thread that finds no liveness answer at all waits this long for
+#: the first probe. A daemon that is up answers in milliseconds; one that is
+#: not up refuses a loopback connection only after ~2 s on Windows (~4 s for
+#: ``localhost``, which resolves to ::1 and 127.0.0.1), so a request must
+#: never wait that out. It reports "not reachable" and the probe finishes
+#: behind it.
+REQUEST_PROBE_WAIT_S = 0.6
+#: Outside a request (a worker, the CLI) the caller may wait for the truth.
+BACKGROUND_PROBE_WAIT_S = 8.0
+
 _instance = None
 _lock = threading.Lock()
+
+
+def _in_request() -> bool:
+    """True while this thread is serving an HTTP request."""
+    try:
+        from flask import has_request_context
+        return bool(has_request_context())
+    except Exception:
+        return False
 
 
 def get_manager(base_url="http://localhost:11434"):
@@ -57,14 +77,33 @@ class OllamaManager:
         # daemon up/down flaps slower than the inventory changes.
         self._models_ttl = 5
         self._running_ttl = 5
+        # One liveness probe at a time, shared by every caller.
+        self._probe_lock = threading.Lock()
+        self._probe_event = None
+
+    def _fail_fast(self):
+        """Refuse to open a connection on a request thread to a daemon that is
+        not known to be up.
+
+        A refused loopback connection costs seconds on Windows. A request that
+        pays it ties up one of the server's workers, and the polled routes
+        multiply that by every open page. The liveness answer is cached and
+        refreshed behind the request (``is_available``), so a request asks that
+        instead of dialling. Outside a request nothing changes.
+        """
+        if _in_request() and not self.is_available():
+            raise urllib.error.URLError(
+                "the Ollama daemon is not reachable right now")
 
     def _get(self, path, timeout=5):
+        self._fail_fast()
         url = f"{self.base_url}{path}"
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def _post(self, path, body, timeout=30):
+        self._fail_fast()
         url = f"{self.base_url}{path}"
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
@@ -90,6 +129,7 @@ class OllamaManager:
                 e.headers, None) from None
 
     def _post_stream(self, path, body, timeout=600):
+        self._fail_fast()
         url = f"{self.base_url}{path}"
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
@@ -108,19 +148,61 @@ class OllamaManager:
     # ── Public API ──────────────────────────────────────────────
 
     def is_available(self):
+        """Is the daemon answering?
+
+        The answer is cached for ``_cache_ttl`` seconds and probed by ONE
+        background thread no matter how many callers ask. A caller serving an
+        HTTP request never waits out a refused connection: it gets the last
+        answer at once (a stale one triggers a refresh behind it), or, with
+        no answer yet, waits ``REQUEST_PROBE_WAIT_S`` and reports False
+        without caching that. Other callers wait for the probe.
+        """
         now = time.time()
         if self._available is not None and (now - self._available_ts) < self._cache_ttl:
             return self._available
-        try:
-            url = f"{self.base_url}/api/tags"
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=3):
-                pass
-            self._available = True
-        except Exception:
-            self._available = False
-        self._available_ts = now
+        in_request = _in_request()
+        event = self._start_probe()
+        if in_request and self._available is not None:
+            return self._available
+        event.wait(REQUEST_PROBE_WAIT_S if in_request else BACKGROUND_PROBE_WAIT_S)
+        return bool(self._available)
+
+    def peek_available(self):
+        """The last liveness answer, never waiting: True, False, or None when
+        nothing has been learned yet. A stale or missing answer starts the
+        refresh behind the caller."""
+        now = time.time()
+        if self._available is None or (now - self._available_ts) >= self._cache_ttl:
+            self._start_probe()
         return self._available
+
+    def _start_probe(self):
+        """Join the probe in flight, or start one. Returns its completion event."""
+        with self._probe_lock:
+            event = self._probe_event
+            if event is not None:
+                return event
+            event = self._probe_event = threading.Event()
+        threading.Thread(target=self._probe, args=(event,), daemon=True,
+                         name="ollama-liveness").start()
+        return event
+
+    def _probe(self, event):
+        try:
+            try:
+                url = f"{self.base_url}/api/tags"
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=3):
+                    pass
+                up = True
+            except Exception:
+                up = False
+            self._available = up
+            self._available_ts = time.time()
+        finally:
+            with self._probe_lock:
+                self._probe_event = None
+            event.set()
 
     def list_models(self):
         now = time.time()
@@ -541,5 +623,6 @@ class OllamaManager:
 
     def invalidate_cache(self):
         self._available = None
+        self._available_ts = 0
         self._models_cache = None
         self._running_cache = None

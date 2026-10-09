@@ -1130,9 +1130,42 @@ def _system_disks():
 
 
 def _system_top_processes():
-    """Top processes by CPU time. Reading CPU time for every process takes
-    ~1.4 s on Windows however it is asked for, so callers go through the
-    stale-while-revalidate cache."""
+    """Top processes by CPU time, read in-process with psutil.
+
+    The PowerShell ``Get-Process`` this replaces cost a process launch and
+    about a second of CPU on a quiet machine, and several times that on a
+    loaded 4-core one; the cache behind the route only spaced those launches
+    out. PowerShell remains the fallback where psutil is not installed. Either
+    way callers go through the stale-while-revalidate cache.
+    """
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
+    if psutil is not None:
+        # CPU time is one cheap call per process. Memory is read only for the
+        # eight that are shown: asking every process for it (hundreds on a
+        # busy machine) cost seconds of CPU.
+        ranked = []
+        for p in psutil.process_iter(["name", "cpu_times"]):
+            try:
+                t = p.info.get("cpu_times")
+                if t is None or p.pid == 0:    # pid 0 is idle time, not a program
+                    continue
+                ranked.append((float(t.user) + float(t.system), p))
+            except (psutil.Error, OSError):
+                continue
+        ranked.sort(key=lambda r: r[0], reverse=True)
+        rows = []
+        for cpu_s, p in ranked[:8]:
+            try:
+                rss = p.memory_info().rss
+            except (psutil.Error, OSError):
+                rss = 0
+            rows.append({"Name": p.info.get("name") or "",
+                         "CPU_s": round(cpu_s, 1),
+                         "MemMB": round(rss / 2**20, 1)})
+        return rows
     proc_cmd = 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Name,@{N="CPU_s";E={[math]::Round($_.CPU,1)}},@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'
     proc_result = subprocess.run(['powershell', '-Command', proc_cmd], capture_output=True, text=True, timeout=10, creationflags=_POPEN_FLAGS)
     procs = json.loads(proc_result.stdout) if proc_result.stdout.strip() else []

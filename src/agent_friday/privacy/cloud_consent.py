@@ -411,5 +411,47 @@ def status(profile: dict | None = None) -> dict:
         "capability_snapshot": cs.capability_snapshot,
     }
     if needs_prompt:
-        payload["capability"] = assess_local_capability(profile)
+        payload["capability"] = _capability_for_status(profile)
     return payload
+
+
+#: The machine does not change its capability between two page loads, and a
+#: page asks on every load while the question is unanswered. The assessment
+#: prices the whole model catalogue, so a request is given the last one.
+CAPABILITY_FRESH_S = 120.0
+#: How long the first request waits for the first assessment before it is told
+#: the machine is still being measured.
+CAPABILITY_BUDGET_S = 4.0
+
+
+def _capability_for_status(profile: dict | None) -> dict:
+    """``assess_local_capability`` for a polled GET.
+
+    Outside a request, or with a profile handed in, this is the assessment
+    itself. Inside a request it is the last assessment (``stale`` and ``as_of``
+    say so once it is older than ``CAPABILITY_FRESH_S``), refreshed behind the
+    request; with none yet, it waits ``CAPABILITY_BUDGET_S`` and then answers
+    ``pending`` -- never "incapable", which the machine has not been shown to be.
+    """
+    if profile is not None:
+        return assess_local_capability(profile)
+    try:
+        from flask import has_request_context
+        in_request = bool(has_request_context())
+    except Exception:
+        in_request = False
+    if not in_request:
+        return assess_local_capability(None)
+    from agent_friday.services import machine_probe as _mp
+    from agent_friday.paths import friday_home
+    value, at, state = _mp.snapshot(
+        "consent.capability:%s" % friday_home(),
+        lambda: assess_local_capability(None),
+        fresh_for=CAPABILITY_FRESH_S, budget=CAPABILITY_BUDGET_S,
+        default=None, allow_blocking=False)
+    if value is None:
+        return {"capable": False, "pending": True, "roles": {},
+                "chain_ok": None, "chain_why": None}
+    if state != _mp.STATE_FRESH:
+        value = {**value, "stale": True, "as_of": at}
+    return value
