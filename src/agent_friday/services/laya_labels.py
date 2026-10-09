@@ -28,6 +28,8 @@ import threading
 import time
 from typing import Dict, Optional
 
+from agent_friday.user_errors import UserFacingValueError
+
 _log = logging.getLogger("friday.laya_labels")
 _LOCK = threading.Lock()
 
@@ -59,7 +61,7 @@ def label(*, reaches_outside: bool, tool: Optional[str] = None,
             subject = "state:" + str(state_sha256)
     subject = str(subject or "")
     if not re.fullmatch(r"(tool:[A-Za-z0-9_.\-]{1,120}|state:[0-9a-f]{16})", subject):
-        raise ValueError("a label needs a tool name or a 16-hex state digest")
+        raise UserFacingValueError("a label needs a tool name or a 16-hex state digest")
     row = {"at": time.time(), "subject": subject, "question": QUESTION,
            "reaches_outside": bool(reaches_outside), "by": str(by)[:40],
            "note": str(note or "")[:200]}

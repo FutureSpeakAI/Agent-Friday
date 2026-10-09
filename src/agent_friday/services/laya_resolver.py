@@ -297,6 +297,12 @@ _LEAD = re.compile(
     r"(?:open|opening|show|display|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to|launch|view)\s+(?:up\s+)?", re.I)
 
 
+#: A trailing "for me / now / workspace ..." tail. It starts at the first blank
+#: of a run, so a long run of blanks is tried once, not from every blank in it.
+_TRAIL_FILLER = re.compile(
+    r"(?<!\s)\s+(?:for me|for us|now|please|again|workspace|window|screen|tab)\b.*$", re.I)
+
+
 _KIND_CUES = (
     ("email", re.compile(r"\b(e-?mails?|inbox message|thread)\b", re.I)),
     ("wiki_page", re.compile(r"\b(wiki|page|notes?|entry|entries|article I wrote|my archive)\b", re.I)),
@@ -320,8 +326,7 @@ def _workspace_named(text: str) -> Optional[Candidate]:
     rest = _LEAD.sub("", text or "", count=1)
     if rest == (text or ""):
         return None
-    rest = re.sub(r"\s+(?:for me|for us|now|please|again|workspace|window|screen|tab)\b.*$", "",
-                  rest.strip().rstrip(".!?"), flags=re.I)
+    rest = _TRAIL_FILLER.sub("", rest.strip().rstrip(".!?"))
     ws = agent._resolve_workspace(rest)
     if not ws:
         return None

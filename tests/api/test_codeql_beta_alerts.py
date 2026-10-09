@@ -137,3 +137,50 @@ def test_sites_overview_hides_a_plain_value_error(client, monkeypatch):
     r = client.get("/api/sites")
     body = _hidden(r)
     assert r.status_code == 400 and body["status"] == "error" and body["error_id"]
+
+
+# -- the rest of the beta stack-trace alerts ----------------------------------
+
+def test_a_failed_command_launch_is_marked_and_hidden_at_the_boundary(monkeypatch, tmp_path):
+    import subprocess
+    from agent_friday.routes._errors import public_result
+    from agent_friday.services import codebases as cb
+    monkeypatch.setattr(cb, "_root", lambda: tmp_path / "codebases")
+    rec = cb.create("Rent tracker", template="static")
+
+    def _no_shell(*_a, **_k):
+        raise OSError(INTERNAL)
+    monkeypatch.setattr(subprocess, "run", _no_shell)
+    out = cb.run(rec["id"], "Write-Output hi")
+    assert out["status"] == "error" and INTERNAL in out["output"], "the model still reads the cause"
+    shown = public_result(out, "Couldn't complete that Sites request")
+    assert INTERNAL not in str(shown) and shown["error_id"]
+
+
+def test_the_sites_action_answers_through_the_boundary_filter(client, monkeypatch):
+    from agent_friday.services import sites_operations as ops
+    from agent_friday.user_errors import exception_text
+    from agent_friday.routes import sites as sites_routes
+    monkeypatch.setattr(sites_routes.core, "_api_token_valid", lambda token: True)
+    monkeypatch.setattr(ops, "execute", lambda *a, **k: {"status": "failed", "run": {"output": exception_text(OSError(INTERNAL))}})
+    r = client.post("/api/sites/action", json={"action": "list", "args": {}})
+    assert r.status_code == 200, r.get_data(as_text=True)[:200]
+    raw = r.get_data(as_text=True)
+    assert INTERNAL not in raw, raw[:300]
+
+
+def test_a_label_refusal_is_said_and_another_value_error_is_not(client, monkeypatch):
+    from agent_friday.services import laya_labels
+    r = client.post("/api/decisions/labels", json={"subject": "nonsense", "reaches_outside": True})
+    assert r.status_code == 400 and "16-hex" in r.get_json()["message"]
+    monkeypatch.setattr(laya_labels, "label", _boom_value)
+    r = client.post("/api/decisions/labels", json={"subject": "tool:x", "reaches_outside": True})
+    body = _hidden(r)
+    assert r.status_code == 400 and body["status"] == "error" and body["error_id"]
+
+
+def test_a_publish_refusal_is_worded_for_the_owner():
+    from agent_friday.services import publish_web as pw
+    from agent_friday.user_errors import UserFacingError
+    assert issubclass(pw.Refused, UserFacingError)
+    assert pw.Refused("the image data could not be decoded").user_message == "the image data could not be decoded"

@@ -52,7 +52,17 @@ GRANT_TOOL = "share_local_context"
 GRANT_TTL_S = 4 * 3600
 GRANT_MAX_USES = 100
 
-PERSON_RE = re.compile(r"\{\{\s*person\s*:\s*([^|}]+?)\s*\|\s*([^}]+?)\s*\}\}", re.I)
+# A marker is `{{person: Name | relationship}}`. The name and the relationship
+# begin and end on a non-blank and never run across another `{{`, so each opener
+# is scanned only up to the next one and a run of blanks has one way to match:
+# the scan stays linear on hostile text. A single `{` inside a name is fine.
+_NB = r"(?:[^|}{\s]|\{(?!\{))"   # a name character that is not a blank
+_NC = r"(?:[^|}{]|\{(?!\{))"     # any name character
+_RB = r"(?:[^}{\s]|\{(?!\{))"    # a relationship character that is not a blank
+_RC = r"(?:[^}{]|\{(?!\{))"      # any relationship character
+PERSON_RE = re.compile(
+    r"\{\{\s*person\s*:\s*(" + _NB + "(?:" + _NC + "*" + _NB + r")?)\s*\|\s*("
+    + _RB + "(?:" + _RC + "*" + _RB + r")?)\s*\}\}", re.I)
 _PII_TAG_RE = re.compile(r"\[PII:([a-z]+):[0-9a-f]+\]")
 _PII_WORDS = {"phone": "phone number", "email": "email address", "addr": "street address",
               "ssn": "ID number", "cc": "card number", "name": "person"}

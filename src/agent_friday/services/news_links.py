@@ -169,11 +169,11 @@ def _fetch(url: str, data: str | None = None) -> str:
     if url != _GN_EXEC:
         raise ValueError("refusing to post anywhere but Google's link exchange")
     import requests
-    from agent_friday.services.web_safety import assert_safe
-    assert_safe(url)
-    return requests.post(url, data={"f.req": data}, timeout=10,
-                         headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                                  "User-Agent": "Mozilla/5.0"}).text
+    from agent_friday.services.web_safety import pinned
+    with pinned(url):
+        return requests.post(url, data={"f.req": data}, timeout=10,
+                             headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                                      "User-Agent": "Mozilla/5.0"}).text
 
 
 def resolve_url(url: str, *, fetch=None) -> str:

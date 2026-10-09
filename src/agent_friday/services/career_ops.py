@@ -788,12 +788,13 @@ def parse_board(kind: str, data) -> List[dict]:
 def fetch_json(url: str, timeout: int = 20):
     """GET a public job-board API. SSRF-checked, no redirects, size-capped."""
     import requests
-    from agent_friday.services.web_safety import check_url
-    ok, why = check_url(url)
-    if not ok:
-        raise CareerError(f"refused {url}: {why}")
-    resp = requests.get(url, timeout=timeout, allow_redirects=False,
-                        headers={"User-Agent": "AgentFriday-career-scan"})
+    from agent_friday.services.web_safety import UnsafeURLError, pinned
+    try:
+        with pinned(url):
+            resp = requests.get(url, timeout=timeout, allow_redirects=False,
+                                headers={"User-Agent": "AgentFriday-career-scan"})
+    except UnsafeURLError as e:
+        raise CareerError(f"refused {url}: {e}") from e
     if resp.status_code != 200:
         raise CareerError(f"HTTP {resp.status_code} from {url}")
     if len(resp.content) > 5_000_000:

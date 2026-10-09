@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
-from agent_friday.services.web_safety import MAX_REDIRECT_HOPS, UnsafeURLError, check_url
+from agent_friday.services.web_safety import MAX_REDIRECT_HOPS, UnsafeURLError, check_url, pinned
 
 _log = logging.getLogger("friday.web_fetch")
 
@@ -241,10 +241,11 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
     try:
         for _hop in range(MAX_REDIRECT_HOPS + 1):
             seen.append(current)
-            resp = requests.get(
-                current, timeout=timeout, headers={"User-Agent": _UA},
-                allow_redirects=False,      # THE point — see module docstring
-            )
+            with pinned(current):   # dial the address that was just judged
+                resp = requests.get(
+                    current, timeout=timeout, headers={"User-Agent": _UA},
+                    allow_redirects=False,      # THE point — see module docstring
+                )
             if resp.status_code in (301, 302, 303, 307, 308):
                 loc = resp.headers.get("location") or ""
                 if not loc:

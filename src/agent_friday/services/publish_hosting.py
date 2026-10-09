@@ -369,7 +369,7 @@ def connect_adapter(adapter: str, token: str, *, account_id: str = "", project: 
             raise UserFacingValueError("a Pages project name is lowercase letters, digits and dashes")
         rec = {"token": token, "account_id": account_id, "project": project}
     elif adapter == "github_pages":
-        if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        if not repo or len(repo) > 140 or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
             raise UserFacingValueError("GitHub Pages needs a repository as owner/name")
         rec = {"token": token, "repo": repo, "branch": branch or "gh-pages"}
     else:

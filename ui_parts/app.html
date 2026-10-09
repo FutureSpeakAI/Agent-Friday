@@ -20176,7 +20176,7 @@ function SettingsNotificationMutes() {
       ? React.createElement('div', { className: 'fridayui-muted', style: { fontSize: 11 } }, 'Nothing is muted.')
       : mutes.map(m => React.createElement('div', { key: m, className: 'notif-mute-row',
           style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, padding: '3px 0' } },
-          React.createElement('span', null, String(m).replace('|', ' \u00b7 ')),
+          React.createElement('span', null, String(m).split('|').join(' \u00b7 ')),
           React.createElement('button', { className: 'settings-btn', onClick: () => unmute(m) }, 'Unmute'))));
 }
 

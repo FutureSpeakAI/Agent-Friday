@@ -5,7 +5,7 @@ const {spawn}=require('node:child_process');
 const {chromium,expect}=require('@playwright/test');
 const root=path.resolve(__dirname,'..'),port=Number(process.env.FRIDAY_CREW_TEST_PORT||3192),base='http://127.0.0.1:'+port;
 for(const file of ['friday_crew.js','friday_crew_playback.js','js/friday_pcm_player.worklet.js'])new vm.Script(fs.readFileSync(path.join(root,'static',file),'utf8'));
-for(const match of fs.readFileSync(path.join(root,'index.html'),'utf8').matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g))if(!match[1].includes('src=')&&!/type=["'](?!text\/javascript|application\/javascript)/.test(match[1]))new vm.Script(match[2]);
+for(const match of fs.readFileSync(path.join(root,'index.html'),'utf8').matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/gi))if(!match[1].includes('src=')&&!/type=["'](?!text\/javascript|application\/javascript)/.test(match[1]))new vm.Script(match[2]);
 const {babelParse}=require(path.join(path.dirname(require.resolve('playwright/package.json')),'lib/transform/babelBundle'));
 const mirror=fs.readFileSync(path.join(root,'ui_parts/app.html'),'utf8'),tag='<script type="text/babel">';
 babelParse(mirror.slice(mirror.indexOf(tag)+tag.length,mirror.lastIndexOf('</script>')),'mirror.jsx',false);

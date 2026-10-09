@@ -13,7 +13,7 @@ const base = 'http://127.0.0.1:' + port;
 let checks = 0;
 function passed(name) { checks++; console.log('PASS ' + name); }
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-for (const m of html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)) {
+for (const m of html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/gi)) {
   if (m[1].includes('src=') || /type=["'](?!text\/javascript|application\/javascript)/.test(m[1])) continue;
   new vm.Script(m[2]);
 }

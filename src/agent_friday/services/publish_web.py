@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent_friday.paths import contained, safe_name
-from agent_friday.user_errors import UserFacingValueError
+from agent_friday.user_errors import UserFacingError, UserFacingValueError
 
 _log = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ ADAPTER_LABELS = {"this_pc": "This PC", "cloudflare_pages": "Cloudflare Pages",
                   "github_pages": "GitHub Pages"}
 
 
-class Refused(Exception):
+class Refused(UserFacingError):
     """The bundle cannot be published as it is; the message says why."""
 
 
@@ -336,12 +336,12 @@ def pack(rec: dict, *, mark: Optional[bool] = None) -> Bundle:
         files["data.csv"] = _csv(cols, rows).encode("utf-8")
     elif kind == "image":
         src = str((content or {}).get("src") or "")
-        m = re.match(r"data:image/(png|jpe?g|gif|webp|svg\+xml);base64,(.+)$", src, re.S)
-        if not m:
+        m = re.match(r"data:image/(png|jpe?g|gif|webp|svg\+xml);base64,", src)
+        if not m or m.end() >= len(src):
             raise Refused("the image has no embedded bytes to publish")
         ext = {"jpeg": "jpg", "svg+xml": "svg"}.get(m.group(1), m.group(1))
         try:
-            data = base64.b64decode(m.group(2))
+            data = base64.b64decode(src[m.end():])
         except Exception:
             raise Refused("the image data could not be decoded")
         if ext == "svg" and not _svg_is_inert(data.decode("utf-8", "replace")):
@@ -615,7 +615,7 @@ def request_publish(cid: str, aid: str, *, adapter: Optional[str] = None, versio
     try:
         bundle = pack(rec, mark=mark)
     except Refused as e:
-        return {"approval": None, "refused": [str(e)], "scan": None}
+        return {"approval": None, "refused": [e.user_message], "scan": None}
     s = scan(bundle)
     if not s["ok"]:
         return {"approval": None, "refused": s["refusals"], "scan": s}

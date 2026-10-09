@@ -4,7 +4,7 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.core import login_required
-from agent_friday.routes._errors import api_error
+from agent_friday.routes._errors import api_error, public_result
 from agent_friday.user_errors import UserFacingPermissionError
 import agent_friday.core as core
 from agent_friday.services import sites_operations as sites
@@ -86,7 +86,7 @@ def site_action():
             site = sites.get_site(args["site_id"])
             cid = (site or {}).get("conversation_id")
         result = sites.execute(body.get("action"), args, {"conversation_id": cid, "_sites_origin": origin})
-        return jsonify(result)
+        return jsonify(public_result(result, "Couldn't complete that Sites request"))
     except (ValueError, KeyError) as exc:
         return _fail(exc)
     except PermissionError as exc:

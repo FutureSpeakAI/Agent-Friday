@@ -377,7 +377,7 @@ def decisions_labels():
                                 reaches_outside=data["reaches_outside"],
                                 by="owner", note=str(data.get("note") or ""))
     except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+        return api_error(e, "Couldn't save the label", 400)
     except Exception as e:
         return api_error(e, "Couldn't save the label")
     return jsonify({"status": "ok", "label": row})
