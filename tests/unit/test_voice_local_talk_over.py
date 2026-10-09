@@ -23,6 +23,14 @@ import pytest
 
 from agent_friday.services import voice_session as vs
 
+
+def _where(th) -> str:
+    """Where a thread that should have ended is waiting: its stack, for a failure message."""
+    import sys
+    import traceback
+    frame = sys._current_frames().get(th.ident)
+    return "".join(traceback.format_stack(frame)) if frame is not None else "(thread has no frame)"
+
 MS_PER_CHUNK = 170                    # the browser's ~171 ms mic frames
 CHUNK_SAMPLES = 16 * MS_PER_CHUNK     # 16 kHz PCM16
 
@@ -275,7 +283,7 @@ def test_talking_over_friday_stops_her_and_ends_the_turn_at_once():
     assert seen["cancel"].is_set()
     assert gpu.cancelled, "the turn's queued GPU jobs were not cancelled"
     th.join(1.0)
-    assert not th.is_alive(), "the barged turn is still waiting on its mind"
+    assert not th.is_alive(), "the barged turn is still waiting on its mind\n" + _where(th)
     assert not release.is_set()
     rec = [f for f in frames if f["type"] == "turn_receipt"][-1]
     assert rec["outcome"] == "aborted"
@@ -300,7 +308,7 @@ def test_talk_over_works_for_a_client_that_never_reports_playback():
     assert "interrupted" in _types(frames)
     assert seen["cancel"].is_set()
     th.join(1.0)
-    assert not th.is_alive()
+    assert not th.is_alive(), "the turn did not end\n" + _where(th)
 
 
 # ── 2. Friday's own echo never barges ───────────────────────────────────────
@@ -397,7 +405,7 @@ def test_a_barge_drops_queued_clauses_and_cancels_the_mind():
         assert "interrupted" in _types(frames), "talking over Friday did not stop her"
         assert seen["cancel"].is_set(), "the barge did not cancel the mind"
         th.join(2.0)
-        assert not th.is_alive()
+        assert not th.is_alive(), "the turn did not end\n" + _where(th)
         assert s._speak_q.empty(), "queued clauses survived the barge"
         mouth.release.set()
         with turn["cv"]:
@@ -455,7 +463,7 @@ def test_the_next_turn_starts_while_the_barged_mind_is_still_running():
     th = _start_turn(s, frames)
     s.handle({"type": "barge"})                       # Escape
     th.join(1.0)
-    assert not th.is_alive(), "Escape left the turn waiting on its mind"
+    assert not th.is_alive(), "Escape left the turn waiting on its mind\n" + _where(th)
     t0 = time.monotonic()
     nxt = threading.Thread(target=s.run_turn, args=("second",), daemon=True)
     nxt.start()
@@ -492,7 +500,7 @@ def test_escape_still_barges_when_talk_over_is_off():
     assert "interrupted" in _types(frames)
     assert seen["cancel"].is_set()
     th.join(1.0)
-    assert not th.is_alive()
+    assert not th.is_alive(), "the turn did not end\n" + _where(th)
 
 
 # ── the route reads the setting and wires the detector ──────────────────────
