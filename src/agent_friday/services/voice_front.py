@@ -222,6 +222,21 @@ def validate_tool_call(call: dict, contract: dict):
     return name, args, None
 
 
+def _renderable(call: dict) -> dict:
+    """``call`` with arguments a chat template can render: unchanged when they
+    are a JSON object, ``{}`` otherwise (a truncated or malformed call)."""
+    fn = dict((call or {}).get("function") or {})
+    raw = fn.get("arguments")
+    try:
+        ok = isinstance(raw, dict) or isinstance(json.loads(raw or "{}"), dict)
+    except (TypeError, ValueError):
+        ok = False
+    if ok:
+        return call
+    fn["arguments"] = "{}"
+    return dict(call, function=fn)
+
+
 # ── the seat ───────────────────────────────────────────────────────────────
 
 class FrontSeat:
@@ -412,8 +427,13 @@ class FrontSeat:
                 continue
             if not calls or ch.get("finish_reason") == "cancelled":
                 break
+            # The history carries each call as the server must re-render it.
+            # A call cut off by the token budget has arguments that are not
+            # JSON ('{'); sent back verbatim, the chat template cannot render
+            # it and the server fails the whole turn (HTTP 500). The model is
+            # told the call was not run either way, below.
             convo.append({"role": "assistant", "content": text,
-                          "tool_calls": calls})
+                          "tool_calls": [_renderable(c) for c in calls]})
             for c in calls:
                 if admit_tool is not None:
                     refusal = admit_tool(str(((c or {}).get("function") or {}).get("name") or ""))

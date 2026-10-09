@@ -2073,12 +2073,29 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None):
 VOICE_FRONT_HANDOFF_RULE = (
     "YOUR DEEPER MIND: You are Friday's fast voice; her full memory and slower, "
     "deeper reasoning are one tool call away. When a question needs the user's "
-    "full context, real research, or careful thought, say a short line such as "
-    "'let me dig into that', then call ask_friday (an answer in seconds) or "
-    "delegate_to_friday (a longer task that reports back). When a deep answer "
+    "full context, real research, or careful thought, call ask_friday (an "
+    "answer in seconds) or delegate_to_friday (a longer task that reports "
+    "back) straight away. When a deep answer "
     "arrives later it is marked as one: offer it ('that deep answer's ready, "
     "want it now?'). Never present a deep answer as something you just "
     "thought of, and never guess at something the deeper mind could look up.\n"
+)
+
+
+#: How the local front uses a tool. The cloud voice's VOICE_TOOL_CHOREOGRAPHY
+#: (announce, END the sentence, then call; confirm "it's up on screen") is
+#: right for a model that speaks and calls in one stream; a small local model
+#: obeys "end the sentence" by ending its turn, never emits the call, and then
+#: recites the scripted confirmation over an invented result. The front calls
+#: first; the session, not the model, covers the wait.
+VOICE_FRONT_TOOL_RULE = (
+    "USING YOUR TOOLS: When a request needs something one of your tools can "
+    "fetch or do (the calendar, email, news, the web, files, the wiki, past "
+    "conversations, the briefing), your reply STARTS with the tool call. Say "
+    "nothing before it: no 'let me check', no announcement. Then answer from "
+    "what the tool returned. If you did not call a tool, you have no result: "
+    "never describe a calendar, an inbox, a file, a search or a story you "
+    "have not received in this turn. Small talk and thanks need no tool.\n\n"
 )
 
 
@@ -2169,7 +2186,7 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
             "exactly that.\n"
             + VOICE_FRONT_HANDOFF_RULE
             + VOICE_FRONT_NEWS_RULE + "\n"
-            + VOICE_TOOL_CHOREOGRAPHY
+            + VOICE_FRONT_TOOL_RULE
             + ("\nTHE TOOLS YOU HOLD IN THIS CONVERSATION: " + ", ".join(names) + ".\n"
                if names else "\nYou hold no tools in this conversation.\n")
             + "\n== WHAT YOU KNOW (a digest; your deeper mind holds your full memory "
