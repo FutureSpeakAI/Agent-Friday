@@ -53,6 +53,9 @@ function scratchServer(target, repoRoot, python, home) {
       FRIDAY_HOME: home,
       FRIDAY_PORT: target.scratchPort,
       FRIDAY_TESTING: '1',
+      // A scratch server never governs the machine's real model seats: an
+      // Arbiter booting here would adopt or reap the live Friday's llama-servers.
+      FRIDAY_NO_ARBITER: '1',
     }),
   };
 }
