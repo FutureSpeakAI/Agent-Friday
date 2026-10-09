@@ -59,6 +59,14 @@ def wiki(tmp_path, monkeypatch):
     journal.reset()
 
 
+def _approve(out):
+    """Approve the card a call raised through the real decision path; return the run's receipt."""
+    ap.decide(out["approval_id"], "approve")
+    rec = ia.wait_for(out["approval_id"], 10)
+    assert rec and rec["status"] == "complete", rec
+    return rec
+
+
 def _text(root, rel):
     return (root / rel).read_text(encoding="utf-8")
 
@@ -118,21 +126,25 @@ def test_a_tag_on_a_page_without_frontmatter_adds_it(wiki):
 
 def test_archive_keeps_a_page_out_of_the_graph_and_undo_brings_it_back(wiki):
     out = ia.organize_wiki("archive", pages=["projects/Budget.md"])
-    assert out["status"] == "complete"
+    assert out["status"] == "pending_approval"          # even one page waits for one card
+    assert (wiki / "projects" / "Budget.md").exists() and not (wiki / "_archived").exists()
+    rec = _approve(out)
     assert (wiki / "_archived" / "projects" / "Budget.md").exists()
     assert all(p.name != "Budget.md" for p in list_wiki_pages(wiki))
-    ia.undo(out["receipt_id"])
+    ia.undo(rec["receipt_id"])
     assert (wiki / "projects" / "Budget.md").exists()
 
 
 def test_trash_moves_a_page_out_of_the_wiki_intact(wiki, tmp_path):
     before = (wiki / "health" / "Dr Lee.md").read_bytes()
     out = ia.organize_wiki("trash", pages=["health/Dr Lee.md"])
-    assert out["status"] == "complete"
+    assert out["status"] == "pending_approval"
+    assert (wiki / "health" / "Dr Lee.md").read_bytes() == before, "nothing moves before the yes"
+    rec = _approve(out)
     assert not (wiki / "health" / "Dr Lee.md").exists()
     kept = list((tmp_path / "friday-trash").rglob("Dr Lee.md"))
     assert len(kept) == 1 and kept[0].read_bytes() == before, "the ciphertext is kept as it was"
-    ia.undo(out["receipt_id"])
+    ia.undo(rec["receipt_id"])
     assert (wiki / "health" / "Dr Lee.md").read_bytes() == before
 
 
@@ -155,7 +167,9 @@ def test_a_plain_page_moved_into_an_encrypted_section_is_encrypted(wiki):
 
 def test_archiving_an_encrypted_page_keeps_it_encrypted(wiki):
     import agent_friday.privacy.vault_crypto as vc
-    ia.organize_wiki("archive", pages=["health/Dr Lee.md"])
+    out = ia.organize_wiki("archive", pages=["health/Dr Lee.md"])
+    assert out["status"] == "pending_approval"
+    _approve(out)
     assert vc.is_encrypted((wiki / "_archived" / "health" / "Dr Lee.md").read_bytes())
 
 
