@@ -605,7 +605,8 @@ end;
 
 // One group of radios in the list: the heading, then every option for the seat.
 // Nothing is ticked: the recommendation is a label, never a preselection. An
-// option that does not fit follows, greyed, with the reason on its own line, so a
+// option that does not fit follows, greyed, with a short reason in its caption (a
+// sub-line squeezes the caption in this list), so a
 // heading is never empty without saying why.
 procedure AddSeat(Seat, Heading: String);
 var
@@ -638,7 +639,7 @@ begin
   for I := 0 to GetArrayLength(Unfit) - 1 do
   if Unfit[I].Seat = Seat then
   begin
-    ModelList.AddRadioButton(Unfit[I].Caption + ' - ' + Unfit[I].SizeText, Unfit[I].Reason, 1, False, False, nil);
+    ModelList.AddRadioButton(Unfit[I].Caption + ' - ' + Unfit[I].SizeText + ' (' + Unfit[I].Reason + ')', '', 1, False, False, nil);
     Listed := Listed + 1;
   end;
   if Listed = 0 then

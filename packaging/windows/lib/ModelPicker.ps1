@@ -348,8 +348,10 @@ function Get-ModelOptions {
     }
 
     function Disk-Reason([double] $bytes) {
-        return ('needs {0} plus {1} GB left free on this drive (Agent Friday itself takes about {2} GB first)' -f
-                (Get-FileSizeLine $bytes), $floorGb, $script:Pick.FridayDiskGb)
+        # Short on purpose: it sits beside the model's name in the list. The
+        # arithmetic (Agent Friday's own space, the floor) is in the message below.
+        $gb = [int][math]::Ceiling(($fridayDiskMib + [math]::Ceiling($bytes / 1MB) + $script:Pick.RuntimeAllowanceMib + $script:Pick.DiskFloorMib) / 1024)
+        return ('needs {0} GB free' -f $gb)
     }
 
     function Ram-Reason([double] $modelMib) {

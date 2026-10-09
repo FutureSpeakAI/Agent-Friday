@@ -260,9 +260,9 @@ def test_with_12_gb_free_every_option_is_listed_greyed_with_its_reason_and_cloud
     for seat in ("deep_thinker", "fast_responder"):
         assert [u for u in out["unfit"] if u["seat"] == seat], "no seat heading is empty without a reason: " + seat
     for u in out["unfit"]:
-        assert u["size"] and re.search(r"plus 10 GB left free on this drive", u["reason"]), u
+        assert u["size"] and re.fullmatch(r"needs \d+ GB free", u["reason"]), u
     front = next(u for u in out["unfit"] if u["id"] == "qwen3-4b-instruct-2507")
-    assert front["size"] == "2.8 GB" and front["reason"].startswith("needs 2.8 GB plus 10 GB left free on this drive"), front
+    assert front["size"] == "2.8 GB" and front["reason"] == "needs 22 GB free", front   # 8 + 2.8 + 0.65 + 10, rounded up
     assert len(out["notes"]) == 1, "said once"
     note = out["notes"][0]
     for part in ("12.2 GB free", "Agent Friday itself needs about 8 GB", "their size plus 10 GB left free afterwards",
@@ -276,7 +276,7 @@ def test_with_12_gb_free_every_option_is_listed_greyed_with_its_reason_and_cloud
 def test_with_24_gb_free_the_27b_is_greyed_and_the_rest_are_selectable_without_forcing_cloud(tmp_path):
     out = probe(tmp_path, disk_free_mib=24576, **RTX_4070)       # 24 GB: Agent Friday 8 + 27B 6.1 + 10 floor does not fit
     assert [u["id"] for u in out["unfit"]] == ["bonsai2:27b"]
-    assert out["unfit"][0]["seat"] == "deep_thinker" and "plus 10 GB left free on this drive" in out["unfit"][0]["reason"]
+    assert out["unfit"][0]["seat"] == "deep_thinker" and out["unfit"][0]["reason"] == "needs 25 GB free"
     assert set(ids(out["deep"])) == {"ternary-bonsai:4b", "ternary-bonsai:8b"}
     assert set(ids(out["fast"])) == {"qwen3-4b-instruct-2507", "qwen3-1.7b"}
     assert out["notes"] == [], "something fits in both seats, so no cloud message and the choice is the person's"
@@ -333,8 +333,8 @@ def test_the_page_carries_the_words_the_owner_asked_for():
 
 def test_an_option_that_does_not_fit_is_listed_greyed_with_its_reason_on_its_own_line():
     block = ISS[ISS.index("procedure AddSeat"):ISS.index("procedure BuildModelChoices")]
-    # caption, reason as the sub-line, level 1, unticked, disabled
-    assert "ModelList.AddRadioButton(Unfit[I].Caption + ' - ' + Unfit[I].SizeText, Unfit[I].Reason, 1, False, False, nil)" in block
+    # name, size and the short reason in the caption (a sub-line squeezes the caption), level 1, unticked, disabled
+    assert "ModelList.AddRadioButton(Unfit[I].Caption + ' - ' + Unfit[I].SizeText + ' (' + Unfit[I].Reason + ')', '', 1, False, False, nil)" in block
     assert "Unfit[I].Seat = Seat" in block
     # a seat with nothing at all still says why
     assert "No local model could be checked on this computer." in block
