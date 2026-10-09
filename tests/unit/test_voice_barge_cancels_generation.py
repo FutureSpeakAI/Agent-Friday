@@ -21,6 +21,14 @@ def _sse(content):
                                                "finish_reason": None}]})
 
 
+def _where(th) -> str:
+    """Where a thread that should have ended is waiting: its stack, for a failure message."""
+    import sys
+    import traceback
+    frame = sys._current_frames().get(th.ident)
+    return "".join(traceback.format_stack(frame)) if frame is not None else "(thread has no frame)"
+
+
 class _SlowStream:
     """A seat that streams a token every 20 ms for ten seconds."""
 
@@ -90,8 +98,16 @@ def test_escape_closes_the_seat_stream_within_300_ms_and_frees_the_next_turn():
         assert streams[0].closed_at is not None, (
             "Escape stopped the audio but the seat kept generating")
         assert (streams[0].closed_at - t_barge) * 1000.0 <= 300.0
-        th.join(2)
-        assert not th.is_alive(), "the barged turn still holds the turn lock"
+        # The seat's stream is closed (asserted above, within 300 ms); the turn
+        # then ends on its own thread after one settings read and a few frames.
+        # Measured at milliseconds with every CPU busy, 200 spinning threads and
+        # a 3-million-object heap, so a hosted runner that stalls that read for
+        # a couple of seconds is not a stuck turn. The wait is on the turn
+        # ending, bounded far past any stall and far short of a real hang,
+        # which never ends and prints its stack below.
+        th.join(15)
+        assert not th.is_alive(), (
+            "the barged turn still holds the turn lock\n" + _where(th))
         # The next utterance runs at once.
         t0 = time.perf_counter()
         s.run_turn("second")
