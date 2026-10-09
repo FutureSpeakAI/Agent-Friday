@@ -28,7 +28,7 @@ async function openSettings(page: Page) {
 
 test('a row Friday is taken to is outlined, and the outline goes on the next input', async ({ page }) => {
   await openSettings(page);
-  await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'voice' } })); });
+  await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); });
   const row = page.locator(`[data-st-key="${KEY}"]`);
   await row.waitFor({ timeout: 30000 });
   expect(await page.evaluate(k => (window as any).FridaySettingRows.highlight(k), KEY)).toBe(true);
@@ -42,7 +42,7 @@ test('a row Friday is taken to is outlined, and the outline goes on the next inp
 
 test('the provenance line names Friday\'s proposal and Undo works once', async ({ page }) => {
   const writes = await openSettings(page);
-  await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'voice' } })); });
+  await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); });
   const line = page.getByTestId('st-provenance').first();
   await expect(line).toContainText('Friday, by a proposal you accepted');
   await page.getByTestId('st-undo').first().click();
