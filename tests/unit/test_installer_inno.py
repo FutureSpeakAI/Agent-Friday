@@ -331,3 +331,28 @@ def test_sherpa_onnx_is_installed_from_the_wheelhouse_at_the_voice_installers_pi
     from agent_friday.services import voice_artifacts as va
     req = read_text(WINDOWS_DIR / "requirements" / "recommended.txt")
     assert "sherpa-onnx==%s" % va.ARTIFACTS["sherpa-onnx"]["version"] in req
+
+
+def _pascal_routines(script: str):
+    """(name, body) for every procedure/function in the [Code] section."""
+    code = script.split("[Code]", 1)[1]
+    parts = re.split(r"(?mi)^(?:procedure|function)\s+(\w+)", code)
+    return list(zip(parts[1::2], parts[2::2]))
+
+
+def test_a_silent_setup_never_waits_on_a_box_nobody_can_answer():
+    """/SUPPRESSMSGBOXES only silences SuppressibleMsgBox. A plain MsgBox in a silent
+    install opens on a desktop nobody watches and setup waits for ever (a CI fresh
+    install hung 60 minutes on the model page's box). Every routine that calls a plain
+    MsgBox must leave first when the install or uninstall is silent."""
+    offenders = []
+    for name, body in _pascal_routines(SCRIPT):
+        first_box = body.find("MsgBox(")
+        while first_box > 0 and body[first_box - 1].isalnum():   # SuppressibleMsgBox is fine
+            first_box = body.find("MsgBox(", first_box + 1)
+        if first_box < 0:
+            continue
+        guard = re.search(r"if\s+\(?\s*(?:not\s+)?\(?\s*(WizardSilent|UninstallSilent)", body[:first_box])
+        if not guard:
+            offenders.append(name)
+    assert not offenders, "plain MsgBox reachable in a silent run: %s" % offenders

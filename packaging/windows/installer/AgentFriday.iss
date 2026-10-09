@@ -667,6 +667,10 @@ var
 begin
   Result := True;
   if CurPageID <> ModelPage.ID then Exit;
+  // A silent install takes its models from the command line (see the WizardSilent
+  // branch below, which falls back to cloud with no downloads); this page's checks
+  // would only raise a box nobody can answer and stop setup.
+  if WizardSilent then Exit;
   if CloudCheck.Checked then Exit;
   D := SelectedOption(DeepItem, DeepOpt);
   F := SelectedOption(FastItem, FastOpt);
