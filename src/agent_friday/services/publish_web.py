@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent_friday.paths import contained, safe_name
-from agent_friday.user_errors import UserFacingValueError
+from agent_friday.user_errors import UserFacingError, UserFacingValueError
 
 _log = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ ADAPTER_LABELS = {"this_pc": "This PC", "cloudflare_pages": "Cloudflare Pages",
                   "github_pages": "GitHub Pages"}
 
 
-class Refused(Exception):
+class Refused(UserFacingError):
     """The bundle cannot be published as it is; the message says why."""
 
 
@@ -615,7 +615,7 @@ def request_publish(cid: str, aid: str, *, adapter: Optional[str] = None, versio
     try:
         bundle = pack(rec, mark=mark)
     except Refused as e:
-        return {"approval": None, "refused": [str(e)], "scan": None}
+        return {"approval": None, "refused": [e.user_message], "scan": None}
     s = scan(bundle)
     if not s["ok"]:
         return {"approval": None, "refused": s["refusals"], "scan": s}

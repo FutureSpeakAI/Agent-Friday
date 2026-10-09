@@ -41,7 +41,8 @@ from pathlib import Path
 from typing import Optional
 
 from agent_friday.paths import contained, safe_name
-from agent_friday.user_errors import UserFacingRuntimeError, UserFacingValueError
+from agent_friday.user_errors import (UserFacingRuntimeError, UserFacingValueError,
+                                      exception_text, keep_mark)
 
 _log = logging.getLogger(__name__)
 
@@ -537,18 +538,20 @@ def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S, _site_snapsho
     except subprocess.TimeoutExpired:
         out, code, status = "(timed out after %ds)" % timeout_s, -1, "timeout"
     except Exception as e:
-        out, code, status = "(could not run: %s)" % e, -1, "error"
+        out, code, status = exception_text(e, "(could not run: %s)"), -1, "error"
     if _site_snapshot is not None:
         try:
             site_builds.execution_generation(_site_snapshot)
         except ValueError:
             return {"status": "refused", "say": "This build's privacy context ended; no command output was retained."}
+    launched = out
     try:
         out = _cred.redact_secrets(out)
     except Exception:
         pass
     if len(out) > RUN_OUTPUT_MAX_CHARS:
         out = out[:RUN_OUTPUT_MAX_CHARS] + "\n[truncated: %d chars in all]" % len(out)
+    out = keep_mark((launched,), out)   # a failed launch stays marked for the HTTP boundary
     entry = {"id": "run-" + secrets.token_hex(4), "command": command[:2000], "exit": code, "status": status,
              "output": out, "duration_s": round(time.time() - t0, 2), "ts": time.time(),
              "at": datetime.now().isoformat(timespec="seconds")}

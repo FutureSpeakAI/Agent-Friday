@@ -162,7 +162,7 @@ test('local models with unknown residency are not labeled cloud or cold', () => 
 
 test('the served UI scripts parse', () => {
   let count = 0;
-  for (const match of source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+  for (const match of source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
     if (/\bsrc\s*=/.test(match[1]) || !match[2].trim()) continue;
     new vm.Script(match[2], {filename:'index.html'});
     count += 1;

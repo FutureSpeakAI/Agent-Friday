@@ -243,6 +243,7 @@ def probe_once(host: str, port: int, timeout: float, tls: bool = False,
         if tls:
             import ssl
             ctx = ssl.create_default_context()
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             s = ctx.wrap_socket(raw, server_hostname=host)
