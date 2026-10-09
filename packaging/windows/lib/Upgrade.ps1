@@ -39,7 +39,9 @@ function Get-BuildSequence {
     [int64]$patch = 0; if ($m.Groups[3].Success) { $patch = [int64]$m.Groups[3].Value }
     $label = ''; if ($m.Groups[4].Success) { $label = $m.Groups[4].Value.ToLowerInvariant() }
     [int64]$number = 0; if ($m.Groups[5].Success) { $number = [int64]$m.Groups[5].Value }
-    if ($label -eq '' -and $major -eq 5) { return [int64]($major * 10000 + $minor * 100 + $patch) }
+    if ($label -eq '' -and $major -ge 2 -and $major -le 5) {
+        return [int64]([math]::Min($major, 9999) * 10000 + [math]::Min($minor, 99) * 100 + [math]::Min($patch, 99))
+    }
     [int64]$stage = 99
     if ($label -ne '') {
         [int64]$base = 1
