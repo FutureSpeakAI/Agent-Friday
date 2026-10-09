@@ -101,10 +101,14 @@ jobs:
   # safe control, the change survives a reload) and the See & Touch specs, run
   # against a scratch Friday with its own home and no residency Arbiter
   # (playwright.app.config.ts). A broken Settings control fails this job.
+  # seams.spec.ts is left out here: it checks the selected models against live
+  # provider catalogues, which a CI runner has no keys or local models for.
   app-specs:
     name: app specs (Settings walk, See & Touch)
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Windows, the platform Friday ships on: the scratch server calls Windows
+    # tools (PowerShell) that a Linux runner does not have.
+    runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -122,8 +126,8 @@ jobs:
           FRIDAY_PYTHON: python
         run: >
           npx playwright test --config=playwright.app.config.ts --workers=1
-          --output=test-results/app
-          settings_walk.spec.ts smoke.spec.ts seams.spec.ts
+          --timeout=180000 --output=test-results/app
+          settings_walk.spec.ts smoke.spec.ts
           fill_in_place.spec.ts messages_friday_select.spec.ts open_only_stage.spec.ts
           point_and_chips.spec.ts settings_highlight.spec.ts step_panel.spec.ts
           studio_alias_nav.spec.ts this_and_these.spec.ts
