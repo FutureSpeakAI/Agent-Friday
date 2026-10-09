@@ -16,7 +16,8 @@ async function open(page: Page) {
   await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window as any).fridayWorkspaceStages && !!(window as any).fridayStage, null, { timeout: 60000 });
 }
-const addRows = (page: Page, html: string) => page.evaluate(h => { const d = document.createElement('div'); d.id = 'probe'; d.innerHTML = h; document.body.appendChild(d); }, html);
+// The probe sits above the shell's own overlays (the Depth entry, docks), so a click reaches the row itself.
+const addRows = (page: Page, html: string) => page.evaluate(h => { const d = document.createElement('div'); d.id = 'probe'; d.style.cssText = 'position:fixed;left:30%;top:35%;z-index:2147483000;padding:12px;background:#222;color:#fff'; d.innerHTML = h; document.body.appendChild(d); }, html);
 
 test('calendar rows get a stage; Ctrl-click ticks one; a pointed row is outlined', async ({ page }) => {
   await open(page);
