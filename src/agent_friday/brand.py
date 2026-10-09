@@ -185,7 +185,7 @@ _PRODUCT_WORDS = re.compile(
 _MAKER_WORDS = re.compile(r"(?<![\w@/.-])(FutureSpeak\.AI)(?![\w/-])" + _UNMARKED)
 #: Where "FutureSpeak.AI" names the company as owner, and stays plain.
 _OWNER = re.compile(r"(?:trademarks? of|\u00a9|\(c\)|copyright)[ \t\d,\u2013-]*$", re.IGNORECASE)
-_SPOKEN_MARK = re.compile(r"[ \t]*\u2122|(?:(?<=friday)|(?<=\.ai))[ \t]*\(tm\)", re.IGNORECASE)
+_SPOKEN_MARK = re.compile(r"(?<![ \t])[ \t]*\u2122|(?:(?<=friday)|(?<=\.ai))[ \t]*\(tm\)", re.IGNORECASE)
 
 
 def _mark_maker(part: str) -> str:

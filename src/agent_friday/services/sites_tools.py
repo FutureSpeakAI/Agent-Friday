@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+from agent_friday.user_errors import UserFacingValueError
+
 
 SITE_ACTIONS = ("list", "inspect", "open", "save", "build", "preview", "prepare_publish",
                 "deployment_status", "hosting_requirements", "operation")
@@ -63,7 +65,7 @@ def _open(name, args, context, service, *, preview=False):
     from agent_friday.services import desktop_bus, sites_privacy
     allowed = ({"site_id", "build_id"} if preview else {"site_id"}) if name == "site_action" else {"account_id", "domain", "site_id", "site_revision"}
     if set(args) - allowed:
-        raise ValueError("Unsupported inputs for opening Sites. Inspect the selected item before changing it.")
+        raise UserFacingValueError("Unsupported inputs for opening Sites. Inspect the selected item before changing it.")
     target = {"workspace": "futurespeak"}
     if name == "site_action":
         if preview:
@@ -77,7 +79,7 @@ def _open(name, args, context, service, *, preview=False):
     else:
         account_id = args.get("account_id")
         if not isinstance(account_id, str) or not account_id:
-            raise ValueError("Choose the exact domain account before opening its inventory.")
+            raise UserFacingValueError("Choose the exact domain account before opening its inventory.")
         if args.get("site_id"):
             result = service.execute("inspect", {key: args[key] for key in
                                      ("site_id", "site_revision", "account_id", "domain") if key in args}, context)
@@ -90,7 +92,7 @@ def _open(name, args, context, service, *, preview=False):
                 from agent_friday.services.namecom import domain_name
                 domain = domain_name(args["domain"])
                 if not any(row.get("domain") == domain for row in result["inventory"]):
-                    raise ValueError("That domain is not in the selected account's saved inventory. Sync or import it in Sites.")
+                    raise UserFacingValueError("That domain is not in the selected account's saved inventory. Sync or import it in Sites.")
                 target["domain"] = domain
         key = "domain_ref" if target.get("domain") else "account_id"
     expected = target["account_id"] + "/" + target["domain"] if key == "domain_ref" else target[key]

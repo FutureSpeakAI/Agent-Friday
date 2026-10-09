@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import agent_friday.core as core
+from agent_friday.user_errors import exception_text
 
 HANDLER = "media_tidy"
 TIDY_ACTION = "media: tidy"
@@ -179,7 +180,7 @@ def propose(requested_by: str = "user", ids: Optional[List[str]] = None) -> Dict
             action_description="Move them to Friday's trash. Restore any of them from Media's Trash.",
         )
     except Exception as e:
-        return {"status": "error", "message": f"The approval gate is unavailable: {e}"}
+        return {"status": "error", "message": exception_text(e, "The approval gate is unavailable: %s")}
     act = getattr(v, "action", "deny")
     if act == "allow":
         return apply(pid, approval_id=None)

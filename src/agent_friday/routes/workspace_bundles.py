@@ -13,20 +13,30 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error
 from agent_friday.services import workspace_bundles as wb
 
 workspace_bundles_bp = Blueprint("workspace_bundles", __name__)
 
 
-def _bad(msg, code=400, **extra):
-    body = {"status": "error", "error": str(msg)}
+def _bad(msg: str, code=400, **extra):
+    body = {"status": "error", "error": msg}
     body.update(extra)
     return jsonify(body), code
 
 
+def _fail(exc, code=400, **extra):
+    """A refused request. A `UserFacingError` shows its message; any other
+    exception is logged and answered with a short error id."""
+    response, status = api_error(exc, "Couldn't complete that workspace request", code, key="error")
+    body = response.get_json()
+    body.update(extra)
+    return jsonify(body), status
+
+
 @workspace_bundles_bp.errorhandler(ValueError)
 def _bad_value(e):
-    return _bad(e)
+    return _fail(e)
 
 
 @workspace_bundles_bp.errorhandler(KeyError)
@@ -68,7 +78,7 @@ def improve(ws):
     try:
         out = wb.improve(ws)
     except wb.NativeWorkspace as e:
-        return _bad(e, 409, status="refused", blocker=e.blocker)
+        return _fail(e, 409, status="refused", blocker=e.blocker)
     return jsonify({"status": "ok", **out})
 
 
@@ -83,11 +93,11 @@ def swap():
     try:
         card = wb.request_swap(cid, requested_by=str(body.get("requested_by") or "you"))
     except wb.SmokeFailed as e:
-        return _bad(e, 409, status="refused", blocker=e.blocker)
+        return _fail(e, 409, status="refused", blocker=e.blocker)
     except (wb.BrandRefused, wb.ManifestRefused) as e:
-        return _bad(e, 409, status="refused")
+        return _fail(e, 409, status="refused")
     except ValueError as e:
-        return _bad(e, 409, status="refused")
+        return _fail(e, 409, status="refused")
     return jsonify({"status": "ok", "approval": card})
 
 

@@ -22,7 +22,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )
-from agent_friday.routes._errors import api_error
+from agent_friday.routes._errors import api_error, error_text
 
 ws_studio_bp = Blueprint('ws_studio', __name__)
 
@@ -40,7 +40,7 @@ def _ws_headers(resp):
 
 @ws_studio_bp.errorhandler(ValueError)
 def _ws_bad_id(e):
-    return jsonify({"status": "error", "message": str(e) or "invalid request"}), 400
+    return api_error(e, "That request was not valid", 400)
 
 
 # ═══ WORKSPACE STUDIO — Friday as per-workspace customization agent ═══
@@ -64,11 +64,11 @@ def ws_appearance(ws_id):
                                          apply=data.get('apply', False), origin=origin)
         return jsonify(status='ok', **result)
     except WorkspaceConflictError as exc:
-        return jsonify(status='conflict', message=str(exc)), 409
+        return jsonify(status='conflict', message=error_text(exc, 'The workspace changed')), 409
     except PermissionError as exc:
-        return jsonify(status='error', message=str(exc)), 403
+        return api_error(exc, 'That change was refused', 403)
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return api_error(exc, 'That appearance change was not valid', 400)
     except OSError:
         return jsonify(status='error', message='Workspace appearance could not be read or saved. Your draft is kept.'), 503
 
@@ -118,7 +118,7 @@ def ws_chat_post(ws_id):
         label = (data.get('label') or ws_id).strip()
         _admit_write(origin)
     except PermissionError as exc:
-        return jsonify(status='error', message=str(exc)), 403
+        return api_error(exc, 'That change was refused', 403)
     try:
         system = _get_friday_system_prompt(
             keywords=message, workspace=ws_id,
@@ -130,7 +130,7 @@ def ws_chat_post(ws_id):
         result = workspace_chat_turn(ws_id, label, message, system=system, origin=origin)
         return jsonify(result)
     except PermissionError as exc:
-        return jsonify(status='error', message=str(exc)), 403
+        return api_error(exc, 'That change was refused', 403)
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't send the workspace message")
@@ -144,7 +144,7 @@ def ws_chat_clear(ws_id):
         doc = clear_chat(ws_id)
         return jsonify({"status": "ok", "chat": doc.get("chat", [])})
     except PermissionError as exc:
-        return jsonify(status='error', message=str(exc)), 403
+        return api_error(exc, 'That change was refused', 403)
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't clear the workspace chat")
@@ -170,7 +170,7 @@ def ws_revert(ws_id):
             "versions": doc.get("versions", []),
         })
     except PermissionError as exc:
-        return jsonify(status='error', message=str(exc)), 403
+        return api_error(exc, 'That change was refused', 403)
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't revert the workspace")
@@ -189,7 +189,7 @@ def ws_reset(ws_id):
             "versions": doc.get("versions", []),
         })
     except PermissionError as exc:
-        return jsonify(status='error', message=str(exc)), 403
+        return api_error(exc, 'That change was refused', 403)
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't reset the workspace")

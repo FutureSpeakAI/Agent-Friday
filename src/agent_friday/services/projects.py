@@ -67,6 +67,7 @@ from typing import Optional
 
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.paths import contained, safe_name
+from agent_friday.user_errors import UserFacingRuntimeError, UserFacingValueError
 
 _LOCK = threading.RLock()
 
@@ -355,7 +356,7 @@ def _file_name(name: str) -> str:
     name = (name or "").strip()
     if not name or name != safe_name(name, what="file name") or name.startswith(".") \
             or "/" in name or "\\" in name or name in (".", ".."):
-        raise ValueError("a file name is one plain name, no folders")
+        raise UserFacingValueError("a file name is one plain name, no folders")
     return name[:120]
 
 
@@ -367,19 +368,19 @@ def list_files(pid: str) -> list:
 def add_file(pid: str, name: str, data: bytes) -> dict:
     """Keep a file on the project. Replaces a file of the same name."""
     if _off_record():
-        raise RuntimeError("off the record: nothing is written")
+        raise UserFacingRuntimeError("off the record: nothing is written")
     name = _file_name(name)
     if not isinstance(data, (bytes, bytearray)):
-        raise ValueError("a file is bytes")
+        raise UserFacingValueError("a file is bytes")
     if len(data) > MAX_FILE_BYTES:
-        raise ValueError("that file is too large for a project (%d bytes; the cap is %d)" % (len(data), MAX_FILE_BYTES))
+        raise UserFacingValueError("that file is too large for a project (%d bytes; the cap is %d)" % (len(data), MAX_FILE_BYTES))
     with _LOCK:
         proj = load(pid)
         if proj is None:
             raise KeyError("project")
         others = [f for f in proj["files"] if f.get("name") != name]
         if sum(int(f.get("bytes") or 0) for f in others) + len(data) > MAX_PROJECT_FILE_BYTES:
-            raise ValueError("the project's files are at their cap (%d bytes)" % MAX_PROJECT_FILE_BYTES)
+            raise UserFacingValueError("the project's files are at their cap (%d bytes)" % MAX_PROJECT_FILE_BYTES)
         fdir = _files_dir(pid)
         fdir.mkdir(parents=True, exist_ok=True)
         path = contained(fdir, name)
@@ -410,7 +411,7 @@ def read_file(pid: str, name: str) -> Optional[bytes]:
 
 def remove_file(pid: str, name: str) -> bool:
     if _off_record():
-        raise RuntimeError("off the record: nothing is written")
+        raise UserFacingRuntimeError("off the record: nothing is written")
     try:
         name = _file_name(name)
         path = contained(_files_dir(pid), name)

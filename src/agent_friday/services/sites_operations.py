@@ -10,6 +10,7 @@ import time
 import uuid
 from contextlib import ExitStack
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.paths import friday_home, contained
 from agent_friday.services.workflow_operations import atomic_write
 from agent_friday.services import sites_privacy
@@ -35,7 +36,7 @@ def _root():
 
 def _id(value, prefix):
     if not re.fullmatch(prefix + r"-[a-f0-9]{32}", str(value)):
-        raise ValueError("Choose a saved %s." % prefix)
+        raise UserFacingValueError("Choose a saved %s." % prefix)
     return value
 
 
@@ -64,31 +65,31 @@ def _context(context):
     context = dict(context or {})
     if any(context.get(key) for key in ("nested_execution", "is_background_task", "task_id", "schedule_id",
                                        "agent_id", "agent_profile_id", "grant_scope", "scope", "scheduled")):
-        raise ValueError("Sites account and publication actions need the owning chat or Sites panel, not a background worker.")
+        raise UserFacingValueError("Sites account and publication actions need the owning chat or Sites panel, not a background worker.")
     if not context.get("conversation_id"):
-        raise ValueError("Choose the chat that owns this site.")
+        raise UserFacingValueError("Choose the chat that owns this site.")
     return context
 
 
 def validate_site_owner(site, context=None):
     from agent_friday.services import conversations, projects, codebases
     if not site:
-        raise ValueError("That site no longer exists.")
+        raise UserFacingValueError("That site no longer exists.")
     cid, pid = site.get("conversation_id"), site.get("project_id") or None
     conversation = conversations.load(cid)
     if not conversation or conversation.get("status") == "archived" or (conversation.get("project") or None) != pid:
-        raise ValueError("The site's owning chat was deleted, archived, or moved. Save a new site in the intended chat.")
+        raise UserFacingValueError("The site's owning chat was deleted, archived, or moved. Save a new site in the intended chat.")
     project = projects.load(pid) if pid else None
     if pid and (not project or project.get("archived")):
-        raise ValueError("The site's project is unavailable.")
+        raise UserFacingValueError("The site's project is unavailable.")
     codebase = codebases.load(site["codebase_id"])
     if (not codebase or codebase.get("conversation_id") != cid
             or conversation.get("codebase") != site["codebase_id"]):
-        raise ValueError("The site codebase is no longer bound to its owning chat.")
+        raise UserFacingValueError("The site codebase is no longer bound to its owning chat.")
     if context is not None:
         caller = _context(context)
         if caller["conversation_id"] != cid or (caller.get("project_id") or None) != pid:
-            raise ValueError("This site belongs to another chat or project.")
+            raise UserFacingValueError("This site belongs to another chat or project.")
     return site
 
 
@@ -98,10 +99,10 @@ def _caller(context):
     generation = sites_privacy.admit(context)
     conversation = conversations.load(context["conversation_id"])
     if not conversation or conversation.get("status") == "archived":
-        raise ValueError("The owning chat is unavailable.")
+        raise UserFacingValueError("The owning chat is unavailable.")
     pid = conversation.get("project") or None
     if "project_id" in context and (context.get("project_id") or None) != pid:
-        raise ValueError("The owning chat has moved to a different project.")
+        raise UserFacingValueError("The owning chat has moved to a different project.")
     return dict(context, project_id=pid, _sites_generation=generation)
 
 
@@ -114,14 +115,14 @@ def _build(site, build_id):
     from agent_friday.services.site_builds import build_dir
     value = _read(build_dir(site["site_id"], _id(build_id, "build")) / "build.json")
     if not value or value.get("site_id") != site["site_id"]:
-        raise ValueError("That build does not belong to this site.")
+        raise UserFacingValueError("That build does not belong to this site.")
     return value
 
 
 def _operation(site, operation_id):
     value = _read(_site_dir(site["site_id"]) / "operations" / (_id(operation_id, "op") + ".json"))
     if not value or value.get("site_id") != site["site_id"]:
-        raise ValueError("That operation does not belong to this site.")
+        raise UserFacingValueError("That operation does not belong to this site.")
     if value.get("status") in {"awaiting_approval", "applying"}:
         applying = value["status"] == "applying"
         expired = applying and value.get("executor_instance") != _INSTANCE
@@ -154,9 +155,9 @@ def _hostname(value):
     try:
         value = str(value or "").strip().rstrip(".").encode("idna").decode("ascii").lower()
     except UnicodeError as exc:
-        raise ValueError("Enter a valid domain hostname.") from exc
+        raise UserFacingValueError("Enter a valid domain hostname.") from exc
     if len(value) > 253 or "." not in value or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", p) for p in value.split(".")):
-        raise ValueError("Enter a valid domain hostname without a URL, port or wildcard.")
+        raise UserFacingValueError("Enter a valid domain hostname without a URL, port or wildcard.")
     return value
 
 
@@ -165,20 +166,20 @@ def _config(args, previous, caller):
     merged = {key: copy.deepcopy(args.get(key, (previous or {}).get(key))) for key in CONFIG}
     name, command = merged["name"], merged["build_command"] or ""
     if not isinstance(name, str) or not name.strip() or len(name) > 160:
-        raise ValueError("Give the site a name of at most 160 characters.")
+        raise UserFacingValueError("Give the site a name of at most 160 characters.")
     if not isinstance(command, str) or len(command) > 2000:
-        raise ValueError("The build command must be text of at most 2000 characters.")
+        raise UserFacingValueError("The build command must be text of at most 2000 characters.")
     from agent_friday.services import credential_paths, publish_web
     if (credential_paths.scan_command(command) or any(pattern.search(command) for pattern in publish_web._SECRET_RES)
             or re.search(r"(?i)(?:token|secret|password|api[_-]?key)\s*=", command)):
-        raise ValueError("Build commands cannot contain credentials or read protected credential paths.")
+        raise UserFacingValueError("Build commands cannot contain credentials or read protected credential paths.")
     merged.update(name=name.strip(), build_command=command.strip(),
                   build_root=site_builds.relative_path(merged["build_root"] or "."),
                   output_dir=site_builds.relative_path(merged["output_dir"] or "."))
     hosting = merged["hosting"]
     if hosting is not None:
         if not isinstance(hosting, dict) or set(hosting) != {"connection_id"}:
-            raise ValueError("Select a saved hosting connection.")
+            raise UserFacingValueError("Select a saved hosting connection.")
         connection = site_hosting.get_connection(hosting["connection_id"])
         site_hosting.require_site_target(connection)
         target = site_hosting.target_identity(connection)
@@ -187,18 +188,18 @@ def _config(args, previous, caller):
             if other and other["site_id"] != (previous or {}).get("site_id") and other.get("hosting"):
                 other_connection = site_hosting.get_connection(other["hosting"]["connection_id"])
                 if site_hosting.target_identity(other_connection) == target:
-                    raise ValueError("That hosting target belongs to another saved site. Use a dedicated Pages project or repository.")
+                    raise UserFacingValueError("That hosting target belongs to another saved site. Use a dedicated Pages project or repository.")
     binding = merged["domain"]
     if binding is not None:
         if not isinstance(binding, dict) or set(binding) - {"account_id", "account_revision", "domain", "hostname"}:
-            raise ValueError("Select a verified domain account and hostname.")
+            raise UserFacingValueError("Select a verified domain account and hostname.")
         from agent_friday.services import domain_operations
         domain, hostname = _hostname(binding.get("domain")), _hostname(binding.get("hostname"))
         if hostname != domain and not hostname.endswith("." + domain):
-            raise ValueError("The hostname must be inside the selected domain.")
+            raise UserFacingValueError("The hostname must be inside the selected domain.")
         verified = domain_operations.validate_binding(binding.get("account_id"), domain, caller)
         if type(binding.get("account_revision")) is not int or binding["account_revision"] != verified["account_revision"]:
-            raise ValueError("The selected domain account changed. Refresh and review its binding before saving.")
+            raise UserFacingValueError("The selected domain account changed. Refresh and review its binding before saving.")
         merged["domain"] = {key: verified[key] for key in ("account_id", "account_revision", "domain")}
         merged["domain"]["hostname"] = hostname
         if hosting:
@@ -213,11 +214,11 @@ def _save(args, caller):
     with LOCK:
         previous = get_site(args["site_id"]) if args.get("site_id") else None
         if args.get("site_id") and not previous:
-            raise ValueError("That site no longer exists.")
+            raise UserFacingValueError("That site no longer exists.")
         if previous:
             validate_site_owner(previous, caller)
             if type(args.get("revision")) is not int or args["revision"] != previous["revision"]:
-                raise ValueError("The site changed. Reload it before saving.")
+                raise UserFacingValueError("The site changed. Reload it before saving.")
         config = _config(args, previous, caller)
         record = dict(config, site_id=(previous or {}).get("site_id") or "site-" + uuid.uuid4().hex,
                       revision=int((previous or {}).get("revision", 0)) + 1,
@@ -265,20 +266,20 @@ def _overview(site):
 def _connection(site, expected=None, *, allow_reconnected=False):
     from agent_friday.services import site_hosting
     if not site.get("hosting"):
-        raise ValueError("Select a saved hosting connection before publishing.")
+        raise UserFacingValueError("Select a saved hosting connection before publishing.")
     connection = site_hosting.get_connection(site["hosting"]["connection_id"], secret=True)
     site_hosting.require_site_target(connection)
     target = site_hosting.target_identity(connection)
     if target != site.get("hosting_target"):
-        raise ValueError("The hosting target changed. Review and save the site binding again.")
+        raise UserFacingValueError("The hosting target changed. Review and save the site binding again.")
     for path in _root().glob("site-*/site.json"):
         other = _read(path)
         if other and other["site_id"] != site["site_id"] and other.get("hosting_target") == target:
-            raise ValueError("This hosting target is already reserved by another saved site.")
+            raise UserFacingValueError("This hosting target is already reserved by another saved site.")
     identity_fields = ("connection_id", "adapter", "repo", "branch", "account_id", "project")
     if expected and (any(connection.get(key) != expected.get(key) for key in identity_fields)
                      or (not allow_reconnected and connection.get("revision") != expected.get("revision"))):
-        raise ValueError("The hosting connection changed. Prepare a new approval.")
+        raise UserFacingValueError("The hosting connection changed. Prepare a new approval.")
     return connection
 
 
@@ -290,23 +291,23 @@ def _binding(site, generation):
             {"conversation_id": site["conversation_id"], "project_id": site["project_id"],
              "_sites_origin": sites_privacy.require_generation(generation)})
         if current["account_revision"] != binding["account_revision"]:
-            raise ValueError("The domain connection changed. Save the binding again before publishing.")
+            raise UserFacingValueError("The domain connection changed. Save the binding again before publishing.")
 
 
 def _bundle(site, build, operation_id=None):
     from agent_friday.services import site_builds, publish_web
     if build.get("status") != "built":
-        raise ValueError("Choose a successful static build before publishing.")
+        raise UserFacingValueError("Choose a successful static build before publishing.")
     files = site_builds.collect(site_builds.build_dir(site["site_id"], build["build_id"]) / "output", output=True)
     if site_builds.manifest(files) != build.get("files") or site_builds.digest(files) != build.get("output_hash"):
-        raise ValueError("Build output changed after preview. Prepare a new build.")
+        raise UserFacingValueError("Build output changed after preview. Prepare a new build.")
     if operation_id:
         files[".well-known/friday-deployment.json"] = json.dumps({"site_id": site["site_id"], "operation_id": operation_id,
             "build_id": build["build_id"], "output_hash": build["output_hash"]}, sort_keys=True).encode()
     bundle = publish_web.Bundle(files, site["name"], site["site_id"], "site", site["site_id"], site["conversation_id"], site["revision"])
     scan = publish_web.scan(bundle)
     if not scan["ok"]:
-        raise ValueError("The output no longer passes the publication scan.")
+        raise UserFacingValueError("The output no longer passes the publication scan.")
     return bundle, scan
 
 
@@ -316,7 +317,7 @@ def _preparation_current(site, generation, privacy_boot):
         sites_privacy.require_operation(generation, privacy_boot)
         current = validate_site_owner(get_site(site["site_id"]))
         if current["revision"] != site["revision"]:
-            raise ValueError("The site changed while preparing the review. Prepare it again.")
+            raise UserFacingValueError("The site changed while preparing the review. Prepare it again.")
 
 
 def _prepare(site, action, args, generation):
@@ -356,7 +357,7 @@ def _prepare(site, action, args, generation):
         unresolved = [row for row in _records(site, "operations", "op-*.json")
                       if row["action"] == "publish" and row["status"] in ("applying", "unknown")]
         if unresolved:
-            raise ValueError("A publication outcome is unresolved. Check its deployment status before preparing another write.")
+            raise UserFacingValueError("A publication outcome is unresolved. Check its deployment status before preparing another write.")
         build = _build(site, args.get("build_id"))
         connection = _connection(site)
         _binding(site, generation)
@@ -417,11 +418,11 @@ def _approved_operation(record):
     if (not _matches_card(record, operation) or operation["site_revision"] != site["revision"]
             or operation["conversation_id"] != site["conversation_id"]
             or operation.get("project_id") != site.get("project_id")):
-        raise ValueError("The site or approval changed. Prepare a new operation.")
+        raise UserFacingValueError("The site or approval changed. Prepare a new operation.")
     from agent_friday.services import approvals
     stored = approvals.get_approval(record["approval_id"])
     if not stored or stored.get("status") != "approved" or not stored.get("executing_at"):
-        raise ValueError("This operation has no current, claimed approval.")
+        raise UserFacingValueError("This operation has no current, claimed approval.")
     return site, operation
 
 
@@ -491,12 +492,12 @@ def _perform(record):
                 if any(other["operation_id"] != operation["operation_id"] and other["action"] == "publish"
                        and other["status"] in ("applying", "unknown")
                        for other in _records(site, "operations", "op-*.json")):
-                    raise ValueError("Another publication is unresolved; no additional write was started.")
+                    raise UserFacingValueError("Another publication is unresolved; no additional write was started.")
                 connection = _connection(site, operation["connection"])
                 _binding(site, operation["privacy_generation"])
                 bundle, _scan = _bundle(site, build, operation["operation_id"])
                 if bundle.manifest() != operation["files"]:
-                    raise ValueError("The approved output changed. Prepare a new publication.")
+                    raise UserFacingValueError("The approved output changed. Prepare a new publication.")
                 # The owner cannot move while a bounded external mutation is in flight.
                 stack.enter_context(conversations._LOCK)
                 _approved_operation(record)
@@ -537,15 +538,15 @@ def preview_file(site_id, build_id, rel, *, generation):
     site = validate_site_owner(get_site(site_id))
     build = _build(site, build_id)
     if build.get("status") != "built":
-        raise ValueError("This build has no successful preview.")
+        raise UserFacingValueError("This build has no successful preview.")
     path = contained(site_builds.build_dir(site_id, build_id) / "output", rel)
     site_builds._regular(path)
     file = next((item for item in build.get("files", []) if item["path"] == rel), None)
     if not file or path.stat().st_size > site_builds.MAX_FILE_BYTES:
-        raise ValueError("That preview file is unavailable.")
+        raise UserFacingValueError("That preview file is unavailable.")
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != file["sha256"]:
-        raise ValueError("Build output changed. Prepare a new build.")
+        raise UserFacingValueError("Build output changed. Prepare a new build.")
     sites_privacy.require_generation(generation)
     return data
 
@@ -553,10 +554,10 @@ def preview_file(site_id, build_id, rel, *, generation):
 def _execute(action, args, caller):
     """One owner-scoped contract for UI, chat and voice; never executes approval tokens from input."""
     if action not in ACTIONS or (args is not None and not isinstance(args, dict)):
-        raise ValueError("Choose a supported Sites action and object arguments.")
+        raise UserFacingValueError("Choose a supported Sites action and object arguments.")
     args = dict(args or {})
     if set(args) - ACTION_FIELDS[action]:
-        raise ValueError("Unsupported Sites fields. Ownership comes from the current chat.")
+        raise UserFacingValueError("Unsupported Sites fields. Ownership comes from the current chat.")
     if action == "save":
         return {"status": "ok", "site": _overview(_save(args, caller))}
     if action == "list":
@@ -584,15 +585,15 @@ def _execute(action, args, caller):
         from agent_friday.services import publish_adapters
         binding = site.get("domain")
         if not binding:
-            raise ValueError("Select the site's domain first.")
+            raise UserFacingValueError("Select the site's domain first.")
         return {"status": "ok", "requirements": publish_adapters.site_dns_requirements(_connection(site), binding["hostname"], binding["domain"])}
     operation = _operation(site, args.get("operation_id"))
     if action == "deployment_status":
         from agent_friday.services import publish_adapters, site_verification
         if operation["action"] != "publish":
-            raise ValueError("Choose a publication operation.")
+            raise UserFacingValueError("Choose a publication operation.")
         if operation["status"] in {"awaiting_approval", "denied", "expired", "blocked", "refused", "failed"}:
-            raise ValueError("This publication has not started. Inspect its review before checking the provider.")
+            raise UserFacingValueError("This publication has not started. Inspect its review before checking the provider.")
         if operation["status"] == "applying":
             return {"status": "ok", "operation": operation, "operation_id": operation["operation_id"]}
         observed_revision = operation.get("record_revision", 0)
@@ -622,7 +623,7 @@ def _execute(action, args, caller):
         with LOCK, site_hosting.LOCK, conversations._LOCK:
             current = validate_site_owner(get_site(site["site_id"]), caller)
             if current["revision"] != site["revision"]:
-                raise ValueError("The site changed during verification. Check its current deployment again.")
+                raise UserFacingValueError("The site changed during verification. Check its current deployment again.")
             _connection(current, operation["connection"], allow_reconnected=True)
             latest = _operation(current, operation["operation_id"])
             if latest.get("record_revision", 0) != observed_revision:

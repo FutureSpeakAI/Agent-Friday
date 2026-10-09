@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent_friday.paths import contained, safe_name
+from agent_friday.user_errors import UserFacingValueError
 
 _log = logging.getLogger(__name__)
 
@@ -120,8 +121,8 @@ _SECRET_RES = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}"),
 )
 _SSN_RE = re.compile(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b")
-_SCRIPT_SRC_RE = re.compile(r"<script\b[^>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"]", re.I)
-_IMPORT_URL_RE = re.compile(r"""(?:from|import)\s*\(?\s*['"](https?://[^'"]+)['"]""")
+_SCRIPT_SRC_RE = re.compile(r"<script\b[^<>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"]", re.I)
+_IMPORT_URL_RE = re.compile(r"""(?:from|import)\s*(?:\(\s*)?['"](https?://[^'"]+)['"]""")
 _ESM_PIN_RE = re.compile(r"https://esm\.sh/((?:@[a-z0-9~][a-z0-9._~-]*/)?[a-z0-9~][a-z0-9._~-]*)@([0-9][^/?'\"\s]*)")
 _COPYLEFT_RE = re.compile(r"\b(?:A?GPL|LGPL|SSPL|EUPL|CC[- ]BY[- ]NC|OSL|CPAL|non-?commercial|NC\b)", re.I)
 
@@ -192,7 +193,7 @@ def slug_for(title: str) -> str:
 def _check_slug(slug: str) -> str:
     slug = safe_name(slug, what="slug")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,47}", slug):
-        raise ValueError("invalid slug")
+        raise UserFacingValueError("invalid slug")
     return slug
 
 
@@ -245,11 +246,11 @@ def _inject_into_app(html_src: str, *, mark: bool) -> str:
     meta = ("<meta http-equiv=\"Content-Security-Policy\" content=\"" + FRAME_CSP.replace('"', "&quot;") + "\">"
             "<meta name=\"referrer\" content=\"no-referrer\"><meta name=\"generator\" content=\"Friday\">")
     s = html_src or ""
-    m = re.search(r"<head[^>]*>", s, re.I)
+    m = re.search(r"<head\b[^<>]*>", s, re.I)
     if m:
         s = s[:m.end()] + meta + s[m.end():]
     else:
-        m = re.search(r"<html[^>]*>", s, re.I)
+        m = re.search(r"<html\b[^<>]*>", s, re.I)
         if m:
             s = s[:m.end()] + "<head><meta charset=\"utf-8\">" + meta + "</head>" + s[m.end():]
         else:
@@ -609,7 +610,7 @@ def request_publish(cid: str, aid: str, *, adapter: Optional[str] = None, versio
         raise KeyError(aid)
     adapter = adapter or default_adapter()
     if adapter not in ADAPTER_LABELS:
-        raise ValueError("unknown publish adapter %r" % adapter)
+        raise UserFacingValueError("unknown publish adapter %r" % adapter)
     label = ADAPTER_LABELS[adapter]
     try:
         bundle = pack(rec, mark=mark)
@@ -739,7 +740,7 @@ def unpublish(slug: str) -> bool:
             except Exception:
                 # Remote timeouts can be ambiguous. Keep the local receipt and
                 # mirror so a failed request cannot be presented as taken down.
-                raise ValueError("Remote take-down was not confirmed. The saved publication remains listed; check the host before retrying.") from None
+                raise UserFacingValueError("Remote take-down was not confirmed. The saved publication remains listed; check the host before retrying.") from None
         _write_index([i for i in items if i.get("slug") != slug])
     return True
 

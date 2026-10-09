@@ -10,8 +10,8 @@ crew_rooms_bp = Blueprint("crew_rooms", __name__)
 
 def _error(exc):
     if isinstance(exc, runtime.CrewRoomError):
-        return jsonify(status="error", message=str(exc)), (
-            409 if isinstance(exc, runtime.CrewConflict) else 400)
+        return api_error(exc, "Couldn't update this Crew conversation",
+                         409 if isinstance(exc, runtime.CrewConflict) else 400)
     return api_error(exc, "Couldn't update this Crew conversation")
 
 

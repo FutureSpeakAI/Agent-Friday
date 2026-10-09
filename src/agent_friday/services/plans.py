@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Optional
 
 from agent_friday.services import artifacts as _art
+from agent_friday.user_errors import UserFacingValueError
 
 CONTEXT_HEADER = "== PLAN (this chat's panel) =="
 BLOCKERS = ("missing_evidence", "needs_user_input", "run_failed", "external_wait", "goal_not_met_yet")
@@ -46,9 +47,9 @@ def create(cid: str, title: str, markdown: str, milestones: list, settings: Opti
     """A plan awaiting approval. Raises ValueError on an empty or oversized milestone list."""
     titles = [" ".join(str(m).split())[:160] for m in (milestones or []) if str(m).strip()]
     if not titles:
-        raise ValueError("a plan needs at least one milestone")
+        raise UserFacingValueError("a plan needs at least one milestone")
     if len(titles) > MAX_MILESTONES:
-        raise ValueError("a plan has at most %d milestones; split it" % MAX_MILESTONES)
+        raise UserFacingValueError("a plan has at most %d milestones; split it" % MAX_MILESTONES)
     plan = {"milestones": [{"n": i + 1, "title": t, "status": "todo", "step": None, "blocker": None, "note": ""}
                            for i, t in enumerate(titles)],
             "approved": False, "approved_at": None, "approved_by": None, "task_id": None,
@@ -78,7 +79,7 @@ def approve(cid: str, aid: str, by: str = "you", settings: Optional[dict] = None
     rec = _art.get(cid, aid, settings=settings)
     plan = _plan_of(rec)
     if plan is None:
-        raise ValueError("that artifact is not a plan")
+        raise UserFacingValueError("that artifact is not a plan")
     if plan.get("approved"):
         return rec
     plan = dict(plan)
@@ -104,20 +105,20 @@ def milestone(cid: str, aid: str, n: int, status: str, *, step: Optional[str] = 
     rec = _art.get(cid, aid, settings=settings)
     plan = _plan_of(rec)
     if plan is None:
-        raise ValueError("that artifact is not a plan")
+        raise UserFacingValueError("that artifact is not a plan")
     if not plan.get("approved"):
         raise NotApproved("the plan has not been approved; nothing is built before the user says so")
     if status not in STATUSES:
-        raise ValueError("status must be one of %s" % ", ".join(STATUSES))
+        raise UserFacingValueError("status must be one of %s" % ", ".join(STATUSES))
     if status == "blocked" and blocker not in BLOCKERS:
-        raise ValueError("a blocked milestone needs one of the typed blockers: %s" % ", ".join(BLOCKERS))
+        raise UserFacingValueError("a blocked milestone needs one of the typed blockers: %s" % ", ".join(BLOCKERS))
     ms = [dict(m) for m in plan["milestones"]]
     try:
         m = ms[int(n) - 1]
         if int(n) < 1:
             raise IndexError
     except (IndexError, TypeError, ValueError):
-        raise ValueError("no milestone %r" % (n,))
+        raise UserFacingValueError("no milestone %r" % (n,))
     m["status"] = status
     m["blocker"] = blocker if status == "blocked" else None
     m["note"] = " ".join(str(note or "").split())[:300]

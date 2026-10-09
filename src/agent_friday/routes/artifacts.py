@@ -15,13 +15,20 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error
 from agent_friday.services import artifacts as art
 
 artifacts_bp = Blueprint("artifacts", __name__)
 
 
-def _bad(msg, code=400):
-    return jsonify({"status": "error", "error": str(msg)}), code
+def _bad(msg: str, code=400):
+    return jsonify({"status": "error", "error": msg}), code
+
+
+def _fail(exc, code=400):
+    """A refused request. A `UserFacingError` shows its message; any other
+    exception is logged and answered with a short error id."""
+    return api_error(exc, "Couldn't complete that artifact request", code, key="error")
 
 
 @artifacts_bp.route("/api/artifacts", methods=["GET"])
@@ -31,7 +38,7 @@ def list_artifacts():
     try:
         return jsonify({"status": "ok", "artifacts": art.list_for(cid)})
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
 
 
 @artifacts_bp.route("/api/artifacts/<cid>", methods=["POST"])
@@ -43,7 +50,7 @@ def create_artifact(cid):
                       body.get("content"), meta=body.get("meta") if isinstance(body.get("meta"), dict) else None,
                       author="you", note=str(body.get("note") or "made in the panel"))
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     return jsonify({"status": "ok", "artifact": rec})
 
 
@@ -54,7 +61,7 @@ def read_artifact(cid, aid):
     try:
         rec = art.get(cid, aid, version=int(version) if version else None)
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     if rec is None:
         return _bad("no such artifact or version", 404)
     out = {"status": "ok", "artifact": rec}
@@ -71,7 +78,7 @@ def artifact_versions(cid, aid):
     try:
         vs = art.versions(cid, aid)
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     if not vs:
         return _bad("no such artifact", 404)
     return jsonify({"status": "ok", "versions": vs})
@@ -89,7 +96,7 @@ def edit_artifact(cid, aid):
     except KeyError:
         return _bad("no such artifact", 404)
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     return jsonify({"status": "ok", "artifact": rec})
 
 
@@ -104,7 +111,7 @@ def approve_plan(cid, aid):
             return _bad("no such artifact", 404)
         rec = _plans.approve(cid, aid, by="you")
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     try:
         from agent_friday.services import conversations as _convs
         _convs.append(cid, {"role": "system", "text": "\u2705 Plan approved: \"%s\". Friday builds it from the next turn, one milestone at a time." % rec["title"],
@@ -127,5 +134,5 @@ def restore_artifact(cid, aid):
     except KeyError:
         return _bad("no such version", 404)
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     return jsonify({"status": "ok", "artifact": rec})

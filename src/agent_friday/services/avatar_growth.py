@@ -34,6 +34,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.services import avatar_genome as g
 
@@ -102,14 +103,14 @@ def set_settings(*, enabled=None, author=None, apply_mode=None, now=None) -> dic
         st = settings(now=now)
         if author is not None:
             if not _valid_author(author):
-                raise ValueError("not a model Friday can use: %r" % (author,))
+                raise UserFacingValueError("not a model Friday can use: %r" % (author,))
             st["author"] = author
             st["waiting"] = None
         if enabled is not None:
             st["enabled"] = bool(enabled)
         if apply_mode is not None:
             if apply_mode not in APPLY_MODES:
-                raise ValueError("apply mode must be one of %s" % (APPLY_MODES,))
+                raise UserFacingValueError("apply mode must be one of %s" % (APPLY_MODES,))
             st["apply_mode"] = apply_mode
         g.save_state(st)
         return st

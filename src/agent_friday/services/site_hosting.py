@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.paths import friday_home
 from agent_friday.services.workflow_operations import atomic_write
 from agent_friday.services import sites_privacy
@@ -18,9 +19,9 @@ CLOUDFLARE_UNAVAILABLE = "Cloudflare Pages is not available for saved Sites yet;
 
 def require_supported(adapter):
     if adapter == "cloudflare_pages":
-        raise ValueError(CLOUDFLARE_UNAVAILABLE)
+        raise UserFacingValueError(CLOUDFLARE_UNAVAILABLE)
     if not isinstance(adapter, str) or adapter not in SUPPORTED_ADAPTERS:
-        raise ValueError("Choose GitHub Pages for saved Sites.")
+        raise UserFacingValueError("Choose GitHub Pages for saved Sites.")
 
 
 def _path():
@@ -38,7 +39,7 @@ def _write(rows):
 
 def _key(connection_id, revision=None):
     if not re.fullmatch(r"host-[a-f0-9]{32}", str(connection_id)):
-        raise ValueError("Choose a saved hosting connection.")
+        raise UserFacingValueError("Choose a saved hosting connection.")
     return "sites_" + connection_id + ("_" + str(revision) if revision is not None else "")
 
 
@@ -55,12 +56,12 @@ def get_connection(connection_id, *, secret=False):
     with LOCK:
         row = _read().get(connection_id)
         if not row:
-            raise ValueError("That hosting connection is unavailable.")
+            raise UserFacingValueError("That hosting connection is unavailable.")
         result = dict(row)
         if secret:
             token = credential_store.get_provider_key(_key(connection_id, row["revision"]))
             if not token:
-                raise ValueError("Reconnect this hosting account in Sites.")
+                raise UserFacingValueError("Reconnect this hosting account in Sites.")
             result["token"] = token
         return result
 
@@ -70,34 +71,34 @@ def connect(data, *, generation):
     from agent_friday.services import credential_store
     sites_privacy.require_generation(generation)
     if not isinstance(data, dict):
-        raise ValueError("Provide a hosting connection object.")
+        raise UserFacingValueError("Provide a hosting connection object.")
     adapter = data.get("adapter")
     require_supported(adapter)
     if set(data) - {"name", "adapter", "token", "repo", "branch", "connection_id", "revision"}:
-        raise ValueError("Use the hosting connection form fields.")
+        raise UserFacingValueError("Use the hosting connection form fields.")
     token = data.get("token")
     if not isinstance(token, str) or not token.strip() or any(ord(c) < 33 for c in token.strip()):
-        raise ValueError("Choose GitHub Pages and enter its token.")
+        raise UserFacingValueError("Choose GitHub Pages and enter its token.")
     name = str(data.get("name") or adapter).strip()
     if len(name) > 120 or len(token) > 10000:
-        raise ValueError("The connection name or token is too long.")
+        raise UserFacingValueError("The connection name or token is too long.")
     repo, branch = str(data.get("repo") or ""), str(data.get("branch") or "gh-pages")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repo) or repo.split("/")[-1] in (".", ".."):
-        raise ValueError("Enter the GitHub repository as owner/name.")
+        raise UserFacingValueError("Enter the GitHub repository as owner/name.")
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_/-]{0,99}", branch) or "//" in branch:
-        raise ValueError("Choose a simple publishing branch name.")
+        raise UserFacingValueError("Choose a simple publishing branch name.")
     target = {"repo": repo, "branch": branch}
     with LOCK:
         rows = _read()
         connection_id = data.get("connection_id") or "host-" + uuid.uuid4().hex
         _key(connection_id)
         if data.get("connection_id") and connection_id not in rows:
-            raise ValueError("That hosting connection no longer exists.")
+            raise UserFacingValueError("That hosting connection no longer exists.")
         prior = rows.get(connection_id) or {}
         if prior and (type(data.get("revision")) is not int or data["revision"] != prior["revision"]):
-            raise ValueError("This connection changed. Refresh it before reconnecting.")
+            raise UserFacingValueError("This connection changed. Refresh it before reconnecting.")
         if prior and (prior["adapter"] != adapter or any(prior.get(key) != value for key, value in target.items())):
-            raise ValueError("A different hosting target needs a new connection; reconnect only replaces its credential.")
+            raise UserFacingValueError("A different hosting target needs a new connection; reconnect only replaces its credential.")
         row = dict(target, connection_id=connection_id, adapter=adapter, name=name,
                    revision=int(prior.get("revision", 0)) + 1, updated_at=time.time())
         rows[connection_id] = row
@@ -124,9 +125,9 @@ def disconnect(connection_id, revision, *, generation):
     with LOCK:
         rows = _read()
         if connection_id not in rows:
-            raise ValueError("That hosting connection no longer exists.")
+            raise UserFacingValueError("That hosting connection no longer exists.")
         if type(revision) is not int or revision != rows[connection_id]["revision"]:
-            raise ValueError("This connection changed. Refresh it before disconnecting.")
+            raise UserFacingValueError("This connection changed. Refresh it before disconnecting.")
         # Keep the tombstone and generation so reconnect cannot revive an old approval.
         old_revision = rows[connection_id]["revision"]
         rows[connection_id]["revision"] += 1
@@ -151,7 +152,7 @@ def require_artifact_target(adapter, connection):
     for path in (friday_home() / "sites").glob("site-*/site.json"):
         row = json.loads(path.read_text(encoding="utf-8"))
         if row.get("hosting_target") == identity:
-            raise ValueError("That hosted project/repository belongs to a saved site. Choose a separate target for artifact publishing.")
+            raise UserFacingValueError("That hosted project/repository belongs to a saved site. Choose a separate target for artifact publishing.")
 
 
 def require_site_target(connection):
@@ -161,4 +162,4 @@ def require_site_target(connection):
     legacy = publish_hosting.connection(adapter)
     if (legacy and target_identity(dict(legacy, adapter=adapter)) == target_identity(connection)
             and any(row.get("adapter") == adapter for row in publish_web.list_published())):
-        raise ValueError("That target contains the published artifact portfolio. Choose a dedicated project or repository for this site.")
+        raise UserFacingValueError("That target contains the published artifact portfolio. Choose a dedicated project or repository for this site.")

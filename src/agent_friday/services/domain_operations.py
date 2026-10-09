@@ -13,6 +13,7 @@ import uuid
 from contextlib import ExitStack
 from datetime import datetime
 
+from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services import domain_accounts as accounts, namecom, sites_privacy
 
 KIND = "domain_change"
@@ -39,21 +40,21 @@ def _owner(context, *, check_recording=True):
         generation = context.get("privacy_generation")
         sites_privacy.require_generation(generation)
     if any(context.get(k) for k in _BACKGROUND):
-        raise ValueError("Domain accounts can only be managed directly from Sites or the owning chat, not from a background or scoped task.")
+        raise UserFacingValueError("Domain accounts can only be managed directly from Sites or the owning chat, not from a background or scoped task.")
     cid = context.get("conversation_id")
     if not cid:
         if context.get("surface") != "sites_ui":
-            raise ValueError("Open the owning chat or Sites before managing domains.")
+            raise UserFacingValueError("Open the owning chat or Sites before managing domains.")
         return {"surface": "sites_ui", "conversation_id": None, "project_id": None, "privacy_generation": generation}
     from agent_friday.services import conversations, projects
     conv = conversations.load(cid)
     if not conv or conv.get("status") == "archived":
-        raise ValueError("The originating chat is unavailable.")
+        raise UserFacingValueError("The originating chat is unavailable.")
     pid = conv.get("project") or None
     if "project_id" in context and (context.get("project_id") or None) != pid:
-        raise ValueError("The originating chat has moved to a different project.")
+        raise UserFacingValueError("The originating chat has moved to a different project.")
     if pid and (not projects.load(pid) or projects.load(pid).get("archived")):
-        raise ValueError("The owning project is unavailable.")
+        raise UserFacingValueError("The owning project is unavailable.")
     return {"surface": context.get("surface", "chat"), "conversation_id": cid, "project_id": pid, "privacy_generation": generation}
 
 
@@ -61,19 +62,19 @@ def _site(args, owner):
     site_id = args.get("site_id")
     if not site_id:
         if owner.get("project_id"):
-            raise ValueError("Choose this project's saved site before accessing domain accounts.")
+            raise UserFacingValueError("Choose this project's saved site before accessing domain accounts.")
         return None
     from agent_friday.services import sites_operations as sites
     site = sites.get_site(site_id)
     if not site:
-        raise ValueError("That saved site is unavailable.")
+        raise UserFacingValueError("That saved site is unavailable.")
     sites.validate_site_owner(site, None if owner.get("surface") == "sites_ui" and not owner.get("conversation_id") else
         dict(owner, _sites_origin=sites_privacy.require_generation(owner["privacy_generation"])))
     if args.get("site_revision") is not None and (type(args["site_revision"]) is not int or args["site_revision"] != site["revision"]):
-        raise ValueError("This site changed. Refresh before changing its domain.")
+        raise UserFacingValueError("This site changed. Refresh before changing its domain.")
     binding = site.get("domain") or {}
     if binding.get("account_id") != args.get("account_id") or binding.get("domain") != namecom.domain_name(args.get("domain")):
-        raise ValueError("This domain and account are not bound to the selected site.")
+        raise UserFacingValueError("This domain and account are not bound to the selected site.")
     return {"site_id": site_id, "revision": site["revision"], "domain": copy.deepcopy(binding),
             "conversation_id": site.get("conversation_id"), "project_id": site.get("project_id") or None}
 
@@ -95,14 +96,14 @@ def _site_host(site, domain):
     if hostname == domain:
         return ""
     if not hostname.endswith("." + domain):
-        raise ValueError("This site's hostname is outside its bound domain.")
+        raise UserFacingValueError("This site's hostname is outside its bound domain.")
     return hostname[:-(len(domain) + 1)]
 
 
 def _check_record_scope(record, site, domain):
     host = _site_host(site, domain)
     if host is not None and record is not None and record["host"] != host:
-        raise ValueError("This site can manage DNS only for its saved hostname. Use Sites account management for other records.")
+        raise UserFacingValueError("This site can manage DNS only for its saved hostname. Use Sites account management for other records.")
 
 
 def validate_binding(account_id, domain, context):
@@ -162,7 +163,7 @@ def _same_record(actual, desired):
 def _operation(operation_id, state=None):
     op = (state or accounts.read())["operations"].get(str(operation_id))
     if not op:
-        raise ValueError("That domain operation is unavailable.")
+        raise UserFacingValueError("That domain operation is unavailable.")
     return copy.deepcopy(op)
 
 
@@ -188,7 +189,7 @@ def _access_operation(op, owner):
     recorded = op["plan"]["owner"]
     account_management = owner.get("surface") == "sites_ui" and not owner.get("conversation_id")
     if not account_management and (owner.get("conversation_id"), owner.get("project_id")) != (recorded.get("conversation_id"), recorded.get("project_id")):
-        raise ValueError("Open the chat that owns this domain operation.")
+        raise UserFacingValueError("Open the chat that owns this domain operation.")
 
 
 def history(account_id=None, context=None):
@@ -206,12 +207,12 @@ def _validate_plan(plan):
     owner = _owner(plan["owner"], check_recording=False)
     rec = accounts.account(plan["account_id"])
     if rec["revision"] != plan["account_revision"] or (plan.get("account_identity") and rec.get("identity_hash") != plan["account_identity"]):
-        raise ValueError("The account changed after this review. Prepare a new review.")
+        raise UserFacingValueError("The account changed after this review. Prepare a new review.")
     site = plan.get("site")
     if site:
         current = _site({"site_id": site["site_id"], "site_revision": site["revision"], "account_id": plan["account_id"], "domain": plan["domain"]}, owner)
         if current != site:
-            raise ValueError("The site's domain binding changed after this review.")
+            raise UserFacingValueError("The site's domain binding changed after this review.")
     return rec
 
 
@@ -222,16 +223,16 @@ def _validate_reconciliation(plan, generation):
     identity = plan.get("account_identity")
     if rec["revision"] != plan["account_revision"]:
         if not isinstance(identity, str) or not identity or rec.get("identity_hash") != identity:
-            raise ValueError("This operation's original account identity cannot be verified after reconnecting.")
+            raise UserFacingValueError("This operation's original account identity cannot be verified after reconnecting.")
     elif identity and rec.get("identity_hash") != identity:
-        raise ValueError("This operation's account identity changed.")
+        raise UserFacingValueError("This operation's account identity changed.")
     saved = plan.get("site")
     if saved:
         current = _site({"site_id": saved["site_id"], "account_id": plan["account_id"], "domain": plan["domain"]}, owner)
         same_owner = all(current.get(key) == saved.get(key) for key in ("conversation_id", "project_id"))
         same_binding = all(current["domain"].get(key) == saved["domain"].get(key) for key in ("account_id", "domain", "hostname"))
         if not same_owner or not same_binding:
-            raise ValueError("The site's owner or effective domain binding changed. This operation cannot read a different destination.")
+            raise UserFacingValueError("The site's owner or effective domain binding changed. This operation cannot read a different destination.")
     return rec
 
 
@@ -246,12 +247,12 @@ def _prepare(action, args, owner, site):
     account_id, domain = str(args.get("account_id") or ""), namecom.domain_name(args.get("domain"))
     rec = accounts.account(account_id)
     if site and site["domain"].get("account_revision") != rec["revision"]:
-        raise ValueError("Reconnect this site's domain binding after the account changed.")
+        raise UserFacingValueError("Reconnect this site's domain binding after the account changed.")
     if action != "prepare_renewal" and any(
             item["plan"]["account_id"] == account_id and item["plan"]["domain"] == domain
             and item["status"] in {"applying", "unknown", "provider_accepted"}
             for item in accounts.read()["operations"].values()):
-        raise ValueError("Another change for this domain is unresolved. Inspect and reconcile it before preparing another change; nothing was replayed.")
+        raise UserFacingValueError("Another change for this domain is unresolved. Inspect and reconcile it before preparing another change; nothing was replayed.")
     client = accounts.client(rec, generation=owner["privacy_generation"])
     info = _domain(client, domain, generation=owner["privacy_generation"])
     sites_privacy.require_generation(owner["privacy_generation"])
@@ -263,22 +264,22 @@ def _prepare(action, args, owner, site):
             "nameservers": info["nameservers"]}
     if action == "prepare_dns":
         if info["dns_authority"] != "namecom":
-            raise ValueError("This domain uses another DNS provider. No Name.com DNS change was prepared.")
+            raise UserFacingValueError("This domain uses another DNS provider. No Name.com DNS change was prepared.")
         records = _records(client, domain, generation=owner["privacy_generation"])
         sites_privacy.require_generation(owner["privacy_generation"])
         plan["zone_digest"] = _digest(records)
         rid = namecom.record_id(args["record_id"]) if args.get("record_id") is not None else None
         before = next((r for r in records if r["id"] == rid), None)
         if rid and not before:
-            raise ValueError("That DNS record no longer exists. Refresh the records.")
+            raise UserFacingValueError("That DNS record no longer exists. Refresh the records.")
         _check_record_scope(before, site, domain)
         if type(args.get("delete", False)) is not bool:
-            raise ValueError("Choose whether this is a record deletion.")
+            raise UserFacingValueError("Choose whether this is a record deletion.")
         if args.get("delete"):
             if "record" in args:
-                raise ValueError("Deletion uses an exact record ID, not a replacement record.")
+                raise UserFacingValueError("Deletion uses an exact record ID, not a replacement record.")
             if not before:
-                raise ValueError("Deletion needs an exact DNS record ID.")
+                raise UserFacingValueError("Deletion needs an exact DNS record ID.")
             namecom.record_payload(_record_body(before))
             after = None
         else:
@@ -288,7 +289,7 @@ def _prepare(action, args, owner, site):
             if rid is None and any(_same_record(r, after) for r in matches):
                 return {"status": "ok", "message": "This exact DNS record already exists. Nothing changed."}
             if any(r["id"] != rid and r["host"] == after["host"] and (r["type"] == "CNAME" or after["type"] == "CNAME") for r in records):
-                raise ValueError("A CNAME would conflict with an existing record at that hostname.")
+                raise UserFacingValueError("A CNAME would conflict with an existing record at that hostname.")
             if before and _same_record(before, after):
                 return {"status": "ok", "message": "The DNS record already matches. Nothing changed."}
         plan.update(before=before, after=after, record_id=rid)
@@ -296,7 +297,7 @@ def _prepare(action, args, owner, site):
     elif action == "prepare_autorenew":
         enabled = args.get("enabled")
         if type(enabled) is not bool or info["autorenew_enabled"] is None:
-            raise ValueError("Choose on or off after Name.com returns the current auto-renew setting.")
+            raise UserFacingValueError("Choose on or off after Name.com returns the current auto-renew setting.")
         if info["autorenew_enabled"] == enabled:
             return {"status": "ok", "message": "Auto-renew already has that setting. Nothing changed."}
         plan.update(before={"autorenew_enabled": info["autorenew_enabled"]}, after={"autorenew_enabled": enabled})
@@ -304,12 +305,12 @@ def _prepare(action, args, owner, site):
     else:
         years = args.get("years", 1)
         if type(years) is not int or not 1 <= years <= 10:
-            raise ValueError("Choose a renewal term from 1 to 10 years.")
+            raise UserFacingValueError("Choose a renewal term from 1 to 10 years.")
         sites_privacy.require_generation(owner["privacy_generation"])
         pricing = client.pricing(domain, years)
         sites_privacy.require_generation(owner["privacy_generation"])
         if pricing.get("renewalPrice") is None:
-            raise ValueError("Name.com does not currently offer renewal for this domain and term.")
+            raise UserFacingValueError("Name.com does not currently offer renewal for this domain and term.")
         plan.update(years=years, before={"expire_date": info["expire_date"]}, quote={"subtotal": namecom.amount(pricing["renewalPrice"]),
             "currency": "USD", "tax": "unknown", "total": None, "quoted_at": now, "source": "namecom_api"})
         op = {"operation_id": "dom_" + uuid.uuid4().hex, "plan": plan, "plan_digest": _digest(plan), "status": "awaiting_provider_checkout",
@@ -390,7 +391,7 @@ def _execution_locks(plan):
             from agent_friday.services import sites_operations as sites
             lock = getattr(sites, "LOCK", None)
             if lock is None:
-                raise ValueError("Site ownership cannot be held while applying this change.")
+                raise UserFacingValueError("Site ownership cannot be held while applying this change.")
             stack.enter_context(lock)
         stack.enter_context(accounts.LOCK)
         if plan["owner"].get("conversation_id") or plan.get("site"):
@@ -448,30 +449,30 @@ def _on_decision(record):
             if not _matches_card(record, op) or op["status"] != "awaiting_approval":
                 return
             if plan["expires_at"] < time.time():
-                raise ValueError("This review expired. Prepare a fresh review.")
+                raise UserFacingValueError("This review expired. Prepare a fresh review.")
             sites_privacy.require_operation(plan["owner"]["privacy_generation"], plan.get("privacy_boot"))
             rec = _validate_plan(plan)
             client = accounts.client(rec, generation=plan["owner"]["privacy_generation"])
             info = _domain(client, plan["domain"], generation=plan["owner"]["privacy_generation"])
             if info["nameservers"] != plan["nameservers"]:
-                raise ValueError("The domain's DNS authority changed. Prepare a fresh review.")
+                raise UserFacingValueError("The domain's DNS authority changed. Prepare a fresh review.")
             if plan["action"] == "prepare_dns":
                 if info["dns_authority"] != "namecom" or _digest(_records(client, plan["domain"], generation=plan["owner"]["privacy_generation"])) != plan["zone_digest"]:
-                    raise ValueError("DNS changed after this review. Prepare a fresh review.")
+                    raise UserFacingValueError("DNS changed after this review. Prepare a fresh review.")
             elif plan["action"] == "prepare_autorenew":
                 if info["autorenew_enabled"] != plan["before"]["autorenew_enabled"]:
-                    raise ValueError("Auto-renew changed after this review. Prepare a fresh review.")
+                    raise UserFacingValueError("Auto-renew changed after this review. Prepare a fresh review.")
             else:
-                raise ValueError("Paid renewal must finish at Name.com checkout.")
+                raise UserFacingValueError("Paid renewal must finish at Name.com checkout.")
             if plan["expires_at"] < time.time():
-                raise ValueError("This review expired during verification. Prepare a fresh review.")
+                raise UserFacingValueError("This review expired during verification. Prepare a fresh review.")
             sites_privacy.require_operation(plan["owner"]["privacy_generation"], plan.get("privacy_boot"))
             if any(item["operation_id"] != op["operation_id"]
                    and item["plan"]["account_id"] == plan["account_id"]
                    and item["plan"]["domain"] == plan["domain"]
                    and item["status"] in {"applying", "unknown", "provider_accepted"}
                    for item in accounts.read()["operations"].values()):
-                raise ValueError("Another change for this domain is unresolved. Inspect and reconcile it before approving another change; nothing was replayed.")
+                raise UserFacingValueError("Another change for this domain is unresolved. Inspect and reconcile it before approving another change; nothing was replayed.")
             from agent_friday.governance import action_gate
             action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=plan["domain"])
             op.update(status="applying", attempted_at=time.time())
@@ -520,10 +521,10 @@ def register():
 
 def execute(action, args=None, context=None):
     if not isinstance(action, str) or action not in SERVICE_ACTIONS or (args is not None and not isinstance(args, dict)):
-        raise ValueError("Choose a supported domain action.")
+        raise UserFacingValueError("Choose a supported domain action.")
     args = args or {}
     if set(args) - SERVICE_ARGUMENTS[action]:
-        raise ValueError("This domain action contains unsupported fields.")
+        raise UserFacingValueError("This domain action contains unsupported fields.")
     owner = _owner(context)
     def checked(result):
         _owner(owner, check_recording=False)
@@ -543,7 +544,7 @@ def execute(action, args=None, context=None):
         _owner(owner, check_recording=False)
         site = _site(args, owner)
         if site and action in {"accounts", "inventory", "sync"}:
-            raise ValueError("Inspect this site's bound domain; manage account inventory directly in Sites.")
+            raise UserFacingValueError("Inspect this site's bound domain; manage account inventory directly in Sites.")
         if action == "accounts":
             return checked({"status": "ok", "accounts": accounts.list_accounts()})
         if action == "inventory":
@@ -555,7 +556,7 @@ def execute(action, args=None, context=None):
         account_id, domain = str(args.get("account_id") or ""), namecom.domain_name(args.get("domain"))
         rec = accounts.account(account_id)
         if site and site["domain"].get("account_revision") != rec["revision"]:
-            raise ValueError("Reconnect this site's domain binding after the account changed.")
+            raise UserFacingValueError("Reconnect this site's domain binding after the account changed.")
         client = accounts.client(rec, generation=owner["privacy_generation"])
         info = _domain(client, domain, generation=owner["privacy_generation"])
         sites_privacy.require_generation(owner["privacy_generation"])
@@ -564,7 +565,7 @@ def execute(action, args=None, context=None):
             from agent_friday.services import domain_dns
             if site:
                 if not isinstance(args.get("records"), list):
-                    raise ValueError("Supply the explicit DNS records to check.")
+                    raise UserFacingValueError("Supply the explicit DNS records to check.")
                 for record in args["records"]:
                     _check_record_scope(namecom.record_payload(record), site, domain)
             return checked(domain_dns.verify(domain, args.get("records"), generation=owner["privacy_generation"]))

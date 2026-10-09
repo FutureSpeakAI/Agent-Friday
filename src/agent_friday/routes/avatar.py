@@ -22,6 +22,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error
 
 avatar_bp = Blueprint("avatar", __name__)
 
@@ -74,7 +75,7 @@ def avatar_settings_route():
         _gr().set_settings(enabled=body.get("enabled"), author=body.get("author"),
                            apply_mode=body.get("apply_mode"))
     except ValueError as e:
-        return jsonify({"status": "error", "error": str(e)}), 400
+        return api_error(e, "Couldn't change that avatar setting", 400, key="error")
     return jsonify(_gr().status())
 
 
@@ -91,7 +92,7 @@ def avatar_use_local_route():
     try:
         return jsonify(_gr().use_local_instead(model))
     except ValueError as e:
-        return jsonify({"status": "error", "error": str(e)}), 400
+        return api_error(e, "Couldn't change that avatar setting", 400, key="error")
 
 
 @avatar_bp.route("/api/avatar/undo", methods=["POST"])
@@ -108,7 +109,7 @@ def avatar_rollback_route():
     except (KeyError, TypeError):
         return _missing()
     except ValueError as e:
-        return jsonify({"status": "error", "error": str(e)}), 409
+        return api_error(e, "Couldn't change that avatar step", 409, key="error")
     return jsonify({"status": "ok", "step": step["content_hash"]})
 
 
@@ -151,7 +152,7 @@ def avatar_delete_route():
     except (KeyError, TypeError):
         return _missing()
     except ValueError as e:
-        return jsonify({"status": "error", "error": str(e)}), 409
+        return api_error(e, "Couldn't change that avatar step", 409, key="error")
     return jsonify({"status": "ok"})
 
 

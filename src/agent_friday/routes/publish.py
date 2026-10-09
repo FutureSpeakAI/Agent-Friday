@@ -16,13 +16,20 @@ import mimetypes
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error, log_failure
 from agent_friday.services import publish_web as pw
 
 publish_bp = Blueprint("publish", __name__)
 
 
-def _bad(msg, code=400):
-    return jsonify({"status": "error", "error": str(msg)}), code
+def _bad(msg: str, code=400):
+    return jsonify({"status": "error", "error": msg}), code
+
+
+def _fail(exc, code=400):
+    """A refused request. A `UserFacingError` shows its message; any other
+    exception is logged and answered with a short error id."""
+    return api_error(exc, "Couldn't complete that publishing request", code, key="error")
 
 
 @publish_bp.route("/api/publish/request", methods=["POST"])
@@ -39,7 +46,7 @@ def publish_request():
     except KeyError:
         return _bad("no such artifact", 404)
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     if out.get("refused"):
         return jsonify({"status": "refused", "refused": out["refused"], "scan": out.get("scan")})
     return jsonify({"status": "ok", "approval": out["approval"], "scan": out.get("scan")})
@@ -72,7 +79,7 @@ def publish_unpublish(slug):
     try:
         ok = pw.unpublish(slug)
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     if not ok:
         return _bad("nothing is published under that name", 404)
     return jsonify({"status": "ok", "slug": slug})
@@ -85,8 +92,11 @@ def _this_pc(refresh: bool = False) -> dict:
         st["line"] = _ph.status_line()
         return st
     except Exception as e:
+        # The cause goes to the local log; the panel gets the error id.
+        error_id = log_failure(e, "Couldn't read the hosting status")
         return {"enabled": False, "serving": False, "url": None, "reachable": None,
-                "line": "Published pages: hosting is unavailable (%s)." % e, "error": str(e)}
+                "line": "Published pages: hosting is unavailable (error %s)." % error_id,
+                "error": "Hosting is unavailable (error %s)" % error_id}
 
 
 @publish_bp.route("/api/publish/connect", methods=["POST"])
@@ -107,7 +117,7 @@ def publish_connect():
                             project=str(body.get("project") or ""), repo=str(body.get("repo") or ""),
                             branch=str(body.get("branch") or ""))
     except ValueError as e:
-        return _bad(e)
+        return _fail(e)
     return jsonify({"status": "ok", "adapter": adapter, "connected": _ph.adapter_connected(adapter)})
 
 

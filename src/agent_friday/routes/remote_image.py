@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import error_text
 from agent_friday.services import remote_image as ri
 
 remote_image_bp = Blueprint('remote_image', __name__)
@@ -27,7 +28,7 @@ def remote_image_load():
     try:
         body, ctype = ri.fetch_image(url)
     except ri.RemoteImageRefused as e:
-        return jsonify({'status': 'refused', 'error': str(e)}), 422
+        return jsonify({'status': 'refused', 'error': error_text(e, "That picture couldn't be fetched")}), 422
     resp = Response(body, mimetype=ctype)
     resp.headers['Cache-Control'] = 'private, no-store'
     resp.headers['X-Content-Type-Options'] = 'nosniff'

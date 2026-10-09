@@ -32,7 +32,9 @@ import threading
 import uuid
 from datetime import datetime
 
+from agent_friday import paths
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import UserFacingError, UserFacingPermissionError, UserFacingValueError
 
 _log = logging.getLogger("friday.workspace_studio")
 
@@ -45,7 +47,7 @@ _MAX_VERSIONS = 40
 _SAVE_LOCK = threading.RLock()
 
 
-class WorkspaceConflictError(OSError):
+class WorkspaceConflictError(UserFacingError, OSError):
     """A newer workspace state must be read before retrying this change."""
 
 
@@ -84,13 +86,13 @@ _WS_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 
 def check_ws_id(ws_id) -> str:
     s = str(ws_id or "")
-    if not _WS_ID.match(s):
-        raise ValueError("invalid workspace id")
+    if not _WS_ID.fullmatch(s):
+        raise UserFacingValueError("invalid workspace id")
     return s
 
 
 def _ws_path(ws_id):
-    return WS_STUDIO_DIR / f"{check_ws_id(ws_id)}.json"
+    return paths.contained(WS_STUDIO_DIR, f"{check_ws_id(ws_id)}.json")
 
 
 def _blank_doc(ws_id):
@@ -111,19 +113,19 @@ def load_ws_doc(ws_id):
     try:
         doc = json.loads(raw)
         if not isinstance(doc, dict) or doc.get("workspace", ws_id) != ws_id:
-            raise ValueError("invalid workspace document")
+            raise UserFacingValueError("invalid workspace document")
         doc.setdefault("workspace", ws_id)
         doc.setdefault("chat", [])
         doc.setdefault("customization", {})
         doc.setdefault("versions", [])
         if not isinstance(doc["chat"], list) or not isinstance(doc["customization"], dict) or not isinstance(doc["versions"], list):
-            raise ValueError("invalid workspace document fields")
+            raise UserFacingValueError("invalid workspace document fields")
         if any(not isinstance(entry, dict) for entry in doc["chat"] + doc["versions"]):
-            raise ValueError("invalid workspace history entry")
+            raise UserFacingValueError("invalid workspace history entry")
         doc["customization"] = _sanitize_patch(doc["customization"])
         for version in doc["versions"]:
             if not isinstance(version.get("customization", {}), dict):
-                raise ValueError("invalid workspace snapshot")
+                raise UserFacingValueError("invalid workspace snapshot")
             version["customization"] = _sanitize_patch(version.get("customization", {}))
         return _WorkspaceDoc(doc, hashlib.sha256(raw).digest())
     except (ValueError, TypeError, UnicodeError) as exc:
@@ -136,7 +138,7 @@ def _admit_write(origin=None):
     from agent_friday.services import off_record
     with core._SETTINGS_WRITE_LOCK:
         if off_record.active(core._load_settings()):
-            raise PermissionError("Off the record is on. Workspace Studio changes and chat are not saved.")
+            raise UserFacingPermissionError("Off the record is on. Workspace Studio changes and chat are not saved.")
         if origin is not None:
             _check_write(origin)
             return origin
@@ -147,7 +149,7 @@ def _check_write(origin):
     from agent_friday import core
     from agent_friday.services import off_record
     if off_record.active(core._load_settings()) or type(origin) is not int or origin != off_record.generation():
-        raise PermissionError("The privacy context changed. No workspace or Studio history change was saved.")
+        raise UserFacingPermissionError("The privacy context changed. No workspace or Studio history change was saved.")
 
 
 def save_ws_doc(ws_id, doc, *, origin=None):
@@ -253,9 +255,24 @@ def _scoped_selector(selector):
     return True
 
 
+def _strip_comments(text):
+    """Remove every closed /* ... */ comment in one pass. An unterminated
+    "/*" stays, and the callers refuse it. (A lazy pattern retried every "/*"
+    to the end of the text.)"""
+    out, pos = [], 0
+    while True:
+        start = text.find("/*", pos)
+        end = text.find("*/", start + 2) if start >= 0 else -1
+        if end < 0:
+            out.append(text[pos:])
+            return "".join(out)
+        out.append(text[pos:start])
+        pos = end + 2
+
+
 def _scoped_css(css):
     """Keep only flat rules whose every selector is anchored inside the workspace."""
-    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    css = _strip_comments(css)
     if "/*" in css:
         return ""
     rules, pos = [], 0
@@ -316,7 +333,7 @@ def _sanitize_selector(sel):
     declaration, start an at-rule or fetch anything."""
     if not isinstance(sel, str) or len(sel) > 200:
         return ""
-    sel = re.sub(r"/\*.*?\*/", "", sel, flags=re.S).strip()
+    sel = _strip_comments(sel).strip()
     branches = _selector_branches(sel)
     if len(branches) != 1 or sel.startswith(("+", "~", "|")) or "/*" in sel:
         return ""
@@ -426,7 +443,7 @@ def apply_customization(ws_id, patch, label=None):
             return load_ws_doc(ws_id), None
         ok, why = check_blast_radius(patch)
         if not ok:
-            raise PermissionError(why)
+            raise UserFacingPermissionError(why)
     except PermissionError:
         raise
     except Exception:
@@ -443,30 +460,30 @@ def _presentation_target(ws_id):
     from agent_friday.services import workspace_registry
     target = workspace_registry.get(check_ws_id(ws_id))
     if not target or workspace_registry.is_held(target) or (target.get("boundary") or {}).get("kind", "native") != "native":
-        raise ValueError("Choose an available native workspace to customize.")
+        raise UserFacingValueError("Choose an available native workspace to customize.")
 
 
 def _presentation_patch(patch):
     """The appearance editor has no arbitrary CSS or hidden-control input."""
     if not isinstance(patch, dict) or not patch or set(patch) - {"note", "accent", "density", "actions"}:
-        raise ValueError("Choose a note, accent, density or quick actions.")
+        raise UserFacingValueError("Choose a note, accent, density or quick actions.")
     if "note" in patch and patch["note"] is not None and (not isinstance(patch["note"], str) or len(patch["note"]) > 1500):
-        raise ValueError("A workspace note must be at most 1500 characters.")
+        raise UserFacingValueError("A workspace note must be at most 1500 characters.")
     if "accent" in patch and patch["accent"] is not None and (not isinstance(patch["accent"], str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", patch["accent"])):
-        raise ValueError("Choose a six-digit hex accent color.")
+        raise UserFacingValueError("Choose a six-digit hex accent color.")
     if "density" in patch and patch["density"] not in (None, "comfortable", "compact"):
-        raise ValueError("Choose comfortable or compact spacing.")
+        raise UserFacingValueError("Choose comfortable or compact spacing.")
     if "actions" in patch and patch["actions"] is not None:
         actions = patch["actions"]
         if not isinstance(actions, list) or len(actions) > 8:
-            raise ValueError("A workspace can have at most eight quick actions.")
+            raise UserFacingValueError("A workspace can have at most eight quick actions.")
         for action in actions:
             if not isinstance(action, dict) or set(action) != {"label", "prompt"}:
-                raise ValueError("Each quick action needs a label and prompt.")
+                raise UserFacingValueError("Each quick action needs a label and prompt.")
             for key, limit in (("label", 40), ("prompt", 400)):
                 value = action[key]
                 if not isinstance(value, str) or not value.strip() or len(value) > limit:
-                    raise ValueError("A quick action needs a short label and prompt.")
+                    raise UserFacingValueError("A quick action needs a short label and prompt.")
     return _sanitize_patch(patch)
 
 
@@ -498,31 +515,31 @@ def review_presentation(ws_id, patch, expected_revision, *, apply=False, origin=
     origin = _presentation_origin() if origin is None else origin
     if (type(origin) is not tuple or len(origin) != 2
             or type(origin[0]) is not bool or type(origin[1]) is not int):
-        raise PermissionError("The privacy context changed. Reload appearance before applying this draft.")
+        raise UserFacingPermissionError("The privacy context changed. Reload appearance before applying this draft.")
     origin_private, origin_generation = origin
     _presentation_target(ws_id)
     clean = _presentation_patch(patch)
     if not isinstance(expected_revision, str) or not re.fullmatch(r"new|[a-f0-9]{64}", expected_revision):
-        raise ValueError("Read the workspace appearance before changing it.")
+        raise UserFacingValueError("Read the workspace appearance before changing it.")
     # The local edit is brief and contains no provider call. A privacy/settings
     # transition and another workspace writer cannot cross this commit.
     with core._SETTINGS_WRITE_LOCK, _SAVE_LOCK:
         _presentation_target(ws_id)
         if apply and (origin_private or origin_generation != off_record.generation()):
-            raise PermissionError("The privacy context changed. Reload appearance before applying this draft.")
+            raise UserFacingPermissionError("The privacy context changed. Reload appearance before applying this draft.")
         doc = load_ws_doc(ws_id)
         state = _presentation_view(doc)
         if state["revision"] != expected_revision:
             raise WorkspaceConflictError("This workspace changed. Reload its appearance before applying your draft.")
         allowed, reason = check_blast_radius(clean)
         if safe_mode() or not allowed:
-            raise PermissionError(reason or "Workspace changes are unavailable in safe mode.")
+            raise UserFacingPermissionError(reason or "Workspace changes are unavailable in safe mode.")
         preview = _merge_customization(doc.get("customization", {}), clean)
         changed = [key for key in clean if doc.get("customization", {}).get(key) != preview.get(key)]
         if not apply:
             return {**state, "preview": preview, "changed": changed, "applied": False}
         if off_record.active(core._load_settings()):
-            raise PermissionError("Off the record is on. Workspace appearance was not saved.")
+            raise UserFacingPermissionError("Off the record is on. Workspace appearance was not saved.")
         if not changed:
             return {**state, "changed": [], "applied": False}
         version = _apply_to_doc(doc, clean, "Workspace appearance")

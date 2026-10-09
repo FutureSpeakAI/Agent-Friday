@@ -25,6 +25,7 @@ import json
 import re
 import time as _time
 from datetime import datetime, timedelta
+from agent_friday import paths as _paths
 from agent_friday.user_errors import UserFacingValueError
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
@@ -600,6 +601,10 @@ def _save(draft) -> dict:
     if not steps:
         raise UserFacingValueError("Add at least one step that says what Friday should do.")
     old_slug = draft.get("slug") or None
+    # A slug names one file in the workflows folder. It is refused, not
+    # rewritten, unless it is already the plain form `_chain_slug` produces.
+    if old_slug is not None and (not isinstance(old_slug, str) or _agent._chain_slug(old_slug) != old_slug):
+        raise UserFacingValueError("That workflow no longer exists; reload before saving.")
     previous = _agent.load_workflow_chain(old_slug) if old_slug else None
     if old_slug and not previous:
         raise UserFacingValueError("That workflow no longer exists; reload before saving.")
@@ -617,7 +622,7 @@ def _save(draft) -> dict:
         _ops.remember_definition(previous, rec)
     # The definition and timetable form one save. Keep exact prior bytes so
     # rollback neither invents a revision nor loses scheduler bookkeeping.
-    target = _agent._workflows_dir() / f"{new_slug}.json"
+    target = _paths.contained(_agent._workflows_dir(), f"{new_slug}.json")
     original = target.read_bytes() if target.exists() else None
     prior_schedules = _sched._read_store()
     schedule_id = None

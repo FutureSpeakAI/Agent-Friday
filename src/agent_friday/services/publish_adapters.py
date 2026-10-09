@@ -144,7 +144,9 @@ def _site_http(method, url, *, headers, json_body, deadline, generation):
         remaining()
         # Register TLS before its handshake so cutoff also interrupts peers
         # that drip handshake or header bytes before each inactivity timeout.
-        secure = ssl.create_default_context().wrap_socket(raw, server_hostname=host, do_handshake_on_connect=False)
+        context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        secure = context.wrap_socket(raw, server_hostname=host, do_handshake_on_connect=False)
         own(secure)
         secure.settimeout(min(remaining(), 30))
         secure.do_handshake()

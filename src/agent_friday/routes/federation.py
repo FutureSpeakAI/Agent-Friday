@@ -31,7 +31,7 @@ from agent_friday.services import marketplace
 from agent_friday.services import economy
 from agent_friday.services import moderation
 from agent_friday.services import held_features
-from agent_friday.routes._errors import error_text, public_result
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 federation_bp = Blueprint("federation", __name__)
 
@@ -664,4 +664,4 @@ def trust_agents_create():
     except _agents.NotEnabled as e:
         return jsonify(e.body()), 404
     except ValueError as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return api_error(e, "Couldn't create that agent", 400, shape="ok")

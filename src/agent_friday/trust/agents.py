@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from agent_friday.user_errors import UserFacingValueError
+
 KIND = "agent"
 TRUST_AGENTS = "trust_agents"
 #: The federation.py peer-trust set, reserved so Federation can adopt it.
@@ -67,7 +69,7 @@ def record(agent_id: str, owner_person_id: str, *, display_name: str = "") -> Di
 def create(agent_id: str, owner_person_id: str, *, display_name: str = "") -> Dict[str, Any]:
     _require()
     if not agent_id or not owner_person_id:
-        raise ValueError("an agent needs an id and a human sponsor")
+        raise UserFacingValueError("an agent needs an id and a human sponsor")
     rec = record(agent_id, owner_person_id, display_name=display_name)
     p = agents_path()
     p.parent.mkdir(parents=True, exist_ok=True)

@@ -284,7 +284,10 @@ def _entities(title: str, text: str) -> set[str]:
     headline, is not evidence of a name; a word capitalised mid-sentence in
     the story's text is. A title word counts when the text confirms it.
     """
-    figures = {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", "%s %s" % (title, text))
+    # A figure is never 40 characters of digits and separators; a longer run is
+    # cut so the pattern below cannot retry a hostile run from every digit.
+    scanned = re.sub(r"([\d,.]{40})[\d,.]+", r"\1", "%s %s" % (title, text))
+    figures = {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", scanned)
                if not re.fullmatch(r"\d{1,2}", w)}
     body = _caps(text, initial=False)
     if not body:
@@ -588,10 +591,42 @@ def opinion_problems(lines: list[dict], story_list: list[dict], docs: list[dict]
 #: The writer narrating its own process ("I did not check the time, so I am
 #: not inventing one"). Never speech: cut before it is spoken, named if it
 #: survives.
-META_RE = re.compile(
-    r"[^.!?]*\b(?:I|I'm|I am|I'll|we)\b[^.!?]*\b(?:did not|didn't|do not|don't|won't|will not|"
-    r"am not|'m not|not going to|can't|cannot)\b[^.!?]*\b(?:check\w*|verif\w*|confirm\w*|guess\w*|"
-    r"invent\w*|speculat\w*|giv\w+ you|leav\w+ it out|tell you)\b[^.!?]*[.!?]", re.I)
+_META_CLAUSE = re.compile(r"(?<![^.!?])[^.!?]*[.!?]")
+_META_STEPS = (
+    re.compile(r"\b(?:I|I'm|I am|I'll|we)\b", re.I),
+    re.compile(r"\b(?:did not|didn't|do not|don't|won't|will not|am not|'m not|not going to|can't|cannot)\b", re.I),
+    re.compile(r"\b(?:check\w*|verif\w*|confirm\w*|guess\w*|invent\w*|speculat\w*|giv\w+ you|leav\w+ it out|tell you)\b", re.I),
+)
+
+
+class _MetaNarration:
+    """One sentence in which the writer says "I" / "we", then a refusal, then
+    a verb of checking or guessing, in that order. Looked for sentence by
+    sentence, each step starting where the last ended, so the cost is linear
+    in the text (a single pattern with a `[^.!?]*` between the steps retried
+    every start position)."""
+
+    @staticmethod
+    def _is_meta(clause: str) -> bool:
+        pos = 0
+        for step in _META_STEPS:
+            found = step.search(clause, pos)
+            if not found:
+                return False
+            pos = found.end()
+        return True
+
+    def search(self, text: str):
+        for clause in _META_CLAUSE.finditer(text):
+            if self._is_meta(clause.group(0)):
+                return clause
+        return None
+
+    def sub(self, repl: str, text: str) -> str:
+        return _META_CLAUSE.sub(lambda m: repl if self._is_meta(m.group(0)) else m.group(0), text)
+
+
+META_RE = _MetaNarration()
 
 
 def meta_problems(lines: list[dict]) -> list[dict]:
