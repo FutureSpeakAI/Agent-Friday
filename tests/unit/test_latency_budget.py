@@ -52,10 +52,13 @@ MAX_TOOL_CATALOGUE_TOKENS = 23_000
 MAX_TOOL_OPENING_TOKENS = 4_500
 
 #: What the seat reads before the conversation starts, with the tool index on
-#: (the default): the system prompt plus the opening tool set. Measured ~6,900
-#: (3,476 + 3,425 for 107 tools). At the 500 tokens/second a local seat
-#: sustains, 9,000 is about 18 seconds on a cache miss.
-MAX_STANDING_PROMPT_TOKENS = 9_000
+#: (the default): the system prompt plus the opening tool set. Measured ~4,500
+#: on a bare runner (~3,430 system prompt, the project-context file included,
+#: plus ~1,070 for the opening tool set). The search-based loader keeps the
+#: opening set small, so the standing prompt is a third below the ~6,900 this
+#: ceiling was first set against. At the 500 tokens/second a local seat
+#: sustains, 6,500 is about 13 seconds on a cache miss.
+MAX_STANDING_PROMPT_TOKENS = 6_500
 
 
 def _system_prompt_tokens() -> int:

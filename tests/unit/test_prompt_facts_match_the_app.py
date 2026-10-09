@@ -8,6 +8,8 @@ import inspect
 import re
 from pathlib import Path
 
+import pytest
+
 import agent_friday.services.agent as ag
 import agent_friday.services.model_router as mr
 
@@ -39,6 +41,10 @@ def test_every_conversation_citation_shape_uses_the_slash_the_ui_splits_on():
 
 def test_pointer_tools_say_their_coordinates_are_screenshot_pixels():
     for name in ("click", "move_mouse"):
+        if name in ag._WITHHELD_TOOLS:
+            pytest.skip("%s is withheld where pyautogui is not installed (the "
+                        "Windows extra; capability_preflight) - the Windows "
+                        "jobs read its definition" % name)
         tool = _tool(name)
         assert "screenshot" in tool["description"]
         for axis in ("x", "y"):

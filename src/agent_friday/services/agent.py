@@ -7980,16 +7980,16 @@ CLAUDE_TOOLS.extend([
         "name": "move_mouse",
         "description": "Move the mouse cursor to a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Data).",
         "input_schema": {"type": "object", "properties": {
-            "x": {"type": "integer"},
-            "y": {"type": "integer"},
+            "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot."},
+            "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot."},
         }, "required": ["x", "y"]},
     },
     {
         "name": "click",
         "description": "Click at a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Data).",
         "input_schema": {"type": "object", "properties": {
-            "x": {"type": "integer"},
-            "y": {"type": "integer"},
+            "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot."},
+            "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot."},
             "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Mouse button; left when omitted."},
         }, "required": ["x", "y"]},
     },
