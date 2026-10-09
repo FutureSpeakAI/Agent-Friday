@@ -448,6 +448,20 @@ def execute(r: Route, run_tool: Callable[[str, dict], str]) -> Optional[str]:
     return run_tool(r.tool, dict(r.args))
 
 
+_ACK = ("One moment, {label}.", "Sure, {label}.", "Okay, {label} now.")
+
+
+def acknowledgement(r: Route) -> str:
+    """What the voice says while a routed tool runs: fixed words built from
+    the route's label, never generated. A model asked to speak before the
+    result exists invents one ("there's a meeting at one"), which is the
+    failure this layer exists to remove."""
+    if r.decision != "tool" or not r.label:
+        return ""
+    pick = int(hashlib.sha256((r.tool or "").encode()).hexdigest(), 16) % len(_ACK)
+    return _ACK[pick].format(label=r.label)
+
+
 def receipt(r: Route) -> dict:
     """What a turn's receipt says about the routing (Transparency)."""
     return {"routed_by": "laya_router", "layer": r.layer, "decision": r.decision,

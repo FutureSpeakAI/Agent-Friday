@@ -1529,6 +1529,14 @@ def _voice_lease_give(holder) -> None:
         _log.warning("voice call lease release failed: %s", e)
 
 
+def voice_tool_routing(settings) -> str:
+    """Who chooses the local voice front's tools: "laya" (system one routes,
+    the front only speaks; the default) or "model" (the front calls tools
+    itself from the full catalogue)."""
+    v = str((settings or {}).get("voice_tool_routing") or "laya").strip().lower()
+    return v if v in ("laya", "model") else "laya"
+
+
 def _arm_voice_front(settings, progress=None, holder="session"):
     """Arm the voice front for a session, or return None to answer with the
     brain (no front installed). Returns ``{"seat", "model", "label",
@@ -1552,12 +1560,25 @@ def _arm_voice_front(settings, progress=None, holder="session"):
         seat.arm(model, holder=holder)
         taken["seat"] = seat
         contract = build_voice_tool_contract()
-        prompt = _build_front_system_prompt(settings, contract, label)
-        seat.prefill(prompt, contract)
+        speaker = voice_tool_routing(settings) == "laya"
+        if speaker:
+            # System one routes the tools (services/laya_router); the front
+            # only speaks, from a prompt with no catalogue in it.
+            prompt = _build_front_speaker_prompt(settings, label)
+            seat.prefill(prompt, {"tools": []})
+            try:
+                from agent_friday.services import laya_router as _lr
+                _lr.warm()
+            except Exception:
+                pass
+        else:
+            prompt = _build_front_system_prompt(settings, contract, label)
+            seat.prefill(prompt, contract)
     except Exception:
         _release_voice_front(taken)
         raise
     return {"seat": seat, "model": model, "label": label, "contract": contract,
+            "speaker": speaker,
             "prompt": prompt, "lease": taken["lease"], "holder": holder}
 
 
@@ -2204,6 +2225,73 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
     spent = len(json.dumps(compose(""))) // 4
     return compose(voice_context_digest.build(
         settings, budget_tokens=max(0, budget - spent - 32), front=True))
+
+
+#: The speaker's one rule about tools: system one (services/laya_router) runs
+#: them; the speaker answers from what came back and never invents a result.
+VOICE_SPEAKER_RULE = (
+    "TOOLS ARE HANDLED FOR YOU: Friday's quick judgement looks things up "
+    "before you answer; when it has, the result is in this conversation as a "
+    "tool result, after your own short acknowledgement. Answer from that "
+    "result and do not repeat the acknowledgement. You never call tools and "
+    "never write tool syntax. If the owner asked for something and there is "
+    "no result for it, say plainly that you couldn't check that just now: "
+    "never describe a calendar, an inbox, a file, a search or a story you "
+    "did not receive. If a result says an approval card was raised, say in "
+    "one line that it is waiting for their go-ahead. When a result says a "
+    "request was handed to Friday's deeper mind, say so in one line.\n\n"
+)
+
+#: The speaker's digest: enough to know who the owner is, small enough that
+#: a turn reads in milliseconds (the routed front carries no catalogue).
+SPEAKER_DIGEST_TOKENS = 900
+
+
+def _build_front_speaker_prompt(settings=None, model_label=None):
+    """The routed voice front's system prompt: persona, the delivery and
+    honesty rules, the speaker rule and a small digest. No tool catalogue
+    and no tool list: services/laya_router chooses and the governed runner
+    executes, so the front only speaks."""
+    settings = settings if settings is not None else (_load_settings() or {})
+    from agent_friday.services import voice_context_digest
+    from agent_friday.services.action_policy import seal_system_prompt
+    from agent_friday.services.voice_delivery import front_instruction
+    label = model_label or "a small local model"
+    style = ""
+    try:
+        style = _front_persona_style(_get_voice_style_prompt() or "")
+    except Exception:
+        style = ""
+    body = (
+        "You are Agent Friday, a sovereign personal AI assistant, in a LIVE "
+        "VOICE conversation. You are her fast voice, running on this computer "
+        f"({label}).\n"
+        "Speak like a person: natural, warm, contractions.\n"
+        + VOICE_LENGTH_RULE +
+        "NEVER use markdown: no asterisks, headers, or bullets; this is read "
+        "aloud. Numbered points are said the way a person says them, inside "
+        "ordinary sentences.\n"
+        "Never state that an action succeeded unless the tool result in this "
+        "turn says so. A withheld, failed, or missing result is reported as "
+        "exactly that.\n"
+        + VOICE_SPEAKER_RULE
+        + "== WHAT YOU KNOW (a digest; your deeper mind holds your full memory) ==\n"
+        + voice_context_digest.build(settings, budget_tokens=SPEAKER_DIGEST_TOKENS, front=True)
+    )
+    body = front_instruction(settings) + "\n" + body
+    block = persona_block(style)
+    text = f"{block}\n{body}\n\n{block}" if block else body
+    return seal_system_prompt(text, "voice speaker prompt")
+
+
+def _speaker_volatile(volatile: str) -> str:
+    """The per-turn block the speaker reads: the clock section only. The full
+    block (project context files, story continuity, auto-context) was ~1.7K
+    tokens re-read every minute by a model that needs the time and the words."""
+    vol = (volatile or "").strip()
+    if vol.startswith("== AUTHORITATIVE CLOCK"):
+        return vol.split("\n== ", 1)[0].strip()
+    return ""
 
 
 def _local_voice_messages(conversation_id, user_text, settings=None, volatile=None):
@@ -3113,14 +3201,51 @@ if sock is not None:
                 # endpoint (local voice spec §4.2 recovery lever).
                 if not _front:
                     return
+                if _front.get("speaker"):
+                    _front["seat"].prefill_partial(
+                        _front["prompt"],
+                        [{"role": "user", "content": _voice_user_message(
+                            partial_text, settings, volatile=_speaker_volatile(_volatile()))}],
+                        {"tools": []})
+                    return
                 _front["seat"].prefill_partial(
                     _front["prompt"],
                     [{"role": "user", "content": _voice_user_message(
                         partial_text, settings, volatile=_volatile())}],
                     _front["contract"])
 
+            def _routed_front_turn(user_text, on_delta):
+                # System one decides; the governed runner executes; the front
+                # speaks (ftv/program/reference/laya_router_addendum_2026-10-09).
+                from agent_friday.services import laya_router as _lr
+                held = list(_front["contract"].get("names") or [])
+                r = _lr.route(user_text, tools=held, surface="voice")
+                tool, args = (r.tool, r.args) if r.decision == "tool" else (None, None)
+                ack = _lr.acknowledgement(r)
+                if r.decision == "defer" and "delegate_to_friday" in held:
+                    # A request to change something goes to the deeper mind,
+                    # whose own gates and cards decide it, as in text mode.
+                    tool, args = "delegate_to_friday", {"request": str(user_text)[:4000]}
+                    ack = "I'll hand that to my deeper mind."
+                _send({"type": "route", **_lr.receipt(r),
+                       "ran": tool, "handed_to": tool if r.decision == "defer" else None})
+                return _front["seat"].routed_turn(
+                    _front["prompt"],
+                    _local_voice_messages(_tool_session.get("conversation_id"), user_text,
+                                          settings, volatile=_speaker_volatile(_volatile())),
+                    tool=tool, args=args, ack=ack,
+                    question=r.question if r.decision == "ask" else "",
+                    run_tool=lambda n, a: _local_voice_tool(n, a, _send, _tool_session),
+                    on_delta=on_delta, max_tokens=_voice_reply_cap(settings, user_text),
+                    temperature=settings.get("temperature"), timings=_timings)
+
             def _front_turn(user_text, on_delta):
                 _tool_session["owner_text"] = str(user_text or "")[:4000]
+                if _front.get("speaker"):
+                    try:
+                        return _routed_front_turn(user_text, on_delta)
+                    finally:
+                        _vol["text"] = None
                 from agent_friday.services import agent as _crew_admission_agent
                 try:
                     return _front["seat"].run_turn(

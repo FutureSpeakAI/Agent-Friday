@@ -58,6 +58,10 @@ def env(monkeypatch, tmp_path):
                         lambda self, system, contract: {"ms": 900, "prompt_n": 6100})
     monkeypatch.setattr(rv, "_build_front_system_prompt",
                         lambda settings, contract, label: "FRONT PROMPT")
+    # The routed front (voice_tool_routing "laya", the default) arms with the
+    # speaker prompt instead; the lifecycle under test is the same.
+    monkeypatch.setattr(rv, "_build_front_speaker_prompt",
+                        lambda settings, label: "FRONT PROMPT")
     monkeypatch.setattr("agent_friday.services.build_hours.is_active", lambda *a, **k: False)
     monkeypatch.setattr(vf, "_SEAT", None)
     return {"loader": loader, "arb": arb, "dir": tmp_path}

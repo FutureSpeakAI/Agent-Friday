@@ -460,6 +460,57 @@ class FrontSeat:
         # Rounds are separate utterances ("Let me check." then the answer).
         return " ".join(spoken).strip()
 
+    def routed_turn(self, system: str, messages: list, *, tool=None, args=None,
+                    ack: str = "", question: str = "", run_tool=None, on_delta=None,
+                    max_tokens: int = 400, temperature=None, timings=None) -> str:
+        """One spoken turn whose tool, if any, system one already chose
+        (services/laya_router). The front never sees a tool catalogue.
+
+        ``question``: the router's one clarifying question is the reply.
+        ``tool``: it starts on a thread through ``run_tool`` (the surface's
+        governed runner) while ``ack`` is spoken; the front then answers from
+        the result, which reaches it as the Qwen3 tool-result turn: its own
+        acknowledgement carrying the call, then the result. A barge stops
+        the wait; the read it started finishes on its own and is not spoken.
+        Otherwise the front simply answers."""
+        from agent_friday.services.model_router import turn_cancelled
+        speak = (lambda s: on_delta(s) if on_delta else None)
+        if question:
+            speak(question)
+            return question
+        if not tool:
+            return self.run_turn(system, messages, {"tools": []}, on_delta=on_delta,
+                                 max_tokens=max_tokens, temperature=temperature,
+                                 timings=timings)
+        box = {}
+
+        def _run():
+            try:
+                box["result"] = run_tool(tool, dict(args or {})) if run_tool else \
+                    "ERROR: tools are not available in this session."
+            except Exception as e:  # the governed runner never raises; belt only
+                box["result"] = "ERROR: %s" % type(e).__name__
+        worker = threading.Thread(target=_run, name="voice-routed-tool", daemon=True)
+        worker.start()
+        if ack:
+            speak(ack + " ")
+        while worker.is_alive():
+            if turn_cancelled():
+                return ack
+            worker.join(0.05)
+        result = box.get("result")
+        if not isinstance(result, str):
+            result = json.dumps(result, ensure_ascii=False, default=str)
+        call = {"id": "laya-1", "type": "function",
+                "function": {"name": tool, "arguments": json.dumps(dict(args or {}))}}
+        convo = list(messages) + [
+            {"role": "assistant", "content": ack, "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": "laya-1", "content": result}]
+        answer = self.run_turn(system, convo, {"tools": []}, on_delta=on_delta,
+                               max_tokens=max_tokens, temperature=temperature,
+                               timings=timings)
+        return (ack + " " + answer).strip()
+
 
 _SEAT = None
 _SEAT_LOCK = threading.Lock()
