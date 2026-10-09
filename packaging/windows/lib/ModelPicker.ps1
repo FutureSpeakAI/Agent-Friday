@@ -30,6 +30,7 @@ $script:Pick = @{
     DisplayReserveMib  = 2560    # reserves.display_reserve_mib.windows
     FridayFootprintMib = 1500    # reserves.friday_footprint_mib.value
     DiskFloorMib       = 10240   # reserves.disk_floor_mib.value
+    FridayDiskGb       = 8       # install.ps1's preflight estimate ($neededGb) for Agent Friday itself
     RuntimeAllowanceMib = 650    # the largest runtime asset the app may fetch (CUDA build + its runtime)
     ComputeBufferMib   = 400     # reserves.compute_buffer_mib.ub_512
     WeightsPtq10Mib    = 5671    # pick.derived.weights_mib (PTQ1_0)
@@ -317,8 +318,12 @@ function Get-ModelOptions {
         downloaded for it), size_text, recommended, older_generation, note,
         companions, serve (the pick's serving numbers for the 27B).
 
-        An option is listed only if the machine can hold it AND the disk keeps
-        the 10 GB floor after the download (residency rule R8). #>
+        An option is selectable only if the machine can hold it AND the disk keeps
+        the 10 GB floor after Agent Friday itself and the download (residency
+        rule R8). Every option that does not fit is returned in `unfit`, with the
+        reason in plain words, so no seat is ever empty without saying why.
+        When a seat has nothing selectable, `notes` carries one plain message
+        with the real numbers. #>
     param([Parameter(Mandatory)] $Facts,
           [Parameter(Mandatory)][string] $ShortlistPath,
           [string] $VoiceFrontPath = '')
@@ -329,9 +334,27 @@ function Get-ModelOptions {
     $diskFree = [int64]$Facts.disk_free_mib
     $notes = @()
     $deep = @(); $fast = @()
+    $unfit = New-Object System.Collections.Generic.List[object]
+    $fridayDiskMib = [int64]$script:Pick.FridayDiskGb * 1024
+    $floorGb = [int]($script:Pick.DiskFloorMib / 1024)
 
     function Fits-Disk([double] $bytes) {
-        return (($diskFree - [math]::Ceiling($bytes / 1MB) - $script:Pick.RuntimeAllowanceMib) -ge $script:Pick.DiskFloorMib)
+        return (($diskFree - $fridayDiskMib - [math]::Ceiling($bytes / 1MB) - $script:Pick.RuntimeAllowanceMib) -ge $script:Pick.DiskFloorMib)
+    }
+
+    function Add-Unfit([string] $seat, [string] $id, [string] $label, [double] $bytes, [string] $kind, [string] $reason) {
+        $unfit.Add([ordered]@{ seat = $seat; id = $id; label = $label; size_text = (Get-FileSizeLine $bytes)
+                               kind = $kind; reason = $reason })
+    }
+
+    function Disk-Reason([double] $bytes) {
+        return ('needs {0} plus {1} GB left free on this drive (Agent Friday itself takes about {2} GB first)' -f
+                (Get-FileSizeLine $bytes), $floorGb, $script:Pick.FridayDiskGb)
+    }
+
+    function Ram-Reason([double] $modelMib) {
+        $gb = [int][math]::Ceiling(($modelMib + $script:Pick.OsReserveMib + $script:Pick.FridayFootprintMib) / 1024)
+        return ('needs {0} GB of memory' -f $gb)
     }
 
     function Find-File($model, $packing) {
@@ -343,14 +366,25 @@ function Get-ModelOptions {
         $roles = @($m.roles)
         $isOlder = ($m.PSObject.Properties.Match('generation_note').Count -gt 0 -and $m.generation_note)
         if ($m.id -eq 'bonsai2:27b') {
-            if ($pick.tier -eq 'T0') { continue }
+            if ($pick.tier -eq 'T0') {
+                $d27 = $null
+                foreach ($cand in @($m.files)) { if ($cand.PSObject.Properties.Match('default').Count -gt 0 -and $cand.default) { $d27 = $cand } }
+                if ($d27) {
+                    $why = 'needs 16 GB of memory and a processor from the last several years'
+                    if ([int64]$Facts.ram_mib -lt $script:Pick.MinRamFloorMib) { $why = 'needs 16 GB of memory' }
+                    elseif (-not [bool]$Facts.avx2) { $why = 'needs a processor with AVX2 support' }
+                    elseif ([int]$Facts.cpu_cores -lt 4) { $why = 'needs a processor with at least 4 cores' }
+                    Add-Unfit 'deep_thinker' ([string]$m.id) 'Bonsai 2 27B' ([double]$d27.bytes) 'memory' $why
+                }
+                continue
+            }
             $f = Find-File $m $pick.packing
             if (-not $f) { continue }
             $bytes = [double]$f.bytes
             $withComp = $false
             if ($pick.mmproj -eq $true -or $pick.mmproj -eq 'on_demand') { $withComp = $true }
             if ($withComp) { foreach ($c in @($m.companions)) { $bytes += [double]$c.bytes } }
-            if (-not (Fits-Disk $bytes)) { $notes += 'Not enough free disk space for Bonsai 2 27B (it needs 10 GB to spare after the download).'; continue }
+            if (-not (Fits-Disk $bytes)) { Add-Unfit 'deep_thinker' ([string]$m.id) 'Bonsai 2 27B' $bytes 'disk' (Disk-Reason $bytes); continue }
             $kind = 'on the graphics card'
             if ($pick.profile -eq 'cpu') { $kind = 'on the processor' }
             if ($pick.tier -eq 'T4a') { $kind = 'split between the graphics card and the processor' }
@@ -371,9 +405,16 @@ function Get-ModelOptions {
         if (-not $f) { continue }
         $bytes = [double]$f.bytes
         $need = [math]::Ceiling($bytes / 1MB) + $script:Pick.LesserHeadroomMib
-        if ($ramBudget -lt $need) { continue }
-        if (-not (Fits-Disk $bytes)) { continue }
-        if ($roles -contains 'lesser_brain') {
+        $isLesser = ($roles -contains 'lesser_brain')
+        if ($ramBudget -lt $need) {
+            if ($isLesser) { Add-Unfit 'deep_thinker' ([string]$m.id) ([string]$m.label) $bytes 'memory' (Ram-Reason $need) }
+            continue
+        }
+        if (-not (Fits-Disk $bytes)) {
+            if ($isLesser) { Add-Unfit 'deep_thinker' ([string]$m.id) ([string]$m.label) $bytes 'disk' (Disk-Reason $bytes) }
+            continue
+        }
+        if ($isLesser) {
             $deep += (New-Option -Seat 'deep_thinker' -Model $m -File $f -Older $isOlder `
                         -Note 'Lighter than Bonsai 2 27B and less capable. An earlier Bonsai generation.')
         }
@@ -395,8 +436,14 @@ function Get-ModelOptions {
         foreach ($front in @($vf.fronts)) {
             $bytes = [double]$front.front_bytes + $earBytes
             $need = [math]::Ceiling([double]$front.front_bytes / 1MB) + $script:Pick.LesserHeadroomMib
-            if ($ramBudget -lt $need) { continue }
-            if (-not (Fits-Disk $bytes)) { continue }
+            if ($ramBudget -lt $need) {
+                Add-Unfit 'fast_responder' ([string]$front.id) ([string]$front.label) $bytes 'memory' (Ram-Reason $need)
+                continue
+            }
+            if (-not (Fits-Disk $bytes)) {
+                Add-Unfit 'fast_responder' ([string]$front.id) ([string]$front.label) $bytes 'disk' (Disk-Reason $bytes)
+                continue
+            }
             $earMb = [math]::Round($earBytes / 1MB)
             $fast += [ordered]@{
                 seat = 'fast_responder'; id = [string]$front.id; packing = 'Q4_K_M'; label = [string]$front.label
@@ -423,10 +470,22 @@ function Get-ModelOptions {
     $deep = @($deep | Sort-Object @{ Expression = { -[int][bool]$_.recommended } }, @{ Expression = { $_.bytes } })
     $fast = @($fast | Sort-Object @{ Expression = { -[int][bool]$_.recommended } }, @{ Expression = { $_.bytes } })
 
-    if ($pick.tier -eq 'T0') {
-        $notes += 'This computer is below what Bonsai 2 27B needs (16 GB of memory and a recent processor). A cloud model works on any computer.'
+    if ($deep.Count -eq 0 -or $fast.Count -eq 0) {
+        $diskStopped = @($unfit | Where-Object { $_.kind -eq 'disk' }).Count -gt 0
+        if ($pick.tier -eq 'T0') {
+            $notes += 'This computer is below what local models need (16 GB of memory and a recent processor). A cloud model works on any computer, and you can add local models later in Settings -> Models.'
+        } elseif ($diskStopped) {
+            $what = 'no local model fits right now'
+            if ($deep.Count -eq 0 -and $fast.Count -gt 0) { $what = 'no deep thinker fits right now, and both jobs need a local model' }
+            if ($fast.Count -eq 0 -and $deep.Count -gt 0) { $what = 'no fast responder fits right now, and both jobs need a local model' }
+            $notes += ('This drive has {0:N1} GB free. Agent Friday itself needs about {1} GB, and local models need their size plus {2} GB left free afterwards so Windows keeps working, so {3}. ' -f
+                       ($diskFree / 1024.0), $script:Pick.FridayDiskGb, $floorGb, $what) +
+                      'You can use a cloud model now and add local models later in Settings -> Models after you free some space.'
+        } else {
+            $notes += 'No local model fits this computer for both jobs. A cloud model works on any computer, and you can add local models later in Settings -> Models.'
+        }
     }
-    return [ordered]@{ tier = $pick.tier; pick = $pick; deep = $deep; fast = $fast; notes = $notes; ram_budget_mib = $ramBudget }
+    return [ordered]@{ tier = $pick.tier; pick = $pick; deep = $deep; fast = $fast; unfit = $unfit.ToArray(); notes = $notes; ram_budget_mib = $ramBudget }
 }
 
 function Write-ModelOptionsFile {
@@ -434,6 +493,7 @@ function Write-ModelOptionsFile {
         FACT|name|value   what was detected, for the page's "this computer" line
         TIER|id           the pick
         NOTE|text
+        UNFIT|seat|id|label|size_text|reason   an option that does not fit, listed greyed with its reason
         OPT|seat|id|packing|label|bytes|size_text|recommended|older|companions|note|pickjson #>
     param([Parameter(Mandatory)] $Facts, [Parameter(Mandatory)] $Options, [Parameter(Mandatory)][string] $OutFile)
     $clean = { param($s) ("$s" -replace '[\r\n|]', ' ').Trim() }
@@ -441,6 +501,9 @@ function Write-ModelOptionsFile {
     foreach ($k in $Facts.Keys) { $lines.Add(('FACT|{0}|{1}' -f $k, (& $clean $Facts[$k]))) }
     $lines.Add('TIER|' + $Options.tier)
     foreach ($n in $Options.notes) { $lines.Add('NOTE|' + (& $clean $n)) }
+    foreach ($u in @($Options.unfit)) {
+        $lines.Add(('UNFIT|{0}|{1}|{2}|{3}|{4}' -f $u.seat, $u.id, (& $clean $u.label), $u.size_text, (& $clean $u.reason)))
+    }
     foreach ($o in @($Options.deep) + @($Options.fast)) {
         $pj = ''
         if ($o.serve) { $pj = ($o.serve | ConvertTo-Json -Compress) }

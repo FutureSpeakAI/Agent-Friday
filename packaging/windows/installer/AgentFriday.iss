@@ -152,6 +152,10 @@ type
     Bytes: Int64;
     Recommended, Older, Companions: Boolean;
   end;
+  // An option that does not fit this computer: listed greyed, with why.
+  TUnfitOption = record
+    Seat, Caption, SizeText, Reason: String;
+  end;
 
 const
   // BEGIN SEQUENCE ARITHMETIC (agent_friday/release.py; held equal by a test)
@@ -162,6 +166,8 @@ const
   MegaByte = 1048576;
   DiskFloorMib = 10240;
   RuntimeAllowanceMib = 650;
+  // install.ps1's preflight estimate for Agent Friday itself (held equal by a test).
+  FridayDiskMib = 8192;
 
 var
   ModelPage: TWizardPage;
@@ -171,6 +177,7 @@ var
   DeepItem, DeepOpt, FastItem, FastOpt: array of Integer;
   ForcedCloud: Boolean;
   Opts: array of TModelOption;
+  Unfit: array of TUnfitOption;
   FactRam, FactDisk, FactVram: Int64;
   FactGpu, FactVramKnown, TierId, ProbeNotes: String;
   ProbeStarted, ProbeOk: Boolean;
@@ -456,6 +463,7 @@ var
   I, N, Code: Integer;
   L, Kind, Field, Value, OutFile, Params: String;
   O: TModelOption;
+  U: TUnfitOption;
 begin
   Result := False;
   ProbeNotes := '';
@@ -463,6 +471,7 @@ begin
   FactRam := 0; FactDisk := 0; FactVram := 0;
   FactGpu := ''; FactVramKnown := 'False';
   SetArrayLength(Opts, 0);
+  SetArrayLength(Unfit, 0);
   try
     ExtractTemporaryFile('ModelPicker.ps1');
     ExtractTemporaryFile('probe-hardware.ps1');
@@ -502,6 +511,17 @@ begin
       TierId := L
     else if Kind = 'NOTE' then
       ProbeNotes := ProbeNotes + L + ' '
+    else if Kind = 'UNFIT' then
+    begin
+      U.Seat := NextField(L);
+      NextField(L);
+      U.Caption := NextField(L);
+      U.SizeText := NextField(L);
+      U.Reason := L;
+      N := GetArrayLength(Unfit);
+      SetArrayLength(Unfit, N + 1);
+      Unfit[N] := U;
+    end
     else if Kind = 'OPT' then
     begin
       O.Seat := NextField(L);
@@ -520,6 +540,7 @@ begin
       Opts[N] := O;
     end;
   end;
+  StringChangeEx(ProbeNotes, ' -> ', ' ' + #$2192 + ' ', True);
   Result := (TierId <> '');
 end;
 
@@ -584,11 +605,14 @@ begin
 end;
 
 // One group of radios in the list: the heading, then every option for the seat.
-// Nothing is ticked: the recommendation is a label, never a preselection.
+// Nothing is ticked: the recommendation is a label, never a preselection. An
+// option that does not fit follows, greyed, with the reason on its own line, so a
+// heading is never empty without saying why.
 procedure AddSeat(Seat, Heading: String);
 var
-  I, N, Item: Integer;
+  I, N, Item, Listed: Integer;
 begin
+  Listed := 0;
   ModelList.AddGroup(Heading, '', 0, nil);
   for I := 0 to GetArrayLength(Opts) - 1 do
   if Opts[I].Seat = Seat then
@@ -610,7 +634,16 @@ begin
       FastItem[N] := Item;
       FastOpt[N] := I;
     end;
+    Listed := Listed + 1;
   end;
+  for I := 0 to GetArrayLength(Unfit) - 1 do
+  if Unfit[I].Seat = Seat then
+  begin
+    ModelList.AddRadioButton(Unfit[I].Caption + ' - ' + Unfit[I].SizeText, Unfit[I].Reason, 1, False, False, nil);
+    Listed := Listed + 1;
+  end;
+  if Listed = 0 then
+    ModelList.AddRadioButton('No local model could be checked on this computer.', '', 1, False, False, nil);
 end;
 
 procedure BuildModelChoices();
@@ -632,7 +665,7 @@ begin
     else
       Gpu := FactGpu + ' (memory not readable, so it is not counted)';
     HwLabel.Caption := 'This computer: ' + IntToStr((FactRam + 512) div 1024) + ' GB of memory, ' + Gpu + ', ' +
-      IntToStr(FactDisk div 1024) + ' GB free for models.';
+      IntToStr(FactDisk div 1024) + ' GB free on this drive.';
   end
   else
     HwLabel.Caption := 'Setup could not read this computer''s hardware, so no local model is offered. You can add one later in Settings.';
@@ -649,7 +682,7 @@ begin
     if ProbeNotes <> '' then
       NoteLabel.Caption := ProbeNotes
     else
-      NoteLabel.Caption := 'No local model fits this computer for both jobs.';
+      NoteLabel.Caption := 'No local model fits this computer for both jobs. You can use a cloud model now and add local models later in Settings ' + #$2192 + ' Models.';
   end;
   RefreshModelPage();
 end;
@@ -689,10 +722,10 @@ begin
     Result := False;
     Exit;
   end;
-  NeedMib := TotalBytesChosen() div MegaByte + RuntimeAllowanceMib;
+  NeedMib := TotalBytesChosen() div MegaByte + RuntimeAllowanceMib + FridayDiskMib;
   if FactDisk - NeedMib < DiskFloorMib then
   begin
-    MsgBox('These two models together need ' + GbText(TotalBytesChosen()) + ', and that would leave this drive with less than 10 GB free. ' +
+    MsgBox('These two models together need ' + GbText(TotalBytesChosen()) + ' and Agent Friday itself needs about 8 GB, and that would leave this drive with less than 10 GB free. ' +
       'Choose smaller models, free some space, or choose a cloud model instead.', mbInformation, MB_OK);
     Result := False;
   end;
@@ -708,7 +741,7 @@ begin
   WizardForm.Top := WizardForm.Top - ScaleY(35);
 
   ModelPage := CreateCustomPage(wpSelectTasks, 'Choose your AI models',
-    'Two jobs, two models. Only models that fit this computer are listed.');
+    'Two jobs, two models. Models that do not fit this computer are greyed, with the reason.');
   W := ModelPage.SurfaceWidth;
   H := ModelPage.SurfaceHeight;
 
@@ -729,12 +762,12 @@ begin
   ConsentCheck.Caption := 'Download these models when Agent Friday first starts';
   ConsentCheck.OnClick := @ModelChoiceChanged;
 
-  Y := Y - ScaleY(34);
+  Y := Y - ScaleY(66);
   NoteLabel := TNewStaticText.Create(ModelPage);
   NoteLabel.Parent := ModelPage.Surface;
   NoteLabel.AutoSize := False;
   NoteLabel.WordWrap := True;
-  NoteLabel.SetBounds(0, Y, W, ScaleY(32));
+  NoteLabel.SetBounds(0, Y, W, ScaleY(64));
 
   Y := Y - ScaleY(24);
   CloudCheck := TNewCheckBox.Create(ModelPage);

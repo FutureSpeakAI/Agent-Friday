@@ -33,13 +33,17 @@ def probe(tmp_path: Path, **facts) -> dict:
     out = run_ps("& '%s' -OutFile '%s' -ShortlistPath '%s' -FactsJson '%s'\nexit $LASTEXITCODE\n"
                  % (INSTALLER_DIR / "probe-hardware.ps1", out_file, SHORTLIST, facts_file), tmp_path)
     assert out.returncode == 0 and out_file.exists(), out.stdout + out.stderr
-    result = {"tier": "", "notes": [], "deep": [], "fast": [], "facts": {}}
+    result = {"tier": "", "notes": [], "deep": [], "fast": [], "unfit": [], "facts": {}}
     for line in out_file.read_text(encoding="utf-8").splitlines():
         kind, _, rest = line.partition("|")
         if kind == "TIER":
             result["tier"] = rest
         elif kind == "NOTE":
             result["notes"].append(rest)
+        elif kind == "UNFIT":
+            f = rest.split("|")
+            assert len(f) == 5, "the wizard reads exactly five fields: %r" % line
+            result["unfit"].append(dict(zip(("seat", "id", "label", "size", "reason"), f)))
         elif kind == "FACT":
             name, _, value = rest.partition("|")
             result["facts"][name] = value
@@ -225,9 +229,73 @@ def test_the_disk_floor_is_kept(tmp_path):
     tight = probe(tmp_path, disk_free_mib=12000)
     assert "bonsai2:27b" in ids(roomy["deep"])
     assert "bonsai2:27b" not in ids(tight["deep"])
-    assert any("disk" in n.lower() for n in tight["notes"]), tight["notes"]
+    assert any("drive" in n.lower() and "free" in n.lower() for n in tight["notes"]), tight["notes"]
     for o in tight["deep"] + tight["fast"]:
-        assert 12000 - o["bytes"] / 1048576 - 650 >= 10240, o
+        assert 12000 - 8192 - o["bytes"] / 1048576 - 650 >= 10240, o
+
+
+# ── what the page says when something does not fit ───────────────────────────
+
+# The owner's own machine: 32 GB of memory and a 12 GB RTX 4070.
+RTX_4070 = dict(ram_mib=32768, gpu_name="NVIDIA GeForce RTX 4070", gpu_vendor="nvidia", vram_mib=12282,
+                vram_known=True, idle_used_mib=900, bandwidth_gb_s=89.6)
+EVERY_OPTION = {"bonsai2:27b", "ternary-bonsai:4b", "ternary-bonsai:8b", "qwen3-4b-instruct-2507", "qwen3-1.7b"}
+
+
+@needs_powershell
+def test_a_roomy_rtx_4070_lists_both_seats_recommends_and_says_nothing_is_missing(tmp_path):
+    out = probe(tmp_path, disk_free_mib=200000, **RTX_4070)
+    assert {"bonsai2:27b", "ternary-bonsai:4b", "ternary-bonsai:8b"} <= set(ids(out["deep"]))
+    assert set(ids(out["fast"])) == {"qwen3-4b-instruct-2507", "qwen3-1.7b"}
+    assert [o["id"] for o in out["deep"] if o["recommended"]] == ["bonsai2:27b"]
+    assert [o["id"] for o in out["fast"] if o["recommended"]] == ["qwen3-4b-instruct-2507"]
+    assert out["unfit"] == [] and out["notes"] == []
+
+
+@needs_powershell
+def test_with_12_gb_free_every_option_is_listed_greyed_with_its_reason_and_cloud_is_offered_with_the_numbers(tmp_path):
+    out = probe(tmp_path, disk_free_mib=12493, **RTX_4070)       # 12.2 GB
+    assert out["deep"] == [] and out["fast"] == []
+    assert {u["id"] for u in out["unfit"]} == EVERY_OPTION, "every option is listed, none silently dropped"
+    for seat in ("deep_thinker", "fast_responder"):
+        assert [u for u in out["unfit"] if u["seat"] == seat], "no seat heading is empty without a reason: " + seat
+    for u in out["unfit"]:
+        assert u["size"] and re.search(r"plus 10 GB left free on this drive", u["reason"]), u
+    front = next(u for u in out["unfit"] if u["id"] == "qwen3-4b-instruct-2507")
+    assert front["size"] == "2.8 GB" and front["reason"].startswith("needs 2.8 GB plus 10 GB left free on this drive"), front
+    assert len(out["notes"]) == 1, "said once"
+    note = out["notes"][0]
+    for part in ("12.2 GB free", "Agent Friday itself needs about 8 GB", "their size plus 10 GB left free afterwards",
+                 "so Windows keeps working",
+                 "You can use a cloud model now and add local models later in Settings -> Models after you free some space."):
+        assert part in note, (part, note)
+    assert "27B" not in note, "the message is about every local model, not only the 27B"
+
+
+@needs_powershell
+def test_with_24_gb_free_the_27b_is_greyed_and_the_rest_are_selectable_without_forcing_cloud(tmp_path):
+    out = probe(tmp_path, disk_free_mib=24576, **RTX_4070)       # 24 GB: Agent Friday 8 + 27B 6.1 + 10 floor does not fit
+    assert [u["id"] for u in out["unfit"]] == ["bonsai2:27b"]
+    assert out["unfit"][0]["seat"] == "deep_thinker" and "plus 10 GB left free on this drive" in out["unfit"][0]["reason"]
+    assert set(ids(out["deep"])) == {"ternary-bonsai:4b", "ternary-bonsai:8b"}
+    assert set(ids(out["fast"])) == {"qwen3-4b-instruct-2507", "qwen3-1.7b"}
+    assert out["notes"] == [], "something fits in both seats, so no cloud message and the choice is the person's"
+
+
+@needs_powershell
+def test_a_machine_too_small_for_a_model_says_how_much_memory_it_needs(tmp_path):
+    out = probe(tmp_path, ram_mib=8192)
+    by_id = {u["id"]: u for u in out["unfit"]}
+    assert set(by_id) == EVERY_OPTION
+    assert by_id["bonsai2:27b"]["reason"] == "needs 16 GB of memory"
+    assert re.fullmatch(r"needs \d+ GB of memory", by_id["qwen3-4b-instruct-2507"]["reason"]), by_id["qwen3-4b-instruct-2507"]
+    assert len(out["notes"]) == 1 and "below what local models need" in out["notes"][0]
+
+
+def test_the_disk_estimate_for_agent_friday_is_the_one_install_ps1_checks():
+    install = read_text(LIB.parent / "install.ps1")
+    assert re.search(r"\$neededGb = 8\b", install)
+    assert re.search(r"FridayDiskGb\s*=\s*8\b", PICKER)
 
 
 @needs_powershell
@@ -261,6 +329,24 @@ def test_the_page_carries_the_words_the_owner_asked_for():
                  "Use a cloud model instead (set up a key after install)",
                  "Download these models when Agent Friday first starts", "(Recommended)"):
         assert text in ISS, text
+
+
+def test_an_option_that_does_not_fit_is_listed_greyed_with_its_reason_on_its_own_line():
+    block = ISS[ISS.index("procedure AddSeat"):ISS.index("procedure BuildModelChoices")]
+    # caption, reason as the sub-line, level 1, unticked, disabled
+    assert "ModelList.AddRadioButton(Unfit[I].Caption + ' - ' + Unfit[I].SizeText, Unfit[I].Reason, 1, False, False, nil)" in block
+    assert "Unfit[I].Seat = Seat" in block
+    # a seat with nothing at all still says why
+    assert "No local model could be checked on this computer." in block
+    # a greyed option is never one the person can choose
+    assert "DeepItem" in block and "FastItem" in block
+
+
+def test_cloud_is_forced_only_when_a_seat_has_nothing_to_choose():
+    block = ISS[ISS.index("procedure BuildModelChoices"):ISS.index("procedure CurPageChanged")]
+    assert "(GetArrayLength(DeepItem) = 0) or (GetArrayLength(FastItem) = 0)" in block
+    assert block.count("CloudCheck.Enabled := False") == 1 and block.count("ForcedCloud := True") == 1
+    assert "' -> '" in ISS and "#$2192" in ISS, "the note's arrow is drawn in the wizard, which reads the file as ANSI"
 
 
 def test_nothing_is_preselected():
