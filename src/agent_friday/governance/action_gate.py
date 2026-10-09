@@ -824,7 +824,7 @@ def _has_free_text(args) -> bool:
     return walk(args or {})
 
 
-_EMAIL_IN_ARGS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_EMAIL_IN_ARGS = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
 def _connector_read(tool_name: str, a: dict) -> tuple:

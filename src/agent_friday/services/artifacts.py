@@ -379,7 +379,31 @@ except Exception:  # pragma: no cover - the hook is optional at import
 
 # ── the fenced-block fallback ───────────────────────────────────────────────
 
-_FENCE_RE = re.compile(r"```friday-artifact[ \t]*([^\n]*)\n(.*?)\n?```", re.S)
+_FENCE_OPEN = re.compile(r"```friday-artifact[ \t]*([^\n]*)\n")
+
+
+def _replace_fences(text: str, fn) -> str:
+    """Replace every closed ```friday-artifact fence with fn(header, body, whole).
+
+    Scans once: each opener looks for the next closing fence, and when there is
+    none no later opener has one either, so the text after it is left as it is
+    (a pattern with a lazy body would retry every opener to the end)."""
+    out, pos = [], 0
+    while True:
+        opener = _FENCE_OPEN.search(text, pos)
+        if opener is None:
+            break
+        close = text.find("```", opener.end())
+        if close < 0:
+            break
+        end = close
+        if end > opener.end() and text[end - 1] == "\n":
+            end -= 1
+        out.append(text[pos:opener.start()])
+        out.append(fn(opener.group(1), text[opener.end():end], text[opener.start():close + 3]))
+        pos = close + 3
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def _parse_block(header: str, body: str) -> dict | None:
@@ -426,21 +450,21 @@ def absorb_fenced(cid: str, text: str, settings: dict | None = None) -> tuple[st
         return text, []
     records: list[dict] = []
 
-    def _sub(m):
-        spec = _parse_block(m.group(1), m.group(2))
+    def _sub(header, body, whole):
+        spec = _parse_block(header, body)
         if spec is None:
-            return m.group(0)
+            return whole
         try:
             rec = put(cid, spec["kind"], str(spec.get("title") or spec["kind"]),
                       spec["content"], meta=spec.get("meta") if isinstance(spec.get("meta"), dict) else None,
                       artifact_id=spec.get("artifact_id") or None, author="friday",
                       settings=settings)
         except Exception:
-            return m.group(0)
+            return whole
         records.append(rec)
         return "\U0001F4CE **%s** — in the panel (v%d)" % (rec["title"], rec["version"])
 
-    return _FENCE_RE.sub(_sub, text), records
+    return _replace_fences(text, _sub), records
 
 
 # ── what the model is told ──────────────────────────────────────────────────

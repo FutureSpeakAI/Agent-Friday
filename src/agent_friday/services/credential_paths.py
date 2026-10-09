@@ -724,8 +724,37 @@ _WALK_WHY = "a folder that holds your key and credential folders"
 #: A space in a substituted path is carried as \x01 so a token stays whole.
 _SPACE = "\x01"
 _HOME_FORMS = re.compile(
-    r"\[(?:system\.)?environment\]::getfolderpath\s*\([^)]*\)|\$\{home\}|\$home(?![a-z0-9_])",
+    r"(?P<gfp>\[(?:system\.)?environment\]::getfolderpath\s*\()|\$\{home\}|\$home(?![a-z0-9_])",
     re.I)
+
+
+def _sub_home_forms(cmd: str, home: str) -> str:
+    """Replace `$HOME`, `${HOME}` and `[Environment]::GetFolderPath(...)` with
+    `home`, left to right in one pass, exactly as one pattern whose
+    GetFolderPath alternative ran to the first `)` would. Once an opener has no `)`
+    after it, no later one has either, so the `)` is looked for once (the
+    pattern retried it from every opener to the end)."""
+    out, pos, scan, no_close = [], 0, 0, False
+    while True:
+        m = _HOME_FORMS.search(cmd, scan)
+        if m is None:
+            break
+        if m.group("gfp"):
+            close = -1 if no_close else cmd.find(")", m.end())
+            if close < 0:
+                no_close = True
+                scan = m.start() + 1
+                continue
+            end = close + 1
+        else:
+            end = m.end()
+        out.append(cmd[pos:m.start()])
+        out.append(home)
+        pos = scan = end
+    out.append(cmd[pos:])
+    return "".join(out)
+
+
 _CWD_FORMS = re.compile(
     r"\$\(\s*(?:pwd|get-location)\s*\)(?:\.path)?|\(\s*(?:pwd|get-location|"
     r"(?:resolve-path|convert-path)\s+\.)\s*\)(?:\.path)?|\$\{?pwd\}?(?![a-z0-9_])(?:\.path)?",
@@ -744,7 +773,7 @@ def _resolve_symbolic(cmd: str) -> str:
         cwd = os.getcwd().replace(" ", _SPACE)
     except OSError:
         cwd = home
-    return _CWD_FORMS.sub(lambda m: cwd, _HOME_FORMS.sub(lambda m: home, cmd))
+    return _CWD_FORMS.sub(lambda m: cwd, _sub_home_forms(cmd, home))
 
 
 def _covers_credentials(path: str) -> bool:

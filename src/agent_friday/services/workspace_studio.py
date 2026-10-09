@@ -255,9 +255,24 @@ def _scoped_selector(selector):
     return True
 
 
+def _strip_comments(text):
+    """Remove every closed /* ... */ comment in one pass. An unterminated
+    "/*" stays, and the callers refuse it. (A lazy pattern retried every "/*"
+    to the end of the text.)"""
+    out, pos = [], 0
+    while True:
+        start = text.find("/*", pos)
+        end = text.find("*/", start + 2) if start >= 0 else -1
+        if end < 0:
+            out.append(text[pos:])
+            return "".join(out)
+        out.append(text[pos:start])
+        pos = end + 2
+
+
 def _scoped_css(css):
     """Keep only flat rules whose every selector is anchored inside the workspace."""
-    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    css = _strip_comments(css)
     if "/*" in css:
         return ""
     rules, pos = [], 0
@@ -318,7 +333,7 @@ def _sanitize_selector(sel):
     declaration, start an at-rule or fetch anything."""
     if not isinstance(sel, str) or len(sel) > 200:
         return ""
-    sel = re.sub(r"/\*.*?\*/", "", sel, flags=re.S).strip()
+    sel = _strip_comments(sel).strip()
     branches = _selector_branches(sel)
     if len(branches) != 1 or sel.startswith(("+", "~", "|")) or "/*" in sel:
         return ""

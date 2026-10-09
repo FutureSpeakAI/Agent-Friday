@@ -121,8 +121,8 @@ _SECRET_RES = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}"),
 )
 _SSN_RE = re.compile(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b")
-_SCRIPT_SRC_RE = re.compile(r"<script\b[^>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"]", re.I)
-_IMPORT_URL_RE = re.compile(r"""(?:from|import)\s*\(?\s*['"](https?://[^'"]+)['"]""")
+_SCRIPT_SRC_RE = re.compile(r"<script\b[^<>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"]", re.I)
+_IMPORT_URL_RE = re.compile(r"""(?:from|import)\s*(?:\(\s*)?['"](https?://[^'"]+)['"]""")
 _ESM_PIN_RE = re.compile(r"https://esm\.sh/((?:@[a-z0-9~][a-z0-9._~-]*/)?[a-z0-9~][a-z0-9._~-]*)@([0-9][^/?'\"\s]*)")
 _COPYLEFT_RE = re.compile(r"\b(?:A?GPL|LGPL|SSPL|EUPL|CC[- ]BY[- ]NC|OSL|CPAL|non-?commercial|NC\b)", re.I)
 
@@ -246,11 +246,11 @@ def _inject_into_app(html_src: str, *, mark: bool) -> str:
     meta = ("<meta http-equiv=\"Content-Security-Policy\" content=\"" + FRAME_CSP.replace('"', "&quot;") + "\">"
             "<meta name=\"referrer\" content=\"no-referrer\"><meta name=\"generator\" content=\"Friday\">")
     s = html_src or ""
-    m = re.search(r"<head[^>]*>", s, re.I)
+    m = re.search(r"<head\b[^<>]*>", s, re.I)
     if m:
         s = s[:m.end()] + meta + s[m.end():]
     else:
-        m = re.search(r"<html[^>]*>", s, re.I)
+        m = re.search(r"<html\b[^<>]*>", s, re.I)
         if m:
             s = s[:m.end()] + "<head><meta charset=\"utf-8\">" + meta + "</head>" + s[m.end():]
         else:
