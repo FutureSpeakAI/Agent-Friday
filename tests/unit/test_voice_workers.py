@@ -107,7 +107,8 @@ def test_idle_unload_exits_and_releases(broker):
     w = vw.VoiceWorker("fake", "mouth", idle_s=0.3, spawn=_spawn_fake()).start()
     assert w.alive()
     assert _wait(lambda: not w.alive(), 6.0)
-    assert broker["leases"][w.lease_id]["state"] == "released"
+    # The watchdog releases the lease once its wait on the child returns, so the release can trail the exit.
+    assert _wait(lambda: broker["leases"][w.lease_id]["state"] == "released", 5.0), broker["leases"][w.lease_id]
     assert w._exit_reason == "idle"
 
 
