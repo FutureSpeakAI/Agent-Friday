@@ -985,6 +985,9 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
     #: The stories a sentence was cut from while naming them: if one's first
     #: mention is left without its lede, the story goes whole (see below).
     lost: set = set()
+    #: Stories already told without a lede before anything was cut: a cut did
+    #: not cause that, so it is the gate's to judge, not a reason to drop them.
+    unled = {p["sid"] for p in quality.lede_problems(merge_turns(list(lines)), story_list)}
 
     def drop(text, chapter, why):
         cut.append({"text": text, "chapter": chapter, "reason": "cut by the script check: " + why})
@@ -1114,7 +1117,7 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
     # the lede check: the whole story is left out instead.
     if lost:
         orphans = {p["sid"] for p in quality.lede_problems(out, story_list)
-                   if by.get(p["sid"], {}).get("cluster") in lost}
+                   if by.get(p["sid"], {}).get("cluster") in lost and p["sid"] not in unled}
         if orphans:
             out, gone = without_stories(out, story_list, orphans)
             for ln in gone:

@@ -308,7 +308,11 @@ def test_one_story_failing_its_lede_after_revision_is_left_out_and_the_rest_goes
     assert [s["headline"] for s in done["left_out"]] == [
         "Tech chiefs sign a voluntary pledge to police their own AI"]
     said = " ".join(ln["text"] for ln in done["lines"])
-    assert "pledge" not in said and "Example Ledger reports" in said
+    pledge = done["left_out"][0]["sid"]
+    # The story is not told: nothing cites it or comments on it, and its lede
+    # is gone. (A passing allusion in another story's line may remain.)
+    assert not any(pledge in q.refs(ln) for ln in done["lines"])
+    assert "voluntary pledge" not in said and "Example Ledger reports" in said
     assert not any(p["code"] in q.HARD_CODES for p in done["script_check"]["problems"])
 
 
@@ -363,8 +367,13 @@ def test_a_rejected_script_is_kept_for_review(home, monkeypatch):
     (home / "briefing_runs" / (fx.DATE + ".json")).write_text(json.dumps(fx.sidecar()), encoding="utf-8")
     ds = fx.docs()
     bad = good_lines(ds)
-    # A story with no spoken lede: no edit can supply one, so it blocks.
-    bad[2] = dict(bad[2], text="The pledge leaves a governance opening your interviews can use.")
+    # Every story told with no spoken lede: no edit can supply one and leaving
+    # them out leaves nothing to air, so the episode is refused.
+    for i, text in {2: "The pledge leaves a governance opening your interviews can use.",
+                    4: "The data-center spending figure leaves a funding question for your interviews.",
+                    6: "The public argument between the two lab chiefs is useful to you.",
+                    8: "The shooting at the bar is closer to home than the rest of the news."}.items():
+        bad[i] = dict(bad[i], text=text)
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:
