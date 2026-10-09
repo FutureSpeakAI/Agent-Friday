@@ -53801,6 +53801,12 @@ function LocalModelRow({ r, onFetch }) {
 function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
   const [card, setCard] = useState(null);
   const [err, setErr] = useState(null);
+  // The card renders at the foot of the Local models list, far below the Get
+  // that opened it (the catalogue's or a row's), so it brings itself into view.
+  const box = useRef(null);
+  useEffect(() => {
+    box.current && box.current.scrollIntoView && box.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [modelId, card, err]);
   useEffect(() => {
     let live = true;
     setCard(null); setErr(null);
@@ -53813,12 +53819,15 @@ function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
     return () => { live = false; };
   }, [modelId]);
 
-  const wrap = (children) => E('div', {
+  // Every child, not just the first: with one parameter the lines and the
+  // Fetch / Cancel buttons were dropped and only the title rendered.
+  const wrap = (...children) => E('div', {
+    ref: box, role: 'group', 'aria-label': 'Before fetching ' + modelId,
     style: {
       margin: '10px 0', border: '1px solid rgba(0,212,255,0.35)', borderRadius: 9,
       padding: 12, background: '#111726',
     },
-  }, children);
+  }, ...children);
 
   if (err) return wrap(
     E('div', { style: { fontSize: 11, color: '#f59e0b', marginBottom: 6 } }, err),
