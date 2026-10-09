@@ -1278,7 +1278,8 @@
         selection: { id: cur.id, refs: cur.refs, count: cur.refs.length, label: cur.label, source: cur.source, beyond_loaded: beyond },
         filters, focus: focusTouched.current && shown[focus] ? refOf(shown[focus]) : null, open: open ? refOf(open.card) : null,
         cursor: FS.cursorNow(shown.slice(0, FS.MAX_ROWS).map(refOf)), fields: FS.fieldList('messages'),
-        held: Object.keys(cur.held).length ? [{ card_id: 'pending', refs_count: Object.keys(cur.held).length }] : []
+        held: Object.keys(cur.held).length ? [{ card_id: 'pending', refs_count: Object.keys(cur.held).length }] : [],
+        pointed: FS.pointedNow()
       };
       const json = JSON.stringify(st);
       if (json !== stageRev.current.json) stageRev.current = { json, rev: stageRev.current.rev + 1 };

@@ -713,7 +713,7 @@
     STEP_STATES: STEP_STATES, reduceSteps: reduceSteps, stepsRunning: stepsRunning,
     FILL_MAX: FILL_MAX, fieldList: fieldList, registerField: registerField, fillField: fillField, undoFill: undoFill, fillChip: fillChip, fillChips: fillChips,
     cursor: cursor, cursorNow: cursorNow, CURSOR_MEMORY_MS: CURSOR_MEMORY_MS,
-    pointPlan: pointPlan, point: point, clearPoints: clearPoints, chipsRow: chipsRow, makeAdapter: makeAdapter, ensureStyle: ensureStyle,
+    pointPlan: pointPlan, point: point, pointedNow: pointedNow, clearPoints: clearPoints, chipsRow: chipsRow, makeAdapter: makeAdapter, ensureStyle: ensureStyle,
     domList: domList, register: register, registered: registered, snapshot: snapshot, handles: handles, run: run, touch: touch
   };
 }));
