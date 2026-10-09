@@ -1,13 +1,14 @@
 # Architecture
 
-> Status: current for 5.14.0. Last verified against the code: 2026-09-24.
-> Paths are relative to `src/agent_friday/` unless they start at the repository
-> root. When this page and the code disagree, the code is right.
+This page describes how Agent Friday™ Beta 1.0 (version `1.0.0b1`) is put
+together, for people who work on the code. Paths are relative to
+`src/agent_friday/` unless they start at the repository root. When this page
+and the code disagree, the code is right; please fix the page.
 
-Agent Friday is a local Flask application with a single-page UI, a set of
-local model runtimes it manages itself, and optional cloud providers. Every
-model call to the cloud passes an egress gate, and every tool call passes one
-governance checkpoint. More diagrams and subsystem detail are in
+Friday is a local Flask application with a single-page UI, a set of local model
+runtimes it manages itself, and optional cloud providers. Every model call to
+the cloud passes an egress gate, and every tool call passes one governance
+checkpoint. More diagrams and subsystem detail are in
 [docs/architecture/overview.md](docs/architecture/overview.md); the security
 design is in [docs/security/threat-model.md](docs/security/threat-model.md).
 
@@ -29,8 +30,11 @@ friday_tray.py  (system tray; Windows)
 - **The tray** (`friday_tray.py`) starts the server as a child process with no
   console window, waits for `/health`, and restarts or stops it from its menu.
   It also runs the system-wide push-to-transcribe hook, because the tray is the
-  one Friday process that outlives the browser. The desktop shortcut runs
-  `python -m agent_friday.cli`, which starts the server without the tray.
+  one Friday process that outlives the browser. The installed "Start Friday
+  when I sign in" entry starts the tray; the desktop and Start menu shortcuts run
+  `python -m agent_friday.cli`, which starts the server and opens the browser
+  without the tray. `friday_tray.py` and `server.py` at the repository root are
+  thin shims over the package.
 - **The server** (`server.py`) binds to `127.0.0.1` on `FRIDAY_PORT` (default
   3000, next free port if busy). It registers every blueprint in `routes/` by
   auto-discovery (`_discover_and_register_blueprints`), falling back to the
@@ -83,7 +87,7 @@ friday_tray.py  (system tray; Windows)
    with computed weekdays, and returned to the loop.
 8. **Response.** The reply streams back with the model that answered; the turn
    is recorded in the conversation store, the cost meter and, if enabled, the
-   encrypted reasoning-trace ledger (`services/reasoning_trace.py`).
+   encrypted reasoning-trace log (`services/reasoning_trace.py`).
 
 ## Tool dispatch and the governance hook chain
 
@@ -137,7 +141,7 @@ or `record_external`.
 
 ## Seats and residency
 
-A **seat** is a model bound to a job: `reasoning`, `subagent`, `orchestrator`,
+A **seat** is a model bound to a job: `reasoning`, `subagent`,
 `heavy_hitter`, `function_manager`, `memory_manager`, `researcher`,
 `creative_image`, `asr`, `tts` and so on (`capability_routing` in settings).
 A seat is local or cloud by the model it names. The planner
@@ -159,14 +163,84 @@ non-interactive, so an outward action needs a grant scoped to that schedule or
 waits on a card. The weekly update check is a schedule seeded from the owner's
 first-run answer.
 
+## Voice
+
+Voice has two paths that share the same brain and the same governance chain.
+
+- **Local voice** (`/ws/voice-local`, `/ws/voice` in `routes/voice.py`) runs
+  speech recognition, the model turn and speech synthesis on this PC. The CPU
+  engines (`services/local_voice.py`) run in the server process. GPU engines run
+  as separate processes, `python -m agent_friday.voice.worker`, one per engine,
+  managed by `services/voice_workers.py`. Each worker holds a GPU lease from
+  the residency arbiter, and the lease ends when the process exits. A voice
+  lease can be taken back by an image job or a heavy turn, and the stage then
+  falls back to the CPU with a notice. `services/voice_session.py` runs the
+  session and `services/voice_engine.py` picks the engines.
+- **Cloud voice** (`/ws/live` in `routes/voice.py`) streams to a cloud
+  provider.
+- **Local voice models** are fetched by `services/voice_installer.py` from
+  Settings > Voice, and by `services/first_run_models.py` for the choices made
+  in setup. Both ask before downloading and verify what they fetch.
+- **Push-to-transcribe** (`services/push_to_talk.py`) is a keyboard hook that
+  lives in the tray process.
+
 ## UI
 
 `index.html` at the repository root is the served, authoritative UI: React
 components compiled into the page, with Three.js for the 3D views, served by
-the Flask app. `ui_parts/app.html` is a hand-maintained JSX mirror; every UI change
-edits both, and the build tool refuses to regenerate `index.html` in a way that
-drops components. See [docs/development/ui-build.md](docs/development/ui-build.md).
-Any workspace except Settings can open as its own tab at `/w/<id>`.
+the Flask app. `ui_parts/app.html` is a hand-maintained JSX mirror. A UI change
+edits both files, and the build tool (`ui/`) refuses to
+regenerate `index.html` in a way that drops components. Static assets
+(fonts, vendored libraries, scene scripts and icons) are in `static/`, and the
+icon set is in `assets/`. See [docs/development/ui-build.md](docs/development/ui-build.md).
+Any workspace except Settings can open as its own tab at `/w/<id>`
+(`routes/core_routes.py`).
+
+## Settings
+
+Defaults live in `DEFAULT_SETTINGS` in `core/__init__.py`. The values a person
+changes are stored in `settings.json` in the data folder, which is `~/.friday`
+(`%USERPROFILE%\.friday` on Windows) unless `FRIDAY_HOME` names another one
+(`paths.py`). Keys the UI writes that are not in `DEFAULT_SETTINGS` are dropped
+on load, and `scripts/check_settings_readers.py` checks that each key has a
+reader.
+
+## Installer
+
+The Windows setup program is built from `packaging/windows/`. See
+`packaging/windows/README.md` for the full guide.
+
+| Path | Role |
+|---|---|
+| `packaging/windows/installer/AgentFriday.iss` | Inno Setup script: wizard, model page, shortcuts, uninstaller. |
+| `packaging/windows/installer/probe-hardware.ps1` | Reads RAM, GPU and disk for the model page. |
+| `packaging/windows/lib/ModelPicker.ps1` | Chooses which models fit, from `resources/bonsai2-tiers.json`. |
+| `packaging/windows/install.ps1` | The install engine the setup program runs. |
+| `packaging/windows/lib/Upgrade.ps1` | Orders releases by build sequence and backs up the data folder before an upgrade. |
+| `packaging/windows/uninstall.ps1` | Uninstall; asks whether to keep data. |
+| `packaging/windows/build-installer.ps1` | Builds `AgentFriday-Setup-<tag>.exe` and its checksum. |
+| `packaging/windows/requirements/` | Dependency tiers installed from the bundled wheelhouse. |
+| `packaging/windows/tests/Test-Installer.ps1` | Installer assertions. |
+
+An installed copy lives under `%LOCALAPPDATA%\AgentFriday` (`app\` for the
+source tree, `python\` for a private interpreter). Setup downloads no model
+weights; `services/first_run_models.py` fetches the chosen models on first
+start. Releases are ordered by `BUILD_SEQUENCE` in `release.py`
+([release process](docs/development/release-process.md)).
+
+## Tests and documentation
+
+- `tests/unit/` is fast and needs no server. `tests/api/` uses the Flask test
+  client with every model call stubbed. `tests/security/`,
+  `tests/test_egress_adversarial.py` and `tests/test_judgment_gate.py` cover the
+  egress boundary. Browser tests are Playwright specs under `tests/app/`
+  (`npm run test:smoke`) and a few `tests/*.spec.ts` files. See
+  [tests/README.md](tests/README.md).
+- Repository guards are scripts in `scripts/` and the hooks in `.githooks/`; see
+  [repository guards](docs/development/repository-guards.md).
+- Documentation starts at [docs/README.md](docs/README.md). Design rules for
+  the UI are in [docs/design/hig](docs/design/hig/) and the brand tokens in
+  [docs/brand/BRAND.md](docs/brand/BRAND.md).
 
 ## Where things live
 
@@ -182,12 +256,13 @@ Any workspace except Settings can open as its own tab at `/w/<id>`.
 | Egress gate, classifier | `services/egress_gate.py`, `services/sensitivity_classifier.py` |
 | Routing | `routing/model_router.py`, `services/model_router.py` |
 | Residency | `services/residency_arbiter.py`, `residency_policy.py`, `model_plan.py` |
-| Voice | `services/voice_engine.py`, `voice_session.py`, `voice_workers.py`, `local_voice.py`, `push_to_talk.py` |
-| Mail | `services/gmail_*.py`, `services/mail_proposals.py` |
+| Voice | `services/voice_engine.py`, `voice_session.py`, `voice_workers.py`, `local_voice.py`, `voice_installer.py`, `push_to_talk.py`, `voice/worker.py` |
+| Mail | `services/gmail_api.py`, `gmail_mailbox.py`, `gmail_read.py`, `gmail_send.py`, `mail_proposals.py` |
 | Phone | `phone/` |
 | Documents | `services/office_engine.py` |
 | Local address | `services/local_address.py`, `local_ca.py`, `local_proxy.py` |
 | Reasoning traces | `services/reasoning_trace.py`, `routes/traces.py` |
 | Update check | `services/update_check.py` |
 | CLI | `cli.py` (`friday`), `setup_wizard.py` |
+| Local model downloads at first start | `services/first_run_models.py`, `services/model_store.py` |
 | Windows installer | `packaging/windows/` |

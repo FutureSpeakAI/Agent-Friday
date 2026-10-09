@@ -1,76 +1,46 @@
-# Skills System
+# Skills
 
-Agent Friday's skill system enables self-improvement through learnable workflows, versioned optimization, and automatic quality recovery.
+A skill is a reusable procedure that Agent Friday™ can follow when a request
+matches it. Skills can be created by Friday, saved from a successful
+[workflow](workflows.md), or imported. A skill never grants new permissions: it
+describes how to do something, and every tool it uses keeps its normal checks
+and approvals.
 
----
+The skill system has three parts:
 
-## Overview
+1. **Skills**, portable `SKILL.md` folders (or legacy YAML files) that define
+   reusable procedures.
+2. **The SkillOpt engine**, which versions skills, scores their runs and
+   promotes a better version only if it passes a regression gate.
+3. **The auto-research loop**, which proposes edits when a skill's results
+   drop.
 
-The skill system has three layers:
+## Where skills come from
 
-1. **Learnable Skills** — portable `SKILL.md` folders (or legacy YAML files) defining reusable workflows
-2. **SkillOpt Engine** — Versioned skill optimization with training epochs and regression gates
-3. **Auto-Research Loop** — Automatic quality recovery when skill performance drops
+- **Saved from a workflow.** After a successful workflow run whose deliverable
+  was verified, **Keep as reusable procedure** saves the workflow's steps as a
+  skill named `workflow-<workflow name>`. It is refused if the run was not
+  verified, or if the workflow changed after that run. Saving it again for the
+  same revision changes nothing.
+- **Created in chat.** Ask Friday to remember a procedure. Friday uses the
+  `learn_skill` tool, which writes a YAML skill file.
+- **Imported.** From a folder, a `.zip`, a legacy `.yaml` file or an
+  OpenClaw-style package.
+- **Bundled.** A few skills ship with Friday.
 
----
+Your skills live in `%USERPROFILE%\.friday\skills\`. A skill is active as soon
+as it is saved, without a restart.
 
-## Learnable Skills
+## The SKILL.md format
 
-Skills are YAML files stored in `~/.friday/skills/`. Each skill defines a reusable workflow that Friday can invoke when it recognizes a trigger pattern.
-
-### Skill File Structure
-
-```yaml
-name: meeting-prep
-description: Prepare a briefing for an upcoming meeting
-trigger_patterns:
-  - "prepare for my meeting with"
-  - "meeting prep"
-  - "brief me on"
-tool_chain:
-  - search_wiki
-  - query_trust_graph
-  - search_web
-  - browse_web
-prompt_template: |
-  Research {person} and prepare a meeting briefing:
-  1. What we know from the wiki and trust graph
-  2. Recent news and activity
-  3. Suggested talking points
-  4. Potential areas of collaboration
-success_criteria:
-  - Includes background from local sources
-  - Includes recent external context
-  - Provides actionable talking points
-```
-
-### Managing Skills
-
-Skills are managed through the `learn_skill` tool, available in chat:
-
-| Action | Description |
-|--------|-------------|
-| `create` | Create a new skill YAML file |
-| `modify` | Update an existing skill |
-| `delete` | Remove a skill |
-| `list` | List all registered skills |
-| `read` | Read a skill's content |
-
-Skills can also be managed via the filesystem at `~/.friday/skills/`.
-
----
-
-## Portable Skill Format (SKILL.md folder)
-
-The portable skill format is a **folder containing a `SKILL.md` file** with YAML frontmatter plus a Markdown body (the procedure). Folders are stored under `~/.friday/skills/<name>/`.
-
-### `SKILL.md` structure
+A skill is a folder containing a `SKILL.md` file: YAML frontmatter, then a
+Markdown body that is the procedure.
 
 ```markdown
 ---
 name: meeting-prep
 description: Prepare a briefing for an upcoming meeting
-version: 1.0.0
+version: 1
 triggers:
   - "prepare for my meeting with"
   - "meeting prep"
@@ -84,12 +54,12 @@ success_criteria:
   - Includes recent external context
   - Provides actionable talking points
 license: MIT
-source: imported
+source: friday
 ---
 
 # Meeting Prep
 
-Research {person} and prepare a meeting briefing:
+Research the person and prepare a meeting briefing:
 1. What we know from the wiki and trust graph
 2. Recent news and activity
 3. Suggested talking points
@@ -97,192 +67,160 @@ Research {person} and prepare a meeting briefing:
 ```
 
 | Frontmatter field | Type | Description |
-|-------------------|------|-------------|
-| `name` | string | Skill identifier (matches the folder name). |
+|---|---|---|
+| `name` | string | Skill identifier. Defaults to the folder name. |
 | `description` | string | One-line summary. |
-| `version` | string | Skill version. |
-| `triggers` | string[] | Substrings that activate the skill. |
-| `tool_chain` | string[] | Tools the procedure relies on. |
-| `success_criteria` | string[] | Conditions for a successful run. |
-| `license` | string | License of the portable skill. |
-| `source` | string | Origin tag: `friday` \| `imported` \| `openclaw` \| `bundled` (set automatically on import). |
+| `version` | integer | Skill version. |
+| `triggers` | string list | Phrases that activate the skill. `trigger_patterns` is accepted as an alias. |
+| `tool_chain` | string list | Tools the procedure relies on. |
+| `success_criteria` | string list | Conditions for a successful run. |
+| `license` | string | License of the skill. Defaults to MIT. |
+| `source` | string | Where it came from: `friday`, `imported`, `openclaw`, `bundled` or `workflow`. |
 
-### Loading & matching
+### How skills are used
 
-The skill registry (`skill_registry.py`) discovers skills at startup. On every turn, skills whose `triggers` substring-match the user's message are injected into the system prompt. Legacy single-file `~/.friday/skills/*.yaml` skills are still supported and auto-discovered alongside the folder format.
+On each turn, Friday checks your message against every skill's triggers (a
+case-insensitive match on the phrase). For up to three matching skills, Friday
+sees the name, description, suggested tools and success criteria, and is told to
+load the complete procedure with the `read_skill` tool before using it. The
+full procedure is never cut short, because a partial procedure could drop its
+checks or limits.
 
-### Import / export
+When a skill is saved over, the previous procedure is kept in a `_history`
+folder inside the skill's folder.
 
-Skills are portable. They can be imported from a folder, a `.zip`, a legacy `.yaml`, or an OpenClaw-style package, and exported as a `.zip`:
+### Legacy YAML skills
 
-- `GET /api/skills` — list all skills (learned, imported, bundled).
-- `POST /api/skills/import` — import a portable skill (`.zip` upload, or JSON pointing at a folder/zip/legacy `.yaml`).
-- `GET /api/skills/<name>/export` — download a skill as a portable `.zip`.
+Single-file skills in `%USERPROFILE%\.friday\skills\*.yaml` still work and are
+found alongside the folder format. The `learn_skill` tool takes these actions:
+
+| Action | Description |
+|---|---|
+| `create` | Create a skill YAML file. |
+| `modify` | Replace an existing skill's content. |
+| `delete` | Remove a skill. |
+| `list` | List the YAML skills. |
+| `read` | Read a skill's content. |
+
+### Importing and exporting
+
+Skills are portable. These routes require you to be signed in:
+
+- `GET /api/skills` lists all skills (learned, imported, bundled).
+- `POST /api/skills/import` imports a skill from a `.zip` upload, or from JSON
+  that points at a folder, a zip or a legacy `.yaml` file.
+- `GET /api/skills/<name>/export` downloads a skill as a `.zip`.
+- `POST /api/skills/reload` rescans the skills folders without a restart.
 
 ### Closed-loop learning
 
-`skill_capture.py` records turn trajectories and feeds real usage metrics back to the SkillOpt engine (see below). A nightly `skillopt-nightly` auto-research job exists but is disabled in the general release (it will be re-enabled once the skill fleet is large enough); auto-research can still be triggered programmatically via `maybe_autoresearch()`.
+Friday records the trajectory of skill runs and feeds the results to the
+SkillOpt engine. The nightly auto-research job is disabled in this release. The
+check can still be run on demand with `maybe_autoresearch()`.
 
----
+## The SkillOpt engine
 
-## SkillOpt Engine
-
-The SkillOpt engine (`skillopt_engine.py`) tracks skill performance over time and evolves skills through an optimization loop inspired by Microsoft's SkillOpt (github.com/microsoft/SkillOpt).
-
-### Architecture
+The SkillOpt engine (`skillopt_engine.py`) tracks each skill's performance
+over time and evolves skills through an optimization loop inspired by
+Microsoft's SkillOpt (github.com/microsoft/SkillOpt). Everything it stores is
+on your PC.
 
 ```
 SkillOptEngine
 ├── SkillVersion        Versioned snapshot with metrics
-├── TrainingEpoch       Batch evaluation + improvement cycle
+├── TrainingEpoch       Batch evaluation and improvement cycle
 ├── ValidationGate      Regression prevention (within 5% of best)
 └── AutoResearchLoop    Proposes edits when scores drop
 ```
 
-### Composite Scoring
+### Composite scoring
 
-Every skill execution is scored on a weighted composite of five dimensions:
+Every skill run is scored on a weighted composite of five dimensions:
 
-| Dimension | Default Weight | Description |
-|-----------|---------------|-------------|
+| Dimension | Default weight | Description |
+|---|---|---|
 | `accuracy` | 0.40 | Correctness of the output |
-| `user_satisfaction` | 0.25 | User feedback / acceptance |
-| `latency` | 0.15 | Response time (normalized: <= target = 1.0, exponential decay beyond) |
-| `cost` | 0.10 | Token cost (normalized against target) |
+| `user_satisfaction` | 0.25 | Your feedback and acceptance |
+| `latency` | 0.15 | Response time (at or below the target scores 1.0, with exponential decay beyond) |
+| `cost` | 0.10 | Token cost against the target |
 | `completeness` | 0.10 | Coverage of the requested task |
 
-Weights are configurable per skill via `~/.friday/skillopt/<skill>/config.json`.
+Weights and targets are configurable per skill in
+`%USERPROFILE%\.friday\skillopt\<skill>\config.json`. The defaults are a
+latency target of 5000 ms and a cost target of $0.05.
 
-### Default Targets
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `latency_target_ms` | 5000 | Latency at or below this scores 1.0 |
-| `cost_target_usd` | 0.05 | Cost at or below this scores 1.0 |
-
-### Version Lifecycle
+### Version lifecycle
 
 ```
-register_skill() → record_execution() → maybe_train() → promote_best()
+register_skill() -> record_execution() -> maybe_train() -> promote_best()
 ```
 
-1. **Register** — A skill is registered with initial content and scoring weights
-2. **Execute** — Every execution is logged with metrics to `metrics.jsonl`
-3. **Score** — Composite score is computed and version summary is updated
-4. **Research** — If the rolling mean drops, auto-research proposes improvements
-5. **Train** — A candidate version is evaluated against the current champion
-6. **Validate** — The validation gate checks for regressions
-7. **Promote** — If the candidate passes, it becomes the new champion
+1. **Register.** A skill is registered with its content and scoring weights.
+2. **Execute.** Every run is logged with metrics to `metrics.jsonl`.
+3. **Score.** The composite score is computed and the version summary updated.
+4. **Research.** If the rolling mean drops, auto-research proposes improvements.
+5. **Train.** A candidate version is evaluated against the current champion.
+6. **Validate.** The validation gate checks for regressions.
+7. **Promote.** If the candidate passes, it becomes the new champion.
 
----
+### Validation gate
 
-## Validation Gate
+A candidate must satisfy two conditions to be promoted:
 
-The validation gate prevents regressions. A candidate version must satisfy two conditions to be promoted:
+1. **Within tolerance.** Its score is at least 95% of the all-time best score.
+2. **Beats the baseline.** Its score is above the current champion's score.
 
-1. **Within tolerance** — Score >= 95% of the all-time best score
-2. **Beats baseline** — Score > current champion's score
+If the improvement is under 0.5%, the candidate is accepted as a marginal pass
+(within noise).
 
-If improvement is < 0.5%, the candidate is accepted as a marginal pass (within noise).
+## The auto-research loop
 
----
+The loop fires when the 10-run rolling mean drops more than 10% below the
+all-time best score.
 
-## Auto-Research Loop
+1. **Detect.** Compare the rolling mean with the best score.
+2. **Analyze.** Look for error-rate spikes, latency above twice the target, and
+   quality drift with no obvious cause.
+3. **Hypothesize.** Generate explanations for the drop.
+4. **Propose.** Create edit proposals: `replace` (the whole content), `patch`
+   (find and replace) or `append` (new sections).
+5. **Test.** Hand candidates to a training epoch.
+6. **Validate.** The validation gate decides.
 
-Inspired by Microsoft's SkillOpt research on self-improving skills (github.com/microsoft/SkillOpt, MIT).
+When a language model is wired in, the loop analyses with it. Without one, a
+heuristic fallback analyses error and latency patterns.
 
-### Trigger Conditions
-
-The auto-research loop fires when the 10-execution rolling mean drops more than 10% below the all-time best score.
-
-### Research Process
-
-1. **Detect** — Rolling mean vs best score comparison
-2. **Analyze** — Examine recent executions for patterns:
-   - Error rate spikes
-   - Latency exceeding 2x target
-   - Quality drift with no obvious cause
-3. **Hypothesize** — Generate explanations for the drop
-4. **Propose** — Create specific edit proposals:
-   - `replace` — Replace the entire skill content
-   - `patch` — Find-and-replace within the content
-   - `append` — Add new sections
-5. **Test** — Hand candidates to a training epoch
-6. **Validate** — The validation gate decides
-
-### LLM-Backed Research
-
-When an LLM researcher callable is wired up, the loop performs deep analysis using the model. Without it, a heuristic fallback analyzes error and latency patterns.
-
----
-
-## Storage Layout
+## Storage layout
 
 ```
-~/.friday/skillopt/
-└── <skill_name>/
-    ├── versions/
-    │   ├── v001.md           # First version (auto-promoted as baseline)
-    │   ├── v001.json         # Version metadata sidecar
-    │   ├── v002.md           # Candidate version
+%USERPROFILE%\.friday\skillopt\
+└── <skill_name>\
+    ├── versions\
+    │   ├── v001.md           First version (auto-promoted as baseline)
+    │   ├── v001.json         Version metadata
+    │   ├── v002.md           Candidate version
     │   └── v002.json
-    ├── metrics.jsonl          # Append-only execution log
-    ├── best_skill.md          # Current champion artifact
-    ├── config.json            # Weights, thresholds, targets
-    └── research_log.jsonl     # Auto-research findings
+    ├── metrics.jsonl          Append-only run log
+    ├── best_skill.md          Current champion
+    ├── config.json            Weights, thresholds, targets
+    └── research_log.jsonl     Auto-research findings
 ```
 
-### Execution Record Fields
+Each line of `metrics.jsonl` records the skill name, version, run id, time,
+inputs, outputs, raw metrics, composite score (0.0 to 1.0), duration, estimated
+cost, optional user feedback and any error.
 
-Each entry in `metrics.jsonl`:
+## Command line
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `skill_name` | string | Skill identifier |
-| `version_id` | string | Version that was executed (e.g., `v003`) |
-| `execution_id` | string | Unique execution ID |
-| `timestamp` | string | ISO 8601 timestamp |
-| `inputs` | object | Input parameters |
-| `outputs` | object | Output data |
-| `metrics` | object | Raw metric values |
-| `composite_score` | float | Weighted composite (0.0 - 1.0) |
-| `duration_ms` | float | Execution time in milliseconds |
-| `cost_usd` | float | Estimated cost |
-| `user_feedback` | object | Optional user feedback |
-| `error` | string | Error message if execution failed |
+Run these as modules from Friday's Python environment:
 
----
-
-## CLI
-
-The SkillOpt engine includes a CLI for inspection (run as a module after `pip install -e .`):
-
-```bash
-# Fleet status
+```
 python -m agent_friday.skillopt_engine status
-
-# Show a specific skill
 python -m agent_friday.skillopt_engine show meeting-prep
-
-# List versions
 python -m agent_friday.skillopt_engine versions meeting-prep
-
-# Export full fleet state as JSON
 python -m agent_friday.skillopt_engine export
-
-# Register a skill from a file
 python -m agent_friday.skillopt_engine register meeting-prep skills/meeting-prep.md
 ```
 
----
-
-## API Integration
-
-The SkillOpt engine exposes public helpers used by `server.py`:
-
-| Function | Description |
-|----------|-------------|
-| `get_engine()` | Lazy singleton — returns the shared SkillOptEngine |
-| `export_fleet_state()` | JSON snapshot for the Observatory UI |
-| `record_skill_run(...)` | Convenience hook for recording executions |
-| `maybe_autoresearch(skill_name)` | Trigger auto-research check (call periodically) |
+`status` shows fleet status, `show` one skill, `versions` its versions, `export`
+the full fleet state as JSON, and `register` adds a skill from a file.

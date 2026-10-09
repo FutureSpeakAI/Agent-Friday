@@ -79,7 +79,7 @@ CHECKED_FILES = [
     "docs/getting-started/installation.md",
     "docs/user-guide/configuration.md",
     "docs/reference/api.md",
-    "docs/getting-started/tutorial.md",
+    "docs/getting-started/README.md",
     "KNOWN_ISSUES.md",
 ]
 

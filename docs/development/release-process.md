@@ -19,13 +19,13 @@ update check both rank releases by it, and the release notes carry a
 
 | Artifact | Built by | Supported |
 |---|---|---|
-| `AgentFriday-Setup-<tag>.exe` + `.sha256` (Windows setup program, Inno Setup 6, unsigned) | `packaging/windows/build-installer.ps1` | Yes — the primary distribution. |
-| Source checkout (`pip install -e .`) | git | Yes — Windows, macOS, Linux (feature differences are in the README's platform section). |
+| `AgentFriday-Setup-<tag>.exe` + `.sha256` (Windows setup program, Inno Setup 6, unsigned) | `packaging/windows/build-installer.ps1` | Yes, the primary distribution. |
+| Source checkout (`pip install -e .`) | git | Yes, Windows, macOS, Linux (feature differences are in the README's platform section). |
 | Wheel / `pip install agent-friday` | `python -m build` | Yes for the application code, CLI and the bundled seed skills; not the web UI (`index.html`, `static/`, `assets/` are not packaged). Not published to PyPI. |
-| `AgentFriday.exe` (PyInstaller) | — | **Retired.** The last published binary predates current privacy fixes and should not be used. |
+| `AgentFriday.exe` (PyInstaller) |, | **Retired.** The last published binary predates current privacy fixes and should not be used. |
 
 The full matrix, with what each path can and cannot do, is in
-[Installation](../getting-started/installation.md).
+[Installation reference](../getting-started/installation.md).
 
 ## Cutting a release
 

@@ -1,6 +1,6 @@
 # Backup and restore
 
-Everything Friday knows is in one folder, `%USERPROFILE%\.friday`. There is no
+Everything Agent Friday™ knows is in one folder, `%USERPROFILE%\.friday`. There is no
 cloud copy, so if this PC's disk fails, a backup you made is the only copy.
 This page covers what to back up, the one thing that cannot be recovered, and
 how to restore.
@@ -42,6 +42,10 @@ credentials. Keep it on encrypted storage.
 
 Or use the built-in export. It has two forms.
 
+The **Export all my data (ZIP)** button in **Settings > Privacy & Data > Your
+data** makes the data export described next, and your browser saves the zip.
+The command line makes both forms.
+
 **Data export** (the default) zips your data and leaves out every key and
 credential file: the keystore root key (`security\`), stored API keys,
 account sign-in tokens, the web session secret, signing keys and private TLS
@@ -59,7 +63,7 @@ stay encrypted inside the zip.
 
 A data export is enough to keep your wiki, conversations, settings and vault,
 but **it cannot restore your stored API keys or account sign-ins**. After
-restoring one, enter your keys again in Settings → Accounts & Keys and
+restoring one, enter your keys again in Settings > Connections and
 reconnect your accounts.
 
 **Full backup** also includes the keys and credentials, inside one file
@@ -114,21 +118,30 @@ The passphrase copies in Credential Manager still work.
 
 From a folder copy or a full backup, stored API keys and account tokens come
 across with the keystore. From a data export they do not. If a connected
-account asks you to sign in again, do so in Settings → Accounts & Keys.
+account asks you to sign in again, do so in Settings > Connections.
 
 **After a move, outward actions may be held.** Friday's governance signing key
 is kept in Windows Credential Manager, so a new PC or account gets a new key,
 and the pinned signature of Friday's rules no longer matches. Friday then
 holds outward actions (reads keep working). To accept the new key, open
-Settings → Privacy & Approvals → Friday's rules on this PC, check that it says
+Settings > Privacy & Data > Friday's rules on this PC, check that it says
 the signature does not match, and choose **Re-confirm Friday's rules on this
-PC**. The control works only from Friday's own page on this PC. Receipts
+PC**. The same step is needed after an update that changed the rules text. The control works only from Friday's own page on this PC. Receipts
 signed before the move can only be verified with the old key.
 
 **A passphrase-protected keystore needs the passphrase.** If you turned on
-Settings → Privacy & Approvals → Stored keys, the restored keystore opens only
+Settings > Privacy & Data > Stored keys, the restored keystore opens only
 with your vault passphrase, so run `vault-setup` (step 3 above) before
 starting Friday.
+
+## Backups made by the installer
+
+When you run the installer over an existing install, it first stops Friday and
+copies your data to a timestamped folder under `%USERPROFILE%\.friday-backups`.
+If the whole data folder does not fit, it copies the vault and the settings.
+After the install it checks that the data is unchanged. If the backup cannot be
+made, the upgrade does not start. See
+[Updating and uninstalling](updating-and-uninstalling.md).
 
 ## Erasing everything
 
@@ -138,5 +151,7 @@ To delete all of Friday's data from this PC:
 "%LOCALAPPDATA%\AgentFriday\Agent Friday.cmd" erase
 ```
 
-It lists what will be removed and asks you to confirm. The uninstaller can
-also remove your data; see [Updating and uninstalling](updating-and-uninstalling.md).
+It lists what will be removed and asks you to confirm. **Settings > Privacy &
+Data > Your data** has an **Erase everything** button that asks you to type
+`ERASE`. The uninstaller asks whether to keep your data (the default is to
+keep it); see [Updating and uninstalling](updating-and-uninstalling.md).

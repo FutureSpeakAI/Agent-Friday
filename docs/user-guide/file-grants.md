@@ -1,142 +1,121 @@
-# File Grants — letting Friday use your documents without giving up the gate
+# File access: letting a cloud model read your files
 
-*Added in 5.6.0. Implementation: `services/file_grants.py`, endpoints in
-`routes/control.py`.*
+Agent Friday™ keeps what it cannot confidently classify as public on this PC.
+Ask Friday to read your résumé and reason about it with a cloud model, and
+she declines, because a résumé is full of the contact details that rule
+exists to hold back. A file grant is how you say "this document, on purpose".
+The decision is recorded, scoped, expiring where it has to be, and
+revocable.
 
----
+The alternative is pasting the text into the chat by hand. That sends the
+same content to the cloud with no record. A grant inside Friday keeps the
+record.
 
-## The problem this solves
+File grants matter only when a cloud model is in use. With a local model
+nothing leaves the PC, and no grant is needed.
 
-Friday's egress gate is fail-closed: anything it cannot confidently classify as
-public is withheld from cloud models. That is the right default, and it has an
-unpleasant consequence — Friday is **least useful on exactly the work you most
-want help with**. Ask her to read your own résumé and reason about it with a
-frontier model and she will decline, because your résumé is full of the contact
-details the gate exists to stop.
+## Granting access
 
-The realistic thing a person does next is worse than the thing the gate
-prevented: they paste the same text into the chat box by hand. The content
-crosses the wire anyway, with no registry, no audit trail, and no receipt.
+Open **Settings > Privacy & Data > File access**.
 
-**A grant inside the system beats a bypass outside it.** So file grants are a
-way to say "yes, this specific document, on purpose" — and to have that decision
-recorded, scoped, expiring, and revocable.
+1. Type the full path of a file or folder under **Add**.
+2. Choose **File** or **Folder**. For a folder, choose how long it lasts: 1,
+   7 or 30 days.
+3. Press **Add**. The result names what the privacy scan found in the file.
 
-## The design, in five rules
+The list shows each grant with its state: Valid, Paused, File changed, File
+missing, Expired, Quarantined or Unverified. **Remove** revokes one. Nothing
+in the list is deleted from history; a removal is recorded as a removal.
 
-### 1. File grants are content-pinned
+Friday can also ask for access. She raises an approval card naming the file
+or folder, and you approve it with **Allow it** on screen. A typed or spoken
+"yes" does not count, and Friday has no tool that creates a grant. By voice you
+can ask "what files can the cloud see?" or "take that away", and a spoken
+request for access puts a card on screen.
 
-Granting a file records a **SHA-256 of its contents at grant time**. If the file
-later changes, the next read does not match the pin, the grant is reported
-`stale`, and the content gates normally. A grant is permission for *the document
-you looked at*, not for a filename that someone or something can later refill.
+Paths must be full local paths. Network paths, web addresses, device paths
+and relative paths are refused. A folder grant on a whole drive or on your
+whole home folder is refused, and so is a file over 50 MB.
 
-Because of that pin, file grants may be permanent. There is nothing to expire —
-the pin already limits them.
+## The rules
 
-### 2. Folder and glob grants must expire, within 30 days
+### A file grant is pinned to the file
 
-A folder or a glob cannot be content-pinned: the whole point is that it covers
-files that do not exist yet. So breadth is traded against time. An expiry is
-**required** for these, and the 30-day ceiling is enforced in
-`file_grants.py` — not merely in the UI, so an API caller cannot exceed it
-either.
+Granting a file records a SHA-256 of its contents at that moment. If the file
+changes, the grant shows **File changed** and stops applying until you grant
+it again. The permission covers the document you looked at, not whatever
+someone puts at that name later. A file grant has no expiry because the pin
+already limits it.
 
-### 3. Deny always beats grant, at any specificity
+### A folder grant expires within 30 days
 
-`check_grant()` checks deny marks **before** it ever looks at a grant. A deny on
-`~/Documents/tax` is not overridden by a later, narrower grant on a file inside
-it. There is no precedence puzzle to reason about and no ordering that produces
-a surprise: if anything denies it, it is denied.
+A folder cannot be pinned to its contents, because it covers files that do not
+exist yet. A folder grant therefore needs an expiry, and the maximum is 30
+days. The limit is enforced in code, not only on the screen.
 
-### 4. Only you can grant. No model, on any surface, ever
+### A deny mark beats any grant
 
-There is no grant tool in `CLAUDE_TOOLS`. Not in chat, not in voice, not in
-background tasks. Grants are created only through authenticated HTTP endpoints
-driven by UI chrome, and the consent dialog renders findings from the
-classifier's own scan of the file — never from model-supplied text. So:
+A deny mark on a path always wins over a grant, however specific the grant is.
+Your never-send list also still applies. Overriding it needs an explicit
+acknowledgement of each match the scan found in the file, and exists for
+single files only, never for folders, where you cannot have seen what you were
+agreeing to.
 
-- a **prompt-injected document cannot widen its own reach**, because the model
-  has no call path to a grant;
-- it also **cannot script its own consent screen**, because the dialog's
-  contents do not come from the file's text;
-- a **spoken "yes" cannot create a grant.** Voice can only tell you a pending
-  chip appeared; approving it happens in the UI.
+### Only you can grant
 
-### 5. A corrupted ledger can only ever tighten
+No model, on any surface (chat, voice, background work), can create a grant.
+Grants come only from the controls above and from an approval card that you
+click. So a document that contains instructions cannot widen its own
+permissions, and cannot script the consent screen, which shows the privacy
+scan's own findings rather than text from the file.
 
-Grants live in an append-only JSONL ledger at
-`~/.friday/privacy/file_grants.jsonl`, deliberately **separate from
-`settings.json`** so that the factory-reset/BOM failure mode that once wiped 83
-settings keys cannot touch it. Every line carries an HMAC over its event, keyed
-by the app's own secret key.
+### Content is sendable only when the real file is read
 
-A line that fails to parse or fails its HMAC is dropped and counted. Then:
+A grant does not switch the privacy gate off. When Friday reads a granted file
+with the file-reading tool, the passages she just read are marked sendable. Text she only claims came from a granted file is not. Passages from
+a content search of a granted file still go through the normal gate.
 
-- a dropped **grant** fails safe on its own — one fewer permission, normal
-  gating;
-- a dropped **deny** is the dangerous direction, because losing a prohibition
-  silently widens what may be sent.
+### A damaged record can only tighten
 
-Rather than reason about which kind was lost, **any drop at all puts the entire
-ledger into "suspenders mode":** every grant is treated as absent, every deny
-mark that folded cleanly is still enforced, and a high-priority notification is
-raised. Tampering with the ledger — or corrupting it by accident — can remove
-permissions. It can never add one.
+Grants are kept in an append-only record, `.friday\privacy\file_grants.jsonl`,
+separate from `settings.json`. Every line is signed. A line that cannot be
+verified is never trusted:
 
-## How a grant actually takes effect
+- While such a line is in the record, **every file permission is paused** and
+  deny marks that verified are still enforced. A notice explains why.
+- A grant made under a key Friday has since replaced is set aside unchanged
+  and shown as **Quarantined**, with a **Re-grant** button. Re-granting raises
+  a fresh approval card.
+- **Start file access fresh** sets the old record aside and starts with no
+  permissions. It also needs your approval on screen, and your never-send
+  marks are kept.
 
-There is no send-time exemption flag anywhere; nothing accepts "please allow
-this call". Instead a grant re-uses the span registry the news pipeline already
-uses:
+A damaged record can remove permissions. It can never add one.
 
-`on_file_read()` is called by `read_file` / `search_files` **at the moment a
-file is genuinely read**. If the resolved path carries a live grant, that read's
-exact paragraphs are registered as sendable, exactly as a fetched news article
-is registered.
+## Auditing your grants
 
-The consequence is the property worth having: **content becomes sendable only
-because the real file at the granted path was really read, just now.** A model
-cannot register spans, so it cannot talk its way into an exemption for text it
-merely claims came from a granted file.
+The record is plain JSONL on your own disk, so you can read it with any text
+editor:
 
-## Endpoints
+```
+%USERPROFILE%\.friday\privacy\file_grants.jsonl
+```
 
-All four paths sit under `/api/privacy/` and all require authentication.
+Revoking appends a revocation instead of erasing the grant, so what Friday was
+allowed to send, and when you allowed it, stays answerable afterwards.
+
+## For developers
+
+The local API behind the screen needs a signed-in session, so a bare `curl`
+gets a 401.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/privacy/file-grants` | Grants, deny marks, pending re-approvals, and ledger status |
-| `GET` | `/api/privacy/file-grants/scan?path=…` | Classifier findings for a candidate file — what the consent dialog shows *before* the button. Read-only; creates nothing |
-| `POST` | `/api/privacy/file-grants` | Create a grant. `{path, scope: file\|folder\|glob, expiry_days}` — `expiry_days` required for folder/glob, max 30 |
-| `POST` | `/api/privacy/deny-marks` | Create a deny mark. `{path, scope}` |
-| `POST` | `/api/privacy/file-grants/<id>/revoke` | Revoke a grant **or** a deny mark — same action, either registry |
+| `GET` | `/api/privacy/file-grants` | Grants, deny marks, notices and ledger status |
+| `GET` | `/api/privacy/file-grants/scan?path=...` | Privacy scan of a candidate file. Read-only |
+| `POST` | `/api/privacy/file-grants` | Create a grant: `{path, scope: file or folder or glob, expiry_days}`. `expiry_days` is required for folder and glob, maximum 30 |
+| `POST` | `/api/privacy/deny-marks` | Create a deny mark: `{path, scope}` |
+| `POST` | `/api/privacy/file-grants/<id>/revoke` | Revoke a grant or a deny mark |
 
-## Never-send material
-
-Some content is marked never-send regardless of grants. When a scanned file
-contains such matches, the consent dialog must display them and the caller must
-acknowledge each one explicitly (`ack_never_send_matches`) before
-`never_send_override` is honoured — and the override is **available on file
-grants only**, never on a folder or glob, where you cannot have seen what you
-were agreeing to.
-
-## Auditing your own grants
-
-The ledger is plain JSONL on your own disk, so the most direct audit needs no
-API access at all:
-
-```bash
-# every grant and deny decision ever made, newest last
-cat ~/.friday/privacy/file_grants.jsonl
-```
-
-For the current *effective* state — including whether the ledger has dropped
-into suspenders mode — use `GET /api/privacy/file-grants` on the running server
-(`http://localhost:3000` by default). Note that it is `@login_required` like the
-rest of the control API, so a bare `curl` will get a 401; call it from the UI, or
-with the session the app itself uses.
-
-The ledger is append-only, so revoking does not erase history — it appends a
-revocation. What Friday was allowed to send, and when you allowed it, remains
-answerable after the fact.
+Glob grants and deny marks are available through the API only. The screen
+offers files and folders.

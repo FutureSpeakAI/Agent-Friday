@@ -1,16 +1,13 @@
 # Background Network Activity
 
-> Status: current for 5.14.0. Last verified against the code: 2026-09-24,
-> after the connectivity probe, fonts, MediaPipe and embedding-model changes.
-
-This page lists every network connection Agent Friday makes on its own, without
+This page lists every network connection Agent Friday™ makes on its own, without
 you asking for something in the moment: what it connects to, how often, what it
 sends, and how to turn it off. Requests you cause directly (a chat with a cloud
 model, a web search, sending an email) are not listed here; they go through the
 egress gate and, for outward actions, the approval checkpoint.
 
-Friday contains **no telemetry, analytics, crash reporting or license check**,
-and it never contacts FutureSpeak.AI. None of the connections below carries
+Friday contains **zero telemetry**: no analytics, no crash reporting and no
+license check. It never contacts FutureSpeak.AI. None of the connections below carries
 conversation content, vault data or personal details.
 
 ---
@@ -19,13 +16,14 @@ conversation content, vault data or personal details.
 
 | What | Destination | When | Turn it off |
 |---|---|---|---|
-| Update check (opt-in) | `api.github.com` | At most once a week, only if you said yes | First-run question, or Settings → About |
+| Update check (opt-in) | `api.github.com` | At most once a week, only if you said yes | First-run question, or Settings > About |
 | Connectivity probe | Nothing by default (a routing-table lookup on this PC); `dns.google`, `8.8.8.8`, `1.1.1.1` (TCP 443) only if you opt in | Every 30 seconds | `network_probe` in `settings.json` |
 | News feeds | Built-in RSS feeds (news sites, Google News) | Every 5 minutes | Turn news categories off in the News workspace |
-| Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load, only while Friday's font files are not installed and the setting is on (it is on by default) | Settings → Privacy & Approvals → Fonts |
+| Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load, only while Friday's font files are not installed and the setting is on (it is on by default) | Settings > Privacy & Data > Fonts |
 | MediaPipe scripts and models | `cdn.jsdelivr.net` | Only when you turn on head or hand tracking | Leave tracking off |
 | Embedding model | `huggingface.co` | Never at startup. Once, the first time a feature needs it and it is not already on disk, with a notification | Pre-fetched by the installer's memory tier |
-| Local voice models | `huggingface.co` | First use of local voice, if not already downloaded | Leave local voice off |
+| Local chat models | `huggingface.co` (weights), `api.github.com` and `github.com` (the model runtime) | Only when you ask: the first-start download you agreed to in setup, or Settings > Models | Choose a cloud model, or do not tick the download box |
+| Local voice models | `huggingface.co`, `github.com`, PyPI | Only when you press Download in Settings > Voice > Local voice models | Do not press Download |
 | Connector health | Your connected services (Google, MCP servers) | About every 2 minutes | Disconnect the connector |
 | Scheduled jobs | Your model provider, feeds, git remotes | Per schedule | Workflows workspace |
 | Phone (off by default) | Twilio API | Only when the phone is on | Off unless you turn it on |
@@ -35,7 +33,9 @@ conversation content, vault data or personal details.
 ## 1. Update check (opt-in)
 
 **What it does:** Asks GitHub for the list of published Agent Friday releases
-and, if a newer version exists, shows you a notification with a link.
+and, if a newer build exists, shows you a notification with a link. Releases
+are compared by build sequence, not by version number, so Friday never offers
+an older build, such as a 5.x release, to a Beta 1.0 install.
 
 **How often:** The scheduler looks every 6 hours, but a request is made only
 when the last successful check was at least 7 days ago.
@@ -49,7 +49,8 @@ IP address the request came from, as it would for any web page.
 the new installer, when you choose to.
 
 **On or off:** First-run setup asks, and an unanswered install stays off. You
-can change your answer in Settings → About.
+can change your answer in **Settings > About**, where **Check for new
+versions weekly** is a switch and **Check now** runs a check at once.
 
 ## 2. Connectivity probe
 
@@ -72,7 +73,7 @@ how:
 switch to a local model while offline.
 
 **Turn it off or change it:** set `"network_probe"` in `settings.json` while
-Friday is stopped. Setting `offline_auto_local` to `false` stops the automatic
+Friday is stopped (see [Configuration](configuration.md)). Setting `offline_auto_local` to `false` stops the automatic
 switch to local models.
 
 ## 3. News feeds
@@ -96,7 +97,7 @@ installed on the PC, then a font file in `static/fonts`, then a similar system
 font. Friday ships those font files, so Google Fonts is never requested.
 If the files are removed, Friday adds Google Fonts to the page (every page
 load then asks `fonts.googleapis.com` and `fonts.gstatic.com`) unless
-**Settings → Privacy & Approvals → Fonts → Load fonts from Google Fonts** is
+**Settings > Privacy & Data > Fonts > Load fonts from Google Fonts** is
 off (`web_fonts_from_google: false`), in which case it uses fonts already on
 the PC.
 The login page for remote access and saved draft pages use only the local
@@ -104,7 +105,7 @@ stylesheet.
 
 **MediaPipe.** The three MediaPipe scripts for head and hand tracking are not
 loaded with the page. They are fetched from `cdn.jsdelivr.net` (with integrity
-hashes) the first time you turn tracking on in Settings → Voice & Tracking,
+hashes) the first time you turn on head or hand tracking (the hologram and hand buttons on the orb),
 followed by the tracking model files. With tracking off, nothing is fetched.
 
 Three.js and the rest of the interface are served locally. These requests,
@@ -120,17 +121,23 @@ when they happen, reveal your IP address to Google or jsDelivr.
   before the download starts and when it finishes or fails. The Windows
   installer's memory tier fetches it ahead of time, so an installed PC
   normally never makes this request.
-- Local voice downloads its speech-recognition and voice models from Hugging
-  Face the first time you use it, if they are not already on disk.
-- Local chat models are downloaded only when you ask for one (installer,
-  Hardware Check, or Settings → Models).
+- Local voice models download only when you press **Download** in **Settings
+  > Voice > Local voice models** (or choose a fast responder in setup). The
+  screen shows each file's size first. Files come from fixed, pinned
+  releases and are checked against a SHA-256 checksum. See
+  [Local voice models](local-voice-gpu-tier.md).
+- Local chat models download only when you ask for one: the first-start
+  download you agreed to in setup, or **Settings > Models**. Weights come
+  from Hugging Face and the model runtime from GitHub releases. Downloads
+  show their size, resume if interrupted, and are checked against the
+  publisher's checksum.
 
 ## 6. Connector health
 
 Roughly every 2 minutes Friday checks that the services you connected still
 work: a token-validity check for Google (no mail or calendar content) and a
 reachability check for MCP servers. A standing credential sweep also runs
-locally. Disconnect a connector in Settings → Accounts & Keys to stop its check.
+locally. Disconnect a connector in Settings > Connections to stop its check.
 
 MCP servers you configure in `~/.friday/mcp_servers.json` are local processes
 that Friday talks to over stdio, but a server may make its own network calls.

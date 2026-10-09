@@ -1,6 +1,6 @@
 # Phone
 
-Friday can have its own phone number: it can text you, take voicemail, let you
+Agent Friday™ can have its own phone number: it can text you, take voicemail, let you
 approve actions by text, and (experimentally) talk with you on a call. It uses
 your own Twilio account. **The phone is off by default**, and while it is off
 nothing listens and nothing is sent.
@@ -47,12 +47,12 @@ nothing listens and nothing is sent.
 Twilio bills your account directly: a monthly charge for the number, a charge
 per text, and a charge per minute of calls, plus any registration fees for
 10DLC. Friday records each charge as Twilio prices it, shows totals and the
-current US rates under **Settings → Spending**, and the spending caps apply to
+current US rates under **Settings > Models > Spending**, and the spending caps apply to
 phone sends too. Check Twilio's pricing page for current prices.
 
 ## Setting it up
 
-All of this is in **Settings → Accounts & Keys → Phone**.
+All of this is in **Settings > Connections > Phone**.
 
 1. **Account.** Paste the account SID (`AC…`), the API key SID (`SK…`) and
    secret, the auth token, and Friday's number. The secrets are encrypted on

@@ -1,6 +1,6 @@
 # Privacy: local and cloud
 
-Friday keeps what it knows on your PC. What can leave is what a model needs to
+Agent Friday™ keeps what it knows on your PC. What can leave is what a model needs to
 answer you, and only when that model runs in the cloud. This page says exactly
 what goes where.
 
@@ -15,18 +15,20 @@ Not all of it is encrypted:
 
 - **The vault** (finance, health, legal and family records) is encrypted with
   your vault passphrase (AES-256-GCM). Without a passphrase it is readable.
-- **Keys and connected-account tokens** are encrypted under Friday's keystore.
-- **Traces and the task journal** are encrypted by default.
+- **Keys and connected-account tokens** are encrypted in Friday's credential store.
+- **The task journal** is encrypted by default.
 - **Your wiki, conversations and the knowledge map** are ordinary files, so
-  you can read and edit them. You can encrypt chosen wiki sections with the
-  vault key (`wiki_encrypted_sections`).
+  you can read and edit them. In **Settings > Privacy & Data > Wiki sections
+  kept off the cloud** you can choose wiki sections that are encrypted with the
+  vault key and never enter the knowledge block sent with cloud prompts.
 
 Anyone who can sign in to your Windows account can read the plain files. Use
 Windows sign-in and BitLocker.
 
 ## Where your words go
 
-First-run setup asks, and Settings → Models lets you change it per job.
+First-run setup asks, and you can change the choice later in **Settings >
+Models**, where you can also pick the model for each job.
 
 | Choice | What happens |
 |---|---|
@@ -60,7 +62,7 @@ should see. On a PC that can run local models, the answers are private
 (local), cloud with the safeguards on, or unrestricted cloud. On a PC that
 cannot, the answers are cloud with the safeguards on, or unrestricted cloud.
 Only a recorded "unrestricted" turns the gate's safeguards off; nothing else
-does. You can change the answer in Settings › Privacy & Approvals.
+does. You can change the answer in **Settings > Privacy & Data > Cloud consent**.
 
 **File grants.** To send one specific document to a cloud model on purpose,
 create a file grant: it is pinned to that file's content and expires. See

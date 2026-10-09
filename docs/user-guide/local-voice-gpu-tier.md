@@ -1,105 +1,97 @@
-# Tier-2 Local Voice — NVIDIA NeMo (GPU)
+# Local voice models and the GPU option
 
-The premium on-device voice tier for RTX-class machines: GPU-accelerated
-streaming ASR + higher-fidelity TTS. It runs **behind the same backend interface
-and the same `/ws/voice-local` WebSocket contract** as the Tier-1 CPU path, so
-the browser audio plumbing, the `friday-pcm-player` worklet, and the holographic
-signals are unchanged. Tier-1 (faster-whisper + Piper, CPU) remains the default
-and the universal fallback — both tiers coexist.
+Agent Friday™ can listen and speak entirely on your PC. This page covers the
+downloadable pieces of local voice and the optional, experimental GPU engine
+for NVIDIA graphics cards. The everyday voice features are in
+[Voice](voice.md).
 
-| | Tier-1 (default) | Tier-2 (premium) |
+## Local voice models
+
+**Settings > Voice > Local voice models** lists every downloadable piece of
+local voice. The list appears in every voice mode, including cloud, so you can
+prepare local voice before you need it.
+
+Each row shows what the piece does, its download size, and whether it is
+installed, downloading, stopped or failed. Nothing downloads until you press
+**Download** and confirm. The confirmation names the size, the publisher and
+the licence.
+
+| Piece | What it does | Size |
 |---|---|---|
-| ASR | faster-whisper (CTranslate2, CPU INT8) | `nvidia/nemotron-3.5-asr-streaming-0.6b` (GPU) |
-| TTS | Piper (VITS→ONNX, CPU) | NeMo FastPitch + HiFi-GAN (GPU) |
-| Deps | onnxruntime (~150–300 MB) | torch-CUDA + NeMo (~3–6 GB) |
-| Hardware | any CPU | NVIDIA GPU, ≥4 GB free VRAM |
-| Install | `.[voice-local-lite]` (in `[all]`) | Settings voice installer (opt-in; not a pip extra) |
+| Nemotron 3.5 streaming speech recognition (int8, CPU) | The ear. Turns your speech into text as you talk. | about 454 MB |
+| sherpa-onnx runtime | The program library the ear runs in. | about 3 MB |
+| Silero VAD v6 | Hears when you start and stop speaking. | about 2 MB |
+| Qwen3-4B-Instruct-2507 Q4_K_M | Fast reply model for short voice questions (best quality). | about 2.3 GB |
+| Qwen3-1.7B Q4_K_M | A smaller fast reply model that fits beside the main model. | about 1.2 GB |
+| misaki | Tells the Kokoro voice how to pronounce words. | about 4 MB |
+| espeak-ng pronunciation helper and its library (optional) | Pronounces unusual names. Runs as its own program. | about 45 MB together |
 
-## Requirements
+A piece that needs another piece downloads it too, and the confirmation adds
+the sizes together. Optional pieces are marked "(optional)". A piece that is
+not yet available says why.
 
-- **GPU:** NVIDIA, Turing → Blackwell (RTX 2050/3050 laptop and up). Nemotron
-  streaming is **GPU-only** — it does not run on CPU.
-- **VRAM:** ≥4 GB free (gate: `services.nemo_voice.MIN_VRAM_GB`). The 0.6B RNN-T
-  in fp16 is ~2–3 GB single-stream; 4 GB leaves headroom for TTS sharing the card.
-- **CUDA:** a torch build matching your CUDA runtime. The installers default to
-  the CUDA 12.4 wheel index (`https://download.pytorch.org/whl/cu124`). Pick the
-  index URL that matches your driver from the PyTorch site if 12.4 isn't right.
-- **NeMo:** `nemo_toolkit[asr]==3.0.0`, installed by its own step. NeMo is not
-  a pip extra and is not in `uv.lock`, because it caps two of its dependencies
-  below their security fixes; see
-  [dependency advisories](../security/dependency-advisories.md).
+How downloads are handled:
 
-## Install
+- **Pinned.** Files come from a fixed release or revision, never from a moving
+  branch. Software packages are pinned to an exact version.
+- **Verified.** Friday checks each downloaded file against a fixed SHA-256
+  checksum. A file that does not match is deleted and never used.
+- **Resumable.** If a download stops, **Continue download** picks up where it
+  stopped. **Stop** cancels a running download.
 
-The installers do not currently auto-detect GPUs — install Tier-2 by hand.
+## The GPU option (experimental)
 
-**Linux / macOS-NVIDIA:**
+The GPU engine is an alternative to the default local engine. It runs
+NVIDIA's Nemotron streaming speech recognition and a FastPitch plus HiFi-GAN
+voice on the graphics card. It is labelled **Local GPU (NeMo, experimental)**
+in the voice mode picker. The default local engine needs no graphics card.
 
-```bash
-venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cu124
-venv/bin/pip install "nemo_toolkit[asr]==3.0.0"
-```
+### Requirements
 
-**Windows:**
+- An NVIDIA graphics card with CUDA. Streaming recognition on this engine does
+  not run on a processor.
+- At least 4 GB of free graphics memory.
+- The CUDA build of PyTorch and NVIDIA NeMo, which are large downloads.
 
-```powershell
-venv\Scripts\pip.exe install torch --index-url https://download.pytorch.org/whl/cu124
-venv\Scripts\pip.exe install "nemo_toolkit[asr]==3.0.0"
-```
+If the engine cannot run on your PC, its button in the picker is greyed out
+and the reason is shown.
 
-> **Windows is best-effort.** NeMo is Linux-first; on Windows+RTX it usually
-> works with a recent torch-CUDA wheel, but the dependency stack can be fragile.
-> If a clean install proves painful, use **WSL2** (Ubuntu + the CUDA wheel) or a
-> conda env, or simply stay on Tier-1 — the engine falls back to CPU voice
-> automatically, so voice never breaks.
+### Installing
 
-Models download lazily on first GPU voice activation into `~/.friday/models/nemo/`
-(~1.5 GB), with a one-time "Downloading NeMo voice models…" progress orb. Nothing
-is vendored in the repo.
+1. Open **Settings > Voice** and press **Voice setup**.
+2. In the steps, find **GPU voice tier (NVIDIA NeMo), optional** and press
+   **Install GPU tier**. The button shows the approximate download size.
+3. Wait for the install to finish. Friday reports success only after the
+   installed packages import correctly.
 
-## Selecting the tier
+The speech and voice model files (about 1.5 GB) download the first time you
+use the engine, with a progress message. They are stored in
+`%USERPROFILE%\.friday\models\nemo\`.
 
-- Settings → **Audio & Voice → Voice Engine**: `Local (CPU)` · `Local GPU (NeMo)`
-  · `Cloud (Gemini)` · `Auto`. (`Auto` picks GPU when ready, else CPU, then cloud.)
-- Persisted as `voice_engine` in `settings.json`
-  (`local` | `local-gpu` | `gemini` | `auto`).
-- The switch is a **hot-swap**: the next voice session rebuilds the backends — no
-  server restart. A GPU pick that can't actually run (no CUDA / NeMo missing /
-  load error) **degrades gracefully to Tier-1 CPU**, surfaced via the status orb.
+### Choosing it
 
-## Health & performance
+Open **Settings > Voice > Voice engine** and choose **Local GPU (NeMo,
+experimental)**. The change applies to the next voice session without a
+restart. The setting is `voice_engine` with the value `local-gpu`.
 
-- `GET /api/health/full` → `local_voice` block carries `active_tier`, last ASR/TTS
-  latencies under `perf`, and a Tier-2 `gpu` sub-block (CUDA/VRAM/model readiness).
-- `GET /api/health` (providers) → the `nvidia-nemo` provider reports
-  `ok` / `needs_download` / `down` / `missing` from `services.nemo_voice.nemo_health`.
-- `friday health` → prints both tiers + the active-tier latencies.
+If the GPU engine cannot run (no CUDA, NeMo missing, not enough free graphics
+memory, or a load error), Friday uses the default local voice instead and
+shows a status message. Voice does not stop working.
 
-## License
+### Checking health
 
-- **Nemotron-3.5 ASR** — **OpenMDW-1.1** (permissive open model weights license).
-  Models are downloaded at runtime, not redistributed in this repo.
-- **NeMo FastPitch / HiFi-GAN** — NVIDIA NeMo model terms; also fetched at runtime.
-- We deliberately **avoid CC-BY-NC** models (e.g. Canary) for the public repo.
+- **Settings > Voice > Voice readiness** shows the ear, the reasoning and the
+  mouth. A stage turns green only after it has actually heard, thought or
+  spoken in the last 15 minutes.
+- `GET /api/health/full` returns a `local_voice` block with the active tier,
+  recent latencies and the GPU readiness.
 
-## Manual GPU test procedure (run on an RTX box)
+## Licences
 
-CI has no GPU, so the NeMo inference path is validated manually. The CPU/wiring
-path is covered by `tests/unit/test_nemo_voice.py` and
-`tests/unit/test_local_voice.py`.
+- Nemotron 3.5 speech recognition: OpenMDW-1.1.
+- Qwen3 models: Apache-2.0.
+- Silero VAD: MIT.
+- NeMo FastPitch and HiFi-GAN: NVIDIA's NeMo model terms.
 
-1. **Install:** torch-CUDA + `nemo_toolkit[asr]==3.0.0` (above), or the GPU voice installer in Settings.
-2. **Detect:** `friday health` → expect
-   `Local voice (Tier-2 · NeMo GPU): needs_download` (deps + GPU detected, models
-   not yet fetched) and a `Hardware: GPU=… VRAM=…GB` line.
-3. **Select:** Settings → Voice → Voice Engine → **Local GPU (NeMo)**.
-4. **First activation:** click the mic. Expect the one-time download orb, then
-   `live (GPU/NeMo)`. Models land in `~/.friday/models/nemo/`.
-5. **Round-trip:** speak a sentence → live transcript → Friday replies in NeMo
-   voice. Confirm the holographic cube animates on speech identically to Gemini
-   (it reads the shared playback analyser).
-6. **Latency:** `GET /api/health/full` → `local_voice.perf` shows `asr_ms` /
-   `tts_ms` for the GPU tier; compare against the CPU tier.
-7. **Fallback:** uninstall NeMo (or set `MIN_VRAM_GB` high) and confirm a
-   `local-gpu` setting still yields working CPU voice with a "falling back to CPU
-   voice" status message — never a dead socket.
+Model files are downloaded to your PC at your request. Friday does not
+redistribute them.

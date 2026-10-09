@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/FutureSpeakAI/Agent-Friday/discussions
+    about: Ask how something works, or talk through an idea before filing a feature request.
+  - name: Report a security problem privately
+    url: https://github.com/FutureSpeakAI/Agent-Friday/security/policy
+    about: Do not open a public issue for a vulnerability or an exposed secret. Follow the security policy.

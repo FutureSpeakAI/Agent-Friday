@@ -1,45 +1,53 @@
 ---
 name: Bug report
-about: Something isn't working as expected
+about: Something in Agent Friday is not working as expected
 title: '[BUG] '
 labels: bug
 assignees: ''
 ---
 
-## Describe the bug
+Please do not paste API keys, passwords, vault contents or private messages.
+Look through logs and screenshots first and remove anything private. To report a
+security problem, do not use this form; see the
+[security policy](https://github.com/FutureSpeakAI/Agent-Friday/security/policy).
 
-A clear description of what happened.
+## What happened
+
+A clear description of what you saw.
+
+## What you expected
 
 ## Steps to reproduce
 
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
-## Expected behavior
+## Your setup
 
-What you expected to happen.
-
-## Actual behavior
-
-What actually happened. Include error messages, tracebacks, or screenshots.
-
-## Environment
-
-- OS: [e.g. Windows 11, Ubuntu 22.04, macOS 14]
-- Python version: [output of `python --version`]
-- Agent Friday version / commit: [output of `friday version` or `git rev-parse --short HEAD`]
-- How installed: [pip install -e . / install.ps1 / install.sh]
-- Relevant providers: [Anthropic / Gemini / Ollama / OpenAI-compatible]
+- Agent Friday version (Settings > About):
+- Windows version and build (press Win+R, type `winver`):
+- RAM:
+- Graphics card and its VRAM (Task Manager > Performance > GPU):
+- How you installed it (setup program `AgentFriday-Setup-...exe`, or from source):
+- Model in use (local model name, or cloud provider):
 
 ## Logs
 
-Paste relevant output from the server terminal or `~/.friday/logs/` (redact any API keys or personal data).
+Friday writes its logs to `%USERPROFILE%\.friday`. The useful files are:
+
+- `friday.log` (the main log)
+- `server_stderr.log` (the server's error output)
+- `voice_debug.log` (voice problems)
+- `logs\crashes.log` (after a crash or hang)
+
+Paste the last lines around the problem, or attach the file after reading it
+for private text.
 
 ```
 paste logs here
 ```
 
-## Additional context
+## Anything else
 
-Anything else that might help.
+Screenshots (with private content hidden), or other details that might help.
