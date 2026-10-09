@@ -42,6 +42,15 @@ degraded artifact if the payload is incomplete, if a vendored library under
 Library's pdf.js, 204 files, rides this way), if the wheelhouse comes out empty,
 or if anything credential-shaped survives into the payload.
 
+**The wheelhouse is complete.** After building the pure-Python wheels, the build
+runs `pip download` for every file in `requirements\` (core, recommended,
+memory, judgment) into the wheelhouse, then resolves each file again with
+`--no-index` and aborts if anything is missing. The setup program therefore
+installs every Python package offline (`install.ps1` passes `--no-index` when a
+wheelhouse is shipped; a missing wheel fails naming it; `-AllowNetwork` /
+`/AllowNetwork=1` restores the index as an explicit fallback). OfficeCLI and the
+judgment checkpoint still download while setup runs.
+
 Useful flags: `-NoBundlePython` (installer downloads Python on the target
 instead), `-NoWheelhouse` (accept the source-build fallback deliberately),
 `-IsccPath`.
@@ -58,7 +67,9 @@ every step the way it always has (each verified, none trusting an exit code).
 - **Model page.** `installer\probe-hardware.ps1` (using `lib\ModelPicker.ps1`)
   reads memory, the graphics card and free disk, applies the pick rules of
   `src\agent_friday\resources\bonsai2-tiers.json`, and lists only the Bonsai
-  models that fit, for two required jobs (fast responder, deep thinker). The
+  models that fit, for two required jobs: the deep thinker (Bonsai) and the fast
+  responder (the Qwen3 voice front from `resources\voice_front_options.json`,
+  sized with the speech ear and sherpa-onnx). The
   recommended one is labelled and never preselected; a cloud option and an
   explicit download-consent checkbox sit on the same page. Setup downloads no
   weights: it writes `first-run.json` beside the install, and

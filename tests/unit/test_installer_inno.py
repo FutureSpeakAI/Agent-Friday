@@ -192,7 +192,7 @@ def test_the_json_setup_writes_is_the_json_the_app_reads(tmp_path, monkeypatch):
             '  "build_sequence": 101000001,\r\n  "cloud": false,\r\n  "consent_download": true,\r\n'
             '  "total_bytes": 7000000000,\r\n  "hardware": { "tier": "T1", "ram_mib": 16384, "vram_mib": 0, "disk_free_mib": 90000 },\r\n'
             '  "seats": {\r\n'
-            '    "fast_responder": { "model_id": "ternary-bonsai:4b", "packing": "PQ2_0" },\r\n'
+            '    "fast_responder": { "model_id": "qwen3-4b-instruct-2507", "packing": "Q4_K_M" },\r\n'
             '    "deep_thinker": { "model_id": "bonsai2:27b", "packing": "PTQ1_0", "with_companions": false, "pick": ' + pick + ' }\r\n'
             '  }\r\n}\r\n')
     path = tmp_path / "first-run.json"
@@ -202,7 +202,7 @@ def test_the_json_setup_writes_is_the_json_the_app_reads(tmp_path, monkeypatch):
     assert req["cloud"] is False and req["consent"] is True and req["problems"] == []
     assert req["seats"]["deep_thinker"]["with_companions"] is False
     assert req["seats"]["deep_thinker"]["serve"]["serve_num_ctx"] == 8192
-    assert req["seats"]["fast_responder"]["model_id"] == "ternary-bonsai:4b"
+    assert req["seats"]["fast_responder"]["model_id"] == "qwen3-4b-instruct-2507"
 
 
 def test_the_cloud_file_has_no_seats_and_downloads_nothing(tmp_path, monkeypatch):
@@ -288,3 +288,46 @@ def test_a_shortcut_is_created_where_asked_and_the_desktop_is_resolved_through_t
     assert got["made"] and got["exists"]
     assert got["desktop"], "a Desktop folder was found"
     assert got["known"].lower() == got["net"].lower() == got["desktop"].lower(), "the shell, .NET and Get-DesktopDir agree on this machine"
+
+
+# ── offline install from the bundled wheelhouse ──────────────────────────────
+
+def test_the_build_collects_every_requirement_and_proves_the_wheelhouse_complete():
+    assert "'-m', 'pip', 'download'" in BUILD
+    for tier in ("core", "recommended", "memory", "judgment"):
+        assert "'%s'" % tier in BUILD
+    assert "'install', '--dry-run', '--no-index'" in BUILD, "coverage is proved by resolving offline"
+    assert BUILD.index("'download'") < BUILD.index("'--dry-run'") < BUILD.index("Compiling the installer with Inno Setup")
+    assert "The wheelhouse does not cover" in BUILD
+
+
+@needs_powershell
+def test_pip_runs_offline_when_a_wheelhouse_is_shipped_and_online_only_on_request(tmp_path):
+    house = tmp_path / "wheelhouse"
+    house.mkdir()
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (house / "x-1-py3-none-any.whl").write_bytes(b"PK")
+    got = ps_json(". '%s'\n. '%s'\n"
+                  "$a = Get-PipBaseArgs -WheelhouseDir '%s'\n"
+                  "$b = Get-PipBaseArgs -WheelhouseDir '%s'\n"
+                  "$c = Get-PipBaseArgs -WheelhouseDir $null\n"
+                  "$script:PipAllowNetwork = $true\n"
+                  "$d = Get-PipBaseArgs -WheelhouseDir '%s'\n"
+                  "[ordered]@{ shipped = ($a -contains '--no-index'); links = ($a -contains '--find-links'); empty = ($b -contains '--no-index');"
+                  " none = ($c -contains '--no-index'); allow = ($d -contains '--no-index'); allowlinks = ($d -contains '--find-links') } | ConvertTo-Json -Compress\n"
+                  % (LIB / "Common.ps1", LIB / "Deps.ps1", house, empty, house), tmp_path)
+    assert got == {"shipped": True, "links": True, "empty": False, "none": False, "allow": False, "allowlinks": True}
+
+
+def test_a_missing_wheel_is_a_clear_failure_not_a_trip_to_pypi():
+    deps = read_text(LIB / "Deps.ps1")
+    assert "The bundled wheelhouse has no wheel for" in deps and "-AllowNetwork" in deps
+    assert "[switch] $AllowNetwork" in INSTALL and "$script:PipAllowNetwork = [bool]$AllowNetwork" in INSTALL
+    assert "if (-not $script:PipAllowNetwork) { $base += '--no-index' }" in deps, "the pyautogui family too"
+
+
+def test_sherpa_onnx_is_installed_from_the_wheelhouse_at_the_voice_installers_pin():
+    from agent_friday.services import voice_artifacts as va
+    req = read_text(WINDOWS_DIR / "requirements" / "recommended.txt")
+    assert "sherpa-onnx==%s" % va.ARTIFACTS["sherpa-onnx"]["version"] in req

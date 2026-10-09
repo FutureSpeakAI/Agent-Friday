@@ -1,0 +1,31 @@
+{
+  "_note": "Read by the installer's model page (lib/ModelPicker.ps1). Held equal to services/voice_artifacts.py and voice_front.FRONT_MODELS by tests/unit/test_installer_model_picker.py.",
+  "fronts": [
+    {
+      "id": "qwen3-4b-instruct-2507",
+      "artifact": "voice-front-4b",
+      "label": "Qwen3-4B-Instruct-2507",
+      "role": "solo",
+      "front_bytes": 2497281120,
+      "note": "Best quality. Pauses the deep thinker while you talk (there is not room for both)."
+    },
+    {
+      "id": "qwen3-1.7b",
+      "artifact": "voice-front-1.7b",
+      "label": "Qwen3-1.7B",
+      "role": "co_resident",
+      "front_bytes": 1282439264,
+      "note": "Smaller. Stays loaded beside the deep thinker."
+    }
+  ],
+  "companions": [
+    {
+      "artifact": "voice-ear-streaming",
+      "bytes": 475271763
+    },
+    {
+      "artifact": "sherpa-onnx",
+      "bytes": 3145728
+    }
+  ]
+}

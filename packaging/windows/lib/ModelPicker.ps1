@@ -320,7 +320,8 @@ function Get-ModelOptions {
         An option is listed only if the machine can hold it AND the disk keeps
         the 10 GB floor after the download (residency rule R8). #>
     param([Parameter(Mandatory)] $Facts,
-          [Parameter(Mandatory)][string] $ShortlistPath)
+          [Parameter(Mandatory)][string] $ShortlistPath,
+          [string] $VoiceFrontPath = '')
 
     $short = Get-Content -LiteralPath $ShortlistPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $pick = Select-BonsaiTier -Facts $Facts
@@ -372,26 +373,51 @@ function Get-ModelOptions {
         $need = [math]::Ceiling($bytes / 1MB) + $script:Pick.LesserHeadroomMib
         if ($ramBudget -lt $need) { continue }
         if (-not (Fits-Disk $bytes)) { continue }
-        $params = [double]$m.params_total_b
-        if ($roles -contains 'system_one' -and $params -le 4.0) {
-            $fast += (New-Option -Seat 'fast_responder' -Model $m -File $f -Older $isOlder `
-                        -Note 'Small and quick. An earlier Bonsai generation.')
-        }
         if ($roles -contains 'lesser_brain') {
             $deep += (New-Option -Seat 'deep_thinker' -Model $m -File $f -Older $isOlder `
                         -Note 'Lighter than Bonsai 2 27B and less capable. An earlier Bonsai generation.')
         }
     }
 
+    # The fast responder is the local VOICE FRONT: the Qwen3 models the voice
+    # stack serves (voice_front.FRONT_MODELS), not a Bonsai model. Each choice
+    # also downloads the speech ear and its runtime, and the size shown includes
+    # them. A front is listed only if it fits (memory and the disk floor).
+    #   solo         (4B)   the deep thinker is parked while a call runs
+    #   co_resident  (1.7B) stays loaded beside the deep thinker
+    # Recommended: the 4B where there is room to spare (a big card, or 16 GB of
+    # memory budget), else the 1.7B, the one that fits beside the deep thinker
+    # on smaller machines. This restates voice_front's own roles.
+    if ($VoiceFrontPath -and (Test-Path -LiteralPath $VoiceFrontPath)) {
+        $vf = Get-Content -LiteralPath $VoiceFrontPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $earBytes = [double]0
+        foreach ($c in @($vf.companions)) { $earBytes += [double]$c.bytes }
+        foreach ($front in @($vf.fronts)) {
+            $bytes = [double]$front.front_bytes + $earBytes
+            $need = [math]::Ceiling([double]$front.front_bytes / 1MB) + $script:Pick.LesserHeadroomMib
+            if ($ramBudget -lt $need) { continue }
+            if (-not (Fits-Disk $bytes)) { continue }
+            $earMb = [math]::Round($earBytes / 1MB)
+            $fast += [ordered]@{
+                seat = 'fast_responder'; id = [string]$front.id; packing = 'Q4_K_M'; label = [string]$front.label
+                bytes = [int64]$bytes; size_text = (Get-FileSizeLine $bytes); recommended = $false
+                older_generation = $false; companions = $false
+                note = ("{0} Includes the speech ear ({1} MB)." -f $front.note, $earMb)
+                serve = $null; role = [string]$front.role
+            }
+        }
+        $roomy = ((Get-UsableVramMib -Facts $Facts) -ge 13000) -or ($ramBudget -ge 16000)
+        $pickId = 'qwen3-1.7b'
+        if ($roomy -and ($fast | Where-Object { $_.id -eq 'qwen3-4b-instruct-2507' })) { $pickId = 'qwen3-4b-instruct-2507' }
+        foreach ($o in $fast) { $o.recommended = ($o.id -eq $pickId) }
+        if ($fast.Count -gt 0 -and -not ($fast | Where-Object { $_.recommended })) { $fast[0].recommended = $true }
+    }
+
     # Recommendations. Deep: Bonsai 2 27B when it fits, else the largest lighter model.
-    # Fast: the 4B when it fits, else the 1.7B.
     if ($deep.Count -gt 0 -and -not ($deep | Where-Object { $_.recommended })) {
         $big = $deep | Sort-Object { $_.bytes } -Descending | Select-Object -First 1
         $big.recommended = $true
     }
-    $fastRec = $fast | Where-Object { $_.id -eq 'ternary-bonsai:4b' } | Select-Object -First 1
-    if (-not $fastRec) { $fastRec = $fast | Sort-Object { $_.bytes } -Descending | Select-Object -First 1 }
-    foreach ($o in $fast) { $o.recommended = ($fastRec -and $o.id -eq $fastRec.id) }
 
     # Order: recommended first within each seat, then by size.
     $deep = @($deep | Sort-Object @{ Expression = { -[int][bool]$_.recommended } }, @{ Expression = { $_.bytes } })

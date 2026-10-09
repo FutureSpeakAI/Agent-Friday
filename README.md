@@ -91,12 +91,14 @@ cloud key (Anthropic recommended).
    [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest).
 2. Double-click it. No administrator rights are needed. The setup program is
    not code-signed, so SmartScreen may warn first.
-3. On the model page, choose a **deep thinker** and a **fast responder** from
-   the Bonsai models that fit your computer (the recommended one is marked,
-   never preselected), or choose a cloud model. Setup downloads no model: if
-   you tick the box, Friday fetches your choices when she first starts, with
-   progress, checksums and resume. Then say whether Friday should start when
-   you sign in.
+3. On the model page, choose a **deep thinker** (a Bonsai model that fits
+   your computer) and a **fast responder** (the voice model, with its speech
+   ear), the recommended ones marked and never preselected, or choose a cloud
+   model. Setup downloads nothing: if you tick the box, Friday fetches your
+   choices when she first starts, with progress, checksums and resume. Then
+   say whether Friday should start when you sign in.
+   The setup program installs Friday's Python packages from the wheels it
+   carries, with no internet needed for them.
 
 Friday installs into `%LOCALAPPDATA%\AgentFriday` with its own copy of Python.
 Your data lives separately in `%USERPROFILE%\.friday`, which updates never

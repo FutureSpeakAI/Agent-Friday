@@ -15,7 +15,10 @@ param(
     [Parameter(Mandatory)][string] $OutFile,
     [Parameter(Mandatory)][string] $ShortlistPath,
     [string] $ModelsPath = '',
-    [string] $FactsJson = ''
+    [string] $FactsJson = '',
+    # The voice front models the fast responder offers; beside the shortlist
+    # when the wizard extracted both, else the repository's copy.
+    [string] $VoiceFrontPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +36,9 @@ if ($FactsJson) {
     $facts = Get-HardwareFacts -ModelsPath $ModelsPath
 }
 
-$options = Get-ModelOptions -Facts $facts -ShortlistPath $ShortlistPath
+if (-not $VoiceFrontPath) {
+    $VoiceFrontPath = Join-Path (Split-Path -Parent $ShortlistPath) 'voice_front_options.json'
+}
+$options = Get-ModelOptions -Facts $facts -ShortlistPath $ShortlistPath -VoiceFrontPath $VoiceFrontPath
 Write-ModelOptionsFile -Facts $facts -Options $options -OutFile $OutFile
 exit 0

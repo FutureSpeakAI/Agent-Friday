@@ -68,3 +68,8 @@ mutagen>=1.47
 # announced and consented to, rather than arriving inside "voice and PDF
 # reading".
 headroom-ai==0.38.0
+
+# Local voice ear runtime. Pinned to the voice installer's own pin
+# (services/voice_artifacts.py, held equal by a test) so the first-run voice
+# fetch finds it already installed and needs no network for it.
+sherpa-onnx==1.13.8

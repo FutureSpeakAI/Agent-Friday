@@ -14,10 +14,18 @@ downloader the Models screen uses, so a first-run download gets, unchanged:
 
 Two seats are filled, both required unless the person chose a cloud model:
 
-  fast_responder   quick replies. Seated as ``capability_routing.local``,
-                   the "Quick reflexes" seat.
-  deep_thinker     the brain. Seated as ``capability_routing.reasoning``
-                   (and ``model_routing.local_model``), "Everyday conversation".
+  fast_responder   the local VOICE FRONT: a Qwen3 model from
+                   ``voice_front.FRONT_MODELS`` (the 1.7B beside the deep
+                   thinker, or the 4B). It arrives through the voice installer's
+                   pinned, sha256-verified, resumable artifact path, together
+                   with the speech ear (``voice-ear-streaming``) and
+                   ``sherpa-onnx``, and is seated by setting
+                   ``voice_front_model``, which ``voice_front.selected_model``
+                   reads. It is not seated as a capability: nothing else is
+                   routed through it.
+  deep_thinker     a Bonsai model from the shortlist. Seated as
+                   ``capability_routing.reasoning`` (and
+                   ``model_routing.local_model``), "Everyday conversation".
 
 A seat is set only after its weights are on disk, verified and registered, so
 a failed or cancelled download leaves the person's existing choice alone. The
@@ -44,19 +52,34 @@ REQUEST_NAME = "first-run.json"
 DONE_NAME = "first-run.done.json"
 STATUS_NAME = "first-run-status.json"
 
-#: seat -> (label shown to the person, settings capability it fills)
+#: seat -> (label shown to the person, settings capability it fills; the fast
+#: seat fills none, it is the ``voice_front_model`` setting)
 SEATS = {
-    "fast_responder": ("Fast responder", "local"),
+    "fast_responder": ("Fast responder", None),
     "deep_thinker": ("Deep thinker", "reasoning"),
 }
 
-#: Which shortlist roles may fill which seat. Bonsai 2 27B is the brain; the
-#: earlier Ternary Bonsai generation fills the fast seat, and the larger two
-#: may stand in as a lesser brain on a machine below the 27B's floor.
+#: Which shortlist roles may fill the deep seat. Bonsai 2 27B is the brain; the
+#: earlier Ternary Bonsai generation may stand in as a lesser brain on a
+#: machine below the 27B's floor.
 SEAT_ROLES = {
-    "fast_responder": {"system_one"},
     "deep_thinker": {"brain", "lesser_brain"},
 }
+
+#: The voice front models (``voice_front.FRONT_MODELS`` keys) and the voice
+#: artifact that carries each one's pinned file.
+FRONT_ARTIFACT = {
+    "qwen3-4b-instruct-2507": "voice-front-4b",
+    "qwen3-1.7b": "voice-front-1.7b",
+}
+
+#: Local voice needs these beside any front: the ear and its runtime.
+FRONT_COMPANIONS = ("voice-ear-streaming", "sherpa-onnx")
+
+
+def front_artifacts(model_id: str) -> list:
+    """Every artifact a fast-responder choice downloads, front first."""
+    return [FRONT_ARTIFACT[model_id], *FRONT_COMPANIONS]
 
 #: Fast first: it is small, and it is the one that carries the runtime install.
 ORDER = ("fast_responder", "deep_thinker")
@@ -116,6 +139,16 @@ def validate_choice(seat: str, model_id: str, packing: Optional[str] = None) -> 
 
     if seat not in SEATS:
         return "unknown seat %r" % seat
+    if seat == "fast_responder":
+        from agent_friday.services import voice_artifacts as va
+        from agent_friday.services import voice_front as vf
+        if model_id not in FRONT_ARTIFACT or model_id not in vf.FRONT_MODELS:
+            return "%r is not a voice front model" % (model_id,)
+        for aid in front_artifacts(model_id):
+            ok, why = va.pinned(aid)
+            if not ok:
+                return why
+        return None
     m = sl.get(str(model_id))
     if not m:
         return "%r is not on the shortlist" % model_id
@@ -203,11 +236,15 @@ def apply_seat(seat: str, model_id: str) -> None:
     """Seat an installed model. Called only once its weights are verified."""
     from agent_friday import core
 
+    if seat == "fast_responder":
+        # voice_front.selected_model(settings) reads this key.
+        core._save_settings({"voice_front_model": model_id})
+        log.info("first run: voice front set to %s", model_id)
+        return
     _label, capability = SEATS[seat]
     delta: dict = {"capability_routing": {capability: {"provider": "ollama-local",
-                                                       "model": model_id}}}
-    if seat == "deep_thinker":
-        delta["model_routing"] = {"local_model": model_id}
+                                                       "model": model_id}},
+                   "model_routing": {"local_model": model_id}}
     core._save_settings(delta)
     log.info("first run: %s seat set to %s", seat, model_id)
 
@@ -227,6 +264,14 @@ def _write_status(status: dict) -> None:
 
 
 def _entry(seat: str, model_id: str, packing: Optional[str]) -> dict:
+    if seat == "fast_responder":
+        from agent_friday.services import voice_artifacts as va
+        from agent_friday.services import voice_front as vf
+        total = sum(va.size_bytes(a) for a in front_artifacts(model_id))
+        return {"seat": seat, "label": SEATS[seat][0], "model_id": model_id,
+                "model_label": vf.FRONT_MODELS[model_id]["label"] + " + speech ear",
+                "packing": "Q4_K_M", "bytes_total": int(total), "bytes_done": 0,
+                "state": "waiting", "error": None, "job_id": None, "artifacts_done": 0}
     from agent_friday.services import model_shortlist as sl
     m = sl.get(model_id) or {}
     f = sl.file_entry(model_id, packing) or {}
@@ -268,6 +313,15 @@ def status() -> dict:
             continue
         row = rows.get(seat) or _entry(seat, want["model_id"], want.get("packing"))
         job = md.get_job(row["job_id"]) if (md and row.get("job_id")) else None
+        if seat == "fast_responder" and row["state"] == "downloading":
+            # The voice installer reports the file it is on; earlier artifacts
+            # of this choice are already counted in artifacts_done.
+            try:
+                from agent_friday.services import voice_installer as vi
+                prog = (vi.status().get("progress") or {})
+                row["bytes_done"] = int(row.get("artifacts_done") or 0) + int(prog.get("done") or 0)
+            except Exception:
+                pass
         if job and row["state"] not in ("installed", "failed"):
             row["bytes_done"] = int(job.get("bytes_done") or 0)
             row["bytes_total"] = int(job.get("bytes_total") or row["bytes_total"])
@@ -289,6 +343,27 @@ def status() -> dict:
 
 # ── the work ────────────────────────────────────────────────────────────────
 
+def _run_front(row: dict, rows: list) -> None:
+    """Fetch the chosen voice front, the speech ear and sherpa-onnx through
+    the voice installer's artifact path (pinned revision, sha256 checked, a
+    stopped transfer resumes), then set ``voice_front_model``."""
+    from agent_friday.services import voice_artifacts as va
+    from agent_friday.services import voice_installer as vi
+
+    row["state"] = "downloading"
+    row["artifacts_done"] = 0
+    for aid in front_artifacts(row["model_id"]):
+        if vi.artifact_installed(aid):
+            row["artifacts_done"] += va.size_bytes(aid)
+            continue
+        vi._install_artifact(aid)
+        row["artifacts_done"] += va.size_bytes(aid)
+        _write_status({"seats": rows})
+    row["state"] = "installed"
+    row["bytes_done"] = row["bytes_total"]
+    apply_seat("fast_responder", row["model_id"])
+
+
 def _run(req: dict) -> None:
     from agent_friday.services import model_download as md
     from agent_friday.services import model_store
@@ -303,6 +378,10 @@ def _run(req: dict) -> None:
     for row in rows:
         want = req["seats"][row["seat"]]
         try:
+            if row["seat"] == "fast_responder":
+                _run_front(row, rows)
+                _write_status({"seats": rows})
+                continue
             if row["model_id"] in model_store.available():
                 row["state"] = "installed"
                 row["bytes_done"] = row["bytes_total"]

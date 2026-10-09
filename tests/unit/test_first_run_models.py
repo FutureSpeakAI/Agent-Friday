@@ -29,7 +29,7 @@ def _request(tmp_path, monkeypatch, **body):
 
 
 GOOD = {"consent_download": True, "cloud": False, "release": "1.0.0b1",
-        "seats": {"fast_responder": {"model_id": "ternary-bonsai:4b", "packing": "PQ2_0"},
+        "seats": {"fast_responder": {"model_id": "qwen3-1.7b", "packing": "Q4_K_M"},
                   "deep_thinker": {"model_id": "bonsai2:27b", "packing": "PTQ1_0"}}}
 
 
@@ -37,13 +37,17 @@ GOOD = {"consent_download": True, "cloud": False, "release": "1.0.0b1",
 
 def test_a_valid_choice_is_accepted_for_its_seat():
     assert frm.validate_choice("deep_thinker", "bonsai2:27b", "PTQ1_0") is None
-    assert frm.validate_choice("fast_responder", "ternary-bonsai:4b", "PQ2_0") is None
-    assert frm.validate_choice("fast_responder", "ternary-bonsai:1.7b") is None
+    assert frm.validate_choice("fast_responder", "qwen3-4b-instruct-2507") is None
+    assert frm.validate_choice("fast_responder", "qwen3-1.7b") is None
 
 
 def test_a_model_cannot_fill_a_seat_it_is_not_for():
-    assert "cannot fill" in frm.validate_choice("fast_responder", "bonsai2:27b", "PTQ1_0")
-    assert "cannot fill" in frm.validate_choice("deep_thinker", "ternary-bonsai:1.7b", "PQ2_0")
+    # The fast seat is the local voice front: a Bonsai model is not one.
+    assert "not a voice front model" in frm.validate_choice("fast_responder", "bonsai2:27b", "PTQ1_0")
+    assert "not a voice front model" in frm.validate_choice("fast_responder", "ternary-bonsai:4b")
+    # A voice front is not a brain.
+    assert frm.validate_choice("deep_thinker", "qwen3-1.7b") is not None
+    assert frm.validate_choice("deep_thinker", "ternary-bonsai:4b", "PQ2_0") is None, "the lighter Bonsai may stand in as a brain"
 
 
 def test_names_not_on_the_shortlist_are_refused():
@@ -95,15 +99,11 @@ def test_an_invalid_name_in_the_request_never_reaches_the_downloader(tmp_path, m
 
 @pytest.fixture
 def fake_shortlist(store, tmp_path, monkeypatch):  # noqa: F811
-    """Two tiny models on a local server, in place of the Hugging Face files."""
-    fast, deep = _gguf_bytes(200_000), _gguf_bytes(300_000)
-    servers = {"fast": _Server(fast), "deep": _Server(deep)}
+    """A tiny deep model on a local server in place of Hugging Face, and a
+    recording stand-in for the voice installer's per-artifact fetch."""
+    deep = _gguf_bytes(300_000)
+    servers = {"deep": _Server(deep)}
     entries = {
-        "ternary-bonsai:4b": {"id": "ternary-bonsai:4b", "label": "Ternary Bonsai 4B", "runtime": None,
-                              "roles": ["system_one"], "repo": "x/fast", "licence": "Apache-2.0",
-                              "files": [{"file": "fast.gguf", "packing": "PQ2_0", "bytes": len(fast),
-                                         "sha256": hashlib.sha256(fast).hexdigest(), "default": True}],
-                              "_url": servers["fast"].url},
         "bonsai2:27b": {"id": "bonsai2:27b", "label": "Bonsai 2 27B", "runtime": None,
                         "roles": ["brain"], "repo": "x/deep", "licence": "Apache-2.0",
                         "files": [{"file": "deep.gguf", "packing": "PTQ1_0", "bytes": len(deep),
@@ -115,7 +115,11 @@ def fake_shortlist(store, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(sl, "companions", lambda mid: [])
     seated: list = []
     monkeypatch.setattr(frm, "apply_seat", lambda seat, mid: seated.append((seat, mid)))
-    yield {"entries": entries, "servers": servers, "seated": seated, "bytes": {"fast": fast, "deep": deep}}
+    from agent_friday.services import voice_installer as vi
+    fetched: list = []
+    monkeypatch.setattr(vi, "artifact_installed", lambda aid: False)
+    monkeypatch.setattr(vi, "_install_artifact", lambda aid: fetched.append(aid))
+    yield {"entries": entries, "servers": servers, "seated": seated, "fetched": fetched, "bytes": {"deep": deep}}
     for s in servers.values():
         s.stop()
 
@@ -126,11 +130,12 @@ def test_both_models_download_verified_and_seat_after_they_install(fake_shortlis
     out = frm.run_at_boot(blocking=True)
 
     assert out["state"] == "done", out
-    assert fake_shortlist["seated"] == [("fast_responder", "ternary-bonsai:4b"),
+    assert fake_shortlist["seated"] == [("fast_responder", "qwen3-1.7b"),
                                         ("deep_thinker", "bonsai2:27b")], "fast first, each only once installed"
-    for mid in ("ternary-bonsai:4b", "bonsai2:27b"):
-        rec = model_store.get(mid)
-        assert rec and Path(rec["path"]).exists() and rec["source"] == model_store.SOURCE_DOWNLOAD
+    # the front, the speech ear and its runtime come through the voice installer's pinned path
+    assert fake_shortlist["fetched"] == ["voice-front-1.7b", "voice-ear-streaming", "sherpa-onnx"]
+    rec = model_store.get("bonsai2:27b")
+    assert rec and Path(rec["path"]).exists() and rec["source"] == model_store.SOURCE_DOWNLOAD
     assert not req.exists() and req.with_name("first-run.done.json").exists(), "the request retires when everything is in"
 
 
@@ -141,7 +146,7 @@ def test_a_checksum_mismatch_installs_nothing_and_seats_nothing(fake_shortlist, 
     out = frm.run_at_boot(blocking=True)
 
     assert out["state"] == "failed", out
-    assert fake_shortlist["seated"] == [("fast_responder", "ternary-bonsai:4b")], "the unverified model must not be seated"
+    assert fake_shortlist["seated"] == [("fast_responder", "qwen3-1.7b")], "the unverified model must not be seated"
     assert model_store.get("bonsai2:27b") is None
     assert req.exists(), "the request stays so the next start retries"
     bad = next(r for r in out["seats"] if r["seat"] == "deep_thinker")
@@ -163,7 +168,10 @@ def test_an_interrupted_download_resumes_from_its_part_file(fake_shortlist, tmp_
 
 
 def test_a_model_already_installed_is_seated_without_downloading(fake_shortlist, tmp_path, monkeypatch):
-    monkeypatch.setattr(model_store, "available", lambda: {"ternary-bonsai:4b": {}, "bonsai2:27b": {}})
+    from agent_friday.services import voice_installer as vi
+    monkeypatch.setattr(model_store, "available", lambda: {"bonsai2:27b": {}})
+    monkeypatch.setattr(vi, "artifact_installed", lambda aid: True)
+    monkeypatch.setattr(vi, "_install_artifact", lambda aid: pytest.fail("refetched an installed artifact"))
     _request(tmp_path, monkeypatch, **GOOD)
     monkeypatch.setattr(md, "start_model", lambda *a, **k: pytest.fail("refetched an installed model"))
 
@@ -179,12 +187,35 @@ def test_the_seats_are_written_to_the_settings_the_app_reads(monkeypatch):
     monkeypatch.setattr(core, "_save_settings", lambda d, **k: saved.append(d))
 
     frm.apply_seat("deep_thinker", "bonsai2:27b")
-    frm.apply_seat("fast_responder", "ternary-bonsai:4b")
+    frm.apply_seat("fast_responder", "qwen3-1.7b")
 
     assert saved[0]["capability_routing"]["reasoning"]["model"] == "bonsai2:27b"
     assert saved[0]["model_routing"]["local_model"] == "bonsai2:27b"
-    assert saved[1]["capability_routing"]["local"]["model"] == "ternary-bonsai:4b"
-    assert "model_routing" not in saved[1]
+    # the fast pick sets the one setting the voice front reads, and no capability
+    # (a "local" capability would become the brain's fallback)
+    assert saved[1] == {"voice_front_model": "qwen3-1.7b"}
+
+
+def test_the_voice_front_reads_what_the_installer_sets():
+    from agent_friday.services import voice_front as vf
+    assert vf.selected_model({"voice_front_model": "qwen3-1.7b"}) == "qwen3-1.7b"
+    assert set(frm.FRONT_ARTIFACT) == set(vf.FRONT_MODELS)
+
+
+def test_the_front_and_its_companions_are_pinned_and_sized_in_the_voice_artifacts():
+    from agent_friday.services import voice_artifacts as va
+    for model_id in frm.FRONT_ARTIFACT:
+        for aid in frm.front_artifacts(model_id):
+            assert va.pinned(aid) == (True, ""), aid
+            assert va.size_bytes(aid) > 0
+    assert va.ARTIFACTS["sherpa-onnx"]["version"] == "1.13.8"
+
+
+def test_the_first_run_size_includes_the_speech_ear():
+    row = frm._entry("fast_responder", "qwen3-1.7b", None)
+    from agent_friday.services import voice_artifacts as va
+    assert row["bytes_total"] == sum(va.size_bytes(a) for a in
+                                     ("voice-front-1.7b", "voice-ear-streaming", "sherpa-onnx"))
 
 
 def test_the_first_run_download_is_reported_on_the_models_route(tmp_path, monkeypatch):

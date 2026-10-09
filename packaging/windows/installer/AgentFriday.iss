@@ -26,6 +26,7 @@
 ;      /ModelFast=<id> [/ModelFastPacking=<p>] /ModelDeep=<id> [/ModelDeepPacking=<p>]
 ;      /ConsentDownload=1             required with /ModelFast and /ModelDeep
 ;      /SkipMemory=1 /SkipJudgment=1  skip the large optional parts
+;      /AllowNetwork=1                let pip use the internet as well as the carried wheels
 ;  Silent uninstall keeps the person's data unless /REMOVEDATA=1 is given.
 ; ============================================================================
 
@@ -116,6 +117,7 @@ Source: "{#RepoRoot}\assets\icons\futurespeak.ico"; DestDir: "{app}"; DestName: 
 Source: "{#RepoRoot}\packaging\windows\lib\ModelPicker.ps1"; Flags: dontcopy
 Source: "probe-hardware.ps1"; Flags: dontcopy
 Source: "{#RepoRoot}\src\agent_friday\resources\model_shortlist.json"; Flags: dontcopy
+Source: "{#RepoRoot}\src\agent_friday\resources\voice_front_options.json"; Flags: dontcopy
 
 [Icons]
 Name: "{userdesktop}\{#AppName}"; Filename: "{app}\Agent Friday.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\AgentFriday.ico"; Comment: "Start Agent Friday"
@@ -462,6 +464,7 @@ begin
     ExtractTemporaryFile('ModelPicker.ps1');
     ExtractTemporaryFile('probe-hardware.ps1');
     ExtractTemporaryFile('model_shortlist.json');
+    ExtractTemporaryFile('voice_front_options.json');
     OutFile := ExpandConstant('{tmp}\model-options.txt');
     DeleteFile(OutFile);
     Params := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\probe-hardware.ps1') + '"' +
@@ -938,6 +941,8 @@ begin
     ' -BuildSequence {#BuildSequence} -ReleaseName "{#ReleaseName}"';
   if ExpandConstant('{param:SkipMemory|0}') = '1' then Params := Params + ' -SkipMemory';
   if ExpandConstant('{param:SkipJudgment|0}') = '1' then Params := Params + ' -SkipJudgment';
+  // Packages install offline from the wheels this program carries; this puts the index back.
+  if ExpandConstant('{param:AllowNetwork|0}') = '1' then Params := Params + ' -AllowNetwork';
 
   WizardForm.StatusLabel.Caption := 'Installing Agent Friday. Most of this is setting up its parts, and it can take several minutes.';
   WizardForm.FilenameLabel.Caption := '';

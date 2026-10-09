@@ -562,12 +562,62 @@ if ($NoWheelhouse) {
         Say-Note ("Could not build: " + ($failed -join ', '))
     }
 
+    # --- Every runtime wheel, so the install is offline ---------------------
+    #
+    # The setup program installs from this folder with --no-index. So the folder
+    # must hold a wheel for everything the installer will ask pip for: each
+    # requirements file, with its whole dependency tree. Download them here
+    # (same interpreter, same platform as the target: CPython 3.12, win_amd64),
+    # then PROVE coverage by resolving every file again with the index switched
+    # off. A build whose wheelhouse has a hole stops here.
+    # The wheels built above (the sdist-only family); the pure-Python check
+    # below applies to these only, never to the platform wheels collected here.
+    $ownWheelNames = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    $tierFiles = @('core', 'recommended', 'memory', 'judgment') |
+        ForEach-Object { Join-Path (Join-Path $Here 'requirements') "$_.txt" }
+    $pipCommon = @('--only-binary=:all:', '--disable-pip-version-check', '--no-input')
+    if (-not $embedZip) {
+        Say-Problem -What 'The wheelhouse cannot be completed without the bundled interpreter (-NoBundlePython).' `
+                    -WhatToDo 'Build without -NoBundlePython, or pass -NoWheelhouse to accept a setup that needs the internet.'
+        Complete-Install -Failed -FailedStep 'build.wheelhouse' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+        exit 1
+    }
+    foreach ($tf in $tierFiles) {
+        Say-Working ("Collecting the wheels for " + (Split-Path -Leaf $tf) + ' (a large download the first time).')
+        $dl = Invoke-Native -FilePath $buildPy -Arguments (@('-m', 'pip', 'download') + $pipCommon +
+            @('--dest', $Wheels, '--find-links', $Wheels, '-r', $tf)) -TimeoutSeconds 7200
+        if ($dl.ExitCode -ne 0) {
+            Say-Problem -What ("Could not collect wheels for $(Split-Path -Leaf $tf): " + (($dl.Combined -split "`r?`n") | Select-Object -Last 3) -join ' ') `
+                        -WhatToDo 'Check the network and build again. A wheelhouse with a hole is never shipped.'
+            Write-Log "BUILD ABORTED - pip download failed for $tf" 'FAIL'
+            Complete-Install -Failed -FailedStep 'build.wheelhouse' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+            exit 1
+        }
+    }
+    foreach ($tf in $tierFiles) {
+        $chk = Invoke-Native -FilePath $buildPy -Arguments (@('-m', 'pip', 'install', '--dry-run', '--no-index') + $pipCommon +
+            @('--find-links', $Wheels, '-r', $tf)) -TimeoutSeconds 1800
+        if ($chk.ExitCode -ne 0) {
+            $why = (($chk.Combined -split "`r?`n") | Where-Object { $_ -match 'No matching distribution|ERROR' } | Select-Object -First 3) -join ' '
+            Say-Problem -What ("The wheelhouse does not cover $(Split-Path -Leaf $tf): $why") `
+                        -WhatToDo 'Do not ship this artifact. Build again; if it repeats, a requirement has no wheel for CPython 3.12 on Windows.'
+            Write-Log "BUILD ABORTED - wheelhouse does not cover $tf" 'FAIL'
+            Complete-Install -Failed -FailedStep 'build.wheelhouse' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+            exit 1
+        }
+    }
+    $allWheels = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl')
+    $wheelMb = [math]::Round((($allWheels | Measure-Object -Property Length -Sum).Sum) / 1MB)
+    Say-Ok "$($allWheels.Count) wheels ($wheelMb MB) cover every requirement; the install resolves from them offline."
+    Write-Log "Wheelhouse covers core, recommended, memory and judgment: $($allWheels.Count) wheels, $wheelMb MB" 'OK'
+
     # The throwaway interpreter must not end up inside the artifact - it would
     # double the download and ship a second Python nobody asked for.
     $bpRootClean = Join-Path $Staging 'buildpy'
     if (Test-Path -LiteralPath $bpRootClean) { Remove-Item -LiteralPath $bpRootClean -Recurse -Force }
 
-    $built = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl' -ErrorAction SilentlyContinue)
+    $built = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl' -ErrorAction SilentlyContinue |
+               Where-Object { $ownWheelNames -contains $_.Name })
     if ($built.Count -eq 0) {
         # ABORT rather than warn. An empty wheelhouse means the artifact
         # silently falls back to building sdists on her laptop - the exact
@@ -592,7 +642,7 @@ if ($NoWheelhouse) {
             Write-Log "Removed non-universal wheel: $($b.Name)" 'WARN'
             Remove-Item -LiteralPath $b.FullName -Force
         }
-        $kept = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl')
+        $kept = @($built | Where-Object { Test-Path -LiteralPath $_.FullName })
         Say-Ok "$($kept.Count) universal wheel(s): $(($kept | ForEach-Object { $_.Name -replace '-py[23].*','' }) -join ', ')"
     }
 }

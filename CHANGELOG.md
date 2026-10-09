@@ -23,8 +23,9 @@ offered to a Beta install, and Beta 1.0 counts as newer than 5.14.3.
   Inno Setup 6, per-user, unsigned) replacing the zip and `Install Agent
   Friday.cmd`. It carries its own Python, Friday's files and the wheels.
 - **Hardware-aware model page.** Reads memory, graphics card and free disk
-  locally and lists only the Bonsai models that fit, for two required jobs
-  (fast responder, deep thinker). The recommendation is labelled, never
+  locally and lists only the models that fit, for two required jobs: the fast
+  responder (a Qwen3 voice front, with the speech ear) and the deep thinker (a
+  Bonsai model). The recommendation is labelled, never
   preselected. A cloud option and an explicit consent box sit on the same
   page. Setup downloads no model: Friday's downloader fetches the choices on
   first start with progress, sha256 verification and resume

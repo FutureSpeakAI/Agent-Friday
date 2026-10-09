@@ -79,7 +79,12 @@ param(
     # src/agent_friday/release.py). Recorded in the manifest so a later
     # installer can tell whether it is older or newer than what is here.
     [string] $BuildSequence = '',
-    [string] $ReleaseName = ''
+    [string] $ReleaseName = '',
+
+    # With a wheelhouse shipped, packages install OFFLINE from it (--no-index)
+    # and a missing wheel is a clear failure. This puts PyPI back as an
+    # explicit fallback, for a setup built without a full wheelhouse.
+    [switch] $AllowNetwork
 )
 
 $ErrorActionPreference = 'Stop'
@@ -97,6 +102,7 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $Here 'lib\OfficeCli.ps1')
 
 Initialize-Console
+$script:PipAllowNetwork = [bool]$AllowNetwork
 
 # --- Layout --------------------------------------------------------------
 $AppDir        = Join-Path $InstallRoot 'app'

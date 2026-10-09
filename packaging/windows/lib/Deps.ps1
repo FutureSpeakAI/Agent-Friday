@@ -42,6 +42,20 @@
 
 Set-StrictMode -Version 2.0
 
+#: OFFLINE BY DEFAULT WHEN A WHEELHOUSE IS SHIPPED.
+#: The setup program carries a wheel for every runtime requirement (the build
+#: refuses to produce one that does not). With a wheelhouse present, pip is run
+#: with --no-index, so a wheel that is missing is a clear failure naming it,
+#: never a silent trip to PyPI. -AllowNetwork on install.ps1 sets this and
+#: puts the index back as an explicit fallback.
+$script:PipAllowNetwork = $false
+
+function Test-WheelhouseShipped {
+    param([string] $WheelhouseDir = $null)
+    return [bool]($WheelhouseDir -and (Test-Path -LiteralPath $WheelhouseDir) -and
+                  (Get-ChildItem -LiteralPath $WheelhouseDir -Filter '*.whl' -ErrorAction SilentlyContinue))
+}
+
 function Get-PipBaseArgs {
     <# Flags every pip invocation gets. Kept in one place so a healing
        remediation that adds a flag cannot accidentally drop these. #>
@@ -54,11 +68,12 @@ function Get-PipBaseArgs {
         '--no-input'
     )
     if ($WheelhouseDir -and (Test-Path -LiteralPath $WheelhouseDir)) {
-        # --find-links adds the local wheelhouse as an ADDITIONAL source. We
-        # deliberately do not pass --no-index: the wheelhouse only carries the
-        # handful of packages that have no wheels on PyPI, and everything else
-        # must still come from PyPI so version resolution stays normal.
         $a += @('--find-links', $WheelhouseDir)
+        # With a real wheelhouse (every runtime wheel), the index is switched
+        # off: the install is offline and a missing wheel fails loudly.
+        if ((Test-WheelhouseShipped -WheelhouseDir $WheelhouseDir) -and -not $script:PipAllowNetwork) {
+            $a += '--no-index'
+        }
     }
     return $a
 }
@@ -77,7 +92,16 @@ function Install-RequirementSet {
     )
     $exe  = Get-PythonExe $InstallRoot
     $args = (Get-PipBaseArgs -WheelhouseDir $WheelhouseDir) + $ExtraFlags + @('-r', $RequirementsFile)
-    return (Invoke-Native -FilePath $exe -Arguments $args -TimeoutSeconds $TimeoutSeconds)
+    $res = Invoke-Native -FilePath $exe -Arguments $args -TimeoutSeconds $TimeoutSeconds
+    if ($res.ExitCode -ne 0 -and $args -contains '--no-index') {
+        # Say plainly why, and which wheel, rather than leaving a generic pip error.
+        $m = [regex]::Match([string]$res.Combined, 'No matching distribution found for ([^\s]+)')
+        $what = 'a package'; if ($m.Success) { $what = $m.Groups[1].Value }
+        Write-Log ("The bundled wheelhouse has no wheel for $what, and setup does not go to the internet " +
+                   'for one. Rebuild the setup program, or run install.ps1 with -AllowNetwork.') 'FAIL'
+        Set-VerifyDetail ("The bundled wheelhouse is missing a wheel for $what. Setup installs offline and will not fetch it.")
+    }
+    return $res
 }
 
 function Test-ModulesImportable {
@@ -165,8 +189,7 @@ function Install-PyAutoGuiFamily {
     )
     $exe = Get-PythonExe $InstallRoot
 
-    if ($WheelhouseDir -and (Test-Path -LiteralPath $WheelhouseDir) -and
-        (Get-ChildItem -LiteralPath $WheelhouseDir -Filter '*.whl' -ErrorAction SilentlyContinue)) {
+    if (Test-WheelhouseShipped -WheelhouseDir $WheelhouseDir) {
         Write-Log "Installing the PyAutoGUI family from the shipped wheelhouse at $WheelhouseDir"
         # pyautogui itself with --no-deps, then its dependencies by name: its
         # metadata requires mouseinfo (GPL-3.0), which it imports only inside a
@@ -174,6 +197,7 @@ function Install-PyAutoGuiFamily {
         # needs nor ships it.
         $base = @('-m','pip','install','--only-binary=:all:','--no-warn-script-location',
                   '--disable-pip-version-check','--no-input','--find-links', $WheelhouseDir)
+        if (-not $script:PipAllowNetwork) { $base += '--no-index' }
         $r = Invoke-Native -FilePath $exe -Arguments ($base + $script:PyAutoGuiDeps) -TimeoutSeconds 900
         if ($r.ExitCode -ne 0) { return $r }
         return (Invoke-Native -FilePath $exe -Arguments ($base + @('--no-deps','pyautogui')) -TimeoutSeconds 900)

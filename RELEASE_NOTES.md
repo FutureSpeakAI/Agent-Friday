@@ -11,8 +11,9 @@ Download `AgentFriday-Setup-1.0.0-beta.1.exe` below and double-click it.
 
 - It installs for you alone. It does not ask for administrator rights, and it
   sends nothing anywhere.
-- It brings its own Python and everything Agent Friday needs to start. You do not
-  need Python, git, or a terminal.
+- It brings its own Python and a wheel for every Python package Agent Friday
+  needs, and installs them without the internet. You do not need Python, git,
+  or a terminal.
 - It is **not code-signed**, so Windows SmartScreen may ask you to confirm.
   Choose *More info*, then *Run anyway*, after checking the file against the
   `.sha256` file published beside it.
@@ -20,10 +21,12 @@ Download `AgentFriday-Setup-1.0.0-beta.1.exe` below and double-click it.
 ## Choose how Agent Friday thinks
 
 Setup looks at your computer (memory, graphics card, free disk space; it stays on
-your computer) and shows only the Bonsai models that fit it, for two jobs:
+your computer) and shows only the models that fit it, for two jobs:
 
-- a **fast responder**, for voice and quick replies; and
-- a **deep thinker**, for the harder work.
+- a **fast responder**, for voice and quick replies: the small Qwen3 model the
+  voice system runs, downloaded with its speech ear (the size shown includes
+  both); and
+- a **deep thinker**, for the harder work: a Bonsai model.
 
 One choice is marked *Recommended*. Nothing is chosen for you. Or choose a cloud
 model and add a key later in Settings.
@@ -51,9 +54,7 @@ them is the default.
 
 ## Known limits of this beta
 
-- The fast responder you choose is recorded and downloaded, but spoken
-  conversation still runs on its own small model for now. See
-  [KNOWN_ISSUES](KNOWN_ISSUES.md).
+- No Bonsai model runs the voice yet; the voice front is a Qwen3 model.
 - Before this release is published, an automated run installs it on a clean
   Windows machine, uninstalls it keeping the data, reinstalls it, and upgrades a
   5.14.3 install in place. It has had little time on real computers.

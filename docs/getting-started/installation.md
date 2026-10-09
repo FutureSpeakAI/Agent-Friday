@@ -43,9 +43,11 @@ and double-click it. SmartScreen may warn on first launch; see the note below.
 Everything installs per-user under `%LOCALAPPDATA%\AgentFriday`; no
 administrator rights are used.
 
-The model page lists only Bonsai models that fit this computer (memory,
-graphics card and free disk, read locally; nothing is sent), in two jobs: a
-*fast responder* for voice and quick replies, and a *deep thinker*. The
+The model page lists only models that fit this computer (memory, graphics
+card and free disk, read locally; nothing is sent), in two jobs: a *fast
+responder* for voice and quick replies (a Qwen3 voice model, fetched with the
+speech ear; the 1.7B sits beside the deep thinker on smaller machines, the 4B
+where there is room), and a *deep thinker* (a Bonsai model). The
 recommended choice is labelled, never preselected. Setup itself downloads no
 model: with the box ticked, Friday's own downloader fetches them on first
 start, with progress, checksums and resume. Choosing a cloud model downloads

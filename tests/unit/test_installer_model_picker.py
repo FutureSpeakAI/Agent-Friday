@@ -137,15 +137,58 @@ def test_the_ampere_card_gets_the_larger_packing_and_the_ada_card_does_not(tmp_p
 # ── the two seats, and the rules the page keeps ──────────────────────────────
 
 @needs_powershell
-def test_both_seats_are_offered_and_only_family_models_appear(tmp_path):
+def test_the_deep_seat_is_bonsai_and_the_fast_seat_is_the_voice_front(tmp_path):
     out = probe(tmp_path)
     shortlist = {m["id"]: m for m in json.loads(SHORTLIST.read_text(encoding="utf-8"))["models"]}
     assert out["deep"] and out["fast"]
-    for o in out["deep"] + out["fast"]:
+    for o in out["deep"]:
         assert o["id"] in shortlist and shortlist[o["id"]]["publisher"] == "PrismML", o["id"]
+    for o in out["deep"] + out["fast"]:
         assert o["bytes"] > 0 and o["size"], "every option shows its size on disk"
     assert "bonsai2:27b" in ids(out["deep"])
-    assert set(ids(out["fast"])) <= {"ternary-bonsai:1.7b", "ternary-bonsai:4b"}, "a fast seat is a small model"
+    # The fast seat offers what the voice stack actually serves, never a Bonsai model.
+    from agent_friday.services import voice_front as vf
+    assert set(ids(out["fast"])) <= set(vf.FRONT_MODELS)
+    assert not any(i.startswith(("ternary-bonsai", "bonsai")) for i in ids(out["fast"]))
+
+
+@needs_powershell
+def test_the_fast_options_and_their_sizes_are_the_voice_artifacts(tmp_path):
+    """The size shown is the front plus the speech ear and its runtime."""
+    from agent_friday.services import first_run_models as frm
+    from agent_friday.services import voice_artifacts as va
+    out = probe(tmp_path)
+    for o in out["fast"]:
+        assert o["bytes"] == sum(va.size_bytes(a) for a in frm.front_artifacts(o["id"])), o["id"]
+        assert "speech ear" in o["note"]
+
+
+@needs_powershell
+def test_the_recommended_front_follows_the_machine(tmp_path):
+    """The 1.7B sits beside the deep thinker on smaller machines; the 4B where
+    there is room to spare (voice_front's solo / co_resident roles)."""
+    small = probe(tmp_path, ram_mib=16384)
+    big = probe(tmp_path, ram_mib=65536)
+    rec = lambda o: [x["id"] for x in o["fast"] if x["recommended"]]
+    assert rec(small) == ["qwen3-1.7b"]
+    assert rec(big) == ["qwen3-4b-instruct-2507"]
+    assert set(ids(small["fast"])) == {"qwen3-1.7b", "qwen3-4b-instruct-2507"}, "both fit 16 GB; the 4B is still offered"
+
+
+@needs_powershell
+def test_the_voice_front_options_file_is_the_voice_artifacts(tmp_path):
+    from agent_friday.services import first_run_models as frm
+    from agent_friday.services import voice_artifacts as va
+    from agent_friday.services import voice_front as vf
+    doc = json.loads((SHORTLIST.parent / "voice_front_options.json").read_text(encoding="utf-8"))
+    assert {f["id"] for f in doc["fronts"]} == set(vf.FRONT_MODELS)
+    for f in doc["fronts"]:
+        assert f["artifact"] == frm.FRONT_ARTIFACT[f["id"]]
+        assert f["front_bytes"] == va.size_bytes(f["artifact"])
+        assert f["role"] == vf.FRONT_MODELS[f["id"]]["role"]
+    assert [c["artifact"] for c in doc["companions"]] == list(frm.FRONT_COMPANIONS)
+    for c in doc["companions"]:
+        assert c["bytes"] == va.size_bytes(c["artifact"])
 
 
 @needs_powershell
