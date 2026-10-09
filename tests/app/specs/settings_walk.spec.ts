@@ -154,6 +154,11 @@ async function savedSettings(page: Page): Promise<any> {
   return (await r.json()).settings || {};
 }
 
+// A save is awaited by its own response, not by a clock. On a shared CI runner the server answers a save after
+// 60 s or more while the page's polling requests queue behind it, so the bound is generous and only a save
+// that never answers fails. The walk's own budget (below) is 15 minutes.
+const SAVE_MS = 150_000;
+
 test.describe('Settings walk', () => {
   test.setTimeout(900_000);
   // A control that cannot be acted on is a finding, reported in its row, not a wait for the whole test's budget.
@@ -264,7 +269,7 @@ test.describe('Settings walk', () => {
         const before = posted.length;
         // The save this control causes, if it saves through /api/settings at all: observed, not slept for.
         const settingsSaved = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings',
-          { timeout: 30_000 }).catch(() => null);
+          { timeout: SAVE_MS }).catch(() => null);
         let value = '';
         try {
           if (c.kind === 'switch') {
@@ -273,7 +278,7 @@ test.describe('Settings walk', () => {
             value = was === 'true' ? 'false' : 'true';
             // A switch shows the new state once the server has confirmed the save.
             await settingsSaved;
-            await expect(loc).toHaveAttribute('aria-checked', value, { timeout: 10_000 });
+            await expect(loc).toHaveAttribute('aria-checked', value, { timeout: 20_000 });
           } else if (c.kind === 'checkbox') {
             const was = await loc.isChecked();
             await loc.setChecked(!was);
@@ -323,7 +328,7 @@ test.describe('Settings walk', () => {
         // The saved settings are read until they show what this control sent (the save is the server's to finish).
         let now = await savedSettings(page);
         await expect.poll(async () => { now = await savedSettings(page); return saved.every(s => deepContains(now, s)); },
-          { timeout: 8000 }).toBe(true).catch(() => undefined);
+          { timeout: SAVE_MS }).toBe(true).catch(() => undefined);
         const api = saved.every(s => deepContains(now, s));
         rows.push({ ...base, action: 'changed', posted: keys.join(', '), apiPersisted: api ? 'yes' : 'NO', uiPersisted: '?',
           result: api ? 'pass' : 'fail', detail: api ? 'GET /api/settings has the new value' : 'GET /api/settings does not show what was saved: saved ' + JSON.stringify(saved).slice(0, 160) + ' now ' + JSON.stringify(keys.reduce((o: any, k) => (o[k] = now[k], o), {})).slice(0, 160) });
@@ -334,7 +339,15 @@ test.describe('Settings walk', () => {
       if (expectedUi.length) {
         await openSettings(page);
         await goSection(page, sec);
-        const again = await discover(page);
+        // Panels fetch their own data, so a control can arrive after the section opens: wait until every control
+        // that was changed is back (or the bound passes, and the missing one is reported below).
+        let again = await discover(page);
+        const countOf = (list: any[], k: string, l: string) => list.filter(a => a.kind === k && a.label === l).length;
+        const needed = expectedUi.reduce((m: Record<string, number>, w) => { const k = w.kind + '|' + w.label; m[k] = (m[k] || 0) + 1; return m; }, {});
+        await expect.poll(async () => {
+          again = await discover(page);
+          return Object.keys(needed).every(k => countOf(again, k.split('|')[0], k.slice(k.indexOf('|') + 1)) >= needed[k]);
+        }, { timeout: 60_000, intervals: [500, 1000, 2000] }).toBe(true).catch(() => undefined);
         const seen2: Record<string, number> = {};
         for (const want of expectedUi) {
           const key = want.kind + '|' + want.label;
