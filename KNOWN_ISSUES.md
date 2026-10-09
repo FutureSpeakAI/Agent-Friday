@@ -84,12 +84,6 @@ you hit something that is not here, please open an issue.
   later.
 - **`ui_parts/app.html` drifts from `index.html`.** The served file is the
   source of truth; see [docs/development/ui-build.md](docs/development/ui-build.md).
-- **No Bonsai model is the voice front.** The setup program's fast responder is
-  one of the Qwen3 voice front models (`services/voice_front.py`), fetched with
-  the speech ear. The Arbiter looks up a model's required runtime by registry
-  id, not by the voice front's seat id, so a Bonsai file served as the front
-  would be started on stock llama.cpp, which refuses its tensor types. The
-  Bonsai family fills the deep thinker only.
 - **A few parts still need the internet at install.** Python packages install
   from the wheels the setup program carries, but the document engine
   (OfficeCLI) and the judgment model's checkpoint are fetched while setup

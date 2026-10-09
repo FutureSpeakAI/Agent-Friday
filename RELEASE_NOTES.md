@@ -89,7 +89,6 @@ matter:
   RAM to run on the processor, where it is slow (an estimate of 3 to 6 tokens
   per second), and a 12 GB NVIDIA card for fast, long-context use.
 - The optional, more accurate "turbo" speech listener is not offered yet.
-- No Bonsai model runs the voice yet; the voice front is a Qwen3 model.
 - It has had little time on real computers. Please report what you find at
   [github.com/FutureSpeakAI/Agent-Friday/issues](https://github.com/FutureSpeakAI/Agent-Friday/issues).
 
