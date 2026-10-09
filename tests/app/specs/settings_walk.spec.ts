@@ -80,14 +80,11 @@ async function openSettings(page: Page) {
   // A fresh scratch home has finished no setup, so the first-run consent flow would cover Settings.
   // The walk is of Settings after setup, as the owner uses it; the settings themselves stay real.
   await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
-  // The same holds for the cloud-consent question a fresh home asks once. The walk answers it the careful way
-  // ("cloud_guarded": sensitive material stays held back, as while unanswered) in the scratch home, so the gate
-  // does not appear over Settings after a reload.
+  // The same holds for the cloud-consent question a fresh home asks once. tests/app/setup.js answers it the
+  // careful way ("cloud_guarded") in the scratch home before any spec runs; the walk only reads that it did,
+  // because page.request bypasses the page's routes and may never write.
   const cc = await (await page.request.get(`${BASE}/api/privacy/cloud-consent`, { timeout: 120_000 })).json();
-  if (cc.needs_prompt) {
-    const r = await page.request.post(`${BASE}/api/privacy/cloud-consent`, { data: { choice: 'cloud_guarded' }, timeout: 120_000 });
-    expect(r.ok(), 'recording the careful cloud-consent answer in the scratch home').toBeTruthy();
-  }
+  expect(cc.needs_prompt, 'the scratch home answered the cloud-consent question in global setup').toBeFalsy();
   await page.goto(`${BASE}/w/settings`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.st-root', { timeout: 60000 });
 }
