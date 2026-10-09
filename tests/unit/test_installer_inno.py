@@ -71,6 +71,16 @@ def test_the_rocket_icon_is_used_everywhere():
     assert r"app\assets\icons\futurespeak.ico" in INSTALL and r"app\assets\icons\futurespeak.ico" in AUTOSTART
 
 
+def test_setup_shows_no_licence_page_and_the_licence_still_ships_in_the_app_folder():
+    """The MIT licence needs no acceptance, so setup has no page asking for it. The
+    LICENSE file is copied with the rest of the repository root into the app folder."""
+    assert "LicenseFile" not in SCRIPT and "wpLicense" not in SCRIPT
+    assert (REPO / "LICENSE").is_file()
+    excludes = BUILD[BUILD.index("function Get-PayloadExcludes"):BUILD.index("function Get-PayloadExcludePatterns")]
+    assert "license" not in excludes.lower()
+    assert "Copy-Item -LiteralPath $item.FullName -Destination $Payload" in BUILD
+
+
 def test_the_wizard_images_are_used_when_present_and_the_defaults_when_not():
     assert re.search(r'#if FileExists\(AddBackslash\(SourcePath\) \+ "wizard\.bmp"\)\s*\nWizardImageFile=wizard\.bmp\s*\n#endif', SCRIPT)
     assert re.search(r'#if FileExists\(AddBackslash\(SourcePath\) \+ "wizard-small\.bmp"\)\s*\nWizardSmallImageFile=wizard-small\.bmp\s*\n#endif', SCRIPT)

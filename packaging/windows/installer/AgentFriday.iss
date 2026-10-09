@@ -85,7 +85,6 @@ OutputBaseFilename=AgentFriday-Setup-{#AppTag}
 SetupIconFile={#RepoRoot}\assets\icons\futurespeak.ico
 UninstallDisplayIcon={app}\AgentFriday.ico
 UninstallDisplayName={#ReleaseName}
-LicenseFile={#RepoRoot}\LICENSE
 WizardStyle=modern
 Compression=lzma2/max
 SolidCompression=yes
