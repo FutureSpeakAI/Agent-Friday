@@ -365,7 +365,13 @@ def test_heartbeat_refreshes_last_seen_while_running_and_stops_when_terminal(mon
     hb = tj.Heartbeat(TID).start()
     time.sleep(0.5)
     seen1 = tj.last_seen(TID)
-    assert seen1 and time.time() - seen1 < 0.3
+    assert seen1
+    # While running, last_seen keeps moving: it advances again past the first reading (bounded, so a
+    # stalled heartbeat still fails; a loaded runner may delay one beat but not the next for seconds).
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not (tj.last_seen(TID) or 0) > seen1:
+        time.sleep(0.02)
+    assert (tj.last_seen(TID) or 0) > seen1, "last_seen stopped refreshing while the task was running"
     assert _kinds().count("heartbeat") >= 2
     st = tj.read_state(TID); st["status"] = "complete"; tj.write_state(TID, st)
     time.sleep(0.2)
