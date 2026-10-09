@@ -68,6 +68,9 @@ type Row = {
 };
 
 async function openSettings(page: Page) {
+  // A fresh scratch home has finished no setup, so the first-run consent flow would cover Settings.
+  // The walk is of Settings after setup, as the owner uses it; the settings themselves stay real.
+  await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
   await page.goto(`${BASE}/w/settings`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.st-root', { timeout: 60000 });
 }
