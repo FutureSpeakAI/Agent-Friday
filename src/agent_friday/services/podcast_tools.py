@@ -214,6 +214,10 @@ def _tool_podcast_format(inp):
     if fmt:
         from agent_friday.services import setting_proposals as _sp
         try:
+            pe.check_format(routine if routine != "any" else "", fmt)
+        except pe.PodcastRefused as e:
+            return json.dumps({"status": "error", "message": str(e)})
+        try:
             held = _sp.hold("podcast_format", inp, old=pe.format_for(routine if routine != "any" else ""), new=fmt,
                             label="who hosts %s" % (routine or "the shows"),
                             consequence="A show with two hosts takes longer to make." if fmt == "duo" else

@@ -213,14 +213,30 @@ def test_put_chat_on_the_right_third(pages, monkeypatch):
     assert agent._tool_set_chat_tray({"size": "most"}).startswith("CHAT_FAIL")
 
 
-def test_put_a_workspace_on_the_left_two_thirds(pages):
+def test_put_a_workspace_on_the_left_two_thirds(pages, tmp_path, monkeypatch, friday_dir):
     from agent_friday.core import _load_settings, _save_settings
+    from agent_friday.governance import action_gate as ag
+    from agent_friday.services import approvals as ap, dissent_gate as dg
+    from agent_friday.services import setting_proposals as sp
+    monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
+    monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
+    monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
+    monkeypatch.setattr(sp, "_store", lambda: tmp_path / "setting_changes.json")
+    _save_settings({"workspace_layouts": {}})
     spec = next(t for t in ve._VOICE_LIVE_TOOLS if t[0] == "set_workspace_layout")
     assert spec[2]["position"][0] == "string" and spec[3] == ["fullscreen_chat"]
     out = agent._tool_set_workspace_layout({"workspace": "news", "fullscreen_chat": False,
                                             "position": "left two thirds"})
-    assert out.startswith("LAYOUT_SAVED:news") and "the left two thirds" in out, out
+    # a layout is a setting: it waits for the owner's own yes, and nothing is saved before it
+    assert out.startswith("SETTING_NEEDS_YES") and "left two thirds" in out, out
+    assert "news" not in (_load_settings().get("workspace_layouts") or {})
+    card = next(r for r in ap.list_approvals(kind="governed_action")
+                if (r.get("payload") or {}).get("handler") == sp.HANDLER and r.get("status") == "pending")
+    ap.decide_with_outcome(card["approval_id"], "approve", decided_by="owner")
     assert _load_settings()["workspace_layouts"]["news"] == {"window": "left_two_thirds"}
+    again = agent._tool_set_workspace_layout({"workspace": "news", "fullscreen_chat": False,
+                                              "position": "left two thirds"})
+    assert again.startswith("SETTING_UNCHANGED"), again
     assert agent._tool_set_workspace_layout({"workspace": "news", "fullscreen_chat": False,
                                              "position": "top"}).startswith("LAYOUT_FAIL")
     _save_settings({"workspace_layouts": {}})
