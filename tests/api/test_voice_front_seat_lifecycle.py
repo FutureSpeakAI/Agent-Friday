@@ -86,7 +86,11 @@ def test_the_4b_front_parks_the_brain_and_serves_on_its_own_port(env):
     assert env["arb"].released_kind == "voice_call", "only its own lease is released"
 
 
-def test_the_17b_front_sits_beside_the_brain(env):
+def test_the_17b_front_sits_beside_the_brain(env, monkeypatch):
+    # Beside the brain when the card has room for it (the fit is asked, not
+    # assumed: tests/unit/test_ternary_bonsai_voice.py covers a full card).
+    from agent_friday.services import voice_workers
+    monkeypatch.setattr(voice_workers, "admit_gpu", lambda need, stage: {"ok": True})
     _install(env, "qwen3-1.7b")
     f = rv._arm_voice_front({"voice_front_model": "qwen3-1.7b"})
     assert env["arb"].events == [], "a co-resident front must not park the brain"

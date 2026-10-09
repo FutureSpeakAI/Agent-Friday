@@ -415,7 +415,12 @@ def _configured_local_model() -> str | None:
                            .read_text("utf-8")) or {}
         except Exception:
             s = {}
-    for value in (((s.get("capability_routing") or {}).get("local") or {}).get("model"),
+    # The everyday-conversation seat first: Quick reflexes ("local") may name
+    # a small model such as Ternary Bonsai 1.7B, and a brain that falls back
+    # to the reflex model is a silent downgrade, not a repair.
+    cr = s.get("capability_routing") or {}
+    for value in ((cr.get("reasoning") or {}).get("model"),
+                  (cr.get("local") or {}).get("model"),
                   (s.get("model_routing") or {}).get("local_model")):
         if value and not _names_a_cloud_model(value):
             return str(value)

@@ -83,6 +83,22 @@ def model_for_label(label) -> str:
 #: unpinned file is never installed). Sizes are the published file sizes.
 #: Licences were checked against the model cards (spec §4.1): Apache-2.0.
 FRONT_MODELS = {
+    # The PrismML ternary build of Qwen3-1.7B: the Qwen3 chat template and
+    # tool format, a third of the 1.7B's memory. Its PQ2_0 tensors load only
+    # on the PrismML fork of llama.cpp (stock rejects the type), so it
+    # declares that engine and is never tried on stock (engine_for below).
+    "ternary-bonsai:1.7b": {
+        "label": "Ternary Bonsai 1.7B",
+        "repo": "prism-ml/Ternary-Bonsai-1.7B-gguf",
+        "file": "Ternary-Bonsai-1.7B-PQ2_0.gguf",
+        "sha256": "de68ba48a8dacb21979915991e7741b917869d71410a370df951c0c3a237ae50",
+        "size_mb": 442,
+        "licence": "Apache-2.0",
+        "ctx": 16384,
+        "role": "co_resident",
+        "engine": "prism-fork",
+        "packing": "PQ2_0",
+    },
     "qwen3-4b-instruct-2507": {
         "label": "Qwen3-4B-Instruct-2507",
         "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
@@ -105,7 +121,26 @@ FRONT_MODELS = {
     },
 }
 
-DEFAULT_FRONT_MODEL = "qwen3-4b-instruct-2507"
+DEFAULT_FRONT_MODEL = "ternary-bonsai:1.7b"
+
+#: What a served front holds on the card beyond its file, in MiB: the q8_0 KV
+#: cache for the full window (Qwen3-1.7B: 28 layers x 8 KV heads x 128 x 2,
+#: ~60 KiB a token, ~950 MiB at 16K; the 4B's 36 layers ~1,220 MiB) plus
+#: llama-server's compute buffers at -ub 512.
+_FRONT_OVERHEAD_MIB = {"qwen3-4b-instruct-2507": 1550}
+_DEFAULT_OVERHEAD_MIB = 1300
+
+
+def required_engine(model: str):
+    """The runtime a front must be served on (a model_download runtime name),
+    or None for the Arbiter's default engines."""
+    return (FRONT_MODELS.get(model) or {}).get("engine")
+
+
+def vram_need_mib(model: str) -> int:
+    """The card a served front takes: its file plus KV and buffers."""
+    spec = FRONT_MODELS[model]
+    return int(spec["size_mb"]) + _FRONT_OVERHEAD_MIB.get(model, _DEFAULT_OVERHEAD_MIB)
 
 #: llama-server flags for the front, merged over the Arbiter's base command.
 #: One slot (the session prefix stays pinned in its cache; a second slot would

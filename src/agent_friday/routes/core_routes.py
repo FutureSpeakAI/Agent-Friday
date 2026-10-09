@@ -1405,7 +1405,7 @@ _VOICE_ENUMS = {
     "voice_ear_gpu": ("never", "preferred", "if_free", "required"),
     "voice_mouth_gpu": ("never", "preferred", "if_free", "required"),
     # The voice front (local voice spec §6).
-    "voice_front_model": ("qwen3-4b-instruct-2507", "qwen3-1.7b"),
+    "voice_front_model": ("ternary-bonsai:1.7b", "qwen3-4b-instruct-2507", "qwen3-1.7b"),
     "voice_brain_during_calls": ("auto", "parked", "resident"),
     "voice_async_routing": ("local_only", "follow_model_routing"),
     # Not a voice key, but the same rule: an unknown value would silently

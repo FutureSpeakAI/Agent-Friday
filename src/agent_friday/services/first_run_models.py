@@ -14,15 +14,16 @@ downloader the Models screen uses, so a first-run download gets, unchanged:
 
 Two seats are filled, both required unless the person chose a cloud model:
 
-  fast_responder   the local VOICE FRONT: a Qwen3 model from
-                   ``voice_front.FRONT_MODELS`` (the 1.7B beside the deep
-                   thinker, or the 4B). It arrives through the voice installer's
-                   pinned, sha256-verified, resumable artifact path, together
-                   with the speech ear (``voice-ear-streaming``) and
-                   ``sherpa-onnx``, and is seated by setting
+  fast_responder   the local VOICE FRONT from ``voice_front.FRONT_MODELS``:
+                   Ternary Bonsai 1.7B by default, or a Qwen3 build (the 1.7B
+                   or the 4B) as the alternative. It arrives through the voice
+                   installer's pinned, sha256-verified, resumable artifact
+                   path, together with the speech ear (``voice-ear-streaming``)
+                   and ``sherpa-onnx``, and is seated by setting
                    ``voice_front_model``, which ``voice_front.selected_model``
-                   reads. It is not seated as a capability: nothing else is
-                   routed through it.
+                   reads. Ternary Bonsai 1.7B also fills Quick reflexes
+                   (``capability_routing.local``); a Qwen3 front fills nothing
+                   else.
   deep_thinker     a Bonsai model from the shortlist. Seated as
                    ``capability_routing.reasoning`` (and
                    ``model_routing.local_model``), "Everyday conversation".
@@ -69,6 +70,7 @@ SEAT_ROLES = {
 #: The voice front models (``voice_front.FRONT_MODELS`` keys) and the voice
 #: artifact that carries each one's pinned file.
 FRONT_ARTIFACT = {
+    "ternary-bonsai:1.7b": "voice-front-bonsai-1.7b",
     "qwen3-4b-instruct-2507": "voice-front-4b",
     "qwen3-1.7b": "voice-front-1.7b",
 }
@@ -81,7 +83,8 @@ def front_artifacts(model_id: str) -> list:
     """Every artifact a fast-responder choice downloads, front first."""
     return [FRONT_ARTIFACT[model_id], *FRONT_COMPANIONS]
 
-#: Fast first: it is small, and it is the one that carries the runtime install.
+#: Fast first: it is small. The PrismML runtime a Bonsai front is served on
+#: comes with the deep thinker, which is always a Bonsai model.
 ORDER = ("fast_responder", "deep_thinker")
 
 _LOCK = threading.RLock()
@@ -238,8 +241,17 @@ def apply_seat(seat: str, model_id: str) -> None:
 
     if seat == "fast_responder":
         # voice_front.selected_model(settings) reads this key.
-        core._save_settings({"voice_front_model": model_id})
-        log.info("first run: voice front set to %s", model_id)
+        delta = {"voice_front_model": model_id}
+        reflex = _register_reflex(model_id)
+        if reflex:
+            # The same file is the Quick reflexes model (capability "local"),
+            # served by the Arbiter on the engine the front declares.
+            delta["capability_routing"] = {"local": {"provider": "llama-cpp-local",
+                                                     "model": reflex}}
+            delta["model_routing"] = {"local_model": reflex}
+        core._save_settings(delta)
+        log.info("first run: voice front set to %s%s", model_id,
+                 " (and Quick reflexes)" if reflex else "")
         return
     _label, capability = SEATS[seat]
     delta: dict = {"capability_routing": {capability: {"provider": "ollama-local",
@@ -247,6 +259,29 @@ def apply_seat(seat: str, model_id: str) -> None:
                    "model_routing": {"local_model": model_id}}
     core._save_settings(delta)
     log.info("first run: %s seat set to %s", seat, model_id)
+
+
+def _register_reflex(model_id: str) -> Optional[str]:
+    """Record a voice front that is also a shortlist model (Ternary Bonsai
+    1.7B) in the model store, so the Arbiter can serve it in the Quick
+    reflexes seat; its model id, or None for a front that is only a front
+    (the Qwen3 builds). The engine is the runtime the front declares, named
+    by path: the deep thinker's download installs it after this seat."""
+    from agent_friday.services import model_shortlist as sl
+    from agent_friday.services import voice_front as vf
+    spec = vf.FRONT_MODELS.get(model_id) or {}
+    if not spec.get("engine") or not sl.get(model_id):
+        return None
+    from agent_friday.services import model_download as md
+    from agent_friday.services import model_store
+    binary = (sl.runtime_spec(spec["engine"]).get("server_binary") or {}).get(
+        sl.os_family(), "llama-server")
+    model_store.register(
+        model_id, vf.model_path(model_id), source=model_store.SOURCE_DOWNLOAD,
+        sha256=spec["sha256"], label=spec["label"],
+        engine=str(md.runtime_dir_for(spec["engine"]) / binary),
+        origin={"repo": spec["repo"], "file": spec["file"], "licence": spec["licence"]})
+    return model_id
 
 
 # ── the status the UI reads ─────────────────────────────────────────────────
@@ -270,7 +305,8 @@ def _entry(seat: str, model_id: str, packing: Optional[str]) -> dict:
         total = sum(va.size_bytes(a) for a in front_artifacts(model_id))
         return {"seat": seat, "label": SEATS[seat][0], "model_id": model_id,
                 "model_label": vf.FRONT_MODELS[model_id]["label"] + " + speech ear",
-                "packing": "Q4_K_M", "bytes_total": int(total), "bytes_done": 0,
+                "packing": vf.FRONT_MODELS[model_id].get("packing", "Q4_K_M"),
+                "bytes_total": int(total), "bytes_done": 0,
                 "state": "waiting", "error": None, "job_id": None, "artifacts_done": 0}
     from agent_friday.services import model_shortlist as sl
     m = sl.get(model_id) or {}

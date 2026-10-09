@@ -2,12 +2,22 @@
   "_note": "Read by the installer's model page (lib/ModelPicker.ps1). Held equal to services/voice_artifacts.py and voice_front.FRONT_MODELS by tests/unit/test_installer_model_picker.py.",
   "fronts": [
     {
+      "id": "ternary-bonsai:1.7b",
+      "artifact": "voice-front-bonsai-1.7b",
+      "label": "Ternary Bonsai 1.7B",
+      "role": "co_resident",
+      "packing": "PQ2_0",
+      "front_bytes": 463290464,
+      "note": "Recommended. Answers you when you talk and handles quick jobs (Quick reflexes). Small enough to stay beside the deep thinker where there is room."
+    },
+    {
       "id": "qwen3-4b-instruct-2507",
       "artifact": "voice-front-4b",
       "label": "Qwen3-4B-Instruct-2507",
       "role": "solo",
       "front_bytes": 2497281120,
-      "note": "Best quality. Pauses the deep thinker while you talk (there is not room for both)."
+      "note": "Larger Qwen3 alternative. Pauses the deep thinker while you talk (there is not room for both).",
+      "packing": "Q4_K_M"
     },
     {
       "id": "qwen3-1.7b",
@@ -15,7 +25,8 @@
       "label": "Qwen3-1.7B",
       "role": "co_resident",
       "front_bytes": 1282439264,
-      "note": "Smaller. Stays loaded beside the deep thinker."
+      "note": "Qwen3 alternative. Stays loaded beside the deep thinker where there is room.",
+      "packing": "Q4_K_M"
     }
   ],
   "companions": [

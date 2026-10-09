@@ -1456,7 +1456,17 @@ def _brain_parked_for_call(settings, front_model) -> bool:
         return False
     if pol == "parked":
         return True
-    return _vf.FRONT_MODELS.get(front_model, {}).get("role") == "solo"
+    if _vf.FRONT_MODELS.get(front_model, {}).get("role") == "solo":
+        return True
+    # A co-resident front stays beside the brain only when the card has room
+    # for it above the display reserve. Loading it into a full card is the
+    # over-commit the lease exists to prevent; "cannot tell" parks too.
+    try:
+        from agent_friday.services.voice_workers import admit_gpu
+        admit_gpu(_vf.vram_need_mib(front_model), "voice front")
+        return False
+    except Exception:
+        return True
 
 
 #: Sessions holding the voice-call lease. The Arbiter holds ONE lease; two
