@@ -27,8 +27,12 @@ def world(tmp_path, monkeypatch):
 
 
 def _raise(monkeypatch, selected=(1, 2, 3)):
-    report(newsletter_stage(selected=list(selected)))
-    page = Page(monkeypatch, answer={"ok": True, "applied": 3, "missing": 0, "accepted": 3, "count": 3})
+    stage = newsletter_stage(selected=list(selected))
+    report(stage)
+    # A real page answers a stage request with its list, as the product asks again when the stage is
+    # older than screen_stage.FRESH_S; a slow first call must not turn into "I can't see your list".
+    page = Page(monkeypatch, answer={"ok": True, "applied": 3, "missing": 0, "accepted": 3, "count": 3},
+                stage_on_ask=stage)
     sel = ve._voice_tool_run("screen_select", {"op": "select", "scope": "screen", "category": "newsletters"},
                              _say, {"conversation_id": "c-v"})
     assert sel.startswith("SELECT_OK"), sel
