@@ -1,8 +1,8 @@
 # Security Policy
 
-This is the security-policy entry point for Agent Friday: how to report a
-problem, which versions receive fixes, what Friday defends against, what it
-guarantees about actions and receipts, and where secrets live. The detailed
+This is the security-policy entry point for Agent Friday™: how to report a
+problem, which versions receive fixes, what is in scope, what Friday defends
+against, what it guarantees about actions and receipts, and where secrets live. The detailed
 design, with every guarantee and its limits, is in
 [docs/security/threat-model.md](docs/security/threat-model.md).
 
@@ -17,7 +17,8 @@ exposed secret.
   `SECURITY: Agent Friday`.
 
 Include what you found, where (file, commit or release), how to reproduce it,
-and the impact you expect. A proof of concept helps but is not required.
+and the impact you expect. A proof of concept helps but is not required. Do not
+include real credentials or other people's data in a report.
 
 What to expect:
 
@@ -29,15 +30,43 @@ If you find an exposed credential, rotation comes first: rewriting history
 never un-leaks a value, so the credential is revoked and re-issued before
 anything else.
 
+## Scope
+
+In scope:
+
+- The application in this repository: the server, the tray app, the voice
+  workers, the phone ingress, the UI files, and the scripts that ship with them.
+- The Windows setup program and its scripts in `packaging/windows/`.
+- Bypasses of the approval checkpoint, the egress gate, the vault tiers, the
+  credential store or the loopback rule described below.
+- Secrets, tokens or personal data committed to this repository.
+
+Out of scope:
+
+- Anything that needs an attacker who already controls your Windows account or
+  runs code as you (see "What Friday does not defend against" below).
+- Physical access to an unlocked or unencrypted machine.
+- Weaknesses in a third-party model provider, in a model's own output, or in a
+  dependency that Friday does not use in a vulnerable way. Report those to the
+  maintainer of that project. Tell us if a dependency advisory affects Friday.
+- Reports that come only from an automated scanner, with no demonstrated
+  effect on Friday.
+- The Windows SmartScreen warning on the setup program. The installer is not
+  code signed yet; that is a known limitation of this release.
+- Social engineering of maintainers, and denial of service by sending a
+  local process unreasonable amounts of work.
+
 ## Supported versions
 
-Security fixes land on `main` and ship in the next tagged release. They are
-not back-ported.
+Agent Friday™ Beta 1.0 (version `1.0.0b1`) is the first release and the only
+supported line. The 5.x versions were alpha builds and are not supported.
+Security fixes land on `main` and ship in the next tagged release. They are not
+back-ported.
 
 | Version | Supported |
 |---|---|
-| The latest tagged release | Yes |
-| Anything older | No. Upgrade by running the new installer; your data is kept. |
+| Beta 1.0 (`1.0.0b1`) and later releases, the latest only | Yes |
+| 5.x and anything older | No. Upgrade by running the new installer; your data is kept. |
 
 Watch the repository's releases for security notes.
 
@@ -112,7 +141,7 @@ jobs, background tasks and the phone. They are implemented in
     action waits on an **approval card**. An approved card lets that one call
     through once.
   - A **scheduled job** can act on its own only under a **grant** you create
-    in Settings → Privacy & Approvals: it names the job, the actions, an
+    in Settings > Privacy & Data: it names the job, the actions, an
     expiry and a number of uses. A grant never covers an action whose details
     came from read content, and every email still gets its own card.
 - **Signed receipts.** Each decision is appended to
@@ -130,7 +159,7 @@ jobs, background tasks and the phone. They are implemented in
 | Secret | Where | Protection |
 |---|---|---|
 | Provider API keys, Google tokens, MCP OAuth tokens, platform credentials, phone secrets | `~/.friday/providers/keys/`, `~/.friday/google_accounts/tokens/`, `~/.friday/mcp_oauth/`, `~/.friday/platforms/`, `~/.friday/phone/secrets/` | AES-256-GCM under Friday's own keystore root key (`services/keystore.py`, `services/credential_store.py`). Blobs written by older versions (vault key, Windows DPAPI) are still readable and are migrated. |
-| The keystore root key | `~/.friday/security/keystore.json` | 32 random bytes. By default the file holds the key unwrapped, protected by an owner-only file ACL, so Friday can start unattended. With a vault passphrase set, Settings → Privacy & Approvals → Stored keys wraps it with that passphrase (Argon2id); Friday unwraps it at start-up with the passphrase from Credential Manager, and changing the vault passphrase rewraps it. Nothing changes the wrap without that control. |
+| The keystore root key | `~/.friday/security/keystore.json` | 32 random bytes. By default the file holds the key unwrapped, protected by an owner-only file ACL, so Friday can start unattended. With a vault passphrase set, Settings > Privacy & Data > Stored keys wraps it with that passphrase (Argon2id); Friday unwraps it at start-up with the passphrase from Credential Manager, and changing the vault passphrase rewraps it. Nothing changes the wrap without that control. |
 | The vault passphrase | Windows Credential Manager (`agent-friday` / `vault-passphrase`) and a DPAPI-protected file, `~/.friday/security/vault-passphrase.dpapi` | Never written to a launch script. `services/vault_passphrase.py` is the single resolver. |
 | Vault files (finance, health, legal, family records) | `~/.friday/finance`, `~/.friday/health`, `~/.friday/vault/` | When a vault passphrase is set: AES-256-GCM with a key derived from it by Argon2id. There is no recovery if the passphrase is lost. Without a passphrase these are ordinary readable files. |
 | Governance signing key | Windows Credential Manager (`agent-friday` / `governance-key`), falling back to `~/.friday/vault/.governance-key` (owner-only) | Never replaced automatically: an unreadable key is an error, not a reason to mint a new one and orphan old receipts. |

@@ -6,18 +6,21 @@ labels: enhancement
 assignees: ''
 ---
 
-## Problem
+## The problem
 
-What problem does this feature solve? Who experiences it and how often?
+What are you trying to do that Agent Friday does not let you do today? Who runs
+into it, and how often?
 
-## Proposed solution
+## What you would like
 
-Describe what you'd like to see.
+Describe what you would like to see.
 
-## Alternatives considered
+## Alternatives you considered
 
-Any other approaches you thought about, and why you'd prefer this one.
+Other approaches, and why you prefer this one.
 
-## Additional context
+## Anything else
 
-Screenshots, mockups, related issues, or prior art. If this touches the vault, egress gate, governance, or federation subsystems, note that — those areas get extra review.
+Screenshots, mockups, related issues. If the idea touches the vault, the egress
+gate, approvals or anything that sends data off the PC, say so; those areas
+get extra review.

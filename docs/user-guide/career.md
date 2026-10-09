@@ -1,10 +1,10 @@
 # Career: choose roles, prepare, and track your search
 
-Status: implemented. Career uses Friday's native tools and your local career-ops files.
-
-Career brings your job search into one workspace: find promising roles, compare
-them with your real experience, prepare application materials, and keep track of
-what happens next. Friday helps you prepare; you review and apply.
+Career is in the Work group of the dock. It brings your job search into one
+workspace: find promising roles, compare them with your real experience,
+prepare application materials, and keep track of what happens next. Agent
+Friday™ helps you prepare; you review and apply. Career uses Friday's native
+tools and your local career-ops files.
 
 ## Your job search in one place
 
@@ -73,9 +73,9 @@ Career does not imply that every model call runs locally.
 Choose **Add Career search workflow**, or add **Career search** from the starters
 in **Workflows**. It saves an ordinary editable workflow with three steps:
 
-1. **Check career setup** — report what is ready and what needs attention.
-2. **Scan new opportunities** — read configured boards and report coverage gaps.
-3. **Evaluate and shortlist** — read the selected postings and save fit reports.
+1. **Check career setup** reports what is ready and what needs attention.
+2. **Scan new opportunities** reads configured boards and reports coverage gaps.
+3. **Evaluate and shortlist** reads the selected postings and saves fit reports.
 
 Adding the workflow does not run it, create a schedule, or replace your edits to
 an existing workflow. Review the steps in Workflows, then run it when you choose.

@@ -1,6 +1,6 @@
 # Documents
 
-Friday can make real Word, Excel and PowerPoint files (`.docx`, `.xlsx`,
+Agent Friday™ can make real Word, Excel and PowerPoint files (`.docx`, `.xlsx`,
 `.pptx`) on your PC, with no Microsoft Office installed and nothing sent
 anywhere. Ask in chat: "make a one-page brief as a Word document", "turn this
 table into a spreadsheet", "build a five-slide deck".
@@ -36,9 +36,9 @@ See [Approvals and receipts](approvals-and-receipts.md).
 The Windows installer installs OfficeCLI 1.0.152 into
 `%USERPROFILE%\.friday\runtime\officecli\`. It downloads the release from
 GitHub, checks it against a SHA-256 fingerprint built into the installer, and
-discards it if they differ. If that step was skipped (`-SkipOfficeCli`) or
-failed, Friday reports that the engine is not installed when you ask for an
-Office file; run the installer again, or set it up by hand:
+discards it if they differ. If that step failed, Friday reports that the
+engine is not installed when you ask for an Office file. Run the installer
+again, or set it up by hand:
 
 1. Download `officecli-win-x64.exe` version **1.0.152** from the OfficeCLI
    GitHub releases page.

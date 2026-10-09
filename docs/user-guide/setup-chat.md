@@ -1,10 +1,48 @@
 # The setup chat
 
-After the first-run consent screens (what Friday writes down, the vault
-passphrase, where your words go, other people, update checks), Friday sets
-herself up with you in a short conversation. You answer by typing or by
-tapping a suggested answer. Every step can be skipped, and **Set up later**
-in the top bar finishes setup with defaults at any point.
+Setup has three parts. The installer asks which models to download. The first
+run in the app shows a few consent screens. Then Agent Friday™ sets itself up
+with you in a short conversation, the setup chat. You answer by typing or by
+tapping a suggested answer. Every step can be skipped, and **Set up later** in
+the top bar finishes setup with defaults at any point.
+
+## Choosing models in the installer
+
+The installer's model page looks at your PC (memory, graphics card and free
+disk space) and offers two jobs, each with a choice of model:
+
+- **Fast responder** answers voice and quick replies. The choices are Qwen3 4B
+  and Qwen3 1.7B, the same models listed under
+  [Voice](voice.md#the-fast-responder).
+- **Deep thinker** does the heavier thinking. The choices are from the Bonsai
+  family.
+
+Each option shows its download size. The page labels one option per job as
+**Recommended**, but it never ticks anything for you. You choose a model for
+each job, and the page shows the total download.
+
+Nothing downloads during setup. To fetch the models you must tick **Download
+these models when Agent Friday first starts**, and setup will not continue
+without either that tick or the cloud choice. The download happens the first
+time Friday starts. It shows its progress, checks every file against the
+publisher's checksum, and picks up where it stopped if interrupted. A choice
+that would leave the drive with under 10 GB free is refused.
+
+If you would rather use a cloud model, tick **Use a cloud model instead** and
+nothing is downloaded. After setup, add a key for the cloud model you want.
+You can add or remove local models later in Settings > Models. See
+[Updating and uninstalling](updating-and-uninstalling.md) for the rest of what
+the installer does.
+
+## The first-run screens
+
+Before the chat, Friday shows what it writes down, asks for the passphrase that
+protects the vault, and asks where your words go: the cloud, this computer only,
+or both. If you chose a cloud model, a further screen explains what cloud mode
+changes. Another screen covers the people you mention, a screen asks how Friday
+should behave when you are on a video call, and the last asks whether to check
+for new versions weekly. The update check is off until you turn it on. See
+[Privacy](privacy.md).
 
 The chat needs no model and no API key: every line Friday says in it is
 written in advance, and every step is decided by Friday's own code. A model
@@ -26,7 +64,7 @@ keep Friday). Then the basics:
 - **What this computer can run:** your graphics card and memory, and, if a
   local model runtime is installed, a button to download the local model.
 - **Friday's own address on this PC** (optional): the same card as
-  Settings → General → Local address.
+  Settings > General > Local address.
 
 ### 2. Connect everything
 
@@ -39,7 +77,7 @@ TikTok, Bluesky, Medium, Substack), messaging (Telegram and Discord bots,
 Slack, Discord servers), tools (Linear, Notion, Higgsfield), web search
 (Brave, Firecrawl), voices (ElevenLabs, Inworld) and Cloudflare.
 
-Each card says what connecting it unlocks and **exactly what it asks for**:
+Each card says what connecting it allows and **exactly what it asks for**:
 for Google, every permission in plain words, with sending mail and changing
 your mailbox as separate boxes that are off unless you tick them; for social
 accounts, the permissions the platform will ask you to approve.
@@ -57,7 +95,7 @@ other programs' credential files, and never asks for a password in the chat.
 If you paste something that looks like a key into the chat box, it is not
 sent anywhere; Friday offers the secure field for it instead.
 
-Anything you skip waits in **Settings → Accounts & Keys → Setup checklist**,
+Anything you skip waits in **Settings > Connections > Setup checklist**,
 with the same cards.
 
 #### One key is enough
@@ -127,7 +165,7 @@ What it **will not** do:
   Rejected findings are deleted.
 
 With no model available, Friday says so and you can run it later from
-**Settings → General → Your profile → Research on you**.
+**Settings > General > Your profile > Research on you**.
 
 ### 4. A few questions
 
@@ -159,13 +197,13 @@ her instructions, and text trying to override them is removed.
 
 ### Scheduled jobs on a PC with no local model
 
-Friday does a few jobs on her own schedule: the morning news, the evening
-front page, an afternoon briefing, a daily creation, and a heartbeat that
-checks your mail and calendar. They run on a model on this computer, at no
-cost. If this computer has no local model, they are paused, and the chat asks
-once whether they may use a cloud model instead. The question lists the model
-each job would use (Claude Haiku 4.5 by default) and its estimated monthly
-cost, about $9 in total with the defaults.
+Two of Friday's jobs run on their own schedule and cost nothing on a model on
+this computer: a daily creation and a heartbeat that checks your mail and
+calendar. If this computer has no local model, they are paused, and the chat
+asks once whether they may use a cloud model instead. The question lists the
+model each job would use (Claude Haiku 4.5 by default) and its estimated
+monthly cost. The News (the front pages and briefings) always runs on this
+computer and never uses a cloud model.
 
 - **Yes** lets them run on those models while there is no local model. The
   heartbeat then runs every 4 hours between 08:00 and 20:00.
@@ -173,9 +211,26 @@ cost, about $9 in total with the defaults.
 - **Skip** leaves the question unanswered.
 
 The question does not appear when a local model is installed, when you chose
-"local only" on the "Where your words go" screen, or once you have answered
-it. Change the answer any time in **Settings → Spending**. See
+"local only" on the "Where your words go" screen, or once you have answered it.
+Change the answer any time in **Settings > Models**. See
 [Scheduled jobs](scheduled-jobs.md).
+
+### Other people in the room
+
+Friday then asks about spoken approvals. When you talk to Friday with someone
+else in the room, it cannot yet tell your voice from theirs. You can require
+that a spoken approval says Friday's name ("Friday, send it"), or let anyone
+Friday can hear approve out loud. Skipping keeps the careful answer, which is
+to require the name. On your own, "send it" is enough. The cards themselves are
+unchanged either way.
+
+### The local model between sessions
+
+If a large local model is loaded, Friday asks what to do with its memory when
+you quit. **Hand it back when I quit** (the default) keeps the rest of your
+computer fast and costs about a minute to load again next time. **Keep it
+warm for me** lets Friday think privately the moment you return, while the
+memory stays reserved. Either way the model stays loaded through a restart.
 
 ### 6. Finish
 
@@ -200,7 +255,7 @@ answers, and then only your answers go, to the model you were shown.
 
 ## Changing or deleting your profile
 
-**Settings → General → Your profile** shows each question and your answer.
+**Settings > General > Your profile** shows each question and your answer.
 You can change answers, rebuild the style from them, move the sliders, and
 **Run the setup chat again**. Running it again revisits each step and keeps
 everything already connected and everything Friday has learned.

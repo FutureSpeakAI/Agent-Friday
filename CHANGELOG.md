@@ -1,57 +1,85 @@
 # Changelog — Agent Friday
 
 All notable changes to this project are documented here.  
-Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
+Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current release: **5.14.3**.
->
-> Entries for 5.7.0 and 5.8.1 are not recorded here — those releases were
-> tagged without a changelog entry.
+> **Note:** Agent Friday™ Beta 1.0 is the first release of the app. The 5.x
+> entries below are the alpha line it replaces, kept as a record. Entries for
+> 5.7.0 and 5.8.1 are not recorded, because those releases were tagged
+> without a changelog entry. Where a 5.x entry points to the release notes, it
+> means the notes published with that release.
 
 ---
 
-## [1.0.0b1] - Agent Friday Beta 1.0 (unreleased)
+## [1.0.0-beta.1] - Agent Friday Beta 1.0 (unreleased)
 
-Beta 1.0 is numerically below the 5.x line it replaces. Releases are now ordered
-by a **build sequence** (`src/agent_friday/release.py`), not by version number,
-and both the setup program and the weekly update check use it: 5.14.3 is never
-offered to a Beta install, and Beta 1.0 counts as newer than 5.14.3.
+Agent Friday™ Beta 1.0 (version `1.0.0b1`, tag `v1.0.0-beta.1`) is a private AI
+agent that runs on a Windows PC. It is a pre-release: it is meant to be tried,
+and its rough edges are listed in [KNOWN_ISSUES.md](KNOWN_ISSUES.md). The
+release notes are in [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
-### Added
+### What it is
 
-- **One-file Windows setup program** (`AgentFriday-Setup-1.0.0-beta.1.exe`,
-  Inno Setup 6, per-user, unsigned) replacing the zip and `Install Agent
-  Friday.cmd`. It carries its own Python, Friday's files and the wheels.
-- **Hardware-aware model page.** Reads memory, graphics card and free disk
-  locally and lists only the models that fit, for two required jobs: the fast
-  responder (a Qwen3 voice front, with the speech ear) and the deep thinker (a
-  Bonsai model). The recommendation is labelled, never
-  preselected. A cloud option and an explicit consent box sit on the same
-  page. Setup downloads no model: Friday's downloader fetches the choices on
-  first start with progress, sha256 verification and resume
-  (`services/first_run_models.py`).
-- **Safer upgrades.** Setup ranks the installed release by build sequence,
-  stops Friday by the processes that run from the install folder, copies the
-  data home to `~/.friday-backups` first, and afterwards checks the file count
-  and the vault key files' hashes.
+- **A private agent on your own PC.** Wiki, conversations, settings and
+  receipts live in one folder (`%USERPROFILE%\.friday`). There is no Friday
+  server and no account. Finance, health, legal and family records go in a vault
+  encrypted with your passphrase.
+- **Local first.** Friday thinks on your graphics card or processor, in the
+  cloud (Anthropic, Google, OpenRouter or any OpenAI-compatible provider), or
+  both. Every reply names the model that answered. An egress gate withholds
+  private content from cloud models and fails closed.
+- **You approve actions.** Reading and drafting run on their own. Sending,
+  publishing, scheduling, installing and changing your files wait for your yes,
+  and every decision is written to a signed receipt.
+- **Zero telemetry.** Friday sends nothing about you. Connections happen only for
+  features you use. The optional update check, off until you turn it on,
+  contacts `api.github.com` once a week.
+
+### What it does
+
+- **Chat Hub.** Chat in a panel, a window or a browser tab, with a sidebar of
+  every conversation grouped into projects.
+- **Voice.** Cloud voice, or local listening and speaking on your PC. Settings >
+  Voice has a **Local voice models** section in every voice mode; each part
+  shows its size and asks before it downloads, and every download is pinned and
+  verified. Hold Alt+T anywhere in Windows to dictate into any app.
+- **See & Touch.** Friday sees what your open workspace shows (counts and kinds,
+  never private workspace details), points at rows with numbered badges, ticks
+  or filters what you mean, and fills in a field you can see. Acting on what is
+  ticked needs your approval, and trash and archive always ask.
+- **Mail, calendar and tasks** through your Google account, with every send or
+  change on an approval card.
+- **Library and Media.** Documents you add, read on your PC and answered with
+  footnotes; a media workspace with search, previews, transcripts and tidy-up
+  with a recoverable trash.
+- **Documents.** Word, Excel and PowerPoint files made locally and checked
+  visually.
+- **Workflows, scheduled jobs and podcasts.**
+- **Phone** (off by default) through your own Twilio number.
+- **Settings** grouped into General, Voice, Models, Privacy & Data,
+  Connections, Appearance and Advanced, with About at the bottom.
+
+### The installer
+
+- **One file.** `AgentFriday-Setup-1.0.0-beta.1.exe` (Inno Setup 6, per-user, no
+  administrator rights, unsigned) carries its own Python, Friday's files and a
+  wheel for every package, and installs them without the internet.
+- **A hardware-aware model page.** It reads memory, graphics card and free disk
+  locally and lists only the models that fit, for two jobs: the fast responder
+  (a Qwen3 voice model with its speech listener) and the deep thinker (a
+  Bonsai model). The recommendation is labelled, never preselected. A cloud
+  option and an explicit consent box sit on the same page. Setup downloads no
+  model; Friday fetches the choices on first start with progress, SHA-256
+  verification and resume (`services/first_run_models.py`).
+- **Safe upgrades from 5.x.** Setup orders releases by build sequence
+  (`src/agent_friday/release.py`), so Beta 1.0 counts as newer than 5.14.3 and
+  the update check never offers a 5.x build. It stops Friday, copies the data
+  home to `~/.friday-backups`, and afterwards checks the file count and the
+  vault key files' hashes.
 - **Shortcuts that land.** The Desktop shortcut follows a OneDrive-redirected
-  Desktop; setup verifies both shortcuts exist and repairs through the shell's
-  known folders when one does not.
+  Desktop. Setup verifies both shortcuts and repairs them through the shell's
+  known folders when one is missing.
 - **Uninstall asks whether to keep your data**, defaulting to keep.
-
-### Changed
-
-- The autostart entry is named "Agent Friday" (the old "FRIDAY Desktop" entry
-  is removed on upgrade).
-- `bonsai2-tiers.json` moved to `src/agent_friday/resources/` and ships in the
-  package.
-- Release workflow publishes a pre-release (exe, SHA-256, notes) when the
-  version tag is pushed and the install and upgrade checks pass.
-
-### Removed
-
-- The zip and `Install Agent Friday.cmd` path, `scripts/install.ps1`,
-  `scripts/install.bat` and the stale `AgentFriday.spec`.
 
 ---
 
@@ -59,8 +87,7 @@ offered to a Beta install, and Beta 1.0 counts as newer than 5.14.3.
 
 A security release. The repository's CodeQL backlog (706 alerts) is resolved,
 the Dependabot alerts are closed or dismissed with a documented reason, and
-two approval rules are tightened. The plain-language summary is in
-[RELEASE_NOTES.md](RELEASE_NOTES.md). The per-alert record is in
+two approval rules are tightened. The per-alert record is in
 [docs/security/codeql-dismissals.md](docs/security/codeql-dismissals.md) and
 [docs/security/codeql-residual.md](docs/security/codeql-residual.md).
 

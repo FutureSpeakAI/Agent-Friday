@@ -1,8 +1,8 @@
 # Configuration Reference
 
-> Status: current for 5.14.0. Last verified against `DEFAULT_SETTINGS` in
-> `src/agent_friday/core/__init__.py` on 2026-09-24. Where this page and the
-> code disagree, the code is right; please open an issue.
+Defaults on this page are those of `DEFAULT_SETTINGS` in
+`src/agent_friday/core/__init__.py`. Where this page and the code disagree,
+the code is right; please open an issue.
 
 Most people never need this page: everything here that matters day to day has
 a control in Settings. This reference is for checking a default, reading
@@ -28,7 +28,8 @@ file while Friday is stopped.
 - **A file that will not parse** makes Friday run on factory defaults and log
   an error; saving is then refused so the file is not overwritten.
 - **Partial saves.** `capability_routing`, `model_routing`, `content`,
-  `turn_budget` and `local_address` are merged field by field. Every other
+  `turn_budget`, `local_address`, `scheduled_cloud` and `tracking` are merged
+  field by field. Every other
   block is replaced whole by a partial write, so send the complete block.
 - **Some values are written by exactly one code path.**
   `model_routing.cloud_consent` is set only by the consent screen and is
@@ -58,15 +59,19 @@ hand.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `orchestrator_model` | `"claude-sonnet-5"` | The main model. Mirror of `capability_routing.reasoning`. Choose it in Settings → Models. |
+| `orchestrator_model` | `"claude-sonnet-5"` | The main model. Mirror of `capability_routing.reasoning`. Choose it in Settings > Models. |
 | `subagent_model` | `"claude-sonnet-5"` | Background tasks, drafts and compaction. Mirror of `capability_routing.subagent`. |
 | `creative_model` | `"gemini-nano-banana-2"` | Image generation. |
 | `music_model` | `"lyria-clip"` | `lyria-clip` (up to 30 s) or `lyria-pro`. |
-| `voice_model` | `"gemini-2.5-flash-native-audio-latest"` | The Gemini Live model, used only when the voice engine is `gemini`. |
+| `voice_model` | `"gemini-3.8-live"` | The Gemini Live model, used only when the voice engine is `gemini`. |
 | `custom_models` | `[]` | Your own `{"provider", "id"}` entries, shown in the picker as unverified. |
 | `temperature` | `0.7` | Sampling temperature for chat. |
 | `workspace_temperatures` | per workspace, 0.2 to 0.75 | Temperature by workspace (for example `research` 0.25, `studio` 0.75). |
-| `turn_budget` | rounds 999 (scheduled 300), wall clock 1800 s, tokens 1,000,000 | Limits for one turn. A seat-specific entry overrides the default for that seat. The same budget applies to local and cloud seats. |
+| `turn_budget` | no limits (`rounds`, `wall_clock_s` and `tokens` are empty) | Optional limits for one turn. A figure appears only when you set one; a seat-specific entry (for example `{"local": 200}`) overrides one seat. The same budget applies to local and cloud seats. |
+| `local_reasoning_effort` | `"auto"` | How hard a local reasoning model thinks. `auto` lets the shape of the turn decide; `medium`, `xhigh` or `none` pin one effort; `default` leaves the model to its own. |
+| `local_reasoning_effort_policy` | `deep_xhigh` on, `reflex_thinking_off` off | What `auto` may do: let deep coding or analysis turns think at `xhigh`, and let quick turns skip thinking. |
+| `display_reserve_mode` | `"adaptive"` | How much graphics memory is kept free for the desktop. `adaptive` uses the measured idle draw plus 512 MiB (never under 1 GiB on Windows); `fixed` keeps 2,560 MiB. |
+| `seat_prefix_warm` | `true` | When the main local model answers its health check, send it a one-token request so the first real turn after a restart is fast. |
 | `runtime_dir` | `""` | Where local runtimes and model weights live. Empty means `~/.friday/runtime`. `FRIDAY_RUNTIME_DIR` overrides it. |
 | `demo_mode` | `null` | `null` shows canned replies only when no provider is set up; `true`/`false` forces it. |
 | `providers` | `{}` | Per-provider `{"enabled", "base_url"}`. Never holds keys. |
@@ -80,7 +85,7 @@ hand.
 | `creative_image` | `google-gemini` / `gemini-nano-banana-2` |
 | `creative_video` | `google-gemini` / `veo-3` |
 | `creative_music` | `google-gemini` / `lyria-clip` |
-| `voice` | `google-gemini` / `gemini-2.5-flash-native-audio-latest` |
+| `voice` | `google-gemini` / `gemini-3.8-live` |
 | `asr` | `local-voice-lite` / `whisper-small` |
 | `tts` | `local-voice-lite` / `piper-en_US-amy-medium` |
 | `embedding` | `local` / `all-MiniLM-L6-v2` |
@@ -107,14 +112,13 @@ A capability that is not in the defaults is removed on the next save.
 | `openai_api_key` | `""` | Key for that path, **stored in plain text**. Leave blank and use the encrypted store or `OPENAI_API_KEY` / `OPENROUTER_API_KEY` instead. |
 | `cloud_consent` | not answered | *Internal.* Your recorded answer to the unrestricted-cloud screen. The only thing that can turn the egress gate's safeguards off. |
 | `unrestricted_cloud` | `false` | *Internal.* Legacy; read once to migrate into `cloud_consent`. |
-| `local_inference_slots` | `3` | *Internal.* Not currently read. |
 
 ### Offline
 
 | Key | Default | Meaning |
 |---|---|---|
 | `offline_auto_local` | `true` | Route to local models while this PC is offline. |
-| `web_fonts_from_google` | `true` | While Friday's font files are not in `static/fonts`, load the page's typefaces from Google Fonts. `false` uses fonts already on the PC. Ignored once the files are there. Settings → Privacy & Approvals → Fonts. |
+| `web_fonts_from_google` | `true` | While Friday's font files are not in `static/fonts`, load the page's typefaces from Google Fonts. `false` uses fonts already on the PC. Ignored once the files are there. Settings > Privacy & Data → Fonts. |
 | `network_probe` | `"route"` | How Friday tells whether it is offline, every 30 seconds. `"route"` checks this PC's routing table and sends nothing; `"internet"` connects to public DNS resolvers (`dns.google`, `8.8.8.8`, `1.1.1.1`); `"off"` does not check. |
 | `offline_queue_cloud_tasks` | `true` | Queue cloud content tasks while offline. |
 
@@ -127,6 +131,9 @@ A capability that is not in the defaults is removed on the next save.
 | `include_sources` | `true` | Ask the model to include sources. |
 | `cite_sources` | `false` | Inline citation on every factual claim. |
 | `news_priorities` | `["AI/Tech", "Politics", "Media", "Local", "Business"]` | News topics Friday prioritises in conversation. Does not control the news feeds. |
+| `news_local_only` | `true` | The News routines (front pages and briefings) run on a model on this PC and wait for it. They never use a cloud model. |
+| `news_edition_window_hours` | front page 36, briefing 36 | How many hours a story stays eligible for each routine's edition. |
+| `notification_mutes` | `[]` | Notification kinds you muted, as `kind\|source`. Muted notifications go to the activity log. Approvals can never be muted. |
 | `news_local_area` | `""` | The place the Local news beat covers, as free text (a city or region). Friday searches Google News for it. Set it in News → Customize Briefing → Local beat. |
 | `news_local_sources` | `[]` | Outlet domains for the Local beat, for example `["springfield-local.example"]`. Each is fetched as a Local feed and trusted like the built-in high-trust outlets. With this and `news_local_area` both empty there is no Local beat; nothing ships with a city. |
 | `memory_recall_enabled` | `true` | Recall from past conversations. |
@@ -144,6 +151,8 @@ A capability that is not in the defaults is removed on the next save.
 | `off_record` | `false` | Do not log chat at all. |
 | `context_logging_enabled` | `true` | The append-only context log in `~/.friday/vault/context-log/`. |
 | `context_retention_days` | `0` | 0 keeps the log forever; otherwise prune after 30, 90, 180 or 365 days. |
+| `tool_output_retention_days` | `7` | How long the full text of a cut-short tool result stays on disk. 0 keeps it forever. |
+| `off_record_stops_storage` | `true` | While `off_record` is on, nothing about the conversation is written to disk. Receipts and governance logs keep only the tool, class, decision and time. |
 | `wiki_encrypted_sections` | `[]` | Wiki sections to encrypt with the vault key, for example `["health", "legal", "family"]`. Needs a vault passphrase. Encrypted sections are also kept out of the cloud knowledge block. |
 | `wiki_mirror_dir` | `""` (off) | An absolute path to an existing folder you choose. Every wiki write and delete is copied there. Encrypted sections are copied as ciphertext, everything else as plain text. If the folder is synced by OneDrive, Google Drive, Dropbox or similar, every mirrored page leaves this computer through that client. |
 | `judgment_gate` | off; model `gemma4:e2b` | A local model that judges ambiguous privacy cases. |
@@ -160,8 +169,11 @@ cognitive memory, soul); `nightly_reindex: true`; `max_visible_nodes: 2000`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `decision_backend` | `"laya-union"` | What decides whether an ambiguous action needs your sign-off: the keyword rules, or the rules plus the local Laya model (which can only add a card, never remove one). Off / Shadow / On in Settings → Privacy & Approvals. |
-| `decision_shadow` | `""` | A second backend scored alongside and logged, never changing a decision. |
+| `decision_backend` | `"keyword"` | What decides whether an ambiguous action needs your sign-off: the keyword rules, or `laya-union`, the rules plus the local Laya model (which can only add a card, never remove one). |
+| `decision_shadow` | `"laya"` | A second backend scored alongside and logged to `~/.friday/decisions.jsonl`, never changing a decision. `""` is off. The default pair is **Shadow** in Settings > Privacy & Data > What needs your sign-off; Off and On are the other positions. |
+| `outward_reads` | `"observe"` | A plain read at a service you connected runs without a card and is receipted. `card` asks about every one. |
+| `laya_pilot_enabled` | `false` | An optional experiment that alternates ordinary chat turns with turns Laya prepares. Laya only prepares read tools and never grants actions. |
+| `laya_runtime` | `"auto"` | How Laya runs on the processor: `auto` takes the fastest engine checked on this PC; `torch-fp32`, `torch-int8` or `onnx-int8` pin one. |
 | `approvals_policy` | outward, irreversible, spend and external messages gated, cards expire after 24 h; internal not gated | Which classes of action wait for approval. |
 | `tool_hooks` | every built-in hook on | Switches for the tool hooks. The governance, confirmation and vault hooks are critical and cannot be switched off. |
 | `rate_limiter` | 60 ring-2 and 20 ring-3 calls per minute | Per-minute limits on tool calls; 0 means unlimited. |
@@ -171,13 +183,13 @@ cognitive memory, soul); `nightly_reindex: true`; `max_visible_nodes: 2000`.
 | `hang_watchdog` | on; heartbeat 15 s; stall after 90 s | Writes a thread dump to `~/.friday/logs/` when the server stalls. |
 
 Grants for scheduled jobs are not a setting; they are kept in
-`~/.friday/governance/grants.json` and managed in Settings → Privacy & Approvals.
+`~/.friday/governance/grants.json` and managed in Settings > Privacy & Data.
 
 ### Spending
 
 | Key | Default | Meaning |
 |---|---|---|
-| `cost_budget` | alert at $5/day and $50/month (both off); hard stop $0 (off) | The alert cap warns at 80% and alerts at 100% and never blocks. The hard stop, when enabled, refuses further cloud calls for the rest of its period. Local models are never affected. |
+| `cost_budget` | alert at $5/day and $50/month (both off); hard stop $0 (off); loop guard on | The alert cap warns at 80% and alerts at 100% and never blocks. The hard stop, when enabled, refuses further cloud calls for the rest of its period. Local models are never affected. The loop guard (`loop_guard_enabled`) stops a model that repeats the same call without the conversation moving on; it fires on that pattern, never on an amount. |
 | `daily_creation_free_choice` | `true` | Daily creation chooses freely across media. |
 | `daily_creation_budget_usd` | `0.50` | Soft cap on a day's creative spend. |
 
@@ -186,11 +198,11 @@ Grants for scheduled jobs are not a setting; they are kept in
 | Key | Default | Meaning |
 |---|---|---|
 | `idle_work` | on; after 600 s idle; between 09:00 and 23:00 | Work that runs once a day while you are away, such as daily creation. |
-| `scheduled_cloud.answered` | `false` | Whether you have answered "may the built-in scheduled jobs use a cloud model when this PC has no local model?". Skipping the question leaves it `false`. |
-| `scheduled_cloud.allow` | `false` | Your answer. When `true` and no local model is serving, the morning news, evening front page, afternoon briefing, daily creation and heartbeat run on the cloud models below. A local model that is serving is always used first. Ignored until `answered` is `true`. |
+| `scheduled_cloud.answered` | `false` | Whether you have answered "may daily creation and the heartbeat use a cloud model when this PC has no local model?". Skipping the question leaves it `false`. |
+| `scheduled_cloud.allow` | `false` | Your answer. When `true` and no local model is serving, daily creation and the heartbeat run on the cloud models below. A local model that is serving is always used first. News is not covered: it always runs on this PC. Ignored until `answered` is `true`. |
 | `scheduled_cloud.at` | `null` | When you answered (ISO time). |
 | `scheduled_cloud.heartbeat_model` | `claude-haiku-4-5-20251001` | The one cloud model the heartbeat may use. |
-| `scheduled_cloud.job_model` | `claude-haiku-4-5-20251001` | The one cloud model the other four jobs may use. |
+| `scheduled_cloud.job_model` | `claude-haiku-4-5-20251001` | The one cloud model daily creation may use. |
 | `scheduled_cloud.heartbeat_every_minutes` | `240` | How often the heartbeat runs while it runs in the cloud (60, 120, 240, 360, 480, 720 or 1440). |
 | `scheduled_cloud.heartbeat_from_hour`, `heartbeat_to_hour` | `8`, `20` | The heartbeat runs in the cloud only between these hours. |
 | `away_drain` | off | Drain queued heavy GPU work on a timer. |
@@ -198,6 +210,9 @@ Grants for scheduled jobs are not a setting; they are kept in
 | `repo_sync` | no repositories | Git working trees the repo-sync job pulls. |
 | `learning_loop` | on; up to 50 active skills; weekly epoch on Sunday | Learns heuristics from task outcomes. |
 | `memory_dreaming` | on; 03:00; 12 topics | Nightly local consolidation of conversations. |
+| `podcasts` | routines on; solo for briefing, front page and editorial, duo for weekly; short or standard length | Local podcasts made from your briefings. Written by the local model and spoken by the Kokoro voice. `cloud_voice` is `false`, so no cloud voice is used unless you switch it on, and never for an episode built from private material. |
+| `scheduling` | weekdays 09:00 to 17:00; 12 h notice; 15 min buffer; time zone from this computer | Working hours, working days, minimum notice and buffer used when Friday offers meeting times. See [Calendar](calendar.md). |
+| `career_ops` | `path` empty | The folder of your career-ops checkout. Empty means `Projects/career-ops` in your user folder. See [Career](career.md). |
 | `user_modeling` | on; summary in the prompt | A model of how you work, used to tailor replies. |
 
 The jobs themselves are in `~/.friday/schedules.json` and are managed in the
@@ -207,15 +222,26 @@ Workflows workspace. See [scheduled jobs](scheduled-jobs.md).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `voice_engine` | `"local"` | `local` (CPU), `local-gpu` (NVIDIA NeMo), `gemini`, `auto`, `elevenlabs`, `inworld`. |
-| `local_voice_asr_model` | `"auto"` | faster-whisper size. `auto` loads `base` on the CPU (int8) and `small` on an NVIDIA GPU; `tiny`, `base`, `small` or `medium` is used as given. |
-| `local_voice_tts_engine` | `"piper"` | `piper`, or `kokoro` (needs an NVIDIA GPU unless `local_voice_kokoro_allow_cpu`). |
+| `voice_engine` | `"local"` | `local`, `local-gpu` (NVIDIA NeMo, experimental), `gemini`, `elevenlabs` or `inworld`. `auto` is still accepted and read as `local`. |
+| `local_voice_asr_model` | `"auto"` | faster-whisper size for the Whisper listener and for dictation. `auto` loads `base` on the processor (int8) and `small` on an NVIDIA GPU; `tiny`, `base`, `small` or `medium` is used as given. |
+| `local_voice_tts_engine` | `"piper"` | `piper`, or `kokoro` (graphics card when it fits; the processor when `local_voice_kokoro_allow_cpu` is on). |
 | `local_voice_tts_voice` | `"en_US-amy-medium"` | Piper voice. |
 | `local_voice_kokoro_voice` | `"af_heart"` | Kokoro voice. |
-| `local_voice_kokoro_allow_cpu` | `false` | Let Kokoro run on the CPU. |
+| `local_voice_kokoro_allow_cpu` | `true` | Let Kokoro run on the processor when the card is busy (slower; the session says so) instead of Piper speaking. |
 | `local_voice_gpu_asr_model` | `"nvidia/nemotron-3.5-asr-streaming-0.6b"` | Speech recognition on the GPU tier. |
 | `local_voice_gpu_tts` | `"fastpitch-hifigan"` | Speech on the GPU tier. |
-| `voice_silence_ms` | `800` | Silence that ends your turn. |
+| `voice_silence_ms` | `500` | Silence that ends your turn on the local voice. |
+| `voice_front_model` | `"qwen3-4b-instruct-2507"` | The small fast model that answers live voice turns: `qwen3-4b-instruct-2507` or `qwen3-1.7b`. The main model takes deep work in the background. |
+| `voice_brain_during_calls` | `"auto"` | What the main local model does during a voice call: `auto` keeps it loaded beside the fast model when the card holds both and parks it otherwise; `parked`; `resident`. |
+| `voice_async_routing` | `"local_only"` | Where a deep question asked by voice goes: `local_only` (the main local model, or after the call) or `follow_model_routing` (your routing, cloud included, behind the same gates). |
+| `voice_response_depth` | `"adaptive"` | `adaptive`, `concise` or `detailed`. |
+| `voice_speaking_pace` | `"adaptive"` | `adaptive`, `measured`, `natural` or `brisk`. |
+| `voice_room_mode` | `"one"` | `one` person talking to Friday, or `room` (several people; she answers only when addressed). |
+| `voice_room_approvals_require_name` | `true` | In `room` mode a spoken approval counts only when it names Friday. Turning it off lets anyone within earshot approve. |
+| `voice_tool_hard_limit_s` | `20` | How long a direct voice tool may hold the line before its work moves to the background. 0 means no limit. |
+| `voice_first_token_filler_s` | `0` | On the local voice, seconds without a first word before Friday says "Hang on." 0 is off. |
+| `keep_brain_warm_between_sessions` | `false` | Keep the main local model loaded after you quit Friday. Off releases its memory. |
+| `call_mode` | `"automatic"` | When another app takes the camera or microphone: `automatic` (Friday steps back and returns when the call ends), `ask` (a chip asks once per call) or `off`. |
 | `voice_interruption_mode` | `"auto"` | What talking over Friday does on the local voice. `auto`: she stops once you are clearly louder than her own voice coming back through the mic. `no-barge`: Esc only. Esc stops her in every mode. Gemini Live reads it too (below). |
 | `voice_local_barge_sustain_ms` | `170` | How long you must talk over her before she stops (two of the local voice's ~85 ms mic frames). |
 | `voice_ear_gpu`, `voice_mouth_gpu` | `"if_free"` | GPU use for listening and speaking: `never`, `if_free` or `required`. |
@@ -239,8 +265,8 @@ her own voice coming back through the mic; Esc stops her in both).
 Cloud voices: `elevenlabs_model` (`"eleven_flash_v2_5"`), `elevenlabs_voice_id`,
 `inworld_model` (`"inworld-tts-2-flash"`), `inworld_voice_id`,
 `inworld_plan_tier` (`"on_demand"`). The two API keys are stored encrypted
-when you add them on the setup checklist or in Settings > Accounts & Keys. An
-older `elevenlabs_api_key` or `inworld_api_key` found in `settings.json` is still
+when you add them on the setup checklist or in Settings > Connections. An
+`elevenlabs_api_key` or `inworld_api_key` found in `settings.json` is still
 read, and is moved into the encrypted store the first time it is used. The
 `ELEVENLABS_API_KEY` and `INWORLD_API_KEY` environment variables take
 precedence over both.
@@ -250,26 +276,45 @@ precedence over both.
 | Key | Default | Meaning |
 |---|---|---|
 | `show_all_workspaces` | `true` (`false` on a new install) | The full dock, or the core set. |
-| `dock_custom` | no changes | Your own dock order and hidden workspaces. |
+| `dock_custom` | no changes | Your own dock order and hidden workspaces. Once you arrange the dock, it wins over `show_all_workspaces`. |
+| `landing_mode` | `"smart"` | When the start screen's cluster shows: `smart`, `always` or `never`. |
+| `big_mode` | `"auto"` | Large targets for the hand cursor: `auto`, `on` or `off`. |
+| `workspace_layouts` | `{}` | Workspaces you set to fill the screen with the chat tray docked beside them. |
+| `held_features` | `federation` and `trust_agents` off | Features held back from this release. While a switch is off, nothing offers the feature. |
 | `studio_dazzle` | `"full"` | 3D intensity: `off`, `subtle` or `full`. |
-| `tracking` | parallax and depth 1.0; pinch to click | Camera head and hand tracking tuning. |
+| `tracking` | parallax and depth 1.0; pinch to click; snap on | Camera head and hand tracking tuning, including the hand cursor's gain, region, dwell time and magnetic snap. |
 | `camera_interval_sec` | `3` | Camera capture interval: 1, 3 or 5 seconds. |
 | `audio_input_device_id`, `audio_output_device_id` | `""` | Preferred microphone and speaker. |
 | `pause_warnings_off` | `false` | "Don't warn me again" when pausing a seat. |
+
+### Library, artifacts and publishing
+
+| Key | Default | Meaning |
+|---|---|---|
+| `library_search` | `true` | Friday can search the documents you added to the Library. |
+| `library_cloud_answers` | `false` | Whether a cloud model may write Library answers. Off keeps Library text on this PC. |
+| `library_cloud_char_cap` | `6000` | The most characters of your documents one cloud answer may send (about three pages). |
+| `library_index_on_battery` | `false` | Read and index documents while on battery. |
+| `library_floor_tier` | `false` | A small PC: fewer, shorter passages per search. |
+| `library_kg_learn` | `""` | Whether the knowledge graph learns from Library documents: `""` (not chosen), `on` or `off`. |
+| `artifact_panel_enabled` | `true` | The artifact panel beside every chat. |
+| `publish_default_adapter` | `"this_pc"` | Where published pages go by default: `this_pc`, `cloudflare_pages` or `github_pages`. |
+| `publish_mark` | `true` | The small "Made with Friday" mark on published pages. |
+| `publish_this_pc_enabled` | `true` | The kill switch for hosting on this PC. `false` takes every page published there offline at once. |
+| `publish_this_pc_tunnel` | `true` | `false` keeps pages published on this PC on its loopback only, with no public tunnel. |
 
 ### Network, address and content
 
 | Key | Default | Meaning |
 |---|---|---|
-| `local_address` | off; ports 443 and 80; name from `agent_name` | The optional `https://agent.<name>` address. Set up in Settings → General. See [getting started](getting-started.md#open-friday-at-a-local-address). |
+| `local_address` | off; ports 443 and 80; name from `agent_name` | The optional `https://agent.<name>` address. Set up in Settings > General. See [getting started](getting-started.md#open-friday-at-a-local-address). |
 | `google_oauth` | no override | `redirect_base_override`, only for a reverse proxy that terminates HTTPS. |
 | `content` | on; 2-hour conflict window | The publishing pipeline. |
 
 ### Not currently read
 
-These keys exist in `DEFAULT_SETTINGS` but nothing acts on them: `setup`,
-`onboarding`, `dock_layout`, `channels` (the channel bridges read
-`~/.friday/channels.json` instead) and `model_routing.local_inference_slots`.
+These keys exist in `DEFAULT_SETTINGS` but nothing acts on them: `dock_layout`
+and `channels` (the channel bridges read `~/.friday/channels.json` instead).
 
 ---
 
@@ -340,7 +385,7 @@ Set these for the process that starts Friday. Provider keys are listed under
 | `FRIDAY_NO_ARBITER` | unset | Skip the GPU residency arbiter at startup. |
 | `FRIDAY_TOOL_CATALOGUE` | on | `0` sends every tool's full schema to the model instead of an index. |
 | `FRIDAY_DECISION_BACKEND`, `FRIDAY_DECISION_SHADOW` | unset | Override `decision_backend` and `decision_shadow`. |
-| `FRIDAY_TASK_TIMEOUT` | `1800` | Seconds before a background task times out. |
+| `FRIDAY_TASK_TIMEOUT` | unset (no limit) | Seconds before a background task times out. |
 | `FRIDAY_EGRESS_CLASSIFY_RATE` | `40` | Egress classifier calls per second. |
 | `FRIDAY_PRESIDIO_SHADOW`, `FRIDAY_PRESIDIO_ENFORCE` | unset | Presidio PII detection: observe only, or enforce. Enforcing is not recommended; see the [threat model](../security/threat-model.md). |
 | `FRIDAY_DISTRO` | `default` | Default persona preset. |
@@ -366,7 +411,7 @@ child processes.
 
 ## Provider keys
 
-The recommended place for a key is **Settings → Accounts & Keys**, which
+The recommended place for a key is **Settings > Connections**, which
 encrypts it under Friday's keystore (`~/.friday/providers/keys/`). Where every
 credential lives is in [SECURITY.md](../../SECURITY.md#where-secrets-live).
 
@@ -397,11 +442,11 @@ stored key wins. A key read from a launch script (`start.bat`,
 stored key.
 
 **The terminal wizard.** `friday setup` stores keys only in the encrypted
-store. Earlier versions also wrote plaintext copies to `~/.friday/config.yaml`,
-`~/.friday/settings.json` and `start.bat`; the next run of `friday setup` moves
-those into the encrypted store and removes the copies. It leaves a copy in
+store. If plaintext copies of a key exist in `~/.friday/config.yaml`,
+`~/.friday/settings.json` or `start.bat`, the next run of `friday setup` moves
+them into the encrypted store and removes the copies. It leaves a copy in
 place, and says so, when the key cannot be stored or differs from a key
-already stored; re-enter that key in Settings → Accounts & Keys and delete the
+already stored; re-enter that key in Settings > Connections and delete the
 copy by hand.
 
 ---
@@ -427,7 +472,7 @@ encrypted at rest on this disk.
 | `phone/` | Phone settings, encrypted Twilio secrets, message log | Secrets encrypted; the rest plain text |
 | `decision-bom.jsonl` | Signed receipts of approval and privilege-ring decisions | Plain text, HMAC-signed |
 | `governance/` | Grants and the pinned constraint hash | Plain text |
-| `vault/decision-bom.jsonl` (history from earlier versions), `vault/access-log.jsonl`, `vault/egress-log.jsonl`, `vault/context-log/` | Governance and privacy logs | Plain text |
+| `vault/decision-bom.jsonl` (older receipts), `vault/access-log.jsonl`, `vault/egress-log.jsonl`, `vault/context-log/` | Governance and privacy logs | Plain text |
 | `vault/.governance-key` | Governance signing key (fallback copy) | Owner-only file |
 | `traces/ledger.jsonl` | Reasoning traces | Each record encrypted; hash-chained and signed |
 | `tasks/` | Background-task journal | Encrypted by default |

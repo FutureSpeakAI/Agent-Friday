@@ -2,38 +2,37 @@
 
 [![CI](https://github.com/FutureSpeakAI/Agent-Friday/actions/workflows/tests.yml/badge.svg)](https://github.com/FutureSpeakAI/Agent-Friday/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
+[![Release: Beta 1.0](https://img.shields.io/badge/release-Beta%201.0-informational.svg)](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest)
 
-**A private AI agent that runs on your own Windows PC.** Your data and memory
-stay on your machine. Friday shows which model is answering, asks before it
-does anything outward on your behalf, and keeps a signed record of every
-decision.
+**A private AI agent that runs on your own Windows PC.** It chats, listens and
+talks, drafts your mail, keeps your calendar, makes documents and remembers what
+matters to you. Your data stays on your machine, it asks before it acts, and it
+sends nothing about you anywhere.
 
 ![The Friday desktop](docs/images/desktop.png)
 
-> Agent Friday™ is the standalone desktop application in this repository.
-> It is distinct from the [Asimov's Mind Claude Code plugin](https://futurespeak.ai/asimovs-mind),
-> a separate product built for the Claude Code environment.
+Agent Friday™ Beta 1.0 is the first release of the app. It is a pre-release:
+it is meant to be tried, and it has rough edges. They are listed in
+[Known issues](KNOWN_ISSUES.md).
 
 ## Why Friday
 
-- **Your data stays home.** Your wiki, conversations, settings and receipts
-  live in one folder on your PC. There is no Friday server and no account.
-  Finance, health, legal and family records go in a vault encrypted with your
+- **Private by default.** Your wiki, conversations, settings and receipts live
+  in one folder on your PC. There is no Friday server and no account. Finance,
+  health, legal and family records go in a vault encrypted with your
   passphrase.
-- **You choose where it thinks.** A model on your own graphics card, a cloud
-  model (Anthropic, Google, OpenRouter or any OpenAI-compatible provider), or
-  both. Every reply says which model answered.
-- **Nothing leaves without passing a gate.** Before anything goes to a cloud
-  model, an egress gate on your PC withholds private and sensitive content. If
-  the gate fails, nothing is sent.
-- **It asks before it acts.** Reading and drafting run on their own. Sending,
+- **Local first, and yours.** Friday can think on your own graphics card or
+  processor, in the cloud (Anthropic, Google, OpenRouter or any
+  OpenAI-compatible provider), or both. Every reply says which model answered.
+  The code is MIT licensed.
+- **Zero telemetry.** No analytics, no crash reports, no license check. Friday
+  connects to the internet only for things you use: the model providers you
+  configure, model downloads you approve, the news or weather you open. The
+  optional update check, which is off until you turn it on, contacts
+  `api.github.com` once a week.
+- **You approve actions.** Reading and drafting run on their own. Sending,
   publishing, scheduling, installing and changing your files wait for your yes,
-  an approval card, or a time-limited grant you created.
-- **It keeps receipts.** Every decision is written to a signed log you can
-  read.
-- **No telemetry.** No analytics, crash reports or license checks. The update
-  check is opt-in.
+  and every decision is written to a signed log you can read.
 
 ## What it does
 
@@ -41,169 +40,95 @@ decision.
 
 - **Chat** with any model, in a panel, a window or its own browser tab, with a
   sidebar of every conversation grouped into projects.
-- **Mail** (Messages): a Gmail client with search, threads, labels, drafts,
-  scheduled send and undo. Friday drafts; every message is sent only after you
-  approve it on a card.
-- **Calendar and tasks**: Google Calendar and Google Tasks. Creating or
-  changing an event asks first.
-- **Knowledge**: your wiki pages and a 3D galaxy of how they connect, in one
-  workspace.
-- **Voice**: talk to Friday using on-device speech recognition and speech, or
-  a cloud voice. Hold **Alt+T** anywhere in Windows to dictate into any app,
+- **Voice.** Talk to Friday with on-device listening and speaking, or a cloud
+  voice. Hold **Alt+T** anywhere in Windows to dictate into any app,
   transcribed on your PC.
-- **Documents**: real Word, Excel and PowerPoint files made locally with
-  OfficeCLI, checked visually before Friday calls them done.
-- **Scheduled jobs**: briefings, the news front page and daily creation run on
-  your local model by default.
+- **See & Touch.** Friday sees what your open workspace shows, points at rows
+  with numbered badges, ticks or filters what you mean, and fills in a field you
+  can see. Acting on what is ticked still needs your approval.
+- **Mail and calendar.** A Gmail client and Google Calendar and Tasks. Friday
+  drafts, and sends or changes only after you approve a card.
+- **Library and Media.** Documents you add, read on your PC and answered with
+  footnotes, and a media workspace with search, previews and transcripts.
+- **Documents.** Real Word, Excel and PowerPoint files made locally and checked
+  visually before Friday calls them done.
+- **Workflows, scheduled jobs and podcasts.** Reusable procedures with checked
+  results, briefings and daily work on your local model by default, and
+  podcast episodes written by your local model and spoken on your processor.
 - **Phone** (off by default): texts, voicemail and approvals by text through
   your own Twilio number.
-- **News, Contacts, Code, Studio, Content** and more workspaces on a dock you
-  can arrange.
 
 ![The Knowledge workspace](docs/images/knowledge.png)
 
-## Requirements
+## Download
 
-- **Windows 10 or 11**, 64-bit. macOS and Linux can run the server from source
-  without the tray, GPU planning or Windows credential protection; they are not
-  the supported platform.
-- **16 GB of RAM** or more.
-- **About 8 GB of free disk** for the application, plus 7 to 19 GB for a local
-  model.
-- **For a local model: an NVIDIA graphics card.** Friday reads your card and
-  offers the largest model that fits:
-
-| Graphics memory | Local model offered |
-|---|---|
-| Under about 4.3 GB, or no NVIDIA card | None by default; use a cloud key |
-| About 4.3 GB | Gemma 4 E2B |
-| About 5.5 GB | Gemma 4 E4B |
-| About 10 GB (a 12 GB card) | Gemma 4 12B |
-| About 19.5 GB (a 24 GB card) | Gemma 4 26B |
-
-AMD and Intel graphics are not detected. Local image generation needs an NVIDIA
-card with about 8.5 GB or more. Without a suitable card, Friday works with a
-cloud key (Anthropic recommended).
-
-## Install
-
-1. Download `AgentFriday-Setup-<version>.exe` from the
+1. Download `AgentFriday-Setup-1.0.0-beta.1.exe` (about 640 MB) from the
    [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest).
-2. Double-click it. No administrator rights are needed. The setup program is
-   not code-signed, so SmartScreen may warn first.
-3. On the model page, choose a **deep thinker** (a Bonsai model that fits
-   your computer) and a **fast responder** (the voice model, with its speech
-   ear), the recommended ones marked and never preselected, or choose a cloud
-   model. Setup downloads nothing: if you tick the box, Friday fetches your
-   choices when she first starts, with progress, checksums and resume. Then
-   say whether Friday should start when you sign in.
-   The setup program installs Friday's Python packages from the wheels it
-   carries, with no internet needed for them.
+2. Check its SHA-256 against the one on the release page, then run it. The setup
+   program is not code-signed yet, so Windows SmartScreen shows **Unknown
+   publisher**. Choose **More info**, then **Run anyway**.
+3. Choose your models. Setup reads your memory, graphics card and disk and shows
+   only what fits. Or choose a cloud model.
 
-Friday installs into `%LOCALAPPDATA%\AgentFriday` with its own copy of Python.
-Your data lives separately in `%USERPROFILE%\.friday`, which updates never
-touch. Details and troubleshooting:
-[Installation](docs/getting-started/installation.md).
+The file carries its own Python and every package, so you need nothing else.
+Step by step: [Getting started](docs/getting-started/README.md). If you run a
+5.x version, the same installer keeps your vault, memory and settings.
 
-## Quick start
+## System requirements
 
-The first time Friday opens, it asks:
+| | Minimum | Recommended |
+|---|---|---|
+| Windows | 10 or 11, 64-bit | 11 |
+| Memory | 16 GB for the local model Friday is tuned for | 32 GB |
+| Processor | 4 physical cores with AVX2 | |
+| Graphics card | None (the model runs on the processor, slowly) | NVIDIA with 12 GB or more of video memory |
+| Free disk | About 8 GB for the program, plus models (about 6 GB for the deep thinker) | More, if you keep two local models |
 
-1. **A passphrase for the vault.** It encrypts your finance, health, legal and
-   family records. You can skip it and set it later. **If you lose it, those
-   files cannot be recovered.**
-2. **Where your words go.** Cloud, on this computer only, or both. Nothing is
-   pre-selected, and choosing cloud shows plainly what the provider will see.
-3. **The part about other people.** What it means that Friday holds notes about
-   people you mention.
-4. **Checking for new versions.** Once a week, or never. Nothing downloads on
-   its own either way.
-
-Then a short setup chat: names, a hardware check, a checklist of every
-account and key Friday can use (each says exactly what it asks for), optional
-public-web research on you that keeps only what you approve, and a few
-questions that set how Friday talks to you. It works with no model and no key,
-every step can be skipped, and **Set up later** is always there. See
-[The setup chat](docs/user-guide/setup-chat.md).
-
-Open Friday from the desktop shortcut, which opens **http://localhost:3000**,
-or from the tray icon's **Open Agent Friday™**. Optionally, give it a secure
-local address such as **https://agent.friday** in Settings → General: Windows
-asks you to confirm the hosts-file entry and to trust a certificate that can
-vouch for that one name only.
-
-![First run: where your words go](docs/images/first-run-routing.png)
-
-Step by step: [Getting started](docs/user-guide/getting-started.md).
+Machines below 16 GB of memory use a cloud model, or the older, lighter local
+models setup offers when they fit. Only NVIDIA cards are read for video memory.
+Sizing by graphics card, and what to expect, is in
+[Troubleshooting](docs/user-guide/troubleshooting.md#friday-is-very-slow-or-windows-runs-out-of-memory).
 
 ## Privacy and security
 
 - **What stays on your PC:** everything Friday writes down. The vault is
   encrypted with your passphrase; keys and account tokens are encrypted; your
   wiki and conversations are ordinary files you can read.
-- **What leaves:** what a cloud model needs to answer you, and only when a
-  cloud model answers, after the egress gate. The gate withholds private and
-  sensitive content, and it is honest about its limit: it matches patterns, so
-  sensitive meaning in ordinary words can get through. In "On this computer
-  only" mode, if no local model is running, Friday refuses the turn and offers
-  to answer it in the cloud; nothing is sent until you choose.
+- **What leaves:** what a cloud model needs to answer you, and only when a cloud
+  model answers, after the egress gate. The gate withholds private and
+  sensitive content, and it matches patterns, so sensitive meaning in ordinary
+  words can get through. In "On this computer only" mode with no local model
+  running, Friday refuses the turn and offers to answer it in the cloud; nothing
+  is sent until you choose.
 - **What leaves on its own:** news feeds; health checks for services you
-  connected; the page's fonts from Google Fonts, because this release does
-  not ship the font files (Settings → Privacy & Approvals → Fonts turns that
-  off); and, only if you said yes, the weekly update check. The connectivity
-  probe sends nothing unless you opt in. MediaPipe and the embedding model
-  are fetched only the first time you use the feature that needs them. Each
-  is listed, with how to turn it off, in
+  connected; and, only if you said yes, the weekly update check. The page's
+  fonts are bundled, so they make no request. The connectivity probe
+  sends nothing unless you opt in. Models and helper downloads happen only when
+  you approve them. Each is listed, with how to turn it off, in
   [Background network activity](docs/user-guide/background-network.md).
 - **Remote access:** Friday listens only on this PC. A request that comes
   through a tunnel or proxy is never treated as you.
 
-More: [Privacy: local and cloud](docs/user-guide/privacy.md),
-[SECURITY.md](SECURITY.md), and the
-[threat model](docs/security/threat-model.md).
-
-## Approvals and receipts
-
-Every action, from chat, voice, a scheduled job or a text message, passes one
-checkpoint that fails closed.
-
-| | Examples | What happens |
-|---|---|---|
-| **Internal** | reading, searching, drafting, generating, working in Friday's own folders | Runs |
-| **Outward** | sending mail or texts, calendar changes, publishing, installing, overwriting your files, most commands | Waits for you |
-| **Unknown** | a tool the checkpoint does not recognise | Treated as outward |
-
-You answer with a **yes in chat** (it covers that exact action only), an
-**approval card** (for background work, email, and anything whose details came
-from content Friday read), or a **grant** you create for a scheduled job, which
-names the job and actions and expires. Each decision is appended to
-`~/.friday/decision-bom.jsonl`, signed with Friday's governance key. If the
-receipt cannot be written, the action does not run.
-
-More: [Approvals and receipts](docs/user-guide/approvals-and-receipts.md).
+More in [Privacy: local and cloud](docs/user-guide/privacy.md),
+[SECURITY.md](SECURITY.md) and the [threat model](docs/security/threat-model.md).
 
 ## Documentation
 
 | | |
 |---|---|
-| [Getting started](docs/user-guide/getting-started.md) | Install, first run, the local address |
-| User guide | [Approvals](docs/user-guide/approvals-and-receipts.md) · [Privacy](docs/user-guide/privacy.md) · [Mail](docs/user-guide/mail.md) · [Calendar](docs/user-guide/calendar.md) · [Voice](docs/user-guide/voice.md) · [Documents](docs/user-guide/documents.md) · [Scheduled jobs](docs/user-guide/scheduled-jobs.md) · [Phone](docs/user-guide/phone.md) |
-| [Backup and restore](docs/user-guide/backup-and-restore.md) | What to back up, and what cannot be recovered |
-| [Updating and uninstalling](docs/user-guide/updating-and-uninstalling.md) | Keeping your data across versions |
-| [Configuration](docs/user-guide/configuration.md) | Every setting, environment variable and file |
-| [Architecture](ARCHITECTURE.md) | How the pieces fit |
-| [Known issues](KNOWN_ISSUES.md) · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md) | What is new and what is not right yet |
-| [All documentation](docs/README.md) | The full index |
+| [Getting started](docs/getting-started/README.md) | Download, SmartScreen, setup, first conversation, voice |
+| [User guide](docs/README.md#user-guide) | Settings, See & Touch, Library, Media, Chat Hub, Podcasts, Workflows, Mail, Calendar, Voice and more |
+| [Troubleshooting](docs/user-guide/troubleshooting.md) and [FAQ](docs/user-guide/faq.md) | Fixes for real failures, logs, backup, uninstall |
+| [Release notes](RELEASE_NOTES.md), [Changelog](CHANGELOG.md), [Known issues](KNOWN_ISSUES.md) | What is in Beta 1.0 and what is not right yet |
 
-## Support, security and contributing
+## For developers
 
-- **Questions and bugs:** open an issue using the templates. Include your
-  Windows version, how you installed Friday, and the relevant lines from
-  `%USERPROFILE%\.friday\logs\`.
-- **Security problems:** report privately as described in
-  [SECURITY.md](SECURITY.md). Never in a public issue.
-- **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-  [Code of Conduct](CODE_OF_CONDUCT.md).
+Friday is a Python server (`src/agent_friday/`) with a single-file browser UI
+(`index.html`), a Windows tray, and a Windows installer. [ARCHITECTURE.md](ARCHITECTURE.md)
+describes how the pieces fit, and [CONTRIBUTING.md](CONTRIBUTING.md) covers
+building from source, the required checks and how to submit changes. Report
+security problems privately, as described in [SECURITY.md](SECURITY.md). Please
+follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
@@ -213,6 +138,9 @@ The Windows installer brings in some packages under other licenses, including
 copyleft ones; NOTICE lists them.
 
 Agent Friday™ and FutureSpeak.AI™ are trademarks of FutureSpeak.AI.
+Agent Friday™ is distinct from the
+[Asimov's Mind Claude Code plugin](https://futurespeak.ai/asimovs-mind), a
+separate product.
 
-Created by [FutureSpeak.AI™](https://futurespeak.ai) · Built with Claude by
+Created by [FutureSpeak.AI™](https://futurespeak.ai). Built with Claude by
 Anthropic as AI development partner.

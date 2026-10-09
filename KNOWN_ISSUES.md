@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-09-26, for 5.14.3.**
+**For Agent Friday™ Beta 1.0 (1.0.0b1).**
 
 This file lists what is broken, unverified, or deliberately limited in a way
 you may hit. Each entry was checked against the code on that date. Fixed
@@ -17,35 +17,44 @@ you hit something that is not here, please open an issue.
 - **Moving `.friday` to a new PC or Windows account holds outward actions**
   until you re-confirm Friday's rules. The governance signing key lives in
   Credential Manager, so the new account gets a new key and the pinned
-  signature of Friday's rules no longer matches. Reads keep working. Settings
-  → Privacy & Approvals → Friday's rules on this PC shows the state and
-  re-pins after you confirm. The same hold follows any release that changes
+  signature of Friday's rules no longer matches. Reads keep working. Settings >
+  Privacy & Data shows the state of Friday's rules on this PC and re-pins
+  them after you confirm. The same hold follows any release that changes
   the rules text. A new install, or a profile that never pinned, is not held:
   the first check pins the rules on that PC. See [backup and restore](docs/user-guide/backup-and-restore.md).
-- **Installers 5.6.0 to 5.6.5** had upgrade defects (files not replaced; the
-  vault passphrase deleted when it lived only in `start.bat`). Running the
-  current installer repairs such an install. There is no recovery for data
-  encrypted under a passphrase you no longer have. If you connected a
-  credentialed MCP server on an affected install, rotate that credential.
 
 ## 2. Open defects
 
+- **The setup program is not code-signed.** Windows SmartScreen shows
+  "Unknown publisher". Check the SHA-256 published with the release, then
+  choose More info and Run anyway. Code signing is the next priority.
+- **Some parts still download during setup.** The document engine (OfficeCLI)
+  and the judgment model's checkpoint are fetched while setup runs. Model
+  weights download on first start, after you consent.
+- **The optional faster speech listener is not offered.** The Whisper
+  large-v3-turbo download is not pinned to a verified version, so Settings >
+  Voice > Local voice models does not offer it.
+- **A large local model needs a lot of memory.** Bonsai 2 27B needs 16 GB of
+  RAM to run on the processor, where the estimate is 3 to 6 tokens per second
+  and has not been measured on that class of machine. A 12 GB NVIDIA card
+  measured about 45 tokens per second. Below about 10 GB of RAM setup offers no
+  local deep thinker.
 - **With only an OpenRouter key, the top-bar model chip says "Anthropic:
   Claude Sonnet 5".** The call goes through OpenRouter; the reply's own
-  label in chat and Settings → Spending name the route correctly.
+  label in chat and the Spending view in Settings name the route correctly.
 - **An outward action can be confirmed twice in chat.** When the model asks
   "shall I?" on its own before calling the tool, your yes is not yet the
   checkpoint's question; the checkpoint then asks once more for that exact
   action.
 - **Built-in scheduled jobs on a cloud-only install wait for your answer.**
   With no local model serving they run on a cloud model only after you say yes
-  (in the setup chat, or Settings → Spending); until then they stay paused,
+  (in the setup chat, or the Spending view in Settings); until then they stay paused,
   with one notice. The in-app activity indicator for such a run still names
-  the orchestrator model rather than the cloud model actually used. See
+  the main model rather than the cloud model actually used. See
   [Scheduled jobs](docs/user-guide/scheduled-jobs.md).
 - **No receipt viewer.** Signed receipts are written to
   `.friday\decision-bom.jsonl` but there is no screen for them.
-- **The provenance ledger is in memory.** Where an argument came from is
+- **The provenance record is in memory.** Where an argument came from is
   forgotten on restart, and a value that was paraphrased or re-encoded, or
   summarised by a model, is not tracked. The approval checkpoint still applies
   to every outward action.
@@ -75,19 +84,13 @@ you hit something that is not here, please open an issue.
   later.
 - **`ui_parts/app.html` drifts from `index.html`.** The served file is the
   source of truth; see [docs/development/ui-build.md](docs/development/ui-build.md).
-- **No Bonsai model is the voice front.** The setup program's fast responder is
-  one of the Qwen3 voice front models (`services/voice_front.py`), fetched with
-  the speech ear. The Arbiter looks up a model's required runtime by registry
-  id, not by the voice front's seat id, so a Bonsai file served as the front
-  would be started on stock llama.cpp, which refuses its tensor types. The
-  Bonsai family fills the deep thinker only.
 - **A few parts still need the internet at install.** Python packages install
   from the wheels the setup program carries, but the document engine
   (OfficeCLI) and the judgment model's checkpoint are fetched while setup
   runs, and the voice ear and front models are fetched on first start.
 - **Seat contention on 12 GB cards.** A resident 12B model leaves little room,
   so a second GPU seat or local image generation may fail to allocate. "I need
-  my machine" in Settings → Models releases the GPU.
+  my machine" in Settings > Models releases the GPU.
 
 ## 3. Deliberate behaviour that can surprise
 
@@ -111,8 +114,8 @@ you hit something that is not here, please open an issue.
 
 Listed separately from "broken". These are not claims that things work.
 
-- **No clean-machine install** has been performed for this release on a PC
-  that has never seen the code.
+- **Beta 1.0 has had little time on real computers.** Please report what you
+  find.
 - **The phone has not carried real traffic.** Texts, voicemail and approvals
   by text are unit-tested; live calls have run only against a simulated
   stream.
@@ -158,8 +161,8 @@ or Windows credential protection.
 - **The credential keystore is unwrapped by default.** Its root key sits in
   `.friday\security\keystore.json` behind an owner-only file ACL, so anything
   running as you can decrypt stored credentials, and a folder copy of
-  `.friday` carries the key with it. With a vault passphrase set, Settings →
-  Privacy & Approvals → Stored keys wraps the root key with it. Friday then
+  `.friday` carries the key with it. With a vault passphrase set, Settings >
+  Privacy & Data > Stored keys wraps the root key with it. Friday then
   unwraps it with the passphrase from Credential Manager at start-up, so
   anything running as you can still reach it through Credential Manager; the
   wrap protects copies of the file, not a live session.
@@ -179,9 +182,6 @@ or Windows credential protection.
   so NeMo is no longer a `pyproject.toml` extra or part of `uv.lock`. The voice
   installer installs a pinned NeMo on the machine that asks for it, and NeMo
   loads only NVIDIA's own published models.
-- **The 5.12.0 and 5.13.0 installer zips include files that are not part of
-  the repository**, copied from a build machine's working tree. They are inert.
-  The build now refuses any payload that is not the committed tree.
 
 ## 8. Licensing
 

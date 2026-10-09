@@ -1,63 +1,93 @@
 # Contributing to Agent Friday™
 
 Thank you for contributing to Agent Friday™. This document covers setup, the checks every change
-must pass, and the parts of the codebase that need extra care. It is written as
-present-tense engineering rules; the reasoning behind a rule, where it matters,
-lives in a linked design or security note rather than here.
+must pass, and the parts of the codebase that need extra care. For how the
+code is organised, read [ARCHITECTURE.md](ARCHITECTURE.md) first.
+
+This repository is public. Never commit credentials, tokens, passphrases,
+personal identifiers, family or medical data, or local paths that contain a
+username. The pre-commit scanner catches most of this, and you remain
+responsible for the rest.
 
 All contributors follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Reporting bugs and requesting features
 
 - Bugs: use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md).
-  Include your OS, Python version, how you installed Agent Friday, steps to
-  reproduce, and the relevant lines from the terminal or `~/.friday/logs/`.
+  Include the Agent Friday version (Settings > About), your Windows build,
+  your RAM and graphics card, how you installed it, the steps to reproduce,
+  and the relevant lines from `%USERPROFILE%\.friday\` logs (`friday.log`,
+  and `logs\crashes.log` after a crash). Remove API keys and private text first.
 - Features: use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md).
   Describe the problem before the solution.
+- Questions: use [GitHub Discussions](https://github.com/FutureSpeakAI/Agent-Friday/discussions).
 - Security problems: **do not open a public issue.** See [SECURITY.md](SECURITY.md).
 
 ## Development setup
 
-```bash
+Agent Friday™ is developed on Windows 10 and 11. Install Python 3.11 or 3.12
+(tick "Add python.exe to PATH" in the installer) and Git. Node.js 18 or later is
+needed only for the Playwright browser tests.
+
+```powershell
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
 cd Agent-Friday
 python -m venv venv
-venv\Scripts\activate          # Windows
-source venv/bin/activate       # Linux / macOS
-pip install -e ".[dev]"
+venv\Scriptsctivate
+pip install -e ".[dev,windows]"
 git config core.hooksPath .githooks
 ```
 
-`pip install -e ".[dev]"` installs the application in editable mode plus
-`pytest` and `ruff`. Optional capability groups (`voice-local-lite`, `local`,
-`google`, …) are listed in `pyproject.toml`. On Windows install
-`".[dev,windows]"`: three tray tests import `pystray`, and with `-x` a fresh
-`[dev]`-only environment collects zero tests. CI installs
-`[dev,google,federation]` plus `[windows]` on the Windows runner.
+Python 3.10 or later satisfies `requires-python` in `pyproject.toml`; CI runs
+3.11 and 3.12. `pip install -e ".[dev,windows]"` installs the application in
+editable mode plus `pytest`, `pytest-xdist` and `ruff`, and the Windows extras
+(the tray tests import `pystray`). CI also installs the `google`, `federation`
+and `podcast` extras. The other extras in `pyproject.toml` are `voice`,
+`voice-local-lite`, `voice-local-gpu`, `creative`, `compose`, `provenance`,
+`local`, `compression`, `pii`, `keyring`, `pdf`, `documents` and `all`.
+`requirements.txt` lists the same packages for a plain `pip install -r`.
 
-Other extras in `pyproject.toml`: `voice`, `voice-local-lite`,
-`voice-local-gpu`, `creative`, `compose`, `provenance`, `google`, `local`,
-`compression`, `federation`, `pii`, `keyring`, `windows`, `pdf`, and `all`.
-Python 3.10 or later is required.
+On macOS and Linux the same commands work with `source venv/bin/activate`, but
+Windows is the supported platform and several features (tray, computer control,
+the installer) are Windows only.
 
-Run `scripts/check_imports.py` and the server with `FRIDAY_HOME` pointed at a
-scratch directory unless you mean to touch your real `~/.friday`: importing
-the server seeds schedules and creates state files there. The test suite
+### Run from source
+
+```powershell
+python server.py
+```
+
+The server listens on `http://localhost:3000`, or the next free port if that one
+is busy (`FRIDAY_PORT` pins one) and prints the address it chose. `friday` (the
+console command installed with the package) starts the server and opens the
+browser; `friday setup` runs the terminal setup wizard, `friday models` shows
+which local models fit your hardware, and `friday doctor` checks the
+installation. `python friday_tray.py` runs the system tray app, which starts the
+server for you.
+
+Point `FRIDAY_HOME` at a scratch folder unless you mean to touch your real
+`%USERPROFILE%\.friday`. Importing the server seeds schedules and creates state
+files there, and `scripts/check_imports.py` does the same. The test suite
 isolates its own home directory.
 
-The last line enables the repository's git hooks. It is required: the hooks
-enforce invariants a reviewer cannot reliably catch by reading a diff (see
-[Repository guards](docs/development/repository-guards.md)). The pre-commit
-hook runs the secret and personal-data scanner on staged additions, the import
-smoke test (when a `venv` exists in the checkout), and the gated-prompt,
-settings-reader and stale-model-name checks. Do not bypass it with
-`--no-verify`; if it blocks a false positive, allowlist that line with
-`# pragma: allowlist secret`.
+Friday runs local models itself (`llama-server`, managed by the residency
+arbiter), so Ollama is optional. Cloud keys are entered in the running app and
+stored in the encrypted credential store; a key in an environment variable such
+as `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` overrides the stored copy.
+
+The `git config` line enables the repository's git hooks. It is required: the
+hooks enforce invariants a reviewer cannot reliably catch by reading a diff (see
+[Repository guards](docs/development/repository-guards.md)). The pre-commit hook
+runs the secret and personal-data scanner on staged additions, the import smoke
+test (when a `venv` exists in the checkout), and the gated-prompt,
+settings-reader, stale-model-name, trust-in-governance and brand-token checks.
+Do not bypass it with `--no-verify`; if it blocks a false positive, allowlist
+that line with `# pragma: allowlist secret`.
 
 ## Required checks
 
-Run these before opening a pull request. CI runs the same set on Windows and
-Ubuntu.
+Run these before opening a pull request. CI runs the same set (the unit and API
+suites on Windows and Ubuntu; the guard scripts on Ubuntu).
 
 | Check | Command |
 |---|---|
@@ -71,20 +101,32 @@ Ubuntu.
 | Brand tokens | `python scripts/check_brand_tokens.py` |
 | Trust in governance | `python scripts/check_trust_in_governance.py` |
 | Documentation links | `python scripts/check_doc_links.py` |
+| Secret and personal-data scan of the whole tree | `python .githooks/security_scan.py --tree` |
 
-The unit and API suites are hermetic: no live server, no network, no API keys.
-Tests that need a live server (`tests/test_friday_ui.py`, `tests/test_ui_audit.py`)
-or real network are deselected by default; see `pytest.ini`.
+The scanner without `--tree` checks only what is staged, which is what the
+pre-commit hook runs.
+
+`pytest.ini` runs with `-n auto` (all cores) by default. Use `-n 0` to debug a
+single test with normal tracebacks, or `-n 2` if the machine is also running a
+local model. The unit and API suites are hermetic: no live server, no network,
+no API keys. Tests that need a live server (`tests/test_friday_ui.py`,
+`tests/test_ui_audit.py`) are excluded by default; see `pytest.ini`. The
+Playwright app tests start their own scratch server: `npm install`, then
+`npm run test:smoke` (see [tests/app/README.md](tests/app/README.md)).
+A change to `index.html` or `ui_parts/app.html` needs every test that reads
+those files to pass; find them with a search for the file names under `tests/`.
 
 ## Using an AI coding agent
 
-Agents that read `AGENTS.md` at the repository root get the same rules this
-page gives people. You remain responsible for every line you submit, so read
-the diff before you open the pull request.
+`AGENTS.md` at the repository root carries the same rules for AI coding agents
+(`CLAUDE.md` imports it). You remain responsible for every line you submit, so
+read the diff before you open the pull request.
 
 ## Submitting a pull request
 
-1. Branch from `main`; never commit to `main` directly.
+1. Branch from `main`; never commit to `main` directly. Branch names use a
+   short prefix such as `feat/`, `fix/` or `docs/`, for example
+   `fix/mail-send-receipt`.
 2. Keep each pull request to one logical change. Refactors and bug fixes are
    separate pull requests.
 3. Every bug fix includes a test that fails before the change and passes after
@@ -199,12 +241,18 @@ src/agent_friday/    # the Python package (Flask app)
   pipeline/          # context pruning and compression
   ui/                # UI build tooling
   seed/              # bundled skills and data shipped inside the package
+  resources/         # data files such as the model tier tables
+index.html           # the served UI (authoritative)
+ui_parts/app.html    # hand-maintained mirror of the UI
+static/, assets/     # fonts, vendored libraries, icons
+scripts/             # guard scripts and developer tools
 tests/
   unit/              # fast, no server, no LLM
   api/               # Flask test client, every LLM call stubbed
   security/          # egress-boundary suites
+  app/               # Playwright application tests
 packaging/windows/   # the Windows installer and its tests
-docs/                # documentation — start at docs/README.md
+docs/                # documentation: start at docs/README.md
 ```
 
 ## Sensitive subsystems
@@ -212,12 +260,12 @@ docs/                # documentation — start at docs/README.md
 Changes here have security implications and receive extra review. Say so in
 the pull request.
 
-- `src/agent_friday/privacy/` — vault access control, encryption, cloud consent
-- `src/agent_friday/governance/` — the per-action checkpoint, grants, receipts, behavioural constraints and integrity
-- `src/agent_friday/services/egress_gate.py` and `sensitivity_classifier.py` — the fail-closed outbound gate
-- `src/agent_friday/services/credential_store.py`, `keystore.py` and `vault_passphrase.py` — where secrets live
-- `src/agent_friday/services/taint.py`, `approvals.py`, and the tool hook chain in `services/agent.py` — provenance and approvals
-- `src/agent_friday/phone/` — the only code reachable from the internet
+- `src/agent_friday/privacy/`: vault access control, encryption, cloud consent
+- `src/agent_friday/governance/`: the per-action checkpoint, grants, receipts, behavioural constraints and integrity
+- `src/agent_friday/services/egress_gate.py` and `sensitivity_classifier.py`: the fail-closed outbound gate
+- `src/agent_friday/services/credential_store.py`, `keystore.py` and `vault_passphrase.py`: where secrets live
+- `src/agent_friday/services/taint.py`, `approvals.py`, and the tool hook chain in `services/agent.py`: provenance and approvals
+- `src/agent_friday/phone/`: the only code reachable from the internet
 - Authentication, session, cookie handling and the locality rule in `src/agent_friday/core/`, and `services/local_address.py`, `local_ca.py`, `local_proxy.py`
 
 ## Local-only files
