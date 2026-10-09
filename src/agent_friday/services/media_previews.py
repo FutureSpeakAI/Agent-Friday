@@ -430,10 +430,38 @@ def _run(argv: List[str], timeout: float = 20.0) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, timeout=timeout, creationflags=_SUBPROCESS_FLAGS)
 
 
+_BANNER_DURATION = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
+_BANNER_VIDEO_SIZE = re.compile(r"Stream #[^\n]*Video:[^\n]*?\b(\d{2,5})x(\d{2,5})\b")
+
+
+def _parse_ffmpeg_banner(text: str, det: Dict[str, Any]) -> float:
+    """Duration and frame size from the banner `ffmpeg -i <file>` prints. The bundled
+    ffmpeg (imageio-ffmpeg) ships without ffprobe, so this is how a video still gets its
+    length and size there."""
+    dur = 0.0
+    m = _BANNER_DURATION.search(text or "")
+    if m:
+        dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+        if dur:
+            det["duration_s"] = round(dur, 2)
+    v = _BANNER_VIDEO_SIZE.search(text or "")
+    if v:
+        det["width"], det["height"] = int(v.group(1)), int(v.group(2))
+    return dur
+
+
 def _probe(p: Path, det: Dict[str, Any]) -> float:
     exe = ffprobe_exe()
     if not exe:
-        return 0.0
+        ff = ffmpeg_exe()
+        if not ff:
+            return 0.0
+        try:
+            # `ffmpeg -i` with no output exits non-zero by design; the banner is on stderr.
+            r = _run([ff, "-hide_banner", "-i", str(p)], timeout=15)
+            return _parse_ffmpeg_banner(r.stderr.decode("utf-8", "ignore"), det)
+        except Exception:
+            return 0.0
     try:
         r = _run([exe, "-v", "error", "-show_entries", "format=duration:stream=width,height,codec_type", "-of", "json", str(p)], timeout=15)
         d = json.loads(r.stdout.decode("utf-8", "ignore") or "{}")

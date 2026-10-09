@@ -237,3 +237,29 @@ def test_the_pass_waits_for_memory_and_runs_one_job_at_a_time(home, monkeypatch)
     assert calls and all(c == 0.01 for c in calls[:3]), "short of memory, the worker waits rather than renders"
     mp._QUEUE.clear(); mp._QUEUED.clear()
     assert mp.PAUSE_S > 0 and mp.RAM_FLOOR_MIB >= 1024
+
+
+FFMPEG_BANNER = """Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'quay.mp4':
+  Metadata:
+    major_brand     : isom
+  Duration: 00:01:02.04, start: 0.000000, bitrate: 12 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 64x40, 9 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+At least one output file must be specified
+"""
+
+
+def test_the_ffmpeg_banner_gives_a_video_its_length_and_size():
+    det = {}
+    assert mp._parse_ffmpeg_banner(FFMPEG_BANNER, det) == pytest.approx(62.04)
+    assert det == {"duration_s": 62.04, "width": 64, "height": 40}
+    assert mp._parse_ffmpeg_banner("no media here", {}) == 0.0
+
+
+def test_a_video_keeps_its_length_when_only_the_bundled_ffmpeg_is_present(home, monkeypatch):
+    """The installer ships imageio-ffmpeg, which has no ffprobe: videos must not lose their details."""
+    if not home["has_mp4"]:
+        pytest.skip("no ffmpeg on this machine to make the test video")
+    monkeypatch.setattr(mp, "ffprobe_exe", lambda: None)
+    det = {}
+    assert mp._probe(home["creations"] / "friday-video-quay.mp4", det) > 0.5
+    assert det["duration_s"] > 0.5 and det["width"] == 64
