@@ -184,6 +184,24 @@ function Get-DataHomeInventory {
     return @{ Files = $count; Bytes = $bytes }
 }
 
+function Get-GuardedFileHash {
+    <#  SHA-256 of one file, read with .NET so it does not depend on the
+        Microsoft.PowerShell.Utility module being loadable, and with shared
+        read so a file another process holds open is still read. 'unreadable'
+        when it cannot be read; Compare-DataSnapshots never takes two
+        unreadable answers for "unchanged". #>
+    param([Parameter(Mandatory)][string] $Path)
+    $fs = $null
+    try {
+        $fs = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open,
+                  [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { return ([System.BitConverter]::ToString($sha.ComputeHash($fs))).Replace('-', '') }
+        finally { $sha.Dispose() }
+    } catch { return 'unreadable' }
+    finally { if ($fs) { $fs.Dispose() } }
+}
+
 function Get-DataSnapshot {
     <#  File count of the whole data home, plus the SHA-256 of each guarded
         file that exists. The count walks every folder, including the ones a
@@ -205,7 +223,7 @@ function Get-DataSnapshot {
     foreach ($rel in $script:GuardedFiles) {
         $p = Join-Path $DataHome $rel
         if (Test-Path -LiteralPath $p -PathType Leaf) {
-            try { $snap.Hashes[$rel] = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash } catch { $snap.Hashes[$rel] = 'unreadable' }
+            $snap.Hashes[$rel] = Get-GuardedFileHash -Path $p
         }
     }
     return $snap
@@ -219,7 +237,9 @@ function Compare-DataSnapshots {
     if ($Before.Exists -and -not $After.Exists) { $problems += 'The data folder is gone.' }
     foreach ($rel in $Before.Hashes.Keys) {
         if (-not $After.Hashes.ContainsKey($rel)) { $problems += "$rel is missing after the upgrade."; continue }
-        if ($After.Hashes[$rel] -ne $Before.Hashes[$rel]) { $problems += "$rel changed during the upgrade." }
+        if ($Before.Hashes[$rel] -eq 'unreadable' -or $After.Hashes[$rel] -eq 'unreadable') {
+            $problems += "$rel could not be read to check it, so it is not known to be unchanged."
+        } elseif ($After.Hashes[$rel] -ne $Before.Hashes[$rel]) { $problems += "$rel changed during the upgrade." }
     }
     if ($After.Files -lt $Before.Files) {
         $problems += ("The data folder holds {0} file(s) after the upgrade and held {1} before." -f $After.Files, $Before.Files)

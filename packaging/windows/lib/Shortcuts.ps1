@@ -86,6 +86,18 @@ public static string Get(string guid) {
     } catch { return '' }
 }
 
+function Confirm-DesktopDir {
+    <#  True when $Path is a Desktop folder that exists, creating it when the
+        account has none (a fresh profile, a service-style runner). A shortcut
+        is never skipped because the folder was missing. #>
+    param([string] $Path)
+    if (-not $Path) { return $false }
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Force -Path $Path -ErrorAction Stop | Out-Null }
+    } catch { return $false }
+    return [bool](Test-Path -LiteralPath $Path)
+}
+
 function Get-DesktopDir {
     <#  The Desktop folder this person actually sees. Never assumes
         %USERPROFILE%\Desktop: with OneDrive's Known Folder Move that folder
@@ -96,7 +108,7 @@ function Get-DesktopDir {
         User Shell Folders value, and only then the folders a default profile
         has (OneDrive\Desktop if present, else the profile's own Desktop). #>
     $d = Get-SpecialDir -Name 'Desktop'
-    if ($d) { return $d }
+    if ($d) { if (Confirm-DesktopDir $d) { return $d } }
     $k = Get-KnownFolderPath -Name 'Desktop'
     if ($k) {
         try { if (-not (Test-Path -LiteralPath $k)) { New-Item -ItemType Directory -Force -Path $k -ErrorAction Stop | Out-Null } } catch { }
@@ -106,7 +118,7 @@ function Get-DesktopDir {
         $reg = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' -ErrorAction Stop).Desktop
         if ($reg) {
             $reg = [Environment]::ExpandEnvironmentVariables([string]$reg)
-            if (Test-Path -LiteralPath $reg) { Write-Log "Desktop resolved from the registry: $reg" 'WARN'; return $reg }
+            if (Confirm-DesktopDir $reg) { Write-Log "Desktop resolved from the registry: $reg" 'WARN'; return $reg }
         }
     } catch { }
     foreach ($base in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
@@ -117,7 +129,7 @@ function Get-DesktopDir {
     }
     if ($env:USERPROFILE) {
         $c = Join-Path $env:USERPROFILE 'Desktop'
-        if (Test-Path -LiteralPath $c) { Write-Log "Desktop resolved to the profile folder: $c" 'WARN'; return $c }
+        if (Confirm-DesktopDir $c) { Write-Log "Desktop resolved to the profile folder: $c" 'WARN'; return $c }
     }
     return ''
 }
