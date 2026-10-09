@@ -379,28 +379,34 @@ except Exception:  # pragma: no cover - the hook is optional at import
 
 # ── the fenced-block fallback ───────────────────────────────────────────────
 
-_FENCE_OPEN = re.compile(r"```friday-artifact[ \t]*([^\n]*)\n")
+_FENCE_TAG = "```friday-artifact"
 
 
 def _replace_fences(text: str, fn) -> str:
     """Replace every closed ```friday-artifact fence with fn(header, body, whole).
 
-    Scans once: each opener looks for the next closing fence, and when there is
-    none no later opener has one either, so the text after it is left as it is
-    (a pattern with a lazy body would retry every opener to the end)."""
+    Scans once with plain `find`: an opener needs a line end after it and a
+    closing fence after that, and when either is missing no later opener has
+    one either, so the text from there on is left as it is. (A pattern for the
+    opening line or a lazy body would retry every opener to the end.)"""
     out, pos = [], 0
     while True:
-        opener = _FENCE_OPEN.search(text, pos)
-        if opener is None:
+        start = text.find(_FENCE_TAG, pos)
+        if start < 0:
             break
-        close = text.find("```", opener.end())
+        line_end = text.find("\n", start + len(_FENCE_TAG))
+        if line_end < 0:
+            break
+        body_start = line_end + 1
+        close = text.find("```", body_start)
         if close < 0:
             break
         end = close
-        if end > opener.end() and text[end - 1] == "\n":
+        if end > body_start and text[end - 1] == "\n":
             end -= 1
-        out.append(text[pos:opener.start()])
-        out.append(fn(opener.group(1), text[opener.end():end], text[opener.start():close + 3]))
+        header = text[start + len(_FENCE_TAG):line_end].lstrip(" \t")
+        out.append(text[pos:start])
+        out.append(fn(header, text[body_start:end], text[start:close + 3]))
         pos = close + 3
     out.append(text[pos:])
     return "".join(out)

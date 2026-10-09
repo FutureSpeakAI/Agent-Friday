@@ -125,3 +125,71 @@ def test_publish_web_head_and_script_scans_are_linear():
         == ["https://a.example/x.js", "https://b.example/m.js"]
     _fast(pw.collect_imports, "<script " * (N // 8))
     _fast(pw.collect_imports, "from" + " " * N + "x")
+
+
+# -- the remaining beta alerts ------------------------------------------------
+
+def test_artifact_fence_opener_is_linear_without_a_line_end():
+    from agent_friday.services import artifacts as art
+    ident = lambda h, b, w: w  # noqa: E731
+    for text in ("```friday-artifact" + "\t" * N,
+                 "```friday-artifact" * (N // 18),
+                 "```friday-artifact a\n" + "```friday-artifact" * (N // 18)):
+        assert _fast(art._replace_fences, text, ident) == text
+
+
+def test_artifact_fence_header_loses_only_leading_blanks():
+    from agent_friday.services import artifacts as art
+    seen = []
+    art._replace_fences("```friday-artifact \t {\"k\": 1} \nbody\n```", lambda h, b, w: seen.append((h, b)) or "")
+    assert seen == [('{"k": 1} ', "body")]
+
+
+def test_open_workspace_lead_is_linear_on_a_wall_of_spaces():
+    from agent_friday.services import laya_resolver as lr
+    hostile = "a" + " " * N + "x"
+    assert _fast(lr._TRAIL_FILLER.sub, "", hostile) == hostile
+    assert lr._TRAIL_FILLER.sub("", "the lab for me please") == "the lab"
+    assert lr._TRAIL_FILLER.sub("", "the   lab  now") == "the   lab"
+
+
+def test_person_markers_still_scrub_and_are_linear_on_hostile_text():
+    from agent_friday.services import local_context as lc
+    out, ph = lc.scrub("Ask {{person: Sam Lee | their brother}} and {{ person:Dana|a friend }}.")
+    assert "Sam" not in out and "Dana" not in out
+    assert "[their brother]" in out and "[a friend]" in out
+    for hostile in ("{{person:" + " " * N + "x",
+                    "{{person:" * (N // 9),
+                    "{{person: a |" * (N // 13),
+                    "{{person: a |" + " " * N + "x",
+                    "{{person: " + "x " * (N // 2),
+                    "{{{{person:" + " " * N):
+        _fast(lc.PERSON_RE.sub, "[x]", hostile)
+        _fast(lc.PERSON_RE.findall, hostile)
+
+
+def test_person_marker_pattern_matches_what_it_matched_before():
+    import random
+    import re
+    from agent_friday.services import local_context as lc
+    old = re.compile(r"\{\{\s*person\s*:\s*([^|}]+?)\s*\|\s*([^}]+?)\s*\}\}", re.I)
+    rng = random.Random(7)
+    parts = ["{{", "}}", "person", ":", "|", " ", "Sam", "Dana Q", "brother", "a friend", "\n", "x"]
+    checked = 0
+    for _ in range(4000):
+        text = "".join(rng.choice(parts) for _ in range(rng.randint(1, 14)))
+        a = [(m.start(), m.group(1).strip(), m.group(2)) for m in old.finditer(text)]
+        b = [(m.start(), m.group(1).strip(), m.group(2)) for m in lc.PERSON_RE.finditer(text)]
+        # The pattern may stop at a nested "{{" or a blank name; on everything
+        # else it agrees exactly.
+        if "{{" in text[2:] or not all(g[1] for g in a):
+            continue
+        checked += 1
+        assert a == b, text
+    assert checked > 200
+
+
+def test_figures_pattern_is_bounded_per_start():
+    from agent_friday.services import podcast_quality as pq
+    _fast(pq._entities, "T", ("1" * 39 + "x") * (N // 40))
+    _fast(pq._entities, "T", "$" + "1," * (N // 2))

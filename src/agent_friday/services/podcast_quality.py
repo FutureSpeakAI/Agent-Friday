@@ -287,7 +287,7 @@ def _entities(title: str, text: str) -> set[str]:
     # A figure is never 40 characters of digits and separators; a longer run is
     # cut so the pattern below cannot retry a hostile run from every digit.
     scanned = re.sub(r"([\d,.]{40})[\d,.]+", r"\1", "%s %s" % (title, text))
-    figures = {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", scanned)
+    figures = {w.lower() for w in re.findall(r"\$?\d[\d,.]{0,39}[%BbMmKk]?\b", scanned)
                if not re.fullmatch(r"\d{1,2}", w)}
     body = _caps(text, initial=False)
     if not body:
