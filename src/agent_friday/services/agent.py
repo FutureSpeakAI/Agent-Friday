@@ -605,7 +605,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     raise RuntimeError(
         "No model provider could run the agent (tried "
         + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "
-        "OpenRouter, in Settings → Accounts & Keys (one is enough), configure "
+        "OpenRouter, in Settings → Connections (one is enough), configure "
         "an OpenAI-compatible endpoint in Settings, or run a local model."
     )
 
@@ -958,7 +958,7 @@ CLAUDE_TOOLS = [
          "workspace": {"type": "string"},
          "limit": {"type": "integer", "description": "How many of the most recent snapshots to show. Default 12, max 40."}},
       "required": ["workspace"]}},
-    {"name": "draft_email", "description": "Create an approval card with exact From/To/Subject/body; NEVER sends until the user approves that card. Report waiting for approval, not sent. Supply full final body; later edits invalidate approval. Needs a sending-enabled account. If none, direct to Settings > Accounts & Keys > Google > Add account with \"allow sending\" ticked; never claim email is unavailable.",
+    {"name": "draft_email", "description": "Create an approval card with exact From/To/Subject/body; NEVER sends until the user approves that card. Report waiting for approval, not sent. Supply full final body; later edits invalidate approval. Needs a sending-enabled account. If none, direct to Settings > Connections > Google > Add account with \"allow sending\" ticked; never claim email is unavailable.",
      "input_schema": {"type": "object", "properties": {
          "to": {"type": "string", "description": "One address, or several separated by commas."},
          "subject": {"type": "string"},
@@ -1496,7 +1496,7 @@ _GOOGLE_NOT_CONNECTED_NOTE = (
     "{what} is built in but NOT CONNECTED on this machine yet (no OAuth token). "
     "This is a one-time connection, not a missing feature. Tell the user {what} is "
     "set up and ready to link, and OFFER to walk them through the one-time "
-    "connection — they authorize at /api/google/auth (or Settings -> Accounts & Keys). "
+    "connection — they authorize at /api/google/auth (or Settings -> Connections). "
     "Do NOT tell them you can't access {reads}; say it just needs connecting."
 )
 
@@ -1528,7 +1528,7 @@ def _summarize_multi_account_errors(result):
                 "status": _st,
                 "error": ("This account's Google authorization has expired and "
                           "it was NOT read this turn - reconnect it in Settings "
-                          "-> Accounts & Keys.") if _st == "needs_reauth" else None}
+                          "-> Connections.") if _st == "needs_reauth" else None}
     except Exception:
         pass
     for acc in (result.get("accounts") or []):
@@ -4191,7 +4191,7 @@ def _tool_list_sending_accounts(_inp):
         "can_send": bool(accounts),
         "note": ("" if accounts else
                  "No connected account has been granted permission to send. "
-                 "The user grants it at Settings → Accounts & Keys → Google → Add "
+                 "The user grants it at Settings → Connections → Google → Add "
                  "account, with \"allow sending\" ticked. This is a "
                  "permission, not a bug — don't try another route."),
     }, default=str)
@@ -7820,12 +7820,12 @@ def _cc_check():
         if not _enabled:
             return False, (
                 "Computer control is turned off. Turn on Settings \u2192 Privacy & "
-                "Approvals \u2192 Computer Control, then press \"Grant for this "
+                "Data \u2192 Computer Control, then press \"Grant for this "
                 "session\"."
             )
         return False, (
             "Computer control is enabled, but has not been granted. Open "
-            "Settings \u2192 Privacy & Approvals \u2192 Computer Control and press "
+            "Settings \u2192 Privacy & Data \u2192 Computer Control and press "
             "\"Grant\". The grant then persists across restarts until you revoke it."
         )
     return True, None
@@ -8018,7 +8018,7 @@ def _tool_scroll(inp):
 CLAUDE_TOOLS.extend([
     {
         "name": "move_mouse",
-        "description": "Move the mouse cursor to a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Approvals).",
+        "description": "Move the mouse cursor to a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Data).",
         "input_schema": {"type": "object", "properties": {
             "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot image."},
             "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot image."},
@@ -8026,7 +8026,7 @@ CLAUDE_TOOLS.extend([
     },
     {
         "name": "click",
-        "description": "Click at a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Approvals).",
+        "description": "Click at a point in the most recent `screenshot` image; Friday maps it to the real screen. Take a screenshot first, and again after the screen changes. Requires the Computer Control permission (Settings → Privacy & Data).",
         "input_schema": {"type": "object", "properties": {
             "x": {"type": "integer", "description": "Pixels from the left edge of the latest screenshot image."},
             "y": {"type": "integer", "description": "Pixels from the top edge of the latest screenshot image."},
@@ -9684,6 +9684,13 @@ def _tool_artifact_put(inp):
     """One version into the artifact store, for the conversation that asked."""
     from agent_friday.services import artifacts as _art
     inp = inp or {}
+    try:
+        from agent_friday.core import _load_settings
+        if (_load_settings() or {}).get("artifact_panel_enabled") is False:
+            return ("The artifact panel is turned off in Settings, Privacy & Data. "
+                    "Nothing was stored.")
+    except Exception:
+        pass
     cid = (inp.get("conversation_id") or _CURRENT_CONVERSATION.get() or "").strip()
     if not cid:
         return ("artifact_put needs a conversation to put the artifact in, and "
@@ -10037,7 +10044,7 @@ CLAUDE_TOOLS.append({
     "name": "codebase_key",
     "description": (
         "Change whose key pays for this chat's codebase: 'mine' (the user's own key) or the label of a "
-        "guest key added under Settings \u2192 Accounts & Keys ('use Alex's key'). A guest key is used only by this "
+        "guest key added under Settings \u2192 Connections ('use Alex's key'). A guest key is used only by this "
         "codebase; nothing falls back to the user's key if it fails. Speak the result's `say` as is."),
     "input_schema": {"type": "object", "properties": {
         "profile": {"type": "string", "description": "'mine' or a guest key's label."},
@@ -13533,7 +13540,7 @@ def _guest_client_for_turn(client, session_ctx):
     over = _cb.guest_key_over_cap(g["codebase"], g["label"])
     if over:
         raise RuntimeError("%s's key has reached the cap you set for it ($%.2f of $%.2f). Nothing was sent on your key; "
-                           "raise the cap under Settings \u2192 Accounts & Keys or say \"use my key\"." % (g["label"], over["spent"], over["cap"]))
+                           "raise the cap under Settings \u2192 Connections or say \"use my key\"." % (g["label"], over["spent"], over["cap"]))
     if g["provider"] != "anthropic":
         raise RuntimeError("%s's key is for %s, and guest keys are supported for Anthropic only for now. Nothing was sent on your key."
                            % (g["label"], g["provider"]))
@@ -13562,7 +13569,7 @@ def _guest_auth_failed(guest, exc):
     except Exception as e:
         _log.warning("could not record the rejected guest key: %s", e)
     raise RuntimeError("%s's key was rejected by the provider (%s). Nothing was sent on your key; fix or replace it under "
-                       "Settings \u2192 Accounts & Keys, or say \"use my key\"." % (guest["label"], status or name))
+                       "Settings \u2192 Connections, or say \"use my key\"." % (guest["label"], status or name))
 
 
 def _refusal_message(resp) -> str:
@@ -13687,7 +13694,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 provider=_one_key.OPENROUTER)
         raise RuntimeError(
             "No cloud AI key is set. Add an Anthropic or an OpenRouter key in "
-            "Settings → Accounts & Keys (one is enough)."
+            "Settings → Connections (one is enough)."
         )
 
     if (session_ctx or {}).get("crew_agent_id"):

@@ -305,7 +305,7 @@ def refresh_models(provider, timeout: float = 20.0) -> dict:
         and not feats.get("keyless_discovery")
     if needs_key and not api_key:
         return {"ok": False, "provider": name, "count": 0,
-                "error": "no API key configured — add one in Settings → Accounts & Keys"}
+                "error": "no API key configured — add one in Settings → Connections"}
 
     base = (prov.get("base_url") or "").rstrip("/")
     endpoint = disc.get("endpoint") or "/models"

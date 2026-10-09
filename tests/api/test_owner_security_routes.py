@@ -1,4 +1,4 @@
-"""Settings -> Privacy & Approvals: re-confirming Friday's rules, and
+"""Settings -> Privacy & Data: re-confirming Friday's rules, and
 protecting the credential keystore with the vault passphrase.
 
 Both change a security boundary, so both answer only Friday's own page on

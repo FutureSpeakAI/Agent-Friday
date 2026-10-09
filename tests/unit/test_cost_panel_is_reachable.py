@@ -59,7 +59,7 @@ def test_the_tab_parse_still_works():
     reachable = _reachable_tab_ids(_src())
     assert len(reachable) >= 8, "parsed only %d tabs: %s" % (
         len(reachable), sorted(reachable))
-    assert "accounts" in reachable
+    assert "connections" in reachable
 
 
 def test_cost_and_usage_is_a_reachable_tab():

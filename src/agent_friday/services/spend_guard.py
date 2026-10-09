@@ -82,7 +82,7 @@ class SpendCapReached(UserFacingError, RuntimeError):
             f"Hard spending cap reached: ${spend:.2f} of ${limit:.2f} "
             f"{period} cap already spent, so {what} was not sent to the cloud. "
             f"Local models still work. To resume cloud work: raise the cap or "
-            f"switch the hard stop off in Settings > Cost & Usage."
+            f"switch the hard stop off in Settings > Spending."
         )
 
 
@@ -194,7 +194,7 @@ def _push(title: str, body: str, dedupe_key: str, priority: str = "high") -> Non
 
 def _resume_hint() -> str:
     return ("Local models keep working. To resume cloud work: raise the cap, "
-            "or switch the hard stop off, in Settings > Cost & Usage.")
+            "or switch the hard stop off, in Settings > Spending.")
 
 
 def notify_if_tripped() -> Optional[Dict[str, Any]]:

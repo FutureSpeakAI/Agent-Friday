@@ -1,4 +1,4 @@
-"""Settings -> Privacy & Approvals offers the two owner-only controls, in the
+"""Settings -> Privacy & Data offers the two owner-only controls, in the
 served page and in its hand-maintained mirror, and they call the routes that
 require this PC and the page token."""
 from __future__ import annotations

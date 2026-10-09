@@ -212,7 +212,7 @@ def _phone_items() -> list:
         status, detail = CONNECTED, "Configured and your cell is verified."
     elif any(have):
         status, detail = ATTENTION, ("Partly set up. Finish in Settings > "
-                                     "Accounts & Keys > Phone (number, "
+                                     "Connections > Phone (number, "
                                      "verification, public address).")
     else:
         status, detail = NOT_CONNECTED, ""
@@ -238,7 +238,7 @@ def _phone_items() -> list:
                   "it to delete them (on by default)."),
         ],
         connect={"kind": "fields", "fields": fields,
-                 "more": "Settings > Accounts & Keys > Phone"},
+                 "more": "Settings > Connections > Phone"},
         status=status, detail=detail, docs_url="https://console.twilio.com")]
 
 

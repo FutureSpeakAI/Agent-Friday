@@ -101,7 +101,7 @@ def _client():
     from agent_friday.phone import twilio_api
     c = twilio_api.client_from_config()
     if c is None:
-        raise PhoneRefused("the Twilio API key is not set up yet (Settings → Accounts & Keys → Phone)")
+        raise PhoneRefused("the Twilio API key is not set up yet (Settings → Connections → Phone)")
     return c
 
 
@@ -186,7 +186,7 @@ def checkpoint(action: str, target: str, *, approval: Optional[dict] = None) -> 
         if action != "sms":
             refuse("every call needs your approval first")
         if not owner:
-            refuse("your cell is not verified yet (Settings → Accounts & Keys → Phone)")
+            refuse("your cell is not verified yet (Settings → Connections → Phone)")
         if target != owner:
             refuse("Friday texts only your verified cell without an approval")
         now = time.time()
@@ -375,7 +375,7 @@ def _check_target(to: str, owner_instruction: str) -> str:
         raise PhoneRefused("%r is not a phone number I can read" % to)
     owner = config.verified_owner_cell()
     if not owner:
-        raise PhoneRefused("your cell is not verified yet (Settings → Accounts & Keys → Phone)")
+        raise PhoneRefused("your cell is not verified yet (Settings → Connections → Phone)")
     if to_n != owner and not named_in(to_n, owner_instruction):
         raise PhoneRefused(
             "Friday contacts only your own cell unless you name the number yourself, "
@@ -628,7 +628,7 @@ def handle_approval_reply(text: str, now: Optional[float] = None) -> Optional[st
                 _notify("Approval by text switched off",
                         "Five wrong approval codes arrived within an hour, so approving by "
                         "text is off. Nothing was approved. Turn it back on in Settings → "
-                        "Accounts & Keys → Phone.", priority="high", kind="warning")
+                        "Connections → Phone.", priority="high", kind="warning")
                 return "Too many wrong codes. Approval by text is now off."
             _save_state("sms_approvals.json", st)
             return "That code does not match a waiting approval. Nothing was changed."

@@ -1156,7 +1156,7 @@
     }
     if (kind === 'post' && window.ContentComposeTab) {
       // Compose takes the post's id and fetches the post itself; a post card is that post.
-      return h('div', { style: { padding: 10, overflow: 'auto', flex: 1 } }, h(window.ContentComposeTab, { platforms: window.__mediaPlatforms || [], prefillPost: c.source_ref, slot: null, onNavAccounts: () => toast('Accounts live under Settings → Accounts & Keys.') }));
+      return h('div', { style: { padding: 10, overflow: 'auto', flex: 1 } }, h(window.ContentComposeTab, { platforms: window.__mediaPlatforms || [], prefillPost: c.source_ref, slot: null, onNavAccounts: () => toast('Accounts live under Settings → Connections.') }));
     }
     if ((kind === 'imageset' || kind === 'image') && file) return h('img', { src: file, alt: c.title });
     if ((kind === 'video' || kind === 'timeline') && file) return h('video', { src: file, controls: true });
@@ -1267,7 +1267,7 @@
   window.MediaCard = MediaCard;
 
   // ── Channels and Insights: not pieces of work, so not cards ──────────────
-  // Connected accounts live under Settings → Accounts & Keys (MediaChannelsSettings
+  // Connected accounts live under Settings → Connections (MediaChannelsSettings
   // re-houses the Content workspace's Accounts tab there). Analytics and best
   // times are a pane reached from Media's head row (MediaInsights).
   function usePlatforms() {

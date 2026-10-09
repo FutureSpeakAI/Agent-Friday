@@ -106,7 +106,7 @@ def clear_notification_group():
 @notif_bp.route('/api/notifications/mute', methods=['POST'])
 def mute_notification_kind():
     """Mute (or with {"unmute": true} unmute) a kind of notification. An
-    approval cannot be muted. Reversible in Settings > Notifications."""
+    approval cannot be muted. Reversible in Settings > General > Muted notifications."""
     data = request.get_json(silent=True) or {}
     kind, source = str(data.get('kind') or ''), str(data.get('source') or '')
     if not _notif_engine or not kind:

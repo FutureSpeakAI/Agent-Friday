@@ -1,11 +1,15 @@
-"""The Settings pane's shape: eight task-shaped tabs plus About, nothing on hold.
+"""The Settings pane's shape: seven task-shaped sections plus Spending and About.
 
 Settings grew one tab per feature until it had thirteen, with the same control
 reachable from several of them and developer diagnostics mixed in with what
-every user needs. The structure is now fixed by what a user is trying to do:
+every user needs. The structure is now fixed by what a user is trying to do,
+in the order Claude and ChatGPT lay theirs out:
 
-    General · Models · Accounts & Keys · Privacy & Approvals ·
-    Appearance & 3D · Voice & Tracking · Spending · Advanced   (+ About)
+    General · Voice · Models · Spending · Privacy & Data · Connections ·
+    Appearance · Advanced   (+ About)
+
+Spending sits straight after Models: it is the money the models spend, and
+surface-reorg gives money a door of its own (decision D6).
 
 These tests hold that shape in BOTH UI files (index.html is served;
 ui_parts/app.html is its hand-maintained mirror), and hold the specific
@@ -15,7 +19,7 @@ cleanups that came with it:
     source behind one runtime switch, settings.held_features.federation
     (read by settingsShowHeldFeatures), which is off by default; the rail
     above is the rail while it is off.
-  * Computer Control is switched on only from Privacy & Approvals, where the
+  * Computer Control is switched on only from Privacy & Data, where the
     warning and the grant status sit beside it -- never from the one-click
     Quick Settings menu.
   * Controls whose keys nothing reads (compact_mode, startup_workspace,
@@ -38,12 +42,12 @@ CORE = ROOT / "src" / "agent_friday" / "core" / "__init__.py"
 
 EXPECTED_TABS = [
     ("general", "General"),
+    ("voice", "Voice"),
     ("intelligence", "Models"),
-    ("accounts", "Accounts & Keys"),
-    ("privacy", "Privacy & Approvals"),
-    ("appearance", "Appearance & 3D"),
-    ("voice", "Voice & Tracking"),
     ("costs", "Spending"),
+    ("privacy", "Privacy & Data"),
+    ("connections", "Connections"),
+    ("appearance", "Appearance"),
     ("advanced", "Advanced"),
     ("about", "About"),
 ]
@@ -73,7 +77,7 @@ def _tabs(body: str):
 
 
 @UI_FILES
-def test_settings_rail_is_the_eight_task_tabs_plus_about(path):
+def test_settings_rail_is_the_task_sections_in_order(path):
     tabs = _tabs(_rail(path.read_text(encoding="utf-8")))
     assert tabs == EXPECTED_TABS, "%s rail is %s" % (path.name, tabs)
 
@@ -120,7 +124,8 @@ def test_legacy_deep_links_still_land(path):
     assert m, "%s: SETTINGS_TAB_ALIASES is missing" % path.name
     aliases = dict(re.findall(r"(\w+)\s*:\s*'([a-z]+)'", m.group(1)))
     real = {tab_id for tab_id, _ in EXPECTED_TABS}
-    for old in ("providers", "connectors", "dock", "knowledge", "work"):
+    for old in ("accounts", "providers", "connectors", "phone", "dock", "tracking", "notifications",
+                "knowledge", "work", "models", "spending"):
         assert aliases.get(old) in real, (
             "%s: legacy tab id %r has no alias to a real tab" % (path.name, old))
     assert "settingsTabId(" in _settings_ws(src), (
@@ -196,7 +201,7 @@ def test_models_are_chosen_on_the_models_tab_only():
     assert "ModelBrowser" in _fn(src, "SettingsTabIntelligence")
     providers = _fn(src, "SettingsTabProviders")
     assert "ModelBrowser" not in providers and "AutoRouterControls" not in providers, (
-        "Accounts & Keys is for keys; the model browser and the router's "
+        "Connections is for keys; the model browser and the router's "
         "spend dial belong with the jobs they choose models for")
 
 

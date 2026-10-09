@@ -118,9 +118,9 @@ def _waiting_text(res) -> str:
     local = next((f.split(":", 1)[1] for f in fixes if f.startswith("use_local:")), None)
     s = "I'm waiting for a cloud model: %s." % res.get("reason", "none is connected")
     if "connect_cloud" in fixes and local:
-        s += " I can open Accounts & Keys, or use %s instead. Which?" % local
+        s += " I can open Connections, or use %s instead. Which?" % local
     elif "connect_cloud" in fixes:
-        s += " I can open Accounts & Keys for you."
+        s += " I can open Connections for you."
     return s
 
 

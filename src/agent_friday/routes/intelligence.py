@@ -63,7 +63,7 @@ ROLE_SPEC = [
     ("subagent",       "Background & research", "subagent",     "tools",
      "Runs commissions and background work while you do other things."),
     ("memory_manager", "Memory keeper",         "orchestrator", "tools",
-     "Reads the day and decides what is worth keeping. Local only."),
+     "Reviews your memory when you ask her to; it does not run on its own yet. Local only."),
     ("creative_image", "Images",                "creative",     "image",
      "Generates pictures."),
     ("creative_video", "Video",                 "creative",     "video",
@@ -1019,7 +1019,7 @@ def _model_soup(settings: dict, routing: dict, costs: dict, seats: dict,
              or "local").lower()
     posture = {
         "mode": mode,
-        "vault_local_only": bool(mr.get("vault_local_only", False)),
+        "vault_local_only": bool(mr.get("vault_local_only", True)),  # the gate's own default
         "kg_indexing_mode": kg,
         "kg_local_possible": bool(serving),
         "egress_mode": str(settings.get("egress_mode") or "audit"),

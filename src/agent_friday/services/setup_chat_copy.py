@@ -78,7 +78,7 @@ CONNECT = (
     "Keys go into the secure field on each card, straight into encrypted "
     "storage on this computer. They never go into this chat, and I will "
     "never ask for a password here. Skip whatever you like; everything stays "
-    "in Settings > Accounts & Keys.")
+    "in Settings > Connections.")
 
 CONNECT_DONE = "Done for now"
 
@@ -109,17 +109,17 @@ KEY_CAN_THINK = "That one key is enough. I can think now."
 KEY_CANNOT_THINK = ("I still can't think. Try the key again, or use the other "
                     "provider instead: one key is enough.")
 KEY_UNSURE = ("I'll try it for real the first time you talk to me; if it "
-              "fails, Settings > Accounts & Keys is where to fix it.")
+              "fails, Settings > Connections is where to fix it.")
 
 #: Leaving the connect stage in the cloud with no key: what will not work.
 NO_KEY_YET = (
     "No AI key yet, so for now I can't think. Until you add one, chat, "
     "briefings, the front page, scheduled jobs and research won't work, and "
     "I'll use simple rules for the rest of setup. Add an Anthropic or an "
-    "OpenRouter key any time in Settings > Accounts & Keys; one is enough, "
+    "OpenRouter key any time in Settings > Connections; one is enough, "
     "and nothing else needs redoing.")
 
-#: The one-key line on the checklist (setup chat and Settings > Accounts & Keys).
+#: The one-key line on the checklist (setup chat and Settings > Connections).
 ONE_KEY_IN_USE = ("Thinking with your {label} key. One key is enough; you "
                   "don't need another.")
 ONE_KEY_NONE = ("One key is enough to think with: Anthropic, or OpenRouter "
@@ -521,7 +521,7 @@ CLOUDFLARE_STEPS = (
     "with Cloudflare's own `cloudflared` tool, signed in to your Cloudflare "
     "account in your browser.",
     "For the phone line, point a named tunnel at the phone's local address "
-    "(shown in Settings > Accounts & Keys > Phone) and put the public address "
+    "(shown in Settings > Connections > Phone) and put the public address "
     "into the Phone settings.",
     "For remote access to Friday itself, set FRIDAY_REMOTE_KEY first: without "
     "it Friday refuses every request that does not come from this computer.",

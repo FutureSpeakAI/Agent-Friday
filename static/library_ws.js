@@ -537,7 +537,7 @@
         h('h2', null, 'Library'), h('span', { className: 'lb-count', role: 'status' }, line),
         status && status.waiting_because && h('span', { className: 'lb-count' }, 'Reading paused: ' + status.waiting_because),
         status && status.paused && h('span', { className: 'lb-count lb-danger', role: 'status' }, 'Paused: the permissions record could not be verified. ',
-          // The one place it is fixed: Settings > Privacy & Approvals > File access.
+          // The one place it is fixed: Settings > Privacy & Data > File access.
           h('button', { className: 'btn', 'data-testid': 'library-open-file-access', onClick: () => window.fridayOpenWorkspace && window.fridayOpenWorkspace({ workspace: 'settings', tab: 'privacy', section: 'File access' }) }, 'Open File access')),
         h('span', { className: 'lb-spacer' }),
         h('div', { className: 'lb-seg', role: 'group', 'aria-label': 'View' },

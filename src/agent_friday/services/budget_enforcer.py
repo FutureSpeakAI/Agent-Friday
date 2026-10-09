@@ -174,10 +174,14 @@ import uuid as _uuid
 
 
 def reserve_budget(workspace: str, amount_mψ: int) -> bool:
-    """Atomically reserve amount_mψ. Returns False if monthly cap would be exceeded."""
+    """Atomically reserve amount_mψ. Returns False if the per-task cap or the monthly cap would be exceeded."""
     if amount_mψ <= 0:
         return True
     policy = get_policy(workspace)
+    # The per-task cap is the most one task may reserve at once.
+    task_cap = int(policy.get("per_task_cap_mψ") or 0)
+    if task_cap > 0 and amount_mψ > task_cap:
+        return False
     mk = _month_key()
     now = datetime.now(timezone.utc).isoformat()
 

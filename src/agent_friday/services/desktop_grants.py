@@ -507,7 +507,7 @@ def _targets(tool: str, kind: str, args: dict, *, controls: bool = True) -> tupl
 def _short_grant_hint(app, need) -> str:
     who = f"'{app}'" if app else "the app it would act on (it could not be identified)"
     return (f"{who} is not granted '{need}' for desktop control. The owner can grant "
-            f"it under Settings \u2192 Privacy & Approvals \u2192 Computer Control "
+            f"it under Settings \u2192 Privacy & Data \u2192 Computer Control "
             f"\u2192 Apps.")
 
 

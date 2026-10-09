@@ -359,7 +359,7 @@ GMAIL_ONLY = ("trash", "untrash", "spam", "notspam", "important", "unimportant")
 #: Friday rather than from the owner's own click, it becomes an approval card.
 NEEDS_APPROVAL_FROM_FRIDAY = ("trash", "spam", "archive", "mute")
 NOT_PERMITTED_TEXT = ("this account has not allowed Friday to change Gmail. Reconnect it "
-                      "with sending (Settings > Connectors > Google) to delete, label "
+                      "with sending (Settings > Connections > Google) to delete, label "
                       "and archive in Gmail itself")
 
 

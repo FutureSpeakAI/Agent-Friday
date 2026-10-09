@@ -251,7 +251,17 @@ class InstagramAdapter(PlatformAdapter):
         return str(self._config.get("api_version") or _DEFAULT_VERSION)
 
     def _staging_base_url(self) -> str:
-        return str(self._config.get("staging_base_url") or "").strip()
+        own = str(self._config.get("staging_base_url") or "").strip()
+        if own:
+            return own
+        # The Publishing channels box saves one staging host for every
+        # URL-pull platform under settings.content.
+        try:
+            from agent_friday import core
+            content = (core._load_settings() or {}).get("content") or {}
+            return str(content.get("staging_base_url") or "").strip()
+        except Exception:
+            return ""
 
     # ── auth lifecycle (§4.1 / §12.2) ────────────────────────────────────────
     def connect_url(self, state: str) -> Optional[str]:

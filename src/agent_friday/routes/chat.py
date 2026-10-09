@@ -1880,7 +1880,7 @@ def chat():
                     "I'm set to **cloud only**, and there's no cloud AI key on "
                     "this computer yet — so there's nothing for me to think "
                     "with. I haven't sent this anywhere.\n\n"
-                    "Add one key in **Settings → Accounts & Keys**: Anthropic "
+                    "Add one key in **Settings → Connections**: Anthropic "
                     "(https://console.anthropic.com/settings/keys) or, instead, "
                     "OpenRouter (https://openrouter.ai/keys). One is enough. "
                     "The panel there takes the key straight from you and "

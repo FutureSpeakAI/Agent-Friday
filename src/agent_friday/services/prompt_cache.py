@@ -289,7 +289,7 @@ class task_budget:
             f"Most of that count is the same conversation re-sent on each "
             f"step, which prompt cache billing charges at 0.1x — {money}. "
             f"Adjust 'max_task_input_tokens' to move this notice, or set a "
-            f"real dollar stop in Settings > Cost & Usage."
+            f"real dollar stop in Settings > Spending."
         )
 
     def _warn(self):

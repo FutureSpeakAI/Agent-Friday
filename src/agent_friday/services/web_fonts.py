@@ -5,8 +5,9 @@ and JetBrains Mono from files in static/fonts and falls back to system faces,
 so it never needs the network for a font. Google Fonts is added to the page
 only when BOTH hold:
 
-  * the owner has not turned it off (`web_fonts_from_google`, Settings ->
-    Privacy & Approvals), and
+  * the setting `web_fonts_from_google` is not off (there is no Settings row
+    for it: the font files ship in static/fonts, so it is never consulted in
+    a normal install), and
   * the font files are not in static/fonts. Once they are, Google Fonts is
     never requested, whatever the setting says.
 

@@ -24,7 +24,7 @@ MANIFEST = {"workspaces": {
     "settings": {"label": "Settings", "key": "tab", "keys": ["tab", "section"], "sections": [
         {"id": "general", "label": "General"},
         {"id": "intelligence", "label": "Models", "aliases": ["models", "model"]},
-        {"id": "accounts", "label": "Accounts & Keys", "aliases": ["phone", "keys"]},
+        {"id": "accounts", "label": "Connections", "aliases": ["phone", "keys"]},
         {"id": "costs", "label": "Spending"},
         {"id": "advanced", "label": "Advanced"}]},
     "studio": {"label": "Studio", "key": "view", "sections": [

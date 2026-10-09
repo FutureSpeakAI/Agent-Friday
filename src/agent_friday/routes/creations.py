@@ -459,12 +459,12 @@ def create_availability():
     """Per-type availability for the Studio prompt bar (image / video / music /
     text / code-art): can each engine actually generate right now, and if not,
     why. The UI calls this once to annotate the type chips and point the user
-    at Settings → Accounts & Keys BEFORE they burn a prompt on a dead end. Everything
+    at Settings → Connections BEFORE they burn a prompt on a dead end. Everything
     here is a direct service check — the Studio creation flow never touches the
     agent loop or a Claude Code terminal."""
     from agent_friday.services import creative_engine, music_engine
     gem = creative_engine.is_available()
-    key_msg = ("Requires a Gemini API key — add one in Settings → Accounts & Keys "
+    key_msg = ("Requires a Gemini API key — add one in Settings → Connections "
                "(or set GEMINI_API_KEY), then try again.")
     try:
         music_ok, music_reason = music_engine.cloud_music_available()
@@ -487,7 +487,7 @@ def create_availability():
                  "reason": None if text_ok else (
                      "No text provider configured — add Anthropic, an "
                      "OpenAI-compatible endpoint, or Ollama in "
-                     "Settings → Accounts & Keys.")},
+                     "Settings → Connections.")},
         "code-art": {"available": gem, "reason": None if gem else key_msg},
     }}, "Couldn't check what can be created"))
 
@@ -516,7 +516,7 @@ def create_text():
                 "status": "unavailable",
                 "message": ("Text generation needs a configured AI provider. "
                             "Add Anthropic, an OpenAI-compatible endpoint, or "
-                            "Ollama in Settings → Accounts & Keys, then try again.")})
+                            "Ollama in Settings → Connections, then try again.")})
     except Exception:
         pass
     from agent_friday.services.model_router import _generate_text

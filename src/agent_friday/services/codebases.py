@@ -1055,7 +1055,7 @@ def mark_key_rejected(cid: str, label: str, reason: str, *, by: str = "provider"
     if rec is None:
         raise KeyError(cid)
     rec["key_rejected"] = ("%s's key was rejected: %s. Nothing was sent on your key; fix or replace it under "
-                           "Settings \u2192 Accounts & Keys, or say \"use my key\"." % (label, reason))
+                           "Settings \u2192 Connections, or say \"use my key\"." % (label, reason))
     _save(rec)
     _system_line(rec, "Key rejected: %s's key was refused by the provider (%s). Nothing fell back to your key." % (label, reason))
     return rec
@@ -1129,7 +1129,7 @@ def set_key_profile(cid: str, profile: str, *, by: str = "you") -> dict:
     profile = " ".join(str(profile or "").split())
     known = [k["label"] for k in guest_keys(cid)]
     if profile != "mine" and profile not in known:
-        raise ValueError("no guest key called %r on this codebase; add one under Settings \u2192 Accounts & Keys first" % profile)
+        raise ValueError("no guest key called %r on this codebase; add one under Settings \u2192 Connections first" % profile)
     old = rec.get("key_profile") or "mine"
     rec["key_profile"] = profile
     rec.pop("key_rejected", None)

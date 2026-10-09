@@ -53,7 +53,7 @@ from agent_friday.user_errors import ExceptionText, UserFacingRuntimeError, exce
 # do not hold it. Their tokens still work for everything already granted,
 # but a call needing the newer scope fails with a normal Google 403
 # (insufficient scope), surfaced per-account like any other live API error,
-# never silently. Each account must be reconnected (Settings -> Accounts & Keys ->
+# never silently. Each account must be reconnected (Settings -> Connections ->
 # Google -> the same Add Account flow) to pick up new scopes.
 #
 # Tasks is requested read/write (TASKS_RW) so complete_task/create_task/
@@ -1606,7 +1606,7 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
         # lives on Windows; that is a wall, not an instruction.
         raise UserFacingRuntimeError(
             "Friday has no Google sign-in configured yet. Open Settings -> "
-            "Accounts & Keys -> Google and choose \"Use my own Google sign-in\" "
+            "Connections -> Google and choose \"Use my own Google sign-in\" "
             "to set one up -- Friday walks you through it."
         )
     from google_auth_oauthlib.flow import Flow

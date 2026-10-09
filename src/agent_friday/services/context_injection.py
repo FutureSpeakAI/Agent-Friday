@@ -69,6 +69,8 @@ def _preferences_block(settings: Dict[str, Any]) -> List[str]:
         prefs.append(f"response length: {length}")
     if prefs:
         lines.append("User preferences — " + "; ".join(prefs) + ".")
+    if isinstance(name, str) and name.strip() and name.strip().upper() != "AGENT FRIDAY":
+        lines.append(f"The user has named you {name.strip()}; answer to that name.")
 
     profile = _user_profile()
     if profile:

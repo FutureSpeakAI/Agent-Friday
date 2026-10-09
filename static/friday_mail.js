@@ -620,7 +620,7 @@
       h('div', { className: 'fm-compose-h' }, title,
         h('button', { className: 'btn fm-btn', onClick: onClose, 'aria-label': 'Close compose' }, '✕')),
       !canSend.length && h('div', { className: 'fm-banner warn', style: { margin: 10 } },
-        ('Neither connected account has allowed ' + fridayName() + ' to send. You can write this and file the approval card, but it cannot go out until you reconnect an account with “allow sending” ticked (Settings › Connectors › Google).')),
+        ('Neither connected account has allowed ' + fridayName() + ' to send. You can write this and file the approval card, but it cannot go out until you reconnect an account with “allow sending” ticked (Settings › Connections › Google).')),
       h('div', { className: 'fm-field' }, h('label', null, 'From'),
         h('select', { value: from, onChange: e => setFrom(e.target.value) },
           (canSend.length ? canSend : accounts).map(a => h('option', { key: a.id, value: a.id }, (a.label || '') + (a.email ? ' <' + a.email + '>' : '') + (canSend.find(c => c.id === a.id) ? '' : ' (read-only)'))))),
@@ -680,7 +680,7 @@
     setTimeout(() => { try { w.focus(); w.print(); } catch (_) {} }, 300);
   }
 
-  // Settings › Connectors, where an account is reconnected with sending.
+  // Settings › Connections, where an account is reconnected with sending.
   const openReconnect = () => {
     window.__fridaySettingsTab = 'connectors';
     try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'connectors' } })); } catch (_) {}
@@ -1562,7 +1562,7 @@
         h('p', null, (fridayName() + ' can delete (to Trash), label, report spam and mark importance in Gmail once the account is reconnected with “allow sending and mailbox changes” ticked. Nothing else about the account changes.')),
         h('div', { className: 'fm-bar', style: { justifyContent: 'flex-end', marginTop: 12 } },
           h('button', { className: 'btn fm-btn', onClick: () => setDialog(null) }, 'Not now'),
-          h('button', { className: 'btn fm-btn', style: { borderColor: '#00d4ff', color: '#00d4ff' }, onClick: () => { setDialog(null); openReconnect(); } }, 'Open Settings › Connectors'))),
+          h('button', { className: 'btn fm-btn', style: { borderColor: '#00d4ff', color: '#00d4ff' }, onClick: () => { setDialog(null); openReconnect(); } }, 'Open Settings › Connections'))),
       help && h('div', { className: 'fm-help', onClick: () => setHelp(false) }, h('div', null,
         [['j / k', 'next / previous'], ['o or Enter', 'open'], ['u', 'back to list'], ['x', 'select'], ['* a / * n', 'select all / none'], ['e', 'archive'], ['#  or Delete', 'delete (to Trash)'], ['!', 'report spam'],
          ['s', 'star / unstar'], ['+ / -', 'important / not'], ['Shift+U', 'mark unread'], ['Shift+I', 'mark read'], ['b', 'snooze…'], ['l', 'label…'], ['v', 'move to lane…'], ['m', 'mute'],

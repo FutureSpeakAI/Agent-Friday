@@ -44,7 +44,7 @@ def mail_can_send():
         "status": "ok",
         "can_send": bool(accounts),
         "accounts": accounts,
-        "how": ("Settings → Accounts & Keys → Google → Add account, with "
+        "how": ("Settings → Connections → Google → Add account, with "
                 "\"allow sending\" ticked. Each message still waits for your "
                 "approval."),
     })

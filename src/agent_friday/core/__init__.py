@@ -2108,7 +2108,7 @@ DEFAULT_SETTINGS = {
     # the real defaults (KG_DEFAULT_SETTINGS) and layers the user's saved block
     # on top. This entry exists only so that block SURVIVES the whitelist two
     # lines above this comment's file-mate -- without it, every knowledge-graph
-    # setting the Settings->Privacy & Approvals tab saves (index_sources, indexing_mode,
+    # setting the Settings->Privacy & Data tab saves (index_sources, indexing_mode,
     # power_indexer, nightly_reindex...) round-trips through settings.json and
     # is silently discarded on the very next read, same defect class as
     # egress_mode and the top-level vault_local_only (docs/design/
@@ -2391,7 +2391,7 @@ DEFAULT_SETTINGS = {
     # Empty means UNCONFIGURED, and show_all_workspaces above governs exactly as
     # it always has. The moment an arrangement exists it wins outright, because
     # two switches over one dock is how you get a control that appears to do
-    # nothing. Settings → Appearance & 3D says so, and the quick toggle disables itself
+    # nothing. Settings → Appearance says so, and the quick toggle disables itself
     # rather than silently losing the argument.
     #
     # `order` is a flat list across all three dock groups. Group separators are

@@ -498,7 +498,7 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
     notes = []
     for b in sel["blocked"]:
         notes.append("%s in %s left alone: that account has not allowed Friday to change "
-                     "its mailbox (Settings \u2192 Accounts: reconnect with sending)"
+                     "its mailbox (Settings \u2192 Connections: reconnect with sending)"
                      % (_plural(b["count"], "conversation"),
                         "one account" if _quiet() else b["account"]))
     if _quiet() and sel["errors"]:

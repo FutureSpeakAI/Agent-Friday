@@ -1,4 +1,4 @@
-"""Settings -> Privacy & Approvals: two owner-only controls.
+"""Settings -> Privacy & Data: two owner-only controls.
 
   * Re-confirm Friday's rules on this PC. The approval checkpoint holds every
     outward action when the signature of the cLaws text under this PC's

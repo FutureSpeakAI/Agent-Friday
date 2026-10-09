@@ -631,7 +631,7 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         from agent_friday.services.model_plan import FLOOR_MODEL
         say(f"TIER B CANNOT RUN: indexing_mode is 'local' but no installed "
             f"model can run extraction. Pull one (e.g. 'ollama pull "
-            f"{FLOOR_MODEL}') or set knowledge indexing to the cloud in Settings -> Privacy & Approvals.")
+            f"{FLOOR_MODEL}') or set knowledge indexing to the cloud in Settings -> Privacy & Data.")
         return {
             "tier": "B", "mode": indexing_mode, "chunks": len(chunks),
             "extracted": 0, "extract_failures": 0, "first_failure": None,
@@ -642,7 +642,7 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
             "message": f"Local indexing is selected, but no locally-installed "
                        f"model can run extraction. Run 'ollama pull "
                        f"{FLOOR_MODEL}' (or set knowledge indexing to the cloud in "
-                       f"Settings -> Privacy & Approvals) and try again.",
+                       f"Settings -> Privacy & Data) and try again.",
         }
     if call is _llm and indexing_mode == "cloud":
         try:

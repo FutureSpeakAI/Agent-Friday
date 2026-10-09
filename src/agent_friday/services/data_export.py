@@ -1,5 +1,5 @@
 """What an export of ~/.friday leaves out, shared by `friday export` and the
-Settings -> Privacy & Approvals export button.
+Settings -> Privacy & Data export button.
 
 A data export holds the owner's data, not the keys that decrypt their
 credentials: anyone holding the keystore root key and the credential blobs

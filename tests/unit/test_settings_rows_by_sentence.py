@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 MANIFEST = {"workspaces": {"settings": {"sections": [
     {"id": "voice", "label": "Voice & Camera", "aliases": ["voice"]},
-    {"id": "appearance", "label": "Appearance & 3D", "aliases": ["appearance"]}]}}}
+    {"id": "appearance", "label": "Appearance", "aliases": ["appearance"]}]}}}
 
 
 @pytest.fixture(autouse=True)

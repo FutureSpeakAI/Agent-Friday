@@ -1,4 +1,4 @@
-"""routes/phone.py — Settings → Accounts & Keys → Phone, on Friday's main app.
+"""routes/phone.py — Settings → Connections → Phone, on Friday's main app.
 
 These routes configure the phone; none of them is a Twilio webhook. Webhooks
 are served by the separate ingress app (agent_friday/phone/ingress.py) on its

@@ -13720,7 +13720,7 @@ function ConnectorDot({
   const s = map[wsId];
   if (!s || s === 'off') return null;
   const col = s === 'connected' ? '#00ff80' : s === 'connecting' ? '#f59e0b' : '#ff5470';
-  const tip = s === 'connected' ? 'Live data source connected' : s === 'connecting' ? 'Connecting data source…' : 'Data source error — check Settings → Accounts & Keys';
+  const tip = s === 'connected' ? 'Live data source connected' : s === 'connecting' ? 'Connecting data source…' : 'Data source error — check Settings → Connections';
   return /*#__PURE__*/React.createElement("span", {
     title: tip,
     style: {
@@ -15442,7 +15442,7 @@ function fridayResizeCursor(dir) {
 function FridayChatShell(props) {
   if (props.mode === 'code') return React.createElement('div', { className: 'cs-native-chat', 'data-code-chat-surface': '', style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 } }, props.children);
   const Host = window.FridayArtifactHost;
-  if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, onCodebaseAsk: props.onCodebaseAsk, chatBusy: props.chatBusy }, props.children);
+  if (Host && !props.panelOff) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, onCodebaseAsk: props.onCodebaseAsk, chatBusy: props.chatBusy }, props.children);
   return /*#__PURE__*/React.createElement(React.Fragment, null, props.children);
 }
 function ChatSurface(props) {
@@ -15552,6 +15552,7 @@ function ChatSurface(props) {
     }
   };
   return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, chatBusy: chatLoad,
+    panelOff: !!(agentSettings && agentSettings.artifact_panel_enabled === false),
     onCodebaseAsk: message => sendChat(message, { preserveDraft: true }) }, React.createElement("div", {
     "data-chat-head": "",
     style: {
@@ -27777,7 +27778,7 @@ function StudioPromptBar({
       whiteSpace: 'nowrap'
     },
     onClick: openProviders
-  }, "Open Settings \u2192 Accounts & Keys")), busy && /*#__PURE__*/React.createElement("div", {
+  }, "Open Settings \u2192 Connections")), busy && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10
     }
@@ -27856,7 +27857,7 @@ function StudioPromptBar({
       whiteSpace: 'nowrap'
     },
     onClick: openProviders
-  }, "Open Settings \u2192 Accounts & Keys")) : /*#__PURE__*/React.createElement("div", {
+  }, "Open Settings \u2192 Connections")) : /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
       padding: '8px 10px',
@@ -30168,7 +30169,7 @@ function WalletPanel() {
         method: 'POST'
       });
       const d = await r.json();
-      flash(d.ok ? 'Genesis grant received!' : 'Claim failed: ' + (d.error || ''));
+      flash(d.ok ? 'Genesis grant received!' : 'Claim failed: ' + (d.error || d.message || 'no reason given'));
       load();
     } catch (e) {
       flash('Claim failed');
@@ -44763,6 +44764,12 @@ function ContentAccountsTab({
   };
   useEffect(() => {
     fetch('/api/content/queue').then(r => r.json()).then(d => setPaused(!!(d.paused || d.pause_all))).catch(() => {});
+    // Show what is saved, so Save with an untouched box keeps it.
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const c = d && d.settings && d.settings.content || {};
+      if (c.staging_base_url) setStaging(String(c.staging_base_url));
+      if (c.conflict_window_hours) setConfWin(String(c.conflict_window_hours));
+    }).catch(() => {});
   }, []);
   const list = platforms && platforms.length ? platforms : Object.keys(CONTENT_PLATFORMS).filter(p => p !== 'discord' && p !== 'telegram' && contentPlatformShown(p)).map(name => ({
     name,
@@ -45119,11 +45126,26 @@ function ContentAccountsTab({
       style: {
         marginTop: 8
       }
-    }, /*#__PURE__*/React.createElement("button", {
+    }, name === 'substack' && /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      "aria-label": "Publication address",
+      placeholder: "https://yourname.substack.com",
+      style: {
+        width: '100%',
+        fontSize: 11,
+        marginBottom: 4,
+        boxSizing: 'border-box'
+      },
+      value: ((authVals[name] || {}).options || {}).publication_url || '',
+      onChange: e => setAV(name, 'options', {
+        publication_url: e.target.value
+      })
+    }), /*#__PURE__*/React.createElement("button", {
       className: "btn",
       style: {
         fontSize: 10
       },
+      disabled: name === 'substack' && !(((authVals[name] || {}).options || {}).publication_url || '').trim(),
       onClick: () => submitAuth(name)
     }, "Enable manual handoff")));
   })), /*#__PURE__*/React.createElement("div", {
@@ -49578,7 +49600,7 @@ function SetupConnectionItem({
   }, msg.text)));
 }
 
-// The checklist. Used by the setup chat and by Settings > Accounts & Keys.
+// The checklist. Used by the setup chat and by Settings > Connections.
 function SetupConnectionsPanel({
   highlight
 }) {
@@ -50346,7 +50368,7 @@ function SetupChat({
     style: {
       margin: '6px 0 0'
     }
-  }, "The Connect step is coming up next, or use Settings > Accounts & Keys.")))), (p.chips || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "The Connect step is coming up next, or use Settings > Connections.")))), (p.chips || []).length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "sc-chips",
     role: "group",
     "aria-label": "Quick answers"
@@ -50440,7 +50462,7 @@ function SettingsYourProfile() {
   const saveAnswers = async rebuild => {
     for (const k in edits) {
       if (scDetectSecret(edits[k], shapes)) {
-        setMsg('That looks like a key. Keys go in Accounts & Keys, not here.');
+        setMsg('That looks like a key. Keys go in Connections, not here.');
         return;
       }
     }
@@ -50470,7 +50492,7 @@ function SettingsYourProfile() {
   const startResearch = async v => {
     for (const k in v) {
       if (scDetectSecret(String(v[k] || ''), shapes)) {
-        setRErr('One of those fields looks like a key. Keys go in Accounts & Keys.');
+        setRErr('One of those fields looks like a key. Keys go in Connections.');
         return;
       }
     }
@@ -51384,7 +51406,7 @@ function SettingsTabGeneral({
     onChange: () => save({
       show_all_workspaces: !(s.show_all_workspaces !== false)
     }),
-    desc: "Offer every workspace in the dock. Off shows the everyday set. Once you arrange the dock yourself in Appearance & 3D, your arrangement wins."
+    desc: "Offer every workspace in the dock. Off shows the everyday set. Once you arrange the dock yourself in Appearance, your arrangement wins."
   })));
 }
 // ── Work: what Friday intends to do, and the choice she is asking for ────────
@@ -53537,7 +53559,11 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
           style: { fontSize: 11, color: 'var(--st-dim)', fontFamily: 'var(--st-font)', marginTop: 2, lineHeight: 1.4 },
         }, r.help)),
       E('button', {
-        onClick: () => onOpen(openFor === r.key ? null : r.key),
+        // The live-voice model has one home, the Voice section; this row only shows it.
+        onClick: r.key === 'voice'
+          ? () => { try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'voice' } })); } catch (_) {} }
+          : () => onOpen(openFor === r.key ? null : r.key),
+        title: r.key === 'voice' ? 'Open Voice to change this' : undefined,
         style: {
           flex: 1, textAlign: 'left', cursor: 'pointer', background: 'rgba(255,255,255,0.03)',
           border: '1px solid ' + (openFor === r.key ? 'rgba(0,212,255,0.45)' : 'rgba(255,255,255,0.08)'),
@@ -54320,7 +54346,11 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     },
       E('div', { style: { fontFamily: 'var(--st-font)', fontSize: 12, fontWeight: 600, color: 'var(--st-text)' } }, 'Where your data goes'),
       E('div', { style: { color: 'rgba(255,255,255,0.85)', margin: '2px 0 4px', lineHeight: 1.5 } }, postureTxt),
-      E(CloudConsentRow, { consent: consent, onChanged: reload, compact: true })),
+      // One home for the choice: Privacy & Data. This card only reports it.
+      E('button', {
+        type: 'button', className: 'settings-btn', style: { fontSize: 11 },
+        onClick: () => { try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'privacy' } })); } catch (_) {} },
+      }, 'Change this in Privacy & Data')),
     E('div', {
       style: { padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.05)', fontFamily: 'JetBrains Mono', fontSize: 11 },
     },
@@ -54709,7 +54739,7 @@ function SettingsTabIntelligence({ s, save }) {
 
     E(StSection, {
       title: 'Model for each job',
-      desc: 'Click a job to choose its model. The list shows only models that can do that job. Voice is chosen in Voice & Tracking.',
+      desc: 'Click a job to choose its model. The list shows only models that can do that job. Voice is chosen in Voice.',
     },
       // Grouped by when a model takes memory, because a flat list of jobs
       // reads as that many models loaded at once. Several jobs routinely
@@ -54762,7 +54792,7 @@ function SettingsTabIntelligence({ s, save }) {
     // this tab and nowhere else in Settings.
     E(StSection, {
       title: 'Model browser',
-      desc: "Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed. Keys are added in Accounts & Keys.",
+      desc: "Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed. Keys are added in Connections.",
     }, with3DModels(E(ModelBrowser, { save: save }))),
   );
 }
@@ -54874,7 +54904,7 @@ function IntelligenceDiagnostics() {
       })),
     E(StSection, {
       title: 'Provider activity',
-      desc: 'Connected is not the same as used. The last column is what each provider has actually served. Keys are managed in Accounts & Keys.',
+      desc: 'Connected is not the same as used. The last column is what each provider has actually served. Keys are managed in Connections.',
     },
       (d.providers || []).map(p => E('div', {
         key: p.name,
@@ -56352,15 +56382,6 @@ function SettingsTabPrivacy({
     }),
     desc: "On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted. Forgetting a document removes what the graph learned only from it and clears the descriptions it contributed to; turning this off takes back everything learned from your documents."
   })), /*#__PURE__*/React.createElement(StSection, {
-    title: "Fonts"
-  }, /*#__PURE__*/React.createElement(StToggle, {
-    label: "Load fonts from Google Fonts",
-    value: s.web_fonts_from_google !== false,
-    onChange: () => save({
-      web_fonts_from_google: s.web_fonts_from_google === false
-    }),
-    desc: ("Only used while " + FRIDAY_BRAND.name + "'s own font files are not installed in static\\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, " + FRIDAY_BRAND.name + " uses similar fonts already on this PC. Takes effect when the page reloads.")
-  })), /*#__PURE__*/React.createElement(StSection, {
     title: "What needs your sign-off"
   }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {
     s: s,
@@ -56578,7 +56599,7 @@ function LibraryTrackedToggle() {
   });
 }
 // Settings: while every file permission is paused, say so at the top of every
-// tab, with the way to the one place it is fixed (Privacy & Approvals > File access).
+// tab, with the way to the one place it is fixed (Privacy & Data > File access).
 // Keyed by the tab, so every tab switch reads the state again (a fresh start clears it).
 const FILE_ACCESS_LINK = { workspace: 'settings', tab: 'privacy', section: 'File access' };
 function FileAccessPausedBanner() {
@@ -57006,7 +57027,7 @@ function ApprovalScannerPanel({
 // so a value that only took effect after a save would be untunable.
 const TrackingSlider = StSlider;
 // `part` picks which slice of the tracking settings to show: the camera
-// controls live in Voice & Tracking, the dock's depth in Appearance & 3D, and
+// controls live in Voice, the dock's depth in Appearance, and
 // the debug overlay in Advanced. All three edit the one `tracking` object.
 // ── CALL MODE ────────────────────────────────────────────────────────────
 // Whether Friday stands back on her own when a call takes the camera or the
@@ -58008,7 +58029,7 @@ function GoogleAccountsPanel() {
     }
   }, msg));
 }
-// ─── Settings → Accounts & Keys — the model-agnostic provider layer (P1/P2) ───
+// ─── Settings → Connections — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),
 // catalog size, spend today, encrypted key management, Test Connection, model
 // list refresh, enable/disable, and remove/revert. Add Provider works from the
@@ -58895,7 +58916,7 @@ function ModelBrowser({
   }, "Video")))));
 }
 /* ── AutoRouterControls ────────────────────────────────────────────────────
-   "Let Friday decide" — one component, rendered in Settings → Accounts & Keys AND
+   "Let Friday decide" — one component, rendered in Settings → Connections AND
    inline under the model selector when the Auto Router is the chosen model.
    Picking the router in one tab and its spend dial in another is how a
    feature ends up feeling unfinished. */
@@ -58934,7 +58955,7 @@ function AutoRouterControls({ s, save, orReady, compact }) {
       border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6,
       padding: '8px 10px', marginBottom: 12, lineHeight: 1.5
     }
-  }, "Needs an OpenRouter key — add one in Settings → Accounts & Keys.");
+  }, "Needs an OpenRouter key — add one in Settings → Connections.");
 
   const tierRow = React.createElement(StRow, {
     label: "Cost priority",
@@ -59067,7 +59088,7 @@ function SettingsTabProviders({
   }, "\u25CF healthy \xB7 \u25D0 needs attention \xB7 \u25CB disabled. The dot reflects measured response time and error rate.")));
 }
 // `part` splits the panel: Google accounts are something every user
-// connects (Accounts & Keys); the MCP server list and the platform connector
+// connects (Connections); the MCP server list and the platform connector
 // inventory are diagnostics (Advanced).
 function SettingsTabConnectors({
   s,
@@ -59078,7 +59099,14 @@ function SettingsTabConnectors({
   const [connectors, setConnectors] = useState([]);
   useEffect(() => {
     if (part === 'accounts') return;
-    apiFetch('/api/mcp/servers').then(r => r.json()).then(d => setMcpServers(d.servers || [])).catch(() => {});
+    apiFetch('/api/mcp/servers').then(r => r.json()).then(d => {
+      // The route returns the config as {servers: {name: {...}}}.
+      const cfg = d && d.config && d.config.servers || d && d.servers || {};
+      setMcpServers(Array.isArray(cfg) ? cfg : Object.keys(cfg).map(k => ({
+        name: k,
+        ...(cfg[k] || {})
+      })));
+    }).catch(() => {});
     apiFetch('/api/connectors').then(r => r.json()).then(d => setConnectors(Array.isArray(d) ? d : d.connectors || [])).catch(() => {});
   }, [part]);
   if (part === 'accounts') return /*#__PURE__*/React.createElement(StSection, {
@@ -59174,7 +59202,7 @@ function SettingsTabConnectors({
     }
   }), c.name || c.id)))));
 }
-// ── Settings → Accounts & Keys → Signing. The signature image and the signing
+// ── Settings → Connections → Signing. The signature image and the signing
 // certificate are secrets: they go in, and only whether each is stored comes
 // back. Every route behind this is refused unless the request comes from this
 // computer. Friday signs only on an approval card (services/pdf_signing.py).
@@ -59297,7 +59325,7 @@ function SettingsTabSigning() {
     onClick: () => send('/api/documents/signing/certificate', null, 'Certificate removed', 'DELETE')
   }, "Remove")))));
 }
-// ── Settings → Accounts & Keys → Friday's browser. Friday drives a visible
+// ── Settings → Connections → Friday's browser. Friday drives a visible
 // window on her own profile (services/browser_session.py), never the owner's
 // normal browser. Sign-ins made in that window stay in that profile until they
 // are cleared here. Every route behind this is refused off this computer.
@@ -59386,7 +59414,7 @@ function SettingsTabBrowser() {
     onClick: clear
   }, ("Clear " + fridayName() + "'s browser profile")))));
 }
-// ── Settings → Accounts & Keys → Phone (Twilio). Off by default. Secrets go in, never come back:
+// ── Settings → Connections → Phone (Twilio). Off by default. Secrets go in, never come back:
 // the server reports "stored"/"missing"/"unreadable" for each one. Every
 // route behind this tab is refused unless the request comes from this computer.
 function SettingsTabPhone() {
@@ -59846,7 +59874,7 @@ function PhoneCostsSection() {
     title: "PHONE (TWILIO)"
   }, !p.config.enabled && !costs.total_usd ? /*#__PURE__*/React.createElement("div", {
     style: line
-  }, "The phone is off. Settings \u2192 Phone.") : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "The phone is off. Settings \u2192 Connections \u2192 Phone.") : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: line
   }, "To date: ", usd(costs.total_usd || 0), costs.unpriced ? ' (+' + costs.unpriced + ' not priced by Twilio yet)' : ''), Object.entries(costs.by_channel || {}).map(([k, v]) => /*#__PURE__*/React.createElement("div", {
     key: k,
@@ -60245,8 +60273,8 @@ function SettingsTabAbout() {
   }, "Headroom"), " by Tejas Chopra \u2014 Apache 2.0.")));
 }
 // Knowledge graph settings, shown where each belongs: where semantic
-// indexing runs is an egress decision (Privacy & Approvals), how the galaxy
-// groups pages is a look (Appearance & 3D), and what gets indexed and when is
+// indexing runs is an egress decision (Privacy & Data), how the galaxy
+// groups pages is a look (Appearance), and what gets indexed and when is
 // housekeeping (Advanced).
 function KnowledgeSettings({
   s,
@@ -60353,7 +60381,7 @@ function KnowledgeSettings({
       lineHeight: 1.55,
       marginBottom: 10
     }
-  }, "The wiki is always the source of truth; the graph is derived from it and can be rebuilt at any time. Where indexing runs is set in Privacy & Approvals."), /*#__PURE__*/React.createElement(StToggle, {
+  }, "The wiki is always the source of truth; the graph is derived from it and can be rebuilt at any time. Where indexing runs is set in Privacy & Data."), /*#__PURE__*/React.createElement(StToggle, {
     label: "Reindex nightly",
     value: kg.nightly_reindex !== false,
     onChange: () => patch({
@@ -60771,7 +60799,7 @@ function SettingsTabCosts() {
     title: "By key"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({ fontSize: 10, color: dim, marginBottom: 12, lineHeight: 1.5 }, mono)
-  }, "Whose key paid: yours, or a guest key a codebase runs on (Settings \u2192 Accounts & Keys, the Salon section)."), breakdown(s && s.by_key_profile)), /*#__PURE__*/React.createElement(StSection, {
+  }, "Whose key paid: yours, or a guest key a codebase runs on (Settings \u2192 Connections, the Salon section)."), breakdown(s && s.by_key_profile)), /*#__PURE__*/React.createElement(StSection, {
     title: "By codebase"
   }, breakdown(s && s.by_codebase)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
     title: "Scheduled jobs this month"
@@ -61028,13 +61056,20 @@ function settingsShowHeldFeatures() {
 // window.__fridaySettingsTab all over the app. Each lands on the tab that now
 // holds that content, never on a blank pane.
 const SETTINGS_TAB_ALIASES = {
-  providers: 'accounts',
-  connectors: 'accounts',
-  phone: 'accounts',
+  // Section ids that earlier layouts used. Each lands on the section that now holds it.
+  accounts: 'connections',
+  providers: 'connections',
+  connectors: 'connections',
+  phone: 'connections',
+  keys: 'connections',
+  signing: 'connections',
   dock: 'appearance',
+  tracking: 'appearance',
+  notifications: 'general',
   knowledge: 'advanced',
   work: 'advanced',
   models: 'intelligence',
+  spending: 'costs',
   federation: 'general',
   economy: 'general'
 };
@@ -61058,35 +61093,36 @@ function settingsTabId(t) {
 const SETTINGS_TABS = [{
   id: 'general',
   label: 'General',
-  sub: 'Her name, her personality, which workspaces the dock offers, and your profile from the setup chat.'
+  sub: 'Setup, her name and personality, which workspaces the dock offers, your profile and muted notifications.'
+}, {
+  id: 'voice',
+  label: 'Voice',
+  sub: ('How ' + fridayName() + ' listens and speaks, and the local voice models.')
 }, {
   id: 'intelligence',
   label: 'Models',
   sub: 'Which model does each job, and whether it runs on this machine or in the cloud.'
 }, {
-  // Spend keys and the accounts Friday may use sit together: both are
-  // things a person connects once and then forgets about.
-  id: 'accounts',
-  label: 'Accounts & Keys',
-  sub: 'The setup checklist, model provider keys, Google accounts and tool servers.'
-}, {
-  id: 'privacy',
-  label: 'Privacy & Approvals',
-  sub: 'What may leave this machine, what needs your sign-off, and your data.'
-}, {
-  id: 'appearance',
-  label: 'Appearance & 3D',
-  sub: 'The dock, its depth, and how much the 3D views move and glow.'
-}, {
-  id: 'voice',
-  label: 'Voice & Tracking',
-  sub: ('How ' + fridayName() + ' listens and speaks, and how the camera follows your head and hand.')
-}, {
+  // Money gets a door of its own, straight after the models that spend it.
   // This entry must never be dropped: without it the Spending panel's
   // fetches run into nothing and budget alerts cannot be armed.
   id: 'costs',
   label: 'Spending',
   sub: 'What cloud models have cost, and the limits you set.'
+}, {
+  id: 'privacy',
+  label: 'Privacy & Data',
+  sub: 'What may leave this machine, what needs your sign-off, and your data.'
+}, {
+  // Provider keys and the accounts Friday may use sit together: both are
+  // things a person connects once and then forgets about.
+  id: 'connections',
+  label: 'Connections',
+  sub: 'Model provider keys, Google accounts, tool servers, phone, signing and her browser.'
+}, {
+  id: 'appearance',
+  label: 'Appearance',
+  sub: 'The dock, the start screen, how much the 3D views move and glow, and head and hand tracking.'
 }, {
   id: 'advanced',
   label: 'Advanced',
@@ -61151,7 +61187,7 @@ body[data-friday-display-style="classic"] .ws-custom-root[data-ws="settings"]{co
 `;
 function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
-  // Settings straight onto Accounts & Keys. The global covers a window that
+  // Settings straight onto Connections. The global covers a window that
   // is about to MOUNT (set before open); the event covers one already mounted.
   const [tab, setTab] = useState(() => {
     const t = window.__fridaySettingsTab;
@@ -61168,7 +61204,7 @@ function SettingsWS() {
     return () => window.removeEventListener('friday:settings-tab', h);
   }, []);
   // A notification's target ({workspace:'settings', tab}) lands on that tab;
-  // 'phone' opens Accounts & Keys scrolled to the Phone section.
+  // 'phone' opens Connections scrolled to the Phone section.
   const [shownSection, setShownSection] = useState('');
   const [shownRow, setShownRow] = useState('');
   useTabState('settings', () => ({
@@ -61338,29 +61374,23 @@ function SettingsWS() {
     }
   }, /*#__PURE__*/React.createElement(FileAccessPausedBanner, {
     key: 'fa-' + tab
-  }), tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabGeneral, {
+  }), tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, null), /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), /*#__PURE__*/React.createElement(SettingsYourProfile, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+  }), /*#__PURE__*/React.createElement(SettingsYourProfile, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
-  }), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, null), window.MediaChannelsSettings ? /*#__PURE__*/React.createElement(window.MediaChannelsSettings, null) : null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), tab === 'connections' && /*#__PURE__*/React.createElement(React.Fragment, null, window.MediaChannelsSettings ? /*#__PURE__*/React.createElement(window.MediaChannelsSettings, null) : null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
-  }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
-    s: s,
-    save: save
-  }), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {
-    s: s,
-    save: save
-  }), /*#__PURE__*/React.createElement(CallModePanel, {
+  }), tab === 'appearance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabAppearance, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(StSection, {
@@ -61369,12 +61399,18 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "main"
-  }))), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'advanced' && /*#__PURE__*/React.createElement(SettingsTabAdvanced, {
+  }))), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {
+    s: s,
+    save: save
+  }), /*#__PURE__*/React.createElement(CallModePanel, {
+    s: s,
+    save: save
+  })), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'advanced' && /*#__PURE__*/React.createElement(SettingsTabAdvanced, {
     s: s,
     save: save
   }), settingsShowHeldFeatures() && tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), settingsShowHeldFeatures() && tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null))));
 }
-// Appearance & 3D: the dock, how far it stands out, and the 3D effects.
+// Appearance: the dock, how far it stands out, and the 3D effects.
 function SettingsTabAppearance({
   s,
   save
@@ -63509,6 +63545,10 @@ function App() {
         ...d.settings
       });
       setSettingsSaveMsg(opts.msg || 'Saved');
+      // An open Settings panel keeps its own copy; tell it to read again.
+      try {
+        window.dispatchEvent(new CustomEvent('friday:settings-changed'));
+      } catch (_) {}
     } catch (e) {
       setSettingsSaveMsg('Save failed');
     }
@@ -66511,7 +66551,7 @@ function App() {
     };
   }, []);
 
-  // The one writer for dock_custom. Settings → Appearance & 3D lives inside SettingsWS,
+  // The one writer for dock_custom. Settings → Appearance lives inside SettingsWS,
   // which reads through useSettings() — a parallel store over the same POST
   // endpoint that does not feed agentSettings. Routing the write back here
   // means the dock reshapes as the panel is edited instead of on the next full
@@ -66928,7 +66968,7 @@ function App() {
   // SitesWS portfolio manager instead.
   const showAllWorkspaces = agentSettings.show_all_workspaces !== false;
   // One computation of what the dock is, shared by the dock itself and by
-  // Settings → Appearance & 3D. Recomputed only when an input changes, because it runs on
+  // Settings → Appearance. Recomputed only when an input changes, because it runs on
   // every App render otherwise and App re-renders on every chat token.
   // Held features first: the dock, the palette and every workspace below
   // read the switch through fridayHeldOn during this same render.
@@ -68988,7 +69028,7 @@ function App() {
         onClick: () => { window.__fridaySettingsTab = 'appearance'; setSettingsOpen(false); toggle('settings'); try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); } catch (e) {} }
       }, /*#__PURE__*/React.createElement("span", {
         className: "settings-toggle-label"
-      }, "Show all workspaces — set in Settings → Appearance & 3D"))
+      }, "Show all workspaces — set in Settings → Appearance"))
     : /*#__PURE__*/React.createElement("div", {
         className: "settings-toggle",
         onClick: () => saveAgentSettings({
@@ -69013,16 +69053,18 @@ function App() {
     className: `settings-toggle-switch ${agentSettings.off_record ? 'on' : ''}`
   })), /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
-    onClick: () => saveAgentSettings({
-      context_logging_enabled: !agentSettings.context_logging_enabled
-    })
+    role: "button",
+    tabIndex: 0,
+    title: "Logging is changed in Settings, Privacy & Data, next to the log and its erase controls.",
+    onClick: () => { window.__fridaySettingsTab = 'privacy'; setSettingsOpen(false); toggle('settings'); try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'privacy' } })); } catch (e) {} },
+    onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }
   }, /*#__PURE__*/React.createElement("span", {
     className: "settings-toggle-label"
-  }, "Log conversations"), /*#__PURE__*/React.createElement("div", {
-    className: `settings-toggle-switch ${agentSettings.context_logging_enabled ? 'on' : ''}`
-  })),
+  }, "Log conversations"), /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 11, color: agentSettings.context_logging_enabled ? '#00ff80' : 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono' }
+  }, (agentSettings.context_logging_enabled ? 'On' : 'Off') + ' \u2192')),
   // Computer control is high risk and needs a separate grant, so it is
-  // switched only in Privacy & Approvals, beside its warning and grant
+  // switched only in Privacy & Data, beside its warning and grant
   // status. This row reports the state and goes there.
   /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",

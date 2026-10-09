@@ -1367,6 +1367,22 @@ _VOICE_ENUMS = {
 }
 
 
+def _is_cloud_voice_engine(val):
+    """True for a registered cloud voice provider, bare ("elevenlabs") or
+    prefixed ("cloud:elevenlabs"): the values cloud_voice.resolve_provider
+    reads. Whether the provider is usable is decided there, not at the write."""
+    if not isinstance(val, str):
+        return False
+    name = val.strip().lower()
+    if name.startswith("cloud:"):
+        name = name.split(":", 1)[1].strip()
+    try:
+        from agent_friday.services import cloud_voice
+        return name in cloud_voice.PROVIDERS
+    except Exception:
+        return False
+
+
 def _check_voice_enums(new_settings):
     """Return an error dict when a voice enum is written out of range, else None.
 
@@ -1379,6 +1395,8 @@ def _check_voice_enums(new_settings):
         if key not in new_settings:
             continue
         val = new_settings.get(key)
+        if key == "voice_engine" and _is_cloud_voice_engine(val):
+            continue
         if not isinstance(val, str) or val.strip().lower() not in allowed:
             return {"status": "error",
                     "message": ("%s must be one of: %s (got %r)"

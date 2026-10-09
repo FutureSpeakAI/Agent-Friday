@@ -649,7 +649,7 @@ class TestSettingsPanel:
         """Open settings and verify the panel body renders.
 
         API key fields live on the setup chat's checklist and in Settings >
-        Accounts & Keys; this checks the panel's identity and model pickers.
+        Connections; this checks the panel's identity and model pickers.
         """
         # The top-bar gear opens QUICK SETTINGS; the full panel (IDENTITY →
         # Agent Name, Orchestrator tab, …) is one click deeper.

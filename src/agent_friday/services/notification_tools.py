@@ -104,7 +104,7 @@ def handle(inp: dict) -> str:
     kind, source = str(inp.get("kind") or ""), str(inp.get("source") or "")
     if action == "unmute":
         if not kind:
-            return "Which kind should I unmute? Settings, Notifications lists them."
+            return "Which kind should I unmute? Settings, General, Muted notifications lists them."
         ne.unmute(kind, source)
         return "Unmuted. Those will show again."
     # mute: a named kind, or "these" = the kinds of the FYI cards showing now.
@@ -119,7 +119,7 @@ def handle(inp: dict) -> str:
     for k, s in targets:
         ne.mute(k, s)
     return ("Muted %d kind%s. They go to the activity log now; you can unmute them in "
-            "Settings, Notifications. Approvals still always reach you."
+            "Settings, General, Muted notifications. Approvals still always reach you."
             % (len(targets), "" if len(targets) == 1 else "s"))
 
 

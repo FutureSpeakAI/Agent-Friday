@@ -126,7 +126,7 @@ def test_evolve_now_while_waiting_offers_both_fixes(home, monkeypatch):
     monkeypatch.setattr(gr, "_frontier_available", lambda: (False, "no cloud model is connected", []))
     monkeypatch.setattr(gr, "_local_seat", lambda: "gemma-local")
     out = _tool().handle({"action": "evolve_now"})
-    assert "Accounts & Keys" in out and "gemma-local" in out
+    assert "Connections" in out and "gemma-local" in out
     assert g.active_step() is None
 
 

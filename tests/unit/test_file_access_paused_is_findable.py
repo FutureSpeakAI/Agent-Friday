@@ -1,6 +1,6 @@
 """When every file permission is paused (an unverifiable line in the permissions
 record), the way out is findable: Settings shows a banner at the top of every
-tab whose button lands on Privacy & Approvals > File access, and the Library's
+tab whose button lands on Privacy & Data > File access, and the Library's
 paused line links straight there. With permissions working, no banner shows.
 A real browser, the served page, the permissions read stood in."""
 import functools
@@ -80,7 +80,7 @@ def test_paused_permissions_show_a_banner_that_lands_on_file_access(page):
     page.wait_for_function("""() => { const s = document.querySelector('.st-root section[data-st-section="File access"]');
         if (!s) return false; const r = s.getBoundingClientRect(); return r.top >= 0 && r.top < window.innerHeight; }""",
                            timeout=10000)
-    assert page.locator("[aria-label='Settings sections'] button", has_text="Privacy & Approvals").count() == 1
+    assert page.locator("[aria-label='Settings sections'] button", has_text="Privacy & Data").count() == 1
 
 
 def test_working_permissions_show_no_banner(page):

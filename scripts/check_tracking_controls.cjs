@@ -141,7 +141,7 @@ async function proof(page, name) {
     await switcher.locator('.fx-switcher-option').click();
     const settings = page.locator('.st-root');
     await expect(settings).toBeVisible();
-    await settings.getByRole('button', {name:'Voice & Tracking',exact:true}).click();
+    await settings.getByRole('button', {name:'Voice',exact:true}).click();
     const nativeHead = settings.getByRole('slider', {name:'Parallax strength',exact:true});
     await expect(nativeHead).toHaveValue('0.7');
     // The governed voice tool persists first, then delivers this public UI action.

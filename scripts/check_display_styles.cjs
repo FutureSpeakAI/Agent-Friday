@@ -181,7 +181,7 @@ async function assertSameScene(page) {
     await page.getByRole('button',{name:/^Switch workspace/}).click();
     await page.getByRole('dialog',{name:'Switch workspace',exact:true}).getByRole('searchbox').fill('Settings');
     await page.locator('.fx-switcher-option').click();
-    await page.getByRole('button',{name:'Appearance & 3D',exact:true}).click();
+    await page.getByRole('button',{name:'Appearance',exact:true}).click();
     const settings=page.locator('.st-root');
     await expect(settings.getByRole('radio',{name:'Advanced',exact:true})).toBeDisabled();
     await settings.getByRole('radio',{name:'Classic',exact:true}).click();

@@ -424,7 +424,7 @@ def _say_plaintext_migration(report: dict) -> None:
                       f"encrypted storage and removed the plain-text copy.[/green]")
     for where, provider, why in report.get("kept") or []:
         console.print(f"  [yellow]The {provider} key in {where} was left in place: "
-                      f"{why}. Re-enter it in Settings -> Accounts & Keys, then "
+                      f"{why}. Re-enter it in Settings -> Connections, then "
                       f"delete it from {where}.[/yellow]")
 
 
@@ -938,7 +938,7 @@ def step_brain(total: int, existing_anthro: str, existing_gemini: str) -> tuple[
         choice = Prompt.ask("  Which?", choices=["1", "2", "3"], default="3")
         if choice == "1":
             console.print("\n  [green]Local only. You can add a key any time in "
-                          "Settings -> Accounts & Keys.[/green]\n")
+                          "Settings -> Connections.[/green]\n")
             _pause()
             return "", existing_gemini or ""
     else:
@@ -1491,13 +1491,13 @@ def step_connectors(total: int, existing: dict) -> dict:
         console.print("  [green]Already connected:[/green] "
                       + ", ".join(str(e) for e in signed_in))
         console.print("  [dim]Manage these in Friday: "
-                      "Settings → Accounts & Keys.[/dim]\n")
+                      "Settings → Connections.[/dim]\n")
         return connected
 
     console.print(
         "  [dim]Nothing is connected yet, and this installer cannot connect it\n"
         "  for you — signing in needs a browser and a running Friday.[/dim]\n"
-        "  When Friday opens: [bold]Settings → Accounts & Keys → + Add Account[/bold].\n"
+        "  When Friday opens: [bold]Settings → Connections → + Add Account[/bold].\n"
     )
     console.print(
         "  [dim]Everything else works without it. Mail and calendar simply\n"

@@ -350,7 +350,7 @@ _VOICE_LIVE_TOOLS = [
     ("codebase_key",
      "Set whose key pays for the current codebase chat. 'Use Alex's key' means profile='Alex'; "
      "'use my key' means profile='mine'. Speak the result's say line as is; if refused, say the key "
-     "is not on this codebase and can be added under Settings, Accounts and Keys.",
+     "is not on this codebase and can be added under Settings, Connections.",
      {"profile": ("string", "'mine' or a guest key's label.")}, ["profile"]),
     ("codebase_costs",
      "Report the current codebase chat's metered cost. Speak the result's "
@@ -2540,7 +2540,7 @@ def resolve_gemini_key(update_core=True):
     _add("process env GOOGLE_API_KEY (launcher script)",
          os.environ.get("GOOGLE_API_KEY", ""))
     try:
-        _add("settings.json (Settings → Accounts & Keys)",
+        _add("settings.json (Settings → Connections)",
              (_load_settings() or {}).get("gemini_api_key", ""))  # pragma: allowlist secret
     except Exception:
         pass

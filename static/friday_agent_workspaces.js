@@ -327,7 +327,7 @@
         h('div',{className:'fr-aw-actions'},h('button',{type:'button',onClick:refreshNow},'Refresh views'),
           h('button',{type:'button',disabled:busy,onClick:stopAll},'Stop all workspaces'))),
       !loaded && h('p',{role:'status'},'Loading workspaces…'),error && h('p',{role:'alert'},error),
-      loaded && !error && !surfaces.length && h('p',{className:'fr-aw-empty'},'No agent browsers are open. Enable independent workspaces in setup or Privacy & Approvals, then ask an agent with browser access to work on a website.'),
+      loaded && !error && !surfaces.length && h('p',{className:'fr-aw-empty'},'No agent browsers are open. Enable independent workspaces in setup or Privacy & Data, then ask an agent with browser access to work on a website.'),
       h('div',{className:'fr-aw-grid'},surfaces.map(surface=>h(Surface,{key:surface.surface_id,initial:surface,apiFetch,active:visible,onRefresh:refreshNow}))));
   };
 })(window);

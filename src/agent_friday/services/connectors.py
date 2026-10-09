@@ -438,7 +438,7 @@ def _status_for_google(defn: dict) -> dict:
         else:
             status = "error"
             detail = (f"0/{total_n} account(s) connected — reconnect in "
-                      f"Settings → Accounts & Keys → Google")
+                      f"Settings → Connections → Google")
     elif client_ok:
         status, detail = "needs_setup", "OAuth client ready — click Connect to approve access"
     else:

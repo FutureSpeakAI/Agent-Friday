@@ -233,7 +233,7 @@ def refresh(provider: str) -> dict:
         # OpenRouter's /models is public; Anthropic's is not.
         return {"status": "no_key", "provider": name, "count": 0,
                 "error": "no ANTHROPIC_API_KEY configured — add one in "
-                         "Settings → Accounts & Keys"}
+                         "Settings → Connections"}
     try:
         if name == "anthropic":
             normalized = _normalize_anthropic(fetch_anthropic_models(api_key))

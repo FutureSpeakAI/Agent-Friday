@@ -234,7 +234,7 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
                                 schema=schema)[0]
         raise RuntimeError(
             "No cloud AI key is set. Add an Anthropic or an OpenRouter key in "
-            "Settings → Accounts & Keys (one is enough)."
+            "Settings → Connections (one is enough)."
         )
     if model is None:
         # Same law as the dispatch ladders: orchestrator_model can hold a
@@ -672,7 +672,7 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     _exhausted = (
         "No model provider could generate text (tried "
         + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "
-        "OpenRouter, in Settings → Accounts & Keys (one is enough), configure "
+        "OpenRouter, in Settings → Connections (one is enough), configure "
         "an OpenAI-compatible endpoint in Settings, or run a local model.")
     # A caller may catch this and return; the trace still says why.
     try:
@@ -1629,7 +1629,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             env_hint = (prov.get('auth') or {}).get('key') or f"{pname} API key"
             raise RuntimeError(
                 f"No API key configured for provider '{pname}' — set {env_hint} "
-                f"or add it in Settings → Accounts & Keys.")
+                f"or add it in Settings → Connections.")
         model = model or (prov.get('models') or [None])[0] or cfg.get('openai_model')
         if not model:
             raise RuntimeError(f"No model specified for provider '{pname}'.")
@@ -3330,7 +3330,7 @@ FRIDAY_SYSTEM_PROMPT = (
     "is a one-time OAuth step, NOT a missing feature. If an email or calendar tool comes back 'not "
     "connected' / 'needs connecting' / 'not authenticated', DO NOT tell the user you can't access Gmail or "
     "Calendar. Instead, say the integration is set up and just needs a one-time connection, and OFFER to "
-    "walk them through it (they authorize at /api/google/auth, or via Settings -> Accounts & Keys; you can "
+    "walk them through it (they authorize at /api/google/auth, or via Settings -> Connections; you can "
     "open_url that page for them). Only report an actual failure if a tool fails for some other reason.\n\n"
     "== SAY WHAT YOU ARE ABOUT TO DO ==\n"
     "Before your FIRST tool call in a turn, write one short line saying what "
@@ -3351,7 +3351,7 @@ FRIDAY_SYSTEM_PROMPT = (
     "better to say 'I couldn't get that' than to make something up.\n\n"
     "== COMPUTER CONTROL ==\n"
     "Computer control (screenshot, click, type, etc.) requires the user to enable it in Settings → "
-    "Privacy & Approvals. When you need it and it's not enabled, say so. When it IS enabled: "
+    "Privacy & Data. When you need it and it's not enabled, say so. When it IS enabled: "
     "always take a screenshot first — you will SEE the captured image. Give click/move coordinates "
     "in the pixel space of that screenshot image (top-left is 0,0); Friday maps them to the real "
     "screen automatically, so do not try to convert resolutions yourself. "
