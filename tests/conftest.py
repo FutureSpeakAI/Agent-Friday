@@ -400,6 +400,15 @@ def _no_network_model_download(request, monkeypatch):
     yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _core_imported_before_any_turn():
+    """A voice turn ends by reading a setting, and the first read in a process imports
+    agent_friday.core: seconds on a cold or busy runner. That cost belongs to process
+    start, not to a test that times a barge with a short join, so it is paid here once."""
+    import agent_friday.core  # noqa: F401
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _fresh_off_record_memory():
     """What one test kept off the record is gone before the next one runs."""
