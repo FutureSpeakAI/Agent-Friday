@@ -326,8 +326,8 @@ def wiki_correct():
 def wiki_setup_research():
     """Build draft wiki files for a new user. Stores all as PENDING (auto=true).
 
-    If Anthropic is available, drafts the content via Claude; otherwise creates
-    minimal template files from profile fields.
+    Deterministic: template files built from the profile fields, with no model
+    call, so the person's name, birthdate and location never leave the machine.
     """
     data = request.get_json(force=True, silent=True) or {}
     full_name = (data.get("full_name") or "").strip()
@@ -335,14 +335,6 @@ def wiki_setup_research():
     location = (data.get("location") or "").strip()
 
     drafts = []
-    # Either cloud key can draft (one is enough, services/one_key.py).
-    from agent_friday.services.one_key import cloud_key_present
-    client = get_anthropic_client() or cloud_key_present()
-    base_context = (
-        f"Name: {full_name or '[unknown]'}\n"
-        f"Birthdate: {birthdate or '[unknown]'}\n"
-        f"Location: {location or '[unknown]'}\n"
-    )
     targets = [
         ("identity/core-profile.md", "Core profile",
          "A factual, third-person profile: full name, date of birth, current location, "
@@ -354,34 +346,17 @@ def wiki_setup_research():
          "Schools attended, degrees, dates, and notable accomplishments. Mark unknowns "
          "as [needs research]."),
     ]
-    for rel, section, instr in targets:
-        try:
-            if client and full_name:
-                prompt = (
-                    f"Draft the following wiki file for the user described below. "
-                    f"Markdown. Concise. Mark anything you don't actually know as "
-                    f"`[needs research]` — do NOT invent facts.\n\n"
-                    f"User:\n{base_context}\n\n"
-                    f"Section: {section}\nInstructions: {instr}"
-                )
-                content = _generate_text(
-                    messages=[{"role": "user", "content": prompt}],
-                    system="You build draft personal-wiki entries. Be honest about gaps; never fabricate biographical details.",
-                    max_tokens=16384,
-                    temperature=0.2,
-                )
-            else:
-                title = rel.split('/')[-1].replace('.md', '').replace('-', ' ').title()
-                content = (
-                    f"# {title}\n\n"
-                    f"- **Name:** {full_name or '[needs research]'}\n"
-                    f"- **Birthdate:** {birthdate or '[needs research]'}\n"
-                    f"- **Location:** {location or '[needs research]'}\n\n"
-                    f"_This file was auto-created from profile setup. Fill in details as you learn them._\n"
-                )
-        except Exception as e:
-            content = ("# Draft\n\n[Draft generation failed (error %s)]\n\n%s"
-                       % (log_failure(e, "Wiki setup draft failed"), base_context))
+    for rel, section, _instr in targets:
+        # A fixed template: the name, birthdate and location the person typed
+        # are written to the pending draft on this machine and go nowhere else.
+        title = rel.split('/')[-1].replace('.md', '').replace('-', ' ').title()
+        content = (
+            f"# {title}\n\n"
+            f"- **Name:** {full_name or '[needs research]'}\n"
+            f"- **Birthdate:** {birthdate or '[needs research]'}\n"
+            f"- **Location:** {location or '[needs research]'}\n\n"
+            f"_This file was auto-created from profile setup. Fill in details as you learn them._\n"
+        )
         pid = _propose_wiki_update(
             file=rel, section=section, new_value=content,
             reason=f"New-user setup research for {full_name or 'unknown user'}",
