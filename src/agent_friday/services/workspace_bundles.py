@@ -37,6 +37,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from agent_friday import paths
+from agent_friday.user_errors import UserFacingRuntimeError, UserFacingValueError
+
 _log = logging.getLogger(__name__)
 
 KIND = "workspace_swap"
@@ -57,20 +60,20 @@ DELTA_E_FLOOR = 20.0
 _registered = False
 
 
-class BrandRefused(ValueError):
+class BrandRefused(UserFacingValueError):
     """The bundle repaints a reserved status colour."""
 
 
-class ManifestRefused(ValueError):
+class ManifestRefused(UserFacingValueError):
     """The bundle's manifest breaks the contract, or the codebase is not a bundle."""
 
 
-class NativeWorkspace(ValueError):
+class NativeWorkspace(UserFacingValueError):
     """A registry workspace: improved through Friday's own source (§7), never in place."""
     blocker = "needs_phase_7"
 
 
-class SmokeFailed(RuntimeError):
+class SmokeFailed(UserFacingRuntimeError):
     """The improved page throws at load; a typed blocker, not a card."""
     blocker = "run_failed"
 
@@ -203,7 +206,7 @@ def check_manifest(text: str) -> list:
     if not isinstance(m, dict):
         return ["manifest.json must be an object"]
     problems = []
-    if not isinstance(m.get("id"), str) or not _WS_ID.match(m.get("id") or ""):
+    if not isinstance(m.get("id"), str) or not _WS_ID.fullmatch(m.get("id") or ""):
         problems.append("id must be a slug: lower-case letters, digits and dashes")
     if not isinstance(m.get("name"), str) or not m.get("name", "").strip():
         problems.append("name is required")
@@ -224,13 +227,13 @@ def _root() -> Path:
 
 def check_ws_id(ws_id: str) -> str:
     s = str(ws_id or "").strip()
-    if not _WS_ID.match(s):
-        raise ValueError("not a workspace id")
+    if not _WS_ID.fullmatch(s):
+        raise UserFacingValueError("not a workspace id")
     return s
 
 
 def _dir(ws_id: str) -> Path:
-    return _root() / check_ws_id(ws_id)
+    return paths.contained(_root(), check_ws_id(ws_id))
 
 
 def _save(rec: dict) -> dict:
@@ -472,7 +475,7 @@ def request_swap(cid: str, *, requested_by: str = "friday") -> dict:
     target = ws_id or manifest["id"]
     sha = _sha(files)
     if rec is not None and rec.get("current") == sha:
-        raise ValueError("that version is already the one in use")
+        raise UserFacingValueError("that version is already the one in use")
     head = cb.head(cid) or ""
     changed = 0
     if rec is not None:
