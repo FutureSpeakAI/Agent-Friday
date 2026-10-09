@@ -6075,6 +6075,26 @@ _WORKFLOW_CONTEXT_FIELDS = (
     "workflow_definition", "workflow_notify", "run_created", "workflow_baseline",
 )
 _WORKFLOW_ADVANCE_LOCK = threading.RLock()
+_RUN_CREATED_LOCK = threading.Lock()
+_run_created_last = 0.0
+
+
+def _next_run_created():
+    """A run's creation time, strictly later than every earlier run's in this process.
+
+    "The newest run" is chosen by this value. The Windows clock ticks about every
+    15 ms, so two runs started back to back read the same time.time() and the
+    older one could win the tie, reporting the wrong invocation's state.
+    """
+    global _run_created_last
+    with _RUN_CREATED_LOCK:
+        now = _time.time()
+        if now <= _run_created_last:
+            now = _run_created_last + 1e-6
+        _run_created_last = now
+        return now
+
+
 _WORKFLOW_DELIVERY_LOCK = threading.RLock()
 
 
@@ -6269,7 +6289,7 @@ def run_workflow_chain(name, conversation_id=None, *, project_id=None,
                'outcome_contract': {'output': chain.get('output') or {'kind': 'reply'},
                                     'success_criteria': chain.get('success_criteria') or ''},
                'workflow_notify': notify or chain.get('notify') or 'on_complete',
-               'run_created': _time.time(), 'workflow_baseline': _workflow_baseline(slug, chain)}
+               'run_created': _next_run_created(), 'workflow_baseline': _workflow_baseline(slug, chain)}
     # a new run is not the one that was stopped
     _CHAIN_STOP.pop(slug, None)
     _CHAIN_STOPPED.pop(slug, None)

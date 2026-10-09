@@ -60,7 +60,12 @@ function Get-KnownFolderPath {
     <#  The Windows shell's own answer for a known folder: the folder as it is
         NOW, wherever it has been redirected to (OneDrive's Known Folder Move
         puts the Desktop under OneDrive, and a Documents-style redirect can put
-        it on another drive). Returns '' when the shell cannot say. #>
+        it on another drive). Returns '' when the shell cannot say.
+
+        KF_FLAG_CREATE (0x8000): without it the call FAILS when the folder is
+        not on disk yet (a fresh or redirected profile), and the answer would be
+        '' on exactly the machines where it is needed. With it the shell makes
+        its own folder, which is the Windows way to create a Desktop. #>
     param([Parameter(Mandatory)][ValidateSet('Desktop', 'Programs', 'Startup')][string] $Name)
     $ids = @{ Desktop  = 'B4BFCC3A-DB2C-424C-B029-7FE99A87C641'
               Programs = 'A77F5D77-2E2B-44C3-A6A2-ABA601054A51'
@@ -74,7 +79,7 @@ private static extern int SHGetKnownFolderPath(
     uint dwFlags, System.IntPtr hToken, out System.IntPtr ppszPath);
 public static string Get(string guid) {
     System.IntPtr p;
-    int hr = SHGetKnownFolderPath(new System.Guid(guid), 0, System.IntPtr.Zero, out p);
+    int hr = SHGetKnownFolderPath(new System.Guid(guid), 0x8000u, System.IntPtr.Zero, out p);
     if (hr != 0) return "";
     string s = System.Runtime.InteropServices.Marshal.PtrToStringUni(p);
     System.Runtime.InteropServices.Marshal.FreeCoTaskMem(p);
@@ -99,34 +104,27 @@ function Confirm-DesktopDir {
 }
 
 function Get-DesktopDir {
-    <#  The Desktop folder this person actually sees. Never assumes
-        %USERPROFILE%\Desktop: with OneDrive's Known Folder Move that folder
-        exists and is empty while the real Desktop is under OneDrive, so a link
-        written there lands somewhere nobody looks.
+    <#  The Desktop folder Windows says this person has. Windows' own answer is
+        authoritative; nothing here guesses a OneDrive folder (Known Folder Move
+        is already reflected in the answers below) and nothing prefers the
+        profile folder over a redirected Desktop.
 
-        Order: .NET's answer, the shell's known-folder answer, the registry's
-        User Shell Folders value, and only then the folders a default profile
-        has (OneDrive\Desktop if present, else the profile's own Desktop). #>
+        Order: [Environment]::GetFolderPath('Desktop'); the shell's known-folder
+        lookup (creating the folder when the profile has none); the registry's
+        User Shell Folders value with its environment variables expanded; and
+        only then %USERPROFILE%\Desktop, which is created because nothing else
+        answered. #>
     $d = Get-SpecialDir -Name 'Desktop'
-    if ($d) { if (Confirm-DesktopDir $d) { return $d } }
+    if ($d -and (Test-Path -LiteralPath $d)) { return $d }
     $k = Get-KnownFolderPath -Name 'Desktop'
-    if ($k) {
-        try { if (-not (Test-Path -LiteralPath $k)) { New-Item -ItemType Directory -Force -Path $k -ErrorAction Stop | Out-Null } } catch { }
-        if (Test-Path -LiteralPath $k) { Write-Log "Desktop resolved by the shell's known-folder lookup: $k" 'WARN'; return $k }
-    }
+    if ($k -and (Test-Path -LiteralPath $k)) { Write-Log "Desktop resolved by the shell's known-folder lookup: $k" 'WARN'; return $k }
     try {
         $reg = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' -ErrorAction Stop).Desktop
         if ($reg) {
             $reg = [Environment]::ExpandEnvironmentVariables([string]$reg)
-            if (Confirm-DesktopDir $reg) { Write-Log "Desktop resolved from the registry: $reg" 'WARN'; return $reg }
+            if ($reg -and $reg -notmatch '%' -and (Confirm-DesktopDir $reg)) { Write-Log "Desktop resolved from the registry: $reg" 'WARN'; return $reg }
         }
     } catch { }
-    foreach ($base in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
-        if ($base) {
-            $c = Join-Path $base 'Desktop'
-            if (Test-Path -LiteralPath $c) { Write-Log "Desktop resolved under OneDrive: $c" 'WARN'; return $c }
-        }
-    }
     if ($env:USERPROFILE) {
         $c = Join-Path $env:USERPROFILE 'Desktop'
         if (Confirm-DesktopDir $c) { Write-Log "Desktop resolved to the profile folder: $c" 'WARN'; return $c }

@@ -587,6 +587,35 @@ def _health_run(flight):
     flight.done.set()
 
 
+def _version_fields():
+    """(version, release_name) of the code on disk; None for what cannot be read.
+
+    Cheap (one small file) and shared by the full payload and the
+    "still computing" fallback, so a caller that gets the fallback on a cold
+    first request still learns which release it is talking to.
+    """
+    version = None
+    try:
+        from agent_friday.services.app_version import running_version
+        version = running_version()
+    except Exception:
+        version = None
+    if not version:
+        try:
+            from importlib.metadata import version as _pkg_version
+            version = _pkg_version("agent-friday")
+        except Exception:
+            version = None
+    release_name = None
+    try:
+        from agent_friday.services.app_version import display_version
+        dv = display_version()
+        release_name = dv if dv and dv != version else None
+    except Exception:
+        release_name = None
+    return version, release_name
+
+
 def _health_fallback():
     """An immediate answer while a computation is slow: the last good payload
     marked stale, else the cheap boot verdict marked as still computing."""
@@ -604,10 +633,13 @@ def _health_fallback():
         boot_status = _hc.last_boot_status()
     except Exception:
         boot_status = None
+    version, release_name = _version_fields()
     return {
         "status": "unknown",
         "boot_status": boot_status or "unknown",
         "computing": True,
+        "version": version,
+        "release_name": release_name,
         "uptime_seconds": int(_time.time() - SERVER_START_TS),
         "server_start": datetime.fromtimestamp(SERVER_START_TS).isoformat(),
     }
@@ -758,25 +790,7 @@ def _health_payload():
     # read reported a version it had invented, which is precisely the shape of
     # the install-manifest bug (claimed 5.6.4, was 5.6.3). Unknown is now None
     # and the UI renders it as unknown.
-    _app_version = None
-    try:
-        from agent_friday.services.app_version import running_version
-        _app_version = running_version()
-    except Exception:
-        _app_version = None
-    if not _app_version:
-        try:
-            from importlib.metadata import version as _pkg_version
-            _app_version = _pkg_version("agent-friday")
-        except Exception:
-            _app_version = None
-    _release_name = None
-    try:
-        from agent_friday.services.app_version import display_version
-        _dv = display_version()
-        _release_name = _dv if _dv and _dv != _app_version else None
-    except Exception:
-        _release_name = None
+    _app_version, _release_name = _version_fields()
     _mood = None
     try:
         from agent_friday.services.model_router import _get_emotional_arc
