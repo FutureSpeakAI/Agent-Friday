@@ -162,7 +162,9 @@ const SAVE_MS = 150_000;
 test.describe('Settings walk', () => {
   test.setTimeout(900_000);
   // A control that cannot be acted on is a finding, reported in its row, not a wait for the whole test's budget.
-  test.use({ actionTimeout: 10_000 });
+  // The bound is sized for a loaded CI runner: the trace of a failed run shows every rail click taking 6 to 9 s there
+  // (software-rendered 3D scene on 4 vCPUs) while the button was visible, enabled and not moving.
+  test.use({ actionTimeout: 45_000 });
 
   test('every section opens, and every old section id still lands on the right one', async ({ page }) => {
     await openSettings(page);

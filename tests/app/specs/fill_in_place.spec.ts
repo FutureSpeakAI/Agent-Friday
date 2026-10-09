@@ -24,7 +24,10 @@ async function openMessages(page: Page) {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/*', r => {
     if (r.request().method() === 'GET') return r.fallback();
-    writes.push(`${r.request().method()} ${new URL(r.request().url()).pathname}`);
+    const path = new URL(r.request().url()).pathname;
+    // The page reports its own state to the desktop bridge on a timer (and when a fill changes what is shown);
+    // that is not a write to anything the owner has, so it is not counted. Every other write is.
+    if (path !== '/api/desktop/state') writes.push(`${r.request().method()} ${path}`);
     return r.fulfill(json({ status: 'ok' }));
   });
   await page.route('**/api/setup/status', r => r.fulfill(json({ initialized: true })));
@@ -94,7 +97,10 @@ test('the calendar quick-add is filled but no event is created until the owner p
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/*', r => {
     if (r.request().method() === 'GET') return r.fallback();
-    writes.push(`${r.request().method()} ${new URL(r.request().url()).pathname}`);
+    const path = new URL(r.request().url()).pathname;
+    // The page reports its own state to the desktop bridge on a timer (and when a fill changes what is shown);
+    // that is not a write to anything the owner has, so it is not counted. Every other write is.
+    if (path !== '/api/desktop/state') writes.push(`${r.request().method()} ${path}`);
     return r.fulfill(json({ status: 'ok', event: {} }));
   });
   await page.route('**/api/setup/status', r => r.fulfill(json({ initialized: true })));
@@ -113,7 +119,10 @@ test('the workflow editor fill does not save', async ({ page }) => {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/*', r => {
     if (r.request().method() === 'GET') return r.fallback();
-    writes.push(`${r.request().method()} ${new URL(r.request().url()).pathname}`);
+    const path = new URL(r.request().url()).pathname;
+    // The page reports its own state to the desktop bridge on a timer (and when a fill changes what is shown);
+    // that is not a write to anything the owner has, so it is not counted. Every other write is.
+    if (path !== '/api/desktop/state') writes.push(`${r.request().method()} ${path}`);
     return r.fulfill(json({ status: 'ok' }));
   });
   await page.route('**/api/setup/status', r => r.fulfill(json({ initialized: true })));
