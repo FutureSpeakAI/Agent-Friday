@@ -3,7 +3,7 @@
 // SCRATCH server only (FRIDAY_BASE must be set; the live :3000 is refused). Rows are rendered into the page by the
 // spec so the registrar (static/workspace_stages.js) and domList are proven in a real browser, not in the
 // workspaces' own data: calendar events can be ticked (Ctrl-click) and pointed at; health rows publish a kind only.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');

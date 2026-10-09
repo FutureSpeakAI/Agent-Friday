@@ -5,7 +5,7 @@
 // recorded. Proves in a real page: the list appears with each state in words and a glyph; a step needing the
 // owner reads "needs you"; Stop posts to the stop route once; Esc stops it but not from a text field; the finished
 // list goes away on its own.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');

@@ -6,7 +6,7 @@
 // original with the Send button untouched and enabled; Undo restores what was there; the calendar quick-add
 // line is filled but no event is created until the owner presses Enter; the workflow editor fill does not
 // save; a field nobody registered is refused.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');

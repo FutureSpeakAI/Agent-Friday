@@ -4,7 +4,7 @@
 // cards served by page.route. Proves in a real page: Friday's ticks and the owner's are one set with a
 // chip that says who; a held card turns amber and releases; the row the reticle is on reaches the stage
 // as the cursor for three seconds; a quick pinch on a card ticks it and a pinch held 700 ms opens it.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
