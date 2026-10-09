@@ -36,8 +36,10 @@ jobs:
       # The podcast extra (numpy, pandas, num2words) is light and is what the
       # podcast engine, the spreadsheet briefings and the egress gate's
       # embedding layer need; the tests that use them also importorskip.
+      # The compose extra (imageio-ffmpeg) bundles the ffmpeg binary the media
+      # previews decode audio and video with; the previews tests need it.
       - name: Install agent-friday with the dev extra
-        run: pip install -e ".[dev,google,federation,podcast]"
+        run: pip install -e ".[dev,google,federation,podcast,compose]"
 
       # The tray and GUI-automation modules import display machinery at module
       # scope and are shipped Windows dependencies; the suite collects them.
