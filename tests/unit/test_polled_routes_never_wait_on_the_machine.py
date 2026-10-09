@@ -268,3 +268,24 @@ def test_the_system_panel_reads_processes_without_starting_powershell(monkeypatc
     assert 0 < len(rows) <= 8
     assert set(rows[0]) == {"Name", "CPU_s", "MemMB"}
     assert [r["CPU_s"] for r in rows] == sorted((r["CPU_s"] for r in rows), reverse=True)
+
+
+def test_the_health_canary_does_not_start_icacls(monkeypatch, tmp_path):
+    """Every health computation round-trips a canary secret. Hardening a file
+    that lives for one round trip started two icacls processes each time."""
+    from agent_friday.services import credential_store as cs
+    from agent_friday.services import health_check
+    hardened = []
+    monkeypatch.setattr(cs, "harden_permissions", lambda p: hardened.append(str(p)))
+    ok, _detail = health_check.check_credential_store()
+    assert ok is True
+    assert hardened == []
+    cs.write_secret(tmp_path / "real.enc", b"secret")
+    assert len(hardened) == 2, "a real secret is still hardened"
+
+
+def test_a_build_waiter_gives_up_before_the_page_does():
+    """The Intelligence panel aborts its own fetch at 30 s; a waiter that sits
+    longer than that holds a worker for a page that has gone."""
+    from agent_friday.routes import intelligence
+    assert intelligence.CARD_WAIT_S < 30

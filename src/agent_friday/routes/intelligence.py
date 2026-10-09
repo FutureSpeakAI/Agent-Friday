@@ -1118,7 +1118,7 @@ def api_intelligence():
 # save changes settings.json, which is part of the card's key, so a pick in
 # Settings shows on the very next read.
 CARD_FRESH_S = 15.0
-CARD_WAIT_S = 45.0
+CARD_WAIT_S = 20.0
 _card_lock = threading.Lock()
 _card: dict = {"payload": None, "at": 0.0, "key": None, "building": None}
 
