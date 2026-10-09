@@ -1,0 +1,59 @@
+{
+  "_note": "Second held-out set for services/laya_router, written AFTER the router was tuned on laya_router_eval.json and never used for tuning. Harder on purpose: fillers, indirect requests, remarks that mention a tool word without asking for it, negations, questions about what Friday can do.",
+  "cases": [
+    {"text": "um, what have I got on today", "decision": "tool", "tool": "query_calendar"},
+    {"text": "is my afternoon clear", "decision": "tool", "tool": "query_calendar"},
+    {"text": "what time's the dentist again", "decision": "tool", "tool": "query_calendar"},
+    {"text": "anything on the calendar for Friday", "decision": "tool", "tool": "query_calendar"},
+    {"text": "my calendar is such a mess this week", "decision": "no_tool"},
+
+    {"text": "so did I get any mail", "decision": "tool", "tool": "check_email"},
+    {"text": "has anything urgent come in", "decision": "tool", "tool": "check_email", "args_equal": {"urgent_only": true}},
+    {"text": "go through my inbox real quick", "decision": "tool", "tool": "check_email"},
+    {"text": "don't check my email right now", "decision": "no_tool"},
+    {"text": "email is exhausting", "decision": "no_tool"},
+
+    {"text": "can you find the message where the bank mentioned the overdraft", "decision": "tool", "tool": "search_email", "args_contains": {"query": ["overdraft"]}},
+    {"text": "search my mail for anything from the gym", "decision": "tool", "tool": "search_email", "args_contains": {"query": ["gym"]}},
+    {"text": "did the travel agent email me about the hotel", "decision": "tool", "tool": "search_email", "args_contains": {"query": ["hotel"]}},
+
+    {"text": "what's going on with the strike at the port", "decision": "tool", "tool": "search_news", "args_contains": {"query": ["strike"]}},
+    {"text": "any news today", "decision": "tool", "tool": "search_news"},
+    {"text": "catch me up on the headlines", "decision": "tool", "tool": "search_news"},
+    {"text": "I read some news about whales yesterday", "decision": "no_tool"},
+
+    {"text": "look up how long to boil an egg", "decision": "tool", "tool": "search_web", "args_contains": {"query": ["boil an egg"]}},
+    {"text": "search online for train times to the city", "decision": "tool", "tool": "search_web", "args_contains": {"query": ["train times"]}},
+    {"text": "can you google the symptoms of a sprained ankle", "decision": "tool", "tool": "search_web", "args_contains": {"query": ["sprained ankle"]}},
+
+    {"text": "what's the briefing today", "decision": "tool", "tool": "get_briefing"},
+    {"text": "can I hear my briefing", "decision": "tool", "tool": "get_briefing"},
+
+    {"text": "where did I put the insurance pdf", "decision": "tool", "tool": "search_files", "args_contains": {"query": ["insurance"]}},
+    {"text": "find the spreadsheet called monthly expenses", "decision": "tool", "tool": "search_files", "args_contains": {"query": ["monthly expenses"]}},
+    {"text": "is there a document about the wedding on my laptop", "decision": "tool", "tool": "search_files", "args_contains": {"query": ["wedding"]}},
+
+    {"text": "what's in my notes about the garden", "decision": "tool", "tool": "search_wiki", "args_contains": {"query": ["garden"]}},
+    {"text": "pull up my wiki page on the move", "decision": "tool", "tool": "search_wiki", "args_contains": {"query": ["move"]}},
+
+    {"text": "what did I tell you about my sister's birthday", "decision": "tool", "tool": "search_past_conversations", "args_contains": {"query": ["birthday"]}},
+    {"text": "we talked about a podcast last week, what was it", "decision": "tool", "tool": "search_past_conversations", "args_contains": {"query": ["podcast"]}},
+
+    {"text": "can you read my email", "decision": "tool", "tool": "check_email"},
+    {"text": "are you able to look things up online", "decision": "no_tool"},
+    {"text": "hey, how's it going", "decision": "no_tool"},
+    {"text": "thanks, you're a lifesaver", "decision": "no_tool"},
+    {"text": "what's the capital of Australia", "decision": "no_tool"},
+    {"text": "I'm feeling a bit anxious about tomorrow", "decision": "no_tool"},
+    {"text": "how do I make my sourdough rise more", "decision": "no_tool"},
+    {"text": "good night Friday", "decision": "no_tool"},
+    {"text": "hmm let me think", "decision": "no_tool"},
+
+    {"text": "forward the invoice to my accountant", "decision": "defer"},
+    {"text": "put lunch with Sam on my calendar for Tuesday", "decision": "defer"},
+    {"text": "please remove the duplicate photos", "decision": "defer"},
+    {"text": "mark all my email as read", "decision": "defer"},
+    {"text": "write a note in my wiki about the plumber", "decision": "defer"},
+    {"text": "could you book me a haircut", "decision": "defer"}
+  ]
+}
