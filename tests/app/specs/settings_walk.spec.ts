@@ -310,7 +310,9 @@ test.describe('Settings walk', () => {
           continue;
         }
         // Controls that keep their value elsewhere (their own route) never POST /api/settings: give those a short look.
-        await Promise.race([settingsSaved, new Promise(res => setTimeout(res, 2000))]);
+        // A slider also saves on blur, so a response seen here can belong to the control before: wait for this
+        // control's own POST to be sent, not for any response.
+        await expect.poll(() => posted.length, { timeout: 2500 }).toBeGreaterThan(before).catch(() => undefined);
         const mine = posted.slice(before);
         expectedUi.push({ label: c.label, kind: c.kind, value, nth });
         const saved = mine.map(m => m && m.settings).filter(Boolean);
@@ -321,7 +323,10 @@ test.describe('Settings walk', () => {
           continue;
         }
         const keys = Object.keys(Object.assign({}, ...saved));
-        const now = await savedSettings(page);
+        // The saved settings are read until they show what this control sent (the save is the server's to finish).
+        let now = await savedSettings(page);
+        await expect.poll(async () => { now = await savedSettings(page); return saved.every(s => deepContains(now, s)); },
+          { timeout: 8000 }).toBe(true).catch(() => undefined);
         const api = saved.every(s => deepContains(now, s));
         rows.push({ ...base, action: 'changed', posted: keys.join(', '), apiPersisted: api ? 'yes' : 'NO', uiPersisted: '?',
           result: api ? 'pass' : 'fail', detail: api ? 'GET /api/settings has the new value' : 'GET /api/settings does not show what was saved: saved ' + JSON.stringify(saved).slice(0, 160) + ' now ' + JSON.stringify(keys.reduce((o: any, k) => (o[k] = now[k], o), {})).slice(0, 160) });
