@@ -918,7 +918,9 @@ class VoiceSession:
         # waiting jobs, the running one is flagged, and its audio is never
         # sent.
         from agent_friday import brand
-        clause = brand.spoken(clause)
+        from agent_friday.services.voice_spoken import speakable
+        # Markdown is never read aloud, whoever wrote the clause.
+        clause = brand.spoken(speakable(clause) or clause)
         from agent_friday.services.voice_delivery import using_preferences
         def synthesize(job_cancel):
             with using_preferences(delivery):

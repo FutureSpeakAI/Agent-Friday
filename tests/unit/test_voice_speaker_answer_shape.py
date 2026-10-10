@@ -37,11 +37,10 @@ CLOCK = "== AUTHORITATIVE CLOCK ==\nCurrent datetime: Saturday 10 October 2026, 
 META = re.compile(r"(?i)\b(data|the user|fence|instructions?|looked up|results?|documents?|block)\b")
 EMPTY_CAL = json.dumps({"connected": True, "count": 0, "events": []})
 
+#: Free-text results: the speaker (the model) answers these.
 FOUND = {
-    "two events": ("query_calendar", "checking your calendar", json.dumps(
-        {"connected": True, "count": 2, "events": [
-            {"title": "Dentist", "start": "2026-10-10T15:40", "end": "2026-10-10T16:20"},
-            {"title": "Dinner with Sam", "start": "2026-10-10T19:00", "end": "2026-10-10T21:00"}]})),
+    "past talk": ("search_past_conversations", "looking back through our conversations",
+                  "2026-10-02: you asked about moving the dentist to Friday."),
     "news": ("search_news", "looking at the news", "1. Rain expected over the weekend."),
     "wiki": ("search_wiki", "checking your notes", "Garden plan: plant garlic in late October."),
 }
@@ -126,14 +125,14 @@ def test_one_instruction_line_after_the_fence_with_no_meta_words(case):
 
 def test_the_answer_line_follows_what_came_back():
     say = lambda case: _sent_turn(*FOUND[case]).rstrip().splitlines()[-1]  # noqa: E731
-    assert say("two events") == vf._SAY_BRIEF and say("wiki") == vf._SAY_BRIEF
+    assert say("past talk") == vf._SAY_BRIEF and say("wiki") == vf._SAY_BRIEF
     assert say("news") == vf._SAY_FULL
 
 
 def test_the_speaker_turn_never_names_the_user_and_says_the_question_once():
     msgs = rv._local_voice_messages(None, QUESTION, {}, volatile=CLOCK, speaker=True)
-    turn = vf.with_result(msgs, "checking your calendar", FOUND["two events"][2],
-                          tool="query_calendar")[-1]["content"]
+    turn = vf.with_result(msgs, "looking back", FOUND["past talk"][2],
+                          tool="search_past_conversations")[-1]["content"]
     assert not re.search(r"(?i)\bthe user\b", turn), turn
     assert turn.count(QUESTION) == 1
     assert turn.index(QUESTION) < turn.index(oe.UNTRUSTED_HEADER) < turn.index(vf.RESULT_CLOSE)
@@ -178,11 +177,11 @@ def test_a_forged_close_in_the_result_stays_inside_the_fence():
     assert turn.index("$500") < turn.index(vf.RESULT_CLOSE)
 
 
-@pytest.mark.parametrize("tool,brief", [("query_calendar", True), ("check_email", True),
+@pytest.mark.parametrize("tool,brief", [("search_past_conversations", True),
                                         ("search_wiki", True), ("search_news", False),
                                         ("get_briefing", False)])
 def test_a_quick_look_up_reply_is_capped(tool, brief):
-    tool_, label, result = FOUND["two events"]
+    tool_, label, result = FOUND["past talk"]
     seat = vf.FrontSeat(8199)
     seat.model = "ternary-bonsai:1.7b"
     sent = []
@@ -278,66 +277,165 @@ def test_the_routes_own_failure_texts_are_errors(text):
     assert vf.fixed_reply(text, "check_email").startswith("I couldn't check your email just now")
 
 
-# ── a list is named in full and never cut mid-sentence ──────────────────────
+# ── lists of records are spoken from code, never by the model ───────────────
+
+from datetime import datetime  # noqa: E402
+
+from agent_friday.services import voice_spoken as vs  # noqa: E402
+
+NOW = datetime(2026, 10, 10, 9, 12)          # a Saturday morning
 
 SIX = json.dumps({"connected": True, "count": 6, "events": [
-    {"title": t, "start": s} for t, s in [
-        ("Standup", "2026-10-10T09:00"), ("Dentist", "2026-10-10T15:40"),
-        ("Dinner with Sam", "2026-10-10T19:00"), ("Gym", "2026-10-11T07:00"),
-        ("Budget review", "2026-10-11T11:00"), ("Call with Mum", "2026-10-11T18:30")]]})
+    {"title": t, "start": s, "location": "Somewhere"} for t, s in [
+        ("Standup", "2026-10-10T09:00:00"), ("Dentist", "2026-10-10T15:40:00"),
+        ("Dinner with Sam", "2026-10-10T19:00:00"), ("Gym", "2026-10-11T07:00:00"),
+        ("Budget review", "2026-10-11T11:00:00"), ("Call with Mum", "2026-10-11T18:30:00")]]})
 
+THREE_UNREAD = json.dumps({"connected": True, "source": "gmail", "count": 3, "messages": [
+    {"from": "Alex Rivera <alex@example.com>", "subject": "Lunch on Friday?",
+     "snippet": "Are you free?", "unread": True, "urgent": False, "when": "9:02 AM"},
+    {"from": "City Library", "subject": "Your hold is ready", "snippet": "Pick up by Tuesday.",
+     "unread": True, "urgent": False, "when": "8:15 AM"},
+    {"from": "Jordan Lee", "subject": "**Contract** draft", "snippet": "Need your eyes today.",
+     "unread": True, "urgent": True, "when": "7:40 AM"}]})
+
+
+def test_six_events_over_two_days_are_spoken_from_code():
+    assert vs.structured_reply(SIX, "query_calendar", now=NOW) == (
+        "Today you have Standup at 9 AM, Dentist at 3:40 PM, and Dinner with Sam at 7 PM. "
+        "Tomorrow you have Gym at 7 AM and Budget review at 11 AM. "
+        "There's 1 more; want the rest?")
+
+
+def test_two_events_and_an_all_day_one_and_a_weekday():
+    two = json.dumps({"connected": True, "count": 3, "events": [
+        {"title": "Dentist", "start": "2026-10-10T15:40:00"},
+        {"title": "Holiday", "start": "2026-10-13"},
+        {"title": "Dinner with Sam", "start": "2026-10-10T19:00:00"}]})
+    assert vs.structured_reply(two, "query_calendar", now=NOW) == (
+        "Today you have Dentist at 3:40 PM and Dinner with Sam at 7 PM. "
+        "On Tuesday you have Holiday all day.")
+
+
+def test_three_unread_emails_are_sender_and_subject_never_the_body():
+    said = vs.structured_reply(THREE_UNREAD, "check_email")
+    assert said == ("You have 3 unread emails: from Alex Rivera about Lunch on Friday, "
+                    "from City Library about Your hold is ready, and from Jordan Lee about "
+                    "Contract draft, marked urgent.")
+    for body in ("Are you free", "Pick up by Tuesday", "Need your eyes"):
+        assert body not in said
+
+
+def test_a_partial_or_cached_list_says_so():
+    partial = json.loads(SIX)
+    partial["degraded"] = True
+    assert vs.structured_reply(json.dumps(partial), "query_calendar", now=NOW).endswith(
+        "so that may not be everything.")
+    cached = json.dumps({"connected": False, "count": 1, "messages": [
+        {"from": "Alex", "subject": "Lunch", "snippet": "Noon?"}]})
+    assert vs.structured_reply(cached, "search_email") == (
+        "I found 1 email: from Alex about Lunch. "
+        "That's from my offline copy, so it may be out of date.")
+
+
+def test_a_routed_list_makes_no_model_call():
+    for tool, label, result, expect in [
+            ("query_calendar", "checking your calendar", SIX, "Standup at 9 AM"),
+            ("check_email", "checking your email", THREE_UNREAD, "from Jordan Lee")]:
+        out, sent, spoken = _routed(tool, label, result)
+        assert sent == [] and expect in out and spoken[-1] in out
+
+
+def test_free_text_and_unknown_shapes_still_go_to_the_speaker():
+    assert vs.structured_reply("Dentist 3:40 PM", "query_calendar") is None
+    assert vs.structured_reply(FOUND["news"][2], "search_news") is None
+    assert vs.structured_reply(json.dumps({"foo": 1}), "query_calendar") is None
+
+
+# ── markdown is never spoken ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize("md,plain", [
+    ("**Today** you have standup.", "Today you have standup."),
+    ("- Standup at 9\n- Gym at 7", "Standup at 9\nGym at 7"),
+    ("## Your day\nAll clear.", "Your day\nAll clear."),
+    ("See [the article](https://example.com/x) for more.", "See the article for more."),
+    ("Use `this` *now*.", "Use this now."),
+    ("* one\n* two", "one\ntwo"),
+    ("budget_2026_final.xlsx is ready.", "budget_2026_final.xlsx is ready."),
+])
+def test_markdown_is_stripped_from_spoken_text(md, plain):
+    assert vs.speakable(md) == plain
+
+
+def test_every_clause_and_every_routed_answer_is_cleaned():
+    import inspect
+    from agent_friday.services import voice_session
+    assert "speakable(" in inspect.getsource(voice_session.VoiceSession._synth)
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    seat._post = lambda body, stream: _Cut("**Rain** this weekend.", "stop")
+    out = seat.routed_turn("SYS", [{"role": "user", "content": "news?"}], tool="search_news",
+                           args={}, ack="Okay.", label="looking at the news",
+                           run_tool=lambda n, a: FOUND["news"][2], max_tokens=800)
+    assert out == "Okay. Rain this weekend."
+
+
+# ── a free-text answer has a hard ceiling ────────────────────────────────────
 
 class _Cut:
     """A reply that stops for `reason` ("length": cut by its token budget)."""
     encoding = "utf-8"
 
-    def __init__(self, text, reason):
-        self.text, self.reason = text, reason
+    def __init__(self, text, reason, used=None):
+        self.text, self.reason, self.used = text, reason, used
 
     def raise_for_status(self):
         pass
 
     def iter_lines(self, decode_unicode=True):
+        end = {"choices": [{"delta": {}, "finish_reason": self.reason}]}
+        if self.used is not None:
+            end["timings"] = {"predicted_n": self.used}
         return iter(["data: " + json.dumps({"choices": [{"delta": {"content": self.text}}]}),
-                     "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": self.reason}]}),
-                     "data: [DONE]"])
+                     "data: " + json.dumps(end), "data: [DONE]"])
 
     def close(self):
         pass
 
 
-def test_six_events_over_two_days_are_all_named_and_end_on_a_sentence():
-    seat = vf.FrontSeat(8199)
-    seat.model = "ternary-bonsai:1.7b"
-    sent, replies = [], [
-        _Cut("Today you have standup at 9, the dentist at 3:40 and dinner with Sam at 7. "
-             "Tomorrow you have the gym at 7, a budget review at", "length"),
-        _Cut("11, and a call with Mum at 6:30.", "stop")]
-    seat._post = lambda body, stream: (sent.append(json.loads(json.dumps(body))), replies.pop(0))[1]
-    out = seat.routed_turn("SYS", [{"role": "user", "content": QUESTION}], tool="query_calendar",
-                           args={}, ack="One moment.", label="checking your calendar",
-                           run_tool=lambda n, a: SIX, max_tokens=800,
-                           brief_tokens=rv._routed_brief_cap({}, QUESTION))
-    assert sent[0]["messages"][-1]["content"].rstrip().endswith(vf._SAY_LIST)
-    assert sent[0]["max_tokens"] > rv.ROUTED_LOOKUP_CAP, "a list keeps the ordinary budget"
-    assert len(sent) == 2, "a reply cut by its budget continues"
-    for name in ("Standup", "Dentist", "Sam", "Gym", "Budget", "Mum"):
-        assert name.lower() in out.lower(), name
-    assert out.rstrip().endswith(".")
-
-
-def test_one_or_two_items_keep_the_brief_cap():
+@pytest.mark.parametrize("tool,cap", [("search_news", 800), ("search_wiki", 800),
+                                      ("search_web", 5000), ("get_briefing", 1400)])
+def test_a_free_text_answer_never_exceeds_the_ceiling(tool, cap):
     seat = vf.FrontSeat(8199)
     seat.model = "ternary-bonsai:1.7b"
     sent = []
-    seat._post = lambda body, stream: (sent.append(body), _Cut("You have the dentist.", "stop"))[1]
-    seat.routed_turn("SYS", [{"role": "user", "content": QUESTION}], tool="query_calendar",
-                     args={}, ack="One moment.", label="checking your calendar",
-                     run_tool=lambda n, a: FOUND["two events"][2], max_tokens=800,
-                     brief_tokens=rv._routed_brief_cap({}, QUESTION))
+
+    def post(body, stream):
+        sent.append(body)
+        # Always runs to its budget: the worst case.
+        return _Cut("word " * 10, "length", used=body["max_tokens"])
+    seat._post = post
+    seat.routed_turn("SYS", [{"role": "user", "content": "tell me"}], tool=tool, args={},
+                     ack="Okay.", label="looking", run_tool=lambda n, a: "Some free text.",
+                     max_tokens=cap, brief_tokens=rv._routed_brief_cap({}, "tell me"))
+    assert sum(b["max_tokens"] for b in sent) <= vf.FREE_TEXT_CEILING, [b["max_tokens"] for b in sent]
+    assert len(sent) <= 2, "one continuation at most"
+
+
+def test_a_cut_answer_continues_once_to_finish_its_sentence():
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    sent, replies = [], [_Cut("Rain is expected this weekend, and the council", "length", 120),
+                         _Cut(" approved the bike lanes.", "stop", 6)]
+    seat._post = lambda body, stream: (sent.append(json.loads(json.dumps(body))), replies.pop(0))[1]
+    out = seat.routed_turn("SYS", [{"role": "user", "content": "news?"}], tool="search_wiki",
+                           args={}, ack="Okay.", label="checking your notes",
+                           run_tool=lambda n, a: "Notes text.", max_tokens=800,
+                           brief_tokens=rv._routed_brief_cap({}, "news?"))
     assert sent[0]["max_tokens"] == rv.ROUTED_LOOKUP_CAP
-    assert rv._routed_brief_cap({"voice_max_tokens": 600}, QUESTION) is None
-    assert rv._routed_brief_cap({}, "Tell me more about my calendar") is None
+    assert len(sent) == 2 and sent[1]["max_tokens"] <= vf.FREE_TEXT_CEILING - 120
+    assert "Finish the sentence" in sent[1]["messages"][-1]["content"]
+    assert out.rstrip().endswith(".")
 
 
 # ── the fence: look-alikes cannot close it, and the close is unforgeable ────

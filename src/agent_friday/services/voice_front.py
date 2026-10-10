@@ -314,9 +314,9 @@ BRIEF_LOOKUPS = frozenset({
     "search_past_conversations", "navigate_to", "podcast_play", "media_play",
     "voice_preferences", "task_control", "undo_action", "answer_card",
 })
-#: From this many items up, a look-up is a list: every item is named, with
-#: the ordinary reply budget.
-LIST_ITEMS = 3
+#: The most a free-text routed answer may take, continuation included: a
+#: small model handed a list once reasoned aloud for 646 words.
+FREE_TEXT_CEILING = 300
 
 #: How an empty answer sounds, per tool: one plain sentence to the owner.
 _EMPTY_SAY = {
@@ -334,12 +334,14 @@ _EMPTY_SAY = {
 #: The one instruction line after the fence, by what came back. Written as
 #: the owner's own words (the turn is theirs), in the second person, with no
 #: word about documents, data, results or the user to repeat aloud. Errors
-#: and empty look-ups never reach the model (fixed_reply).
+#: and empty look-ups never reach the model (fixed_reply), nor do lists of
+#: records (voice_spoken.structured_reply).
 _SAY_ERROR = "That didn't work. Tell me in one short sentence that you couldn't check it just now."
 _SAY_EMPTY = "Nothing came back. Tell me so in one short sentence."
-_SAY_BRIEF = "Now answer me in one or two short sentences, with just the facts that matter."
-_SAY_LIST = "Now tell me every one of them, each in a short sentence with its time or name."
-_SAY_FULL = "Now tell me what it says, plainly, in a few short sentences with its facts."
+_SAY_BRIEF = ("Now answer me in one or two short plain sentences with just the facts that "
+              "matter, about me and what it says, never about yourself.")
+_SAY_FULL = ("Now tell me what it says in a few short plain sentences with its facts, "
+             "about me and what it says, never about yourself.")
 
 #: List-valued keys that describe the look-up, not what it found.
 _META_LISTS = frozenset({"accounts", "not_searched", "attendees", "errors",
@@ -448,10 +450,6 @@ def fixed_reply(result, tool: str = "") -> str | None:
     return None
 
 
-def is_list(result) -> bool:
-    return result_items(result) >= LIST_ITEMS
-
-
 def result_instruction(result, tool: str = "") -> str:
     """The single line that tells the speaker how to answer from `result`."""
     kind = result_kind(result)
@@ -459,8 +457,6 @@ def result_instruction(result, tool: str = "") -> str:
         return _SAY_ERROR
     if kind == "empty":
         return _SAY_EMPTY
-    if is_list(result):
-        return _SAY_LIST
     return _SAY_BRIEF if (not tool or tool in BRIEF_LOOKUPS) else _SAY_FULL
 
 
@@ -643,12 +639,14 @@ class FrontSeat:
     def run_turn(self, system: str, messages: list, contract: dict, *,
                  on_delta=None, run_tool=None, max_tokens: int = 400,
                  temperature=None, timings=None, allow_continuation=False,
-                 admit_tool=None) -> str:
+                 admit_tool=None, ceiling=None) -> str:
         """One spoken turn: stream text, run validated tool calls through
         ``run_tool(name, args) -> result``, and loop until the model answers
         (at most ``MAX_TOOL_ROUNDS`` tool rounds). The caller's turn cancel
         (``model_router.TURN_CANCEL``) closes the stream mid-generation.
-        Returns the spoken text."""
+        ``ceiling`` bounds every generated token of the turn, a continuation
+        included: the continuation only finishes the cut sentence, within
+        what is left. Returns the spoken text."""
         from agent_friday.services.model_router import (_consume_sse_completion,
                                                         turn_cancelled)
         convo = [{"role": "system", "content": system}] + list(messages)
@@ -663,6 +661,9 @@ class FrontSeat:
         while len(convo) > 2 and room() < min(int(max_tokens), 1400):
             convo.pop(1)
         allowance = clamp_output(max_tokens, window)
+        if ceiling is not None:
+            allowance = min(int(allowance), int(ceiling))
+        used = 0
         for rnd in range(MAX_TOOL_ROUNDS + 1):
             if turn_cancelled():
                 break
@@ -694,11 +695,24 @@ class FrontSeat:
             text = msg.get("content") or ""
             if text.strip():
                 spoken.append(text.strip())
+            n = ((out.get("usage") or {}).get("completion_tokens")
+                 or (out.get("timings") or {}).get("predicted_n"))
+            used += int(n) if n else (body["max_tokens"] if ch.get("finish_reason") == "length"
+                                      else max(1, len(text) // 3))
+            left = None if ceiling is None else int(ceiling) - used
             if (not calls and ch.get("finish_reason") == "length" and allow_continuation
-                    and not continued and rnd < MAX_TOOL_ROUNDS and not turn_cancelled()):
+                    and not continued and rnd < MAX_TOOL_ROUNDS and not turn_cancelled()
+                    and (left is None or left >= 16)):
                 continued = True
+                ask = ("Continue the unfinished thought naturally, without repeating what was "
+                       "already spoken. Finish when the requested substance is covered."
+                       if left is None else
+                       "Finish the sentence you were saying in a few words, then stop. "
+                       "Do not repeat anything.")
+                if left is not None:
+                    allowance = min(int(allowance), left)
                 convo.extend([{"role": "assistant", "content": text},
-                              {"role": "user", "content": "Continue the unfinished thought naturally, without repeating what was already spoken. Finish when the requested substance is covered."}])
+                              {"role": "user", "content": ask}])
                 continue
             if not calls or ch.get("finish_reason") == "cancelled":
                 break
@@ -787,22 +801,25 @@ class FrontSeat:
         result = box.get("result")
         if not isinstance(result, str):
             result = json.dumps(result, ensure_ascii=False, default=str)
-        fixed = fixed_reply(result, tool)
+        from agent_friday.services.voice_spoken import speakable, structured_reply
+        # Nothing to report, or a list of records: the sentence is code's, not
+        # the model's (a 1.7B read failures aloud, and narrated lists).
+        fixed = fixed_reply(result, tool) or structured_reply(result, tool)
         if fixed:
-            # Nothing to report: the sentence is code's, not the model's.
             speak(fixed)
             return (ack + " " + fixed).strip()
         convo = with_result(messages, label, result, ack, tool=tool)
-        # ``brief_tokens`` caps a quick look-up's answer (one or two
-        # sentences); a list keeps the ordinary budget so every item is named.
-        # A reply cut by its budget continues once rather than stopping mid-
-        # sentence.
-        if brief_tokens and tool in BRIEF_LOOKUPS and not is_list(result):
+        # Free text: ``brief_tokens`` caps a quick look-up's first answer; a
+        # reply cut by its budget continues once to finish its sentence, and
+        # the whole turn stays under FREE_TEXT_CEILING.
+        if brief_tokens and tool in BRIEF_LOOKUPS:
             max_tokens = min(int(max_tokens), int(brief_tokens))
+        max_tokens = min(int(max_tokens), FREE_TEXT_CEILING)
         answer = self.run_turn(system, convo, {"tools": []}, on_delta=on_delta,
                                max_tokens=max_tokens, temperature=temperature,
-                               timings=timings, allow_continuation=True)
-        return (ack + " " + answer).strip()
+                               timings=timings, allow_continuation=True,
+                               ceiling=FREE_TEXT_CEILING)
+        return (ack + " " + speakable(answer)).strip()
 
 
 _SEAT = None
