@@ -52,13 +52,6 @@ def env(monkeypatch, tmp_path):
     loader = _Loader()
     arb = _Arbiter(loader)
     monkeypatch.setattr(ra, "get_arbiter", lambda: arb)
-    # No card and no live seats: the lifecycle under test, not this machine's
-    # GPU (front admission and the brain survey are tested on a fake card in
-    # tests/api/test_voice_call_makes_room_first.py).
-    from agent_friday.services import voice_workers
-    monkeypatch.setattr(voice_workers, "card_free", lambda: {
-        "cuda": False, "free_mib": 0, "reserve_mib": 0, "ok": False, "detail": "test"})
-    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
     monkeypatch.setattr(vf, "model_path", lambda m: tmp_path / vf.FRONT_MODELS[m]["file"])
     monkeypatch.setattr(vf.FrontSeat, "healthy", lambda self: False)
     monkeypatch.setattr(vf.FrontSeat, "prefill",

@@ -2669,7 +2669,6 @@ class Arbiter:
                     self._record("parked", "plan", None, 0.0)
                 else:
                     self._restore_pinned(self.lease.get("displaced"))
-                    self._restore_stood_down(self.lease.get("stood_down") or [])
                 self.lease = None
                 self.state = STATE_DEFAULT
                 el = round(time.time() - t0, 2)
@@ -2678,66 +2677,6 @@ class Arbiter:
             except Exception as e:
                 self.state = STATE_DEGRADED
                 return {"ok": False, "error": str(e)}
-
-    def stand_down_for_voice(self, model_id):
-        """Stand down the live seat serving `model_id` for the held voice call.
-
-        `_evict_pinned` reads the PLAN: a seat the plan does not mark pinned
-        on the GPU, a model the retained sidekick also serves, or a plan made
-        while the card was not Friday's leaves the live seat out, and the
-        voice-call grant then returns with nothing displaced while the model
-        still holds the card. The caller has measured that the model is still
-        serving; this stops that process by model id (adopting a seat started
-        outside this process first, so it can be stopped), records it in the
-        lease so release brings it back, and says why the plan missed it."""
-        with self._lock:
-            if not self.lease or self.lease.get("kind") != "voice_call":
-                return {"ok": False, "error": "no voice-call lease is held"}
-            why = self.why_not_displaced(model_id)
-            try:
-                if hasattr(self.llama, "adopt_live"):
-                    self.llama.adopt_live()
-            except Exception as e:  # noqa: BLE001
-                print("  [arbiter] voice stand-down: adopt_live failed: %s" % e)
-            t0 = time.time()
-            self.llama.evict(model_id)
-            self.lease.setdefault("stood_down", []).append(model_id)
-            self._record("evict", "voice-stand-down", model_id, round(time.time() - t0, 2))
-            print("  [arbiter] voice call stood down %s; the plan's eviction "
-                  "skipped it: %s" % (model_id, why))
-            return {"ok": True, "why_missed": why}
-
-    def why_not_displaced(self, model_id):
-        """Why `_evict_pinned` would not stand down `model_id`, in words."""
-        seats = (self.plan or {}).get("seats") or {}
-        roles = {r: s for r, s in seats.items()
-                 if isinstance(s, dict) and s.get("model_id") == model_id}
-        if not roles:
-            return "no seat in the plan serves it"
-        if model_id in self._retained_models():
-            return "it also serves a seat retained through leases (%s)" % ", ".join(
-                sorted(r for r in roles if r in rp.RETAINED_THROUGH_LEASE) or ["sidekick"])
-        reasons = []
-        for role, seat in sorted(roles.items()):
-            if seat.get("status") != "pinned":
-                reasons.append("%s is %s, not pinned" % (role, seat.get("status")))
-            elif not str(seat.get("device", "")).startswith("gpu"):
-                reasons.append("%s is planned on %s, not the GPU" % (role, seat.get("device")))
-        return "; ".join(reasons) or "the plan marks it displaceable (it was not owned)"
-
-    def _restore_stood_down(self, models):
-        """Bring back what `stand_down_for_voice` stopped: the ordinary
-        restore first; a model still not served is brought back the way
-        reclaim_gpu does it (a fresh plan, its default seats)."""
-        missing = [m for m in models if m not in self.llama.procs]
-        if not missing:
-            return
-        try:
-            self.compute_plan()
-            self._load_default_seats()
-        except Exception as e:  # noqa: BLE001
-            print("  [arbiter] could not bring back %s after the voice call: %s"
-                  % (", ".join(missing), e))
 
     def renew(self, kind, ttl_s):
         """Extend the held lease of `kind` by `ttl_s` from now.
