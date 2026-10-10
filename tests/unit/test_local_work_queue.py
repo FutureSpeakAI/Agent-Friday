@@ -466,3 +466,60 @@ def test_the_idle_setting_is_clamped_with_a_default():
     assert bg.idle_minutes_setting({"background_idle_minutes": 30}) == 30
     assert bg.idle_minutes_setting({"background_idle_minutes": 0}) == bg.MIN_IDLE_MINUTES
     assert bg.idle_minutes_setting({"background_idle_minutes": "x"}) == 10
+
+
+# ── a local voice call: turns block, the gaps between them do not ────────────
+
+def test_a_handoff_runs_between_voice_turns_and_pauses_during_the_next(sup, sig):
+    """Owner's rule: never alongside an active voice TURN. An open call alone
+    does not hold back work handed off in it (the mid-call "that answer's
+    ready" flow), and a deferrable job still waits for the call to end."""
+    call_kind = getattr(bg, "KIND_VOICE_CALL", "voice")
+    bg.interactive_begin("voice-session:s1", call_kind)        # the call opens
+    try:
+        bg.interactive_begin("voice-turn:s1:1", "voice")       # a turn is in progress
+        sup.wire_spawn(_job("handoff", kind="task"))            # handed off by voice
+        sup.wire_spawn(_job("distill", deferrable=True))        # from another chat
+        sig.away()                                              # no keys touched during the call
+        sup.pump()
+        assert sup.started == [], "a job started during a voice turn"
+        bg.interactive_end("voice-turn:s1:1")                  # between turns
+        sup.pump()
+        assert sup.started == ["handoff"], "handed-off work waited for the whole call"
+        # The next turn starts: the handoff pauses before its next model call.
+        bg.interactive_begin("voice-turn:s1:2", "voice")
+        released = threading.Event()
+
+        def handoff():
+            with bg.admitted_job("handoff"):
+                bg.before_local_model_call("bonsai2:27b")
+            released.set()
+        threading.Thread(target=handoff, daemon=True).start()
+        assert not released.wait(0.15), "the handoff called the model during a voice turn"
+        assert sup.snapshot()["running"][0]["why"] == bg.REASON_INTERACTIVE
+        bg.interactive_end("voice-turn:s1:2")
+        assert released.wait(2)
+        sup.on_task_end("handoff")
+        assert sup.started == ["handoff"], "a deferrable job started during the call"
+        assert sup.snapshot()["queued"][0]["why"] == bg.REASON_IDLE
+    finally:
+        bg.interactive_end("voice-session:s1")
+    sup.pump()
+    assert sup.started == ["handoff", "distill"]
+
+
+def test_the_local_voice_session_registers_the_call_and_each_turn(sig):
+    from agent_friday.services import voice_session as vs
+    seen = []
+    session = vs.VoiceSession(lambda frame: True, ear=object(), mouth=object(),
+                              vad=object(), generate=lambda t, d, c: "ok")
+    try:
+        assert bg.interactive_kinds() == [getattr(bg, "KIND_VOICE_CALL", "?")], \
+            "an open call between turns must not count as a turn"
+        session._run_turn = lambda *a, **k: seen.append(sorted(bg.interactive_kinds()))
+        session.run_turn("hello there")
+        assert seen == [sorted([bg.KIND_VOICE_CALL, "voice"])]
+        assert bg.interactive_kinds() == [bg.KIND_VOICE_CALL]
+    finally:
+        session.close()
+    assert bg.interactive_kinds() == []

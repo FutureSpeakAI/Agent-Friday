@@ -55,6 +55,11 @@ REASON_INTERACTIVE = "waits for your chat to finish"
 REASON_IDLE = "waits for idle"
 REASON_SEAT = "waits for the local model"
 
+#: An open voice call, as opposed to a voice TURN in progress ("voice"). A
+#: call means the owner is here: deferrable work waits for it to end. Only a
+#: turn blocks everything else.
+KIND_VOICE_CALL = "voice-call"
+
 
 class JobCancelled(RuntimeError):
     """A background job was cancelled from the Local AI queue."""
@@ -246,10 +251,12 @@ def block_reason(record: Dict[str, Any]) -> str:
     """
     if not record.get("seat_is_local"):
         return ""
-    if interactive_kinds():
+    kinds = interactive_kinds()
+    if any(k != KIND_VOICE_CALL for k in kinds):
         return REASON_INTERACTIVE
     if record.get("deferrable") and not record.get("run_now"):
-        if not idle_state()["idle"]:
+        # An open call is not idle, even when nobody has touched a key.
+        if KIND_VOICE_CALL in kinds or not idle_state()["idle"]:
             return REASON_IDLE
     return ""
 
