@@ -377,7 +377,7 @@ def _run_daily_job(fn, name):
         print(f"  [daily-scheduler:{name}] run failed: {e}")
 
 
-@visible_job('Skill optimisation', kind='skillopt', workspace='skills')
+@visible_job('Skill optimisation', kind='skillopt', workspace='skills', deferrable=True)
 def _skillopt_llm_researcher(skill_name, context):
     """LLM-backed hypothesis generator for the SkillOpt auto-research loop.
 
@@ -453,7 +453,7 @@ SELF_IMPROVEMENT_HOUR = 9          # 9 AM Central, configurable via settings
 SELF_IMPROVEMENT_WEEKDAY = 6       # Sunday (Mon=0 … Sun=6)
 
 
-@visible_job('Self reflection', kind='self_reflect', workspace='memory')
+@visible_job('Self reflection', kind='self_reflect', workspace='memory', deferrable=True)
 def _self_reflect(prompt, system=None):
     """Best-effort first-person reflection via the user's configured provider.
 

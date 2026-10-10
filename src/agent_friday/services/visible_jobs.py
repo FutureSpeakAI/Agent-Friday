@@ -447,7 +447,10 @@ class visible_job(contextlib.ContextDecorator):
                 deferrable=job.deferrable)
             spec = self._bg.__enter__()
             spec["task_id"] = job.id
-            spec["foreground"] = True
+            # Foreground only for work a person is waiting on (a click, a tool
+            # inside their own turn). Deferrable work keeps its 1.0.2 rules:
+            # it waits for idle and for any interactive turn.
+            spec["foreground"] = not job.deferrable
         except Exception:
             self._bg = None
 

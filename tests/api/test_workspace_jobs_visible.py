@@ -270,3 +270,61 @@ def test_a_foreground_job_never_waits_for_the_turn_that_may_be_waiting_on_it(mon
     assert bg.block_reason(record) == bg.REASON_INTERACTIVE
     assert bg.block_reason(dict(record, foreground=True)) == ""
     assert bg.block_reason(dict(record, foreground=True, deferrable=True)) == ""
+
+
+def _admit_spec(monkeypatch, **job_kw):
+    """The spec a visible job hands the Local AI queue at its first local call."""
+    from agent_friday.services import background_gate as bg
+    from agent_friday.services import visible_jobs as vj
+
+    captured = {}
+
+    class Supervisor:
+        def admit_inline(self, spec, **kw):
+            captured.update(spec)
+            return spec["id"]
+
+        def wait_while_blocked(self, job_id):
+            pass
+
+    monkeypatch.setattr(bg, "_SUPERVISOR_PROVIDER", lambda: Supervisor())
+    with vj.visible_job("J", kind="k", workspace="w", **job_kw):
+        bg.before_local_model_call(LOCAL_MODEL)
+    return captured
+
+
+def test_a_deferrable_job_keeps_the_idle_and_interactive_rules(monkeypatch):
+    """Background work (not a person's click) is not foreground: block_reason
+    still holds it for idle and for an interactive turn, as in 1.0.2."""
+    from agent_friday.services import background_gate as bg
+
+    spec = _admit_spec(monkeypatch, deferrable=True)
+    assert spec["foreground"] is False and spec["deferrable"] is True
+    spec["seat_is_local"] = True
+    monkeypatch.setattr(bg, "interactive_kinds", lambda: ["chat"])
+    assert bg.block_reason(spec) == bg.REASON_INTERACTIVE
+    monkeypatch.setattr(bg, "interactive_kinds", lambda: [])
+    monkeypatch.setattr(bg, "idle_state", lambda: {"idle": False})
+    assert bg.block_reason(spec) == bg.REASON_IDLE
+
+
+def test_a_clicked_job_is_foreground_and_does_not_deadlock_in_a_turn(monkeypatch):
+    from agent_friday.services import background_gate as bg
+
+    spec = _admit_spec(monkeypatch)
+    assert spec["foreground"] is True
+    spec["seat_is_local"] = True
+    monkeypatch.setattr(bg, "interactive_kinds", lambda: ["chat"])
+    assert bg.block_reason(spec) == ""
+
+
+def test_a_scheduled_job_keeps_its_own_queue_record(monkeypatch):
+    """Inside the scheduler's background_job the visible job adds no second
+    admission and never marks the scheduler's record foreground."""
+    from agent_friday.services import background_gate as bg
+    from agent_friday.services import visible_jobs as vj
+
+    with bg.background_job(kind="scheduled", key="s", label="L", deferrable=True) as q:
+        with vj.visible_job("J", kind="scheduled", workspace="w", eager=False, queued=False) as j:
+            q["task_id"] = j.id
+        assert "foreground" not in q and q["deferrable"] is True

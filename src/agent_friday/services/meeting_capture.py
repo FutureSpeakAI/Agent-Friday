@@ -188,7 +188,7 @@ def _default_source_factory(max_seconds):
     return MicrophoneSource(max_seconds)
 
 
-@visible_job('Meeting transcript', kind='meeting_transcript', workspace='meetings')
+@visible_job('Meeting transcript', kind='meeting_transcript', workspace='meetings', deferrable=True)
 def _default_transcriber(pcm: bytes) -> str:
     from agent_friday.services.local_voice import get_local_voice_engine
     return get_local_voice_engine().transcribe(pcm) or ""
@@ -199,7 +199,7 @@ def _default_seat_resolver():
     return _resolve_local_seat()
 
 
-@visible_job('Meeting notes', kind='meeting_notes', workspace='meetings')
+@visible_job('Meeting notes', kind='meeting_notes', workspace='meetings', deferrable=True)
 def _default_notes_call(system: str, user: str, model: str):
     from agent_friday.services import local_call
     return local_call.call_json(system, user, model, max_tokens=2048)

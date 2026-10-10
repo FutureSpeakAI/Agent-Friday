@@ -200,7 +200,7 @@ def _model():
         return _MODEL
 
 
-@visible_job('Transcribing audio', kind='transcribe', workspace='media')
+@visible_job('Transcribing audio', kind='transcribe', workspace='media', deferrable=True)
 def _run_whisper(p: Path) -> Dict[str, Any]:
     from agent_friday.services import visible_jobs as _vj
     _vj.note_inference("faster-whisper base.en", local=True)
