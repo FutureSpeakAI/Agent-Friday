@@ -42,6 +42,7 @@ set_oauth_named().
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
@@ -58,6 +59,8 @@ from pathlib import Path
 
 from agent_friday.paths import friday_home
 from agent_friday.user_errors import ExceptionText
+
+_log = logging.getLogger("friday.local_address")
 
 DEFAULT_SLUG = "friday"
 PING_PATH = "/api/local-address/ping"
@@ -103,7 +106,12 @@ _HOST_MEMO = {"key": None, "value": None}
 _STATUS = {"value": None, "ts": 0.0, "refreshing": False, "again": False}
 _STATUS_LOCK = threading.Lock()
 _PROXY = {"proxy": None}
-_JOB = {"kind": None, "state": "idle", "message": "", "started": 0.0, "finished": 0.0}
+# start_listeners/stop_listeners run one at a time: two at once would each
+# stop "the" proxy and start their own, and the loser's loop would be lost.
+_LISTENERS_LOCK = threading.RLock()
+_WATCH = {"thread": None}
+WATCH_INTERVAL_S = 10       # how often the listeners' serving loop is checked
+_JOB ={"kind": None, "state": "idle", "message": "", "started": 0.0, "finished": 0.0}
 _JOB_LOCK = threading.Lock()
 
 
@@ -310,9 +318,18 @@ def probe(base: str, timeout: float = 2.5) -> dict:
     return out
 
 
-def _proxy_status():
+def _proxy_status(heal: bool = False):
+    """Friday's listeners as they are now. With `heal`, a dead or stalled
+    serving loop is replaced first (services/local_proxy.ensure_alive)."""
     p = _PROXY["proxy"]
-    return p.status() if p is not None else None
+    if p is None:
+        return None
+    if heal:
+        try:
+            p.ensure_alive()
+        except Exception as e:
+            _log.warning("Local address: could not check Friday's listeners: %s", e)
+    return p.status()
 
 
 def compute_status() -> dict:
@@ -322,6 +339,9 @@ def compute_status() -> dict:
     host, source, note = resolve_host(s)
     hp, sp = int(b.get("http_port") or 80), int(b.get("https_port") or 443)
     https_o, http_o = origin("https", host, sp), origin("http", host, hp)
+    # Before probing: a serving loop that has died or stalled is replaced, so
+    # the probes below test listeners that are really being served.
+    proxy = _proxy_status(heal=True)
     resolves = resolves_to_loopback(host)
     if resolves:
         hs, hh = probe(https_o), probe(http_o)
@@ -332,7 +352,7 @@ def compute_status() -> dict:
     mine_h = hh.get("instance") == INSTANCE_ID
     secure = bool(resolves and mine_s and hs.get("trusted"))
     plain = bool(resolves and (mine_h or (secure and hh.get("redirect"))))
-    proxy = _proxy_status()
+    proxy = _proxy_status()             # after the probes, as they found it
 
     def served_by(kind, pr, mine):
         mp = (proxy or {}).get(kind) or {}
@@ -382,6 +402,9 @@ def status(refresh: bool = False) -> dict:
         return _store(compute_status())
     out = dict(cached)
     out["job"] = job_status()
+    # The listeners as they are now (is the serving loop alive and accepting),
+    # not as they were at the last check: the card and diagnostics read this.
+    out["listeners"] = _proxy_status()
     if age > _STATE_TTL_S:
         refresh_in_background()
     return out
@@ -490,35 +513,65 @@ def start_listeners(upstream_port: int | None = None) -> dict:
     if upstream_port is None:
         core = sys.modules.get("agent_friday.core")
         upstream_port = getattr(core, "SERVER_PORT", 3000) if core else 3000
-    s = _settings()
-    b = _block(s)
-    host = configured_host(s)
-    info = local_ca.ensure(state_dir(), host)
-    stop_listeners()
-    d = state_dir()
-    proxy = local_proxy.LocalProxy(
-        host=host, upstream_port=upstream_port,
-        https_port=int(b.get("https_port") or 443), http_port=int(b.get("http_port") or 80),
-        cert_file=str(d / local_ca.LEAF_CERT), key_file=str(d / local_ca.LEAF_KEY),
-        redirect_http=_redirect_http)
-    st = proxy.start()
-    _PROXY["proxy"] = proxy
+    with _LISTENERS_LOCK:
+        s = _settings()
+        b = _block(s)
+        host = configured_host(s)
+        info = local_ca.ensure(state_dir(), host)
+        stop_listeners()
+        d = state_dir()
+        proxy = local_proxy.LocalProxy(
+            host=host, upstream_port=upstream_port,
+            https_port=int(b.get("https_port") or 443), http_port=int(b.get("http_port") or 80),
+            cert_file=str(d / local_ca.LEAF_CERT), key_file=str(d / local_ca.LEAF_KEY),
+            redirect_http=_redirect_http)
+        st = proxy.start()
+        _PROXY["proxy"] = proxy
+        _start_watch()
     return {"certificate": info, "listeners": st}
 
 
 def stop_listeners() -> None:
-    p = _PROXY.pop("proxy", None)
-    _PROXY["proxy"] = None
-    if p is not None:
-        try:
-            p.stop()
-        except Exception:
-            pass
+    with _LISTENERS_LOCK:
+        p = _PROXY.pop("proxy", None)
+        _PROXY["proxy"] = None
+        if p is not None:
+            try:
+                p.stop()
+            except Exception:
+                pass
+
+
+def _start_watch() -> None:
+    """One thread per process that keeps Friday's listeners served: every
+    WATCH_INTERVAL_S it asks the serving loop to answer, and replaces a loop
+    that is dead or stuck (local_proxy.ensure_alive logs why)."""
+    t = _WATCH["thread"]
+    if t is not None and t.is_alive():
+        return
+
+    def watch():
+        while True:
+            time.sleep(WATCH_INTERVAL_S)
+            p = _PROXY["proxy"]
+            if p is None:
+                continue
+            try:
+                if p.ensure_alive().get("restarted"):
+                    refresh_in_background()
+            except Exception as e:
+                _log.warning("Local address: listener check failed: %s", e)
+
+    _WATCH["thread"] = threading.Thread(target=watch, name="friday-local-address-watch",
+                                        daemon=True)
+    _WATCH["thread"].start()
 
 
 def _redirect_http() -> bool:
-    with _STATUS_LOCK:
-        st = _STATUS["value"] or {}
+    """Runs on the listeners' event loop thread, so it must never wait: it
+    reads the last stored status without taking _STATUS_LOCK (one dict lookup
+    of a value that _store replaces whole)."""
+    st = _STATUS["value"] or {}
     return bool(st.get("secure")) and ((st.get("https") or {}).get("served_by") == "friday")
 
 
