@@ -127,7 +127,8 @@ def call(app, monkeypatch, tmp_path):
         return self
     monkeypatch.setattr(vw.VoiceWorker, "start", start)
     monkeypatch.setattr(vw.VoiceWorker, "alive", lambda self: True)
-    monkeypatch.setattr(vw.VoiceWorker, "stop", lambda self, reason="": None)
+    monkeypatch.setattr(vw.VoiceWorker, "stop",
+                        lambda self, reason="": card.log.append(("stop", self.stage)))
     monkeypatch.setattr(vw, "_HELD", {})
     monkeypatch.setattr(vw, "NOTICES", [])
 
@@ -167,6 +168,9 @@ def call(app, monkeypatch, tmp_path):
 
     # The brain, the arbiter and the front.
     monkeypatch.setattr(residency_arbiter, "get_arbiter", lambda: _Arbiter(card))
+    # The arbiter's survey of live seats: the brain answers until parked.
+    monkeypatch.setattr(residency_arbiter, "survey_live_seats", lambda *a, **k: (
+        {} if card.parked else {"fixture-brain": (4242, 8090)}))
     monkeypatch.setattr("agent_friday.services.build_hours.is_active", lambda *a, **k: False)
     monkeypatch.setattr(voice_front, "resolve", lambda settings=None: (BONSAI, ""))
     seat = _FrontSeat(card)
@@ -338,3 +342,45 @@ def test_a_release_still_rising_at_the_limit_stops_at_twenty_seconds(call, monke
     call.card.release_polls = None
     w = vw.wait_for_room(100000)
     assert w["ok"] is False and w["settled"] is False and w["waited_s"] == 20.0
+
+
+def test_served_by_says_parked_only_when_the_brain_is_measured_gone(call, monkeypatch):
+    # The live failure: the grant displaced nothing and the brain kept serving.
+    from agent_friday.services import residency_arbiter
+    monkeypatch.setattr(_Arbiter, "grant", lambda self, kind, ttl_s=300: (
+        self.card.log.append(("park", kind)) or
+        {"ok": True, "lease": {"kind": kind, "displaced": []}}))
+    monkeypatch.setattr(residency_arbiter, "survey_live_seats",
+                        lambda *a, **k: {"fixture-brain": (4242, 8090)})
+    frames = call.run()
+    served, = [f for f in frames if f.get("type") == "served_by"]
+    assert served["brain"] != "parked (voice call)", served
+    codes = {f.get("code") for f in frames if f.get("type") == "error-nonfatal"}
+    assert "local_voice_brain_not_parked" in codes, codes
+    assert ("front", BONSAI) not in call.card.log, "no front loaded into a full card"
+    assert call.card.low is None or call.card.low >= RESERVE_MIB
+
+
+def test_a_refused_front_moves_the_engines_off_the_card_before_the_brain_returns(call, monkeypatch):
+    # After the ear and mouth are in, another program takes 5 GB: the front
+    # no longer fits. The ear and mouth leave the card BEFORE the lease (and
+    # with it the brain) is given back.
+    take = call.card.take
+
+    def take_then_grab(mib):
+        take(mib)
+        if mib == WORKING_SETS["kokoro-cuda"] and not getattr(call.card, "grabbed", False):
+            call.card.grabbed = True
+            call.card.taken += 5000
+    monkeypatch.setattr(call.card, "take", take_then_grab)
+    frames = call.run()
+    log = call.card.log
+    assert ("front", BONSAI) not in log, log
+    assert ("stop", "ear") in log and ("stop", "mouth") in log, log
+    unpark = log.index(("unpark", "voice_call"))
+    assert log.index(("stop", "ear")) < unpark and log.index(("stop", "mouth")) < unpark, log
+    served, = [f for f in frames if f.get("type") == "served_by"]
+    assert served["mind"] == "fixture-brain@local (thinking mode)", served
+    assert served["ear"].endswith("@cpu") and served["mouth"].endswith("@cpu"), served
+    codes = {f.get("code") for f in frames if f.get("type") == "error-nonfatal"}
+    assert "local_voice_front_refused" in codes, codes
