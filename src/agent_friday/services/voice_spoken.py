@@ -21,7 +21,12 @@ import re
 from datetime import date, datetime
 
 #: Routed reads whose result is a list of records, spoken from code.
-STRUCTURED_TOOLS = frozenset({"query_calendar", "check_email", "search_email", "search_files"})
+STRUCTURED_TOOLS = frozenset({"query_calendar", "check_email", "search_email", "search_files",
+                              "search_news", "search_web"})
+#: How many stories or web hits are spoken before "There are N more".
+SPOKEN_STORIES = 3
+#: Longest spoken story or hit, in words.
+_STORY_WORDS = 30
 #: How many records are spoken before "and N more; want the rest?".
 SPOKEN_ITEMS = 5
 #: Longest title, subject or name spoken from a record.
@@ -233,12 +238,80 @@ def _files(data: dict) -> str | None:
     return (out + " " + _more(len(rows) - len(shown))).strip()
 
 
+def _sentence(text: str) -> str:
+    """The first sentence of `text`, cleaned, at most _STORY_WORDS words."""
+    t = speakable(re.sub(r"\s+", " ", str(text or ""))).strip()
+    t = re.sub(r"https?://\S+|www\.\S+", "", t).strip()
+    m = re.match(r"(.+?[.!?])(?:\s|$)", t)
+    if m:
+        t = m.group(1)
+    words = t.split()
+    if len(words) > _STORY_WORDS:
+        t = " ".join(words[:_STORY_WORDS])
+    return t.rstrip(" .?!;:,-")
+
+
+def _lower_first(t: str) -> str:
+    """'Heavy rain...' -> 'heavy rain...' after "X says"; acronyms stay."""
+    if len(t) > 1 and t[0].isupper() and t[1].islower():
+        return t[0].lower() + t[1:]
+    return t
+
+
+def _stories(items: list, lead: str) -> str | None:
+    """Up to SPOKEN_STORIES items, each its title (else its summary's first
+    sentence), with its outlet once when there is one; never a URL."""
+    said = []
+    for it in items:
+        text = _sentence(it.get("title") or "") or _sentence(it.get("snippet") or it.get("summary") or "")
+        if not text:
+            continue
+        outlet = _field(it.get("source") or "")
+        said.append("%s says %s." % (outlet, _lower_first(text)) if outlet
+                    else text[0].upper() + text[1:] + ".")
+        if len(said) == SPOKEN_STORIES:
+            break
+    if not said:
+        return None
+    rest = len([i for i in items if (i.get("title") or i.get("snippet") or i.get("summary"))]) - len(said)
+    return (lead + " " + " ".join(said) + " " + _more(rest)).strip()
+
+
+_WEB_ROW = re.compile(r"(?m)^\s*\d+\.\s+(?P<title>[^\n]*)\n[ \t]+(?P<snippet>[^\n]*)")
+
+
+def _news(data: dict) -> str | None:
+    hits = [h for h in (data.get("hits") or []) if isinstance(h, dict)]
+    return _stories(hits, "Here's the news:") if hits else None
+
+
+def _web(result) -> str | None:
+    data = _payload(result)
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        rows = [r for r in data["results"] if isinstance(r, dict)]
+    else:
+        text = _LATE_PREFIX.sub("", str(result or ""))
+        if not text.lstrip().startswith("Search results for"):
+            return None
+        rows = [{"title": m.group("title"), "snippet": m.group("snippet")}
+                for m in _WEB_ROW.finditer(text)]
+    # A web hit's "source" would be its address: never spoken.
+    rows = [{"title": r.get("title"), "snippet": r.get("snippet") or r.get("description")}
+            for r in rows]
+    return _stories(rows, "Here's what I found on the web:") if rows else None
+
+
 def structured_reply(result, tool: str, now: datetime | None = None) -> str | None:
     """The spoken answer for a structured routed read, or None (not a
     structured tool, nothing to list, or a shape it does not know: the
     speaker answers instead)."""
     if tool not in STRUCTURED_TOOLS:
         return None
+    if tool == "search_web":
+        try:
+            return _web(result)
+        except Exception:
+            return None
     data = _payload(result)
     if not isinstance(data, dict):
         return None
@@ -249,6 +322,8 @@ def structured_reply(result, tool: str, now: datetime | None = None) -> str | No
             return _email(data, tool)
         if tool == "search_files":
             return _files(data)
+        if tool == "search_news":
+            return _news(data)
     except Exception:
         return None
     return None

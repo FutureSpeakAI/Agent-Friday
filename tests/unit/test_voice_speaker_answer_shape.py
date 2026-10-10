@@ -125,7 +125,9 @@ def test_one_instruction_line_after_the_fence_with_no_meta_words(case):
 
 def test_the_answer_line_follows_what_came_back():
     say = lambda case: _sent_turn(*FOUND[case]).rstrip().splitlines()[-1]  # noqa: E731
-    assert say("past talk") == vf._SAY_BRIEF and say("wiki") == vf._SAY_BRIEF
+    # The owner's own notes and conversations are told back as theirs.
+    assert say("past talk") == vf._SAY_THEIRS and say("wiki") == vf._SAY_THEIRS
+    assert "You wrote" in vf._SAY_THEIRS
     assert say("news") == vf._SAY_FULL
 
 
@@ -473,3 +475,110 @@ def test_the_close_carries_a_token_each_turn():
     close = lambda s: [ln for ln in s.splitlines() if ln.startswith(vf.RESULT_CLOSE)]  # noqa: E731
     assert len(close(a)) == 1 and len(close(b)) == 1 and close(a) != close(b)
     assert re.fullmatch(re.escape(vf.RESULT_CLOSE) + r" [0-9a-f]{8}\]", close(a)[0])
+
+
+# ── news and web hits are records: spoken from code ──────────────────────────
+
+NEWS = json.dumps({"query": "", "hits": [
+    {"title": "Heavy rain expected across the region this weekend",
+     "snippet": "Flood watches issued for low-lying areas.", "url": "https://example.com/rain",
+     "source": "Regional Weather Service"},
+    {"title": "", "snippet": "The city council approved the new bike-lane plan by a vote of 7 to 2. "
+     "Work starts in spring.", "url": "https://example.com/bikes", "source": "City Desk"},
+    {"title": "**Local bakery** wins the state's best sourdough award",
+     "snippet": "", "url": "https://example.com/bread", "source": ""},
+    {"title": "School board meets Tuesday", "snippet": "", "url": "https://x", "source": "Herald"},
+    {"title": "Library extends weekend hours", "snippet": "", "url": "https://y", "source": "Herald"}]})
+
+
+def test_the_news_is_spoken_from_code_with_its_outlets_and_no_urls():
+    said = vs.structured_reply(NEWS, "search_news")
+    assert said == (
+        "Here's the news: Regional Weather Service says heavy rain expected across the region "
+        "this weekend. City Desk says the city council approved the new bike-lane plan by a "
+        "vote of 7 to 2. Local bakery wins the state's best sourdough award. "
+        "There are 2 more; want the rest?")
+    assert "http" not in said and "example.com" not in said
+    out, sent, _spoken = _routed("search_news", "looking at the news", NEWS)
+    assert sent == [] and out.endswith(said)
+
+
+def test_a_web_search_list_is_spoken_from_code():
+    text = ("Search results for 'garlic' (backend: ddg, 2 results). URLs below are real and "
+            "fetchable — pass one verbatim to browse_web:\n\n"
+            "1. When to plant garlic\n   Plant garlic in autumn, four weeks before frost. More tips.\n"
+            "   https://example.com/garlic\n"
+            "2. Garlic varieties\n   Hardneck and softneck explained.\n   https://example.com/v")
+    assert vs.structured_reply(text, "search_web") == (
+        "Here's what I found on the web: When to plant garlic. Garlic varieties.")
+
+
+@pytest.mark.parametrize("text,said", [
+    ("No current news stories matched 'mars'.", "I didn't find any news on that."),
+    ("No news stories available right now.", "I didn't find any news on that."),
+    ("search_news error fetching feed: timeout", "I couldn't check the news just now: it took too long to answer."),
+    ("Web search error: ConnectError: boom. This is a TOOL FAILURE.", "I couldn't check the web just now."),
+    (json.dumps({"query": "", "hits": [], "out_of_stories": True, "note": "Every story ... told"}),
+     "That's every story I have right now. Want your daily briefing instead?"),
+])
+def test_news_and_web_with_nothing_to_report(text, said):
+    tool = "search_web" if text.startswith("Web") else "search_news"
+    out, sent, _spoken = _routed(tool, "looking", text)
+    assert sent == [] and out.endswith(said), out
+
+
+# ── free text: only the first paragraph is ever spoken ──────────────────────
+
+class _Stream:
+    """A server that ignores `stop`: streams `pieces`, then finishes."""
+    encoding = "utf-8"
+
+    def __init__(self, pieces, reason="stop"):
+        self.pieces, self.reason = pieces, reason
+
+    def raise_for_status(self):
+        pass
+
+    def iter_lines(self, decode_unicode=True):
+        rows = ["data: " + json.dumps({"choices": [{"delta": {"content": p}}]}) for p in self.pieces]
+        rows.append("data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": self.reason}]}))
+        return iter(rows + ["data: [DONE]"])
+
+    def close(self):
+        pass
+
+
+@pytest.mark.parametrize("pieces", [
+    ["Answer.\n\nI will now provide a concise and natural response."],
+    ["Answer.", "\n", "\n", "I will now", " review each one."],
+    ["Answer.\n", "\nThe note says that heavy rain..."],
+])
+def test_only_the_first_paragraph_is_spoken(pieces):
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    sent, spoken = [], []
+    seat._post = lambda body, stream: (sent.append(json.loads(json.dumps(body))), _Stream(pieces, "length"))[1]
+    out = seat.routed_turn("SYS", [{"role": "user", "content": "garden?"}], tool="search_wiki",
+                           args={"query": "the garden"}, ack="Okay.", label="checking your notes",
+                           run_tool=lambda n, a: "Garden plan: plant garlic in late October.",
+                           max_tokens=800, on_delta=spoken.append,
+                           brief_tokens=rv._routed_brief_cap({}, "garden?"))
+    assert out == "Okay. Answer."
+    assert "".join(spoken[1:]).strip() == "Answer.", spoken
+    assert len(sent) == 1, "nothing continues past the first paragraph"
+    assert sent[0]["stop"] == ["\n\n"]
+
+
+def test_the_block_names_the_plain_subject_never_the_note():
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    sent = []
+    seat._post = lambda body, stream: (sent.append(body), _Stream(["You wrote it."]))[1]
+    seat.routed_turn("SYS", [{"role": "user", "content": "garden?"}], tool="search_wiki",
+                     args={"query": "the garden"}, ack="Okay.", label="checking your notes",
+                     run_tool=lambda n, a: "Garden plan: plant garlic.")
+    turn = sent[0]["messages"][-1]["content"]
+    assert "[What came back from your own notes about the garden:]" in turn
+    assert not re.search(r"(?i)\bthe note\b", turn)
+    from agent_friday.services import voice_conversation_state as vcs
+    assert "note" not in vcs.SPEAKER_NOTE_LEAD.lower()

@@ -342,6 +342,30 @@ _SAY_BRIEF = ("Now answer me in one or two short plain sentences with just the f
               "matter, about me and what it says, never about yourself.")
 _SAY_FULL = ("Now tell me what it says in a few short plain sentences with its facts, "
              "about me and what it says, never about yourself.")
+#: The owner's own words (their notes, our past conversations): told back to
+#: them as theirs ("You wrote ..."), never as the speaker's.
+_SAY_THEIRS = ("Now tell me in one or two short plain sentences what I wrote or said, "
+               "starting with \"You wrote\" or \"You said\", never about yourself.")
+_THEIRS = frozenset({"search_wiki", "search_past_conversations"})
+
+#: What the block is labelled, by tool: the plain subject, never "the note"
+#: or a router gerund ("checking your notes") a small model repeats.
+_SUBJECT = {
+    "search_wiki": "your own notes", "search_past_conversations": "our past conversations",
+    "search_news": "the news", "search_web": "the web", "get_briefing": "your briefing",
+    "search_files": "your files", "query_calendar": "your calendar",
+    "check_email": "your email", "search_email": "your email",
+}
+
+
+def subject(tool: str, args=None, label: str = "") -> str:
+    """The block's label: "your own notes about the garden"."""
+    base = _SUBJECT.get(tool) or str(label or "").strip() or "what you asked for"
+    q = str((args or {}).get("query") or "").strip()
+    if q and tool in _SUBJECT:
+        q = _defang(re.sub(r"\s+", " ", q))[:60].strip()
+        base = "%s about %s" % (base, q)
+    return base
 
 #: List-valued keys that describe the look-up, not what it found.
 _META_LISTS = frozenset({"accounts", "not_searched", "attendees", "errors",
@@ -352,7 +376,13 @@ _NOTE_ERROR = re.compile(
     r"re-?auth\w*|reconnect\w*|not (?:connected|authori[sz]ed)|needs? connecting)\b")
 #: Plain-text tool results that are failures (routes/voice.py's own wording).
 _TEXT_ERROR = re.compile(
-    r"(?is)^\s*(?:error\b|i hit a problem with the\b|the \S+ tool did not finish within\b)")
+    r"(?is)^\s*(?:error\b|i hit a problem with the\b|the \S+ tool did not finish within\b"
+    r"|search_\w+ (?:error|unavailable)\b|web search (?:error|unavailable)\b"
+    r"|search for .{0,200}? returned no results[^\n]*\n\s*backend detail)")
+#: Plain-text tool results that found nothing (agent._tool_search_news / web).
+_TEXT_EMPTY = re.compile(
+    r"(?is)^\s*(?:no current news stories matched|no news stories available"
+    r"|search for .{0,200}? returned no results)")
 _LATE_PREFIX = re.compile(r"(?s)^\s*\[LATE RESULT[^\]]*\]\s*")
 
 
@@ -392,7 +422,9 @@ def result_kind(result) -> str:
     if not text or text == "(nothing came back)":
         return "empty"
     if data is None:
-        return "error" if _TEXT_ERROR.match(text) else "found"
+        if _TEXT_ERROR.match(text):
+            return "error"
+        return "empty" if _TEXT_EMPTY.match(text) else "found"
     if isinstance(data, list):
         return "found" if data else "empty"
     if not isinstance(data, dict):
@@ -445,6 +477,8 @@ def fixed_reply(result, tool: str = "") -> str | None:
         why = _failure_reason(result)
         return ("I couldn't check %s just now: %s." % (thing, why) if why
                 else "I couldn't check %s just now." % thing)
+    if kind == "empty" and tool == "search_news" and (_payload(result)[1] or {}).get("out_of_stories"):
+        return "That's every story I have right now. Want your daily briefing instead?"
     if kind == "empty" and tool in _EMPTY_SAY:
         return _EMPTY_SAY[tool]
     return None
@@ -457,6 +491,8 @@ def result_instruction(result, tool: str = "") -> str:
         return _SAY_ERROR
     if kind == "empty":
         return _SAY_EMPTY
+    if tool in _THEIRS:
+        return _SAY_THEIRS
     return _SAY_BRIEF if (not tool or tool in BRIEF_LOOKUPS) else _SAY_FULL
 
 
@@ -480,7 +516,7 @@ def result_block(label: str, result: str, ack: str = "", tool: str = "",
 
 
 def with_result(messages: list, label: str, result: str, ack: str = "",
-                tool: str = "") -> list:
+                tool: str = "", args=None) -> list:
     """``messages`` with the routed result appended to the last owner turn
     (one is started when there is none): what the speaker answers from. Only
     the last turn changes: a result rides in the turn it answers and nowhere
@@ -489,7 +525,8 @@ def with_result(messages: list, label: str, result: str, ack: str = "",
     last = (dict(convo[-1]) if convo and convo[-1].get("role") == "user"
             else {"role": "user", "content": ""})
     last["content"] = (str(last.get("content") or "")
-                       + result_block(label or tool, result, ack, tool=tool)).strip()
+                       + result_block(subject(tool, args, label) if tool else (label or "checking"),
+                                      result, ack, tool=tool)).strip()
     return (convo[:-1] if convo and convo[-1].get("role") == "user" else convo) + [last]
 
 
@@ -509,6 +546,50 @@ def _renderable(call: dict) -> dict:
 
 
 # ── the seat ───────────────────────────────────────────────────────────────
+
+#: Where a free-text routed answer stops: the end of its first paragraph.
+#: A 1.7B said the three facts, then reasoned aloud ("I will now provide a
+#: concise and natural response...") in later paragraphs until its ceiling.
+PARAGRAPH_STOP = ("\n\n",)
+
+
+class _ParagraphGate:
+    """Passes streamed text on until the first blank line after some text,
+    then nothing: the stop sequence's backstop for a server that ignores it."""
+
+    def __init__(self, on_delta):
+        self.on_delta = on_delta
+        self.seen = ""
+        self.sent = 0
+        self.closed = False
+
+    def _end(self, text: str):
+        lead = len(text) - len(text.lstrip())
+        i = text.find("\n\n", lead)
+        return None if i < 0 else i
+
+    def feed(self, piece: str):
+        if self.closed or not piece:
+            return
+        self.seen += piece
+        end = self._end(self.seen)
+        upto = len(self.seen) if end is None else end
+        # Hold a trailing newline back: it may be the first half of "\n\n".
+        if end is None and self.seen.endswith("\n"):
+            upto -= 1
+        if upto > self.sent and self.on_delta:
+            self.on_delta(self.seen[self.sent:upto])
+        self.sent = max(self.sent, upto)
+        if end is not None:
+            self.closed = True
+
+    def cut(self, text: str) -> str:
+        end = self._end(text or "")
+        if end is not None:
+            self.closed = True
+            return text[:end]
+        return text or ""
+
 
 class FrontSeat:
     """One front seat's lifecycle. Thread-safe; one per process (``get``).
@@ -639,14 +720,17 @@ class FrontSeat:
     def run_turn(self, system: str, messages: list, contract: dict, *,
                  on_delta=None, run_tool=None, max_tokens: int = 400,
                  temperature=None, timings=None, allow_continuation=False,
-                 admit_tool=None, ceiling=None) -> str:
+                 admit_tool=None, ceiling=None, first_paragraph=False) -> str:
         """One spoken turn: stream text, run validated tool calls through
         ``run_tool(name, args) -> result``, and loop until the model answers
         (at most ``MAX_TOOL_ROUNDS`` tool rounds). The caller's turn cancel
         (``model_router.TURN_CANCEL``) closes the stream mid-generation.
         ``ceiling`` bounds every generated token of the turn, a continuation
         included: the continuation only finishes the cut sentence, within
-        what is left. Returns the spoken text."""
+        what is left. ``first_paragraph``: the request carries the stop
+        sequence PARAGRAPH_STOP and the stream is cut at the first blank line
+        too (a server may ignore stop), so only the first paragraph is ever
+        spoken; nothing continues past it. Returns the spoken text."""
         from agent_friday.services.model_router import (_consume_sse_completion,
                                                         turn_cancelled)
         convo = [{"role": "system", "content": system}] + list(messages)
@@ -664,6 +748,7 @@ class FrontSeat:
         if ceiling is not None:
             allowance = min(int(allowance), int(ceiling))
         used = 0
+        gate = _ParagraphGate(on_delta) if first_paragraph else None
         for rnd in range(MAX_TOOL_ROUNDS + 1):
             if turn_cancelled():
                 break
@@ -679,9 +764,11 @@ class FrontSeat:
                 body["temperature"] = temperature
             if rnd == MAX_TOOL_ROUNDS:
                 body["tool_choice"] = "none"      # answer with what you have
+            if gate is not None:
+                body["stop"] = list(PARAGRAPH_STOP)
             resp = self._post(body, stream=True)
             resp.raise_for_status()
-            out = _consume_sse_completion(resp, on_delta=on_delta)
+            out = _consume_sse_completion(resp, on_delta=gate.feed if gate is not None else on_delta)
             if timings is not None and rnd == 0:
                 timings.update(out.get("timings") or {})
             ch = (out.get("choices") or [{}])[0]
@@ -693,6 +780,8 @@ class FrontSeat:
                     if refusal:
                         return refusal
             text = msg.get("content") or ""
+            if gate is not None:
+                text = gate.cut(text)
             if text.strip():
                 spoken.append(text.strip())
             n = ((out.get("usage") or {}).get("completion_tokens")
@@ -700,6 +789,8 @@ class FrontSeat:
             used += int(n) if n else (body["max_tokens"] if ch.get("finish_reason") == "length"
                                       else max(1, len(text) // 3))
             left = None if ceiling is None else int(ceiling) - used
+            if gate is not None and (gate.closed or re.search(r"[.!?][\"')\]]*\s*$", text)):
+                break       # the paragraph is done, or ended on a sentence
             if (not calls and ch.get("finish_reason") == "length" and allow_continuation
                     and not continued and rnd < MAX_TOOL_ROUNDS and not turn_cancelled()
                     and (left is None or left >= 16)):
@@ -808,7 +899,7 @@ class FrontSeat:
         if fixed:
             speak(fixed)
             return (ack + " " + fixed).strip()
-        convo = with_result(messages, label, result, ack, tool=tool)
+        convo = with_result(messages, label, result, ack, tool=tool, args=args)
         # Free text: ``brief_tokens`` caps a quick look-up's first answer; a
         # reply cut by its budget continues once to finish its sentence, and
         # the whole turn stays under FREE_TEXT_CEILING.
@@ -818,7 +909,7 @@ class FrontSeat:
         answer = self.run_turn(system, convo, {"tools": []}, on_delta=on_delta,
                                max_tokens=max_tokens, temperature=temperature,
                                timings=timings, allow_continuation=True,
-                               ceiling=FREE_TEXT_CEILING)
+                               ceiling=FREE_TEXT_CEILING, first_paragraph=True)
         return (ack + " " + speakable(answer)).strip()
 
 
