@@ -202,14 +202,11 @@ def interactive(tag: str, kind: str = "voice"):
         interactive_end(tag)
 
 
-def interactive_kinds(exclude_turn: Optional[str] = None,
-                      exclude_kinds: tuple = ()) -> List[str]:
+def interactive_kinds() -> List[str]:
     """The interactive activities running now: "chat" per live chat turn (the
-    core turn registry) and the kind of each registration made here.
-
-    ``exclude_turn`` is the chat turn that spawned the asking job: a job a
-    turn is waiting on must not wait on that same turn.
-    """
+    core turn registry) and the kind of each registration made here. No
+    background job is exempt from any of them: no turn waits synchronously on
+    a job, so a job spawned by a turn simply starts after it."""
     out: List[str] = []
     with _INTERACTIVE_LOCK:
         for tag, rec in list(_INTERACTIVE.items()):
@@ -220,16 +217,12 @@ def interactive_kinds(exclude_turn: Optional[str] = None,
                     continue
             except Exception:
                 pass
-            kind = str(rec.get("kind") or "voice")
-            if kind not in exclude_kinds:
-                out.append(kind)
+            out.append(str(rec.get("kind") or "voice"))
     try:
         from agent_friday import core
         with core._TURNS_LOCK:
             turns = list(core._TURNS.items())
-        for tid, rec in turns:
-            if exclude_turn and str(tid) == str(exclude_turn):
-                continue
+        for _tid, rec in turns:
             th = rec.get("thread")
             if th is not None and th.is_alive():
                 out.append("chat")
@@ -238,15 +231,6 @@ def interactive_kinds(exclude_turn: Optional[str] = None,
     if out:
         _touch_friday_activity()
     return out
-
-
-def current_chat_turn() -> Optional[str]:
-    """The chat turn running on this thread, if any."""
-    try:
-        from agent_friday import core
-        return getattr(core._TURN_LOCAL, "turn_id", None)
-    except Exception:
-        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,10 +246,7 @@ def block_reason(record: Dict[str, Any]) -> str:
     """
     if not record.get("seat_is_local"):
         return ""
-    # Work handed over during a voice call runs during it (its answer is
-    # spoken back in the call); it still yields to a typed chat turn.
-    skip = ("voice",) if record.get("voice_handoff") else ()
-    if interactive_kinds(exclude_turn=record.get("parent_turn"), exclude_kinds=skip):
+    if interactive_kinds():
         return REASON_INTERACTIVE
     if record.get("deferrable") and not record.get("run_now"):
         if not idle_state()["idle"]:
@@ -312,13 +293,15 @@ def background_job(*, kind: str, key: str, label: str, deferrable: bool):
     job = {"pending": True, "kind": kind, "key": key, "label": label,
            "deferrable": bool(deferrable)}
     tok = CURRENT_JOB.set(job)
+    status = "failed"
     try:
         yield job
+        status = "completed"
     finally:
         CURRENT_JOB.reset(tok)
         if job.get("id"):
             try:
-                _supervisor().on_task_end(job["id"])
+                _supervisor().on_task_end(job["id"], status=status)
             except Exception:
                 pass
 

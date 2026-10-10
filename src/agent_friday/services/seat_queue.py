@@ -200,13 +200,16 @@ class SeatQueue:
         current reason."""
         if self._running.get(seat) is not None:
             for task_id in self._queued_for_seat(seat):
-                self._records[task_id]["wait_reason"] = SEAT_BUSY_REASON
+                rec = self._records[task_id]
+                # The reason that will still hold when the seat frees comes
+                # first: "waits for idle" says more than "the model is busy".
+                rec["wait_reason"] = self._gate_reason(rec) or SEAT_BUSY_REASON
             return None
         promoted = None
         for task_id in self._queued_for_seat(seat):
             rec = self._records[task_id]
             if promoted is not None:
-                rec["wait_reason"] = SEAT_BUSY_REASON
+                rec["wait_reason"] = self._gate_reason(rec) or SEAT_BUSY_REASON
                 continue
             reason = self._gate_reason(rec)
             if reason:
@@ -228,6 +231,33 @@ class SeatQueue:
             if tid is not None:
                 out.append(tid)
         return out
+
+    def startable_behind(self, task_id: str):
+        """The first task queued on ``task_id``'s seat that the gate would
+        start now, or None. Asked when the running task pauses: a pause that
+        does not hold the next task back should not hold the seat either."""
+        rec = self._records.get(task_id)
+        if rec is None:
+            return None
+        for tid in self._queued_for_seat(rec.get("seat")):
+            if tid != task_id and not self._gate_reason(self._records[tid]):
+                return tid
+        return None
+
+    def yield_seat(self, task_id: str, reason: str) -> bool:
+        """The RUNNING task gives its seat up and waits at the head of the
+        line with ``reason``; the next task the gate allows is promoted."""
+        rec = self._records.get(task_id)
+        if rec is None or rec.get("status") != "running":
+            return False
+        seat = rec.get("seat")
+        if self._running.get(seat) == task_id:
+            self._running[seat] = None
+        rec["status"] = QUEUED
+        rec["head"] = True
+        rec["wait_reason"] = reason
+        self._promote(seat)
+        return True
 
     def cancel(self, task_id: str) -> bool:
         """Withdraw a QUEUED task. A running one is not stopped here."""

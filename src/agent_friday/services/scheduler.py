@@ -1065,7 +1065,10 @@ def _run_task_inner(rec):
                     _bg.background_job(kind="scheduled",
                                        key="schedule:" + str(rec.get("id") or ref),
                                        label=meta.get("label") or ref,
-                                       deferrable=ref not in TIME_BOUND_BUILTINS):
+                                       # A manual "Run now" is the owner asking
+                                       # for it now: no idle wait.
+                                       deferrable=(ref not in TIME_BOUND_BUILTINS
+                                                   and not rec.get("_manual"))):
                 # `local_only` used to be read ONLY on the agent_prompt path below, so
                 # every builtin schedule -- daily creation, the briefings, the news front
                 # page -- ignored it completely and each job picked its own model. The
@@ -1369,7 +1372,7 @@ def dispatch(rec, *, manual=False):
 
     def _body():
         status, summary, err = "complete", "", None
-        rec_live = dict(rec, _active_run_id=run_id, _orb_id=orb_id)
+        rec_live = dict(rec, _active_run_id=run_id, _orb_id=orb_id, _manual=bool(manual))
         if orb_id:
             try:
                 process_log(orb_id, f"Starting: {rec.get('name')}")

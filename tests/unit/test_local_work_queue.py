@@ -160,7 +160,7 @@ def test_run_now_bypasses_idle_only(sup, sig):
     bg.interactive_end("v")
     sup.pump()
     assert sup.started == ["b"], "run now did not skip the idle wait"
-    assert sup.snapshot()["queued"][0]["why"] == sq.SEAT_BUSY_REASON
+    assert sup.snapshot()["queued"][0]["why"] == bg.REASON_IDLE
     sup.on_task_end("b")
     assert sup.started == ["b"], "run now released the idle wait for another job"
 
@@ -202,15 +202,131 @@ def test_a_chat_turn_in_the_core_registry_blocks_start(sup, sig):
     try:
         sup.wire_spawn(_job("t", kind="scheduled"))
         assert sup.started == []
-        # ...but never on the turn that spawned it (it may be waiting on it).
+        # No job is exempt, including one the turn itself spawned: no turn
+        # waits on a job, so a child simply starts after its turn.
         sup.wire_spawn(dict(_job("child", seat="local/other", kind="task"),
                             parent_turn="turn-1"))
-        assert sup.started == ["child"]
+        sup.pump()
+        assert sup.started == []
     finally:
         stop.set()
         th.join(2)
     sup.pump()
-    assert "t" in sup.started
+    assert set(sup.started) == {"t", "child"}
+
+
+# ── a paused job does not starve the line ────────────────────────────────────
+
+def test_a_job_paused_for_idle_gives_its_seat_to_a_time_bound_job(sup, sig):
+    sig.away()
+    sup.wire_spawn(_job("distill", deferrable=True))
+    assert sup.started == ["distill"]
+    sig.back()                                   # the user returns
+    sup.wire_spawn(_job("edition", kind="scheduled"))   # time-bound: no idle wait
+    resumed = threading.Event()
+
+    def distill():
+        with bg.admitted_job("distill"):
+            bg.before_local_model_call("bonsai2:27b")
+        resumed.set()
+    th = threading.Thread(target=distill, daemon=True)
+    th.start()
+    deadline = time.monotonic() + 2
+    while "edition" not in sup.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert "edition" in sup.started, "the edition starved behind a job paused for idle"
+    snap = sup.snapshot()
+    assert [r["id"] for r in snap["running"]] == ["edition"]
+    assert snap["queued"][0]["id"] == "distill" and snap["queued"][0]["why"] == bg.REASON_IDLE
+    # The edition ends and the user is away again: the distill resumes, at the
+    # head of the line, on its own worker (not a second one).
+    sup.on_task_end("edition")
+    assert not resumed.wait(0.1)
+    sig.away()
+    assert resumed.wait(2)
+    assert sup.started.count("distill") == 1
+    assert [r["id"] for r in sup.snapshot()["running"]] == ["distill"]
+
+
+def test_a_paused_job_alone_keeps_its_seat(sup, sig):
+    sig.away()
+    sup.wire_spawn(_job("distill", deferrable=True))
+    sig.back()
+    sup.wire_spawn(_job("other", deferrable=True))      # also waits for idle
+    done = threading.Event()
+
+    def distill():
+        with bg.admitted_job("distill"):
+            bg.before_local_model_call("bonsai2:27b")
+        done.set()
+    threading.Thread(target=distill, daemon=True).start()
+    time.sleep(0.1)
+    snap = sup.snapshot()
+    assert [r["id"] for r in snap["running"]] == ["distill"]
+    assert snap["running"][0]["state"] == "paused"
+    sig.away()
+    assert done.wait(2)
+    assert sup.started == ["distill"]
+
+
+def test_a_promotion_with_no_worker_releases_the_seat(sig):
+    started = []
+
+    def factory(rec):
+        if rec["id"] == "ghost":
+            return False                        # no worker for it
+        started.append(rec["id"])
+    s = ss.SeatSupervisor(thread_factory=factory, gate=bg.block_reason,
+                          brain_resolver=lambda: "bonsai2:27b")
+    sig.away()
+    s.wire_spawn(_job("a", kind="task"))
+    s.wire_spawn(_job("ghost", kind="task"))
+    s.wire_spawn(_job("b", kind="task"))
+    s.on_task_end("a")
+    assert started == ["a", "b"], "a promoted task with no worker held the seat"
+
+
+def test_a_failed_job_is_not_remembered_as_ran(sup, sig):
+    sig.away()
+    rec = _job("a", key="distill:voice:s", deferrable=True)
+    rec.update(job_digest="same")
+    sup.wire_spawn(rec)
+    rec["status"] = "failed"                   # the worker's own verdict
+    sup.on_task_end("a")                       # the default argument says "completed"
+    assert not sup.already_ran("distill:voice:s", "same")
+    rec2 = _job("b", key="distill:voice:s", deferrable=True)
+    rec2.update(job_digest="same")
+    sup.wire_spawn(rec2)
+    rec2["status"] = "complete"
+    sup.on_task_end("b")
+    assert sup.already_ran("distill:voice:s", "same")
+
+
+# ── the choke point fails open, and cancellation is not a fault ─────────────
+
+def test_the_model_router_checkpoint_fails_open(monkeypatch):
+    from agent_friday.services import model_router as mr
+
+    def boom(model=None):
+        raise RuntimeError("supervisor broke")
+    monkeypatch.setattr(bg, "before_local_model_call", boom)
+    mr._local_queue_checkpoint("bonsai2:27b")     # no raise: the request goes ahead
+
+    def cancelled(model=None):
+        raise bg.JobCancelled()
+    monkeypatch.setattr(bg, "before_local_model_call", cancelled)
+    with pytest.raises(bg.JobCancelled):
+        mr._local_queue_checkpoint("bonsai2:27b")
+
+
+def test_local_call_stops_a_cancelled_job_instead_of_answering_empty(monkeypatch):
+    from agent_friday.services import local_call
+
+    def cancelled(model=None):
+        raise bg.JobCancelled()
+    monkeypatch.setattr(bg, "before_local_model_call", cancelled)
+    with pytest.raises(bg.JobCancelled):
+        local_call.call("sys", "user", "bonsai2:27b")
 
 
 def test_a_running_job_pauses_before_its_next_call_and_the_turn_does_not_wait(sup, sig):

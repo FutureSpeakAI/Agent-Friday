@@ -63,6 +63,9 @@ KILLED_STATUS = "failed:watchdog-kill"
 USER_NOTICE = _seat_queue_mod.USER_NOTICE
 
 _TERMINAL = frozenset({"completed", "failed", KILLED_STATUS, "cancelled", "killed"})
+# Terminal statuses that mean the work was done (this module's and the task
+# registry's).
+_SUCCEEDED = frozenset({"completed", "complete", "completed_unverified"})
 
 
 def _is_terminal(status: Any) -> bool:
@@ -249,7 +252,7 @@ class SeatSupervisor:
             self._start(record)
             return status
 
-    def _start(self, record: Dict[str, Any]) -> None:
+    def _start(self, record: Dict[str, Any], promotion: bool = False) -> None:
         task_id = record["id"]
         if task_id in self._started:
             return  # never start the same task twice
@@ -261,18 +264,43 @@ class SeatSupervisor:
         if self.thread_factory is None:
             raise RuntimeError("seat_supervisor: no thread_factory configured")
         self._started.add(task_id)
-        self.thread_factory(record)
+        if self.thread_factory(record) is False and promotion:
+            # A PROMOTED task with nothing to start (the factory has no worker
+            # for it). Holding the seat for it would stop every local
+            # background job, so the record fails with its reason and the
+            # seat moves on. (At admission the caller may start its own.)
+            record["status"] = "failed"
+            record["status_reason"] = "no worker thread to start"
+            self.queue.complete(task_id)
 
     # ------------------------------------------------------------ the queue
 
     def find_queued_job(self, key: str, seat: Optional[str] = None) -> Optional[str]:
-        """The queued job carrying ``key`` (merge target), or None."""
+        """The queued job carrying ``key`` (merge target), or None. A job that
+        already started and is only waiting again (it yielded its seat) is no
+        merge target: its worker already has its payload."""
         if not key:
             return None
         with self._lock:
             if seat is not None and str(seat).startswith("local/"):
                 seat = canonical_seat(seat, self.brain_resolver)
-            return self.queue.find_queued(key, seat)
+            found = self.queue.find_queued(key, seat)
+            return None if found in self._started else found
+
+    def merge_queued(self, key: str, seat: Optional[str], fields: Dict[str, Any],
+                     on_merged: Optional[Callable[[str], None]] = None) -> Optional[str]:
+        """Find the queued job for ``key``, fold ``fields`` into it and run
+        ``on_merged(id)`` (the caller swaps in the worker for the new payload),
+        all under the supervisor lock: promotion also runs under it, so a
+        promotion can never start the old worker with the new payload
+        recorded. Returns the id merged into, or None."""
+        with self._lock:
+            found = self.find_queued_job(key, seat)
+            if not found or not self.merge(found, **fields):
+                return None
+            if on_merged is not None:
+                on_merged(found)
+            return found
 
     def merge(self, task_id: str, **fields: Any) -> bool:
         """Fold a later request into the queued job ``task_id``: its fields
@@ -364,24 +392,55 @@ class SeatSupervisor:
     def wait_while_blocked(self, task_id: str) -> None:
         """The cooperative yield, called before each of a running job's local
         model calls: wait while an interactive turn is active, or while the
-        user is back for deferrable work. The job keeps the seat (it is the
-        head of the line, and its prompt prefix is still the seat's cache);
-        nothing mid-generation is interrupted. Raises JobCancelled."""
+        user is back for deferrable work. Nothing mid-generation is
+        interrupted. Raises JobCancelled.
+
+        Who keeps the seat while the job waits: if the reason it waits does
+        not hold back the next job in line (a deferrable job waiting for idle,
+        with a time-bound edition or a task the user asked for behind it), it
+        gives the seat to that job and waits at the head of the line, resuming
+        when the queue promotes it again. If nothing behind it could run, it
+        keeps the seat, so its prompt prefix stays the seat's cache."""
         from agent_friday.services.background_gate import JobCancelled
         while True:
+            yielded_now = False
             with self._lock:
                 record = self._records.get(task_id)
-            if record is None:
-                return
-            if record.get("cancel_requested"):
-                raise JobCancelled()
-            reason = self._running_block_reason(record)
-            if not reason:
-                if record.pop("paused_reason", None) is not None:
-                    record.pop("paused_at", None)
-                return
-            record["paused_reason"] = reason
-            record.setdefault("paused_at", time.time())
+                if record is None:
+                    return
+                if record.get("cancel_requested"):
+                    raise JobCancelled()
+                waiting_again = bool(record.get("yielded"))
+                if waiting_again:
+                    stored = self.queue.get(task_id) or {}
+                    if stored.get("status") == "running":
+                        # Promoted again: the seat is this job's once more.
+                        record["status"] = "running"
+                        record.pop("yielded", None)
+                        record.pop("wait_reason", None)
+                        record.pop("user_notice", None)
+                        waiting_again = False
+                if not waiting_again:
+                    reason = self._running_block_reason(record)
+                    if not reason:
+                        if record.pop("paused_reason", None) is not None:
+                            record.pop("paused_at", None)
+                        return
+                    record["paused_reason"] = reason
+                    record.setdefault("paused_at", time.time())
+                    yb = getattr(self.queue, "startable_behind", None)
+                    if yb is not None and yb(task_id) is not None:
+                        self.queue.yield_seat(task_id, reason)
+                        record["status"] = QUEUED_STATUS
+                        record["yielded"] = True
+                        record["wait_reason"] = reason
+                        record["user_notice"] = USER_NOTICE
+                        record["queued_at"] = time.time()
+                        record.pop("paused_reason", None)
+                        record.pop("paused_at", None)
+                        yielded_now = True
+            if yielded_now or waiting_again:
+                self.pump()
             self._sleep(self.poll_seconds)
 
     def run_now(self, task_id: str) -> bool:
@@ -491,9 +550,14 @@ class SeatSupervisor:
                     record["status"] = status
                 record.pop("paused_reason", None)
                 record.pop("wait_reason", None)
+                record.pop("yielded", None)
                 key, digest = record.get("job_key"), record.get("job_digest")
+                # "Ran" means it finished: the record's own terminal status
+                # (the worker sets it before calling here), not this call's
+                # default. A failed or cancelled job runs again next trigger.
                 if (key and digest and task_id in self._started
-                        and status == "completed" and not record.get("cancel_requested")):
+                        and record.get("status") in _SUCCEEDED
+                        and not record.get("cancel_requested")):
                     self._ran[key] = digest
                     self._ran.move_to_end(key)
                     while len(self._ran) > 256:
@@ -520,7 +584,7 @@ class SeatSupervisor:
                 record.pop("user_notice", None)
                 record.pop("wait_reason", None)
                 record["started_at_q"] = time.time()
-                self._start(record)
+                self._start(record, promotion=True)
                 return task_id
         return None
 

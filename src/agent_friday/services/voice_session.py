@@ -1026,6 +1026,18 @@ class VoiceSession:
             try:
                 d = self.hooks.get("distill")
                 if d:
-                    d(self.turn_log)
+                    # The session names its own distillation job: its
+                    # conversation and this session's id (a conversation such
+                    # as Main is shared by many calls).
+                    import inspect as _inspect
+                    try:
+                        takes_key = "session_key" in _inspect.signature(d).parameters
+                    except (TypeError, ValueError):
+                        takes_key = False
+                    if takes_key:
+                        d(self.turn_log, session_key="%s:%s" % (
+                            self.conversation_id or "main", self.session_id))
+                    else:
+                        d(self.turn_log)
             except Exception:
                 pass

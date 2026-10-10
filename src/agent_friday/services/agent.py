@@ -5425,11 +5425,9 @@ def _queue_job_fields(job, *, runner=None, prompt=''):
         'job_key': job.get('key') or None,
         'job_label': job.get('label') or None,
         'deferrable': bool(job.get('deferrable')),
-        'voice_handoff': bool(job.get('voice_handoff')),
         'job_digest': job.get('digest') or (
             _hl.sha256((prompt or '').encode('utf-8', 'replace')).hexdigest()[:16]
             if job.get('key') else None),
-        'parent_turn': _bg.current_chat_turn(),
     }
     cur = _bg.CURRENT_JOB.get()
     if cur and cur.get('id'):
@@ -5447,32 +5445,56 @@ def _merge_queued_job(jobf, model, prompt, description):
         return None
     key = jobf.get('job_key')
     seat = _admission_seat_for(model)
-    existing = sup.find_queued_job(key, seat)
-    if existing:
-        # Latest payload wins: the waiting task runs with this prompt.
+
+    def _swap_worker(existing):
+        # Runs under the supervisor lock, as promotion does: the worker that
+        # starts is always the one built for the payload recorded.
         with TASKS_LOCK:
-            rec = TASKS.get(existing)
-            if rec is None:
-                return None
-            rec['prompt'] = prompt
+            rec = TASKS.get(existing) or {}
             if description:
                 rec['description'] = description
-            name = rec.get('name')
-            orb_icon, rmodel, tools = '🛰', rec.get('model'), rec.get('tools')
-        if not sup.merge(existing, job_digest=jobf.get('job_digest'), prompt=prompt):
-            return None
+            name, rmodel, tools = rec.get('name'), rec.get('model'), rec.get('tools')
+            desc = rec.get('description') or ''
         with _PENDING_TASK_THREADS_LOCK:
             if existing in _PENDING_TASK_THREADS:
-                _PENDING_TASK_THREADS[existing] = _make_task_thread(
-                    existing, name, prompt, description or '', orb_icon=orb_icon,
-                    model=rmodel, tools=tools, runner=None)
+                th = _make_task_thread(existing, name, prompt, desc, orb_icon='🛰',
+                                       model=rmodel, tools=tools, runner=None)
+                _PENDING_TASK_THREADS[existing] = th
                 with TASKS_LOCK:
-                    TASK_THREADS[existing] = _PENDING_TASK_THREADS[existing]
+                    TASK_THREADS[existing] = th
+
+    # Latest payload wins: the waiting task runs with this prompt.
+    existing = sup.merge_queued(key, seat, {'job_digest': jobf.get('job_digest'),
+                                            'prompt': prompt}, on_merged=_swap_worker)
+    if existing:
         _task_log(existing, 'A newer request for the same job was merged into this one.')
         return existing
     if sup.already_ran(key, jobf.get('job_digest')):
         return ''
     return None
+
+
+def _admit_task_thread(task_id, record, th):
+    """Admit a task through the seat supervisor and start its worker when it
+    may run. The worker is parked in _PENDING_TASK_THREADS BEFORE admission:
+    the supervisor loop may promote the task the instant it is queued, and a
+    promotion that found no worker would hold the seat with nothing running
+    on it. FAIL-OPEN: a supervisor error starts the worker directly."""
+    with _PENDING_TASK_THREADS_LOCK:
+        _PENDING_TASK_THREADS[task_id] = th
+    try:
+        admission = _seat_supervisor().wire_spawn(record) if record else 'running'
+    except Exception as _sup_err:
+        _task_log(task_id, 'seat supervisor unavailable (%s); dispatching directly' % _sup_err)
+        admission = 'running'
+    if admission != 'queued-for-seat':
+        # Admitted at once: the supervisor's thread factory normally started
+        # it already; start it here only if nothing did.
+        with _PENDING_TASK_THREADS_LOCK:
+            pending = _PENDING_TASK_THREADS.pop(task_id, None)
+        if pending is not None:
+            pending.start()
+    return admission
 
 
 def _background_job_target(task_id, fn, *args, **kwargs):
@@ -6044,22 +6066,14 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     # error must never strand a task, so on any exception the thread starts
     # unconditionally, exactly as before this change. Runner tasks come
     # through the same door: their model calls reach the same seat.
-    try:
-        _admission = _seat_supervisor().wire_spawn(TASKS[task_id])
-    except Exception as _sup_err:
-        _task_log(task_id, 'seat supervisor unavailable (%s); dispatching directly' % _sup_err)
-        _admission = 'running'
+    _admission = _admit_task_thread(task_id, TASKS[task_id], th)
     if _admission == 'queued-for-seat':
-        with _PENDING_TASK_THREADS_LOCK:
-            _PENDING_TASK_THREADS[task_id] = th
         _why = (TASKS.get(task_id) or {}).get('wait_reason') or 'waits for the local model'
         _task_log(task_id, 'queued-for-seat (%s): this task starts when the local seat is free. Local AI runs one job at a time and needs time to run.' % _why)
         try:
             _journal_state(task_id)
         except Exception:
             pass
-    else:
-        th.start()
     return task_id
 
 
@@ -7131,15 +7145,7 @@ def resume_runner_task(task_id, runner):
             rec['seat_is_local'] = rec['seat'].startswith('local/')
         rec.setdefault('job_kind', 'runner')
     # Through the same door as at spawn; fail open, as at spawn.
-    try:
-        _admission = _seat_supervisor().wire_spawn(rec) if rec else 'running'
-    except Exception:
-        _admission = 'running'
-    if _admission == 'queued-for-seat':
-        with _PENDING_TASK_THREADS_LOCK:
-            _PENDING_TASK_THREADS[task_id] = th
-    else:
-        th.start()
+    _admit_task_thread(task_id, rec, th)
     return True
 
 
