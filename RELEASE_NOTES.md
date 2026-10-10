@@ -8,7 +8,56 @@ meant to be tried, and it has rough edges, listed below.
 
 ## Local voice now runs on Ternary Bonsai 1.7B
 
-<!-- BONSAI-SECTION: written by the release lead after the voice branch lands -->
+Local voice and Quick reflexes now run on Ternary Bonsai 1.7B, PrismML's
+ternary build of Qwen3-1.7B (PQ2_0, about 442 MB, Apache-2.0). It is the
+recommended fast responder in setup and in Settings > Models. Qwen3 4B Instruct
+and Qwen3 1.7B stay available as alternatives.
+
+- **Choosing a model.** The setting `voice_front_model` now defaults to
+  `auto`: the first model that can run on your PC, in the order Ternary Bonsai
+  1.7B, Qwen3 4B, Qwen3 1.7B. A model you pick yourself always wins. An install
+  that has only a Qwen3 model keeps it.
+- **The PrismML runtime.** Bonsai needs the PrismML llama.cpp runtime, which
+  comes with a Bonsai deep thinker. If it is missing, Friday answers with a
+  Qwen3 model that is installed and says so. Settings shows why Bonsai cannot
+  be picked.
+- **How a voice turn works.** A fast on-device classifier, Friday's quick
+  judgement, decides whether a request needs a look-up (calendar, email, files,
+  the wiki, past conversations, news or the web) or one of Friday's own actions
+  (open a workspace, play a podcast or media, voice preferences, stop a running
+  task, undo). Friday runs it, and the small model only speaks the answer.
+- **Safety rules.** Anything that changes the world outside Friday (send,
+  reply, delete, create an event) goes to the full agent and through the usual
+  approval card. A web or news search that Friday guessed at asks before it
+  searches. A spoken "yes" or "no" answers an approval card only when Friday has
+  just read that card aloud in the same call. Text that Friday looks up is
+  treated as data, never as instructions.
+- **Speed.** On our test PC (a 12 GB NVIDIA card, with the Kokoro voice on the
+  GPU), a conversational reply starts about 0.1 seconds after you stop speaking
+  (median). A look-up turn speaks a short acknowledgement at once, and the
+  answer starts about 0.4 seconds later. Other computers will differ.
+
+## Also in 1.0.1
+
+- **Settings > Models.** The **Get** button for a local model opened a consent
+  card that showed only its title, with no Fetch or Cancel button, far below
+  the button. The card now shows its five lines and the Fetch and Cancel
+  buttons.
+- **Podcasts.** An episode was refused whole when the script check cut one
+  story's opening line and left the next line without its outlet. Now a story
+  the check cannot let through is left out and the episode airs with the rest.
+  The episode notes and transcript list each story left out and why. If nothing
+  is left to air, the message names the headline and what its first line
+  lacked.
+- **Local only.** Image, video-frame and audio inspection, outreach drafts,
+  code art, poems, image quality checks and image generation now respect Local
+  only: they use a local model or say plainly that they cannot run locally.
+  Nothing is sent to a cloud model.
+- **Wiki setup** no longer sends your name, birthdate and location to any model.
+  It fills in a template.
+- **Gemini text-to-speech** treats settings it cannot read as Local only.
+- **Dependencies.** The lockfile moves to Werkzeug 3.1.9, multidict 6.9.1 and
+  fsspec 2026.9.0, which fix security advisories.
 
 ## Upgrading
 
@@ -47,8 +96,9 @@ Step by step: [Getting started](docs/getting-started/README.md).
 Setup reads your memory, graphics card and free disk, which stay on your
 computer, and shows only the models that fit, for two jobs:
 
-- a **fast responder** for voice and quick replies, a Qwen3 model (4B or 1.7B)
-  that comes with its speech listener; and
+- a **fast responder** for voice and quick replies, Ternary Bonsai 1.7B by
+  default (Qwen3 4B or 1.7B as alternatives), which comes with its speech
+  listener; and
 - a **deep thinker** for the harder work, from the Bonsai family.
 
 One choice in each job is labelled *Recommended*. Nothing is chosen for you.

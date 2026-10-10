@@ -11,8 +11,9 @@ the top bar finishes setup with defaults at any point.
 The installer's model page looks at your PC (memory, graphics card and free
 disk space) and offers two jobs, each with a choice of model:
 
-- **Fast responder** answers voice and quick replies. The choices are Qwen3 4B
-  and Qwen3 1.7B, the same models listed under
+- **Fast responder** answers voice and quick replies. The choices are Ternary
+  Bonsai 1.7B (recommended), Qwen3 4B and Qwen3 1.7B, the same models listed
+  under
   [Voice](voice.md#the-fast-responder).
 - **Deep thinker** does the heavier thinking. The choices are from the Bonsai
   family.

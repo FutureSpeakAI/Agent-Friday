@@ -11,17 +11,56 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ---
 
-## [1.0.1-beta.1] - Agent Friday Beta 1.0.1 (unreleased)
+## [1.0.1-beta.1] - Agent Friday Beta 1.0.1 (2026-10-09)
 
 Agent Friday™ Beta 1.0.1 (version `1.0.1b1`, tag `v1.0.1-beta.1`, build
 sequence 101000101) follows Beta 1.0. It installs over Beta 1.0 and over 5.x in
 place, with the data backed up first.
 
-<!-- BONSAI-SECTION: written by the release lead after the voice branch lands -->
+### Added
+
+- Ternary Bonsai 1.7B (PrismML's ternary build of Qwen3-1.7B, PQ2_0, about
+  442 MB, Apache-2.0) as the local voice and Quick reflexes model, served on the
+  PrismML llama.cpp runtime. It is the recommended fast responder in setup and
+  in Settings > Models; Qwen3 4B Instruct and Qwen3 1.7B remain as alternatives.
+- Voice turns are routed by a fast on-device classifier (the Laya router). A
+  look-up (calendar, email, files, wiki, past conversations, news, web) or a
+  Friday action (open a workspace, play a podcast or media, voice preferences,
+  stop a task, undo) runs first and the small model speaks the answer. Anything
+  that changes the world outside Friday goes to the full agent and its approval
+  card.
+- Podcast episodes list each story left out and why ("Left out: headline,
+  reason") in the notes and transcript.
 
 ### Changed
 
+- `voice_front_model` defaults to `auto`: the first model that can run on the
+  PC, in the order Ternary Bonsai 1.7B, Qwen3 4B, Qwen3 1.7B. An explicit choice
+  wins; an install that has only a Qwen3 model keeps it. If the PrismML runtime
+  is missing, Friday answers with an installed Qwen3 model and says so, and
+  Settings shows why Bonsai cannot be picked.
+- A web or news search that Friday guessed at asks before it searches. A spoken
+  "yes" or "no" answers an approval card only when Friday has just read it
+  aloud in the same call. Looked-up text is treated as data.
 - Upgrade CI now proves upgrades from both v1.0.0-beta.1 and v5.14.3.
+
+### Fixed
+
+- Settings > Models: the consent card behind **Get** showed only its title,
+  with no Fetch or Cancel button. It now shows its five lines and both buttons.
+- Podcasts: an episode was refused whole when the script check cut one story's
+  opening line. The story is now left out and the episode airs with the rest. If
+  nothing is left to air, the message names the headline and what its first line
+  lacked.
+
+### Security
+
+- Local only is now respected by image, video-frame and audio inspection,
+  outreach drafts, code art, poems, image quality checks and image generation.
+- Wiki setup no longer sends your name, birthdate and location to any model.
+- Gemini text-to-speech treats unreadable settings as Local only.
+- Lockfile: Werkzeug 3.1.9, multidict 6.9.1 and fsspec 2026.9.0 (security
+  advisories).
 
 ---
 

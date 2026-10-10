@@ -50,8 +50,9 @@ it and tells you whether she can think.
    models, one for each job:
    - **Deep thinker.** A Bonsai model that does the reasoning. The best one
      that fits your computer is labelled **Recommended**.
-   - **Fast responder.** A Qwen3 voice model (4B or 1.7B) that answers quick
-     questions and voice. Its size includes the speech recogniser.
+   - **Fast responder.** A voice model that answers quick questions and
+     voice: Ternary Bonsai 1.7B (recommended), Qwen3 4B or Qwen3 1.7B. Its
+     size includes the speech recogniser.
 
    The recommended choice is labelled but never pre-selected; you pick. Or
    tick **Use a cloud model instead** and add a key later.

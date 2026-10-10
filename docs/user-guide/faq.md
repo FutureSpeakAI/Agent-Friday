@@ -58,7 +58,8 @@ a connection.
 
 **What do "fast responder" and "deep thinker" mean?**
 They are the two model seats chosen in setup. The fast responder answers voice
-conversations and quick replies (a Qwen3 4B or 1.7B model). The deep thinker
+conversations and quick replies (Ternary Bonsai 1.7B by default, or Qwen3 4B
+or 1.7B). The deep thinker
 does the harder work (a Bonsai model). You can change both later in **Settings
 > Models**.
 
