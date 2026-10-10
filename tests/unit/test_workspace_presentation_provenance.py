@@ -120,7 +120,7 @@ def _live_tool_runner():
     tree = ast.parse(source.read_text(encoding="utf-8"))
     runners = [node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
                and node.name == "_one" and any(isinstance(call, ast.Call)
-               and isinstance(call.func, ast.Name) and call.func.id == "_voice_tool_with_limit"
+               and isinstance(call.func, ast.Name) and call.func.id in ("_voice_tool_with_limit", "_live_card_tool")
                for call in ast.walk(node))]
     assert len(runners) == 1
     return source, runners[0]
@@ -201,7 +201,7 @@ def _run_live_result(name, *, refuse=False, bypass_gate=False):
         _voice_orb_start=lambda _name: "synthetic-orb",
         _voice_orb_finish=lambda _orb, _name, _args, result, _ms: events.append(("orb", result)),
         _time=SimpleNamespace(time=lambda: 0), _user_words_ts=[0],
-        _voice_tool_run=execute, _voice_tool_with_limit=bounded,
+        _voice_tool_run=execute, _voice_tool_with_limit=bounded, _live_card_tool=bounded,
         _gate_voice_tool_result=gate, _tell_hold=lambda: events.append(("hold",)),
         _mark_if_stale=lambda result, *_args: result)
     module = ast.fix_missing_locations(ast.Module(body=[runner], type_ignores=[]))

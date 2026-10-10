@@ -30,6 +30,12 @@ def cards(monkeypatch):
     return rows
 
 
+def _carried(results, cid=CALL):
+    """Ids of the waiting cards a turn's tool results carry. Carrying a card is
+    not voicing it: tests/unit/test_voice_card_readback.py covers what was said."""
+    return [c["approval_id"] for c in rv._cards_carried(results, cid)]
+
+
 def _answer(spoken, text, cid=CALL):
     """What the routed turn does with the previous turn's spoken cards."""
     pending = rv._pending_voice_card(spoken, cid)
@@ -44,21 +50,21 @@ def _decides(r):
 
 def test_a_background_card_nobody_read_back_is_not_answered_by_sure(cards):
     cards.append(_card("apr_trash"))
-    spoken = rv._cards_read_back(["I looked in your calendar: nothing today."], CALL)
+    spoken = _carried(["I looked in your calendar: nothing today."], CALL)
     assert spoken == []
     assert not _decides(_answer(spoken, "sure"))
 
 
 def test_a_card_from_another_conversation_is_never_answered(cards):
     cards.append(_card("apr_other", cid="conv-elsewhere"))
-    spoken = rv._cards_read_back(["Shall I trash 412 conversations? apr_other"], CALL)
+    spoken = _carried(["Shall I trash 412 conversations? apr_other"], CALL)
     assert spoken == []
     assert not _decides(_answer(["apr_other"], "yes"))
 
 
 def test_a_card_read_back_and_then_another_question_asked_is_not_answered(cards):
     cards.append(_card("apr_a"))
-    assert rv._cards_read_back(["Shall I trash 4 files? apr_a"], CALL) == ["apr_a"]
+    assert _carried(["Shall I trash 4 files? apr_a"], CALL) == ["apr_a"]
     # The next turn asked something else (the router's question, or any other
     # turn): the voiced set is replaced, so a later yes answers nothing.
     assert not _decides(_answer([], "yes"))
@@ -66,7 +72,7 @@ def test_a_card_read_back_and_then_another_question_asked_is_not_answered(cards)
 
 def test_a_card_read_back_as_the_last_question_is_approved_by_yes_and_declined_by_no(cards):
     cards.append(_card("apr_a"))
-    spoken = rv._cards_read_back(["Shall I trash 4 files? apr_a"], CALL)
+    spoken = _carried(["Shall I trash 4 files? apr_a"], CALL)
     r = _answer(spoken, "yes")
     assert _decides(r) and r.args == {"card_id": "apr_a", "decision": "approve"}
     r = _answer(spoken, "no")
@@ -75,7 +81,7 @@ def test_a_card_read_back_as_the_last_question_is_approved_by_yes_and_declined_b
 
 def test_two_qualifying_cards_are_never_picked_between(cards):
     cards.extend([_card("apr_a"), _card("apr_b")])
-    spoken = rv._cards_read_back(["apr_a and apr_b were both read out"], CALL)
+    spoken = _carried(["apr_a and apr_b were both read out"], CALL)
     assert sorted(spoken) == ["apr_a", "apr_b"]
     assert not _decides(_answer(spoken, "yes"))
 

@@ -64,6 +64,7 @@ from agent_friday.services.local_voice import (
     split_sentences,
 )  # noqa: E501
 from agent_friday.services import voice_manifest as _vm
+from agent_friday.services import item_actions as _item_actions
 
 #: The local voice path's log channel. Named `friday.local_voice` so the
 #: /ws/voice-local handler's records interleave with the engine's own in
@@ -729,6 +730,94 @@ def _tool_timeout_message(fname, limit) -> str:
             f"there is no result. Tell the user in one short sentence that it "
             f"is taking too long, and offer to try again or do something else. "
             f"Do not guess at what it would have said.")
+
+
+def _spoken_words(text) -> str:
+    """Lower-case words only, so a transcript's punctuation and quote style
+    never decide whether a fixed line was said."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).split())
+
+
+class _LiveCardWatch:
+    """What Gemini Live has said aloud, checked against the question of each
+    approval card it raised. A card is verified only when its sealed question
+    line (``_sealed_card_line``) appears in Friday's output transcription
+    since the card was raised, and no barge cut her off before it was whole."""
+
+    def __init__(self):
+        self.cards = {}
+
+    def arm(self, ids, line):
+        for i in ids:
+            self.cards[str(i)] = {"line": _spoken_words(line), "said": "", "done": False,
+                                  "cut": False, "age": 0}
+
+    def heard(self, text):
+        """A piece of Friday's output transcription that was voiced."""
+        for c in self.cards.values():
+            if not c["done"] and not c["cut"]:
+                c["said"] += str(text or "")            # pieces may split a word
+                c["done"] = c["line"] in _spoken_words(c["said"])
+                c["age"] = 0
+
+    def owner_turn(self):
+        """The owner began a new utterance. A question counts for the answer
+        that follows it (age 1) and no later one, as on the local voice."""
+        for c in self.cards.values():
+            if c["done"]:
+                c["age"] += 1
+
+    def cut(self):
+        """A barge: any question not yet whole was not heard whole."""
+        for c in self.cards.values():
+            if not c["done"]:
+                c["cut"] = True
+
+    def verified(self, card_id) -> bool:
+        c = self.cards.get(str(card_id or ""))
+        return bool(c and c["done"] and not c["cut"] and c["age"] <= 1)
+
+
+def _live_room_mode() -> bool:
+    try:
+        from agent_friday.services.voice_engine import _voice_room_mode
+        return bool(_voice_room_mode())
+    except Exception:
+        return True          # cannot tell: the stricter reading
+
+
+_LIVE_CARD_ASK = ("\n\nTHE QUESTION FOR THE USER: say these words exactly, do not paraphrase, then "
+                  "wait for their answer: ")
+_LIVE_CARD_UNHEARD = _item_actions.UNVOICED_CARD + " To ask it again, say these words exactly: "
+
+
+async def _live_card_tool(fname, fargs, send, session, runner=None):
+    """``_voice_tool_with_limit`` for Gemini Live, plus the approval-card
+    rule: a card raised by a tool result carries its sealed question for
+    Gemini to say verbatim, and ``answer_card`` on a bare yes or no runs only
+    if Friday's transcript shows that question was said whole and uncut."""
+    watch = session.setdefault("card_watch", _LiveCardWatch()) if session is not None else _LiveCardWatch()
+    cid = (session or {}).get("conversation_id")
+    if session is not None:
+        session.pop("voiced_cards", None)
+    if fname == "answer_card":
+        said = str((session or {}).get("owner_text") or "").strip()
+        card = str((fargs or {}).get("card_id") or "")
+        if watch.verified(card):
+            if session is not None:
+                session["voiced_cards"] = [card]       # the one rule, applied in agent
+        elif _item_actions.unvoiced_card_approval_blocked(card, said, _live_room_mode()):
+            ids, line = _sealed_card_line("card_id=" + card, cid)
+            if ids:
+                watch.arm(ids, line)
+            return _LIVE_CARD_UNHEARD + (line or "ask whether to go ahead.")
+    result = await _voice_tool_with_limit(fname, fargs, send, session, runner=runner)
+    if isinstance(result, str) and "card_id=" in result:
+        ids, line = _sealed_card_line(result, cid)
+        if ids:
+            watch.arm(ids, line)
+            result += _LIVE_CARD_ASK + line
+    return result
 
 
 def _run_voice_tool_bounded(fname, fargs, send, session=None, limit=None, runner=None):
@@ -2653,15 +2742,53 @@ def _call_cards(conversation_id):
             and str((r.get("payload") or {}).get("conversation_id") or "").strip() == cid]
 
 
-def _cards_read_back(results, conversation_id) -> list:
-    """Ids of this call's waiting cards that ``results`` (the tool results the
-    speaker answered from this turn, whose card readback it voiced) carry."""
+def _cards_carried(results, conversation_id) -> list:
+    """This call's waiting cards that ``results`` (the tool results of this
+    turn) raise or carry, as approval records. That a result carries a card
+    says nothing about what was SAID: only a fixed line that was delivered
+    whole (``_run_routed_front_turn``) makes a card answerable by a bare yes."""
     try:
         text = "\n".join(str(r) for r in results if r)
-        return [c["approval_id"] for c in _call_cards(conversation_id)
+        return [c for c in _call_cards(conversation_id)
                 if text and str(c["approval_id"]) in text]
     except Exception:
         return []
+
+
+#: The count-only sentence for a card whose own fields cannot make the
+#: email readback. It names no private content.
+_CARD_LINE_FALLBACK = ("I have a change waiting for your OK; the details are on your screen. "
+                       "Shall I go ahead?")
+
+
+def _sealed_card_line(result, conversation_id):
+    """(card ids, the line Friday speaks for them) for a tool result that
+    raises or carries this call's approval cards; ([], "") when it carries
+    none. The line is the card's own question, built here from the card's
+    fields (``email_readback``: count-only in a room or quiet mode), never
+    the speaker model's words about it."""
+    cards = _cards_carried([result], conversation_id)
+    if not cards:
+        return [], ""
+    from agent_friday.services import item_actions as _ia
+    try:
+        from agent_friday.services.voice_engine import _voice_room_mode as _room_now
+        room = bool(_room_now())
+    except Exception:
+        room = True
+    lines = []
+    for c in cards:
+        p = c.get("payload") or {}
+        try:
+            n = int(p.get("count") or len(p.get("lines") or []))
+            if n < 1:
+                raise ValueError("no count")
+            lines.append(_ia.email_readback(
+                {"count": n, "preview": list(p.get("preview") or [])},
+                str(p.get("action") or ""), str(p.get("label") or ""), room_mode=room))
+        except Exception:
+            lines.append(_CARD_LINE_FALLBACK)
+    return [str(c["approval_id"]) for c in cards], " ".join(lines)
 
 
 def _pending_voice_card(spoken_ids, conversation_id):
@@ -2681,6 +2808,72 @@ def _pending_voice_card(spoken_ids, conversation_id):
         return cards[0]["approval_id"] if len(cards) == 1 else None
     except Exception:
         return None
+
+
+def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_turn,
+                           send, session):
+    """One routed local voice turn: system one decides, the governed runner
+    executes, the front speaks (laya_router_addendum_2026-10-09).
+
+    A bare yes/no may answer a card only if the PREVIOUS turn spoke that
+    card's own question, whole and uncut. When a tool raises or carries an
+    approval card, the question is a fixed line built from the card
+    (``_sealed_card_line``), not the speaker's paraphrase; whether it was
+    delivered is asked of the voice session (``line_delivered``) at the next
+    turn. If that cannot be shown, no bare yes counts: the owner answers on
+    screen or says the card's action."""
+    _cid = tool_session.get("conversation_id")
+    sealed = tool_session.pop("sealed_card", None) or {}
+    try:
+        sess = session() if session else None
+    except Exception:           # the session is not built yet: nothing was delivered
+        sess = None
+    spoken = []
+    tool_session.pop("voiced_cards", None)
+    if sealed.get("ids"):
+        try:
+            if sess is not None and sess.line_delivered(sealed.get("turn"), sealed.get("line")):
+                spoken = list(sealed["ids"])
+        except Exception:
+            spoken = []
+    if spoken:
+        tool_session["voiced_cards"] = list(spoken)    # answer_card's one rule (agent)
+    plan = _voice_route_plan(user_text, list(front["contract"].get("names") or []),
+                             pending_card=_pending_voice_card(spoken, _cid))
+    send({"type": "route", **plan["receipt"]})
+    _carried = {"ids": [], "line": ""}
+
+    def _card_line(result):
+        ids, line = _sealed_card_line(result, _cid)
+        if line:
+            _carried.update(ids=ids, line=line)
+        return line
+
+    def _run_tool(n, a):
+        # Whole: a list is spoken from its parsed records, and a cut JSON
+        # would not parse (routed_turn cuts what the model reads).
+        return _local_voice_tool(n, a, send, tool_session, cut=False)
+    _said = ""
+    try:
+        _said = seat_turn(user_text, on_delta, plan, _run_tool, _card_line)
+        return _said
+    finally:
+        # What was said aloud: a repeat news request moves on past the
+        # stories already told (voice_engine._title_told).
+        if _said:
+            tool_session.setdefault("spoken", []).append(str(_said))
+            del tool_session["spoken"][:-60]
+        # The card line this turn spoke is the last question asked; the
+        # router's own question, or none, clears it. A barged turn may not
+        # have voiced it. Delivery is confirmed at the next turn.
+        from agent_friday.services.model_router import turn_cancelled as _tc
+        try:
+            tid = sess.current_turn_id() if sess is not None else None
+        except Exception:
+            tid = None
+        if _carried["line"] and tid and not plan["question"] and not _tc():
+            tool_session["sealed_card"] = {"ids": _carried["ids"], "line": _carried["line"],
+                                           "turn": tid}
 
 
 def _speaker_volatile(volatile: str) -> str:
@@ -3671,42 +3864,12 @@ if sock is not None:
                     _front["contract"])
 
             def _routed_front_turn(user_text, on_delta):
-                # System one decides; the governed runner executes; the front
-                # speaks (ftv/program/reference/laya_router_addendum_2026-10-09).
-                # A bare yes/no may answer a card only if the PREVIOUS turn
-                # voiced that card's question and nothing was asked since.
-                _cid = _tool_session.get("conversation_id")
-                _spoken = _tool_session.pop("spoken_cards", None) or []
-                plan = _voice_route_plan(user_text, list(_front["contract"].get("names") or []),
-                                         pending_card=_pending_voice_card(_spoken, _cid))
-                _send({"type": "route", **plan["receipt"]})
-                _results = []
+                return _run_routed_front_turn(
+                    user_text, on_delta, front=_front, tool_session=_tool_session,
+                    seat_turn=_routed_front_seat_turn, send=_send,
+                    session=lambda: sess)
 
-                def _run_tool(n, a):
-                    # Whole: a list is spoken from its parsed records, and a
-                    # cut JSON would not parse (routed_turn cuts what the
-                    # model reads).
-                    out = _local_voice_tool(n, a, _send, _tool_session, cut=False)
-                    _results.append(out)
-                    return out
-                _said = ""
-                try:
-                    _said = _routed_front_seat_turn(user_text, on_delta, plan, _run_tool)
-                    return _said
-                finally:
-                    # What was said aloud: a repeat news request moves on
-                    # past the stories already told (voice_engine._title_told).
-                    if _said:
-                        _tool_session.setdefault("spoken", []).append(str(_said))
-                        del _tool_session["spoken"][:-60]
-                    # What this turn voiced is the last question asked; the
-                    # router's own question, or none, clears it.
-                    # A barged turn may not have voiced it: nothing is read back.
-                    from agent_friday.services.model_router import turn_cancelled as _tc
-                    _tool_session["spoken_cards"] = (
-                        [] if plan["question"] or _tc() else _cards_read_back(_results, _cid))
-
-            def _routed_front_seat_turn(user_text, on_delta, plan, _run_tool):
+            def _routed_front_seat_turn(user_text, on_delta, plan, _run_tool, card_line=None):
                 return _front["seat"].routed_turn(
                     _front["prompt"],
                     _local_voice_messages(_tool_session.get("conversation_id"), user_text,
@@ -3714,7 +3877,7 @@ if sock is not None:
                                           speaker=True),
                     tool=plan["tool"], args=plan["args"], ack=plan["ack"],
                     question=plan["question"], label=plan["label"],
-                    run_tool=_run_tool, user_text=user_text,
+                    run_tool=_run_tool, user_text=user_text, card_line=card_line,
                     on_delta=on_delta,
                     max_tokens=_voice_reply_cap(settings, user_text),
                     brief_tokens=_routed_brief_cap(settings, user_text),
@@ -4607,6 +4770,7 @@ if sock is not None:
             # has already told instead of reading the same five again.
             _voice_session = {"news_offered": [], "spoken": [],
                               "conversation_id": _call_cid(), "owner_text": "",
+                              "card_watch": _LiveCardWatch(),
                               "_crew_host_origin": _crew_call_origin,
                               # What he cares about now, how much to say, what is
                               # open (services/voice_conversation_state).
@@ -4963,6 +5127,7 @@ if sock is not None:
                         # (faster than real-time) the leftover flag would eat
                         # the NEXT turn's audio.
                         _barged_turn[0] = _model_speaking[0]
+                        _voice_session["card_watch"].cut()
                         _client_playing[0] = False
                         _est_play_end_ts[0] = 0.0
                         _barge.sustained = 0.0
@@ -5050,7 +5215,7 @@ if sock is not None:
                                             expected_epoch=crew_epoch, **_crew_host)):
                                         return "NOT DONE: this Crew turn ended before the tool began."
                                     return _voice_tool_run(*args)
-                                result = await _voice_tool_with_limit(
+                                result = await _live_card_tool(
                                     fname, fargs, _safe_send, _voice_session,
                                     runner=_crew_tool_run)
                             except Exception as _te:
@@ -5348,6 +5513,8 @@ if sock is not None:
                                             if out_tr and getattr(out_tr, 'text', None):
                                                 _vlog(f'output_transcription: {out_tr.text!r}')
                                                 out_buf.append(out_tr.text)
+                                                if not _quiet_turn[0] and not _barged_turn[0]:
+                                                    _voice_session["card_watch"].heard(out_tr.text)
                                                 if not _quiet_turn[0] and _crew[0]:
                                                     _crew[0].host_text(out_tr.text, **_crew_host)
                                                 elif not _quiet_turn[0]:
@@ -5362,6 +5529,8 @@ if sock is not None:
                                                     if not _crew[0].external_active:
                                                         _crew[0].host_begin(**_crew_host)
                                                 _vlog(f'input_transcription: {in_tr.text!r}')
+                                                if not in_buf:
+                                                    _voice_session["card_watch"].owner_turn()
                                                 in_buf.append(in_tr.text)
                                                 _voice_session["owner_text"] = ''.join(in_buf)[-600:]
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})

@@ -58,7 +58,7 @@ def test_the_live_handler_shows_and_says_every_hold():
     tree = ast.parse(src)
     runners = [node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
                and node.name == "_one" and any(isinstance(call, ast.Call)
-               and isinstance(call.func, ast.Name) and call.func.id == "_voice_tool_with_limit"
+               and isinstance(call.func, ast.Name) and call.func.id in ("_voice_tool_with_limit", "_live_card_tool")
                for call in ast.walk(node))]
     assert len(runners) == 1
     runner = runners[0]

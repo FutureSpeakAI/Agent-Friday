@@ -152,7 +152,7 @@ def test_native_calls_recheck_before_instrumentation_and_send(session, monkeypat
         _voice_orb_start=lambda tool: "fixture-orb",
         _discard_voice_orb=lambda orb: discarded.append(orb) if orb else None,
         _voice_orb_finish=lambda *args: finished.append(args),
-        _time=SimpleNamespace(time=lambda: 0), _voice_tool_with_limit=run_with_limit,
+        _time=SimpleNamespace(time=lambda: 0), _voice_tool_with_limit=run_with_limit, _live_card_tool=run_with_limit,
         _voice_tool_run=execute, _gate_voice_tool_result=lambda result, tool: gated.append(result) or result,
         _tell_hold=lambda: None, _user_words_ts=[0],
         _mark_if_stale=lambda result, *args: result, _run_calls_concurrently=concurrent)

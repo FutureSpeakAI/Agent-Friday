@@ -79,7 +79,9 @@ acknowledgement first.
   event) goes to the full agent and through the usual approval card.
 - A web or news search that Friday guessed at asks before it searches.
 - A spoken "yes" or "no" answers an approval card only when Friday has just read
-  that card aloud in the same call.
+  that card aloud in the same call. When Friday needs your OK by voice, she reads
+  the card's exact question; a yes only counts for the question she just read in
+  full.
 - Text that Friday looks up is treated as data, never as instructions.
 
 On our test PC (a 12 GB NVIDIA card, with the Kokoro voice on the GPU), a
