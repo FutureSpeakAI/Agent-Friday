@@ -11,6 +11,17 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- Ollama models that run in Ollama's cloud (a `:cloud` tag or a `-cloud`
+  suffix, such as `glm-4.6:cloud` or `gpt-oss:120b-cloud`) were treated as
+  local because the provider is "ollama", so what they were sent skipped the
+  privacy gate. The gate now decides from the model as well as the provider
+  name, and those models are checked like any other cloud model. The model
+  list also hides both forms of cloud tag from the on-device picks.
+
 ## [1.0.2-beta.1] - Agent Friday Beta 1.0.2 (2026-10-10)
 
 Agent Friday™ Beta 1.0.2 (version `1.0.2b1`, tag `v1.0.2-beta.1`, build

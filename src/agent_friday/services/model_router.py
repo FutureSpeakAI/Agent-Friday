@@ -53,6 +53,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.services.local_only_guard import is_cloud_model_tag as _is_cloud_model_tag
 from agent_friday.core import (
     ANTHROPIC_MODEL_DEFAULT,
     FRIDAY_DIR,
@@ -99,7 +100,7 @@ def is_refusal(text) -> bool:
     return isinstance(text, RoutedRefusal)
 
 
-def _seal_or_block(payload, provider):
+def _seal_or_block(payload, provider, model=""):
     """Egress-gate wrapper shared by EVERY cloud provider call site (R3).
 
     Centralizing the wrapper means the fail-closed contract cannot drift between
@@ -142,7 +143,8 @@ def _seal_or_block(payload, provider):
     try:
         from agent_friday.services import egress_gate as _eg
         operational = _eg.gate_operational()
-        sealed = _eg.seal_outbound(payload, provider) if operational else None
+        sealed = (_eg.seal_outbound(payload, provider, model=model or "")
+                  if operational else None)
     except Exception as _eg_err:
         _log.error("egress gate error — BLOCKING cloud send (fail-closed): %s", _eg_err)
         raise RuntimeError(
@@ -2025,8 +2027,10 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # Egress gate via the shared fail-closed wrapper (R3). A verified
             # LOCAL provider (LM Studio/vLLM on loopback/LAN) bypasses the seal
             # — data stays on-device — exactly like the Ollama path.
-            if not local_bypass:
-                payload = _seal_or_block(payload, pname)
+            # A local provider serving a model the daemon relays to ollama.com
+            # (`glm-4.6:cloud`) is not on-device: the model decides too.
+            if not local_bypass or _is_cloud_model_tag(model):
+                payload = _seal_or_block(payload, pname, model=model)
             # Streaming is a wire choice, not a contract change: the SSE
             # branch reassembles the SAME response dict, so the agentic loop,
             # metering and attribution below are byte-for-byte unaffected.

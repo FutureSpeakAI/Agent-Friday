@@ -50,6 +50,8 @@ payload on this PC:
 - A watchlist in `.friday\privacy_shield.json` redacts any extra names or
   numbers you add.
 - If the gate itself fails, the message is not sent.
+- Ollama models that run in Ollama's cloud are treated as cloud: the privacy
+  gate checks what they're sent.
 
 **What the gate cannot promise.** It recognises patterns: the shape of an
 account number, a phone number or an address, and the vocabulary of finance,

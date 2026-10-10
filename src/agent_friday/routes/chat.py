@@ -1918,8 +1918,9 @@ def chat():
                     # matters for live/interactive use (an 8B 'thinking' model can take
                     # minutes per turn). A configured model_routing.local_model wins.
                     _cfg_local = (settings.get('model_routing') or {}).get('local_model')
+                    from agent_friday.services.local_only_guard import is_cloud_model_tag
                     _real = [m for m in _om_models
-                             if not str(m.get('name', '')).endswith(':cloud')] or _om_models
+                             if not is_cloud_model_tag(str(m.get('name', '')))] or _om_models
                     if _cfg_local and any(m.get('name') == _cfg_local for m in _real):
                         _local_pick = _cfg_local
                     else:
