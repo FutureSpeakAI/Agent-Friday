@@ -518,6 +518,8 @@ def test_the_tray_tooltip_follows_the_recording(monkeypatch):
 
     t.icon = Icon()
     t.running = True
+    # The tooltip's other line (the Local AI queue) reads an empty queue here.
+    monkeypatch.setattr(t, "_local_queue", lambda: {}, raising=False)
     monkeypatch.setattr(t, "_meeting_status",
                         lambda: {"recording": True, "elapsed_s": 65}, raising=False)
     t._update_meeting_title()

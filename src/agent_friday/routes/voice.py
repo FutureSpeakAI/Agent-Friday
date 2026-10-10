@@ -4188,6 +4188,9 @@ if sock is not None:
             in_buf = []
             out_buf = []
             turn_log = []
+            # Names this call's wiki distillation in the Local AI queue: one
+            # job per call, however many exits fire (services/voice_engine).
+            _distill_call_id = uuid.uuid4().hex[:12]
             resume_handle = [None]   # newest session-resumption handle from Gemini
             _handle_model = [None]   # model id the handle belongs to (handles don't cross models)
             greeted = [False]
@@ -5633,7 +5636,12 @@ if sock is not None:
                 pass
             if turn_log:
                 try:
-                    _spawn_voice_distill(turn_log)
+                    try:
+                        _distill_cid = _voice_session.get("conversation_id") or "main"
+                    except Exception:
+                        _distill_cid = "main"
+                    _spawn_voice_distill(turn_log,
+                                         session_key="%s:%s" % (_distill_cid, _distill_call_id))
                 except Exception as e:
                     print(f'[live] voice distill spawn error: {e}')
 

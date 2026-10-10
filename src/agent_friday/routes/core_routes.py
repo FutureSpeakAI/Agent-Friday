@@ -1452,6 +1452,25 @@ def _check_voice_enums(new_settings):
     return None
 
 
+def _check_background_idle_minutes(new_settings):
+    """`background_idle_minutes` is a whole number of minutes in the range the
+    Local AI queue accepts (services/background_gate). An error dict, or None.
+    A value outside it would be clamped silently at the reader, so the row
+    would report one wait and the queue apply another."""
+    if "background_idle_minutes" not in new_settings:
+        return None
+    from agent_friday.services import background_gate as _bg
+    val = new_settings.get("background_idle_minutes")
+    ok = (isinstance(val, int) and not isinstance(val, bool)
+          and _bg.MIN_IDLE_MINUTES <= val <= _bg.MAX_IDLE_MINUTES)
+    if ok:
+        return None
+    return {"status": "error",
+            "message": ("background_idle_minutes must be a whole number of "
+                        "minutes from %d to %d (got %r)"
+                        % (_bg.MIN_IDLE_MINUTES, _bg.MAX_IDLE_MINUTES, val))}
+
+
 def _check_local_only_seats(new_settings):
     """Refuse a cloud model on a seat declared local-only. 400, or None.
 
@@ -1669,6 +1688,10 @@ def api_settings():
         enum_error = _check_voice_enums(new_settings)
         if enum_error is not None:
             return jsonify(enum_error), 400
+
+        idle_error = _check_background_idle_minutes(new_settings)
+        if idle_error is not None:
+            return jsonify(idle_error), 400
 
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting

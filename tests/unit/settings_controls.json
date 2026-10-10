@@ -4952,5 +4952,19 @@
   "reader_needle": "g = _cb.guest_key_for_turn(session_ctx or {})",
   "status": "ok",
   "note": ""
+ },
+ {
+  "section": "Advanced",
+  "panel": "Local AI queue",
+  "label": "Background AI work waits until you've been away for",
+  "kind": "select",
+  "keys": [
+   "background_idle_minutes"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/background_gate.py",
+  "reader_needle": "settings.get(\"background_idle_minutes\", DEFAULT_IDLE_MINUTES)",
+  "status": "ok",
+  "note": ""
  }
 ]

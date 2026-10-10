@@ -26,7 +26,9 @@ def test_with_no_budget_nothing_expires_and_a_tool_keeps_its_own_deadline():
 def test_a_budget_shortens_a_tool_s_own_deadline_and_expires():
     with td.budget(0.05):
         assert td.active()
-        assert td.deadline(10.0) - time.monotonic() <= 0.05
+        # The budget is 0.05 s; 1e-6 absorbs float rounding in the subtraction
+        # (2050.831 - 2050.781 can come out a hair over 0.05), not a looser budget.
+        assert td.deadline(10.0) - time.monotonic() <= 0.05 + 1e-6
         time.sleep(0.08)
         assert td.expired()
     assert not td.active() and not td.expired()

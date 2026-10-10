@@ -2407,6 +2407,10 @@ DEFAULT_SETTINGS = {
     # capability_routing. Without this line the knob accepts a write, reports
     # success, and reverts, which is worse than not having it.
     "away_drain_after_s": 900,
+    # The Local AI queue (services/background_gate): deferrable background
+    # work on a local model (wiki distillation, daily creation, the session
+    # summary) waits until the computer has been idle this many minutes.
+    "background_idle_minutes": 10,
     # ── Tool lifecycle hooks (Part B) ──
     # Each built-in PreToolUse/PostToolUse hook can be toggled here. Critical
     # hooks (governance_rings, vault_zt) ignore the toggle — they can't be
@@ -2597,7 +2601,7 @@ DEFAULT_SETTINGS = {
     },
     "idle_work": {
         "enabled": True,
-        "idle_after_s": 600,   # how long away before idle work starts
+        "idle_after_s": 600,   # superseded by background_idle_minutes
         "from_hour": 9,        # never overnight on a machine left on by accident
         "to_hour": 23,
     },

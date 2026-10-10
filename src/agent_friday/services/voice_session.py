@@ -316,6 +316,25 @@ class VoiceSession:
         # task, the deeper mind's answer) arrive over services/
         # voice_live_channel and are spoken between turns, never over one.
         self._inject_q: "queue.Queue" = queue.Queue()
+        # The Local AI queue (services/background_gate). An open call is a
+        # "voice-call": the owner is here, so deferrable work (wiki notes and
+        # the like) waits for the call to end and for idle. Each TURN is a
+        # "voice" interaction (see run_turn): while one is in progress no
+        # background job starts and a running one pauses before its next
+        # model call. Between turns, time-bound jobs and work handed off in
+        # this call may use the seat, one at a time.
+        try:
+            import weakref as _weakref
+            from agent_friday.services import background_gate as _bg
+            _me = _weakref.ref(self)
+
+            def _alive():
+                s = _me()
+                return s is not None and not s.done.is_set()
+            _bg.interactive_begin("voice-session:" + str(self.session_id),
+                                  _bg.KIND_VOICE_CALL, alive=_alive)
+        except Exception:
+            pass
 
     # ── frames ───────────────────────────────────────────────────────────
 
@@ -698,6 +717,26 @@ class VoiceSession:
 
     def run_turn(self, user_text: str, audio_ms: float | None = None,
                  injected: bool = False) -> None:
+        """One turn, registered as an interactive voice turn for its whole
+        length (the mind's answer, its tool calls and the spoken reply): the
+        Local AI queue starts no background job during it, and a running one
+        pauses before its next model call (services/background_gate)."""
+        if not (user_text or "").strip() or self.done.is_set():
+            return self._run_turn(user_text, audio_ms, injected)
+        tag = "voice-turn:%s:%s" % (self.session_id, uuid.uuid4().hex[:8])
+        try:
+            from agent_friday.services import background_gate as _bg
+            _bg.interactive_begin(tag, "voice")
+        except Exception:
+            _bg = None
+        try:
+            return self._run_turn(user_text, audio_ms, injected)
+        finally:
+            if _bg is not None:
+                _bg.interactive_end(tag)
+
+    def _run_turn(self, user_text: str, audio_ms: float | None = None,
+                  injected: bool = False) -> None:
         """One turn. ``injected`` marks a late result handed to the mind
         between turns: it is not the owner's words, so it is never shown or
         stored as something they said."""
@@ -994,6 +1033,13 @@ class VoiceSession:
 
     def close(self) -> None:
         self.done.set()
+        # The call is over: background local-model work may have the seat
+        # again (and this session's own distillation is queued below).
+        try:
+            from agent_friday.services import background_gate as _bg
+            _bg.interactive_end("voice-session:" + str(self.session_id))
+        except Exception:
+            pass
         t = self._current_turn
         if t is not None:
             t["cancel"].set()
@@ -1003,6 +1049,18 @@ class VoiceSession:
             try:
                 d = self.hooks.get("distill")
                 if d:
-                    d(self.turn_log)
+                    # The session names its own distillation job: its
+                    # conversation and this session's id (a conversation such
+                    # as Main is shared by many calls).
+                    import inspect as _inspect
+                    try:
+                        takes_key = "session_key" in _inspect.signature(d).parameters
+                    except (TypeError, ValueError):
+                        takes_key = False
+                    if takes_key:
+                        d(self.turn_log, session_key="%s:%s" % (
+                            self.conversation_id or "main", self.session_id))
+                    else:
+                        d(self.turn_log)
             except Exception:
                 pass
