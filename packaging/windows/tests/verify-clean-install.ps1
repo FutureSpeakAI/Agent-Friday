@@ -258,7 +258,12 @@ try {
         Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction SilentlyContinue |
             ForEach-Object { "  :80 listen {0} pid {1} {2}" -f $_.LocalAddress, $_.OwningProcess, (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } | Write-Host
         Write-Host ("  serve: " + ($serve | ConvertTo-Json -Depth 6 -Compress))
-        Write-Host ("  status: " + ((Api '/api/local-address') | ConvertTo-Json -Depth 6 -Compress))
+        # Friday's own view of its listeners, live: is the serving loop's
+        # thread alive, does it answer, is each accept loop running, when did
+        # each scheme last accept, how many tasks are pending, restarts so far.
+        $live = Api '/api/local-address'
+        Write-Host ("  proxy loop: " + ($live.listeners.loop | ConvertTo-Json -Depth 4 -Compress))
+        Write-Host ("  status: " + ($live | ConvertTo-Json -Depth 6 -Compress))
         try {
             $direct = Invoke-WebRequest -Uri 'http://127.0.0.1/' -Headers @{ Host = $hostName } -UseBasicParsing -TimeoutSec 20
             Write-Host "  127.0.0.1:80 with Host $hostName -> $($direct.StatusCode) server: $($direct.Headers['Server'])"
@@ -274,6 +279,21 @@ try {
         Write-Host "  http.sys on port 80:"
         netsh http show servicestate view=requestq 2>$null | Select-String ':80' | ForEach-Object { Write-Host "    $_" }
         netstat -ano | Select-String ':80\s' | ForEach-Object { Write-Host "    $_" }
+        # The https listener and the relay's upstream connections to Friday's
+        # server: a relay stuck on the upstream shows here, a dead loop does not.
+        Write-Host "  :443 and :$Port connections:"
+        netstat -ano | Select-String (":443\s|:$Port\s") | ForEach-Object { Write-Host "    $_" }
+        Write-Host ("  proxy loop now: " + ((Api '/api/local-address').listeners.loop | ConvertTo-Json -Depth 4 -Compress))
+        # What Friday logged about its listeners (a restart logs the stuck
+        # loop thread's stack).
+        $fridayLog = Join-Path $FridayDir 'friday.log'
+        if (Test-Path $fridayLog) {
+            Select-String -LiteralPath $fridayLog -Pattern 'Local address' -Context 0, 40 |
+                Select-Object -Last 4 | ForEach-Object {
+                    Write-Host "    $($_.Line)"
+                    $_.Context.PostContext | Where-Object { $_ -match '^\s' } | ForEach-Object { Write-Host "    $_" }
+                }
+        }
     }
     Check 'address' (($null -ne $named) -and ($named.StatusCode -eq 200) -and ($body -match 'FRIDAY')) `
           ("http://$hostName/ -> " + $(if ($named) { "$($named.StatusCode) $($named.Headers['Content-Type']); title: '$title'; server: $($named.Headers['Server'])" } else { "no answer ($namedErr)" }) + "; listener ok: $($serve.ok)")
