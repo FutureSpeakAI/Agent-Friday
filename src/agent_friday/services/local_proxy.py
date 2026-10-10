@@ -112,6 +112,13 @@ def _bind(addr: str, port: int) -> socket.socket:
         # over agent.<name> from under Friday.
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            # Elsewhere a port whose previous listener still has accepted
+            # connections or TIME_WAIT entries cannot be bound again without
+            # SO_REUSEADDR, so a restart would leave it closed; there it does
+            # not let a second live listener share the port. Never on
+            # Windows, where SO_REUSEADDR lets another program take it over.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if fam == socket.AF_INET6:
             s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         s.bind((addr, port))

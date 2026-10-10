@@ -329,6 +329,22 @@ def test_a_relay_cut_short_closes_its_upstream_connection(tmp_path):
         up.close()
 
 
+def test_listening_sockets_can_be_rebound_but_not_shared():
+    """Exclusive on Windows (SO_REUSEADDR there would let another program
+    take the port); SO_REUSEADDR elsewhere, so a restart can bind again while
+    the previous listener's connections linger."""
+    s = local_proxy._bind("127.0.0.1", 0)
+    try:
+        reuse = s.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            assert s.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE)
+            assert not reuse
+        else:
+            assert reuse
+    finally:
+        s.close()
+
+
 def test_the_redirect_check_never_waits_on_the_status_lock():
     """_redirect_http runs on the listeners' loop thread: if it waited for a
     lock, whoever held the lock would stall every listener."""
