@@ -367,11 +367,14 @@ class VoiceWorker:
         try:
             if progress:
                 progress(f"loading {self.engine}")
+            _t_start = time.perf_counter()
             self.proc = self._spawn()
+            _t_spawned = time.perf_counter()
             self._alive = True
             reply = self._call({"op": "load", "job": 0}, timeout_s=max(120.0, self.stage_budget_ms / 1000.0 * 6))
             if not reply.get("ok"):
                 raise WorkerDied(reply.get("detail") or reply.get("error") or "load failed")
+            self._record_start_profile(reply, _t_start, _t_spawned)
             self.resident_mib = reply.get("resident_mib")
             self.device = reply.get("device")
             self.model = reply.get("model")
@@ -389,6 +392,21 @@ class VoiceWorker:
                                              name=f"voice-idle-{self.stage}")
         self._idle_thread.start()
         return self
+
+    def _record_start_profile(self, reply, t_start, t_spawned) -> None:
+        """One timing line for this stage's start, kept with the last starts."""
+        try:
+            from agent_friday.services import voice_start_profile as _vsp
+            now = time.perf_counter()
+            prof = dict(reply.get("profile") or {})
+            load_s = (reply.get("load_ms") or 0) / 1000.0
+            prof["spawn_s"] = round(t_spawned - t_start, 3)
+            # Interpreter start, the worker's imports and the pipe: what the
+            # parent waited for beyond the engine's own load.
+            prof["startup_s"] = round(max(0.0, (now - t_spawned) - load_s), 3)
+            _vsp.record(_vsp.finish(self.stage, self.engine, prof, total_s=now - t_start))
+        except Exception as e:  # noqa: BLE001
+            log.debug("voice start profile not recorded: %s", e)
 
     def _idle_loop(self):
         while not self._stop.wait(2.0):

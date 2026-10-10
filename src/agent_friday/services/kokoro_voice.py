@@ -509,6 +509,22 @@ class KokoroTTS:
             if not esp["wired"]:
                 log.warning("espeak fallback not wired: %s",
                             esp.get("detail") or "unknown reason")
+            if self.lang_code in ("a", "b"):
+                # misaki's English G2P runs `spacy.cli.download` (a network
+                # install) when the small English model is missing. A load
+                # never reaches the network: the model is installed or this
+                # refuses with the reason.
+                try:
+                    import importlib.util
+                    _have = importlib.util.find_spec("en_core_web_sm") is not None
+                except Exception:
+                    _have = False
+                if not _have:
+                    raise KokoroUnavailable(
+                        "local_voice_kokoro_missing",
+                        "Kokoro's English pronunciation model (en_core_web_sm) is not "
+                        "installed, and loading never downloads it. Reinstall the voice "
+                        "dependencies from Settings > Voice (Setup & install).")
             try:
                 from agent_friday.services.ml_imports import guarded
 
