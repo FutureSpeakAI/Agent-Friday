@@ -41,6 +41,7 @@ existing rules or state files:
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import os
@@ -74,6 +75,8 @@ _collect_cache_lock = threading.Lock()
 # One slot per (limit, query): the 30-second dock-badge poll (limit 80) and
 # the workspace list (limit 40) used to evict each other on every call.
 _collect_cache: Dict[Any, Dict[str, Any]] = {}
+_collect_inflight: Dict[Any, Any] = {}   # key -> Future of the one live read running for it
+_COLLECT_LIVE_BUDGET_SECONDS = 25.0     # the longest a caller waits on a live read with nothing to show
 _COLLECT_CACHE_PARTIAL_TTL_SECONDS = 20   # a result with errors is still reused briefly, so a
                                           # rate-limited account is not hammered by every poll
 
@@ -448,6 +451,51 @@ def learned_senders() -> List[Dict[str, Any]]:
 # Collection — multi-account
 # --------------------------------------------------------------------------
 
+def _fresh_copy(entry: Dict[str, Any], age: float, *, stale: bool) -> Dict[str, Any]:
+    out = dict(entry)
+    out["source"] = f"{entry.get('source', 'merged')}-{'stale' if stale else 'cached'}"
+    out["cache_age_seconds"] = round(age, 1)
+    if stale:
+        out["stale"] = True
+    return out
+
+
+def _live_in_flight(key: Any, limit_per_account: int, query: Optional[str],
+                    use_cache_on_error: bool) -> "concurrent.futures.Future":
+    """The one live read for ``key``: started by the first caller, shared by
+    every caller that arrives while it runs."""
+    with _collect_cache_lock:
+        fut = _collect_inflight.get(key)
+        if fut is not None:
+            return fut
+        fut = concurrent.futures.Future()
+        _collect_inflight[key] = fut
+
+    def _run() -> None:
+        try:
+            fut.set_result(_collect_live(limit_per_account, use_cache_on_error, query, key))
+        except BaseException as exc:  # noqa: BLE001 - handed to every waiter
+            fut.set_exception(exc)
+        finally:
+            with _collect_cache_lock:
+                if _collect_inflight.get(key) is fut:
+                    _collect_inflight.pop(key, None)
+
+    threading.Thread(target=_run, name="mail-collect", daemon=True).start()
+    return fut
+
+
+def _timed_out_result(query: Optional[str]) -> Dict[str, Any]:
+    return {
+        "messages": [], "accounts": [],
+        "errors": [{"account_id": None, "label": "Gmail", "kind": "timeout",
+                    "error": "Gmail did not answer in time."}],
+        "source": "merged", "query": query,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "partial": False, "rate_limited": False, "search_failed": True,
+    }
+
+
 def collect(limit_per_account: int = 25, use_cache_on_error: bool = True,
             query: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -481,11 +529,22 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True,
     cached_age = now - float(slot.get("fetched_monotonic") or 0.0)
     ttl = _COLLECT_CACHE_PARTIAL_TTL_SECONDS if (cached_entry or {}).get("errors") else _COLLECT_CACHE_TTL_SECONDS
     if cached_entry is not None and cached_age < ttl:
-        stale_copy = dict(cached_entry)
-        stale_copy["source"] = f"{cached_entry.get('source', 'merged')}-cached"
-        stale_copy["cache_age_seconds"] = round(cached_age, 1)
-        return stale_copy
+        return _fresh_copy(cached_entry, cached_age, stale=False)
 
+    fut = _live_in_flight(key, limit_per_account, query, use_cache_on_error)
+    if cached_entry is not None and not cached_entry.get("search_failed"):
+        # Last good result: answer at once, refresh in the background.
+        return _fresh_copy(cached_entry, cached_age, stale=True)
+    try:
+        return fut.result(timeout=_COLLECT_LIVE_BUDGET_SECONDS)
+    except concurrent.futures.TimeoutError:
+        log.warning("message_triage: live mail read exceeded %ss", _COLLECT_LIVE_BUDGET_SECONDS)
+        return _timed_out_result(query)
+
+
+def _collect_live(limit_per_account: int, use_cache_on_error: bool,
+                  query: Optional[str], key: Any) -> Dict[str, Any]:
+    """One live read across the accounts, stored in the cache when it merged."""
     rules = ce._load_message_rules() or {}
     state = ce._load_message_state() or {}
     signals = _load_signals()
@@ -569,6 +628,10 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True,
         result["search_failed"] = True
     if source == "merged":
         with _collect_cache_lock:
+            held = (_collect_cache.get(key) or {}).get("result")
+            if result.get("search_failed") and held is not None and not held.get("search_failed"):
+                # a failed refresh never replaces the last good result
+                return result
             _collect_cache[key] = {"result": result, "fetched_monotonic": time.monotonic()}
             if len(_collect_cache) > 24:
                 oldest = min(_collect_cache, key=lambda k: _collect_cache[k]["fetched_monotonic"])

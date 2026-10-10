@@ -48,6 +48,8 @@
   const HELD_NOUN = { archive: 'Archived', trash: 'Moved to Trash', spam: 'Reported as spam', restore: 'Taken out of Trash', not_spam: 'Marked not spam',
     inbox: 'Moved to Inbox', move: 'Moved', read: 'Marked read', unread: 'Marked unread', star: 'Starred', unstar: 'Unstarred', label: 'Labelled', unlabel: 'Unlabelled' };
 
+  // A mail read that does not answer is shown as an error, never as an empty inbox.
+  const loadDeadlineMs = () => Number(W.__FRIDAY_MAIL_DEADLINE_MS) > 0 ? Number(W.__FRIDAY_MAIL_DEADLINE_MS) : 20000;
   const api = (url, opts) => {
     const tok = window.__FRIDAY_API_TOKEN || '';
     const headers = Object.assign({}, opts && opts.headers);
@@ -756,14 +758,37 @@
     const pickFolder = f => { setFolder(f); setOpen(null); if (layout !== 'wide') setSideOpen(null); };
 
     const seq = useRef(0);
+    const lastGood = useRef(null);                 // the last list that was read, for its own search and folder
+    const [refreshNote, setRefreshNote] = useState('');
     const load = useCallback((q, f) => {
       const n = ++seq.current;
       setLoading(true);
       // results of a different search or folder are never shown under this one's name
       setData(d => (d && (d.query || '') === (q || '') && (d.folder || '') === (f || '')) ? d : null);
       const url = '/api/messages?limit=80' + (q ? '&q=' + encodeURIComponent(q) : '') + (f ? '&folder=' + encodeURIComponent(f) : '');
-      const done = d => { if (n !== seq.current) return; if (d) { d.query = q || ''; d.folder = f || ''; } setData(d); setLoading(false); };
-      api(url).then(r => r.json()).then(done).catch(e => done({ status: 'error', search_failed: true, error: ("Couldn't reach " + fridayName() + ": ") + e }));
+      const same = d => d && (d.query || '') === (q || '') && (d.folder || '') === (f || '');
+      let settled = false;                         // the deadline and the answer race; the first one counts
+      const done = d => {
+        if (n !== seq.current || settled) return;
+        settled = true;
+        if (d) { d.query = q || ''; d.folder = f || ''; }
+        // A refresh that failed leaves the list that was read on screen, with a note; never an empty one.
+        if (d && d.search_failed && same(lastGood.current)) {
+          setRefreshNote("Couldn't refresh your mail just now" + (d.error ? ': ' + d.error : '') + '. This list may be out of date.');
+          setLoading(false); return;
+        }
+        if (d && !d.search_failed) lastGood.current = d;
+        setRefreshNote('');
+        setData(d); setLoading(false);
+        // the server answered from its saved copy and is reading Gmail behind it: look again shortly
+        if (d && d.stale) setTimeout(() => { if (n === seq.current) load(q, f); }, 4000);
+      };
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const deadline = setTimeout(() => { done({ status: 'error', search_failed: true, timed_out: true,
+        error: 'Your mail did not answer in time' }); if (ctl) ctl.abort(); }, loadDeadlineMs());
+      api(url, ctl ? { signal: ctl.signal } : undefined).then(r => r.json())
+        .then(d => { clearTimeout(deadline); done(d); })
+        .catch(e => { clearTimeout(deadline); done({ status: 'error', search_failed: true, error: ("Couldn't reach " + fridayName() + ": ") + e }); });
       if (!q && !f) api('/api/messages/stats').then(r => r.json()).then(d => { setStats(d); if (d.actionable != null) window._fridayMsgActionable = d.actionable; }).catch(() => {});
     }, []);
     useEffect(() => { load(query, folder); if (!revealing.current) commitSel({ type: 'owner_nav' }); setFocus(0); focusTouched.current = false; }, [query, folder]);
@@ -1436,7 +1461,11 @@
         '🔒 Read-only in Gmail: ' + readOnlyAccts.map(a => a.label || a.email).join(', ') + ('. Delete, spam, importance and labels need Gmail’s permission to change mail; archive, star and read changes there stay in ' + FRIDAY_BRAND.name + '.'),
         h('button', { className: 'btn fm-btn', onClick: openReconnect, style: { marginLeft: 'auto' } }, 'Reconnect with sending…')),
       loading && !data && h('div', { className: 'fm-banner info' }, query ? 'Searching Gmail for “' + query + '”…' : folder ? 'Reading ' + folderName(folder) + '…' : 'Reading your mail…'),
-      failed && h('div', { className: 'fm-banner err', role: 'alert' }, '⚠ ' + (data.error || "Couldn't read mail.") + ' This is not an empty inbox — the read did not happen.'),
+      failed && h('div', { className: 'fm-banner err', role: 'alert', 'data-testid': 'fm-load-failed' }, '⚠ ' + (data.error || "Couldn't read mail.") + ' This is not an empty inbox — the read did not happen.',
+        h('button', { className: 'btn fm-btn', onClick: () => load(query, folder), style: { marginLeft: 'auto' } }, 'Retry')),
+      refreshNote && !failed && h('div', { className: 'fm-banner warn', role: 'status', 'data-testid': 'fm-refresh-failed' }, '⚠ ' + refreshNote,
+        h('button', { className: 'btn fm-btn', onClick: () => load(query, folder), style: { marginLeft: 'auto' } }, 'Retry')),
+      !failed && data && data.stale && h('div', { className: 'fm-banner info' }, 'Showing your mail as of ' + Math.max(1, Math.round((data.cache_age_seconds || 0))) + ' seconds ago; refreshing.'),
       !failed && data && data.partial && h('div', { className: 'fm-banner warn' }, '⚠ Showing only part of your mail: ' + errs.map(e => (e.label || 'an account') + ' — ' + e.error).join('; ')),
       !failed && data && /^cache/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, ('Showing ' + fridayName() + '’s saved copy of your mail, not a live read: Gmail could not be reached.')),
       !failed && data && /^legacy/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, 'Showing only your main account: the read across all accounts failed.'),
@@ -1470,7 +1499,7 @@
           h('div', { className: 'fm-listhead' },
             h('input', { ref: headRef, type: 'checkbox', checked: allChecked, onChange: () => { if (allChecked) clearTicks(); else setSelCards(shown); }, 'aria-label': 'Select all shown', title: 'Select all shown (* a)' }),
             h('span', { style: { fontWeight: 700, color: '#dbe6f5' } }, folderName(folder)),
-            h('span', null, shown.length + (shown.length === 1 ? ' conversation' : ' conversations')),
+            !(failed || (loading && !data)) && h('span', null, shown.length + (shown.length === 1 ? ' conversation' : ' conversations')),
             ss.refs.length > 0 && ss.source !== '' && h('span', { className: 'fm-selchip', 'data-testid': 'fm-selchip' }, FS.chipText(ss, fridayName()),
               Object.keys(ss.held).length > 0 && h('span', { className: 'held' }, '· Waiting for your OK'),
               h('button', { onClick: clearTicks, title: 'Clear the selection', 'aria-label': 'Clear the selection' }, '×')),
