@@ -11,8 +11,9 @@ budget, one of:
   ask      tool intent is likely, but which tool or what to look for is not:
            one short question, never a guess
   defer    an action outside the router's set, or anything that would change
-           the world: the generating model's own tool calling handles it
-           where it can (Both Paths), otherwise the deeper mind does
+           the world: the speaker has no tools, so the voice surface hands
+           it to ``delegate_to_friday`` (a governed background task whose
+           own gates and cards decide it) and speaks a fixed receipt
 
 It DECIDES and never executes. ``execute`` hands a ``tool`` route to the
 surface's own governed runner (voice: ``routes.voice._local_voice_tool`` ->
@@ -170,8 +171,14 @@ TOOLS: Dict[str, Tuple[str, Callable, Optional[str]]] = {
 }
 
 #: Tools that send the owner's words to an outside provider: tier 1 asks
-#: before running them; only a sealed tier-0 pattern runs them.
-ASK_BEFORE_GUESSING = frozenset({"search_web"})
+#: before running them; only a sealed tier-0 pattern runs them. (A tier-1
+#: guess lifts the whole utterance as the query.)
+ASK_BEFORE_GUESSING = frozenset({"search_web", "search_news"})
+
+_ASK_OUTWARD = {
+    "search_web": "Do you want me to search the web for that?",
+    "search_news": "Do you want me to look that up in the news?",
+}
 
 #: What the router asks when it knows the tool but not what to look for.
 _ASK_FOR = {
@@ -519,7 +526,8 @@ def _tier1(text: str) -> Route:
         # A guess never sends the owner's words to an outside search
         # provider: only a sealed pattern ("search the web for ...") does.
         return Route("ask", tool=best, confidence=round(conf, 3), layer="laya2", label=label,
-                     question="Do you want me to search the web for that?", candidates=cands,
+                     question=_ASK_OUTWARD.get(best, "Do you want me to look that up online?"),
+                     candidates=cands,
                      reason="a guess at an outward search is asked, never run")
     if conf >= ACT_THRESHOLD and margin >= MARGIN_THRESHOLD:
         r = _with_args(best, template(text), round(conf, 3), "laya2", label, required,

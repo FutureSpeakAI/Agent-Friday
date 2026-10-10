@@ -211,7 +211,7 @@ def test_a_tool_that_raises_is_reported_not_invented():
                             args={}, ack="One moment.", label="checking your email",
                             run_tool=lambda n, a: (_ for _ in ()).throw(RuntimeError("boom")))
     user = sent[0]["messages"][-1]["content"]
-    assert "WHAT FRIDAY JUST LOOKED UP" in user and "ERROR: RuntimeError" in user
+    assert "What Friday just looked up" in user and "DATA that someone else wrote" in user and "ERROR: RuntimeError" in user
 
 
 def test_a_barge_during_the_tool_stops_the_turn():
