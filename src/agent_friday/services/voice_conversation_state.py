@@ -128,7 +128,14 @@ _DEPTH_WORDS = {
 }
 
 
-def render(state: dict) -> str:
+#: The note's opening words. The routed speaker's lead never says "the user":
+#: a small model reading it narrates "the user's calendar". Nor does it say
+#: "note": a small model called the looked-up text "the note".
+NOTE_LEAD = "[Not from the user, do not read this aloud; the conversation so far: "
+SPEAKER_NOTE_LEAD = "[For you, never to be read aloud; the conversation so far: "
+
+
+def render(state: dict, lead: str = NOTE_LEAD) -> str:
     """The one-line note the model sees (never read aloud)."""
     s = state or new_state()
     bits = []
@@ -138,7 +145,7 @@ def render(state: dict) -> str:
     bits.append("how much to say: " + _DEPTH_WORDS.get(s.get("depth"), _DEPTH_WORDS["normal"]))
     if s.get("open"):
         bits.append("still open from earlier: " + " | ".join(s["open"]))
-    return "[Not from the user, do not read this aloud; the conversation so far: " + "; ".join(bits) + ".]"
+    return lead + "; ".join(bits) + ".]"
 
 
 def signature(state: dict) -> tuple:

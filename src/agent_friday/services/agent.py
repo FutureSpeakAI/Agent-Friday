@@ -1824,7 +1824,9 @@ def _tool_query_calendar(_inp):
     try:
         result = ga.merged_calendar(days=2)
     except Exception as e:
+        # `error`: an empty list here is a failed read, never "no events".
         return json.dumps({**state, "events": [], "count": 0,
+                           "error": "calendar fetch failed",
                            "note": (_google_note(summary, "Calendar")
                                     + f" Calendar fetch error: {e}").strip()})
     accounts_status = _summarize_multi_account_errors(result)
@@ -2074,6 +2076,7 @@ def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, 
         result = fetch_fn(ga)
     except Exception as e:
         return json.dumps({**state, item_key: [], "count": 0,
+                           "error": "%s fetch failed" % has_accounts_note_what,
                            "note": (_google_note(summary, has_accounts_note_what)
                                     + f" {has_accounts_note_what} fetch error: {e}").strip()})
     accounts_status = _summarize_multi_account_errors(result)

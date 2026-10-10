@@ -86,6 +86,12 @@ def _no_args(_text: str, _m=None) -> dict:
     return {}
 
 
+def _calendar_args(text: str, _m=None) -> dict:
+    """Finished events are read only when the owner asks about the past."""
+    from agent_friday.services.voice_spoken import PAST_ASK
+    return {"include_past": True} if PAST_ASK.search(text or "") else {}
+
+
 def _query(text: str, m=None) -> dict:
     q = _clean_query(m.group("q") if m is not None and m.groupdict().get("q") else _strip_triggers(text))
     return {"query": q} if q else {}
@@ -159,7 +165,7 @@ TOOLS: Dict[str, Tuple[str, Callable, Optional[str]]] = {
     "undo_action": ("undoing that", _no_args, None),
     "answer_card": ("recording your answer", _no_args, None),
     # Reads.
-    "query_calendar": ("checking your calendar", _no_args, None),
+    "query_calendar": ("checking your calendar", _calendar_args, None),
     "check_email": ("checking your email", _email_args, None),
     "search_email": ("searching your email", _query, "query"),
     "search_news": ("looking at the news", _news_args, None),

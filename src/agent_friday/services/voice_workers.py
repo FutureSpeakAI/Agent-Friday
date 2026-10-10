@@ -104,6 +104,32 @@ def _display_reserve_mib() -> int:
             return 2560
 
 
+#: Card already promised to something that loads after the stage being
+#: admitted (the voice front a session arms once its ear and mouth are in):
+#: admission counts it as taken. See ``reserving``.
+_RESERVED_MIB = [0]
+_RESERVED_LOCK = threading.Lock()
+
+
+class reserving:
+    """``with reserving(mib):`` admit stages as if `mib` were already on the
+    card. A session holds the front's need while it admits its ear and mouth,
+    so the front that loads after them still fits above the display reserve."""
+
+    def __init__(self, mib: int):
+        self.mib = max(0, int(mib or 0))
+
+    def __enter__(self):
+        with _RESERVED_LOCK:
+            _RESERVED_MIB[0] += self.mib
+        return self
+
+    def __exit__(self, *exc):
+        with _RESERVED_LOCK:
+            _RESERVED_MIB[0] -= self.mib
+        return False
+
+
 def admit_gpu(need_mib: int, stage: str) -> dict:
     """Decide whether `need_mib` may be taken from the card for `stage`.
 
@@ -125,10 +151,12 @@ def admit_gpu(need_mib: int, stage: str) -> dict:
     real_gb = g.get("vram_free_real_gb")
     free_mib = (int(float(real_gb) * 1024) if real_gb is not None
                 else int(hr.get("free_mib") or 0))
-    if hr.get("ok") is False or free_mib - int(need_mib) < reserve:
+    held_for = _RESERVED_MIB[0]
+    if hr.get("ok") is False or free_mib - held_for - int(need_mib) < reserve:
+        promised = (f" ({held_for:,} MiB of it held for the voice front)" if held_for else "")
         raise GpuRefused(
             "local_voice_gpu_refused",
-            f"GPU voice not loaded: {free_mib:,} MiB free against a {reserve:,} MiB "
+            f"GPU voice not loaded: {free_mib:,} MiB free{promised} against a {reserve:,} MiB "
             f"display reserve (the {stage} needs about {int(need_mib):,} MiB). "
             f"Running the {stage} on the CPU instead.")
     return {"ok": True, "free_mib": free_mib, "reserve_mib": reserve,
@@ -656,7 +684,9 @@ class KokoroCpuMouth(MouthEngine):
 
     def __init__(self, voice: str = "af_heart"):
         from agent_friday.services.kokoro_voice import KokoroTTS
-        self._tts = KokoroTTS(voice, allow_cpu=True)
+        # The CPU fallback runs on the CPU: this process loading Kokoro onto
+        # CUDA would take the card admission just refused, unleased.
+        self._tts = KokoroTTS(voice, allow_cpu=True, cpu_only=True)
         self.voice = voice
 
     def load(self, progress=None):
@@ -873,6 +903,28 @@ def build_mouth(selection: dict, progress=None) -> MouthEngine:
     eng.degraded = degraded
     _hold("mouth", eng)
     return eng
+
+
+def session_engine(stage: str, selection: dict, progress=None):
+    """The engine a session uses for `stage` ("ear" or "mouth"): the held
+    engine, unless it is a CPU fallback while the selection may use the card,
+    in which case the card is asked again (it may have room now that the
+    session has parked the brain). The builders reuse a held GPU worker."""
+    sel = selection or {}
+    cur = held(stage)
+    if cur is not None:
+        if stage == "ear":
+            retry = (isinstance(cur, CpuWhisperEar)
+                     and str(sel.get("device_policy") or "if_free") != "never")
+        else:
+            retry = (str(sel.get("engine") or "") == "kokoro"
+                     and str(sel.get("device_policy") or "preferred") != "never"
+                     and isinstance(cur, (KokoroCpuMouth, PiperMouth)))
+        if not retry:
+            return cur
+    if stage == "ear":
+        return build_ear(sel, progress=progress)
+    return build_mouth(sel, progress=progress)
 
 
 # ── manifest runners (the ENGINE_RUNNERS entries for ear and mouth) ─────────

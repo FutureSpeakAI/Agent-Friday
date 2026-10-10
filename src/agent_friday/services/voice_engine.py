@@ -176,18 +176,35 @@ def warm_voice_reads():
     threading.Thread(target=run, name="voice-warm", daemon=True).start()
 
 
+#: Events the calendar fetch returns at most (calendar_engine maxResults).
+CALENDAR_FETCH_LIMIT = 50
+#: Events the voice calendar tool lists.
+CALENDAR_LIST_LIMIT = 12
+
+
 def _tool_query_calendar(_inp):
     """Voice tool: today's + tomorrow's calendar as a spoken-ready JSON string.
 
     Powers global voice commands like 'what's next on my calendar?' from any
     workspace. Returns {connected, count, events:[{title,start,end,location,
-    attendees}]} or a note when Google isn't linked."""
+    attendees}], finished, window_complete} or a note when Google isn't
+    linked. Events that already ended are left out before the list is capped
+    (unless ``include_past``), so a busy morning cannot fill the list and hide
+    the afternoon; ``count`` is every remaining event, ``finished`` how many
+    were left out, and ``window_complete`` whether the fetch reached the end
+    of tomorrow (False when it stopped at its own limit)."""
+    from agent_friday.services.voice_spoken import event_finished
+    inp = _inp or {}
     events = _voice_calendar()
     err = _google_section_error(events)
     if err:
         return json.dumps({"connected": False, "note": err, "events": []})
+    events = list(events or [])
+    now = datetime.now()
+    keep = events if inp.get("include_past") else [
+        ev for ev in events if not event_finished(ev.get("start_time"), ev.get("end_time"), now)]
     out = []
-    for ev in (events or [])[:12]:
+    for ev in keep[:CALENDAR_LIST_LIMIT]:
         out.append({
             "title": ev.get("title"),
             "start": ev.get("start_time"),
@@ -195,7 +212,10 @@ def _tool_query_calendar(_inp):
             "location": ev.get("location") or "",
             "attendees": (ev.get("attendees") or [])[:6],
         })
-    return json.dumps({"connected": True, "count": len(out), "events": out}, default=str)
+    return json.dumps({"connected": True, "count": len(keep), "events": out,
+                       "finished": len(events) - len(keep),
+                       "window_complete": len(events) < CALENDAR_FETCH_LIMIT},
+                      default=str)
 
 
 def _tool_check_email(inp):
@@ -234,8 +254,15 @@ def _tool_check_email(inp):
         })
         if len(out) >= limit:
             break
+    # What the reply needs beyond the listed messages: the unread total over
+    # everything fetched (the list stops at `limit`), whether more mail may
+    # exist past the fetch, and that this was an urgent-only read.
+    fetched = list(cards or [])
     return json.dumps({"connected": True, "source": source,
-                       "count": len(out), "messages": out}, default=str)
+                       "count": len(out), "messages": out,
+                       "unread_total": sum(1 for c in fetched if c.get("unread")),
+                       "fetched": len(fetched), "fetch_limit": 25,
+                       "urgent_only": urgent_only}, default=str)
 
 
 # Tool surface exposed to the Live voice session. Each entry:
