@@ -2600,15 +2600,53 @@ def _call_cards(conversation_id):
             and str((r.get("payload") or {}).get("conversation_id") or "").strip() == cid]
 
 
-def _cards_read_back(results, conversation_id) -> list:
-    """Ids of this call's waiting cards that ``results`` (the tool results the
-    speaker answered from this turn, whose card readback it voiced) carry."""
+def _cards_carried(results, conversation_id) -> list:
+    """This call's waiting cards that ``results`` (the tool results of this
+    turn) raise or carry, as approval records. That a result carries a card
+    says nothing about what was SAID: only a fixed line that was delivered
+    whole (``_run_routed_front_turn``) makes a card answerable by a bare yes."""
     try:
         text = "\n".join(str(r) for r in results if r)
-        return [c["approval_id"] for c in _call_cards(conversation_id)
+        return [c for c in _call_cards(conversation_id)
                 if text and str(c["approval_id"]) in text]
     except Exception:
         return []
+
+
+#: The count-only sentence for a card whose own fields cannot make the
+#: email readback. It names no private content.
+_CARD_LINE_FALLBACK = ("I have a change waiting for your OK; the details are on your screen. "
+                       "Shall I go ahead?")
+
+
+def _sealed_card_line(result, conversation_id):
+    """(card ids, the line Friday speaks for them) for a tool result that
+    raises or carries this call's approval cards; ([], "") when it carries
+    none. The line is the card's own question, built here from the card's
+    fields (``email_readback``: count-only in a room or quiet mode), never
+    the speaker model's words about it."""
+    cards = _cards_carried([result], conversation_id)
+    if not cards:
+        return [], ""
+    from agent_friday.services import item_actions as _ia
+    try:
+        from agent_friday.services.voice_engine import _voice_room_mode as _room_now
+        room = bool(_room_now())
+    except Exception:
+        room = True
+    lines = []
+    for c in cards:
+        p = c.get("payload") or {}
+        try:
+            n = int(p.get("count") or len(p.get("lines") or []))
+            if n < 1:
+                raise ValueError("no count")
+            lines.append(_ia.email_readback(
+                {"count": n, "preview": list(p.get("preview") or [])},
+                str(p.get("action") or ""), str(p.get("label") or ""), room_mode=room))
+        except Exception:
+            lines.append(_CARD_LINE_FALLBACK)
+    return [str(c["approval_id"]) for c in cards], " ".join(lines)
 
 
 def _pending_voice_card(spoken_ids, conversation_id):
@@ -2628,6 +2666,69 @@ def _pending_voice_card(spoken_ids, conversation_id):
         return cards[0]["approval_id"] if len(cards) == 1 else None
     except Exception:
         return None
+
+
+def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_turn,
+                           send, session):
+    """One routed local voice turn: system one decides, the governed runner
+    executes, the front speaks (laya_router_addendum_2026-10-09).
+
+    A bare yes/no may answer a card only if the PREVIOUS turn spoke that
+    card's own question, whole and uncut. When a tool raises or carries an
+    approval card, the question is a fixed line built from the card
+    (``_sealed_card_line``), not the speaker's paraphrase; whether it was
+    delivered is asked of the voice session (``line_delivered``) at the next
+    turn. If that cannot be shown, no bare yes counts: the owner answers on
+    screen or says the card's action."""
+    _cid = tool_session.get("conversation_id")
+    sealed = tool_session.pop("sealed_card", None) or {}
+    try:
+        sess = session() if session else None
+    except Exception:           # the session is not built yet: nothing was delivered
+        sess = None
+    spoken = []
+    if sealed.get("ids"):
+        try:
+            if sess is not None and sess.line_delivered(sealed.get("turn"), sealed.get("line")):
+                spoken = list(sealed["ids"])
+        except Exception:
+            spoken = []
+    plan = _voice_route_plan(user_text, list(front["contract"].get("names") or []),
+                             pending_card=_pending_voice_card(spoken, _cid))
+    send({"type": "route", **plan["receipt"]})
+    _carried = {"ids": [], "line": ""}
+
+    def _card_line(result):
+        ids, line = _sealed_card_line(result, _cid)
+        if line:
+            _carried.update(ids=ids, line=line)
+        return line
+
+    def _run_tool(n, a):
+        # Whole: a list is spoken from its parsed records, and a cut JSON
+        # would not parse (routed_turn cuts what the model reads).
+        return _local_voice_tool(n, a, send, tool_session, cut=False)
+    _said = ""
+    try:
+        _said = seat_turn(user_text, on_delta, plan, _run_tool, _card_line)
+        return _said
+    finally:
+        # What was said aloud: a repeat news request moves on past the
+        # stories already told (voice_engine._title_told).
+        if _said:
+            tool_session.setdefault("spoken", []).append(str(_said))
+            del tool_session["spoken"][:-60]
+        # The card line this turn spoke is the last question asked; the
+        # router's own question, or none, clears it. A barged turn may not
+        # have voiced it. Delivery is confirmed at the next turn.
+        from agent_friday.services.model_router import turn_cancelled as _tc
+        try:
+            tid = sess.current_turn_id() if sess is not None else None
+        except Exception:
+            tid = None
+        if _carried["line"] and tid and not plan["question"] and not _tc():
+            tool_session["sealed_card"] = {"ids": _carried["ids"], "line": _carried["line"],
+                                           "turn": tid}
 
 
 def _speaker_volatile(volatile: str) -> str:
@@ -3618,42 +3719,12 @@ if sock is not None:
                     _front["contract"])
 
             def _routed_front_turn(user_text, on_delta):
-                # System one decides; the governed runner executes; the front
-                # speaks (ftv/program/reference/laya_router_addendum_2026-10-09).
-                # A bare yes/no may answer a card only if the PREVIOUS turn
-                # voiced that card's question and nothing was asked since.
-                _cid = _tool_session.get("conversation_id")
-                _spoken = _tool_session.pop("spoken_cards", None) or []
-                plan = _voice_route_plan(user_text, list(_front["contract"].get("names") or []),
-                                         pending_card=_pending_voice_card(_spoken, _cid))
-                _send({"type": "route", **plan["receipt"]})
-                _results = []
+                return _run_routed_front_turn(
+                    user_text, on_delta, front=_front, tool_session=_tool_session,
+                    seat_turn=_routed_front_seat_turn, send=_send,
+                    session=lambda: sess)
 
-                def _run_tool(n, a):
-                    # Whole: a list is spoken from its parsed records, and a
-                    # cut JSON would not parse (routed_turn cuts what the
-                    # model reads).
-                    out = _local_voice_tool(n, a, _send, _tool_session, cut=False)
-                    _results.append(out)
-                    return out
-                _said = ""
-                try:
-                    _said = _routed_front_seat_turn(user_text, on_delta, plan, _run_tool)
-                    return _said
-                finally:
-                    # What was said aloud: a repeat news request moves on
-                    # past the stories already told (voice_engine._title_told).
-                    if _said:
-                        _tool_session.setdefault("spoken", []).append(str(_said))
-                        del _tool_session["spoken"][:-60]
-                    # What this turn voiced is the last question asked; the
-                    # router's own question, or none, clears it.
-                    # A barged turn may not have voiced it: nothing is read back.
-                    from agent_friday.services.model_router import turn_cancelled as _tc
-                    _tool_session["spoken_cards"] = (
-                        [] if plan["question"] or _tc() else _cards_read_back(_results, _cid))
-
-            def _routed_front_seat_turn(user_text, on_delta, plan, _run_tool):
+            def _routed_front_seat_turn(user_text, on_delta, plan, _run_tool, card_line=None):
                 return _front["seat"].routed_turn(
                     _front["prompt"],
                     _local_voice_messages(_tool_session.get("conversation_id"), user_text,
@@ -3661,7 +3732,7 @@ if sock is not None:
                                           speaker=True),
                     tool=plan["tool"], args=plan["args"], ack=plan["ack"],
                     question=plan["question"], label=plan["label"],
-                    run_tool=_run_tool, user_text=user_text,
+                    run_tool=_run_tool, user_text=user_text, card_line=card_line,
                     on_delta=on_delta,
                     max_tokens=_voice_reply_cap(settings, user_text),
                     brief_tokens=_routed_brief_cap(settings, user_text),

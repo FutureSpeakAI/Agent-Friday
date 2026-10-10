@@ -913,7 +913,7 @@ class FrontSeat:
                     ack: str = "", question: str = "", run_tool=None, on_delta=None,
                     max_tokens: int = 400, temperature=None, timings=None,
                     label: str = "", tool_timeout_s: float = 60.0,
-                    brief_tokens=None, user_text: str = "") -> str:
+                    brief_tokens=None, user_text: str = "", card_line=None) -> str:
         """One spoken turn whose tool, if any, system one already chose
         (services/laya_router). The front never sees a tool catalogue.
 
@@ -927,7 +927,11 @@ class FrontSeat:
         the 2026-10-09 bench, 2 of 15.) A barge stops the wait; the read it
         started finishes on its own and is not spoken. A tool that outlives
         ``tool_timeout_s`` (the governed runner's own limit is shorter) is
-        reported as slow, never guessed at. Otherwise the front answers."""
+        reported as slow, never guessed at. ``card_line(result)``: when the
+        tool raised or carried an approval card, the line that asks its
+        question, built in code from the card itself; it is the whole reply
+        (the model's own words never stand in for the question). Otherwise
+        the front answers."""
         from agent_friday.services.model_router import turn_cancelled
         speak = (lambda s: on_delta(s) if on_delta else None)
         if question:
@@ -961,6 +965,15 @@ class FrontSeat:
         result = box.get("result")
         if not isinstance(result, str):
             result = json.dumps(result, ensure_ascii=False, default=str)
+        sealed = None
+        if card_line is not None:
+            try:
+                sealed = card_line(result)
+            except Exception:
+                sealed = None
+        if sealed:
+            speak(sealed)
+            return (ack + " " + sealed).strip()
         from agent_friday.services.voice_spoken import speakable, structured_reply
         # Nothing to report, or a list of records: the sentence is code's, not
         # the model's (a 1.7B read failures aloud, and narrated lists).

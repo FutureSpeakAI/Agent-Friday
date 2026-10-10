@@ -292,6 +292,11 @@ class VoiceSession:
         self._rms = rms or _pcm_rms
         self.barge_cooldown_s = float(barge_cooldown_s)
         self._last_barge = None
+        # When each barge landed, and what each finished turn fully sent to
+        # the client: `line_delivered` answers whether a fixed line was
+        # emitted whole and not cut (the voice card readback, routes/voice.py).
+        self._barge_times: list = []
+        self._turn_records: dict = {}
         # The playback window: the client's own `speaking` reports once it
         # has sent one, else an estimate from the audio bytes already sent.
         self._client_signal_seen = False
@@ -637,6 +642,7 @@ class VoiceSession:
     def barge(self, source: str = "escape") -> None:
         """Stop Friday now (Escape, or the user talking over her)."""
         self._last_barge = self._clock()
+        self._barge_times = (self._barge_times + [self._last_barge])[-8:]
         t = self._current_turn
         with self._audio_lock:
             if t is not None:
@@ -759,6 +765,9 @@ class VoiceSession:
                     "aborted": False, "barge": "", "clauses": 0, "first_clause_ms": None,
                     "first_audio_ms": None, "t0": self._clock(), "spoken": [],
                     "audio_bytes": 0, "fallback_used": False, "delivery": delivery,
+                    # (clause, estimated end of its playback) for every clause
+                    # whose audio was sent in full.
+                    "sent": [],
                     "conversation_id": self.conversation_id,
                     # `cv` wakes run_turn when the mind returns, a clause
                     # finishes (`pending` counts queued ones) or a barge lands.
@@ -936,9 +945,34 @@ class VoiceSession:
             if not turn["aborted"]:
                 self._status("listening")
                 self._set_state("listening")
+            self._turn_records[turn["id"]] = {
+                "sent": list(turn["sent"]), "t0": turn["t0"],
+                "cut": bool(turn["cancel"].is_set() or turn["aborted"])}
+            for _old in list(self._turn_records)[:-6]:
+                self._turn_records.pop(_old, None)
             self._current_turn = None
         # A late result that arrived during this turn is spoken now.
         self._maybe_inject()
+
+    def current_turn_id(self):
+        """The id of the turn being run now, or None between turns."""
+        t = self._current_turn
+        return t["id"] if t is not None else None
+
+    def line_delivered(self, turn_id, line: str) -> bool:
+        """True only when ``line`` was sent to the client whole, in that
+        finished turn, and nothing cut Friday off before it could have
+        finished playing. A turn that is unknown, barged, or never sent the
+        line is False: what cannot be shown to have been heard was not."""
+        rec = self._turn_records.get(turn_id)
+        want = " ".join(str(line or "").split())
+        if not rec or rec["cut"] or not want:
+            return False
+        sent = [c for c, _end in rec["sent"]]
+        if want not in " ".join(" ".join(sent).split()):
+            return False
+        end = rec["sent"][-1][1] if rec["sent"] else 0.0
+        return not any(rec["t0"] <= b <= end for b in self._barge_times)
 
     def _enqueue_clause(self, turn: dict, clause: str, receipt, filler=False) -> None:
         if turn["cancel"].is_set():
@@ -1013,10 +1047,12 @@ class VoiceSession:
                 if not chunks:
                     continue
                 pcm = b"".join(chunks)
+                whole = True
                 for off in range(0, len(pcm), PLAYBACK_CHUNK_BYTES):
                     piece = pcm[off:off + PLAYBACK_CHUNK_BYTES]
                     with self._audio_lock:
                         if turn["cancel"].is_set() or self.done.is_set():
+                            whole = False
                             break
                         self.send({"type": "audio",
                                    "data": base64.b64encode(piece).decode("ascii")})
@@ -1031,6 +1067,8 @@ class VoiceSession:
                     if receipt is not None:
                         receipt.mark("first_audio_out")
                         receipt.count_audio_out(len(piece))
+                if whole and not turn["cancel"].is_set():
+                    turn["sent"].append((clause, self._est_play_end))
             finally:
                 self.stage("mouth", "idle")
                 self._clause_done(turn)
