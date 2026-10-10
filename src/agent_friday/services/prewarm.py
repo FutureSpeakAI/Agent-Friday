@@ -63,7 +63,7 @@ def _embedder(step: Step) -> None:
         name = EMBEDDER["id"]
     except Exception:
         name = "all-MiniLM-L6-v2"
-    m = SentenceTransformer(name)
+    m = SentenceTransformer(name, device="cpu")
     vec = m.encode("warm")
     if vec is None or len(vec) == 0:
         raise RuntimeError(f"{name} loaded but produced no vector")

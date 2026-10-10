@@ -212,7 +212,7 @@ class ConversationMemory:
             if self.model_name == embedder_cache.MODEL:
                 embedder_cache.ensure_available("conversation memory")
             return routed(embedding_functions.SentenceTransformerEmbeddingFunction)(
-                model_name=self.model_name
+                model_name=self.model_name, device="cpu"
             )
         except Exception as e:
             print(f"  [MEMORY] sentence-transformers embedder unavailable, "
