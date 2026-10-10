@@ -117,15 +117,7 @@ def api_messages():
     # Cross-reference: flag messages whose sender is an attendee of an upcoming
     # event (next 7 days). Best-effort — failures must not break the inbox.
     try:
-        email_events = {}
-        for i in range(7):
-            d = date.today() + timedelta(days=i)
-            for ev in _events_for_day(d):
-                for a in ev.get("attendees", []):
-                    email_events.setdefault((a or "").lower(), []).append({
-                        "id": ev.get("id"), "title": ev.get("title"),
-                        "start_time": ev.get("start_time"),
-                    })
+        email_events = _related_events()
         for c in cards:
             hit = email_events.get((c.get("sender_email") or "").lower())
             if hit:
@@ -144,12 +136,66 @@ def api_messages():
         "errors": result.get("errors") or [],
         "partial": bool(result.get("partial")),
         "rate_limited": bool(result.get("rate_limited")),
+        "stale": bool(result.get("stale")),
+        "cache_age_seconds": result.get("cache_age_seconds"),
     }
     if result.get("search_failed"):
         # Nothing could be read: a failure, never "no mail". No total.
         out.update(status="error", search_failed=True, total=None,
                    error=_failure_text(result.get("errors") or []))
     return jsonify(public_result(out, "Couldn't read mail"))
+
+
+#: The sender -> upcoming-event map behind ``related_event``. It reads seven
+#: days of calendar, so it is built at most once per TTL and never holds a
+#: response longer than its time limit.
+_RELATED_EVENTS_TTL_SECONDS = 120
+_RELATED_EVENTS_WAIT_SECONDS = 3.0
+_related_events_lock = threading.Lock()
+_related_events_cache = {"at": 0.0, "map": {}, "building": None}
+
+
+def _build_related_events():
+    email_events = {}
+    for i in range(7):
+        d = date.today() + timedelta(days=i)
+        for ev in _events_for_day(d):
+            for a in ev.get("attendees", []):
+                email_events.setdefault((a or "").lower(), []).append({
+                    "id": ev.get("id"), "title": ev.get("title"),
+                    "start_time": ev.get("start_time"),
+                })
+    return email_events
+
+
+def _related_events():
+    with _related_events_lock:
+        c = _related_events_cache
+        if c["at"] and _time.monotonic() - c["at"] < _RELATED_EVENTS_TTL_SECONDS:
+            return c["map"]
+        done = c["building"]
+        if done is None:
+            done = c["building"] = threading.Event()
+
+            def _run(done=done):
+                try:
+                    built = _build_related_events()
+                    with _related_events_lock:
+                        _related_events_cache["map"] = built
+                        _related_events_cache["at"] = _time.monotonic()
+                except Exception:
+                    with _related_events_lock:
+                        # a failed build is not retried on every request
+                        _related_events_cache["at"] = _time.monotonic()
+                finally:
+                    with _related_events_lock:
+                        _related_events_cache["building"] = None
+                    done.set()
+
+            threading.Thread(target=_run, name="related-events", daemon=True).start()
+    done.wait(_RELATED_EVENTS_WAIT_SECONDS)
+    with _related_events_lock:
+        return _related_events_cache["map"]
 
 
 #: Gmail's folders, as the searches Gmail itself uses for them.
