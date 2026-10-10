@@ -26,6 +26,12 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   undo that conversation exactly, instead of saying it did. A batch also needs
   fewer Gmail calls: one call per kind of change instead of one per
   conversation.
+- Ollama models that run in Ollama's cloud (a `:cloud` tag or a `-cloud`
+  suffix, such as `glm-4.6:cloud` or `gpt-oss:120b-cloud`) were treated as
+  local because the provider is "ollama", so what they were sent skipped the
+  privacy gate. The gate now decides from the model as well as the provider
+  name, and those models are checked like any other cloud model. The model
+  list also hides both forms of cloud tag from the on-device picks.
 
 ---
 

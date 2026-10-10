@@ -27,6 +27,7 @@ some grayed out"):
   * Unavailable entries carry `needs_key` + a human `hint` so the UI can dim
     them, block the click, and say exactly which key to add.
 """
+from agent_friday.services.local_only_guard import is_cloud_model_tag
 from agent_friday.services.provider_registry import (
     get_provider_registry, ALL_ROLES,
     ROLE_ORCHESTRATOR, ROLE_SUBAGENT, ROLE_CREATIVE, ROLE_VOICE,
@@ -287,7 +288,7 @@ def _live_ollama_models_uncached(base_url: str):
         out = []
         for m in mgr.list_models() or []:
             name = m.get("name") if isinstance(m, dict) else str(m)
-            if name and not str(name).endswith(":cloud"):
+            if name and not is_cloud_model_tag(str(name)):
                 out.append(name)
         return out
     except Exception:

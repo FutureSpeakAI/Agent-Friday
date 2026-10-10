@@ -770,6 +770,13 @@ def _local_llm_tier(text: str) -> int:
         _log.info("Layer 4 skipped: no local seat available to adjudicate. "
                   "Classification falls back to layers 1-3.")
         return 0
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    if is_cloud_model_tag(model):
+        # The adjudicator reads the very text being judged. A model the daemon
+        # relays to ollama.com would send it off the machine to decide whether
+        # it may leave: no opinion, layers 1-3 still run.
+        _log.info("Layer 4 skipped: the adjudicating seat is a cloud-relayed model.")
+        return 0
     try:
         import requests as _req
         prompt = (

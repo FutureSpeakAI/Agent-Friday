@@ -121,10 +121,10 @@ def tripped() -> Optional[Dict[str, Any]]:
     return None
 
 
-def _is_cloud(provider: str) -> bool:
+def _is_cloud(provider: str, model: str = "") -> bool:
     try:
         from agent_friday.services.egress_gate import _is_cloud
-        return bool(_is_cloud(provider or ""))
+        return bool(_is_cloud(provider or "", model or ""))
     except Exception:
         return True   # uncertain = paid, same default as the egress gate
 
@@ -148,14 +148,14 @@ def _describe(what: Optional[str], provider: str, attr: Dict[str, Any]) -> str:
     return " · ".join(bits)
 
 
-def check(provider: str, *, what: Optional[str] = None) -> None:
+def check(provider: str, *, what: Optional[str] = None, model: str = "") -> None:
     """Refuse a cloud call when the hard stop has tripped. Never raises for
     local providers, never raises when the hard stop is off, and never
     raises for any reason other than the cap (a guard that fails must not
     become a guard that halts everything -- the alert cap is the fallback,
     and the failure is logged loudly)."""
     try:
-        if not _is_cloud(provider):
+        if not _is_cloud(provider, model):
             return
         t = tripped()
     except SpendCapReached:

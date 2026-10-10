@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_friday.paths import friday_home
+from agent_friday.services.local_only_guard import is_cloud_model_tag
 from agent_friday.services.sensitivity_classifier import classify as _classify_impl, Tier
 
 # ── Provider classification ────────────────────────────────────────────────────
@@ -164,13 +165,20 @@ def _rate_limit() -> None:
         time.sleep(min(max(wait, 0.01), 0.25))
 
 
-def _is_cloud(provider: str) -> bool:
-    """True when the provider's payloads leave the device (must be gated).
+def _is_cloud(provider: str, model: str = "") -> bool:
+    """True when the payload leaves the device (must be gated).
 
     Registry-first via is_local_provider(): the registry's egress
     classification decides, with the hardcoded family set only as fallback
     for non-registry names. Default on uncertainty: CLOUD (gated).
+
+    The provider NAME is not the whole answer. An Ollama model tagged `:cloud`
+    or `-cloud` (`glm-4.6:cloud`, `gpt-oss:120b-cloud`) is relayed by the local
+    daemon to ollama.com, so the same "ollama" provider sends it off the
+    machine. A cloud-tagged model is cloud whatever the provider name says.
     """
+    if is_cloud_model_tag(model):
+        return True
     return not is_local_provider(provider)
 
 
@@ -1407,7 +1415,7 @@ def _gate_tools(tools: list, provider: str,
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def gate_text(text: str, provider: str, field: str = "prompt",
-              log_path: Path | None = None) -> str:
+              log_path: Path | None = None, model: str = "") -> str:
     """Gate a single user-supplied text string for a cloud provider.
 
     Public wrapper around the field-level gate so call sites that do NOT go
@@ -1417,8 +1425,12 @@ def gate_text(text: str, provider: str, field: str = "prompt",
     they send. Local providers pass through unchanged. Same fail-closed
     semantics as ``seal_outbound``: SENSITIVE → "" (dropped), PRIVATE →
     redacted placeholder, PUBLIC → unchanged.
+
+    ``model`` is the model the text is going to, when the caller knows it: a
+    cloud-tagged Ollama model (`glm-4.6:cloud`) is cloud even though the
+    provider name is "ollama".
     """
-    if not _is_cloud(provider):
+    if not _is_cloud(provider, model):
         return text
     return _gate_text(text, provider, field, log_path)
 
@@ -1429,6 +1441,7 @@ def gate_worker_payload(
     base_url: str,
     provider: str = "ollama",
     log_path: Path | None = None,
+    model: str = "",
 ) -> dict[str, Any]:
     """The orchestrator worker adapters' single egress entry point (decision D2).
 
@@ -1454,6 +1467,10 @@ def gate_worker_payload(
     which ``seal_outbound`` does not cover — it only knows the Anthropic
     ``system``/``messages``/``tools`` keys, so an ungated ``prompt`` would have
     sailed straight through even if the adapter had called it.
+
+    A cloud-tagged model (`glm-4.6:cloud`) is cloud even when the daemon that
+    relays it is on this machine, so the model decides too: ``model`` if the
+    caller passed it, else the payload's own ``model`` field.
     """
     try:
         from agent_friday.routing.provider_descriptors import is_private_host
@@ -1461,7 +1478,9 @@ def gate_worker_payload(
     except Exception:
         on_device = False  # cannot verify the host → treat as cloud
 
-    if on_device and is_local_provider(provider):
+    model = model or (str(payload.get("model") or "")
+                      if isinstance(payload, dict) else "")
+    if on_device and not _is_cloud(provider, model):
         return payload
 
     # Cloud-bound (or unverifiable): fail-closed, same contract as every other
@@ -1472,11 +1491,83 @@ def gate_worker_payload(
             f"send to {base_url!r} blocked. Fix the gate or use a local model."
         )
 
-    sealed = seal_outbound(dict(payload), provider, log_path)
+    sealed = seal_outbound(dict(payload), provider, log_path, model=model)
     if isinstance(sealed.get("prompt"), str):
         sealed["prompt"] = gate_text(sealed["prompt"], provider, "prompt",
-                                     log_path)
+                                     log_path, model=model)
     return sealed
+
+
+def gate_ollama_body(body: dict[str, Any], model: str = "",
+                     provider: str = "ollama") -> dict[str, Any]:
+    """The egress entry point for a request body bound for an Ollama daemon.
+
+    A plain local model passes through untouched and cheaply. A model the
+    daemon relays to ollama.com (tag `cloud` / suffix `-cloud`) is sealed like
+    any cloud provider's payload, fail-closed: a gate that cannot verify
+    itself raises rather than letting the body out. Works on the native
+    ``/api/chat`` (``messages``) and ``/api/generate`` (``prompt``) shapes.
+    """
+    model = model or (str(body.get("model") or "") if isinstance(body, dict) else "")
+    if not is_cloud_model_tag(model):
+        return body
+    # The owner's spending cap holds for a model that runs in Ollama's cloud.
+    try:
+        from agent_friday.services import spend_guard as _sg
+    except ImportError:
+        _sg = None
+    if _sg is not None:
+        _sg.check(provider, what="%s cloud model call" % model, model=model)
+    body = _withhold_ollama_images(body, provider, model)
+    return gate_worker_payload(body, base_url="http://localhost", provider=provider,
+                               model=model)
+
+
+_IMAGE_PART_TYPES = ("image_url", "input_image", "image")
+
+
+def withhold_cloud_tagged_images(body, provider, model):
+    """Public name for the model_router seam: images out of a body bound for a
+    cloud-tagged model (native Ollama `images` and OpenAI-style image parts)."""
+    return _withhold_ollama_images(body, provider, model)
+
+
+def _withhold_ollama_images(body: dict[str, Any], provider: str, model: str) -> dict[str, Any]:
+    """Drop native Ollama ``images`` (base64 strings on the body or on a
+    message) from a body bound for a cloud-tagged model. No image gate exists
+    (a text classifier cannot judge pixels) and the text gate never read this
+    key, so the closed answer is to withhold; each drop is recorded."""
+    if not isinstance(body, dict):
+        return body
+    why = "cloud-tagged Ollama model %s; images cannot be gated" % model
+
+    def _drop(imgs, field: str) -> None:
+        if imgs:
+            n = sum(len(i) for i in imgs if isinstance(i, (str, bytes))) \
+                if isinstance(imgs, (list, tuple)) else 0
+            record_binary_egress(provider, field, action="withheld", reason=why, byte_len=n)
+
+    out = dict(body)
+    if "images" in out:
+        _drop(out.pop("images"), "images")
+    if isinstance(out.get("messages"), list):
+        msgs = []
+        for i, m in enumerate(out["messages"]):
+            if isinstance(m, dict) and "images" in m:
+                _drop(m["images"], "messages[%d].images" % i)
+                m = {k: v for k, v in m.items() if k != "images"}
+            if isinstance(m, dict) and isinstance(m.get("content"), list):
+                # OpenAI-style content parts: image_url / input_image / image.
+                parts = [p for p in m["content"]
+                         if not (isinstance(p, dict) and p.get("type") in _IMAGE_PART_TYPES)]
+                if len(parts) != len(m["content"]):
+                    record_binary_egress(provider, "messages[%d].content[image]" % i,
+                                         action="withheld", reason=why,
+                                         byte_len=len(json.dumps(m["content"])) - len(json.dumps(parts)))
+                    m = {**m, "content": parts}
+            msgs.append(m)
+        out["messages"] = msgs
+    return out
 
 
 def _scrub_all(obj, lookup: dict):
@@ -1518,6 +1609,7 @@ def seal_outbound(
     provider: str,
     log_path: Path | None = None,
     pii_lookup: dict | None = None,
+    model: str = "",
 ) -> dict[str, Any]:
     """Gate the assembled call payload before it leaves to a cloud provider.
 
@@ -1536,12 +1628,16 @@ def seal_outbound(
     address. That default is deliberate: forgetting the parameter costs
     legibility, never privacy.
 
+    On model: the model the payload is going to, when the caller knows it. A
+    cloud-tagged Ollama model (`glm-4.6:cloud`, `gpt-oss:120b-cloud`) is
+    relayed to ollama.com, so it is gated whatever the provider name says.
+
     Returns a new payload dict with sensitive content redacted or dropped.
     Local providers (Ollama / 'local') are returned unchanged.
 
     Default on uncertainty: REDACT — fail-closed, not fail-open.
     """
-    if not _is_cloud(provider):
+    if not _is_cloud(provider, model):
         return payload  # stays on-device, no gating needed
 
     _unrestricted = is_unrestricted_cloud()

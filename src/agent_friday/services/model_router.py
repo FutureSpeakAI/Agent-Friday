@@ -53,6 +53,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.services.local_only_guard import is_cloud_model_tag as _is_cloud_model_tag
 from agent_friday.core import (
     ANTHROPIC_MODEL_DEFAULT,
     FRIDAY_DIR,
@@ -99,7 +100,7 @@ def is_refusal(text) -> bool:
     return isinstance(text, RoutedRefusal)
 
 
-def _seal_or_block(payload, provider):
+def _seal_or_block(payload, provider, model=""):
     """Egress-gate wrapper shared by EVERY cloud provider call site (R3).
 
     Centralizing the wrapper means the fail-closed contract cannot drift between
@@ -122,7 +123,7 @@ def _seal_or_block(payload, provider):
     except ImportError:
         _sg = None
     if _sg is not None:
-        _sg.check(provider, what=f"{provider} model call")
+        _sg.check(provider, what=f"{provider} model call", model=model or "")
     # HARD CEILING, BEFORE THE GATE. Caching makes the common
     # case cheap; only a limit makes a catastrophe impossible, and these are
     # different guarantees. This is the one chokepoint every cloud provider
@@ -142,7 +143,8 @@ def _seal_or_block(payload, provider):
     try:
         from agent_friday.services import egress_gate as _eg
         operational = _eg.gate_operational()
-        sealed = _eg.seal_outbound(payload, provider) if operational else None
+        sealed = (_eg.seal_outbound(payload, provider, model=model or "")
+                  if operational else None)
     except Exception as _eg_err:
         _log.error("egress gate error — BLOCKING cloud send (fail-closed): %s", _eg_err)
         raise RuntimeError(
@@ -2025,8 +2027,14 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # Egress gate via the shared fail-closed wrapper (R3). A verified
             # LOCAL provider (LM Studio/vLLM on loopback/LAN) bypasses the seal
             # — data stays on-device — exactly like the Ollama path.
-            if not local_bypass:
-                payload = _seal_or_block(payload, pname)
+            # A local provider serving a model the daemon relays to ollama.com
+            # (`glm-4.6:cloud`) is not on-device: the model decides too.
+            if _is_cloud_model_tag(model):
+                # No image gate exists: a cloud-relayed model gets no image parts.
+                from agent_friday.services.egress_gate import withhold_cloud_tagged_images
+                payload = withhold_cloud_tagged_images(payload, pname, model)
+            if not local_bypass or _is_cloud_model_tag(model):
+                payload = _seal_or_block(payload, pname, model=model)
             # Streaming is a wire choice, not a contract change: the SSE
             # branch reassembles the SAME response dict, so the agentic loop,
             # metering and attribution below are byte-for-byte unaffected.
@@ -3764,6 +3772,11 @@ def _predict_route_provider(keywords='', workspace='', has_tools=False):
             "cloud_model": settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
             "is_background_task": True,
         }) or {}
+        # A local seat that is really an Ollama cloud model (`glm-4.6:cloud`)
+        # is not on-device: assemble the prompt as CLOUD so vault TIER_2/3 is
+        # gated out before it is built.
+        if _is_cloud_model_tag(route.get('model')):
+            return 'cloud'
         return route.get('provider', 'cloud')
     except Exception:
         return 'cloud'
@@ -3804,7 +3817,7 @@ def _payload_dump_dir():
 
 def _build_context_prompt(message, workspace='', vision_description=None, provider='cloud',
                           vault_control=None, vault_fallback='redact', pilot=None,
-                          tools_block=True):
+                          tools_block=True, model=''):
     """Build an enriched system prompt with all relevant context layers.
 
     When `vault_control` is provided, each context section is tagged with a
@@ -4168,7 +4181,8 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
         _rl.record_assembly(
             sections,
             turn_id=_rl.new_turn_id(),
-            destination_class=("local" if _is_local(provider) else provider),
+            destination_class=("cloud" if _is_cloud_model_tag(model)
+                               else "local" if _is_local(provider) else provider),
             gated=vault_control is not None,
             policy_source=_vault_policy().source,
         )
@@ -4181,7 +4195,7 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     if vault_control is not None:
         try:
             return vault_control.assemble_prompt(
-                sections, provider, fallback=vault_fallback
+                sections, provider, fallback=vault_fallback, model=model
             ), sources_consulted
         except VaultAccessDenied:
             raise

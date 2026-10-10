@@ -33,7 +33,7 @@ def test_adapter_routes_every_payload_through_the_gate(monkeypatch):
     """The gate is consulted on the way out — not bypassed."""
     seen = {}
 
-    def _spy(payload, *, base_url, provider="ollama", log_path=None):
+    def _spy(payload, *, base_url, provider="ollama", log_path=None, model=""):
         seen["payload"] = payload
         seen["base_url"] = base_url
         seen["provider"] = provider
@@ -112,11 +112,11 @@ def test_gate_seals_when_the_destination_is_not_on_device(monkeypatch):
     monkeypatch.setattr(egress_gate, "gate_operational", lambda: True)
     calls = {}
 
-    def _seal(payload, provider, log_path=None):
+    def _seal(payload, provider, log_path=None, model=""):
         calls["sealed"] = provider
         return dict(payload)
 
-    def _gate_text(text, provider, field="prompt", log_path=None):
+    def _gate_text(text, provider, field="prompt", log_path=None, model=""):
         calls["texted"] = field
         return "[[REDACTED]]"
 

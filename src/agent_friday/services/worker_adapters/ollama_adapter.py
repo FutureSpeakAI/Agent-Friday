@@ -120,7 +120,7 @@ class OllamaAdapter(BaseAdapter):
         try:
             from agent_friday.services.egress_gate import gate_worker_payload
             body = gate_worker_payload(body, base_url=_OLLAMA_BASE,
-                                       provider="ollama")
+                                       provider="ollama", model=model)
         except Exception as exc:
             with _JOBS_LOCK:
                 _JOBS[aid].update({

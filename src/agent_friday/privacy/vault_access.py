@@ -25,6 +25,8 @@ import threading
 import time
 from pathlib import Path
 
+from agent_friday.services.local_only_guard import is_cloud_model_tag
+
 
 class Tier:
     """Sensitivity tiers. Integer-valued so callers can compare/sort."""
@@ -36,6 +38,8 @@ class Tier:
 
 
 # Providers that run on-device and are therefore trusted with raw vault data.
+# A provider name alone is not enough: an Ollama model tagged `:cloud` or
+# `-cloud` is relayed to ollama.com, so can_access() also takes the model.
 LOCAL_PROVIDERS = {"ollama", "local"}
 
 
@@ -109,8 +113,15 @@ class VaultAccessControl:
 
     # ── Core policy ─────────────────────────────────────────────────────
 
-    def can_access(self, provider):
-        """True only when the provider is a local (on-device) model."""
+    def can_access(self, provider, model=""):
+        """True only when the provider is a local (on-device) model.
+
+        A cloud-tagged Ollama model (`glm-4.6:cloud`, `gpt-oss:120b-cloud`) is
+        served through the local daemon but runs in Ollama's cloud, so it gets
+        the cloud policy whatever the provider name says.
+        """
+        if is_cloud_model_tag(model):
+            return False
         return str(provider or "").lower() in LOCAL_PROVIDERS
 
     def classify(self, content, default=Tier.PUBLIC):
@@ -148,7 +159,7 @@ class VaultAccessControl:
         return default
 
     def gate_content(self, content, provider, tier=None, fallback="redact",
-                     detail="content"):
+                     detail="content", model=""):
         """Return content the given provider is allowed to see.
 
         - Local provider: always returns the raw content.
@@ -168,7 +179,7 @@ class VaultAccessControl:
         if tier is None:
             tier = self.classify(content)
 
-        if self.can_access(provider):
+        if self.can_access(provider, model):
             self._record(provider, tier, True, detail)
             return content
 
@@ -190,14 +201,14 @@ class VaultAccessControl:
         # TIER_2 → redacted placeholder so the model knows data exists but is withheld.
         return self._redact(content)
 
-    def assemble_prompt(self, sections, provider, fallback="redact"):
+    def assemble_prompt(self, sections, provider, fallback="redact", model=""):
         """Join tier-tagged prompt sections, gating by provider.
 
         `sections` is a list of (tier, text) tuples. Returns the gated prompt
         string. Local providers get everything; cloud providers get TIER_1 in
         full, TIER_2 as a placeholder, and TIER_3 dropped entirely.
         """
-        local = self.can_access(provider)
+        local = self.can_access(provider, model)
         out = []
         for tier, text in sections:
             if not text:
@@ -272,7 +283,7 @@ class VaultAccessControl:
     # ── Continuous Authorization (zero-trust per-action gate) ─────
 
     def check_action(self, provider, action, data, access_log_path=None,
-                     *, taint_key=None):
+                     *, taint_key=None, model=""):
         """Zero-trust per-action authorization check.
 
         Called before every tool call in the agent loop. Classifies the
@@ -286,7 +297,7 @@ class VaultAccessControl:
         allowed = True
         detail = "action_allowed"
 
-        if tier > Tier.PUBLIC and not self.can_access(provider):
+        if tier > Tier.PUBLIC and not self.can_access(provider, model):
             if str(action or "") in LOCAL_SINK_TOOLS:
                 # Provider-authored content flowing device-ward only — see
                 # the LOCAL_SINK_TOOLS note. Allowed, but logged as such.
@@ -358,17 +369,20 @@ class VaultAccessControl:
         return allowed, detail, tier
 
     def regate_on_provider_change(self, old_provider, new_provider, pending_data,
-                                   action="provider_switch", access_log_path=None):
+                                   action="provider_switch", access_log_path=None,
+                                   new_model=""):
         """Re-gate and redact when the provider changes mid-task.
 
         If the new provider is cloud and pending data is sensitive, the
         data is redacted. Returns (redacted_data, was_regated: bool).
         """
-        if str(old_provider or "").lower() == str(new_provider or "").lower():
+        if (str(old_provider or "").lower() == str(new_provider or "").lower()
+                and not is_cloud_model_tag(new_model)):
             return pending_data, False
 
         allowed, detail, tier = self.check_action(
-            new_provider, action, pending_data, access_log_path
+            new_provider, action, pending_data, access_log_path,
+            model=new_model
         )
 
         if allowed:
@@ -376,7 +390,8 @@ class VaultAccessControl:
 
         # New provider can't see this data — redact it
         if isinstance(pending_data, str):
-            redacted = self.gate_content(pending_data, new_provider, tier=tier)
+            redacted = self.gate_content(pending_data, new_provider, tier=tier,
+                                         model=new_model)
         else:
             redacted = "[VAULT-PROTECTED — provider changed; data redacted]"
 

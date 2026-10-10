@@ -1634,7 +1634,7 @@ def chat():
                           and isinstance(messages[-1].get('content'), str) else None)
         _last_user_text = _last_user_msg.get('content') if _last_user_msg is not None else None
 
-        def _prep_for(provider):
+        def _prep_for(provider, model=None):
             """The system prompt for `provider`, in two parts.
 
             HEAD is the same bytes on every turn of this conversation: the
@@ -1652,7 +1652,16 @@ def chat():
             repeated); on the cloud the cached prefix and the earlier turns'
             thinking stay valid. Only a turn with no plain-text user message
             keeps the tail in the system prompt.
+
+            `model` is the model this prompt is being prepared for; it
+            defaults to the route's current model. A seat that is an Ollama
+            cloud model (`glm-4.6:cloud`) is relayed off this PC, so its
+            prompt is built as CLOUD and the vault gate and PII scrub apply.
             """
+            _prep_model = str((model if model is not None else _route_info.get('model')) or '')
+            from agent_friday.services.local_only_guard import is_cloud_model_tag as _icmt
+            if _icmt(_prep_model):
+                provider = 'cloud'
             # Start from the user's own text: a previous local prep may have
             # wrapped it, and the cloud scrub below must see (and keep) the
             # scrubbed form, so the restore happens first and only here.
@@ -1663,6 +1672,7 @@ def chat():
                 message, workspace, vision_description,
                 provider=provider, vault_control=vc,
                 vault_fallback=_vault_cloud_fallback(),
+                model=_prep_model,
                 **({"pilot": _pilot} if _pilot is not None else {}),
             )
             from agent_friday.services.prompt_cache import VOLATILE_MARKER as _VM
@@ -1918,8 +1928,9 @@ def chat():
                     # matters for live/interactive use (an 8B 'thinking' model can take
                     # minutes per turn). A configured model_routing.local_model wins.
                     _cfg_local = (settings.get('model_routing') or {}).get('local_model')
+                    from agent_friday.services.local_only_guard import is_cloud_model_tag
                     _real = [m for m in _om_models
-                             if not str(m.get('name', '')).endswith(':cloud')] or _om_models
+                             if not is_cloud_model_tag(str(m.get('name', '')))] or _om_models
                     if _cfg_local and any(m.get('name') == _cfg_local for m in _real):
                         _local_pick = _cfg_local
                     else:
@@ -1934,7 +1945,7 @@ def chat():
                     _route_info['model'] = _local_pick
                     _route_info['is_local'] = True
                     # Rebuild the prompt for local (vault content allowed, no PII scrub).
-                    system_prompt, sources, pii_lookup = _prep_for('local')
+                    system_prompt, sources, pii_lookup = _prep_for('local', model=_local_pick)
             except Exception as _safe_e:
                 print(f"  [ROUTER] local safety-net routing failed: {_safe_e}")
 

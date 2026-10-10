@@ -292,6 +292,10 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     if json_mode:
         payload["format"] = "json"
     try:
+        # A cloud-tagged Ollama model is relayed to ollama.com: seal it like
+        # any cloud payload. A plain local model is returned untouched.
+        from agent_friday.services.egress_gate import gate_ollama_body
+        payload = gate_ollama_body(payload, model)
         r = requests.post(f"{ollama_url()}/api/chat", json=payload, timeout=timeout)
         if r.status_code >= 400:
             _log.warning("local_call HTTP %s from %s: %s", r.status_code, model,
