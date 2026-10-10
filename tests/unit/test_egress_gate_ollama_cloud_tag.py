@@ -162,6 +162,98 @@ class TestCatalogHidesBothSuffixForms:
         assert mc._live_ollama_models_uncached("http://x") == ["gemma3:12b", "llama3"]
 
 
+class TestVaultTiersAtAssembly:
+    """TIER_2/3 vault sections are decided at assembly, not left to the gate."""
+
+    def _sections(self):
+        from agent_friday.privacy.vault_access import Tier
+        return [(Tier.PUBLIC, "== NEWS ==\npublic-headline"),
+                (Tier.PRIVATE, "== CONTACTS ==\nprivate-contact-line"),
+                (Tier.SENSITIVE, "== RECORDS ==\nsensitive-record-line")]
+
+    def _vault(self):
+        from agent_friday.privacy.vault_access import VaultAccessControl
+        return VaultAccessControl(enabled=False)
+
+    @pytest.mark.parametrize("model", CLOUD_TAGGED)
+    def test_cloud_tagged_ollama_gets_the_cloud_policy(self, model):
+        out = self._vault().assemble_prompt(self._sections(), "ollama", model=model)
+        assert "public-headline" in out
+        assert "private-contact-line" not in out
+        assert "sensitive-record-line" not in out
+
+    def test_plain_local_model_sees_everything_as_before(self):
+        v = self._vault()
+        for kw in ({"model": LOCAL_MODEL}, {}):
+            out = v.assemble_prompt(self._sections(), "ollama", **kw)
+            assert "private-contact-line" in out and "sensitive-record-line" in out
+
+    @pytest.mark.parametrize("model", CLOUD_TAGGED)
+    def test_gate_content_and_zero_trust_check_follow_the_model(self, model):
+        v = self._vault()
+        assert v.can_access("ollama", model) is False
+        assert v.can_access("ollama", LOCAL_MODEL) is True
+        from agent_friday.privacy.vault_access import Tier
+        assert v.gate_content("x", "ollama", tier=Tier.SENSITIVE, model=model) == ""
+        assert v.gate_content("x", "ollama", tier=Tier.SENSITIVE, model=LOCAL_MODEL) == "x"
+
+    @pytest.mark.parametrize("model", CLOUD_TAGGED)
+    def test_predicted_provider_for_a_cloud_tagged_local_seat_is_cloud(self, monkeypatch, model):
+        import agent_friday.routing.model_router as rr
+        import agent_friday.services.model_router as sm
+
+        class _R:
+            def route(self, *a, **k):
+                return {"provider": "local", "model": model}
+        monkeypatch.setattr(rr, "get_router", lambda cfg: _R())
+        assert sm._predict_route_provider(keywords="hi", workspace="chat") == "cloud"
+
+    def test_predicted_provider_for_a_plain_local_seat_stays_local(self, monkeypatch):
+        import agent_friday.routing.model_router as rr
+        import agent_friday.services.model_router as sm
+
+        class _R:
+            def route(self, *a, **k):
+                return {"provider": "local", "model": LOCAL_MODEL}
+        monkeypatch.setattr(rr, "get_router", lambda cfg: _R())
+        assert sm._predict_route_provider(keywords="hi", workspace="chat") == "local"
+
+
+class TestSpendCapHoldsForCloudTaggedModels:
+    def test_cap_stops_a_cloud_tagged_ollama_call_but_not_a_local_one(self, monkeypatch):
+        from agent_friday.services import spend_guard as sg
+        monkeypatch.setattr(sg, "tripped",
+                            lambda: {"period": "daily", "spend": 5.0, "limit": 1.0})
+        monkeypatch.setattr(sg, "_record_halt", lambda *a, **k: None)
+        monkeypatch.setattr(sg, "_attribution", lambda: {})
+        sg.check("ollama", what="local call", model=LOCAL_MODEL)   # no raise
+        sg.check("ollama", what="local call")                      # no raise
+        for model in CLOUD_TAGGED:
+            with pytest.raises(sg.SpendCapReached):
+                sg.check("ollama", what="cloud call", model=model)
+
+    def test_the_ollama_seam_checks_the_cap_before_sending(self, monkeypatch):
+        from agent_friday.services import spend_guard as sg
+        monkeypatch.setattr(sg, "tripped",
+                            lambda: {"period": "daily", "spend": 5.0, "limit": 1.0})
+        monkeypatch.setattr(sg, "_record_halt", lambda *a, **k: None)
+        monkeypatch.setattr(sg, "_attribution", lambda: {})
+        with pytest.raises(sg.SpendCapReached):
+            gate_ollama_body({"model": "glm-4.6:cloud", "prompt": "hi"}, "glm-4.6:cloud")
+
+
+class TestRetrievalLedgerLabelsCloudRelayedAsCloud:
+    def test_destination_class(self, monkeypatch):
+        import agent_friday.services.model_router as sm
+        from agent_friday.services import retrieval_ledger as rl
+        seen = []
+        monkeypatch.setattr(rl, "record_assembly",
+                            lambda sections, **k: seen.append(k["destination_class"]))
+        for model, want in (("glm-4.6:cloud", "cloud"), (LOCAL_MODEL, "local")):
+            sm._build_context_prompt("hello", provider="ollama", model=model)
+            assert seen[-1] == want
+
+
 # ── Guard: every gate call in an Ollama path carries the model ───────────────
 
 _OLLAMA_FILES = [

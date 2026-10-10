@@ -14449,7 +14449,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     _zt_provider = (session_ctx or {}).get("provider", "cloud")
                     _zt_data = json.dumps(tu.input or {}, default=str)
                     _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
-                        _zt_provider, tu.name, _zt_data,
+                        _zt_provider, tu.name, _zt_data, model=model or "",
                         access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
                         # The provenance ledger for this turn, so the gate can
                         # tell a restaurant's published address from the owner's
@@ -15214,6 +15214,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 _zt_provider = (session_ctx or {}).get("provider", provider)
                 _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
                     _zt_provider, tname, json.dumps(targs, default=str),
+                    model=model or "",
                     access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
                     # See the other call site: the provenance ledger lets the
                     # gate exempt a business's published contact details.

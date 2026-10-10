@@ -1511,6 +1511,13 @@ def gate_ollama_body(body: dict[str, Any], model: str = "",
     model = model or (str(body.get("model") or "") if isinstance(body, dict) else "")
     if not is_cloud_model_tag(model):
         return body
+    # The owner's spending cap holds for a model that runs in Ollama's cloud.
+    try:
+        from agent_friday.services import spend_guard as _sg
+    except ImportError:
+        _sg = None
+    if _sg is not None:
+        _sg.check(provider, what="%s cloud model call" % model, model=model)
     return gate_worker_payload(body, base_url="http://localhost", provider=provider,
                                model=model)
 

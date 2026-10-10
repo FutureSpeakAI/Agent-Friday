@@ -1635,6 +1635,12 @@ def chat():
         _last_user_text = _last_user_msg.get('content') if _last_user_msg is not None else None
 
         def _prep_for(provider):
+            # A local seat that is an Ollama cloud model (`glm-4.6:cloud`) is
+            # relayed off this PC: build its prompt as CLOUD, so the vault
+            # gate and the PII scrub both apply.
+            from agent_friday.services.local_only_guard import is_cloud_model_tag as _icmt
+            if _icmt(_route_info.get('model')):
+                provider = 'cloud'
             """The system prompt for `provider`, in two parts.
 
             HEAD is the same bytes on every turn of this conversation: the
@@ -1663,6 +1669,7 @@ def chat():
                 message, workspace, vision_description,
                 provider=provider, vault_control=vc,
                 vault_fallback=_vault_cloud_fallback(),
+                model=str(_route_info.get('model') or ''),
                 **({"pilot": _pilot} if _pilot is not None else {}),
             )
             from agent_friday.services.prompt_cache import VOLATILE_MARKER as _VM
