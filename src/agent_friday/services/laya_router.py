@@ -397,6 +397,77 @@ def _with_args(tool, args, conf, layer, label, required, reason="") -> Route:
                  label=label, reason=reason)
 
 
+# ── follow-ups: a turn that drops its subject ───────────────────────────────
+
+#: A date or part of the day: the argument a calendar follow-up changes.
+_WHEN = (r"(?:today|tonight|tomorrow|yesterday|this (?:morning|afternoon|evening|week|weekend)|"
+         r"next (?:week|weekend|month)|the day after(?: tomorrow)?|"
+         r"(?:on |this |next )?(?:mon|tues|wednes|thurs|fri|satur|sun)day)")
+
+#: "What about tomorrow?", "and Friday?", "how about next week", a bare
+#: "tomorrow?": the subject is the previous turn's.
+_FOLLOW_WHEN = re.compile(
+    r"^(?:(?:and|so|okay|ok|well)[\s,]+)*(?:(?:what|how) about[\s,]+)?(?:for |on |in )?"
+    r"(?:the )?" + _WHEN + r"(?:\s+(?:then|too|as well|instead))?" + _END, re.I)
+
+#: "Any from Sarah?", "anything from the bank", "what about Sarah", "and from
+#: Sarah": a different filter on the same look-up.
+_FOLLOW_FROM = re.compile(
+    r"^(?:(?:and|so|okay|ok|well)[\s,]+)*(?:(?:what|how) about[\s,]+|(?:is there |are there |was there |were there |did i get |have i got )?"
+    r"(?:any|anything|something|one|ones|a message|an? e-?mail|messages?|e-?mails?)\s+)?(?:from|by)\s+" + _Q + _END, re.I)
+_FOLLOW_ABOUT = re.compile(
+    r"^(?:(?:and|so|okay|ok|well)[\s,]+)*(?:what|how) about\s+(?!you\b|that\b|it\b|this\b|me\b)" + _Q + _END, re.I)
+
+#: How many turns a tool stays "the previous one" for a follow-up.
+FOLLOW_UP_TURNS = 3
+
+_CALENDAR_TOOLS = frozenset({"query_calendar"})
+_EMAIL_TOOLS = frozenset({"check_email", "search_email"})
+_QUERY_TOOLS = frozenset({"search_files", "search_wiki", "search_past_conversations",
+                          "search_news", "search_web"})
+
+
+def looks_elliptical(text: str) -> bool:
+    """Whether `text` is a data follow-up that drops its subject (a date
+    alone, "any from <name>", "what about <thing>")."""
+    t = " ".join(str(text or "").split())
+    return bool(t and (_FOLLOW_WHEN.match(t) or _FOLLOW_FROM.match(t)))
+
+
+def follow_up(text: str, last: Optional[dict]) -> Optional[Route]:
+    """Route an elliptical follow-up with the previous turn's tool and the new
+    argument. None when the words are not a follow-up or the previous tool has
+    no follow-up reading (the caller then decides as for any other turn)."""
+    t = " ".join(str(text or "").split())
+    tool = (last or {}).get("tool")
+    if not t or not tool:
+        return None
+    if tool in _CALENDAR_TOOLS and _FOLLOW_WHEN.match(t):
+        label, template, required = TOOLS[tool]
+        return _with_args(tool, template(t), 0.9, "rule", label, required,
+                          reason="a follow-up on the calendar")
+    if tool in _EMAIL_TOOLS:
+        m = _FOLLOW_FROM.match(t) or _FOLLOW_ABOUT.match(t)
+        if m:
+            q = _clean_query(m.group("q"))
+            if q:
+                label, template, required = TOOLS["search_email"]
+                return _with_args("search_email", {"query": q}, 0.9, "rule", label, required,
+                                  reason="a follow-up on the email")
+    if tool in _QUERY_TOOLS:
+        m = _FOLLOW_ABOUT.match(t)
+        q = _clean_query(m.group("q")) if m else ""
+        if q:
+            label, template, required = TOOLS[tool]
+            if tool in ASK_BEFORE_GUESSING:
+                return Route("ask", tool=tool, confidence=0.9, layer="rule", label=label,
+                             question=_ASK_OUTWARD.get(tool, _ASK_WHICH),
+                             reason="a follow-up on an outward search is asked, never run")
+            return _with_args(tool, {"query": q}, 0.9, "rule", label, required,
+                              reason="a follow-up on the same look-up")
+    return None
+
+
 # ── tier 1: Laya 2's encoder ────────────────────────────────────────────────
 
 #: Seed sentences per class. Invented; never copied from an evaluation set
@@ -557,7 +628,8 @@ def _tier1(text: str) -> Route:
 
 def route(text: str, *, tools: Optional[Sequence[str]] = None,
           budget_ms: int = DEFAULT_BUDGET_MS, surface: str = "voice",
-          log: bool = True, pending_card: Optional[str] = None) -> Route:
+          log: bool = True, pending_card: Optional[str] = None,
+          last_route: Optional[dict] = None) -> Route:
     """Decide for one turn within ``budget_ms``. Never raises.
 
     ``tools`` is what this session holds; a tool it does not hold is never
@@ -580,6 +652,17 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
                       reason="a spoken answer to the waiting card")
     if r is None:
         r = _tier0(text) if text else Route("no_tool", reason="empty")
+    if text and (r is None or r.decision == "no_tool"):
+        # A turn that drops its subject is never the speaker's to answer from
+        # imagination: the previous turn's tool with the new argument, or, with
+        # no tool to carry, the deeper mind.
+        if looks_elliptical(text) or (last_route and _FOLLOW_ABOUT.match(text)):
+            fu = follow_up(text, last_route)
+            if fu is not None:
+                r = fu
+            elif looks_elliptical(text):
+                r = Route("defer", confidence=0.9, layer="rule",
+                          reason="a follow-up with no previous look-up to carry")
     if r is None:
         try:
             from agent_friday.services import laya2_encoder
