@@ -42,11 +42,15 @@ import math
 import re
 from datetime import datetime
 
-WORDS_PER_MINUTE = 150
+#: Words per spoken minute, as the renderer says them (podcast_render).
+WORDS_PER_MINUTE = 133
 MAX_OWN_WORD_REPEATS = 2
 RESTATE_OVERLAP = 0.6
 MIN_LEDE_WORDS = 14
-SOLO_NEWS_PER_MINUTE = 2.0
+#: The fewest stories a solo newscast covers per minute. Fewer stories, each
+#: told in depth: five minutes carries three or four (podcast_engine
+#: LENGTH_STORIES), not ten headlines.
+SOLO_NEWS_PER_MINUTE = 0.6
 
 _STOP = set("""
 a about above after again against all also am an and any are as at be because been before
@@ -330,6 +334,10 @@ def stories(docs: list[dict]) -> list[dict]:
         out.append({"sid": d["sid"], "title": d["title"], "url": d.get("url") or "",
                     "outlet": d.get("outlet") or "",
                     "text": (d.get("text") or "") + ("\n" + d["article"] if d.get("article") else ""),
+                    # The full-article passages the writer was given (podcast_engine.deepen).
+                    # They widen what a claim may rest on (support, attribution), never
+                    # what counts as the story's lede or its identity.
+                    "read": d.get("read") or "",
                     "entities": ents, "places": _places(body),
                     "keys": {_stem(w) for w in _content(d["title"])},
                     "safety": is_safety_story(d)})
@@ -370,9 +378,13 @@ def stories(docs: list[dict]) -> list[dict]:
 
 
 def _cluster_words(story_list: list[dict]) -> dict:
-    """{sid: every word in its cluster's items}."""
-    words = {s["sid"]: set(_words("%s %s" % (s["title"], s["text"])))
-             | {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", "%s %s" % (s["title"], s["text"]))}
+    """{sid: every word in its cluster's items}, with the full-article passages
+    the writer read: a fact the writer took from the article is the outlet's,
+    and one that is in neither the summary nor the article is no one's."""
+    def body(s):
+        return "%s %s %s" % (s["title"], s["text"], s.get("read") or "")
+    words = {s["sid"]: set(_words(body(s)))
+             | {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", body(s))}
              for s in story_list}
     return {s["sid"]: set().union(*[words[m] for m in s["cluster"]]) for s in story_list}
 
@@ -891,8 +903,8 @@ def density_problems(lines: list[dict], docs: list[dict]) -> list[dict]:
     need = min(len(items), math.ceil(SOLO_NEWS_PER_MINUTE * minutes))
     if len(covered) < need:
         return [_p("low_density", "%d stories and events in about %.0f minutes; a newscast this "
-                   "long covers at least %d. Cover more of the list, and spend fewer words on each."
-                   % (len(covered), minutes, need))]
+                   "long tells at least %d, each in depth. Tell another story from the list "
+                   "rather than saying more about one." % (len(covered), minutes, need))]
     return []
 
 
@@ -1227,7 +1239,9 @@ def states(sent: str, cluster_sids: set, story_list: list[dict], need: float = S
     for s in story_list:
         if s["sid"] not in cluster_sids:
             continue
-        srcs = [x for x in re.split(r"(?<=[.!?;])\s+|\n", "%s\n%s" % (s["title"], s["text"])) if x.strip()]
+        srcs = [x for x in re.split(r"(?<=[.!?;])\s+|\n",
+                                    "%s\n%s\n%s" % (s["title"], s["text"], s.get("read") or ""))
+                if x.strip()]
         for k in range(len(srcs)):
             for passage in (srcs[k], " ".join(srcs[k:k + 2])):
                 have = {_stem(w) for w in _content(passage)}
@@ -1239,6 +1253,14 @@ def states(sent: str, cluster_sids: set, story_list: list[dict], need: float = S
 def _odd_case(text: str) -> set:
     """Names written in mixed case ("cLaws", "iPhone"): names wherever they stand."""
     return {w.lower() for w in re.findall(r"\b[a-z]+[A-Z][A-Za-z]*\b", text or "")}
+
+
+_FIGURE_RE = re.compile(r"\$?\d[\d,.]*[%BbMmKk]?\b")
+
+
+def _figure_core(f: str) -> str:
+    """A figure's digits: "$4.2B" -> "4.2", "12%" -> "12", "1,200" -> "1200"."""
+    return re.sub(r"[^\d.]", "", f).strip(".")
 
 
 def support(sent: str, cited: list[str], story_list: list[dict], docs: list[dict],
@@ -1268,6 +1290,13 @@ def support(sent: str, cited: list[str], story_list: list[dict], docs: list[dict
     # Clock times are the calendar's, checked by `time_problems`.
     bare = _CLOCK_RE.sub(" ", sent)
     missing = sorted(f for f in _hard_facts(bare) | _odd_case(bare) if f not in pool)
+    # A figure is the same figure however it is written ("12%" and "12
+    # percent", "$4.2B" and "4.2 billion"), in a story or on the calendar.
+    figures = {_figure_core(w) for w in pool if re.search(r"\d", w)}
+    for d in docs:
+        if d.get("kind") == "event":
+            figures |= {_figure_core(f) for f in _FIGURE_RE.findall(d.get("text") or "")}
+    missing = [f for f in missing if not (re.search(r"\d", f) and _figure_core(f) in figures)]
     # Commentary that names an outlet aloud ("Example Wire reports that ...")
     # puts it in the outlet's mouth however it is cited: it cannot be hers.
     credits = bool(re.search(_ATTRIB_VERB, sent, re.I)) and any(
@@ -1301,6 +1330,14 @@ def _support_verdict(sent, cluster, words, docs, story_list, missing, content, s
                 own |= set(_words(d.get("text") or "")) | _odd_case(d.get("text") or "")
         if all(f in own for f in missing):
             return "own", missing
+        # A figure no source gives (not the summary, not the article the writer
+        # read, not her own notes) is invented, however familiar the words
+        # around it: only a name can be an abbreviation spelled out.
+        own_figures = {_figure_core(f) for d in docs if is_own_doc(d)
+                       for f in _FIGURE_RE.findall(d.get("text") or "")}
+        invented = [f for f in missing if re.search(r"\d", f) and _figure_core(f) not in own_figures]
+        if invented:
+            return "cut", invented
         if overlap >= 0.5:
             return "ok", []          # a name the source abbreviates, spelled out
         return "cut", missing

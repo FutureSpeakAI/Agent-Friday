@@ -36,8 +36,9 @@ def _squash(text):
 def test_an_interruption_stops_the_avatar_speaking_at_once(path):
     t = _squash(path.read_text(encoding="utf-8"))
     flush = t.split("flushPlaybackRef.current=", 1)[1][:2600]
-    assert "window._fridayHoloAmplitude=0;" in flush
-    assert "window._fridayMoodSignals.ttsActive=false;" in flush
+    # The voice's own source goes silent in the shared avatar signal (a podcast
+    # or recording still playing is not blanked by it).
+    assert "fridayAvatarSignal('voice',false,0);" in flush
     assert "v._ampQuietUntil=performance.now()+250;" in flush
     assert "setSystemMood('LISTENING')" in flush
     loop = t.split("const_voiceAmpLoop=()=>{", 1)[1][:900]

@@ -75,7 +75,7 @@ def podcasts_create():
         refs += found
     try:
         ep = pe.create(refs, title=str(data.get("title") or ""),
-                       length=str(data.get("length") or "standard"),
+                       length=str(data.get("length") or ""),   # "": the owner's setting
                        mode=str(data.get("mode") or "auto"),
                        instructions=str(data.get("instructions") or ""),
                        voice_engine=str(data.get("voice") or "local"), origin="user")

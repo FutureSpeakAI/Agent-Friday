@@ -1472,6 +1472,25 @@ def _check_background_idle_minutes(new_settings):
                         % (_bg.MIN_IDLE_MINUTES, _bg.MAX_IDLE_MINUTES, val))}
 
 
+def _check_podcast_length(new_settings):
+    """`podcasts.length` maps known shows to known lengths (podcast_engine
+    LENGTH_SHOWS, LENGTHS). An error dict, or None. An unknown value would be
+    read back as the recommended length, so the row would show one length
+    and the episodes run another."""
+    pod = (new_settings or {}).get("podcasts")
+    if not isinstance(pod, dict) or "length" not in pod:
+        return None
+    from agent_friday.services import podcast_engine as _pe
+    val = pod.get("length")
+    bad = (not isinstance(val, dict)
+           or any(k not in _pe.LENGTH_SHOWS or v not in _pe.LENGTHS for k, v in val.items()))
+    if not bad:
+        return None
+    return {"status": "error",
+            "message": ("podcasts.length maps a show (%s) to a length (%s); got %r"
+                        % (", ".join(_pe.LENGTH_SHOWS), ", ".join(_pe.LENGTHS), val))}
+
+
 def _check_local_only_seats(new_settings):
     """Refuse a cloud model on a seat declared local-only. 400, or None.
 
@@ -1693,6 +1712,10 @@ def api_settings():
         idle_error = _check_background_idle_minutes(new_settings)
         if idle_error is not None:
             return jsonify(idle_error), 400
+
+        podcast_error = _check_podcast_length(new_settings)
+        if podcast_error is not None:
+            return jsonify(podcast_error), 400
 
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting

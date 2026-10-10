@@ -35,6 +35,8 @@ def home(tmp_path, monkeypatch):
     SAVED["s"] = {"news_local_area": "Springfield, IL"}
     monkeypatch.setattr(core, "_load_settings", lambda: SAVED["s"])
     monkeypatch.setattr(weather, "current", lambda city, **k: None)
+    # A unit test never reads a real publisher's page (podcast_engine.deepen).
+    monkeypatch.setattr(pe, "article_text", lambda url: "")
     return tmp_path
 
 

@@ -89,6 +89,15 @@ nothing from your conversations.
 **Turn it off:** Turn categories off in the News workspace's preferences
 (`categories_enabled`). Clearing `news_priorities` does not stop the archiver.
 
+**Podcast articles:** When a News show's podcast episode is written, Friday
+reads the full article of each story the episode tells (two to six, by the
+show's length) from the publisher's page, so the episode is told from the
+reporting rather than the feed's summary. These are ordinary page requests
+through the same guarded fetcher; nothing about you or the episode is sent.
+To stop them, turn that show's episodes off (`podcasts.enabled_for_routines` in
+`settings.json`). See
+[Podcasts](podcasts.md#depth-each-story-from-its-full-article).
+
 ## 4. Web fonts and MediaPipe
 
 **Fonts.** The page's typefaces (Orbitron, Inter, JetBrains Mono) are declared

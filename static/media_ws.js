@@ -26,6 +26,15 @@
   const h = React.createElement;
   const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
+  // What Media can be opened to (index.html's fridayDeclareNav; queued, since
+  // this script loads first). `card` with `play` opens that card in Friday's
+  // media player (an episode or a recording), from second `at` when given.
+  (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['media', {
+    keys: ['view', 'card', 'play', 'at', 'q', 'kind', 'project', 'default_view', 'status'],
+    sections: [['library', 'Library'], ['board', 'Pipeline'], ['calendar', 'Calendar'], ['insights', 'Insights']]
+      .map(v => ({ id: v[0], label: v[1], key: 'view' }))
+  }]);
+
   function api(url, opts) {
     const tok = window.__FRIDAY_API_TOKEN || '';
     const headers = Object.assign({}, opts && opts.headers);
@@ -98,11 +107,16 @@
     return out.join(' · ');
   }
   const AV_KINDS = { audio: 1, music: 1, episode: 1, video: 1 };
+  // What Friday's own media player opens: an episode (by its id) or a recording (by its file).
+  function inPlayer(c) { return !!c && ((c.kind === 'episode' && !!c.source_ref) || ((c.kind === 'audio' || c.kind === 'music') && !!c.file_url)); }
+  function playButton(c, active) {
+    return inPlayer(c) ? h('button', { className: 'btn' + (active ? ' active' : ''), onClick: () => window.fridayPlayMedia && window.fridayPlayMedia(c) }, '\u25B6 Play in Friday\u2019s player') : null;
+  }
   // Play in place: one <audio> for the whole workspace, so two cards never talk over each other.
   const player = { el: null, id: null, listeners: new Set() };
   function playing(id) { return player.id === id && player.el && !player.el.paused; }
   function togglePlay(c) {
-    if (!player.el) { player.el = new Audio(); player.el.addEventListener('ended', () => { player.id = null; player.listeners.forEach(f => f()); }); }
+    if (!player.el) { player.el = new Audio(); if (window.fridayMediaAvatar) window.fridayMediaAvatar.attach(player.el); player.el.addEventListener('ended', () => { player.id = null; player.listeners.forEach(f => f()); }); }
     if (player.id === c.id) {
       if (player.el.paused) player.el.play().catch(() => {}); else player.el.pause();
     } else {
@@ -451,6 +465,7 @@
       h('div', { className: 'md-label' }, 'Actions'),
       h('div', { className: 'md-actions' },
         h('button', { className: 'btn active', onClick: () => onOpen(c) }, 'Open'),
+        playButton(c),
         onQuick ? h('button', { className: 'btn', onClick: () => onQuick(c) }, 'Quick look') : null,
         h('button', { className: 'btn', onClick: () => onAction('tab', c) }, 'Own tab'),
         h('button', { className: 'btn', onClick: () => onAction('turn', c) }, 'Turn this into…'),
@@ -600,6 +615,7 @@
     else if ((c.kind === 'image' || c.kind === 'imageset' || c.kind === 'chart') && c.file_url) stage = h('img', { key: c.id, src: c.file_url, alt: c.title });
     else if (full && full.body) stage = h('div', { className: 'text' }, full.body);
     else if (c.thumb) stage = h('img', { key: c.id, src: c.thumb, alt: c.title });
+    else if (inPlayer(c)) stage = h('div', { className: 'text' }, h('b', null, c.title), '\n\n', facts(c), d.snippet ? '\n\n' + d.snippet : '', c.transcript_excerpt ? '\n\n' + c.transcript_excerpt : '', '\n\n', playButton(c, true));
     else stage = h('div', { className: 'text' }, h('b', null, c.title), '\n\n', facts(c), d.snippet ? '\n\n' + d.snippet : '', '\n\nNo preview for this type; open it in its app.');
     const act = what => post('/api/media/' + encodeURIComponent(c.id) + '/' + what, {}).then(r => { if (r.status !== 'ok') toast(r.message || 'That did not work.'); });
     return h('div', { ref: keyboardRoot, className: 'md-ql', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Quick look: ' + c.title, onClick: e => { if (e.target === e.currentTarget) onClose(); } },
@@ -611,6 +627,7 @@
         h('span', null, facts(c)), h('span', null, '·'), h('span', null, d.model || c.maker || ''), d.prompt ? h('span', { title: d.prompt }, '· “' + d.prompt.slice(0, 80) + (d.prompt.length > 80 ? '…' : '') + '”') : null,
         h('span', { className: 'md-spacer' }),
         h('button', { className: 'btn active', onClick: () => onOpen(c) }, 'Open card'),
+        c.kind === 'episode' ? null : playButton(c),
         c.file_url ? h('button', { className: 'btn', onClick: () => act('open') }, 'Open in app') : null,
         c.file_url ? h('button', { className: 'btn', onClick: () => act('reveal') }, 'Show in folder') : null,
         h('span', { className: 'md-count' }, '← → move · Space or Esc close · Enter open')),
@@ -830,6 +847,15 @@
     useEffect(() => {
       const apply = t => {
         if (!t || (t.workspace && t.workspace !== 'media')) return;
+        if (t.card && t.play && t.q == null) {
+          // "play this one": Friday's media player, from where the words said so (at, in seconds)
+          json('/api/media/' + encodeURIComponent(t.card)).then(d => {
+            const c = (d && (d.card || d)) || null;
+            if (c && c.id && window.fridayPlayMedia) window.fridayPlayMedia(c, { at: t.at });
+          }).catch(() => {});
+          setCard(t.card);
+          return;
+        }
         if (t.card && t.play) {
           // "play the last podcast about X": the Library's quick look, started where the words were said
           setCard(null); setView('library');
@@ -860,6 +886,9 @@
     // opening it goes to the show's tab in News, never into Media's editor.
     const NEWS_TAB = { front_page: 'frontpage', briefing: 'briefings', weekly: 'weekly', editorial: 'editorial' };
     const openCard = useCallback(c => {
+      // A podcast or a recording opens in Friday's own media player, whichever
+      // view, button or key opened it; the card (or a routine's News tab) opens too.
+      if (window.fridayPlayMedia) window.fridayPlayMedia(c);
       const routine = c.origin === 'routine' && c.extra && c.extra.routine;
       if (routine && window.fridayNavigate) { window.fridayNavigate({ workspace: 'news', tab: NEWS_TAB[routine] || 'frontpage' }); return; }
       setCard(c.id);
