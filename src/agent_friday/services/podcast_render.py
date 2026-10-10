@@ -399,6 +399,20 @@ def release_speaker():
         _SPEAKER = None
 
 
+def release_tts_gpu():
+    """An episode is finished (or failed): end the speaking process and give
+    this process's cached CUDA blocks back, so the card holds none of the
+    render's memory when a voice call or the brain next needs it."""
+    try:
+        release_speaker()
+    finally:
+        try:
+            from agent_friday.services.hardware_profile import empty_cuda_cache
+            empty_cuda_cache()
+        except Exception:
+            pass
+
+
 # ── audio identity ──────────────────────────────────────────────────────────
 #
 # docs/brand/BRAND.md "Audio identity" defines the intro and outro slots: under

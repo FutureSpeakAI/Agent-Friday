@@ -2517,17 +2517,34 @@ class Arbiter:
                     resolve_display_reserve)
                 _reserve = resolve_display_reserve(self.profile)
                 _hd = vram_headroom(reserve_mib=_reserve["mib"])
-                if _hd.get("total_mib") and not _hd.get("ok"):
+                # A lease that PARKS seats is the cure for a short card, so
+                # what its own transition frees counts before it is refused:
+                # free + freed is the room the desktop has once it has run.
+                _freed = self._lease_frees_mib(kind)
+                _short = max(0, int(_hd.get("shortfall_mib", 0)) - _freed)
+                if _hd.get("total_mib") and not _hd.get("ok") and _short > 0:
                     self.state = STATE_DEFAULT
+                    _who = ""
+                    try:
+                        from agent_friday.services.hardware_profile import (
+                            foreign_vram_holders, holders_sentence)
+                        _who = holders_sentence(foreign_vram_holders())
+                    except Exception:
+                        pass
                     return {"ok": False, "error": (
                         "not enough VRAM left for the desktop: %d MiB free "
-                        "against a %d MiB display reserve (short by %d). "
+                        "%sagainst a %d MiB display reserve (short by %d). "
                         "Loading now risks the display driver, which is how "
-                        "a second monitor gets dropped. Free the "
-                        "card or close a display-heavy app first."
+                        "a second monitor gets dropped. %s"
                         % (_hd.get("free_mib", 0),
-                           _hd.get("display_reserve_mib", 0),
-                           _hd.get("shortfall_mib", 0))),
+                           ("(and %d MiB more once the main model is parked) "
+                            % _freed) if _freed else "",
+                           _hd.get("display_reserve_mib", 0), _short,
+                           (_who[:1].upper() + _who[1:] + ". Close "
+                            "what you can, or free the card, and try again."
+                            ) if _who else (
+                            "Free the card or close a display-heavy app "
+                            "first."))),
                         "refused": {"rule_id": "R-DISPLAY-RESERVE"}}
             except Exception:
                 pass
@@ -3431,6 +3448,58 @@ class Arbiter:
             return emb
         return None
 
+    def _displaceable_seats(self, for_voice_call=False):
+        """``[(role, seat)]`` that `_evict_pinned` stands down: the pinned GPU
+        seats (and a GPU embedder) the lease may take, R10 applied."""
+        keep_models = self._retained_models()
+        if for_voice_call:
+            brain = ((self.plan or {}).get("seats") or {}).get("interactive_brain") or {}
+            keep_models = keep_models - {brain.get("model_id")}
+        cands = [(r, s) for r, s in self._pinned_llama_seats()]
+        emb = self._gpu_embedder()
+        if emb is not None:
+            cands.append(("embedder", emb))
+        out = []
+        for role, seat in cands:
+            if role in rp.RETAINED_THROUGH_LEASE:
+                continue
+            if seat.get("model_id") in keep_models:
+                continue
+            if not str(seat.get("device", "")).startswith("gpu"):
+                continue
+            out.append((role, seat))
+        return out
+
+    #: Leases whose transition only frees the card: they park seats and load
+    #: nothing, so the VRAM those seats hold counts toward the display reserve.
+    _PARKING_LEASES = ("voice_call", "podcast_voice")
+
+    def _lease_frees_mib(self, kind) -> int:
+        """VRAM, in MiB, the `kind` lease's own transition gives back before it
+        loads anything: the resident seats it parks, once per model process.
+        0 for a lease that loads (it frees nothing the load does not retake)."""
+        if kind not in self._PARKING_LEASES:
+            return 0
+        try:
+            live = set(getattr(self.llama, "procs", {}) or {})
+            try:
+                ollama_live = dict(self.ollama.resident() or {})
+            except Exception:
+                ollama_live = {}
+            seen, total = set(), 0
+            for _role, seat in self._displaceable_seats(kind == "voice_call"):
+                mid = seat.get("model_id")
+                if mid in seen or (mid not in live and mid not in ollama_live):
+                    continue
+                seen.add(mid)
+                mib = max(int(seat.get("vram_mib") or 0),
+                          int(ollama_live.get(mid) or 0)
+                          if isinstance(ollama_live.get(mid), (int, float)) else 0)
+                total += max(0, mib)
+            return total
+        except Exception:
+            return 0
+
     def _evict_pinned(self, for_voice_call=False):
         """Stand down the seats a lease may take. R10 says which it may not.
 
@@ -3455,21 +3524,7 @@ class Arbiter:
         every other lease keeps R10 exactly.
         """
         displaced = []
-        keep_models = self._retained_models()
-        if for_voice_call:
-            brain = ((self.plan or {}).get("seats") or {}).get("interactive_brain") or {}
-            keep_models = keep_models - {brain.get("model_id")}
-        cands = [(r, s) for r, s in self._pinned_llama_seats()]
-        emb = self._gpu_embedder()
-        if emb is not None:
-            cands.append(("embedder", emb))
-        for role, seat in cands:
-            if role in rp.RETAINED_THROUGH_LEASE:
-                continue
-            if seat.get("model_id") in keep_models:
-                continue
-            if not str(seat.get("device", "")).startswith("gpu"):
-                continue
+        for role, seat in self._displaceable_seats(for_voice_call):
             t0 = time.time()
             self.llama.evict(seat["model_id"])
             self.ollama.evict(seat["model_id"])

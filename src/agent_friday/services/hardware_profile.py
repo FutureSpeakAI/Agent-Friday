@@ -1095,3 +1095,138 @@ def vram_headroom(gpu_index: int = 0, *, reserve_mib: int | None = None) -> dict
         "display_reserve_mib": reserve,
         "shortfall_mib": max(0, reserve - free),
     }
+
+
+def empty_cuda_cache() -> bool:
+    """Give this process's cached CUDA blocks back to the driver.
+
+    Only when torch is already imported: importing it just to empty a cache
+    would itself create the CUDA context this call exists to shrink. True when
+    a cache was emptied. Never raises.
+    """
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return False
+    try:
+        if not torch.cuda.is_available():
+            return False
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
+        torch.cuda.empty_cache()
+        return True
+    except Exception:
+        return False
+
+
+_GPU_PID_RE = None
+
+
+def _sum_counter_by_pid(rows: dict) -> dict:
+    """``{instance name: bytes}`` from the ``GPU Process Memory`` counter ->
+    ``{pid: MiB}``. Instances are ``pid_<pid>_luid_..._phys_<n>``; one process
+    can appear several times (one per adapter engine), so they are summed."""
+    import re
+    global _GPU_PID_RE
+    if _GPU_PID_RE is None:
+        _GPU_PID_RE = re.compile(r"^pid_(\d+)_", re.IGNORECASE)
+    out: dict = {}
+    for name, nbytes in (rows or {}).items():
+        m = _GPU_PID_RE.match(str(name))
+        if not m:
+            continue
+        try:
+            out[int(m.group(1))] = out.get(int(m.group(1)), 0) + int(nbytes) // (1024 * 1024)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _gpu_process_dedicated_mib() -> dict:
+    r"""``{pid: dedicated VRAM MiB}`` from the Windows ``\GPU Process
+    Memory(*)\Dedicated Usage`` counter. ``{}`` off Windows or on any failure."""
+    if sys.platform != "win32":
+        return {}
+    script = (
+        "Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage' "
+        "-ErrorAction SilentlyContinue | ForEach-Object { "
+        "$_.CounterSamples | ForEach-Object { "
+        "'{0}|{1}' -f $_.InstanceName, [int64]$_.CookedValue } }")
+    text = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                timeout=20)
+    rows: dict = {}
+    for line in (text or "").splitlines():
+        name, sep, val = line.strip().partition("|")
+        if sep:
+            try:
+                rows[name] = rows.get(name, 0) + int(val)
+            except ValueError:
+                continue
+    return _sum_counter_by_pid(rows)
+
+
+def _own_process_ids() -> set:
+    """This process and everything it started (model servers, voice workers)."""
+    ids = {os.getpid()}
+    try:
+        import psutil
+        ids |= {c.pid for c in psutil.Process().children(recursive=True)}
+    except Exception:
+        pass
+    return ids
+
+
+def _process_names(pids) -> dict:
+    out: dict = {}
+    try:
+        import psutil
+    except Exception:
+        return out
+    for pid in pids:
+        try:
+            out[pid] = psutil.Process(pid).name()
+        except Exception:
+            continue
+    return out
+
+
+def _friendly_program_name(exe: str) -> str:
+    name = str(exe or "").strip()
+    if name.lower().endswith(".exe"):
+        name = name[:-4]
+    return name[:1].upper() + name[1:] if name.islower() else name
+
+
+def foreign_vram_holders(limit: int = 3, min_mib: int = 64) -> list:
+    """The programs that are not Friday holding the most dedicated VRAM, as
+    ``[(name, MiB)]`` largest first. Best effort: ``[]`` when the counter is
+    unreadable or off Windows; never raises."""
+    try:
+        usage = _gpu_process_dedicated_mib() or {}
+        own = _own_process_ids()
+        foreign = {p: m for p, m in usage.items() if p not in own and m >= min_mib}
+        if not foreign:
+            return []
+        top = sorted(foreign.items(), key=lambda kv: -kv[1])
+        names = _process_names([p for p, _m in top])
+        merged: dict = {}
+        for pid, mib in top:
+            label = _friendly_program_name(names.get(pid) or "")
+            if label:
+                merged[label] = merged.get(label, 0) + mib
+        ranked = sorted(merged.items(), key=lambda kv: -kv[1])
+        return [(n, int(m)) for n, m in ranked[:max(1, int(limit))]]
+    except Exception:
+        return []
+
+
+def holders_sentence(holders) -> str:
+    """"Brave (540 MiB) and Claude (223 MiB) are using the card"; "" for none."""
+    parts = ["%s (%d MiB)" % (n, m) for n, m in (holders or [])]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return "%s is using the card" % parts[0]
+    return "%s and %s are using the card" % (", ".join(parts[:-1]), parts[-1])

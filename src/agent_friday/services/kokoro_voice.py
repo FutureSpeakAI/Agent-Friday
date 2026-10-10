@@ -548,6 +548,18 @@ class KokoroTTS:
             self._pipeline = pipeline
             self._device = device
 
+    def unload(self):
+        """Drop the pipeline (and the CUDA memory it holds); the next
+        ``load()`` builds it again."""
+        with self._lock:
+            self._pipeline = None
+            self._device = None
+        try:
+            from agent_friday.services.hardware_profile import empty_cuda_cache
+            empty_cuda_cache()
+        except Exception:
+            pass
+
     def _native_rate(self) -> int:
         return KOKORO_NATIVE_RATE
 

@@ -840,6 +840,32 @@ def release_gpu_engines(reason: str = "released") -> list:
     return [k for k, _e in items]
 
 
+def release_own_gpu(reason: str = "released") -> dict:
+    """Clear everything Friday's own server process holds on the card before a
+    call asks the arbiter to make room: the GPU ear and mouth workers, the
+    in-process local voice (Kokoro or NeMo on cuda, a GPU ear), and torch's
+    cached blocks. Best effort and never raises; a stage that cannot be
+    released is logged and the rest still are."""
+    out = {"workers": [], "in_process": [], "cache_emptied": False}
+    try:
+        out["workers"] = release_gpu_engines(reason)
+    except Exception as e:  # noqa: BLE001
+        log.warning("voice GPU workers not released (%s): %s", reason, e)
+    try:
+        from agent_friday.services import local_voice as _lv
+        eng = getattr(_lv, "_engine", None)     # never build one just to empty it
+        if eng is not None:
+            out["in_process"] = eng.release_gpu(reason)
+    except Exception as e:  # noqa: BLE001
+        log.warning("in-process local voice not released (%s): %s", reason, e)
+    try:
+        from agent_friday.services.hardware_profile import empty_cuda_cache
+        out["cache_emptied"] = empty_cuda_cache()
+    except Exception as e:  # noqa: BLE001
+        log.warning("CUDA cache not emptied (%s): %s", reason, e)
+    return out
+
+
 def release_all(reason: str = "released") -> None:
     with _HELD_LOCK:
         items = list(_HELD.items())

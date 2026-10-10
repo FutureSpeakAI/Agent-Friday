@@ -1684,6 +1684,17 @@ def _voice_lease_take(settings, holder, progress=None, granted=None):
         if not _VOICE_LEASE_HOLDERS:
             if progress:
                 progress("making room for the voice")
+            # Friday's own server process comes first: leftover GPU ear and
+            # mouth workers, an in-process GPU voice and torch's cached blocks
+            # all sit on the card beside the brain being parked.
+            try:
+                from agent_friday.services import voice_workers as _vw
+                cleared = _vw.release_own_gpu("starting a voice call")
+                if cleared.get("workers") or cleared.get("in_process"):
+                    _log.info("voice start: released Friday's own GPU holders: %s",
+                              cleared)
+            except Exception as e:  # noqa: BLE001
+                _log.warning("voice start: own GPU holders not released: %s", e)
             got = arb.grant("voice_call", ttl_s=_voice_lease_ttl(settings))
             if not got.get("ok"):
                 raise RuntimeError("the card could not be cleared for the voice: "

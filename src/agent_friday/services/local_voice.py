@@ -852,6 +852,31 @@ class LocalVoiceEngine:
         self._ready = False
         self._tier = tier
 
+    def release_gpu(self, reason=""):
+        """Let go of the ear and mouth this process holds ON THE CARD, so a
+        call that needs the room starts from what Friday itself is using. A
+        CPU ear or mouth is kept; the next load rebuilds what was dropped.
+        Returns ``["tts"]`` / ``["asr"]`` / both for what was released."""
+        dropped = []
+        for attr, label in (("_tts", "tts"), ("_asr", "asr")):
+            obj = getattr(self, attr, None)
+            if obj is None or getattr(obj, "_device", None) != "cuda":
+                continue
+            setattr(self, attr, None)
+            unload = getattr(obj, "unload", None)
+            if callable(unload):
+                try:
+                    unload()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("local voice %s did not unload (%s): %s",
+                                label, reason, e)
+            dropped.append(label)
+        if dropped:
+            self._ready = False
+            log.info("local voice: released the GPU %s (%s)",
+                     " and ".join(dropped), reason or "released")
+        return dropped
+
     def select_tier(self, tier):
         """Switch tiers if different from the loaded one (hot-swap, no restart)."""
         tier = "gpu" if str(tier).lower() in ("gpu", "local-gpu", "nemo") else "cpu"

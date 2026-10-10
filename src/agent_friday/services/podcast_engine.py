@@ -1506,7 +1506,7 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
                     _update(eid, progress={"stage": "speaking", "done": i, "of": n})
                     if i % 5 == 0 or i == n else None,
                     _orb(orb, "progress", ep, 0.4 + 0.5 * i / n)))
-        pcm, timings = _render() if speak is not None else _speak_with_room(eid, _render, len(ep["lines"]))
+        pcm, timings = _speak_then_release(eid, _render, speak, len(ep["lines"]))
         d = _dir(eid)
         wav = d / "audio.wav"
         render.write_wav(pcm, wav)
@@ -1576,6 +1576,15 @@ def _room_to_speak() -> bool:
         return True
     head = render.commit_headroom_mb()
     return head is None or head >= VOICE_HEADROOM_MB
+
+
+def _speak_then_release(eid: str, run, speak, n_lines: int):
+    """Speak the episode; whatever the outcome, the speaking voice leaves the
+    card (its process ends, cached CUDA blocks go back)."""
+    try:
+        return run() if speak is not None else _speak_with_room(eid, run, n_lines)
+    finally:
+        render.release_tts_gpu()
 
 
 def _speak_with_room(eid: str, run, n_lines: int):
