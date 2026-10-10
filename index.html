@@ -17742,7 +17742,11 @@ function PodcastPlayer() {
     }
     if (tap.ctx && tap.ctx.state === 'suspended') tap.ctx.resume().catch(() => {});
     let raf = 0;
-    const loop = () => {
+    // Whose line is playing follows the audio, not the frame rate: the scene can
+    // draw at two or three frames a second on a weak GPU, so the state is also
+    // refreshed by a timer and by the audio's own progress, and a co-host's line
+    // never keeps Friday's speaking state for the length of a slow frame.
+    const tick = () => {
       const lns = (epRef.current && epRef.current.lines) || [];
       let ln = null;
       for (const l of lns) { if ((l.start || 0) <= a.currentTime + 0.05) ln = l; else break; }
@@ -17757,11 +17761,18 @@ function PodcastPlayer() {
       window._fridayHoloAmplitude = amp;
       if (!window._fridayMoodSignals) window._fridayMoodSignals = {};
       window._fridayMoodSignals.ttsActive = hers;
+    };
+    const loop = () => {
+      tick();
       raf = requestAnimationFrame(loop);
     };
     loop();
+    const iv = setInterval(tick, 100);
+    a.addEventListener('timeupdate', tick);
     return () => {
       cancelAnimationFrame(raf);
+      clearInterval(iv);
+      a.removeEventListener('timeupdate', tick);
       window._fridayHoloAmplitude = 0;
       if (window._fridayMoodSignals) window._fridayMoodSignals.ttsActive = false;
     };

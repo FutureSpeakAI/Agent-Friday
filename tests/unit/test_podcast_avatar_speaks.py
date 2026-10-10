@@ -137,3 +137,26 @@ def test_stopping_the_episode_puts_the_avatar_back_at_rest(page):
     st = page.evaluate("() => ({ amp: window._fridayHoloAmplitude || 0,"
                        " tts: !!(window._fridayMoodSignals && window._fridayMoodSignals.ttsActive) })")
     assert st == {"amp": 0, "tts": False}
+
+
+def test_the_co_host_s_line_clears_her_state_even_when_frames_are_slow(page):
+    """The scene can render at two or three frames a second on a weak GPU (the
+    software renderer here does). Whose line is playing follows the audio, not
+    the frame rate: with animation frames held back for seconds, the co-host's
+    line still never shows Friday speaking."""
+    page.evaluate("() => window.dispatchEvent(new CustomEvent('friday-podcast', {detail: {op: 'seek', t: 0.3}}))")
+    page.evaluate("() => window.dispatchEvent(new CustomEvent('friday-podcast', {detail: {op: 'resume'}}))")
+    page.wait_for_function("() => window._fridayMoodSignals && window._fridayMoodSignals.ttsActive", timeout=10000)
+    page.evaluate("() => { window.__realRAF = window.requestAnimationFrame;"
+                  " window.requestAnimationFrame = cb => setTimeout(() => window.__realRAF(cb), 5000); }")
+    try:
+        page.wait_for_function("() => { const a = document.querySelector('[aria-label=\"Podcast player\"] audio');"
+                               " return a && a.currentTime > 2.9; }", timeout=20000)
+        s = page.evaluate(SAMPLE, [1000])
+    finally:
+        page.evaluate("() => { if (window.__realRAF) window.requestAnimationFrame = window.__realRAF; }")
+        page.evaluate("() => window.dispatchEvent(new CustomEvent('friday-podcast', {detail: {op: 'pause'}}))")
+    cohost = [x for x in s if 2.9 < x["t"] < 4.5 and not x["paused"]]
+    assert cohost, "the co-host's line played: %r" % s[::5]
+    assert not any(x["tts"] for x in cohost) and max(x["amp"] for x in cohost) == 0, \
+        "the co-host's line is not Friday's state, however slowly the scene draws: %r" % cohost[::5]
