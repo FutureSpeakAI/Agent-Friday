@@ -744,6 +744,27 @@ def _trace_outgoing(where, pname, model, payload, extra=None):
 from agent_friday.services import turn_budget as _tbud
 
 
+_LOCAL_QUEUE_FAULT_LOGGED = []
+
+
+def _local_queue_checkpoint(model):
+    """The Local AI queue's choke point (services/background_gate), failing
+    OPEN: a fault in the queue itself is logged once and the request goes
+    ahead as it did before the queue existed. A cancellation from the queue
+    is not a fault; it stops the job."""
+    from agent_friday.services import background_gate as _bg
+    try:
+        _bg.before_local_model_call(model)
+    except _bg.JobCancelled:
+        raise
+    except Exception as e:  # noqa: BLE001
+        if not _LOCAL_QUEUE_FAULT_LOGGED:
+            _LOCAL_QUEUE_FAULT_LOGGED.append(True)
+            logging.getLogger("friday.local_queue").warning(
+                "Local AI queue check failed; the request goes ahead: %s: %s",
+                type(e).__name__, e)
+
+
 def _served_ctx(model):
     """The window the running seat will actually accept.
 
@@ -990,6 +1011,9 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
             repeat the call that just failed, which is what turned a 19-minute
             turn into no answer at all.
             """
+            # The Local AI queue's choke point (services/background_gate),
+            # as on the llama-server path in _call_openai.
+            _local_queue_checkpoint(model)
             _t0 = _time.time()
             _mt = int(_over.get("max_tokens") or max_tokens or 0) or None
             _think = False if _over.get("no_reasoning") else None
@@ -2041,6 +2065,12 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                         encoding="utf-8")
                 except Exception:
                     pass
+            # The Local AI queue's choke point: a background job's request to
+            # a local seat waits here, before it is sent, while an interactive
+            # turn is active (services/background_gate). Interactive turns
+            # pass straight through.
+            if local_bypass:
+                _local_queue_checkpoint(model)
             _t0 = _time.time()
             def _post_current(**request_kwargs):
                 if (session_ctx or {}).get("crew_agent_id"):

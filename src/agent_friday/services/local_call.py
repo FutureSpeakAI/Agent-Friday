@@ -253,12 +253,26 @@ def log_dispatch_table(models, expect_up=None) -> list:
 def call(system: str, user: str, model: str, *, json_mode: bool = False,
          max_tokens: int = 2048, timeout: int = DEFAULT_TIMEOUT_S,
          num_ctx: int | None = None) -> str:
-    """One local completion. Returns text ("" on failure — never raises).
+    """One local completion. Returns text ("" on failure). Never raises, except
+    background_gate.JobCancelled when the job was cancelled from the queue.
 
     json_mode uses Ollama's native constrained decoding, which is a far
     stronger guarantee than asking a small model nicely for JSON.
     """
     import requests
+
+    # The Local AI queue's choke point (services/background_gate): inside a
+    # background job this waits while an interactive turn is active. A job
+    # cancelled from the queue stops here (the one exception this function
+    # lets through, so a cancelled job never publishes an empty result); a
+    # fault in the queue itself fails open.
+    from agent_friday.services import background_gate as _bg
+    try:
+        _bg.before_local_model_call(model)
+    except _bg.JobCancelled:
+        raise
+    except Exception:
+        pass
 
     base = seat_endpoint(model)
     if base:

@@ -712,10 +712,13 @@ def _live_ollama_has(prov: dict, model_id: str) -> bool:
         # request makes. It reads the daemon's last known state and never waits
         # on a connection: an unanswered probe reads as "not there" until it
         # finishes, and the next resolution sees the real answer.
+        # The same holds for the model list: the cached one, refreshed behind
+        # the caller (peek_models), never a fetch on this thread.
         peek = getattr(mgr, "peek_available", None)
         if not (peek() if peek is not None else mgr.is_available()):
             return False
-        for m in (mgr.list_models() or []):
+        peek_models = getattr(mgr, "peek_models", None)
+        for m in ((peek_models() if peek_models is not None else mgr.list_models()) or []):
             name = m.get("name") if isinstance(m, dict) else str(m)
             if name == model_id:
                 return True

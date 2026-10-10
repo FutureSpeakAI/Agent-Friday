@@ -104,6 +104,10 @@ def _meetings_status_url() -> str:
     return _server_url() + "/api/meetings/status"
 
 
+def _local_queue_url() -> str:
+    return _server_url() + "/api/local-queue"
+
+
 TRAY_TITLE = brand.PRODUCT_LOCKUP
 
 
@@ -600,11 +604,21 @@ class FridayTray:
         except Exception:
             return {}
 
+    def _local_queue(self) -> dict:
+        try:
+            import json
+            with urllib.request.urlopen(_local_queue_url(), timeout=2.0) as r:
+                return json.load(r) or {}
+        except Exception:
+            return {}
+
     def _update_meeting_title(self) -> None:
         """While a meeting is recording, the tray tooltip says so, with the time.
 
         The UI shows the same thing as a red dot; this is the one place that
-        stays visible when every Friday window is closed.
+        stays visible when every Friday window is closed. Otherwise, while
+        background work waits for the local model, the tooltip says that
+        ("Local AI: 3 tasks queued · next: ... · waits for idle").
         """
         if self.icon is None:
             return
@@ -613,6 +627,12 @@ class FridayTray:
             tip = tray_tooltip(self._meeting_status()) if self.running else None
         except Exception:
             tip = None
+        if not tip and self.running:
+            try:
+                from agent_friday.services.seat_supervisor import tray_tooltip as _queue_tip
+                tip = _queue_tip(self._local_queue())
+            except Exception:
+                tip = None
         title = tip or TRAY_TITLE
         try:
             if self.icon.title != title:

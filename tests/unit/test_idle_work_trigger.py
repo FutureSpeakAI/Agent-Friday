@@ -24,6 +24,10 @@ def sched(monkeypatch):
     # Away, nothing running, no lease, not stood down: the "can run" baseline.
     from agent_friday.services import work_queue
     monkeypatch.setattr(work_queue, "idle_seconds", lambda: 9999.0)
+    # Idle is the minimum of Friday's own signal and the OS last-input time
+    # (services/background_gate); the OS reads as away too in the baseline.
+    from agent_friday.services import background_gate
+    monkeypatch.setattr(background_gate, "OS_IDLE_READER", lambda: 9999.0)
     monkeypatch.setattr(scheduler, "_RUNNING", set(), raising=False)
     import agent_friday.services.residency_arbiter as ra
     monkeypatch.setattr(ra, "exclusive_lease", lambda: None)

@@ -174,6 +174,7 @@ TOOLS: Dict[str, Tuple[str, Callable, Optional[str]]] = {
     "search_files": ("looking through your files", _query, "query"),
     "search_wiki": ("checking your notes", _query, "query"),
     "search_past_conversations": ("looking back through our conversations", _query, "query"),
+    "queue_status": ("checking the local AI queue", _no_args, None),
 }
 
 #: Tools that send the owner's words to an outside provider: tier 1 asks
@@ -272,6 +273,10 @@ _NO = re.compile(r"^(?:friday,?\s+)?(?:no|nope|don'?t|do not|decline|deny|cancel
 
 #: (tool, pattern). First match wins; order is most specific first.
 _RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
+    # "What's in your queue?", "what are you doing in the background?"
+    ("queue_status",
+     r"\b(?:what(?:'s| is)? (?:in|on) (?:your|the) (?:local )?(?:ai )?(?:work )?queue|"
+     r"what(?:'s| is| are)? (?:you )?(?:doing|working on|running) in the background)\b"),
     ("search_past_conversations",
      r"\b(?:what did (?:i|we|you) (?:say|tell (?:me|you)|talk about|discuss|mention)|"
      r"(?:what )?(?:did|have) we (?:talk|discuss|speak)|remind me what we (?:said|talked about|discussed)|"
