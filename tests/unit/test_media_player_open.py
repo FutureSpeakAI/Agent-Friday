@@ -235,9 +235,6 @@ def test_opening_a_card_in_media_opens_the_player(page, card_id, title, how):
     else:
         _card_title(page, card_id).dblclick()
     _assert_player_on_screen(page, title)
-    if card_id == "ep-1":
-        page.wait_for_timeout(400)
-        _shot(page, "media_open_player.png")
     _close_player(page)
 
 
@@ -283,8 +280,6 @@ def test_news_listen_shows_the_player_while_the_audio_plays(page):
     _open(page, "news", "button:has-text('Listen to Front Page')")
     page.get_by_role("button", name="Listen to Front Page").click()
     _assert_player_on_screen(page, "Test episode")
-    page.wait_for_timeout(300)
-    _shot(page, "news_player_visible.png")
     p = page.locator(PLAYER)
     p.get_by_role("button", name="Pause", exact=True).click()
     p.get_by_role("button", name="Play", exact=True).wait_for(state="visible", timeout=3000)
@@ -292,6 +287,58 @@ def test_news_listen_shows_the_player_while_the_audio_plays(page):
     p.get_by_role("button", name="Pause", exact=True).wait_for(state="visible", timeout=3000)
     p.get_by_role("button", name="Close the player").click()
     page.wait_for_selector(PLAYER, state="detached", timeout=5000)
+
+
+HEADER_HITS = """() => {
+  const p = document.querySelector('[aria-label="Podcast player"]').getBoundingClientRect();
+  const roots = [...document.querySelectorAll('.ws-custom-root')].filter(r => r.getBoundingClientRect().width > 0);
+  const out = [];
+  roots.forEach(root => {
+    const rr = root.getBoundingClientRect();
+    const mid = document.elementFromPoint(rr.left + 40, rr.top + 40);
+    if (!mid || !root.contains(mid)) return;   // not the workspace in front
+    root.querySelectorAll('button, a, input, select, [role=tab]').forEach(b => {
+      const r = b.getBoundingClientRect();
+      if (!r.width || !r.height || getComputedStyle(b).visibility === 'hidden') return;
+      // the header and the toolbar rows: the first 120px of the workspace root
+      if (r.top > rr.top + 120) return;
+      // only controls on screen: another workspace left behind is not the active one
+      const at = document.elementFromPoint(Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1), Math.min(Math.max(r.top + r.height / 2, 0), innerHeight - 1));
+      if (at && !b.contains(at) && !at.contains(b) && !document.querySelector('[aria-label="Podcast player"]').contains(at)) return;
+      const hit = r.left < p.right && r.right > p.left && r.top < p.bottom && r.bottom > p.top;
+      if (hit) out.push(Math.round(r.top - rr.top) + ' ' + (b.innerText || b.getAttribute('aria-label') || b.tagName).trim().slice(0, 40));
+    });
+  });
+  return out; }"""
+
+
+def test_the_player_never_covers_the_workspace_header_or_toolbar(page):
+    # News: the Listen button itself is in the toolbar.
+    _entry_news(page)
+    _assert_player_on_screen(page)
+    assert page.evaluate(HEADER_HITS) == [], "the player covers News controls"
+    page.wait_for_timeout(300)
+    _shot(page, "news_player_visible.png")
+    _close_player(page)
+    # Media: an opened episode.
+    _entry_media_episode(page)
+    _assert_player_on_screen(page)
+    assert page.evaluate(HEADER_HITS) == [], "the player covers Media controls"
+    page.wait_for_timeout(300)
+    _shot(page, "media_open_player.png")
+    _close_player(page)
+
+
+def test_news_listen_chip_and_nav_episode_use_the_player(page):
+    """The other ways into News audio: the episode chip beside the Front Page
+    toolbar, and an episode named in a News deep link."""
+    _open(page, "news", "button:has-text('Listen to Front Page')")
+    page.get_by_role("button", name=re.compile(r"Listen to this run")).click()
+    _assert_player_on_screen(page, "Test episode")
+    _close_player(page)
+    page.evaluate("id => window.fridayNavigate({ workspace: 'news', tab: 'frontpage', episode: id })", EID)
+    page.wait_for_selector(PLAYER, state="visible", timeout=20000)
+    _close_player(page)
 
 
 # ── The avatar follows the playing audio ──────────────────────────────────────

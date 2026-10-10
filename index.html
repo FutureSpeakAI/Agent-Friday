@@ -17874,6 +17874,22 @@ function PodcastPlayer() {
       return !!ln && (ln.speaker === 'a' || ((hostsNow[ln.speaker] || {}).name || '') === herName);
     } });
   }, [ep && ep.id, !!popped]);
+  // Resting in the bottom corner, the player sits above the selection bar when
+  // the workspace shows one (the bar can wrap, so its top is measured).
+  useEffect(() => {
+    if (!ep) return undefined;
+    const root = document.documentElement;
+    const lift = () => {
+      const bar = document.querySelector('.fx-selection-bar');
+      const r = bar && bar.getBoundingClientRect();
+      if (r && r.width > 0 && r.height > 0) root.style.setProperty('--friday-podcast-lift', Math.ceil(window.innerHeight - r.top + 8) + 'px');
+      else root.style.removeProperty('--friday-podcast-lift');
+    };
+    lift();
+    const iv = setInterval(lift, 400);
+    window.addEventListener('resize', lift);
+    return () => { clearInterval(iv); window.removeEventListener('resize', lift); root.style.removeProperty('--friday-podcast-lift'); };
+  }, [!!ep]);
   if (!ep) return null;
   const lines = ep.lines || [];
   const total = ep.duration_s || dur;
@@ -17950,7 +17966,7 @@ function PodcastPlayer() {
   const nowSources = (line && line.cites ? line.cites : []).map(c => srcById[c]).filter(Boolean);
   const timeline = podcastSourceTimeline(ep);
   const frame = h('div', {
-    className: 'friday-podcast-player' + (popped ? ' is-popped' : ''),
+    className: 'friday-podcast-player' + (popped ? ' is-popped' : '') + (pos ? ' is-placed' : ''),
     role: 'region', 'aria-label': 'Podcast player',
     style: Object.assign({
       '--friday-shared-x': pos ? pos.x + 'px' : undefined,

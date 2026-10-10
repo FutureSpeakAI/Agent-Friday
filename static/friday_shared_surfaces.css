@@ -381,6 +381,10 @@ body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spat
 }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.friday-workspace-studio, .thread-panel) { height: var(--fs-float-height) !important; }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-podcast-player:not(.is-popped) { overflow: auto; overscroll-behavior: contain; }
+/* Until the owner has dragged it somewhere, the player rests in the bottom corner of the
+ * work area, above the selection bar (--friday-podcast-lift, set by the player), so it never
+ * covers the workspace's header, toolbar or the bar. */
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-podcast-player:not(.is-popped):not(.is-placed) { top: auto !important; bottom: max(calc(var(--fs-work-bottom) + 8px), var(--friday-podcast-lift, 0px)) !important; }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.friday-studio-head, .friday-studio-composer, .thread-header) { flex-wrap: wrap; }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .friday-studio-head > span:last-of-type { min-width: 0; overflow-wrap: anywhere; }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .camera-pip {
