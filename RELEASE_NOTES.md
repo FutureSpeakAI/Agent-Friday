@@ -25,7 +25,15 @@ and Qwen3 1.7B stay available as alternatives.
   judgement, decides whether a request needs a look-up (calendar, email, files,
   the wiki, past conversations, news or the web) or one of Friday's own actions
   (open a workspace, play a podcast or media, voice preferences, stop a running
-  task, undo). Friday runs it, and the small model only speaks the answer.
+  task, undo). Friday runs it. Calendar events, email, files, news and web
+  results are read to you straight from what came back ("Today you have Standup
+  at 9 AM and Dinner with Sam at 7 PM."), and a failed or empty look-up gets a
+  plain sentence ("I couldn't check your email just now."). The small model only
+  phrases free text, such as your notes, in one short paragraph.
+- **Room for the voice.** When the voice models and the deep thinker cannot
+  share the graphics card, Friday pauses the deep thinker for the call so the
+  voice runs on the card. Work you hand to the deeper mind during the call
+  waits until the call ends.
 - **Safety rules.** Anything that changes the world outside Friday (send,
   reply, delete, create an event) goes to the full agent and through the usual
   approval card. A web or news search that Friday guessed at asks before it
