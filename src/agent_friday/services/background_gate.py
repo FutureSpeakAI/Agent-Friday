@@ -251,6 +251,13 @@ def block_reason(record: Dict[str, Any]) -> str:
     """
     if not record.get("seat_is_local"):
         return ""
+    if record.get("foreground"):
+        # Work the person (or a turn of theirs) is waiting on, launched from a
+        # workspace button or from a tool inside a chat turn
+        # (services/visible_jobs). It queues behind other jobs for the seat and
+        # reports its place, but never waits for the interactive turn that may
+        # itself be waiting on it, and never for idle.
+        return ""
     kinds = interactive_kinds()
     if any(k != KIND_VOICE_CALL for k in kinds):
         return REASON_INTERACTIVE
@@ -328,6 +335,10 @@ def before_local_model_call(model: Optional[str] = None) -> None:
     if job.get("pending"):
         seat = "local/" + (str(model).strip() if model else "default")
         job_id = sup.admit_inline({
+            # A workspace job (services/visible_jobs) queues under its own task
+            # id, so the queue row and the task card are one thing.
+            "id": job.get("task_id"),
+            "foreground": bool(job.get("foreground")),
             "kind": job.get("kind"), "job_key": job.get("key"),
             "label": job.get("label"), "deferrable": job.get("deferrable"),
             "seat": seat, "seat_is_local": True,

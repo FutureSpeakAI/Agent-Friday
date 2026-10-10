@@ -51,6 +51,7 @@ from agent_friday.services.model_router import (
 )  # noqa: E501
 from agent_friday.routes._errors import ExceptionText, api_error, error_text, public_result
 from agent_friday.user_errors import exception_text
+from agent_friday.services.visible_jobs import visible_job
 
 messages_bp = Blueprint('messages', __name__)
 
@@ -549,6 +550,7 @@ def api_messages_restore():
 
 
 @messages_bp.route('/api/messages/draft', methods=['POST'])
+@visible_job('Message draft', kind='message_draft', workspace='messages')
 def api_messages_draft():
     """Generate a reply draft with Claude, grounded in vault/wiki context.
     Body: {id?, sender?, subject?, snippet?, body?, instructions?}."""

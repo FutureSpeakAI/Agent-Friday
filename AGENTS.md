@@ -64,10 +64,23 @@ python scripts/check_settings_readers.py
 python scripts/check_stale_model_names.py
 python scripts/check_brand_tokens.py
 python scripts/check_trust_in_governance.py
+python scripts/check_visible_jobs.py
 ```
 
 The pre-commit hook runs the scanner and these guards; do not bypass it with
 `--no-verify`.
+
+## Model work is always visible
+
+Whatever launches a model job (a workspace button, a scheduler tick, a
+background thread), the person sees it on the desktop: the model or seat doing
+it by name, its steps, its reasoning trace, its place in the Local AI queue.
+The door is `services/visible_jobs.visible_job` (see
+[docs/development/visible-jobs.md](docs/development/visible-jobs.md)); a new
+launch point goes behind it, and `scripts/check_visible_jobs.py` fails the
+commit when one does not. The allow-list in that script is for interactive
+turns that already have their own surface, with the reason written beside each
+entry; it is not a place to park a job.
 
 ## Sensitive subsystems
 

@@ -20,6 +20,7 @@
 - [ ] `python scripts/check_stale_model_names.py`
 - [ ] `python scripts/check_brand_tokens.py`
 - [ ] `python scripts/check_trust_in_governance.py`
+- [ ] `python scripts/check_visible_jobs.py`
 - [ ] `python scripts/check_doc_links.py` (when the change touches documentation)
 - [ ] `python .githooks/security_scan.py --tree`
 - [ ] A UI change edits both `index.html` and `ui_parts/app.html`

@@ -88,6 +88,8 @@ jobs:
         run: python scripts/check_stale_model_names.py
       - name: Governance never reads trust
         run: python scripts/check_trust_in_governance.py
+      - name: Model work is visible
+        run: python scripts/check_visible_jobs.py
       - name: Brand tokens
         run: python scripts/check_brand_tokens.py
       - name: Markdown links

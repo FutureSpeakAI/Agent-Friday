@@ -23,6 +23,7 @@ from agent_friday.services.library import (answer, api, forget, grants, pages, p
                                            runtime, search)
 from agent_friday.services.library.store import store_for
 from agent_friday.user_errors import UserFacingValueError
+from agent_friday.services.visible_jobs import visible_job
 
 library_bp = Blueprint("library", __name__)
 
@@ -134,6 +135,13 @@ def lib_search():
     runtime.prepare(p)
 
     def stream():
+        # The search runs while the response is read, after this route has
+        # returned: the job lives for the iteration, not for the route.
+        with visible_job("Library search", kind="library_search",
+                         workspace="library", eager=False):
+            yield from _search_events()
+
+    def _search_events():
         done = None
         try:
             for ev in search.search(q, principal=p, scope=scope, floor_tier=floor):

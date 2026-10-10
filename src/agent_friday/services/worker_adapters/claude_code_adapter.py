@@ -14,6 +14,7 @@ import uuid
 from typing import TYPE_CHECKING, Dict
 
 from agent_friday.services.worker_adapters.base import BaseAdapter, WorkerStatus
+from agent_friday.services.visible_jobs import visible_job
 
 if TYPE_CHECKING:
     from agent_friday.services.orchestrator import WorkerTask, WorkerResult
@@ -49,6 +50,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         t.start()
         return aid
 
+    @visible_job('Coding worker', kind='worker', workspace='orchestrator')
     def _run(self, aid: str, task: "WorkerTask"):
         try:
             from agent_friday.services.agent import _generate_agent

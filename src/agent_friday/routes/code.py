@@ -59,6 +59,7 @@ from agent_friday.services.model_router import (
     _predict_route_provider,
 )  # noqa: E501
 from agent_friday.routes._errors import api_error, error_text, public_result
+from agent_friday.services.visible_jobs import visible_job
 
 code_bp = Blueprint('code', __name__)
 
@@ -529,6 +530,7 @@ def files_read():
 
 
 @code_bp.route('/api/code/plan', methods=['POST'])
+@visible_job('Code plan', kind='code_plan', workspace='code')
 def code_plan():
     """Natural language -> Claude generates a structured code plan with file changes."""
     data = request.get_json(silent=True) or {}

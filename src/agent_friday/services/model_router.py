@@ -75,6 +75,7 @@ from agent_friday.services.wiki_engine import (
     wiki_read_text,
     wiki_write_text,
 )  # noqa: E501
+from agent_friday.services import visible_jobs as _vj
 
 # Re-export routing helpers so callers can use a single import location.
 # Canonical source is routing/model_router.py — import from there when you only
@@ -243,6 +244,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
         _settings = _load_settings()
         model = _claude_safe_model(_settings.get("orchestrator_model"),
                                    _settings) or ANTHROPIC_MODEL_DEFAULT
+    # A workspace job's card names the model that is about to answer.
+    _vj.note_inference(model, local=False)
     kwargs = {
         "model": model,
         "max_tokens": max_tokens,
@@ -548,6 +551,11 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
         routed_provider_name = route.get('provider_name')
     except Exception as _re:
         print(f"  [GEN] routing failed, defaulting to cloud: {_re}")
+        route = {}
+    # The router's verdict, for the task card of the job this call belongs to
+    # (a no-op outside one). Raises JobCancelled when the card's Stop was used.
+    _vj.note_route(provider, routed_model,
+                   str(route.get("reason") or route.get("why") or "") or None)
 
     # Honor the router's verdicts BEFORE any provider sees the request --
     # the exact two lines _generate_agent already has (services/agent.py)
@@ -638,6 +646,7 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     errors = []
     for name, fn, use_model in attempts:
         _leg = f"{name} ({use_model})" if use_model else name
+        _vj.note_leg(name, use_model)
         try:
             try:
                 text = fn(use_model, schema) if schema is not None else fn(use_model)
@@ -659,11 +668,17 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
                                           seat="local" if name == "local" else "cloud")
                     except Exception:
                         pass
+                _vj.note_done(name, use_model)
                 return text
             errors.append(f"{_leg}: empty response")
         except Exception as e:
+            if type(e).__name__ == "JobCancelled":
+                # A job stopped from its card or the Local AI queue stops; it
+                # does not fall through to another provider.
+                raise
             from agent_friday.user_errors import ExceptionText
             errors.append(ExceptionText(f"{_leg}: {e}"))
+            _vj.note_failed_leg(name, use_model, e)
         try:
             from agent_friday.services import attribution
             attribution.note_fallback(errors[-1])

@@ -40,6 +40,7 @@ from agent_friday.seed.data.job_tracker_schema import JobTracker
 from agent_friday.seed.skills.application_engine import engine as app_engine
 from agent_friday.seed.skills.job_scanner import scanner as job_scanner
 from agent_friday.routes._errors import log_text
+from agent_friday.services.visible_jobs import visible_job
 
 jobs_bp = Blueprint("jobs", __name__)
 
@@ -59,6 +60,7 @@ def _notify_adapter(payload):
         pass
 
 
+@visible_job('Cover letter draft', kind='cover_letter', workspace='career')
 def _llm_cover_drafter(listing, resume_pack, config):
     """Polish the template cover letter with the configured LLM provider;
     fall back to the template on any failure (offline, no keys, etc.)."""

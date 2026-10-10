@@ -48438,6 +48438,22 @@ function TaskControls({
     }
   }, "Delete record")));
 }
+/* WHICH MODEL IS DOING THIS, by name, and where it runs. A job a workspace
+   launched (a briefing, a podcast, a front page) carries the same fields a
+   chat-launched task does: the card has to say who is working, or the person
+   cannot tell a local model from a cloud one. */
+function fridayTaskModelLine(task) {
+  const seat = String(task.seat || '');
+  const m = task.model || seat.replace(/^(local|cloud)\//, '');
+  const local = task.seat_is_local === true || seat.startsWith('local/');
+  const cloud = task.seat_is_local === false && seat.startsWith('cloud/');
+  const where = local ? 'local seat' : cloud ? 'cloud' : '';
+  if (!m || m === 'default') return where ? 'model chosen when it starts \u00b7 ' + where : '';
+  return m + (where ? ' \u00b7 ' + where : '');
+}
+function fridayTaskQueueLine(task) {
+  return 'Waiting for the local model \u2014 number ' + task.queue_position + (task.queue_total ? ' of ' + task.queue_total : '') + ' in the Local AI queue' + (task.wait_reason ? ' (' + task.wait_reason + ')' : '');
+}
 function TaskCard({
   task,
   expanded,
@@ -48526,7 +48542,12 @@ function TaskCard({
     }
   }, "\u25CF"), "STALLED", seenAgo != null ? ' \xB7 last seen ' + seenAgo + 's ago' : ''), status === 'running' && !stalled && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     className: "task-card-spinner"
-  }), "EXECUTING"), status === 'interrupted' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }), "EXECUTING"), status === 'queued' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#f59e0b',
+      fontWeight: 700
+    }
+  }, "\u23F3"), "WAITING"), status === 'interrupted' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#f59e0b',
       fontWeight: 700
@@ -48565,7 +48586,27 @@ function TaskCard({
     }
   }, "step ", task.step_n, task.step_total ? ' of ' + task.step_total : ''), /*#__PURE__*/React.createElement("span", {
     className: "task-card-elapsed"
-  }, fmtElapsed(task.elapsed))), (task.now || task.cost_usd != null) && /*#__PURE__*/React.createElement("div", {
+  }, fmtElapsed(task.elapsed))), (task.model || task.seat) && fridayTaskModelLine(task) && /*#__PURE__*/React.createElement("div", {
+    className: "task-card-sub",
+    "data-testid": "task-model",
+    style: {
+      marginTop: 3,
+      fontSize: 10,
+      color: '#9fb2c9',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    },
+    title: fridayTaskModelLine(task)
+  }, fridayTaskModelLine(task)), task.queue_position > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "task-card-sub",
+    "data-testid": "task-queue",
+    style: {
+      marginTop: 3,
+      fontSize: 10,
+      color: '#f59e0b'
+    }
+  }, fridayTaskQueueLine(task)), (task.now || task.cost_usd != null) && /*#__PURE__*/React.createElement("div", {
     className: "task-card-sub",
     style: {
       marginTop: 3,

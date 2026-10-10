@@ -20,6 +20,7 @@ from agent_friday.core import login_required
 from agent_friday.services import work_queue as wq
 from agent_friday.services import workflow_plan as wp
 from agent_friday.routes._errors import api_error, public_result
+from agent_friday.services.visible_jobs import visible_job
 
 work_plan_bp = Blueprint("work_plan", __name__)
 
@@ -264,6 +265,7 @@ def touch_activity():
     return jsonify({"ok": True, "idle_s": wq.idle_seconds()})
 
 
+@visible_job('Queued work', kind='work_queue', workspace='work')
 def _runner(item):
     """Execute one queued item on the seat its class implies.
 

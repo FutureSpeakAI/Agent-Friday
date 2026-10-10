@@ -100,6 +100,7 @@ suites on Windows and Ubuntu; the guard scripts on Ubuntu).
 | Stale model names | `python scripts/check_stale_model_names.py` |
 | Brand tokens | `python scripts/check_brand_tokens.py` |
 | Trust in governance | `python scripts/check_trust_in_governance.py` |
+| Model work is visible | `python scripts/check_visible_jobs.py` |
 | Documentation links | `python scripts/check_doc_links.py` |
 | Secret and personal-data scan of the whole tree | `python .githooks/security_scan.py --tree` |
 

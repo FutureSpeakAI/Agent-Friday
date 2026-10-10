@@ -50,6 +50,8 @@ from agent_friday.services.model_router import (
     _predict_route_provider,
 )  # noqa: E501
 from agent_friday.services.voice_persona import WRITTEN_NEWS_RULES
+from agent_friday.services import visible_jobs as _vj
+from agent_friday.services.visible_jobs import visible_job
 from agent_friday.services.news_engine import (
     BANNED_SOURCES_FILE,
     BOOSTED_SOURCES_FILE,
@@ -358,6 +360,7 @@ def get_briefing(filename):
 
 
 @news_bp.route('/api/briefing/generate', methods=['POST'])
+@visible_job("Daily briefing", kind="briefing", workspace="news")
 def generate_briefing():
     """Generate a fresh daily briefing on demand via Claude and persist it.
 
@@ -372,8 +375,10 @@ def generate_briefing():
         # Pull live sources BEFORE writing the briefing so it never runs on stale
         # cached context. This mirrors the scheduled morning-briefing routine.
         from agent_friday.services.news_engine import _start_briefing_sources
+        _vj.step("Gathering today's calendar, mail and news")
         _start_briefing_sources()
         live_context = _gather_live_briefing_context()
+        _vj.step("Writing the briefing")
 
         prompt = (
             "Generate a crisp daily briefing using the LIVE DATA below plus what "
@@ -409,8 +414,10 @@ def generate_briefing():
                 workspace='briefing',
             )
         if not content or not content.strip():
+            _vj.fail_current("Empty briefing generated")
             return jsonify({"status": "error", "message": "Empty briefing generated"}), 502
         from agent_friday.services.news_engine import _finish_briefing
+        _vj.step("Saving the briefing")
         content = _finish_briefing(content)
 
         date_str = datetime.now().strftime('%Y-%m-%d')
@@ -420,6 +427,7 @@ def generate_briefing():
         out_path.write_text(content, encoding='utf-8')
 
         _notify_briefing(date_str, manual=True)
+        _vj.set_result(content)
 
         return jsonify({
             "status": "ok",
@@ -429,6 +437,7 @@ def generate_briefing():
             "is_html": False,
         })
     except Exception as e:
+        _vj.fail_current(e)
         return api_error(e, "Couldn't generate the briefing")
 
 

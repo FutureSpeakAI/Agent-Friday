@@ -15,6 +15,7 @@ from agent_friday.services import creative_pipeline as cp
 from agent_friday.services import scene_dna as sd
 from agent_friday.services import qa_gates
 from agent_friday.services import take_comparison as tc
+from agent_friday.services.visible_jobs import visible_job
 
 creative_pipeline_bp = Blueprint('creative_pipeline', __name__)
 
@@ -206,6 +207,7 @@ def qa_evaluate():
 
 # ═══ TAKE COMPARISON ═════════════════════════════════════════════
 @creative_pipeline_bp.route('/api/takes/images', methods=['POST'])
+@visible_job('Comparing image takes', kind='takes_images', workspace='creative')
 def takes_images():
     data = request.get_json(silent=True) or {}
     prompt = (data.get('prompt') or '').strip()
@@ -222,6 +224,7 @@ def takes_images():
 
 
 @creative_pipeline_bp.route('/api/takes/text', methods=['POST'])
+@visible_job('Comparing text takes', kind='takes_text', workspace='creative')
 def takes_text():
     """Generate N text candidates (varied temperature) and recommend the best."""
     data = request.get_json(silent=True) or {}

@@ -42,6 +42,7 @@ import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.services import content_pipeline as _store
 from agent_friday.user_errors import exception_text
+from agent_friday.services.visible_jobs import visible_job
 
 # ── Storage (§5.6) ───────────────────────────────────────────────────────────
 VOICE_CARDS_DIR = FRIDAY_DIR / "content" / "voice_cards"
@@ -883,6 +884,7 @@ _UPDATE_KEYS = ("adapted_title", "adapted_body", "segments", "adapted_assets",
                 "char_limit", "hashtags", "mentions", "options", "format")
 
 
+@visible_job('Adapting a post', kind='content_adapt', workspace='content')
 def adapt(post: dict, platforms: Optional[List[str]] = None, *,
           formats: Optional[dict] = None, regenerate: bool = False
           ) -> Dict[str, Any]:
@@ -951,6 +953,7 @@ def adapt(post: dict, platforms: Optional[List[str]] = None, *,
         return {"ok": False, "error": exception_text(e)}
 
 
+@visible_job('Post preview', kind='content_preview', workspace='content')
 def preview(body: str, assets: list, platform: str, format: str) -> Dict[str, Any]:
     """Stateless single-platform adaptation for the Compose tab's live
     preview (§5.1). The preview IS the payload (D6) — same DETERMINISTIC
@@ -1031,6 +1034,7 @@ def _known_profile(profile: str) -> bool:
         return True                     # can't check — trust the matrix
 
 
+@visible_job('Converting a post', kind='content_convert', workspace='content')
 def convert_format(post: dict, conversion: str) -> Dict[str, Any]:
     """§5.4 conversion matrix. Returns {ok, conversion, targets, warnings} —
     targets are plan objects (asset transforms resolve to timeline_engine

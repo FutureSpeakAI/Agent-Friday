@@ -82,6 +82,7 @@ from typing import Any, Callable, Dict, List, Optional
 from agent_friday.core import _load_settings
 from agent_friday.services import introspection
 from agent_friday.user_errors import ExceptionText, exception_text
+from agent_friday.services.visible_jobs import visible_job
 
 _log = logging.getLogger("friday.persona_eval")
 
@@ -576,6 +577,7 @@ def _dispatch_provider(prov: Dict[str, Any], user_prompt: str, system_prompt: st
     raise UnsupportedProviderError(f"no text dispatch for adapter {adapter!r} (provider {name!r})")
 
 
+@visible_job('Persona evaluation', kind='persona_eval', workspace='settings')
 def run_live_eval(providers: Optional[List[str]] = None,
                    threshold: Optional[float] = None,
                    settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

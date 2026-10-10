@@ -46,6 +46,7 @@ from agent_friday.services.creations import (
     generate_daily_creation,
 )  # noqa: E501
 from agent_friday.routes._errors import api_error, error_text, public_result
+from agent_friday.services.visible_jobs import visible_job
 
 
 def _sign_saved(path, tool, media_type, sources=None):
@@ -388,6 +389,7 @@ def _flatten_first_file(result):
 
 @creations_bp.route('/api/creations/generate', methods=['POST'])
 @creations_bp.route('/api/create/image', methods=['POST'])
+@visible_job('Image', kind='studio_image', workspace='studio')
 def create_image():
     """Generate an image (Nano Banana Pro / Nano Banana 2) via the creative
     engine. The unified /api/creations/generate alias dispatches a video request
@@ -493,6 +495,7 @@ def create_availability():
 
 
 @creations_bp.route('/api/create/text', methods=['POST'])
+@visible_job('Studio text', kind='studio_text', workspace='studio')
 def create_text():
     """Generate a text piece (poem / essay / copy) for the Studio prompt bar
     and save it to the gallery.
@@ -653,6 +656,7 @@ def provenance_by_file(filename):
 
 
 @creations_bp.route('/api/create/code-art', methods=['POST'])
+@visible_job('Code art', kind='studio_code_art', workspace='studio')
 def create_code_art():
     """Generate p5.js/HTML art through the routed text provider."""
     try:
@@ -685,6 +689,7 @@ def create_code_art():
 
 
 @creations_bp.route('/api/create/poem', methods=['POST'])
+@visible_job('Poem', kind='studio_poem', workspace='studio')
 def create_poem():
     """Generate text/poetry through the routed text provider."""
     try:
@@ -741,6 +746,7 @@ def create_website():
 
 
 @creations_bp.route('/api/create/video', methods=['POST'])
+@visible_job('Video', kind='studio_video', workspace='studio')
 def create_video():
     """Generate video (Google Veo) via the creative engine. Supports text-to-
     video and image-to-video (pass image_path: a creation filename or absolute

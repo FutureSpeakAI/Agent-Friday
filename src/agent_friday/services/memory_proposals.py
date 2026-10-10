@@ -68,6 +68,7 @@ from typing import Any, Dict, List, Optional
 
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.user_errors import ExceptionText, exception_text
+from agent_friday.services.visible_jobs import visible_job
 
 _log = logging.getLogger("friday.memory_proposals")
 
@@ -319,6 +320,7 @@ def _already_proposed(conn, text: str) -> bool:
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
+@visible_job('Memory proposals', kind='memory_proposals', workspace='memory')
 def propose(day: Optional[str] = None, *, memory=None,
             store: bool = True) -> Dict[str, Any]:
     """Read a day (or the recent window) and PROPOSE durable facts.
