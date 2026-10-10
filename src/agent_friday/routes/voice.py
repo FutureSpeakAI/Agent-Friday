@@ -731,6 +731,76 @@ def _tool_timeout_message(fname, limit) -> str:
             f"Do not guess at what it would have said.")
 
 
+def _spoken_words(text) -> str:
+    """Lower-case words only, so a transcript's punctuation and quote style
+    never decide whether a fixed line was said."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).split())
+
+
+class _LiveCardWatch:
+    """What Gemini Live has said aloud, checked against the question of each
+    approval card it raised. A card is verified only when its sealed question
+    line (``_sealed_card_line``) appears in Friday's output transcription
+    since the card was raised, and no barge cut her off before it was whole."""
+
+    def __init__(self):
+        self.cards = {}
+
+    def arm(self, ids, line):
+        for i in ids:
+            self.cards[str(i)] = {"line": _spoken_words(line), "said": "", "done": False, "cut": False}
+
+    def heard(self, text):
+        """A piece of Friday's output transcription that was voiced."""
+        for c in self.cards.values():
+            if not c["done"] and not c["cut"]:
+                c["said"] += str(text or "")            # pieces may split a word
+                c["done"] = c["line"] in _spoken_words(c["said"])
+
+    def cut(self):
+        """A barge: any question not yet whole was not heard whole."""
+        for c in self.cards.values():
+            if not c["done"]:
+                c["cut"] = True
+
+    def verified(self, card_id) -> bool:
+        c = self.cards.get(str(card_id or ""))
+        return bool(c and c["done"] and not c["cut"])
+
+
+_LIVE_CARD_ASK = ("\n\nTHE QUESTION FOR THE USER: say these words exactly, do not paraphrase, then "
+                  "wait for their answer: ")
+_LIVE_CARD_UNHEARD = ("NOT RECORDED: Friday has not been heard asking that card's question in full, "
+                      "so a bare yes or no cannot decide it. Ask the user to confirm on screen, or "
+                      "to say what the card does (for example, 'yes, archive them'). To ask it "
+                      "again, say these words exactly: ")
+
+
+async def _live_card_tool(fname, fargs, send, session, runner=None):
+    """``_voice_tool_with_limit`` for Gemini Live, plus the approval-card
+    rule: a card raised by a tool result carries its sealed question for
+    Gemini to say verbatim, and ``answer_card`` on a bare yes or no runs only
+    if Friday's transcript shows that question was said whole and uncut."""
+    from agent_friday.services import laya_router as _lr
+    watch = session.setdefault("card_watch", _LiveCardWatch()) if session is not None else _LiveCardWatch()
+    cid = (session or {}).get("conversation_id")
+    if fname == "answer_card":
+        said = str((session or {}).get("owner_text") or "").strip()
+        card = str((fargs or {}).get("card_id") or "")
+        if (_lr._YES.match(said) or _lr._NO.match(said)) and not watch.verified(card):
+            ids, line = _sealed_card_line("card_id=" + card, cid)
+            if ids:
+                watch.arm(ids, line)
+            return _LIVE_CARD_UNHEARD + (line or "ask whether to go ahead.")
+    result = await _voice_tool_with_limit(fname, fargs, send, session, runner=runner)
+    if isinstance(result, str) and "card_id=" in result:
+        ids, line = _sealed_card_line(result, cid)
+        if ids:
+            watch.arm(ids, line)
+            result += _LIVE_CARD_ASK + line
+    return result
+
+
 def _run_voice_tool_bounded(fname, fargs, send, session=None, limit=None, runner=None):
     """The synchronous twin of ``_voice_tool_with_limit``, for the local
     engine (whose turns run on threads, not the asyncio bridge): the same
@@ -4625,6 +4695,7 @@ if sock is not None:
             # has already told instead of reading the same five again.
             _voice_session = {"news_offered": [], "spoken": [],
                               "conversation_id": _call_cid(), "owner_text": "",
+                              "card_watch": _LiveCardWatch(),
                               "_crew_host_origin": _crew_call_origin,
                               # What he cares about now, how much to say, what is
                               # open (services/voice_conversation_state).
@@ -4981,6 +5052,7 @@ if sock is not None:
                         # (faster than real-time) the leftover flag would eat
                         # the NEXT turn's audio.
                         _barged_turn[0] = _model_speaking[0]
+                        _voice_session["card_watch"].cut()
                         _client_playing[0] = False
                         _est_play_end_ts[0] = 0.0
                         _barge.sustained = 0.0
@@ -5068,7 +5140,7 @@ if sock is not None:
                                             expected_epoch=crew_epoch, **_crew_host)):
                                         return "NOT DONE: this Crew turn ended before the tool began."
                                     return _voice_tool_run(*args)
-                                result = await _voice_tool_with_limit(
+                                result = await _live_card_tool(
                                     fname, fargs, _safe_send, _voice_session,
                                     runner=_crew_tool_run)
                             except Exception as _te:
@@ -5366,6 +5438,8 @@ if sock is not None:
                                             if out_tr and getattr(out_tr, 'text', None):
                                                 _vlog(f'output_transcription: {out_tr.text!r}')
                                                 out_buf.append(out_tr.text)
+                                                if not _quiet_turn[0] and not _barged_turn[0]:
+                                                    _voice_session["card_watch"].heard(out_tr.text)
                                                 if not _quiet_turn[0] and _crew[0]:
                                                     _crew[0].host_text(out_tr.text, **_crew_host)
                                                 elif not _quiet_turn[0]:
