@@ -27,17 +27,23 @@ four sockets (https and http, on 127.0.0.1 and ::1) are served by one event
 loop on one thread. The sockets stay bound whatever happens to that thread, and
 the operating system keeps completing TCP handshakes on them, so a loop that
 has died or is stuck looks, from outside, like a server that accepts and never
-answers -- on every listener at once. Three rules follow:
+answers -- on every listener at once. The rules that follow:
   * Nothing that can block runs on the loop thread. A callback it makes
     (redirect_http) returns at once and takes no lock.
   * Each listener has its own accept loop, which survives a failed accept.
     asyncio's built-in one (create_server) closes the listening socket for good
     on the first accept error, and on Windows a client that resets before its
     accept is taken is such an error (WinError 64).
-  * health() asks the loop itself to answer within a deadline and checks every
-    accept loop. status() calls a listener listening only while that holds,
-    and ensure_alive() replaces a dead or stalled loop with a fresh one, and
-    logs the old thread's stack so the cause is on record.
+  * A port that will not bind is tried again by the loop, backing off, and
+    counts as not listening until it binds.
+  * The loop stamps a heartbeat every second. health() reports a listener as
+    serving only while the thread lives, the heartbeat is fresh and that
+    listener is bound and accepting; status() says listening on the same terms.
+  * ensure_alive() restarts only a loop whose thread has ended or whose
+    heartbeat has stood still for STALL_AFTER_S -- never one that is merely
+    slow to answer, because a restart drops every open connection (the voice
+    socket among them). It closes the old generation's listening and accepted
+    sockets, logs the old thread's stack, and backs off between restarts.
 """
 from __future__ import annotations
 
@@ -60,8 +66,16 @@ UPSTREAM_WAIT_S = 15        # Friday is still binding :3000 when the relay start
 MAX_HEAD = 64 * 1024
 LOOPBACK_NAMES = ("localhost", "127.0.0.1", "[::1]")
 CRLF = bytes((13, 10))
-HEALTH_TIMEOUT_S = 2.0      # an idle loop answers in well under a millisecond
-ACCEPT_RETRY_S = 0.05       # pause after a failed accept before taking the next
+HEALTH_TIMEOUT_S = 0.5      # the direct question to the loop (diagnostics only)
+HEARTBEAT_S = 1.0           # the loop stamps its heartbeat this often
+STALL_AFTER_S = 25.0        # a heartbeat this old means a stuck loop (2-3 watchdog rounds)
+ACCEPT_RETRY_S = 0.05       # pause after a failed accept, growing with errors in a row
+ACCEPT_FAILING_AFTER = 20   # errors in a row before a listener counts as not accepting
+REBIND_FIRST_S = 0.5        # a busy port is tried again after this, doubling ...
+REBIND_MAX_S = 30.0         # ... up to this
+RESTART_BACKOFF_S = 10.0    # restarts in a row wait this, doubling ...
+RESTART_BACKOFF_MAX_S = 300.0   # ... up to this
+RESTART_STREAK_RESET_S = 600.0  # this long healthy and the backoff starts over
 
 
 def bare_host(host: str) -> str:
@@ -134,13 +148,23 @@ class _Run:
         self.generation = generation
         self.loop = asyncio.new_event_loop()
         self.thread: threading.Thread | None = None
-        self.socks: list = []
+        self.socks: list = []            # listening sockets
+        self.conn_socks: set = set()     # accepted sockets, until their connection ends
         self.accepts: dict = {}          # "https 127.0.0.1" -> its accept task
+        self.failing: dict = {}          # "https 127.0.0.1" -> consecutive accept errors
+        self.binds: dict = {}            # "https 127.0.0.1" -> its re-bind task
         self.conns: set = set()          # live connection tasks
+        self.beat = time.monotonic()     # the loop's own heartbeat
 
 
 class LocalProxy:
     """Listeners for one host. start() returns what bound and what did not."""
+
+    # Instance-tunable so tests can use short ones.
+    heartbeat_s = HEARTBEAT_S
+    stall_after_s = STALL_AFTER_S
+    rebind_first_s = REBIND_FIRST_S
+    restart_backoff_s = RESTART_BACKOFF_S
 
     def __init__(self, *, host: str, upstream_port: int, https_port: int = 443,
                  http_port: int = 80, cert_file: str = "", key_file: str = "",
@@ -158,12 +182,14 @@ class LocalProxy:
         self._generation = 0
         self._stopped = False
         self._lifecycle = threading.RLock()
+        self._next_restart_at = 0.0
+        self._restart_streak = 0
         self.listening = {"https": {}, "http": {}}   # addr -> "ok" | reason
         self.started_at = None
         self.stats = {"last_accept": {"https": None, "http": None},
                       "accept_errors": 0, "last_accept_error": "",
                       "loop_ended": "", "restarts": 0, "last_restart": None,
-                      "last_restart_reason": ""}
+                      "last_restart_reason": "", "next_restart_in_s": 0.0}
 
     # The loop and thread of the current generation (tests and callers that
     # schedule work on the loop use these).
@@ -176,6 +202,12 @@ class LocalProxy:
     def _thread(self):
         r = self._run_state
         return r.thread if r is not None else None
+
+    def _plan(self) -> list:
+        plan = [("http", self.http_port, None)]
+        if self._ctx is not None:
+            plan.insert(0, ("https", self.https_port, self._ctx))
+        return plan
 
     # ── lifecycle ──────────────────────────────────────────────────────
     def start(self, timeout: float = 5.0) -> dict:
@@ -209,8 +241,10 @@ class LocalProxy:
 
     def _halt(self, run: _Run | None, join_s: float = 3.0) -> None:
         """End one generation. A loop that still answers closes its own
-        connections; one that does not cannot, so its listening sockets are
-        closed from here, which frees the ports for the next generation."""
+        connections; one that does not cannot, so its sockets -- the listening
+        ones and every accepted one -- are closed from here. Accepted sockets
+        matter too: on Windows an accepted connection of an exclusive listener
+        can keep the port from being bound again."""
         if run is None:
             return
         loop = run.loop
@@ -223,6 +257,7 @@ class LocalProxy:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             _close_all(run.socks)
+            _close_all(run.conn_socks)
             loop.stop()
 
         if run.thread is not None and run.thread.is_alive() and not loop.is_closed():
@@ -232,6 +267,7 @@ class LocalProxy:
                 pass
             run.thread.join(join_s)
         _close_all(run.socks)
+        _close_all(run.conn_socks)
 
     def reload_certificate(self) -> None:
         """Pick up a renewed certificate for new connections (same context)."""
@@ -240,16 +276,22 @@ class LocalProxy:
 
     # ── health ─────────────────────────────────────────────────────────
     def health(self, timeout: float = HEALTH_TIMEOUT_S) -> dict:
-        """Is the loop alive, answering, and accepting on every listener?
+        """Is the loop alive and advancing, and is every listener accepting?
 
-        The loop is asked to run a callback and answer within `timeout`; a
-        dead thread, a closed loop or a loop stuck in a blocking call all fail
-        that. `accepting` names each bound listener and whether its accept
-        loop is still running.
+        `advancing` comes from the loop's own heartbeat (it stamps the time
+        every heartbeat_s): a loop whose stamp is older than stall_after_s is
+        not running callbacks. `responsive` is a direct question within
+        `timeout`, for diagnostics only: a busy process (a long C call holding
+        the GIL, a big garbage collection, paging, waking from sleep) can miss
+        it while the loop is fine. `accepting` names every planned listener
+        and whether it is bound and taking connections; one that failed to
+        bind, or whose accepts keep failing, is False. ok needs all three of
+        thread alive, advancing and accepting everywhere.
         """
         run = self._run_state
         out = {"ok": False, "generation": run.generation if run else 0,
                "thread_alive": bool(run and run.thread and run.thread.is_alive()),
+               "advancing": False, "heartbeat_age_s": None,
                "responsive": False, "pending_tasks": None, "connections": None,
                "accepting": {},
                "last_accept": dict(self.stats["last_accept"]),
@@ -259,61 +301,92 @@ class LocalProxy:
                "restarts": self.stats["restarts"],
                "last_restart": self.stats["last_restart"],
                "last_restart_reason": self.stats["last_restart_reason"],
+               "next_restart_in_s": max(0.0, round(self._next_restart_at - time.monotonic(), 1)),
                "started_at": self.started_at}
+        if run is None:
+            return out
+        accepting = {}
+        for kind, _port, _ctx in self._plan():
+            for addr in self.addrs:
+                key = f"{kind} {addr}"
+                task = run.accepts.get(key)
+                accepting[key] = bool(task is not None and not task.done()
+                                      and run.failing.get(key, 0) < ACCEPT_FAILING_AFTER)
+        out["accepting"] = accepting
         if not out["thread_alive"] or run.loop.is_closed():
             return out
-        answer: concurrent.futures.Future = concurrent.futures.Future()
+        age = time.monotonic() - run.beat
+        out["heartbeat_age_s"] = round(age, 2)
+        out["advancing"] = age < self.stall_after_s
+        if timeout and timeout > 0:
+            answer: concurrent.futures.Future = concurrent.futures.Future()
 
-        def ask():
+            def ask():
+                try:
+                    answer.set_result((len(asyncio.all_tasks(run.loop)), len(run.conns)))
+                except Exception as e:          # pragma: no cover - defensive
+                    answer.set_exception(e)
             try:
-                answer.set_result((len(asyncio.all_tasks(run.loop)), len(run.conns),
-                                   {k: not t.done() for k, t in run.accepts.items()}))
-            except Exception as e:          # pragma: no cover - defensive
-                answer.set_exception(e)
-        try:
-            run.loop.call_soon_threadsafe(ask)
-            pending, conns, accepting = answer.result(timeout)
-        except Exception:
-            return out
-        out.update(responsive=True, pending_tasks=pending, connections=conns,
-                   accepting=accepting, ok=all(accepting.values()))
+                run.loop.call_soon_threadsafe(ask)
+                pending, conns = answer.result(timeout)
+                out.update(responsive=True, pending_tasks=pending, connections=conns)
+            except Exception:
+                pass
+        out["ok"] = bool(out["advancing"] and all(accepting.values()))
         return out
 
     def ensure_alive(self, timeout: float = HEALTH_TIMEOUT_S) -> dict:
         """Replace a dead or stalled loop with a fresh one. Returns health()
-        afterwards, with `restarted` saying whether it had to."""
+        afterwards, with `restarted` saying whether it had to.
+
+        Only two things earn a restart: the loop thread has ended, or the
+        loop's heartbeat has not moved for stall_after_s (several watchdog
+        rounds). A listener that cannot bind is retried by the loop itself and
+        a slow answer is not a stall, because a restart drops every open
+        connection, the voice socket among them, and cures neither. Restarts
+        back off exponentially, to at most RESTART_BACKOFF_MAX_S apart.
+        """
+        h = self.health(timeout)
+        h["restarted"] = False
+        run = self._run_state
+        if self._stopped or run is None:
+            return h
+        if h["thread_alive"] and h["advancing"]:
+            if (self._restart_streak and self.stats["last_restart"]
+                    and time.time() - self.stats["last_restart"] > RESTART_STREAK_RESET_S):
+                self._restart_streak = 0          # healthy for long enough
+            return h
+        if not h["thread_alive"]:
+            why = "the loop thread has ended" + (
+                f" ({self.stats['loop_ended']})" if self.stats["loop_ended"] else "")
+        else:
+            why = f"the loop has not run for {h['heartbeat_age_s']} s"
+        wait = self._next_restart_at - time.monotonic()
+        if wait > 0:
+            _log.warning("Local address: listeners for %s need a restart (%s); "
+                         "the next is allowed in %.0f s", self.host, why, wait)
+            return h
+        stack = self._stack_of(run.thread)
         with self._lifecycle:
-            run = self._run_state
-            h = self.health(timeout)
-            if h["thread_alive"] and not h["responsive"]:
-                # A restart drops every open connection (the voice socket
-                # among them), so a loop that is merely slow gets a second,
-                # longer chance before it is judged stuck.
-                h = self.health(timeout * 2)
-            h["restarted"] = False
-            if h["ok"] or self._stopped or run is None:
-                return h
-            if not h["thread_alive"]:
-                why = "the loop thread has ended" + (
-                    f" ({self.stats['loop_ended']})" if self.stats["loop_ended"] else "")
-            elif not h["responsive"]:
-                why = f"the loop did not answer within {timeout:g} s"
-            else:
-                dead = sorted(k for k, v in h["accepting"].items() if not v)
-                why = "accepting stopped on " + ", ".join(dead)
-            _log.warning("Local address: restarting Friday's listeners for %s: %s. "
-                         "Loop thread stack:%s%s", self.host, why, chr(10),
-                         self._stack_of(run.thread))
+            if self._stopped or self._run_state is not run:
+                return self.health(0)            # stopped or replaced meanwhile
+            self._restart_streak += 1
+            backoff = min(RESTART_BACKOFF_MAX_S,
+                          self.restart_backoff_s * (2 ** (self._restart_streak - 1)))
+            self._next_restart_at = time.monotonic() + backoff
             self.stats["restarts"] += 1
             self.stats["last_restart"] = time.time()
             self.stats["last_restart_reason"] = why
-            self._halt(run, join_s=1.0)
+            _log.warning("Local address: restarting Friday's listeners for %s (restart %d, "
+                         "the next allowed after %.0f s): %s. Loop thread stack:%s%s",
+                         self.host, self.stats["restarts"], backoff, why, chr(10), stack)
+            self._halt(run, join_s=0.5)
             self._spawn(5.0)
-            after = self.health(timeout)
-            after["restarted"] = True
-            _log.warning("Local address: listeners for %s restarted (generation %s): %s",
-                         self.host, after["generation"], self._listening_words())
-            return after
+        after = self.health(timeout)
+        after["restarted"] = True
+        _log.warning("Local address: listeners for %s restarted (generation %s): %s",
+                     self.host, after["generation"], self._listening_words())
+        return after
 
     @staticmethod
     def _stack_of(thread) -> str:
@@ -332,7 +405,7 @@ class LocalProxy:
         """What is bound, and whether it is being served right now."""
         h = self.health(health_timeout) if self._run_state is not None else None
         acc = (h or {}).get("accepting") or {}
-        alive = bool(h and h.get("responsive"))
+        alive = bool(h and h.get("thread_alive") and h.get("advancing"))
 
         def one(kind, port):
             st = self.listening.get(kind) or {}
@@ -363,16 +436,22 @@ class LocalProxy:
             # A loop that is gone must not leave its ports bound: a client is
             # then refused at once instead of waiting on a socket nobody reads.
             _close_all(run.socks)
+            _close_all(run.conn_socks)
             try:
                 loop.close()
             except Exception:
                 pass
 
+    async def _heartbeat(self, run: _Run) -> None:
+        while True:
+            run.beat = time.monotonic()
+            await asyncio.sleep(self.heartbeat_s)
+
     async def _open(self, run: _Run) -> None:
-        plan = [("http", self.http_port, None)]
-        if self._ctx is not None:
-            plan.insert(0, ("https", self.https_port, self._ctx))
-        for kind, port, ctx in plan:
+        loop = asyncio.get_running_loop()
+        run.beat = time.monotonic()
+        loop.create_task(self._heartbeat(run))
+        for kind, port, ctx in self._plan():
             for addr in self.addrs:
                 try:
                     sock = _bind(addr, port)
@@ -381,17 +460,40 @@ class LocalProxy:
                     self.listening[kind][addr] = (
                         f"port {port} is in use by {who}" if who else
                         ExceptionText(f"could not listen on port {port}: {e.strerror or e}"))
+                    run.binds[f"{kind} {addr}"] = loop.create_task(
+                        self._bind_later(run, kind, addr, port, ctx))
                     continue
-                run.socks.append(sock)
-                run.accepts[f"{kind} {addr}"] = asyncio.get_running_loop().create_task(
-                    self._accept_loop(run, sock, kind, ctx))
-                self.listening[kind][addr] = "ok"
+                self._serve(run, sock, kind, addr, ctx)
 
-    async def _accept_loop(self, run: _Run, sock, kind: str, ctx) -> None:
+    def _serve(self, run: _Run, sock, kind: str, addr: str, ctx) -> None:
+        run.socks.append(sock)
+        run.accepts[f"{kind} {addr}"] = asyncio.get_running_loop().create_task(
+            self._accept_loop(run, sock, kind, addr, ctx))
+        self.listening[kind][addr] = "ok"
+
+    async def _bind_later(self, run: _Run, kind: str, addr: str, port: int, ctx) -> None:
+        """Keep trying a port that was busy, backing off to REBIND_MAX_S: the
+        holder may let go (a restart's previous generation, a web server being
+        stopped). The reason it failed stays on show until it binds."""
+        delay = self.rebind_first_s
+        while True:
+            await asyncio.sleep(delay)
+            try:
+                sock = _bind(addr, port)
+            except OSError:
+                delay = min(REBIND_MAX_S, delay * 2)
+                continue
+            self._serve(run, sock, kind, addr, ctx)
+            _log.info("Local address: %s on %s port %s is open now", kind, addr, port)
+            return
+
+    async def _accept_loop(self, run: _Run, sock, kind: str, addr: str, ctx) -> None:
         """Take connections until the socket is closed. A failed accept (a
         client that reset first, a transient resource error) costs that one
-        connection, never the listener."""
+        connection, never the listener. Errors in a row are counted; past
+        ACCEPT_FAILING_AFTER health() reports this listener as not accepting."""
         loop = asyncio.get_running_loop()
+        key = f"{kind} {addr}"
         handler = self._https_client if kind == "https" else self._http_client
         while True:
             try:
@@ -401,42 +503,49 @@ class LocalProxy:
             except Exception as e:
                 if sock.fileno() == -1:
                     return
+                n = run.failing.get(key, 0) + 1
+                run.failing[key] = n
                 self.stats["accept_errors"] += 1
                 self.stats["last_accept_error"] = ExceptionText(f"{kind}: {e}"[:200])
-                await asyncio.sleep(ACCEPT_RETRY_S)
+                await asyncio.sleep(min(1.0, ACCEPT_RETRY_S * n))
                 continue
+            run.failing[key] = 0
             self.stats["last_accept"][kind] = time.time()
-            task = loop.create_task(self._connection(conn, handler, ctx))
+            run.conn_socks.add(conn)
+            task = loop.create_task(self._connection(run, conn, handler, ctx))
             run.conns.add(task)
             task.add_done_callback(run.conns.discard)
 
-    async def _connection(self, conn, handler, ctx) -> None:
+    async def _connection(self, run: _Run, conn, handler, ctx) -> None:
         loop = asyncio.get_running_loop()
         reader = asyncio.StreamReader(limit=MAX_HEAD, loop=loop)
         protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
         try:
-            if ctx is not None:
-                transport, _ = await loop.connect_accepted_socket(
-                    lambda: protocol, conn, ssl=ctx,
-                    ssl_handshake_timeout=HANDSHAKE_TIMEOUT_S)
-            else:
-                transport, _ = await loop.connect_accepted_socket(lambda: protocol, conn)
-        except asyncio.CancelledError:
-            conn.close()
-            raise
-        except Exception:
-            conn.close()                # a failed or abandoned handshake
-            return
-        writer = asyncio.StreamWriter(transport, protocol, reader, loop)
-        try:
-            await handler(reader, writer)
-        except Exception:
-            pass
-        finally:
             try:
-                writer.close()
+                if ctx is not None:
+                    transport, _ = await loop.connect_accepted_socket(
+                        lambda: protocol, conn, ssl=ctx,
+                        ssl_handshake_timeout=HANDSHAKE_TIMEOUT_S)
+                else:
+                    transport, _ = await loop.connect_accepted_socket(lambda: protocol, conn)
+            except asyncio.CancelledError:
+                conn.close()
+                raise
+            except Exception:
+                conn.close()                # a failed or abandoned handshake
+                return
+            writer = asyncio.StreamWriter(transport, protocol, reader, loop)
+            try:
+                await handler(reader, writer)
             except Exception:
                 pass
+            finally:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+        finally:
+            run.conn_socks.discard(conn)
 
     # ── connections ────────────────────────────────────────────────────
     async def _upstream(self):
@@ -500,12 +609,16 @@ class LocalProxy:
                 except Exception:
                     pass
 
-        await asyncio.gather(pump(reader, up_writer), pump(up_reader, writer))
-        for w in (up_writer, writer):
-            try:
-                w.close()
-            except Exception:
-                pass
+        try:
+            await asyncio.gather(pump(reader, up_writer), pump(up_reader, writer))
+        finally:
+            # also when cancelled (a stop or a restart): the upstream
+            # connection is closed, not left to Friday's server to time out
+            for w in (up_writer, writer):
+                try:
+                    w.close()
+                except Exception:
+                    pass
 
     async def _https_client(self, reader, writer) -> None:
         await self._relay(reader, writer)
@@ -577,10 +690,11 @@ def _public_health(h: dict | None) -> dict | None:
 
     def ago(t):
         return None if not t else round(now - t, 1)
-    out = {k: h.get(k) for k in ("ok", "generation", "thread_alive", "responsive",
+    out = {k: h.get(k) for k in ("ok", "generation", "thread_alive", "advancing",
+                                 "heartbeat_age_s", "responsive",
                                  "pending_tasks", "connections", "accepting",
                                  "accept_errors", "last_accept_error", "loop_ended",
-                                 "restarts", "last_restart_reason")}
+                                 "restarts", "last_restart_reason", "next_restart_in_s")}
     out["last_accept_s_ago"] = {k: ago(v) for k, v in (h.get("last_accept") or {}).items()}
     out["last_restart_s_ago"] = ago(h.get("last_restart"))
     out["up_s"] = ago(h.get("started_at"))
