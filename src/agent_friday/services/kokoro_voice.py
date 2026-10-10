@@ -95,6 +95,7 @@ DEFAULT_KOKORO_VOICE = "af_heart"
 
 #: American English. Kokoro's lang_code selects the g2p frontend.
 KOKORO_LANG_CODE = "a"
+KOKORO_REPO = "hexgrad/Kokoro-82M"
 
 #: What Kokoro-82M actually wants resident, in GB. It is a small model; the
 #: figure is deliberately conservative to leave room for the g2p frontend and
@@ -408,6 +409,18 @@ def attach_espeak_fallback(pipeline) -> dict:
     return out
 
 
+def _cached_file(filename: str):
+    """The local path of a Kokoro file in the Hugging Face cache, or None.
+    Reads the cache only: it never asks the hub for anything."""
+    try:
+        import os
+        from huggingface_hub import try_to_load_from_cache
+        p = try_to_load_from_cache(KOKORO_REPO, filename)
+        return p if isinstance(p, str) and os.path.isfile(p) else None
+    except Exception:
+        return None
+
+
 class KokoroTTS:
     """Kokoro-82M TTS → 24 kHz PCM16 mono bytes (playback-ready).
 
@@ -428,6 +441,7 @@ class KokoroTTS:
         self.lang_code = lang_code or KOKORO_LANG_CODE
         self._pipeline = None
         self._device = None
+        self._voice_path = None
         self._lock = threading.Lock()
         # The worker of an utterance abandoned at its time budget, while it is
         # still running. See the bounds above.
@@ -525,17 +539,35 @@ class KokoroTTS:
                         "Kokoro's English pronunciation model (en_core_web_sm) is not "
                         "installed, and loading never downloads it. Reinstall the voice "
                         "dependencies from Settings > Voice (Setup & install).")
+            # The model, its config and the voice are read from the local cache
+            # by path. Left to itself kokoro calls hf_hub_download for each, which
+            # asks the hub for the latest revision on every load; a load never
+            # reaches the network, and a first-run download is the voice
+            # installer's explicit, consented step, never a side effect of a call.
+            _cfg = _cached_file("config.json")
+            _pth = _cached_file("kokoro-v1_0.pth")
+            _vox = _cached_file("voices/%s.pt" % self.voice)
+            _absent = [n for n, p in (("config", _cfg), ("model", _pth),
+                                      ("voice " + str(self.voice), _vox)) if not p]
+            if _absent:
+                raise KokoroUnavailable(
+                    "local_voice_kokoro_missing",
+                    "Kokoro's files are not on this computer (%s), and loading never "
+                    "downloads them. Install the voice from Settings > Voice "
+                    "(Setup & install)." % ", ".join(_absent))
             try:
                 from agent_friday.services.ml_imports import guarded
 
                 def _imp():
-                    from kokoro import KPipeline
-                    return KPipeline
-                KPipeline = guarded(_imp)
+                    from kokoro import KModel, KPipeline
+                    return KModel, KPipeline
+                KModel, KPipeline = guarded(_imp)
                 log.info("kokoro load voice=%s device=%s lang=%s espeak=%s",
                          self.voice, device, self.lang_code, esp["wired"])
+                _kmodel = guarded(lambda: KModel(config=_cfg, model=_pth).to(device).eval())
                 # misaki/espeak import during construction: also guarded.
-                pipeline = guarded(KPipeline, lang_code=self.lang_code, device=device)
+                pipeline = guarded(KPipeline, lang_code=self.lang_code, model=_kmodel)
+                self._voice_path = _vox
             except KokoroUnavailable:
                 raise
             except BaseException as e:  # noqa: BLE001
@@ -615,7 +647,7 @@ class KokoroTTS:
         # failure here becomes a refusal that names itself instead.
         def generate():
             try:
-                for _gs, _ps, audio in self._pipeline(text, voice=self.voice, speed=plan["speed"]):
+                for _gs, _ps, audio in self._pipeline(text, voice=self._voice_path or self.voice, speed=plan["speed"]):
                     if abandoned.is_set():
                         return                 # nobody is waiting; stop working
                     if audio is None:
