@@ -460,6 +460,9 @@ def page():
             except Exception as exc:                           # pragma: no cover
                 pytest.skip("no chromium for playwright: %s" % exc)
             pg = browser.new_page(viewport={"width": 1280, "height": 800})
+            # Every Playwright call here has a deadline: navigation and waits
+            # take this default, page reads and writes go through _eval.
+            pg.set_default_timeout(60000)
             # These physical-window assertions describe Classic's complete
             # desktop. Simple composes the same projection into a reserved
             # stage and refits moving geometry to keep it clear of the UI.
@@ -472,29 +475,66 @@ def page():
             pg.goto(url, wait_until="domcontentloaded")
             pg.wait_for_function("() => window.fridayDebugScene && !!fridayDebugScene().camera"
                                  " && !!window.FridayTracking && !!window.FridayGenome", timeout=60000)
-            assert pg.evaluate("window.FridayDisplayStyle.get()") == "classic"
-            assert pg.evaluate("window.FridayHolographicWorkspace?.stageRect || null") is None
-            pg.evaluate(MEASURE)
+            assert _eval(pg, "window.FridayDisplayStyle.get()", "the display style") == "classic"
+            assert _eval(pg, "window.FridayHolographicWorkspace?.stageRect || null", "the stage rect") is None
+            _eval(pg, MEASURE + "\nundefined", "installing the measuring probe")
             _until(pg, "() => __holo.measure() !== null", "the scene never drew a structure")
             yield pg
+            _STUCK.pop(id(pg), None)
+            _GENOME_STEPPED.discard(id(pg))
             browser.close()
     finally:
         httpd.shutdown()
         httpd.server_close()
 
 
+# page.evaluate has no deadline: a page whose main thread never yields (a
+# loop, a stalled synchronous GPU read) would hold the test, and the run,
+# forever. Every read and write of the page goes through wait_for_function
+# instead, whose deadline Playwright enforces from outside the page. The
+# wrapped value is an object, so the first poll is truthy and the source runs
+# exactly once.
+_BOUNDED = """([src, isFn]) => {
+  const r = (0, eval)(isFn ? '(' + src + ')' : src);
+  return { v: isFn ? r() : r };
+}"""
+# A page that stopped answering stays stopped; later calls fail at once
+# rather than each spending a full deadline on it.
+_STUCK = {}
+
+
+def _eval(pg, js, what="a page call", secs=30):
+    """page.evaluate(js) with a deadline; `what` names the step in a failure."""
+    if id(pg) in _STUCK:
+        raise AssertionError("not asking the page for %s: it stopped answering at %s" % (what, _STUCK[id(pg)]))
+    try:
+        handle = pg.wait_for_function(_BOUNDED, arg=[js, js.lstrip().startswith("() =>")], timeout=secs * 1000)
+    except Exception as exc:
+        _STUCK[id(pg)] = what
+        raise AssertionError("the page did not answer within %gs for %s\n  call: %s\n  %s"
+                             % (secs, what, js.strip()[:160], str(exc).splitlines()[0][:200])) from None
+    try:
+        return handle.json_value().get("v")
+    finally:
+        handle.dispose()
+
+
 def _until(pg, js, what, secs=15):
     try:
         pg.wait_for_function(js, timeout=secs * 1000)
     except Exception as exc:
-        state = pg.evaluate("() => { try { return JSON.stringify({ target: fridayDebugScene().targetStructure,"
-                            " head: FridayTracking.head, m: __holo.measure() }); } catch (e) { return String(e); } }")
+        try:
+            state = _eval(pg, "() => { try { return JSON.stringify({ target: fridayDebugScene().targetStructure,"
+                              " head: FridayTracking.head, m: __holo.measure() }); } catch (e) { return String(e); } }",
+                          "the page state after: %s" % what, secs=10)
+        except AssertionError as stuck:
+            state = str(stuck)
         raise AssertionError("%s\n  %s\n  page: %s" % (what, str(exc).splitlines()[0][:200], state[:400]))
 
 
 def _settled(pg, octaves):
     """Hold a synthetic lean and wait for the filtered head to arrive."""
-    pg.evaluate("__holo.lean(%r)" % octaves)
+    _eval(pg, "__holo.lean(%r)" % octaves, "a lean of %g octaves" % octaves)
     _until(pg, "() => Math.abs(__holo.z() - (%r)) < 0.03" % octaves,
            "the head never settled at %g octaves" % octaves)
 
@@ -508,7 +548,7 @@ def _eye_still(pg, what):
     # especially just after a genome rebuild. Stability is measured in real
     # frames; this deadline only bounds a stalled or non-converging scene.
     deadline = time.monotonic() + 40
-    prev = pg.evaluate(snapshot)
+    prev = _eval(pg, snapshot, "the eye for %s" % what)
     anchor, stable_since, stable_frames = prev["eye"], None, 0
     while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
@@ -516,7 +556,7 @@ def _eye_still(pg, what):
             break
         _until(pg, "() => __holo.frame() > %d" % prev["frame"],
                "the renderer never completed a new frame for %s" % what, secs=remaining)
-        cur = pg.evaluate(snapshot)
+        cur = _eval(pg, snapshot, "the eye for %s" % what)
         now = time.monotonic()
         if max(abs(a - b) for a, b in zip(cur["eye"], anchor)) < 2e-3:
             if stable_since is None:
@@ -538,7 +578,8 @@ def _unit_at(pg, octaves, samples=3):
         if frame is not None:
             _until(pg, "() => __holo.frame() > %d" % frame,
                    "the renderer never advanced between projected-unit samples")
-        sample = pg.evaluate("() => ({ frame: __holo.frame(), measure: __holo.measure() })")
+        sample = _eval(pg, "() => ({ frame: __holo.frame(), measure: __holo.measure() })",
+                       "a projected-unit sample at %g octaves" % octaves)
         frame, m = sample["frame"], sample["measure"]
         assert m, "nothing to measure"
         vals.append(m["unit"])
@@ -554,6 +595,17 @@ def _ratio(pg, octaves):
     leaned, at1 = _unit_at(pg, octaves)
     rest2, at2 = _unit_at(pg, 0)
     return leaned / ((rest + rest2) / 2), [at0, at1, at2]
+
+
+class _Handle:
+    def __init__(self, value):
+        self.value = value
+
+    def json_value(self):
+        return self.value
+
+    def dispose(self):
+        pass
 
 
 class _EyeFramePage:
@@ -577,7 +629,9 @@ class _EyeFramePage:
         # A wall-clock wait cannot make a stalled renderer complete a frame.
         self.now += milliseconds / 1000
 
-    def wait_for_function(self, source, timeout):
+    def wait_for_function(self, source, timeout, arg=None):
+        if arg is not None:                                    # _eval: a bounded read
+            return _Handle({"v": self.evaluate(arg[0])})
         after = int(re.search(r"__holo\.frame\(\) > (\d+)", source).group(1))
         deadline = self.now + timeout / 1000
         for elapsed, frame, eye in self.frames:
@@ -610,53 +664,92 @@ def test_eye_still_refuses_a_renderer_that_never_advances(monkeypatch):
         _eye_still(pg, "a renderer that remains paused")
 
 
-def _each_structure(pg, label):
-    """For every structure: a unit at its world origin grows on screen when leaned
-    in by one octave, and the structure stays put. Returns what is wrong."""
-    ids = pg.evaluate("__holo.structures()")
+def test_a_page_that_stops_answering_fails_the_call_instead_of_hanging(page):
+    """page.evaluate waits for a busy main thread without end; _eval names the
+    step and fails at its deadline, and later calls on that page fail at once."""
+    ctx = page.context.browser.new_context()
+    stuck = ctx.new_page()
+    try:
+        stuck.set_content("<p>busy</p>")
+        # From the next task the main thread spins for 15 s: nothing in the
+        # page answers until it ends.
+        stuck.evaluate("setTimeout(() => { const t = Date.now(); while (Date.now() - t < 15000) {} }, 0)")
+        time.sleep(0.3)
+        began = time.monotonic()
+        with pytest.raises(AssertionError, match="did not answer within 2s for a spinning page"):
+            _eval(stuck, "1 + 1", "a spinning page", secs=2)
+        assert time.monotonic() - began < 10
+        with pytest.raises(AssertionError, match="it stopped answering at a spinning page"):
+            _eval(stuck, "1 + 1", "a second question")
+    finally:
+        _STUCK.pop(id(stuck), None)
+        ctx.close()
+
+
+def _one_structure(pg, i, label):
+    """A unit at structure `i`'s world origin grows on screen when leaned in by
+    one octave, and the structure stays put. Returns what is wrong.
+
+    One structure per test: each glides the camera to its own resting pose
+    (about 11 s of scene time at the 0.8/s glide, slower in wall time once
+    software rendering drops below 10 fps, where the frame delta is capped),
+    so fifteen in one test ran to the edge of a per-test timeout on an idle
+    machine and over it on a loaded one."""
+    ids = _eval(pg, "__holo.structures()", "the structure list")
     assert len(ids) == STRUCTURE_COUNT, ids
+    sid = ids[i]
     wrong = []
-    for i, sid in enumerate(ids):
-        pg.evaluate("__holo.show(%d)" % i)
+    try:
+        _eval(pg, "__holo.show(%d)" % i, "showing %s" % sid)
         _until(pg, "() => fridayDebugScene().targetStructure === %r && __holo.measure() !== null" % sid,
                "%s never became the active structure" % sid)
         ratio, ats = _ratio(pg, 1)
-        pg.evaluate("__holo.aside(0.6)")
-        _until(pg, "() => __holo.x() > 0.5", "the head never moved sideways")
-        ats.append(pg.evaluate("__holo.measure()")["at"])
-        # The frustum widens as the eye approaches the glass. The avatar
-        # must nevertheless GROW on screen, which only happens when its
-        # origin is in front of the glass. Its world position must not move.
-        if not 1.02 <= ratio <= 3:
-            wrong.append("%s: %.2fx projected size (%s)" % (sid, ratio, label))
-        if any(max(abs(a - b) for a, b in zip(at, ats[0])) > 1e-9 for at in ats):
-            wrong.append("%s moved with the head: %s (%s)" % (sid, ats, label))
-    pg.evaluate("__holo.release()")
+        _eval(pg, "__holo.aside(0.6)", "moving the head aside at %s" % sid)
+        _until(pg, "() => __holo.x() > 0.5", "the head never moved sideways at %s" % sid)
+        ats.append(_eval(pg, "__holo.measure()", "measuring %s with the head aside" % sid)["at"])
+    finally:
+        if id(pg) not in _STUCK:
+            _eval(pg, "__holo.release()", "releasing the head after %s" % sid)
+    # The frustum widens as the eye approaches the glass. The avatar
+    # must nevertheless GROW on screen, which only happens when its
+    # origin is in front of the glass. Its world position must not move.
+    if not 1.02 <= ratio <= 3:
+        wrong.append("%s: %.2fx projected size (%s)" % (sid, ratio, label))
+    if any(max(abs(a - b) for a, b in zip(at, ats[0])) > 1e-9 for at in ats):
+        wrong.append("%s moved with the head: %s (%s)" % (sid, ats, label))
     return wrong
 
 
-def test_every_structure_grows_on_screen_when_you_lean_in_and_stays_put(page):
-    wrong = _each_structure(page, "v1 look")
+@pytest.mark.parametrize("index", range(STRUCTURE_COUNT))
+def test_every_structure_grows_on_screen_when_you_lean_in_and_stays_put(page, index):
+    wrong = _one_structure(page, index, "v1 look")
     assert not wrong, "leaning in should enlarge each structure on screen, and none may move:\n  " \
         + "\n  ".join(wrong)
 
 
-def test_every_structure_still_answers_after_a_genome_step(page):
-    n = page.evaluate("__holo.genomeStep('sha256:window-test')")
-    assert n == STRUCTURE_COUNT
-    wrong = _each_structure(page, "after a genome step")
+# The genome step is taken once per page, before the first structure after it.
+_GENOME_STEPPED = set()
+
+
+@pytest.mark.parametrize("index", range(STRUCTURE_COUNT))
+def test_every_structure_still_answers_after_a_genome_step(page, index):
+    if id(page) not in _GENOME_STEPPED:
+        n = _eval(page, "__holo.genomeStep('sha256:window-test')", "a genome step", secs=60)
+        assert n == STRUCTURE_COUNT
+        _GENOME_STEPPED.add(id(page))
+    wrong = _one_structure(page, index, "after a genome step")
     assert not wrong, "after the rebuild these no longer answer to the window:\n  " + "\n  ".join(wrong)
 
 
 def test_leaning_back_makes_it_recede(page):
-    page.evaluate("__holo.show(1)")                              # the sphere, centred on its look target
+    _eval(page, "__holo.show(1)")                              # the sphere, centred on its look target
     ratio, _ = _ratio(page, -1)
-    page.evaluate("__holo.release()")
+    _eval(page, "__holo.release()")
     assert 0.91 <= ratio <= 0.97, ratio                          # projected size: 1.5 / (1 + 1.25 * 0.5)
 
 
 def test_with_no_face_the_scene_is_the_plain_camera(page):
-    page.evaluate("__holo.release()")
+    _eval(page, "__holo.release()")
     _until(page, "() => Math.abs(__holo.z()) < 0.01 && Math.abs(__holo.x()) < 0.01",
            "the head never relaxed to neutral")
     # The filtered head eases to neutral, so the projection reaches the plain
@@ -665,48 +758,48 @@ def test_with_no_face_the_scene_is_the_plain_camera(page):
     _until(page, "() => { const p = __holo.projection(), q = __holo.plain();"
                  " return p.every((a, i) => Math.abs(a - q[i]) < 1e-6); }",
            "the projection never returned to the plain camera at rest")
-    proj, plain = page.evaluate("__holo.projection()"), page.evaluate("__holo.plain()")
+    proj, plain = _eval(page, "__holo.projection()"), _eval(page, "__holo.plain()")
     assert all(abs(a - b) < 1e-6 for a, b in zip(proj, plain)), "the projection is not the plain camera at rest"
 
 
 def test_moving_sideways_shears_the_window(page):
-    page.evaluate("__holo.aside(0.8)")
+    _eval(page, "__holo.aside(0.8)")
     _until(page, "() => __holo.x() > 0.7", "the head never moved sideways")
     page.wait_for_timeout(100)
-    proj = page.evaluate("__holo.projection()")
-    page.evaluate("__holo.release()")
+    proj = _eval(page, "__holo.projection()")
+    _eval(page, "__holo.release()")
     assert abs(proj[8]) > 0.05, "no off-axis shear with the head to one side"
 
 
 def test_reduced_motion_keeps_a_gentle_lean_and_no_sideways_shear(page):
     page.emulate_media(reduced_motion="reduce")
     try:
-        page.evaluate("__holo.show(1)")
+        _eval(page, "__holo.show(1)")
         ratio, _ = _ratio(page, 1)
         assert 1.01 <= ratio <= 1.05, ratio                      # GENTLE_ZOOM 1.12: about 1.031 on screen
-        page.evaluate("__holo.aside(0.8)")
+        _eval(page, "__holo.aside(0.8)")
         _until(page, "() => __holo.x() > 0.7", "the head never moved sideways")
         page.wait_for_timeout(100)
-        proj = page.evaluate("__holo.projection()")
+        proj = _eval(page, "__holo.projection()")
         assert abs(proj[8]) < 1e-6, "reduced motion still shears the window sideways"
     finally:
-        page.evaluate("__holo.release()")
+        _eval(page, "__holo.release()")
         page.emulate_media(reduced_motion="no-preference")
 
 
 def test_the_action_bus_applies_a_spoken_change_live(page):
-    res = page.evaluate("""() => {
+    res = _eval(page, """() => {
         const a = { type: 'tracking', tracking: { zoom_in_max: 1.25 } };
         fridayRunActions([a]);
         return { cfg: FridayTracking.cfg.zoom_in_max, result: a.result };
     }""")
     try:
         assert res["cfg"] == 1.25 and res["result"]["tracking"]["zoom_in_max"] == 1.25
-        page.evaluate("__holo.show(1)")
+        _eval(page, "__holo.show(1)")
         ratio, _ = _ratio(page, 1)
         assert 1.03 <= ratio <= 1.08, ratio                      # zoom_in_max 1.25: about 1.067 on screen
         # No face on the camera: a calibrate says so rather than storing a stale width.
-        cal = page.evaluate("""() => { const a = { type: 'tracking', op: 'calibrate' };
+        cal = _eval(page, """() => { const a = { type: 'tracking', op: 'calibrate' };
                                      fridayRunActions([a]); return a.result; }""")
         assert cal == {
             "ok": False, "verified": False, "saved": False, "width": 0, "calibrated": None,
@@ -716,5 +809,5 @@ def test_the_action_bus_applies_a_spoken_change_live(page):
             ),
         }
     finally:
-        page.evaluate("__holo.release()")
-        page.evaluate("fridayRunActions([{ type: 'tracking', tracking: { zoom_in_max: 1.8 } }])")
+        _eval(page, "__holo.release()")
+        _eval(page, "fridayRunActions([{ type: 'tracking', tracking: { zoom_in_max: 1.8 } }])")
