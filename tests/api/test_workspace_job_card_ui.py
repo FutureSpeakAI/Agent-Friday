@@ -66,6 +66,10 @@ def desk(client, tmp_path, monkeypatch):
     with ag.TASKS_LOCK:
         saved = dict(ag.TASKS)
         ag.TASKS.clear()
+    # Orbs other tests in this process left behind would be counted too.
+    with core.PROCESSES_LOCK:
+        saved_procs = dict(core.PROCESSES)
+        core.PROCESSES.clear()
 
     seen: dict = {}
 
@@ -92,6 +96,9 @@ def desk(client, tmp_path, monkeypatch):
     with ag.TASKS_LOCK:
         ag.TASKS.clear()
         ag.TASKS.update(saved)
+    with core.PROCESSES_LOCK:
+        core.PROCESSES.clear()
+        core.PROCESSES.update(saved_procs)
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):

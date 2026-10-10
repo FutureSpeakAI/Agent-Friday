@@ -265,8 +265,15 @@ def touch_activity():
     return jsonify({"ok": True, "idle_s": wq.idle_seconds()})
 
 
-@visible_job('Queued work', kind='work_queue', workspace='work')
 def _runner(item):
+    """One queued item as a visible job, named for the item (its trace carries
+    the same name)."""
+    with visible_job(str(item.get("title") or "Queued work")[:120],
+                     kind="work_queue", workspace="work"):
+        return _run_item(item)
+
+
+def _run_item(item):
     """Execute one queued item on the seat its class implies.
 
     Dispatch goes through the ordinary paths — `_call_ollama` for local work
