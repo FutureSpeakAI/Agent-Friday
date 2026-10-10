@@ -66,6 +66,7 @@ def list_tasks():
                 t.update(_tj.liveness(t['task_id'], t.get('status')))
     except Exception:
         pass
+    _annotate_queue(tasks)
     # Tray lifecycle (services/tray_lifecycle): a finished card is a receipt
     # and ages out; a failure keeps longer; an INTERRUPTED task still holding
     # a resume checkpoint never expires on a clock, because that card is a
@@ -146,6 +147,45 @@ def list_tasks():
     return jsonify(_serve_sealed({"tasks": tasks}, None, "list", events=len(tasks)))
 
 
+def _queue_view():
+    """Where each job stands in the Local AI queue: id -> position fields.
+
+    A job waiting for the local seat says so on its card: its place in line
+    and why it waits (the same words the top-bar chip uses). Labels only."""
+    try:
+        from agent_friday.services.agent import local_queue_snapshot
+        snap = local_queue_snapshot() or {}
+    except Exception:
+        return {}
+    out = {}
+    queued = snap.get("queued") or []
+    for i, row in enumerate(queued, 1):
+        out[row.get("id")] = {"queue_state": "queued", "queue_position": i,
+                              "queue_total": len(queued),
+                              "wait_reason": row.get("why") or ""}
+    for row in snap.get("running") or []:
+        out.setdefault(row.get("id"), {"queue_state": "running"})
+    return out
+
+
+def _annotate_queue(rows):
+    """Add queue fields to task rows; a workspace job (it runs on its
+    launcher's thread, so its record says `running` while it waits for the
+    seat) reads as `queued` while it waits."""
+    view = _queue_view()
+    if not view:
+        return rows
+    for t in rows:
+        q = view.get(t.get("task_id"))
+        if not q:
+            continue
+        t.update(q)
+        if (q.get("queue_state") == "queued" and t.get("inline_job")
+                and t.get("status") == "running"):
+            t["status"] = "queued"
+    return rows
+
+
 def _linked_task_log(linked_tid):
     """The log of the task an orb represents, when it names one."""
     if not linked_tid:
@@ -192,7 +232,9 @@ def _steps_as_log(steps):
 def get_task(task_id):
     task = _task_snapshot(task_id)
     if task:
-        return jsonify(_serve_sealed(dict(task), task_id, "detail", events=1))
+        row = dict(task)
+        _annotate_queue([row])
+        return jsonify(_serve_sealed(row, task_id, "detail", events=1))
 
     # Fall back to PROCESSES when the id isn't a TASK (e.g. scheduler orbs,
     # vault-access orbs, and other process_register() entries).  Synthesise a

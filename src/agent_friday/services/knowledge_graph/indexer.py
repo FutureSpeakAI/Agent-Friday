@@ -49,6 +49,7 @@ from . import kg_settings
 from . import graph_analysis
 from .store import (KnowledgeGraphStore, KnowledgeGraphManifest, canonical)
 from .wiki_graph import list_wiki_pages, _read, _page_sensitivity, _page_key
+from agent_friday.services.visible_jobs import visible_job
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 
@@ -521,6 +522,7 @@ def _resolve_model(sensitivity: int, mode: str) -> tuple[Optional[str], bool]:
     return model, True
 
 
+@visible_job('Knowledge graph learning', kind='kg_learn', workspace='library', eager=False, deferrable=True)
 def _llm(messages, system: Optional[str], sensitivity: int, mode: str,
          orb_label: Optional[str] = None) -> str:
     """Single LLM entry point for the whole indexer (spec §5.4)."""
@@ -594,6 +596,7 @@ def _ent_id(title: str) -> str:
 #  Index pass
 # ═══════════════════════════════════════════════════════════════
 
+@visible_job('Knowledge graph learning', kind='kg_learn', workspace='library', eager=False, deferrable=True)
 def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                    mode: str = "delta",
                    progress: Optional[Callable[[str], None]] = None,

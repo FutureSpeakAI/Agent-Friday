@@ -53,6 +53,7 @@ from agent_friday.services.model_router import (
     _predict_route_provider,
 )  # noqa: E501
 from agent_friday.routes._errors import api_error
+from agent_friday.services.visible_jobs import visible_job
 
 calendar_bp = Blueprint('calendar', __name__)
 
@@ -157,6 +158,7 @@ def api_calendar_event(event_id):
 
 
 @calendar_bp.route('/api/calendar/prep/<event_id>', methods=['POST'])
+@visible_job('Meeting prep', kind='meeting_prep', workspace='calendar')
 def api_calendar_prep(event_id):
     """Generate (and cache) a Friday prep card for an event with attendees."""
     # Locate the event across the upcoming week.
@@ -209,6 +211,7 @@ def api_calendar_prep(event_id):
 
 
 @calendar_bp.route('/api/calendar/quick-add', methods=['POST'])
+@visible_job('Quick add event', kind='calendar_quick_add', workspace='calendar')
 def api_calendar_quick_add():
     """Natural-language event creation. Parses with Claude, then writes to
     Google Calendar if a write scope is available, else stores locally so the

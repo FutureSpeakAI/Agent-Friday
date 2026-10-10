@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, Optional
 
 from agent_friday.core import _load_settings
 from agent_friday.user_errors import ExceptionText
+from agent_friday.services.visible_jobs import visible_job
 
 # Mirrors DEFAULT_SETTINGS["qa_gates"]; used when the key is absent/partial.
 _QA_DEFAULTS = {
@@ -137,6 +138,7 @@ _EVAL_SYSTEM = (
 )
 
 
+@visible_job('Quality check', kind='qa_check', workspace='creative', eager=False)
 def evaluate_text(content: str, intent: str, *,
                   workspace: str = "", extra_criteria: str = "") -> Dict[str, Any]:
     """Score generated text against the user's intent. Returns
@@ -199,6 +201,7 @@ def _score_image_locally(data: bytes, mime: str, intent: str):
         return None
 
 
+@visible_job('Image quality check', kind='qa_check', workspace='creative')
 def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
     """Score a generated image against intent using a Gemini vision model.
 
@@ -260,6 +263,8 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
             'JSON: {"score": <0.0-1.0>, "critique": "<one sentence>", '
             '"suggestions": "<prompt tweaks, or empty>"}.')
         # Use a text/reasoning model for evaluation, never an image-gen model.
+        from agent_friday.services import visible_jobs as _vj
+        _vj.note_inference("gemini-2.5-flash", local=False)
         resp = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[types.Part.from_bytes(data=data, mime_type=mime), prompt],

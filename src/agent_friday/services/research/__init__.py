@@ -21,6 +21,7 @@ from agent_friday.services.research import deliver, harness
 from agent_friday.services.research.objects import (
     DELIVERED, FAILED, Commission, list_commissions,
 )
+from agent_friday.services.visible_jobs import visible_job
 
 _log = logging.getLogger("friday.research")
 
@@ -75,6 +76,7 @@ def is_running(commission_id: str) -> bool:
         return commission_id in _RUNNING
 
 
+@visible_job('Deep research', kind='research', workspace='research')
 def run(commission_id: str) -> dict:
     """Run a commission to completion. Blocking. Returns its status dict.
 

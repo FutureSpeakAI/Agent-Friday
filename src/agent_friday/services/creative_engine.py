@@ -815,6 +815,8 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     try:
         from google.genai import types
         client = _client()
+        from agent_friday.services import visible_jobs as _vj
+        _vj.note_inference(api_model, local=False)
         _orb_update(orb, progress=0.3, label="Painting…")
 
         files: List[Dict[str, str]] = []

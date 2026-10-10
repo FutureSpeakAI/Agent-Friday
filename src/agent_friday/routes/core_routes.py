@@ -63,6 +63,7 @@ from agent_friday.services.notifications import (
     _flush_offline_queue,
 )  # noqa: E501
 from agent_friday.routes._errors import api_error, error_text, public_result
+from agent_friday.services.visible_jobs import visible_job
 
 core_bp = Blueprint('core_routes', __name__)
 
@@ -1969,6 +1970,7 @@ def _analyze_withheld(filename, what, why, remedy):
 
 
 @core_bp.route('/api/analyze', methods=['POST'])
+@visible_job('Analyzing a file', kind='analyze_file', workspace='files')
 def analyze_file():
     """Analyze an uploaded file, locally where possible.
 
@@ -2023,6 +2025,9 @@ def analyze_file():
         _client_box = []
 
         def _cloud_client():
+            # A workspace job's card names the model about to read the file.
+            from agent_friday.services import visible_jobs as _vj
+            _vj.note_inference('gemini-2.5-flash', local=False)
             if not _client_box:
                 _client_box.append(
                     genai.Client(api_key=core.GEMINI_API_KEY))  # pragma: allowlist secret

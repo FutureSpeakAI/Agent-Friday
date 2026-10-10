@@ -1886,7 +1886,26 @@ def process_register(pid, *, name="Task", label=None, category="default",
     in the 3-D scene — used for the green vault-access orb.
     `task_id` links this process to a TASKS entry so the notification detail
     panel can stream the underlying task's log.
+
+    Inside a workspace job (services/visible_jobs) the job already owns the
+    orb and the task card. A model primitive's own "Local Inference" /
+    "Cloud Inference" orb would be a second orb for the same work, so it
+    reports its model to the job instead, and every other orb opened under
+    the job links to the job's task.
     """
+    try:
+        from agent_friday.services import visible_jobs as _vj
+        _job = _vj.current()
+        if _job is not None:
+            if name in ("Local Inference", "Cloud Inference"):
+                # (also what shows a lazy job's card, at its first model call)
+                _vj.note_inference(model, label=label, check=False)
+                if _job.materialized:
+                    return
+            elif _job.materialized and task_id is None:
+                task_id = _job.id
+    except Exception:
+        pass
     with PROCESSES_LOCK:
         PROCESSES[pid] = {
             "id": pid,

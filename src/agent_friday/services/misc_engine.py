@@ -53,6 +53,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.services.visible_jobs import visible_task
 
 
 
@@ -276,7 +277,13 @@ def _spawn_draft_task(mode, prompt_text, context=''):
             _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
             _task_log(task_id, f'Error: {e}')
 
-    threading.Thread(target=_draft_worker, daemon=True).start()
+    def _visible_draft_worker():
+        # The record above is the task; this adds its orb and tells it which
+        # model answered.
+        with visible_task(task_id):
+            _draft_worker()
+
+    threading.Thread(target=_visible_draft_worker, daemon=True).start()
     _log_context("draft_spawn", {"task_id": task_id, "mode": mode, "prompt": prompt_text[:200]})
 
     return {

@@ -273,6 +273,9 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
         raise
     except Exception:
         pass
+    # A workspace job's card names the local model that is about to answer.
+    from agent_friday.services import visible_jobs as _vj
+    _vj.note_inference(model, local=True)
 
     base = seat_endpoint(model)
     if base:

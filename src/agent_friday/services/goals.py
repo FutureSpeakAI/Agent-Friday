@@ -192,6 +192,7 @@ from agent_friday.paths import contained, friday_home, safe_name
 from agent_friday.services import approvals
 from agent_friday.services import qa_gates
 from agent_friday.user_errors import ExceptionText, UserFacingValueError, exception_text
+from agent_friday.services.visible_jobs import visible_job
 
 _log = logging.getLogger("friday.goals")
 
@@ -936,6 +937,7 @@ _RUNNING_MILESTONES: set = set()
 _RUNNING_MILESTONES_LOCK = threading.Lock()
 
 
+@visible_job('Goal milestone', kind='goal_milestone', workspace='goals')
 def run_milestone(goal_id: str, milestone_id: str) -> Dict[str, Any]:
     """Advance one milestone by one attempt-cycle (which itself contains a
     bounded internal repair loop). NEVER marks a milestone done on a failed

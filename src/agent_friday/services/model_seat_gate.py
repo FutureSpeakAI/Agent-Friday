@@ -34,6 +34,7 @@ _seat_logger = logging.getLogger("friday.model_seat_gate")
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.paths import contained
 from agent_friday.services.tool_integrity import find_pseudo_toolcalls
+from agent_friday.services.visible_jobs import visible_job
 
 GATE_DIR = FRIDAY_DIR / "model_seat_conformance"
 
@@ -153,6 +154,7 @@ def _is_harness_error(err: str) -> bool:
                                 "remote end closed", "urlopen error"))
 
 
+@visible_job('Seat conformance check', kind='seat_gate', workspace='settings')
 def run_conformance_gate(model: str, *, provider: str = "local",
                           ollama_url: str = "http://localhost:11434",
                           num_ctx: int = GATE_NUM_CTX,
@@ -275,10 +277,13 @@ def _gate_chat_fn(model: str, ollama_url: str, *, num_ctx=GATE_NUM_CTX,
 
         base = (prov.get("base_url") or "").rstrip("/")
 
+        @visible_job('Seat conformance probe', kind='seat_gate', workspace='settings', eager=False)
         def chat_fn(messages, model, tools=None, temperature=0.2,
                     max_tokens=300):
             body = {"model": model, "messages": messages,
                     "temperature": temperature, "max_tokens": max_tokens}
+            from agent_friday.services import visible_jobs as _vj
+            _vj.note_inference(model, local=True)
             if tools:
                 body["tools"] = tools
             req = _rq.Request(

@@ -37,6 +37,7 @@ from datetime import date, datetime, timedelta
 from agent_friday.user_errors import UserFacingValueError
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.services import avatar_genome as g
+from agent_friday.services.visible_jobs import visible_job
 
 _log = logging.getLogger("friday.avatar_growth")
 _LOCK = threading.RLock()
@@ -562,6 +563,7 @@ def _wait(st, author, why, fixes, now):
     return {"status": "waiting", "reason": why, "fixes": fixes}
 
 
+@visible_job('Avatar evolution step', kind='avatar_evolution', workspace='avatar', eager=False)
 def run_step(*, manual=False, now=None, author=None) -> dict:
     """One step, if the chosen author can take it. Never switches author."""
     with _LOCK:

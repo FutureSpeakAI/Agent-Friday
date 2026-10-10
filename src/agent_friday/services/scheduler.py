@@ -37,6 +37,7 @@ _log = logging.getLogger("friday.scheduler")
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_register, process_update
+from agent_friday.services.visible_jobs import visible_job
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
@@ -1068,7 +1069,12 @@ def _run_task_inner(rec):
                                        # A manual "Run now" is the owner asking
                                        # for it now: no idle wait.
                                        deferrable=(ref not in TIME_BOUND_BUILTINS
-                                                   and not rec.get("_manual"))):
+                                                   and not rec.get("_manual"))) as _qjob, \
+                    visible_job(meta.get("label") or ref, kind="scheduled",
+                                workspace="scheduler", eager=False,
+                                queued=False) as _vjob:
+                # The queue row and the task card are one entry.
+                _qjob["task_id"] = _vjob.id
                 # `local_only` used to be read ONLY on the agent_prompt path below, so
                 # every builtin schedule -- daily creation, the briefings, the news front
                 # page -- ignored it completely and each job picked its own model. The
@@ -1835,6 +1841,7 @@ def _register_default_builtin_tasks():
         print(f"  [scheduler] relationship_sync unavailable: {e}")
 
 
+@visible_job('Afternoon briefing', kind='briefing', workspace='news')
 def _afternoon_briefing_job():
     """Synthesize the afternoon briefing markdown and persist it (so the
     'briefing ready' notification + News panel pick it up). Mirrors the on-demand
@@ -2110,6 +2117,7 @@ def _away_drain_tick() -> None:
         _log.warning("away-drain tick failed: %s", e)
 
 
+@visible_job('Queued background item', kind='away_drain', workspace='work', eager=False)
 def _drain_runner(item):
     from agent_friday.services import local_call
     return local_call.call("You are completing a queued background job.",

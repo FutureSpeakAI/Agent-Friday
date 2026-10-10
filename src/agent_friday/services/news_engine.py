@@ -50,6 +50,7 @@ from agent_friday.services.model_router import (
     _predict_route_provider,
 )  # noqa: E501
 from agent_friday.user_errors import ExceptionText
+from agent_friday.services.visible_jobs import visible_job
 
 # Not visible via the star-import cascade (it is bound in voice_engine, an
 # UPPER layer) — import the leaf module directly so the editorial/digest/front
@@ -2242,6 +2243,7 @@ def _previous_front_page(current_id):
     return None
 
 
+@visible_job("Front Page", kind="front_page", workspace="news")
 @_local_news('Front Page')
 def _generate_front_page(slot="morning"):
     """Build + persist one Front Page edition. Returns the edition dict.
@@ -2673,6 +2675,7 @@ def _list_weekly_digests():
     return out
 
 
+@visible_job("Weekly digest", kind="weekly_digest", workspace="news")
 @_local_news('Weekly Digest')
 def _generate_weekly_digest():
     """Synthesize the week's Front Page editions into one digest. Persists to
@@ -2848,6 +2851,7 @@ def _editorial_markdown(week_id, when, body, banned, score, regenerated):
     return "\n".join(parts)
 
 
+@visible_job("Weekly editorial", kind="weekly_editorial", workspace="news")
 @_local_news('Weekly Editorial')
 def _generate_weekly_editorial():
     """Write + persist Friday's weekly editorial. Returns the editorial dict.
@@ -3485,6 +3489,9 @@ def _article_header(url):
     return page.header if page is not None else page_reader.header_line(page_reader.known_meta(url))
 
 
+# Lazy: a cached dive never reaches a model, and the quick path runs its model
+# call on a thread of its own, which opens its own job.
+@visible_job("News deep dive", kind="news_dive", workspace="news", eager=False)
 @_local_news('News deep dive')
 def _deep_dive_article(url, title=None, refresh=False, quick=False):
     """Fetch an article, summarize it with the local/cloud model, and cache it.
@@ -3594,7 +3601,8 @@ def _quick_dive(url, headline, body, cache_path):
     def work():
         # Its own thread: the local-only mark is per thread, so it is set here.
         try:
-            with local_news_run('News deep dive'):
+            with visible_job("News deep dive", kind="news_dive", workspace="news"), \
+                    local_news_run('News deep dive'):
                 system = _get_friday_system_prompt(
                     keywords=headline, workspace="news",
                     provider=_predict_route_provider(keywords=headline, workspace="news"),

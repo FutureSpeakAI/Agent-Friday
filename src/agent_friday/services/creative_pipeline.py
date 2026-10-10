@@ -38,6 +38,7 @@ import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.paths import contained, safe_name
 from agent_friday.user_errors import ExceptionText, exception_text, result_text
+from agent_friday.services.visible_jobs import visible_job
 
 PIPELINES_DIR = FRIDAY_DIR / "pipelines"
 RUNS_DIR = PIPELINES_DIR / "runs"
@@ -520,6 +521,7 @@ def _exec_text_stage(stage, prompt, context):
                           temperature=temperature, workspace=ws)
 
 
+@visible_job('Creative pipeline stage', kind='pipeline', workspace='creative', eager=False)
 def _exec_agent_stage(stage, prompt, context):
     """Tool-using agentic stage (background-task style). Falls back to text gen
     if the agent entry point is unavailable."""
@@ -536,6 +538,7 @@ def _exec_agent_stage(stage, prompt, context):
         return _exec_text_stage(stage, prompt, context)
 
 
+@visible_job('Creative pipeline stage', kind='pipeline', workspace='creative', eager=False)
 def _exec_image_stage(stage, prompt, context):
     """Generate an image for the stage; returns a short descriptor string and
     stashes the file record into the context under '<output_key>_file'."""
@@ -687,6 +690,7 @@ class PipelineStageError(Exception):
 #  RUN DRIVER  (sync — stops at checkpoints; resumable)
 # ═══════════════════════════════════════════════════════════════════════════
 
+@visible_job('Creative pipeline', kind='pipeline', workspace='creative')
 def advance(run_id: str,
             progress: Optional[Callable[[float, str], None]] = None) -> Dict[str, Any]:
     """Execute exactly ONE stage of the run and persist. Returns the run.
@@ -726,6 +730,7 @@ def advance(run_id: str,
         return _save_run(run)
 
 
+@visible_job('Creative pipeline', kind='pipeline', workspace='creative')
 def run(run_id: str, *, until_checkpoint: bool = True,
         progress: Optional[Callable[[float, str], None]] = None) -> Dict[str, Any]:
     """Drive a run forward: execute stages until a checkpoint pause, completion,

@@ -72,6 +72,7 @@ from agent_friday.services.model_router import (
     is_refusal,
 )  # noqa: E501
 from agent_friday.routes._errors import api_error, log_failure
+from agent_friday.services.visible_jobs import visible_job
 
 workflows_bp = Blueprint('workflows', __name__)
 
@@ -438,6 +439,7 @@ def outreach_suggestions():
 
 @workflows_bp.route('/api/outreach/draft', methods=['POST'])
 @login_required
+@visible_job('Outreach draft', kind='outreach_draft', workspace='outreach')
 def outreach_draft():
     """Draft outreach message via the model router, else templated fallback."""
     data = request.get_json(silent=True) or {}
@@ -604,6 +606,7 @@ def content_idea():
 
 @workflows_bp.route('/api/content/draft', methods=['POST'])
 @login_required
+@visible_job('Content draft', kind='content_draft', workspace='content')
 def content_draft():
     """Draft content from a pipeline item (or ad-hoc title). Optionally advances stage."""
     data = request.get_json(silent=True) or {}

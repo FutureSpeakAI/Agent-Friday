@@ -29,6 +29,7 @@ from datetime import datetime
 from agent_friday import brand
 from agent_friday.core import CREATIONS_DIR
 from agent_friday.user_errors import ExceptionText
+from agent_friday.services.visible_jobs import visible_job
 
 _log = logging.getLogger("friday.showcase")
 
@@ -132,6 +133,7 @@ Produce exactly {n} content slides. No bullet may repeat another slide's
 point. Write for a spoken presentation: verbs first, no filler."""
 
 
+@visible_job('Building a presentation', kind='presentation', workspace='studio')
 def generate_presentation(topic, slides=None, style=None, workspace=None):
     """Generate a self-contained HTML slide deck into the creations gallery.
 
@@ -310,6 +312,7 @@ Produce exactly {n} pages; the FIRST page is the landing page. Each page gets
 fit — plain body text is fine. Concrete, confident copy; no lorem ipsum."""
 
 
+@visible_job('Building a website', kind='website', workspace='studio')
 def generate_website(brief, pages=None, style=None, workspace=None):
     """Generate a self-contained multi-page (hash-routed) website into the gallery."""
     from agent_friday.services.creations import _creation_orb_start

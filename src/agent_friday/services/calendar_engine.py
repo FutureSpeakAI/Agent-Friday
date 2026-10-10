@@ -31,6 +31,7 @@ from agent_friday.core import (
     HOME,
     _load_settings,
 )  # noqa: E501
+from agent_friday.services.visible_jobs import visible_job
 
 
 def _recent_unread_emails(limit=12):
@@ -924,6 +925,7 @@ def _save_json_dict(path, data):
     return data
 
 
+@visible_job('Calendar day notes', kind='calendar_notes', workspace='calendar', eager=False)
 def _day_annotation(day, events):
     """A one-line Friday intro for the day, cached per-date (lightweight Claude)."""
     key = day.isoformat()

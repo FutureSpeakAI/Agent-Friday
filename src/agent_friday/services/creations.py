@@ -39,6 +39,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.services.visible_jobs import visible_job
 
 # The notifications engine lives at the TOP of the service import chain, so it
 # is not visible here via the star-import cascade — import the leaf module
@@ -532,6 +533,7 @@ def _generate_media_daily(date_str, choice, path):
 _daily_creation_lock = threading.Lock()
 
 
+@visible_job('Daily creation', kind='daily_creation', workspace='studio')
 def generate_daily_creation(force=False):
     """Generate (and persist + notify) today's creation. Idempotent per day
     unless force=True. Safe to call from the scheduler or an API trigger.

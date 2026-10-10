@@ -20,6 +20,7 @@ import time
 from typing import Any, Dict, Optional
 from agent_friday.paths import friday_home
 from agent_friday.user_errors import ExceptionText, exception_text
+from agent_friday.services.visible_jobs import visible_job
 
 # Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
 # module along with everything else (see agent_friday/paths.py).
@@ -330,6 +331,7 @@ def gate_reply(text: str, channel: str) -> str:
         return "[withheld: reply could not be safety-checked]"
 
 
+@visible_job('Channel reply', kind='channel_reply', workspace='channels')
 def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
     """Funnel one inbound message → agent loop → egress gate → reply text."""
     channel = _norm(channel)

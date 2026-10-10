@@ -145,6 +145,8 @@ def describe(image_b64: str, *, mime: str = "image/png",
                 "reason": f"{cap['model']} could not be reloaded with its "
                           f"vision projector"}
 
+    from agent_friday.services import visible_jobs as _vj
+    _vj.note_inference(cap["model"], local=True)
     body = {
         "model": cap["model"],
         "max_tokens": max_tokens,

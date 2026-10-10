@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional
 
 import agent_friday.core as core
+from agent_friday.services.visible_jobs import visible_job
 
 VERSION = "v1"
 RAM_FLOOR_MIB = 3072            #: the recogniser and its working set want room
@@ -199,7 +200,10 @@ def _model():
         return _MODEL
 
 
+@visible_job('Transcribing audio', kind='transcribe', workspace='media', deferrable=True)
 def _run_whisper(p: Path) -> Dict[str, Any]:
+    from agent_friday.services import visible_jobs as _vj
+    _vj.note_inference("faster-whisper base.en", local=True)
     model = _model()
     segs, info = model.transcribe(str(p), beam_size=1, vad_filter=True)
     out: List[Dict[str, Any]] = []

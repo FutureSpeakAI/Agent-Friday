@@ -44,6 +44,7 @@ from agent_friday.services import podcast_quality as quality
 from agent_friday.services import podcast_render as render
 from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services import podcast_sources as sources_mod
+from agent_friday.services.visible_jobs import visible_job
 
 log = logging.getLogger(__name__)
 
@@ -1433,6 +1434,7 @@ def _cloud_speak():
     return speak
 
 
+@visible_job('Podcast episode', kind='podcast', workspace='podcasts')
 def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
     """Write, speak and check one episode. Resumes after the last stage done.
 

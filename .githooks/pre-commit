@@ -91,6 +91,16 @@ if ! $PY "$HERE/../scripts/check_trust_in_governance.py"; then
     exit 1
 fi
 
+# ── Visible-jobs check ────────────────────────────────────────────────────
+# Every launch point of model work sits behind services/visible_jobs, so the
+# job is a task the person can see (model, steps, trace, queue place). AST
+# parse of src/, stdlib only, no app import.
+if ! $PY "$HERE/../scripts/check_visible_jobs.py"; then
+    echo "[pre-commit] visible-jobs check FAILED - commit blocked." >&2
+    echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+    exit 1
+fi
+
 # ── Brand token check ─────────────────────────────────────────────────────
 # The palette lives in src/agent_friday/brand.py; the UI carries one --fr-*
 # token block in index.html and ui_parts/head.html. Fails when the two blocks

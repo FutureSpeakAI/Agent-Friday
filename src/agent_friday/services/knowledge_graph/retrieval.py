@@ -23,6 +23,7 @@ from . import kg_settings
 from . import structural_query
 from .indexer import _prompt, _llm, CloudIndexingDisabled, LocalIndexingUnavailable
 from .store import KnowledgeGraphStore
+from agent_friday.services.visible_jobs import visible_job
 
 MAX_MAP_REPORTS = 8
 MAX_LOCAL_ENTITIES = 12
@@ -82,6 +83,7 @@ def _match_entities(question: str, store: KnowledgeGraphStore,
 
 # ── search modes ──────────────────────────────────────────────
 
+@visible_job('Knowledge graph question', kind='kg_question', workspace='library')
 def local_search(question: str,
                  store: Optional[KnowledgeGraphStore] = None,
                  llm=None) -> dict[str, Any]:
@@ -132,6 +134,7 @@ def local_search(question: str,
                           "provenance": e.get("provenance")} for e in ents]}
 
 
+@visible_job('Knowledge graph question', kind='kg_question', workspace='library')
 def global_search(question: str,
                   store: Optional[KnowledgeGraphStore] = None,
                   llm=None) -> dict[str, Any]:
