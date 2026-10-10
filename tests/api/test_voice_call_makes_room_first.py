@@ -29,9 +29,16 @@ class _Card:
         self.parked = False
         self.taken = 0
         self.log = []
+        self.brain_mib = BRAIN_MIB
+        self.low = None          # the least free the card ever had
 
     def free_mib(self):
-        return FREE_WITH_BRAIN_MIB + (BRAIN_MIB if self.parked else 0) - self.taken
+        return FREE_WITH_BRAIN_MIB + (self.brain_mib if self.parked else 0) - self.taken
+
+    def take(self, mib):
+        self.taken += mib
+        free = self.free_mib()
+        self.low = free if self.low is None else min(self.low, free)
 
 
 class _Arbiter:
@@ -57,6 +64,9 @@ class _FrontSeat:
         self.card = card
 
     def arm(self, model, holder="session"):
+        # The front's llama-server takes its real need from the card.
+        from agent_friday.services import voice_front
+        self.card.take(voice_front.vram_need_mib(model))
         self.card.log.append(("front", model))
 
     def prefill(self, prompt, contract):
@@ -91,7 +101,7 @@ def call(app, monkeypatch, tmp_path):
     # occupy it; no child process.
     def start(self, progress=None):
         vw.admit_gpu(self.declared_mib, self.stage)
-        card.taken += self.declared_mib
+        card.take(self.declared_mib)
         card.log.append(("gpu", self.stage))
         self.device, self.model = "cuda", self.args.get("model") or self.engine
         self.voice = self.args.get("voice")
@@ -223,6 +233,40 @@ def test_the_call_parks_the_brain_before_it_admits_the_ear_and_the_mouth(call):
 
 def test_the_park_is_given_back_when_the_call_ends(call):
     call.run()
+    assert call.card.log[-1] == ("unpark", "voice_call") and not call.card.parked
+
+
+def test_the_whole_voice_stays_above_the_display_reserve(call):
+    # 12 GB card: everything fits; nothing ever dips under the reserve.
+    frames = call.run()
+    served, = [f for f in frames if f.get("type") == "served_by"]
+    assert served["mouth"] == "kokoro@cuda"
+    assert call.card.low >= RESERVE_MIB, call.card.low
+
+
+def test_on_an_8_gb_card_the_front_is_counted_before_the_ear_and_mouth(call):
+    # The park frees only 2.2 GB: ear + mouth fit on their own, but not with
+    # the front that arms after them. Its need is held while they are
+    # admitted, so a stage that would push the front under the reserve runs
+    # on the CPU instead, and the card never goes under the reserve.
+    call.card.brain_mib = 2200
+    frames = call.run()
+    assert ("park", "voice_call") in call.card.log
+    assert ("front", BONSAI) in call.card.log
+    assert call.card.low >= RESERVE_MIB, (call.card.low, call.card.log)
+    refused = [f["message"] for f in frames if f.get("code") == "local_voice_gpu_refused"]
+    assert refused and "held for the voice front" in refused[0], refused
+
+
+def test_a_failure_after_the_park_gives_the_room_back(call, monkeypatch):
+    from agent_friday.services import voice_delivery
+
+    def boom(*a, **kw):
+        raise RuntimeError("preferences unavailable")
+    monkeypatch.setattr(voice_delivery, "initialize_session_preferences", boom)
+    with pytest.raises(RuntimeError, match="preferences unavailable"):
+        call.run()
+    assert ("park", "voice_call") in call.card.log
     assert call.card.log[-1] == ("unpark", "voice_call") and not call.card.parked
 
 

@@ -280,13 +280,32 @@ def validate_tool_call(call: dict, contract: dict):
 
 
 #: The end of the fenced result; it pairs with office_engine.as_untrusted's
-#: opening line ("[document content below ..."). Anything in the content that
-#: looks like a fence line is defanged first, so it cannot close the fence
-#: early. What the fence means is said once, in the speaker's system prompt
-#: (routes/voice.py VOICE_SPEAKER_RULE): a small model handed that wording in
-#: every turn reads it aloud.
-RESULT_CLOSE = "[end of document content]"
-_FENCE_LOOKALIKE = re.compile(r"={2,}|\[\s*(?:end of|document content below)[^\]\n]*\]?", re.I)
+#: opening line ("[document content below ..."). Each turn's close carries a
+#: random token after this prefix, so content cannot forge it, and anything
+#: in the content that looks like a fence line is defanged first. What the
+#: fence means is said once, in the speaker's system prompt (routes/voice.py
+#: VOICE_SPEAKER_RULE): a small model handed that wording in every turn reads
+#: it aloud.
+RESULT_CLOSE = "[end of document content"
+#: Fence look-alikes, matched on normalised text: "[end of", "[end  of",
+#: "end-of", "[document content below", a bare "end of document content"
+#: line, and long runs of "=".
+_FENCE_LOOKALIKE = re.compile(
+    r"={2,}"
+    r"|\[\s*(?:end[\s_\-]*of|document[\s_\-]*content[\s_\-]*below)[^\]\n]*\]?"
+    r"|^[ \t]*(?:end[\s_\-]*of[\s_\-]*(?:document|content|what\b)|document[\s_\-]*content[\s_\-]*below)[^\n]*$",
+    re.I | re.M)
+#: Characters that hide a look-alike from the pattern (zero-width and bidi).
+_INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+
+
+def _defang(text: str) -> str:
+    """`text` with fence look-alikes neutralised, after normalising away the
+    tricks that hide them (compatibility forms, invisible characters)."""
+    import unicodedata
+    norm = _INVISIBLE.sub("", unicodedata.normalize("NFKC", str(text or "")))
+    return _FENCE_LOOKALIKE.sub("(fence removed)", norm)
+
 
 #: Routed tools whose answer is a quick fact or a done-deed: one or two short
 #: sentences. The rest (news, briefing, the web, the deeper mind) get a few.
@@ -295,10 +314,14 @@ BRIEF_LOOKUPS = frozenset({
     "search_past_conversations", "navigate_to", "podcast_play", "media_play",
     "voice_preferences", "task_control", "undo_action", "answer_card",
 })
+#: From this many items up, a look-up is a list: every item is named, with
+#: the ordinary reply budget.
+LIST_ITEMS = 3
 
 #: How an empty answer sounds, per tool: one plain sentence to the owner.
 _EMPTY_SAY = {
-    "query_calendar": "Your calendar is clear today.",
+    # The calendar tool reads today and tomorrow.
+    "query_calendar": "Your calendar is clear today and tomorrow.",
     "check_email": "Nothing new in your email.",
     "search_email": "I didn't find an email about that.",
     "search_files": "I didn't find a file like that.",
@@ -310,35 +333,123 @@ _EMPTY_SAY = {
 
 #: The one instruction line after the fence, by what came back. Written as
 #: the owner's own words (the turn is theirs), in the second person, with no
-#: word about documents, data, results or the user to repeat aloud.
-_SAY_ERROR = "That didn't work. Tell me in one short sentence that you couldn't check it just now, and why if it says."
-_SAY_EMPTY = "Nothing came back. Tell me so in one short sentence, like: \"%s\""
+#: word about documents, data, results or the user to repeat aloud. Errors
+#: and empty look-ups never reach the model (fixed_reply).
+_SAY_ERROR = "That didn't work. Tell me in one short sentence that you couldn't check it just now."
+_SAY_EMPTY = "Nothing came back. Tell me so in one short sentence."
 _SAY_BRIEF = "Now answer me in one or two short sentences, with just the facts that matter."
+_SAY_LIST = "Now tell me every one of them, each in a short sentence with its time or name."
 _SAY_FULL = "Now tell me what it says, plainly, in a few short sentences with its facts."
+
+#: List-valued keys that describe the look-up, not what it found.
+_META_LISTS = frozenset({"accounts", "not_searched", "attendees", "errors",
+                         "needs_reauth", "warnings"})
+#: A note that reports a failure (the Google tools put fetch errors there).
+_NOTE_ERROR = re.compile(
+    r"(?i)\b(errors?|fail(?:ed|ure|s)?|could not|couldn't|unable|expired|"
+    r"re-?auth\w*|reconnect\w*|not (?:connected|authori[sz]ed)|needs? connecting)\b")
+#: Plain-text tool results that are failures (routes/voice.py's own wording).
+_TEXT_ERROR = re.compile(
+    r"(?is)^\s*(?:error\b|i hit a problem with the\b|the \S+ tool did not finish within\b)")
+_LATE_PREFIX = re.compile(r"(?s)^\s*\[LATE RESULT[^\]]*\]\s*")
+
+
+def _payload(result):
+    """(the result's text without a late-result label, its JSON or None)."""
+    text = _LATE_PREFIX.sub("", str(result or "")).strip()
+    try:
+        return text, json.loads(text)
+    except (TypeError, ValueError):
+        return text, None
+
+
+def result_items(result) -> int:
+    """How many things the look-up found (its largest item list, or count)."""
+    _text, data = _payload(result)
+    if isinstance(data, list):
+        return len(data)
+    if not isinstance(data, dict):
+        return 0
+    sizes = [len(v) for k, v in data.items() if isinstance(v, list) and k not in _META_LISTS]
+    n = max(sizes) if sizes else 0
+    try:
+        n = max(n, int(data.get("count") or 0))
+    except (TypeError, ValueError):
+        pass
+    return n
 
 
 def result_kind(result) -> str:
     """"error", "empty" or "found": decided here, in code, so the small
-    model is told which answer to give instead of being asked to judge."""
-    text = str(result or "").strip()
+    model is never asked to judge. Anything found wins (a cache search with
+    no account connected, or a partial multi-account answer, still has
+    hits to report); with nothing found, a failure anywhere (an error key,
+    no connection, an account in error or needing re-authorisation, a note
+    that reports an error) is an error, never "your calendar is clear"."""
+    text, data = _payload(result)
     if not text or text == "(nothing came back)":
         return "empty"
-    if re.match(r"(?i)error\b", text):
-        return "error"
-    try:
-        data = json.loads(text)
-    except (TypeError, ValueError):
-        return "found"
+    if data is None:
+        return "error" if _TEXT_ERROR.match(text) else "found"
     if isinstance(data, list):
         return "found" if data else "empty"
     if not isinstance(data, dict):
         return "found"
-    if data.get("error") or data.get("connected") is False:
-        return "error"
-    lists = [v for v in data.values() if isinstance(v, list)]
-    if data.get("count") == 0 or (lists and not any(lists)):
-        return "empty"
-    return "found"
+    if result_items(text) > 0:
+        return "found"
+    failed = (bool(data.get("error")) or data.get("connected") is False
+              or any(str((a or {}).get("status") or "") in ("error", "needs_reauth")
+                     for a in (data.get("accounts") or []) if isinstance(a, dict))
+              or bool(_NOTE_ERROR.search(str(data.get("note") or ""))))
+    return "error" if failed else "empty"
+
+
+#: What a routed look-up reads, for the failure sentence.
+_THING = {
+    "query_calendar": "your calendar", "check_email": "your email",
+    "search_email": "your email", "search_news": "the news", "search_web": "the web",
+    "get_briefing": "your briefing", "search_files": "your files",
+    "search_wiki": "your notes", "search_past_conversations": "our past conversations",
+}
+
+
+def _failure_reason(result) -> str:
+    """A short reason the owner can act on, only when it is a known one."""
+    text, data = _payload(result)
+    low = text.lower()
+    if isinstance(data, dict):
+        note = str(data.get("note") or "").lower()
+        if (any(w in note for w in ("expired", "reconnect", "stopped working"))
+                or any(str((a or {}).get("status") or "") == "needs_reauth"
+                       for a in (data.get("accounts") or []) if isinstance(a, dict))):
+            return "it needs reconnecting"
+        if data.get("connected") is False:
+            return "it isn't connected"
+    if "timeout" in low or "timed out" in low or "did not finish within" in low:
+        return "it took too long to answer"
+    return ""
+
+
+def fixed_reply(result, tool: str = "") -> str | None:
+    """The spoken reply for a look-up with nothing to report, built in code
+    with no model call; None when the speaker should answer. A failure
+    always gets a fixed sentence (a 1.7B handed one read the fence and its
+    instruction aloud); an empty result does when the tool has a sentence."""
+    kind = result_kind(result)
+    if kind == "error":
+        thing = _THING.get(tool)
+        if not thing:
+            return "That didn't work just now."
+        why = _failure_reason(result)
+        return ("I couldn't check %s just now: %s." % (thing, why) if why
+                else "I couldn't check %s just now." % thing)
+    if kind == "empty" and tool in _EMPTY_SAY:
+        return _EMPTY_SAY[tool]
+    return None
+
+
+def is_list(result) -> bool:
+    return result_items(result) >= LIST_ITEMS
 
 
 def result_instruction(result, tool: str = "") -> str:
@@ -347,29 +458,37 @@ def result_instruction(result, tool: str = "") -> str:
     if kind == "error":
         return _SAY_ERROR
     if kind == "empty":
-        return _SAY_EMPTY % _EMPTY_SAY.get(tool, "I didn't find anything.")
+        return _SAY_EMPTY
+    if is_list(result):
+        return _SAY_LIST
     return _SAY_BRIEF if (not tool or tool in BRIEF_LOOKUPS) else _SAY_FULL
 
 
-def result_block(label: str, result: str, ack: str = "", tool: str = "") -> str:
+def result_block(label: str, result: str, ack: str = "", tool: str = "",
+                 token: str = "") -> str:
     """A routed tool's result as the speaker reads it, appended to the owner's
     turn: a short label, the result fenced as UNTRUSTED data
     (office_engine.as_untrusted, the codebase's convention; fence-like text
-    inside it is neutralised), the close, and ONE instruction line. Email
-    bodies and web text are material to report, never instructions to follow;
-    the system prompt says so once. ``ack`` (already spoken) is not repeated
-    to the model: naming it is what made a small model say it again."""
+    inside it is neutralised), the close with this turn's token, and ONE
+    instruction line. Email bodies and web text are material to report,
+    never instructions to follow; the system prompt says so once. ``ack``
+    (already spoken) is not repeated to the model: naming it is what made a
+    small model say it again."""
+    import secrets
     from agent_friday.services import office_engine as _oe
-    body = _FENCE_LOOKALIKE.sub("(fence removed)", (result or "(nothing came back)").strip())
-    label = _FENCE_LOOKALIKE.sub("", str(label or ""))[:60].strip() or "checking"
+    body = _defang((result or "(nothing came back)").strip())
+    label = _defang(str(label or "")).replace("(fence removed)", "")[:60].strip() or "checking"
+    close = "%s %s]" % (RESULT_CLOSE, token or secrets.token_hex(4))
     return "\n\n[What came back from %s:]\n%s\n%s\n%s" % (
-        label, _oe.as_untrusted(body), RESULT_CLOSE, result_instruction(result, tool))
+        label, _oe.as_untrusted(body), close, result_instruction(result, tool))
 
 
 def with_result(messages: list, label: str, result: str, ack: str = "",
                 tool: str = "") -> list:
     """``messages`` with the routed result appended to the last owner turn
-    (one is started when there is none): what the speaker answers from."""
+    (one is started when there is none): what the speaker answers from. Only
+    the last turn changes: a result rides in the turn it answers and nowhere
+    else (history is the persisted words, never a fenced block)."""
     convo = list(messages)
     last = (dict(convo[-1]) if convo and convo[-1].get("role") == "user"
             else {"role": "user", "content": ""})
@@ -619,7 +738,8 @@ class FrontSeat:
     def routed_turn(self, system: str, messages: list, *, tool=None, args=None,
                     ack: str = "", question: str = "", run_tool=None, on_delta=None,
                     max_tokens: int = 400, temperature=None, timings=None,
-                    label: str = "", tool_timeout_s: float = 60.0) -> str:
+                    label: str = "", tool_timeout_s: float = 60.0,
+                    brief_tokens=None) -> str:
         """One spoken turn whose tool, if any, system one already chose
         (services/laya_router). The front never sees a tool catalogue.
 
@@ -667,10 +787,21 @@ class FrontSeat:
         result = box.get("result")
         if not isinstance(result, str):
             result = json.dumps(result, ensure_ascii=False, default=str)
+        fixed = fixed_reply(result, tool)
+        if fixed:
+            # Nothing to report: the sentence is code's, not the model's.
+            speak(fixed)
+            return (ack + " " + fixed).strip()
         convo = with_result(messages, label, result, ack, tool=tool)
+        # ``brief_tokens`` caps a quick look-up's answer (one or two
+        # sentences); a list keeps the ordinary budget so every item is named.
+        # A reply cut by its budget continues once rather than stopping mid-
+        # sentence.
+        if brief_tokens and tool in BRIEF_LOOKUPS and not is_list(result):
+            max_tokens = min(int(max_tokens), int(brief_tokens))
         answer = self.run_turn(system, convo, {"tools": []}, on_delta=on_delta,
                                max_tokens=max_tokens, temperature=temperature,
-                               timings=timings)
+                               timings=timings, allow_continuation=True)
         return (ack + " " + answer).strip()
 
 

@@ -104,6 +104,32 @@ def _display_reserve_mib() -> int:
             return 2560
 
 
+#: Card already promised to something that loads after the stage being
+#: admitted (the voice front a session arms once its ear and mouth are in):
+#: admission counts it as taken. See ``reserving``.
+_RESERVED_MIB = [0]
+_RESERVED_LOCK = threading.Lock()
+
+
+class reserving:
+    """``with reserving(mib):`` admit stages as if `mib` were already on the
+    card. A session holds the front's need while it admits its ear and mouth,
+    so the front that loads after them still fits above the display reserve."""
+
+    def __init__(self, mib: int):
+        self.mib = max(0, int(mib or 0))
+
+    def __enter__(self):
+        with _RESERVED_LOCK:
+            _RESERVED_MIB[0] += self.mib
+        return self
+
+    def __exit__(self, *exc):
+        with _RESERVED_LOCK:
+            _RESERVED_MIB[0] -= self.mib
+        return False
+
+
 def admit_gpu(need_mib: int, stage: str) -> dict:
     """Decide whether `need_mib` may be taken from the card for `stage`.
 
@@ -125,10 +151,12 @@ def admit_gpu(need_mib: int, stage: str) -> dict:
     real_gb = g.get("vram_free_real_gb")
     free_mib = (int(float(real_gb) * 1024) if real_gb is not None
                 else int(hr.get("free_mib") or 0))
-    if hr.get("ok") is False or free_mib - int(need_mib) < reserve:
+    held_for = _RESERVED_MIB[0]
+    if hr.get("ok") is False or free_mib - held_for - int(need_mib) < reserve:
+        promised = (f" ({held_for:,} MiB of it held for the voice front)" if held_for else "")
         raise GpuRefused(
             "local_voice_gpu_refused",
-            f"GPU voice not loaded: {free_mib:,} MiB free against a {reserve:,} MiB "
+            f"GPU voice not loaded: {free_mib:,} MiB free{promised} against a {reserve:,} MiB "
             f"display reserve (the {stage} needs about {int(need_mib):,} MiB). "
             f"Running the {stage} on the CPU instead.")
     return {"ok": True, "free_mib": free_mib, "reserve_mib": reserve,

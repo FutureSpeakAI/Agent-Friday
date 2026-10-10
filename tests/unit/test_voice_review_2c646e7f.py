@@ -207,12 +207,12 @@ def _seat(sent):
 
 def test_a_tool_that_raises_is_reported_not_invented():
     sent = []
-    _seat(sent).routed_turn("SYS", [{"role": "user", "content": "check my email"}], tool="check_email",
-                            args={}, ack="One moment.", label="checking your email",
-                            run_tool=lambda n, a: (_ for _ in ()).throw(RuntimeError("boom")))
-    user = sent[0]["messages"][-1]["content"]
-    assert "DATA that someone else wrote" in user and "ERROR: RuntimeError" in user
-    assert user.rstrip().endswith(vf._SAY_ERROR), "an error is said as one: you couldn't check"
+    out = _seat(sent).routed_turn("SYS", [{"role": "user", "content": "check my email"}],
+                                  tool="check_email", args={}, ack="One moment.",
+                                  label="checking your email",
+                                  run_tool=lambda n, a: (_ for _ in ()).throw(RuntimeError("boom")))
+    # A failure is said in a fixed sentence from code; the model is not asked.
+    assert sent == [] and out == "One moment. I couldn't check your email just now."
 
 
 def test_a_barge_during_the_tool_stops_the_turn():
