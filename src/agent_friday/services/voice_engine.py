@@ -234,8 +234,15 @@ def _tool_check_email(inp):
         })
         if len(out) >= limit:
             break
+    # What the reply needs beyond the listed messages: the unread total over
+    # everything fetched (the list stops at `limit`), whether more mail may
+    # exist past the fetch, and that this was an urgent-only read.
+    fetched = list(cards or [])
     return json.dumps({"connected": True, "source": source,
-                       "count": len(out), "messages": out}, default=str)
+                       "count": len(out), "messages": out,
+                       "unread_total": sum(1 for c in fetched if c.get("unread")),
+                       "fetched": len(fetched), "fetch_limit": 25,
+                       "urgent_only": urgent_only}, default=str)
 
 
 # Tool surface exposed to the Live voice session. Each entry:

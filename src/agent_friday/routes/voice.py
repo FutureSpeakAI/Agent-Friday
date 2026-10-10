@@ -762,12 +762,17 @@ def _discard_voice_orb(orb_id):
             pass
 
 
-def _local_voice_tool(fname, fargs, send, session):
+#: The most of a tool result a local model reads.
+LOCAL_TOOL_RESULT_CHARS = 8000
+
+
+def _local_voice_tool(fname, fargs, send, session, cut=True):
     """One tool call from the LOCAL voice front, with the cloud path's manners
     (local voice spec P3 parity): the owner's time limit, a process orb as the
     execution receipt, a slow-call warning, and the late-result label when
     the owner spoke while it ran. No egress gate: the result stays on this
-    machine with the local model that asked for it."""
+    machine with the local model that asked for it. ``cut=False`` returns the
+    whole result (the routed path parses it, then cuts what the model reads)."""
     from agent_friday.services import agent as _crew_admission_agent
     refusal = _crew_admission_agent._host_action_denial(fname, session)
     if refusal:
@@ -794,7 +799,8 @@ def _local_voice_tool(fname, fargs, send, session):
         return refusal
     if not isinstance(result, str):
         result = str(result)
-    result = result[:8000]
+    if cut:
+        result = result[:LOCAL_TOOL_RESULT_CHARS]
     took = _time.time() - t0
     result = _mark_if_stale(result, fname, t0,
                             float((session or {}).get("user_spoke_at") or 0.0),
@@ -3457,12 +3463,22 @@ if sock is not None:
                 _results = []
 
                 def _run_tool(n, a):
-                    out = _local_voice_tool(n, a, _send, _tool_session)
+                    # Whole: a list is spoken from its parsed records, and a
+                    # cut JSON would not parse (routed_turn cuts what the
+                    # model reads).
+                    out = _local_voice_tool(n, a, _send, _tool_session, cut=False)
                     _results.append(out)
                     return out
+                _said = ""
                 try:
-                    return _routed_front_seat_turn(user_text, on_delta, plan, _run_tool)
+                    _said = _routed_front_seat_turn(user_text, on_delta, plan, _run_tool)
+                    return _said
                 finally:
+                    # What was said aloud: a repeat news request moves on
+                    # past the stories already told (voice_engine._title_told).
+                    if _said:
+                        _tool_session.setdefault("spoken", []).append(str(_said))
+                        del _tool_session["spoken"][:-60]
                     # What this turn voiced is the last question asked; the
                     # router's own question, or none, clears it.
                     # A barged turn may not have voiced it: nothing is read back.
@@ -3478,7 +3494,7 @@ if sock is not None:
                                           speaker=True),
                     tool=plan["tool"], args=plan["args"], ack=plan["ack"],
                     question=plan["question"], label=plan["label"],
-                    run_tool=_run_tool,
+                    run_tool=_run_tool, user_text=user_text,
                     on_delta=on_delta,
                     max_tokens=_voice_reply_cap(settings, user_text),
                     brief_tokens=_routed_brief_cap(settings, user_text),

@@ -82,7 +82,7 @@ class _Resp:
         pass
 
 
-def _routed(tool, label, result, messages=None):
+def _routed(tool, label, result, messages=None, run_tool=None):
     """(what was spoken, the bodies sent to the model) for one routed turn."""
     seat = vf.FrontSeat(8199)
     seat.model = "ternary-bonsai:1.7b"
@@ -90,7 +90,7 @@ def _routed(tool, label, result, messages=None):
     seat._post = lambda body, stream: (sent.append(json.loads(json.dumps(body))), _Resp())[1]
     out = seat.routed_turn("SYS", messages or [{"role": "user", "content": QUESTION}],
                            tool=tool, args={}, ack="One moment, %s." % label, label=label,
-                           run_tool=lambda n, a: result, on_delta=spoken.append)
+                           run_tool=run_tool or (lambda n, a: result), on_delta=spoken.append)
     return out, sent, spoken
 
 
@@ -285,7 +285,7 @@ from datetime import datetime  # noqa: E402
 
 from agent_friday.services import voice_spoken as vs  # noqa: E402
 
-NOW = datetime(2026, 10, 10, 9, 12)          # a Saturday morning
+NOW = datetime(2026, 10, 10, 8, 30)          # a Saturday morning
 
 SIX = json.dumps({"connected": True, "count": 6, "events": [
     {"title": t, "start": s, "location": "Somewhere"} for t, s in [
@@ -306,7 +306,7 @@ def test_six_events_over_two_days_are_spoken_from_code():
     assert vs.structured_reply(SIX, "query_calendar", now=NOW) == (
         "Today you have Standup at 9 AM, Dentist at 3:40 PM, and Dinner with Sam at 7 PM. "
         "Tomorrow you have Gym at 7 AM and Budget review at 11 AM. "
-        "There's 1 more; want the rest?")
+        "There's 1 more.")
 
 
 def test_two_events_and_an_all_day_one_and_a_weekday():
@@ -494,10 +494,10 @@ NEWS = json.dumps({"query": "", "hits": [
 def test_the_news_is_spoken_from_code_with_its_outlets_and_no_urls():
     said = vs.structured_reply(NEWS, "search_news")
     assert said == (
-        "Here's the news: Regional Weather Service says heavy rain expected across the region "
-        "this weekend. City Desk says the city council approved the new bike-lane plan by a "
+        "Here's the news: Regional Weather Service says Heavy rain expected across the region "
+        "this weekend. City Desk says The city council approved the new bike-lane plan by a "
         "vote of 7 to 2. Local bakery wins the state's best sourdough award. "
-        "There are 2 more; want the rest?")
+        "There are 2 more.")
     assert "http" not in said and "example.com" not in said
     out, sent, _spoken = _routed("search_news", "looking at the news", NEWS)
     assert sent == [] and out.endswith(said)
@@ -510,7 +510,8 @@ def test_a_web_search_list_is_spoken_from_code():
             "   https://example.com/garlic\n"
             "2. Garlic varieties\n   Hardneck and softneck explained.\n   https://example.com/v")
     assert vs.structured_reply(text, "search_web") == (
-        "Here's what I found on the web: When to plant garlic. Garlic varieties.")
+        "Here's what I found on the web: One site, example.com, says When to plant garlic. "
+        "One site, example.com, says Garlic varieties.")
 
 
 @pytest.mark.parametrize("text,said", [
@@ -530,7 +531,7 @@ def test_news_and_web_with_nothing_to_report(text, said):
 # ── free text: only the first paragraph is ever spoken ──────────────────────
 
 class _Stream:
-    """A server that ignores `stop`: streams `pieces`, then finishes."""
+    """A server that streams `pieces`, then finishes."""
     encoding = "utf-8"
 
     def __init__(self, pieces, reason="stop"):
@@ -566,7 +567,9 @@ def test_only_the_first_paragraph_is_spoken(pieces):
     assert out == "Okay. Answer."
     assert "".join(spoken[1:]).strip() == "Answer.", spoken
     assert len(sent) == 1, "nothing continues past the first paragraph"
-    assert sent[0]["stop"] == ["\n\n"]
+    # Cut client-side: a stop sequence would end a reply that leads with a
+    # blank line before any word.
+    assert "stop" not in sent[0]
 
 
 def test_the_block_names_the_plain_subject_never_the_note():
@@ -582,3 +585,224 @@ def test_the_block_names_the_plain_subject_never_the_note():
     assert not re.search(r"(?i)\bthe note\b", turn)
     from agent_friday.services import voice_conversation_state as vcs
     assert "note" not in vcs.SPEAKER_NOTE_LEAD.lower()
+
+
+# ── review round: wrong facts, from the tools' real output shapes ────────────
+
+from datetime import timezone  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+
+def _cards(n, unread=True, urgent=0, start=0):
+    return [{"sender": "Sender %d <s%d@example.com>" % (i, i), "subject": "Subject %d" % i,
+             "snippet": "x" * 300, "unread": unread, "urgent": i < urgent,
+             "timestamp": "9:%02d AM" % (i % 60)} for i in range(start, start + n)]
+
+
+def _check_email(monkeypatch, cards, source="gmail", **inp):
+    from agent_friday.services import voice_engine as ve
+    monkeypatch.setattr(ve, "_voice_mail", lambda: (cards, source))
+    return ve._tool_check_email(inp)
+
+
+def test_a_long_email_list_is_parsed_whole_before_anything_is_cut(monkeypatch):
+    # agent._tool_search_email's shape: 25 messages, each with a 160-char
+    # snippet: well past the 8000 characters a local model reads.
+    big = json.dumps({"connected": True, "source": "gmail", "query": "invoice", "count": 25,
+                      "messages": [{"from": "Vendor %d <v%d@example.com>" % (i, i),
+                                    "subject": "Invoice %d for October services" % i,
+                                    "snippet": "Please find attached " + "y" * 300,
+                                    "unread": True, "when": "Oct %d" % (i + 1)}
+                                   for i in range(25)]})
+    assert len(big) > rv.LOCAL_TOOL_RESULT_CHARS
+    calls = []
+    monkeypatch.setattr(rv, "_run_voice_tool_bounded", lambda f, a, s, sess=None: big)
+    monkeypatch.setattr(rv, "_voice_orb_start", lambda name: "orb")
+    monkeypatch.setattr(rv, "_voice_orb_finish", lambda *a: None)
+    monkeypatch.setattr(rv, "_discard_voice_orb", lambda orb: None)
+    from agent_friday.services import agent as ag
+    monkeypatch.setattr(ag, "_host_action_denial", lambda name, session: None)
+    out, sent, _spoken = _routed(
+        "search_email", "searching your email",
+        None, run_tool=lambda n, a: calls.append(n) or rv._local_voice_tool(
+            n, a, lambda o: None, {"engine": "local"}, cut=False))
+    assert sent == [], "spoken from the records, not handed to the model"
+    assert out.endswith("I found 25 emails: from Vendor 0 about Invoice 0 for October services, "
+                        "from Vendor 1 about Invoice 1 for October services, from Vendor 2 about "
+                        "Invoice 2 for October services, from Vendor 3 about Invoice 3 for October "
+                        "services, and from Vendor 4 about Invoice 4 for October services. "
+                        "There are 20 more.")
+    # The model's own path still reads at most the cut.
+    assert len(rv._local_voice_tool("x", {}, lambda o: None, {"engine": "local"})) \
+        == rv.LOCAL_TOOL_RESULT_CHARS
+
+
+def test_cached_mail_after_a_gmail_error_is_never_spoken_as_current(monkeypatch):
+    shape = _check_email(monkeypatch, _cards(2), source="cache")
+    assert json.loads(shape)["connected"] is True and json.loads(shape)["source"] == "cache"
+    said = vs.structured_reply(shape, "check_email")
+    assert said.endswith("That's from my offline copy, so it may be out of date."), said
+
+
+def test_anything_urgent_with_none_urgent_says_so_and_the_unread_count(monkeypatch):
+    shape = _check_email(monkeypatch, _cards(20), urgent_only=True)
+    assert vf.result_kind(shape) == "empty"
+    out, sent, _ = _routed("check_email", "checking your email", shape)
+    assert sent == [] and out.endswith("Nothing urgent. You have 20 unread emails."), out
+
+
+def test_anything_urgent_with_two_urgent_speaks_only_the_urgent_ones(monkeypatch):
+    shape = _check_email(monkeypatch, _cards(20, urgent=2), urgent_only=True)
+    assert vs.structured_reply(shape, "check_email") == (
+        "You have 2 urgent emails: from Sender 0 about Subject 0, and from Sender 1 about Subject 1."
+        .replace(", and", " and"))
+
+
+def test_the_unread_count_is_the_real_total_not_the_listed_twelve(monkeypatch):
+    said = vs.structured_reply(_check_email(monkeypatch, _cards(15)), "check_email")
+    assert said.startswith("You have 15 unread emails: from Sender 0") and said.endswith(
+        "There are 10 more."), said
+    full = vs.structured_reply(_check_email(monkeypatch, _cards(25)), "check_email")
+    assert full.startswith("You have at least 25 unread emails:"), full
+
+
+SAT = datetime(2026, 10, 10, 16, 30)       # Saturday 4:30 PM, local
+
+
+def _cal(*events):
+    return json.dumps({"connected": True, "count": len(events), "events": list(events)})
+
+
+def test_a_finished_meeting_is_not_spoken_unless_asked_about():
+    shape = _cal({"title": "Planning", "start": "2026-10-10T14:00:00", "end": "2026-10-10T16:00:00"},
+                 {"title": "Dinner", "start": "2026-10-10T18:00:00", "end": "2026-10-10T20:00:00"})
+    assert vs.structured_reply(shape, "query_calendar", now=SAT) == "Today you have Dinner at 6 PM."
+    asked = vs.structured_reply(shape, "query_calendar", now=SAT,
+                                asked="What did I have this afternoon, earlier?")
+    assert asked == "Today you have Planning at 2 PM and Dinner at 6 PM."
+    over = _cal({"title": "Planning", "start": "2026-10-10T14:00:00", "end": "2026-10-10T16:00:00"})
+    assert vs.structured_reply(over, "query_calendar", now=SAT) == (
+        "Nothing more on your calendar today or tomorrow.")
+
+
+def test_a_multi_day_all_day_event_is_today_until_its_last_day():
+    shape = _cal({"title": "Vacation", "start": "2026-10-08", "end": "2026-10-13"})
+    said = vs.structured_reply(shape, "query_calendar", now=SAT)
+    assert said == "Today you have Vacation all day, until Monday.", said
+    assert "October 8" not in said and "Yesterday" not in said
+
+
+def test_an_overnight_event_is_today_until_it_ends():
+    night = datetime(2026, 10, 10, 1, 0)
+    shape = _cal({"title": "Night shift", "start": "2026-10-09T22:00:00", "end": "2026-10-10T02:00:00"})
+    assert vs.structured_reply(shape, "query_calendar", now=night) == (
+        "Today you have Night shift until 2 AM.")
+
+
+def test_nothing_is_ever_spoken_as_yesterday():
+    shape = _cal({"title": "Old", "start": "2026-10-09T10:00:00", "end": "2026-10-09T11:00:00"})
+    said = vs.structured_reply(shape, "query_calendar", now=SAT, asked="what did I miss yesterday")
+    assert "Yesterday" not in said and said.startswith("On October 9 you have Old at 10 AM")
+
+
+@pytest.mark.parametrize("start", ["2026-10-10T20:00:00Z", "2026-10-10T20:00:00+00:00",
+                                   "2026-10-10T15:00:00-05:00"])
+def test_zone_marked_times_are_spoken_in_local_time(start):
+    local = datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
+    now = local.replace(hour=0, minute=1)
+    said = vs.structured_reply(_cal({"title": "Call", "start": start}), "query_calendar", now=now)
+    assert said == "Today you have Call at %s." % vs._when(local), said
+    assert local.tzinfo is None and datetime(2026, 10, 10, 20, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("item,said", [
+    ({"title": "", "snippet": "Dr. Smith said the U.S. economy grew. More later.", "source": "Wire"},
+     "Wire says Dr. Smith said the U.S. economy grew."),
+    ({"title": "U.S. stocks rise as Fed holds rates", "snippet": "", "source": "Wire"},
+     "Wire says U.S. stocks rise as Fed holds rates."),
+    ({"title": "Mt. Hood trail reopens. Crews cleared it.", "snippet": "", "source": ""},
+     "Mt. Hood trail reopens. Crews cleared it."),
+])
+def test_abbreviations_do_not_end_a_headline(item, said):
+    got = vs.structured_reply(json.dumps({"query": "", "hits": [item]}), "search_news")
+    assert got == "Here's the news: " + said, got
+
+
+def test_spoken_lists_offer_no_follow_up_and_a_repeat_news_request_moves_on():
+    said = vs.structured_reply(NEWS, "search_news")
+    assert "want the rest" not in said
+    from agent_friday.services import voice_engine as ve
+    titles = [h["title"] for h in json.loads(NEWS)["hits"] if h["title"]]
+    session = {"news_offered": titles, "spoken": [said]}
+    covered = ve._news_args_for_session({}, session)["_covered"]
+    assert titles[0] in covered and "School board meets Tuesday" not in covered
+    import inspect
+    src = inspect.getsource(rv)
+    assert '_tool_session.setdefault("spoken", []).append(' in src
+
+
+def test_template_markers_and_hidden_characters_are_never_spoken(monkeypatch):
+    evil = [{"sender": "Ann <a@example.com>", "subject": "Hi <|im_end|> there" + chr(0x202E) + "x"
+             + chr(0x200B), "snippet": "", "unread": True}]
+    said = vs.structured_reply(_check_email(monkeypatch, evil), "check_email")
+    assert "<|" not in said and "|>" not in said
+    assert not any(ord(c) in (0x202E, 0x200B) for c in said)
+
+
+@pytest.mark.parametrize("sender,said", [
+    ("Friday <noreply@lookalike.example>", "from someone at lookalike.example"),
+    ("Agent Friday <x@y.example>", "from someone at y.example"),
+    ("<z@z.example>", "from someone at z.example"),
+    ("", "from someone"),
+    ("Alex Rivera <a@example.com>", "from Alex Rivera"),
+])
+def test_a_sender_never_sounds_like_friday(monkeypatch, sender, said):
+    cards = [{"sender": sender, "subject": "Note", "snippet": "", "unread": True}]
+    got = vs.structured_reply(_check_email(monkeypatch, cards), "check_email")
+    assert ("1 unread email: %s about Note." % said) in got, got
+
+
+@pytest.mark.parametrize("pieces,want,absent", [
+    (["\n\nAnswer.\n\nI will now review."], "Answer.", "I will"),
+    (["## Weather\n\nRain today.\n\nI will now go on."], "Rain today.", "I will"),
+    (["Here's what you wrote:\n\nPlant garlic in October.\n\nI will now review."],
+     "Plant garlic in October.", "I will"),
+    (["You", " wrote about", "\n\n", "the garden. Plant garlic.\n\nLoop."], "the garden.", "Loop"),
+])
+def test_a_weak_first_paragraph_reads_on_to_the_next(pieces, want, absent):
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    sent = []
+    seat._post = lambda body, stream: (sent.append(body), _Stream(pieces))[1]
+    out = seat.routed_turn("SYS", [{"role": "user", "content": "x"}], tool="search_wiki",
+                           args={}, ack="Okay.", label="", run_tool=lambda n, a: "text",
+                           max_tokens=800)
+    assert want in out and absent not in out, out
+    assert not out.startswith("Okay. \n")
+
+
+def test_a_continuation_is_joined_with_a_space():
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    replies = [_Cut("You wrote that the council", "length", 120), _Cut("approved it.", "stop", 4)]
+    seat._post = lambda body, stream: replies.pop(0)
+    out = seat.routed_turn("SYS", [{"role": "user", "content": "x"}], tool="search_wiki",
+                           args={}, ack="Okay.", label="", run_tool=lambda n, a: "text",
+                           max_tokens=800, brief_tokens=rv._routed_brief_cap({}, "x"))
+    assert out == "Okay. You wrote that the council approved it."
+
+
+def test_n_more_uses_the_tools_own_total():
+    shape = json.dumps({"connected": True, "count": 40, "messages": [
+        {"from": "A", "subject": "S%d" % i} for i in range(25)]})
+    said = vs.structured_reply(shape, "search_email")
+    assert said.startswith("I found 40 emails:") and said.endswith("There are 35 more.")
+
+
+def test_a_prose_clause_keeps_its_dash_and_markup_alone_is_not_spoken():
+    assert vs.speakable("- that one, the second.") == "- that one, the second."
+    from agent_friday.services import voice_session
+    engine = SimpleNamespace(device="cpu", synthesize_stream=lambda text, cancel: [text])
+    me = SimpleNamespace(gpu_queue=None)
+    assert voice_session.VoiceSession._synth(me, engine, "**", None) == []
+    assert voice_session.VoiceSession._synth(me, engine, "**Rain** today.", None) == ["Rain today."]

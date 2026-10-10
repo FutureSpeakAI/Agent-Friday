@@ -314,6 +314,9 @@ BRIEF_LOOKUPS = frozenset({
     "search_past_conversations", "navigate_to", "podcast_play", "media_play",
     "voice_preferences", "task_control", "undo_action", "answer_card",
 })
+#: The most of a routed result the speaker model reads (records spoken from
+#: code are parsed whole first).
+MODEL_RESULT_CHARS = 8000
 #: The most a free-text routed answer may take, continuation included: a
 #: small model handed a list once reasoned aloud for 646 words.
 FREE_TEXT_CEILING = 300
@@ -550,12 +553,36 @@ def _renderable(call: dict) -> dict:
 #: Where a free-text routed answer stops: the end of its first paragraph.
 #: A 1.7B said the three facts, then reasoned aloud ("I will now provide a
 #: concise and natural response...") in later paragraphs until its ceiling.
-PARAGRAPH_STOP = ("\n\n",)
+#: The cut is made here, client-side, after the first non-blank text: a stop
+#: sequence would end a reply that leads with a blank line before a word.
+_BREAK = re.compile(r"\n[ \t]*\n")
+
+
+def _weak_paragraph(p: str) -> bool:
+    """Too little to stop at: under one sentence, a heading, or a lead-in
+    that ends in a colon."""
+    t = p.strip()
+    return (not t or t.startswith("#") or t.endswith(":")
+            or not re.search(r"[.!?][\"')\]]*(\s|$)", t))
+
+
+def _spoken_end(text: str):
+    """Where the spoken answer in `text` ends: the end of its first
+    paragraph, or of its second when the first is weak; None while open."""
+    lead = len(text) - len(text.lstrip())
+    first = _BREAK.search(text, lead)
+    if first is None:
+        return None
+    if not _weak_paragraph(text[lead:first.start()]):
+        return first.start()
+    second = _BREAK.search(text, first.end())
+    return None if second is None else second.start()
 
 
 class _ParagraphGate:
-    """Passes streamed text on until the first blank line after some text,
-    then nothing: the stop sequence's backstop for a server that ignores it."""
+    """Passes streamed text on until the spoken answer's end (_spoken_end),
+    then nothing. Leading blank lines are never passed on; a continuation
+    round joins the earlier text with a space."""
 
     def __init__(self, on_delta):
         self.on_delta = on_delta
@@ -563,32 +590,34 @@ class _ParagraphGate:
         self.sent = 0
         self.closed = False
 
-    def _end(self, text: str):
-        lead = len(text) - len(text.lstrip())
-        i = text.find("\n\n", lead)
-        return None if i < 0 else i
-
     def feed(self, piece: str):
         if self.closed or not piece:
             return
         self.seen += piece
-        end = self._end(self.seen)
+        end = _spoken_end(self.seen)
+        lead = len(self.seen) - len(self.seen.lstrip())
         upto = len(self.seen) if end is None else end
-        # Hold a trailing newline back: it may be the first half of "\n\n".
-        if end is None and self.seen.endswith("\n"):
-            upto -= 1
+        if end is None:
+            # Hold back trailing whitespace: it may be half a paragraph break.
+            upto = len(self.seen.rstrip())
+        self.sent = max(self.sent, lead)
         if upto > self.sent and self.on_delta:
             self.on_delta(self.seen[self.sent:upto])
-        self.sent = max(self.sent, upto)
+            self.sent = upto
         if end is not None:
             self.closed = True
 
-    def cut(self, text: str) -> str:
-        end = self._end(text or "")
+    def next_round(self):
+        """A continuation follows: what it says is joined with a space."""
+        if self.seen.strip() and not self.seen[-1:].isspace():
+            self.seen += " "
+
+    def text(self) -> str:
+        end = _spoken_end(self.seen)
+        out = self.seen if end is None else self.seen[:end]
         if end is not None:
             self.closed = True
-            return text[:end]
-        return text or ""
+        return out.strip()
 
 
 class FrontSeat:
@@ -727,10 +756,10 @@ class FrontSeat:
         (``model_router.TURN_CANCEL``) closes the stream mid-generation.
         ``ceiling`` bounds every generated token of the turn, a continuation
         included: the continuation only finishes the cut sentence, within
-        what is left. ``first_paragraph``: the request carries the stop
-        sequence PARAGRAPH_STOP and the stream is cut at the first blank line
-        too (a server may ignore stop), so only the first paragraph is ever
-        spoken; nothing continues past it. Returns the spoken text."""
+        what is left. ``first_paragraph``: the stream is cut client-side at
+        the end of the first paragraph after the first non-blank text (the
+        second, when the first is a heading, a lead-in or under a sentence),
+        so nothing past it is spoken or continued. Returns the spoken text."""
         from agent_friday.services.model_router import (_consume_sse_completion,
                                                         turn_cancelled)
         convo = [{"role": "system", "content": system}] + list(messages)
@@ -764,8 +793,6 @@ class FrontSeat:
                 body["temperature"] = temperature
             if rnd == MAX_TOOL_ROUNDS:
                 body["tool_choice"] = "none"      # answer with what you have
-            if gate is not None:
-                body["stop"] = list(PARAGRAPH_STOP)
             resp = self._post(body, stream=True)
             resp.raise_for_status()
             out = _consume_sse_completion(resp, on_delta=gate.feed if gate is not None else on_delta)
@@ -781,16 +808,20 @@ class FrontSeat:
                         return refusal
             text = msg.get("content") or ""
             if gate is not None:
-                text = gate.cut(text)
-            if text.strip():
+                if not gate.seen and text:
+                    gate.feed(text)       # a non-streaming reply
+                text = gate.text()
+                spoken[:] = [text] if text else []
+            elif text.strip():
                 spoken.append(text.strip())
             n = ((out.get("usage") or {}).get("completion_tokens")
                  or (out.get("timings") or {}).get("predicted_n"))
             used += int(n) if n else (body["max_tokens"] if ch.get("finish_reason") == "length"
                                       else max(1, len(text) // 3))
             left = None if ceiling is None else int(ceiling) - used
-            if gate is not None and (gate.closed or re.search(r"[.!?][\"')\]]*\s*$", text)):
-                break       # the paragraph is done, or ended on a sentence
+            if gate is not None and (gate.closed or not _weak_paragraph(text)
+                                     and re.search(r"[.!?][\"')\]]*\s*$", text)):
+                break       # the answer is done, or ended on a sentence
             if (not calls and ch.get("finish_reason") == "length" and allow_continuation
                     and not continued and rnd < MAX_TOOL_ROUNDS and not turn_cancelled()
                     and (left is None or left >= 16)):
@@ -802,6 +833,8 @@ class FrontSeat:
                        "Do not repeat anything.")
                 if left is not None:
                     allowance = min(int(allowance), left)
+                if gate is not None:
+                    gate.next_round()
                 convo.extend([{"role": "assistant", "content": text},
                               {"role": "user", "content": ask}])
                 continue
@@ -844,7 +877,7 @@ class FrontSeat:
                     ack: str = "", question: str = "", run_tool=None, on_delta=None,
                     max_tokens: int = 400, temperature=None, timings=None,
                     label: str = "", tool_timeout_s: float = 60.0,
-                    brief_tokens=None) -> str:
+                    brief_tokens=None, user_text: str = "") -> str:
         """One spoken turn whose tool, if any, system one already chose
         (services/laya_router). The front never sees a tool catalogue.
 
@@ -895,10 +928,16 @@ class FrontSeat:
         from agent_friday.services.voice_spoken import speakable, structured_reply
         # Nothing to report, or a list of records: the sentence is code's, not
         # the model's (a 1.7B read failures aloud, and narrated lists).
-        fixed = fixed_reply(result, tool) or structured_reply(result, tool)
+        # The records are parsed whole; only what the model reads is cut.
+        if result_kind(result) == "error":
+            fixed = fixed_reply(result, tool)
+        else:
+            fixed = (structured_reply(result, tool, asked=user_text)
+                     or fixed_reply(result, tool))
         if fixed:
             speak(fixed)
             return (ack + " " + fixed).strip()
+        result = result[:MODEL_RESULT_CHARS]
         convo = with_result(messages, label, result, ack, tool=tool, args=args)
         # Free text: ``brief_tokens`` caps a quick look-up's first answer; a
         # reply cut by its budget continues once to finish its sentence, and

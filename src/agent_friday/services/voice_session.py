@@ -919,8 +919,12 @@ class VoiceSession:
         # sent.
         from agent_friday import brand
         from agent_friday.services.voice_spoken import speakable
-        # Markdown is never read aloud, whoever wrote the clause.
-        clause = brand.spoken(speakable(clause) or clause)
+        # Markdown is never read aloud, whoever wrote the clause; a clause
+        # that was only markup ("**", "---") is not spoken at all.
+        clause = speakable(clause)
+        if not clause.strip():
+            return []
+        clause = brand.spoken(clause)
         from agent_friday.services.voice_delivery import using_preferences
         def synthesize(job_cancel):
             with using_preferences(delivery):

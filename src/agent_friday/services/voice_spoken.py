@@ -3,22 +3,30 @@
 A small voice front (Ternary Bonsai 1.7B) is unreliable at structured lists:
 handed three emails it listed them and then reasoned aloud for 646 words;
 handed six events it narrated itself in the first person, used markdown
-bullets and bold, and read out ISO dates. So a routed read whose result is a
-list of records (calendar events, email messages, files) is spoken from the
-records by ``structured_reply``, with no model call: short, second person,
-natural times ("3:40 PM"), "today" / "tomorrow" / a weekday instead of a
-date, sender and subject for email (never a body), and "and N more; want
-the rest?" past ``SPOKEN_ITEMS``. The model still speaks free-text results
-(news, web, notes, past conversations).
+bullets and bold, and read out ISO dates; handed the news it looped. So a
+routed read whose result is a list of records (calendar events, email
+messages, files, news stories, web hits) is spoken from the records by
+``structured_reply``, with no model call: short, second person, natural
+local times ("3:40 PM"), "today" / "tomorrow" / a weekday instead of a date,
+sender and subject for email (never a body), and "There are N more." past
+the spoken few. The model still speaks free-text results (notes, past
+conversations, the briefing).
 
-``speakable`` strips markdown (bold, headings, bullets, links, code marks)
-from anything about to be spoken, whoever wrote it.
+Every field spoken from a record is cleaned (``_clean``): no markdown, no
+control, bidi or zero-width characters, and no chat-template markers
+(``<|`` / ``|>``, which the session's DeltaFilter would read as the start of
+model markup and mute the rest of the turn).
+
+``speakable`` strips markdown from anything about to be spoken, whoever
+wrote it.
 """
 from __future__ import annotations
 
 import json
 import re
-from datetime import date, datetime
+import unicodedata
+from datetime import date, datetime, timedelta
+from urllib.parse import urlparse
 
 #: Routed reads whose result is a list of records, spoken from code.
 STRUCTURED_TOOLS = frozenset({"query_calendar", "check_email", "search_email", "search_files",
@@ -27,20 +35,26 @@ STRUCTURED_TOOLS = frozenset({"query_calendar", "check_email", "search_email", "
 SPOKEN_STORIES = 3
 #: Longest spoken story or hit, in words.
 _STORY_WORDS = 30
-#: How many records are spoken before "and N more; want the rest?".
+#: How many records are spoken before "There are N more".
 SPOKEN_ITEMS = 5
 #: Longest title, subject or name spoken from a record.
 _FIELD_CHARS = 80
 
 _LATE_PREFIX = re.compile(r"(?s)^\s*\[LATE RESULT[^\]]*\]\s*")
 
-# ── markdown out ─────────────────────────────────────────────────────────────
+# ── markdown and unspeakable characters out ──────────────────────────────────
 
 _MD_LINK = re.compile(r"\[([^\]\n]{1,300})\]\((?:[^)\s]+)\)")
 #: Bold and italics; a lone "_" is left alone (file names use it).
 _MD_EMPH = re.compile(r"(\*\*|__|\*)(?=\S)(.+?)(?<=\S)\1")
+#: List and heading markup at the start of a line (multi-line text only: a
+#: one-line prose clause that starts "- " is not a list).
 _MD_LINE = re.compile(r"(?m)^[ \t]*(?:#{1,6}[ \t]+|[-*+•][ \t]+|>[ \t]*)")
 _MD_LEFTOVER = re.compile(r"(?m)\*\*|__|`+|^[ \t]*[-*_]{3,}[ \t]*$")
+#: Chat-template markers and the characters that hide or reorder text.
+_TEMPLATE = re.compile(r"<\||\|>")
+_HIDDEN = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f"
+                     "­؜᠎​-‏‪-‮⁠-⁯﻿￹-￻]")
 
 
 def speakable(text: str) -> str:
@@ -49,12 +63,22 @@ def speakable(text: str) -> str:
     if not s:
         return s
     s = _MD_LINK.sub(r"\1", s)
-    s = _MD_LINE.sub("", s)
+    if "\n" in s.strip():
+        s = _MD_LINE.sub("", s)
     for _ in range(2):
         s = _MD_EMPH.sub(r"\2", s)
     s = _MD_LEFTOVER.sub("", s)
-    s = re.sub(r"(?<=\S)\*(?=\s|$)|(?:^|(?<=\s))\*(?=\S)", "", s)
     return re.sub(r"[ \t]{2,}", " ", s).strip(" \t") if s.strip() else ""
+
+
+def _clean(v) -> str:
+    """Record text made safe to speak: one line, no markdown, no template
+    markers, no control / bidi / zero-width characters."""
+    s = unicodedata.normalize("NFKC", str(v or ""))
+    s = _HIDDEN.sub("", s)
+    s = _TEMPLATE.sub(" ", s)
+    s = re.sub(r"\s+", " ", s)
+    return speakable(s).strip()
 
 
 # ── records to sentences ─────────────────────────────────────────────────────
@@ -68,8 +92,8 @@ def _payload(result):
 
 
 def _field(v) -> str:
-    """A record's text field, safe to speak: one line, no markdown, short."""
-    s = speakable(re.sub(r"\s+", " ", str(v or ""))).strip()
+    """A record's text field, safe to speak and short."""
+    s = _clean(v)
     if len(s) > _FIELD_CHARS:
         s = s[:_FIELD_CHARS].rsplit(" ", 1)[0] + "…"
     return s.rstrip(" .?!;:,")
@@ -84,11 +108,22 @@ def _join(items: list) -> str:
 
 
 def _more(n: int) -> str:
+    """How many were not spoken. No offer to read them: a bare "yes" has no
+    route back to this list (a repeat news request moves on by itself)."""
     if n <= 0:
         return ""
-    return ("There's 1 more; want the rest?" if n == 1
-            else "There are %d more; want the rest?" % n)
+    return "There's 1 more." if n == 1 else "There are %d more." % n
 
+
+def _total(data: dict, listed: int) -> int:
+    """The tool's own total when it reports one larger than the list."""
+    try:
+        return max(listed, int(data.get("count") or 0))
+    except (TypeError, ValueError):
+        return listed
+
+
+# ── calendar ─────────────────────────────────────────────────────────────────
 
 def _when(dt: datetime) -> str:
     h = dt.hour % 12 or 12
@@ -97,7 +132,8 @@ def _when(dt: datetime) -> str:
 
 
 def _parse(value):
-    """(datetime or None, all_day) from a calendar start string."""
+    """(local naive datetime or None, all_day) from a calendar time string.
+    A time with "Z" or an offset is converted to this machine's local time."""
     s = str(value or "").strip()
     if not s:
         return None, False
@@ -117,16 +153,31 @@ def _parse(value):
 
 
 def _day_name(d: date, today: date) -> str:
+    """"Today", "Tomorrow", "On Tuesday", "On October 20". Never
+    "Yesterday": a past day is named by its date."""
     delta = (d - today).days
     if delta == 0:
         return "Today"
     if delta == 1:
         return "Tomorrow"
-    if delta == -1:
-        return "Yesterday"
     if 1 < delta < 7:
         return "On " + d.strftime("%A")
     return "On %s %d" % (d.strftime("%B"), d.day)
+
+
+def _until(d: date, today: date) -> str:
+    """"until tomorrow", "until Monday", "until October 20"."""
+    delta = (d - today).days
+    if delta == 1:
+        return "until tomorrow"
+    if 1 < delta < 7:
+        return "until " + d.strftime("%A")
+    return "until %s %d" % (d.strftime("%B"), d.day)
+
+
+#: The owner asked about what already happened: finished events stay.
+_PAST_ASK = re.compile(r"(?i)\b(earlier|this morning|did i|was i|had i|have i had|already|"
+                       r"past|missed|yesterday|last (?:night|week))\b")
 
 
 def _incomplete(data: dict) -> bool:
@@ -138,55 +189,102 @@ def _incomplete(data: dict) -> bool:
 _PARTIAL = "Some of your accounts couldn't be read, so that may not be everything."
 
 
-def _calendar(data: dict, now: datetime) -> str | None:
+def _calendar(data: dict, now: datetime, asked: str = "") -> str | None:
     events = [e for e in (data.get("events") or []) if isinstance(e, dict)]
     if not events:
         return None
     today = now.date()
+    keep_past = bool(_PAST_ASK.search(asked or ""))
     days: dict = {}
-    order = []
     undated = []
     for e in events:
-        dt, all_day = _parse(e.get("start"))
         title = _field(e.get("title")) or "something untitled"
-        if dt is None:
-            undated.append(title)
+        start, all_day = _parse(e.get("start"))
+        if start is None:
+            undated.append((title, ""))
             continue
-        key = dt.date()
-        if key not in days:
-            days[key] = []
-            order.append(key)
-        days[key].append((dt, all_day, title))
-    spoken, left = [], SPOKEN_ITEMS
-    told = 0
-    for key in sorted(order):
+        end, _end_all_day = _parse(e.get("end"))
+        if all_day:
+            first = start.date()
+            # Google's all-day end date is exclusive; one day when missing.
+            last = (end.date() - timedelta(days=1)) if end is not None else first
+            last = max(last, first)
+            if last < today and not keep_past:
+                continue
+            key = first if (keep_past or first >= today) else today
+            phrase = "%s all day" % title
+            if last > key:
+                phrase += ", %s" % _until(last, key)
+            days.setdefault(key, []).append((datetime.min, phrase))
+            continue
+        finish = end if end is not None else start
+        if finish <= now and not keep_past:
+            continue                                  # already over
+        if start.date() < today <= finish.date() and not keep_past:
+            # Began on an earlier day and still running (overnight, multi-day).
+            key = today
+            phrase = ("%s until %s" % (title, _when(finish)) if finish.date() == today
+                      else "%s, %s" % (title, _until(finish.date(), today)))
+            days.setdefault(key, []).append((datetime.min.replace(microsecond=1), phrase))
+            continue
+        days.setdefault(start.date(), []).append((start, "%s at %s" % (title, _when(start))))
+    kept = sum(len(v) for v in days.values()) + len(undated)
+    total = kept + max(0, _total(data, len(events)) - len(events))
+    if not kept:
+        return "Nothing more on your calendar today or tomorrow." + (
+            " " + _PARTIAL if _incomplete(data) else "")
+    spoken, left, told = [], SPOKEN_ITEMS, 0
+    for key in sorted(days):
         if left <= 0:
             break
-        items = sorted(days[key], key=lambda x: (not x[1], x[0]))[:left]
+        items = [p for _t, p in sorted(days[key], key=lambda x: x[0])][:left]
         left -= len(items)
         told += len(items)
-        parts = ["%s all day" % t if all_day else "%s at %s" % (t, _when(dt))
-                 for dt, all_day, t in items]
-        spoken.append("%s you have %s." % (_day_name(key, today), _join(parts)))
+        spoken.append("%s you have %s." % (_day_name(key, today), _join(items)))
     if left > 0 and undated:
-        extra = undated[:left]
+        extra = [t for t, _p in undated[:left]]
         told += len(extra)
         spoken.append("You also have %s." % _join(extra))
-    out = " ".join(spoken + [_more(len(events) - told)]).strip()
+    out = " ".join(spoken + [_more(total - told)]).strip()
     if _incomplete(data):
         out += " " + _PARTIAL
     return out
 
 
+# ── email ────────────────────────────────────────────────────────────────────
+
+def _assistant_names() -> set:
+    names = {"friday", "agent friday"}
+    try:
+        from agent_friday.services.podcast_engine import her_name
+        n = str(her_name() or "").strip().lower()
+        if n:
+            names |= {n, "agent " + n}
+    except Exception:
+        pass
+    return names
+
+
 def _sender(v) -> str:
-    s = str(v or "").strip()
-    m = re.match(r'^\s*"?([^"<]+?)"?\s*<[^>]+>\s*$', s)
-    if m:
-        s = m.group(1)
-    return _field(s) or "someone"
+    """Who sent it: the display name, unless it is empty or the assistant's
+    own name (a mail "from Friday" must not sound like Friday speaking), in
+    which case the address's domain."""
+    raw = _clean(v)
+    m = re.match(r'^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$', raw)
+    name, addr = (m.group(1).strip(), m.group(2).strip()) if m else ("", "")
+    if not m:
+        if "@" in raw and " " not in raw:
+            addr = raw
+        else:
+            name = raw
+    name = _field(name)
+    if name and name.lower() not in _assistant_names() and "@" not in name:
+        return name
+    domain = addr.rsplit("@", 1)[-1].strip(" .>") if "@" in addr else ""
+    return ("someone at %s" % _field(domain)) if domain else "someone"
 
 
-def _mail_item(m: dict, mark_urgent: bool) -> str:
+def _mail_item(m: dict, mark_urgent: bool = True) -> str:
     subj = _field(m.get("subject"))
     s = "from %s" % _sender(m.get("from"))
     if subj:
@@ -196,35 +294,83 @@ def _mail_item(m: dict, mark_urgent: bool) -> str:
     return s
 
 
+def _plural(n, one: str, many: str) -> str:
+    return one if n == 1 else many
+
+
+def _unread(data: dict, msgs: list):
+    """(how many unread, whether that is only a lower bound)."""
+    if "unread_total" in data:
+        try:
+            n = int(data.get("unread_total") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        try:
+            lower = int(data.get("fetched") or 0) >= int(data.get("fetch_limit") or 10 ** 9)
+        except (TypeError, ValueError):
+            lower = False
+        return n, lower
+    n = sum(1 for m in msgs if m.get("unread"))
+    return n, n >= 12
+
+
+def _offline(data: dict) -> bool:
+    return data.get("connected") is False or str(data.get("source") or "") == "cache"
+
+
+def _check_email(data: dict) -> str:
+    msgs = [m for m in (data.get("messages") or []) if isinstance(m, dict)]
+    n_unread, lower = _unread(data, msgs)
+    count = ("at least %d" % n_unread) if lower else str(n_unread)
+    if data.get("urgent_only"):
+        urgent = msgs
+        if not urgent:
+            out = "Nothing urgent."
+            if n_unread:
+                out += " You have %s unread %s." % (count, _plural(n_unread, "email", "emails"))
+        else:
+            shown = urgent[:SPOKEN_ITEMS]
+            total = _total(data, len(urgent))
+            out = "You have %d urgent %s: %s." % (
+                total, _plural(total, "email", "emails"),
+                _join([_mail_item(m, False) for m in shown]))
+            out = (out + " " + _more(total - len(shown))).strip()
+        return out
+    unread = [m for m in msgs if m.get("unread")]
+    if not unread:
+        if not msgs:
+            return "Nothing new in your email."
+        return "Nothing unread. Your latest email is %s." % _mail_item(msgs[0])
+    shown = unread[:SPOKEN_ITEMS]
+    n = max(n_unread, len(unread))
+    out = "You have %s unread %s: %s." % (
+        ("at least %d" % n) if lower else str(n), _plural(n, "email", "emails"),
+        _join([_mail_item(m) for m in shown]))
+    return (out + " " + _more(n - len(shown))).strip()
+
+
 def _email(data: dict, tool: str) -> str | None:
     msgs = [m for m in (data.get("messages") or []) if isinstance(m, dict)]
-    if not msgs:
-        return None
     if tool == "check_email":
-        unread = [m for m in msgs if m.get("unread")]
-        if not unread:
-            out = "Nothing unread. Your latest email is %s." % _mail_item(msgs[0], True)
-        else:
-            shown = unread[:SPOKEN_ITEMS]
-            noun = "unread email" if len(unread) == 1 else "unread emails"
-            out = "You have %d %s: %s." % (len(unread), noun,
-                                          _join([_mail_item(m, True) for m in shown]))
-            out = (out + " " + _more(len(unread) - len(shown))).strip()
+        if not msgs and not data.get("urgent_only"):
+            return None
+        out = _check_email(data)
     else:
+        if not msgs:
+            return None
         shown = msgs[:SPOKEN_ITEMS]
-        try:
-            total = max(len(msgs), int(data.get("count") or 0))
-        except (TypeError, ValueError):
-            total = len(msgs)
-        noun = "email" if total == 1 else "emails"
-        out = "I found %d %s: %s." % (total, noun, _join([_mail_item(m, True) for m in shown]))
+        total = _total(data, len(msgs))
+        out = "I found %d %s: %s." % (total, _plural(total, "email", "emails"),
+                                      _join([_mail_item(m) for m in shown]))
         out = (out + " " + _more(total - len(shown))).strip()
-    if data.get("connected") is False:
+    if _offline(data):
         out += " That's from my offline copy, so it may be out of date."
     elif _incomplete(data):
         out += " " + _PARTIAL
     return out
 
+
+# ── files ────────────────────────────────────────────────────────────────────
 
 def _files(data: dict) -> str | None:
     rows = [r for r in (data.get("results") or []) if isinstance(r, dict)]
@@ -233,78 +379,124 @@ def _files(data: dict) -> str | None:
     shown = rows[:SPOKEN_ITEMS]
     names = [_field(r.get("name") or str(r.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1])
              or "an unnamed file" for r in shown]
-    noun = "file" if len(rows) == 1 else "files"
-    out = "I found %d %s: %s." % (len(rows), noun, _join(names))
-    return (out + " " + _more(len(rows) - len(shown))).strip()
+    total = _total(data, len(rows))
+    out = "I found %d %s: %s." % (total, _plural(total, "file", "files"), _join(names))
+    return (out + " " + _more(total - len(shown))).strip()
 
 
-def _sentence(text: str) -> str:
-    """The first sentence of `text`, cleaned, at most _STORY_WORDS words."""
-    t = speakable(re.sub(r"\s+", " ", str(text or ""))).strip()
-    t = re.sub(r"https?://\S+|www\.\S+", "", t).strip()
-    m = re.match(r"(.+?[.!?])(?:\s|$)", t)
-    if m:
-        t = m.group(1)
-    words = t.split()
-    if len(words) > _STORY_WORDS:
-        t = " ".join(words[:_STORY_WORDS])
-    return t.rstrip(" .?!;:,-")
+# ── news and the web ─────────────────────────────────────────────────────────
+
+#: Words a "." follows without ending a sentence.
+_ABBREV = frozenset({"mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "mt", "ft", "no",
+                     "vs", "etc", "inc", "ltd", "co", "corp", "gov", "gen", "sen", "rep",
+                     "lt", "col", "capt", "sgt", "jan", "feb", "mar", "apr", "jun", "jul",
+                     "aug", "sep", "sept", "oct", "nov", "dec", "approx", "est", "dept"})
 
 
-def _lower_first(t: str) -> str:
-    """'Heavy rain...' -> 'heavy rain...' after "X says"; acronyms stay."""
-    if len(t) > 1 and t[0].isupper() and t[1].islower():
-        return t[0].lower() + t[1:]
-    return t
+def _words(text: str, n: int = _STORY_WORDS) -> str:
+    w = text.split()
+    return " ".join(w[:n]) if len(w) > n else text
 
 
-def _stories(items: list, lead: str) -> str | None:
+def _first_sentence(text: str) -> str:
+    """The first sentence: it ends at ". ", "! " or "? " followed by a
+    capital, unless the word before the dot is an abbreviation ("Dr.") or a
+    single letter or an initialism ("U.S.")."""
+    for m in re.finditer(r"([.!?])\s+(?=[A-Z\"'(])", text):
+        if m.group(1) == ".":
+            before = re.search(r"(\S+)$", text[:m.start()])
+            word = (before.group(1) if before else "").strip("\"'(").lower()
+            if (word in _ABBREV or re.fullmatch(r"[a-z]", word)
+                    or re.fullmatch(r"(?:[a-z]\.)+[a-z]", word)):
+                continue
+        return text[:m.start() + 1]
+    return text
+
+
+def _sentence(text: str, whole: bool = False) -> str:
+    """Cleaned, without URLs, at most _STORY_WORDS words; ``whole`` keeps a
+    title whole (no sentence split) when it fits."""
+    t = re.sub(r"https?://\S+|www\.\S+", "", _clean(text)).strip()
+    if not t:
+        return ""
+    if not (whole and len(t.split()) <= _STORY_WORDS):
+        t = _first_sentence(t)
+    return _words(t).rstrip(" ,;:-").rstrip(".")
+
+
+def _end(t: str) -> str:
+    return t if t[-1:] in ".!?" else t + "."
+
+
+def _domain(url) -> str:
+    try:
+        host = urlparse(str(url or "")).hostname or ""
+    except ValueError:
+        host = ""
+    host = host[4:] if host.startswith("www.") else host
+    return _field(host)
+
+
+def _stories(items: list, lead: str, total: int, web: bool = False) -> str | None:
     """Up to SPOKEN_STORIES items, each its title (else its summary's first
-    sentence), with its outlet once when there is one; never a URL."""
+    sentence), attributed: a news outlet by name, a web hit by its site, so a
+    headline never sounds like Friday's own claim. Never a URL."""
     said = []
     for it in items:
-        text = _sentence(it.get("title") or "") or _sentence(it.get("snippet") or it.get("summary") or "")
+        text = (_sentence(it.get("title") or "", whole=True)
+                or _sentence(it.get("snippet") or it.get("summary") or ""))
         if not text:
             continue
-        outlet = _field(it.get("source") or "")
-        said.append("%s says %s." % (outlet, _lower_first(text)) if outlet
-                    else text[0].upper() + text[1:] + ".")
+        # The headline keeps its own case: lowercasing its first word would
+        # turn a name ("Dr.", "Apple") into a common word.
+        if web:
+            site = _domain(it.get("url"))
+            said.append(_end("One site, %s, says %s" % (site, text) if site
+                             else "One result says %s" % text))
+        else:
+            outlet = _field(it.get("source") or "")
+            said.append(_end("%s says %s" % (outlet, text) if outlet
+                             else text[0].upper() + text[1:]))
         if len(said) == SPOKEN_STORIES:
             break
     if not said:
         return None
-    rest = len([i for i in items if (i.get("title") or i.get("snippet") or i.get("summary"))]) - len(said)
-    return (lead + " " + " ".join(said) + " " + _more(rest)).strip()
+    return (lead + " " + " ".join(said) + " " + _more(total - len(said))).strip()
 
 
-_WEB_ROW = re.compile(r"(?m)^\s*\d+\.\s+(?P<title>[^\n]*)\n[ \t]+(?P<snippet>[^\n]*)")
+_WEB_ROW = re.compile(r"(?m)^\s*\d+\.\s+(?P<title>[^\n]*)\n[ \t]+(?P<snippet>[^\n]*)"
+                      r"(?:\n[ \t]+(?P<url>\S+))?")
 
 
 def _news(data: dict) -> str | None:
-    hits = [h for h in (data.get("hits") or []) if isinstance(h, dict)]
-    return _stories(hits, "Here's the news:") if hits else None
+    hits = [h for h in (data.get("hits") or []) if isinstance(h, dict)
+            and (h.get("title") or h.get("snippet") or h.get("summary"))]
+    return _stories(hits, "Here's the news:", _total(data, len(hits))) if hits else None
 
 
 def _web(result) -> str | None:
     data = _payload(result)
     if isinstance(data, dict) and isinstance(data.get("results"), list):
         rows = [r for r in data["results"] if isinstance(r, dict)]
+        total = _total(data, len(rows))
     else:
         text = _LATE_PREFIX.sub("", str(result or ""))
         if not text.lstrip().startswith("Search results for"):
             return None
-        rows = [{"title": m.group("title"), "snippet": m.group("snippet")}
+        rows = [{"title": m.group("title"), "snippet": m.group("snippet"), "url": m.group("url")}
                 for m in _WEB_ROW.finditer(text)]
-    # A web hit's "source" would be its address: never spoken.
-    rows = [{"title": r.get("title"), "snippet": r.get("snippet") or r.get("description")}
-            for r in rows]
-    return _stories(rows, "Here's what I found on the web:") if rows else None
+        total = len(rows)
+    rows = [{"title": r.get("title"), "snippet": r.get("snippet") or r.get("description"),
+             "url": r.get("url")} for r in rows]
+    return _stories(rows, "Here's what I found on the web:", total, web=True) if rows else None
 
 
-def structured_reply(result, tool: str, now: datetime | None = None) -> str | None:
+def structured_reply(result, tool: str, now: datetime | None = None,
+                     asked: str = "") -> str | None:
     """The spoken answer for a structured routed read, or None (not a
     structured tool, nothing to list, or a shape it does not know: the
-    speaker answers instead)."""
+    speaker answers instead). ``asked`` is what the owner said (the calendar
+    keeps finished events only when they asked about the past)."""
     if tool not in STRUCTURED_TOOLS:
         return None
     if tool == "search_web":
@@ -317,7 +509,7 @@ def structured_reply(result, tool: str, now: datetime | None = None) -> str | No
         return None
     try:
         if tool == "query_calendar":
-            return _calendar(data, now or datetime.now())
+            return _calendar(data, now or datetime.now(), asked)
         if tool in ("check_email", "search_email"):
             return _email(data, tool)
         if tool == "search_files":
