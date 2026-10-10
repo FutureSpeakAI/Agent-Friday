@@ -1701,8 +1701,49 @@ def _voice_lease_take(settings, holder, progress=None, granted=None):
                                    + str(got.get("error") or "refused"))
             if granted is not None:
                 granted.update(got)
+            _voice_lease_keeper_start(settings)
         _VOICE_LEASE_HOLDERS.add(str(holder))
     return "voice_call"
+
+
+#: How often the start-up keeper renews the lease, and how long it keeps
+#: doing so on its own. The call heartbeat (15 s) only runs once the session is
+#: up; a cold ear/mouth/front load can outlast the lease TTL, and an expired
+#: lease hands the card back to the brain in the middle of the start. The
+#: bound lets a hung start still give the brain back.
+VOICE_LEASE_KEEP_EVERY_S = 10.0
+VOICE_LEASE_KEEP_MAX_S = 600.0
+_VOICE_LEASE_KEEPER = {"stop": None, "thread": None}
+
+
+def _voice_lease_keeper_start(settings) -> None:
+    """Renew the voice-call lease from the grant until it is given back or
+    the bound passes. Called with the lease lock held, once per grant."""
+    _voice_lease_keeper_stop()
+    stop = threading.Event()
+    every, bound = VOICE_LEASE_KEEP_EVERY_S, VOICE_LEASE_KEEP_MAX_S
+
+    def run():
+        t0 = _time.monotonic()
+        while not stop.wait(every):
+            if _time.monotonic() - t0 >= bound:
+                _log.warning("voice start keeper: stopped renewing after %.0f s; "
+                             "the call heartbeat must take over", bound)
+                return
+            _voice_lease_renew(settings)
+
+    t = threading.Thread(target=run, name="voice-lease-keeper", daemon=True)
+    _VOICE_LEASE_KEEPER["stop"], _VOICE_LEASE_KEEPER["thread"] = stop, t
+    t.start()
+
+
+def _voice_lease_keeper_stop() -> None:
+    stop, t = _VOICE_LEASE_KEEPER["stop"], _VOICE_LEASE_KEEPER["thread"]
+    _VOICE_LEASE_KEEPER["stop"] = _VOICE_LEASE_KEEPER["thread"] = None
+    if stop is not None:
+        stop.set()
+    if t is not None and t is not threading.current_thread():
+        t.join(timeout=2.0)
 
 
 def _voice_lease_ttl(settings) -> float:
@@ -1728,6 +1769,7 @@ def _voice_lease_give(holder) -> None:
         _VOICE_LEASE_HOLDERS.discard(str(holder))
         if _VOICE_LEASE_HOLDERS:
             return
+        _voice_lease_keeper_stop()
     # The last call that parked the brain is ending. Its GPU ear and mouth
     # leave the card BEFORE the park is given back (the front was disarmed
     # already): restored beside them, the brain would push the card under
