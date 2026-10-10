@@ -95,8 +95,9 @@ def test_bonsai_is_the_default_front_and_qwen_stays_choosable():
     from agent_friday import core
     from agent_friday.routes import core_routes
     assert vf.DEFAULT_FRONT_MODEL == BONSAI
-    assert core.DEFAULT_SETTINGS["voice_front_model"] == BONSAI
-    assert set(core_routes._VOICE_ENUMS["voice_front_model"]) == set(vf.FRONT_MODELS)
+    assert core.DEFAULT_SETTINGS["voice_front_model"] == "auto"
+    assert vf.AUTO_ORDER[0] == BONSAI, "automatic takes Bonsai first when it can run"
+    assert set(core_routes._VOICE_ENUMS["voice_front_model"]) == set(vf.FRONT_MODELS) | {"auto"}
     assert {"qwen3-4b-instruct-2507", "qwen3-1.7b"} <= set(vf.FRONT_MODELS)
     assert core_routes._check_voice_enums({"voice_front_model": "qwen3-1.7b"}) is None
 
@@ -158,14 +159,22 @@ def test_the_installer_page_offers_bonsai_first_with_its_own_packing():
 
 # ── the brain never falls back to the reflex model ──────────────────────────
 
-def test_the_brain_fallback_prefers_the_everyday_seat_over_quick_reflexes(monkeypatch):
+def test_the_brain_fallback_passes_over_a_reflex_only_model(monkeypatch):
+    from agent_friday import core
+    from agent_friday.services import local_seats
+    monkeypatch.setattr(core, "_load_settings", lambda: {
+        "capability_routing": {"local": {"provider": "llama-cpp-local", "model": BONSAI}},
+        "model_routing": {"local_model": BONSAI}})
+    assert local_seats._configured_local_model() == local_seats.LOCAL_BRAIN_DEFAULT
+
+
+def test_the_brain_fallback_keeps_the_owners_local_choice_first(monkeypatch):
     from agent_friday import core
     from agent_friday.services import local_seats
     monkeypatch.setattr(core, "_load_settings", lambda: {
         "capability_routing": {"reasoning": {"provider": "llama-cpp-local", "model": "bonsai2:27b"},
-                               "local": {"provider": "llama-cpp-local", "model": BONSAI}},
-        "model_routing": {"local_model": BONSAI}})
-    assert local_seats._configured_local_model() == "bonsai2:27b"
+                               "local": {"provider": "llama-cpp-local", "model": "ternary-bonsai:8b"}}})
+    assert local_seats._configured_local_model() == "ternary-bonsai:8b"
 
 
 def test_a_cloud_everyday_seat_still_falls_back_to_the_local_choice(monkeypatch):

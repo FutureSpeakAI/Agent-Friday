@@ -390,6 +390,16 @@ def _role_default(role: str) -> str | None:
     return _configured_local_model()
 
 
+def _reflex_only(model_id: str) -> bool:
+    """The shortlist holds this model only for the system-one (reflex) role."""
+    try:
+        from agent_friday.services import model_shortlist as _sl
+        roles = set((_sl.get(str(model_id)) or {}).get("roles") or [])
+    except Exception:
+        return False
+    return bool(roles) and roles <= {"system_one"}
+
+
 def _configured_local_model() -> str | None:
     """The local model the owner has actually chosen, from either place it is
     recorded, falling back to the Bonsai2 standard.
@@ -415,14 +425,12 @@ def _configured_local_model() -> str | None:
                            .read_text("utf-8")) or {}
         except Exception:
             s = {}
-    # The everyday-conversation seat first: Quick reflexes ("local") may name
-    # a small model such as Ternary Bonsai 1.7B, and a brain that falls back
-    # to the reflex model is a silent downgrade, not a repair.
-    cr = s.get("capability_routing") or {}
-    for value in ((cr.get("reasoning") or {}).get("model"),
-                  (cr.get("local") or {}).get("model"),
+    # Quick reflexes ("local") may name a reflex-only model such as Ternary
+    # Bonsai 1.7B; a brain that falls back to it is a silent downgrade, so a
+    # model the shortlist holds only for the system-one role is passed over.
+    for value in (((s.get("capability_routing") or {}).get("local") or {}).get("model"),
                   (s.get("model_routing") or {}).get("local_model")):
-        if value and not _names_a_cloud_model(value):
+        if value and not _names_a_cloud_model(value) and not _reflex_only(value):
             return str(value)
     return LOCAL_BRAIN_DEFAULT
 

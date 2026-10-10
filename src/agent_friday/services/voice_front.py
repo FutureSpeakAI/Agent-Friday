@@ -171,10 +171,66 @@ def installed(model: str) -> bool:
         return False
 
 
+#: "auto" (the default) takes the first of these that can run here.
+AUTO_ORDER = ("ternary-bonsai:1.7b", "qwen3-4b-instruct-2507", "qwen3-1.7b")
+
+
+def runtime_ready(model: str) -> bool:
+    """The engine the front declares is on this machine (stock fronts need none)."""
+    engine = required_engine(model)
+    if not engine:
+        return True
+    try:
+        from agent_friday.services import model_download as _md
+        return _md.runtime_binary(engine) is not None
+    except Exception:
+        return False
+
+
+def runnable(model: str) -> bool:
+    """Downloaded AND servable here: a Bonsai front without the PrismML
+    runtime is installed but cannot run."""
+    return installed(model) and runtime_ready(model)
+
+
+def why_not(model: str) -> str:
+    if not installed(model):
+        return "is not downloaded"
+    if not runtime_ready(model):
+        return ("needs the PrismML runtime, which comes with a Bonsai model from "
+                "Settings > Models")
+    return ""
+
+
 def selected_model(settings: dict | None = None) -> str:
+    """The owner's choice; "auto", unset or unknown takes the first front in
+    AUTO_ORDER that can run here (an install that only has a Qwen3 front keeps
+    it), else the default."""
     s = settings or {}
-    m = str(s.get("voice_front_model") or DEFAULT_FRONT_MODEL).strip().lower()
-    return m if m in FRONT_MODELS else DEFAULT_FRONT_MODEL
+    m = str(s.get("voice_front_model") or "auto").strip().lower()
+    if m in FRONT_MODELS:
+        return m
+    for cand in AUTO_ORDER:
+        if runnable(cand):
+            return cand
+    return DEFAULT_FRONT_MODEL
+
+
+def resolve(settings: dict | None = None):
+    """(the front to serve, or None for the brain; a sentence for the owner
+    when that is not the one chosen). A chosen front that cannot run falls
+    back to one that can, and says so; it never goes silent."""
+    chosen = selected_model(settings)
+    if runnable(chosen):
+        return chosen, ""
+    label = FRONT_MODELS[chosen]["label"]
+    for cand in AUTO_ORDER:
+        if cand != chosen and runnable(cand):
+            return cand, "%s %s, so %s is answering for now." % (
+                label, why_not(chosen), FRONT_MODELS[cand]["label"])
+    if installed(chosen):
+        return None, "%s %s, so the main model is answering." % (label, why_not(chosen))
+    return None, ""
 
 
 # ── tool-call validation (the grammar's backstop) ──────────────────────────
@@ -220,6 +276,17 @@ def validate_tool_call(call: dict, contract: dict):
         if not isinstance(v, py):
             return name, None, f"argument {k!r} must be of type {want}"
     return name, args, None
+
+
+def result_block(label: str, result: str, ack: str = "") -> str:
+    """A routed tool's result as the speaker reads it: in the owner's turn,
+    labelled, with the one instruction that matters."""
+    heard = (" They have already heard you say: \"%s\"; do not say it again or "
+             "talk about it." % ack) if ack else ""
+    return ("\n\n== WHAT FRIDAY JUST LOOKED UP (%s) ==\n%s\n== END OF WHAT WAS LOOKED UP ==\n"
+            "Answer the owner now from what was looked up: say what it says, plainly, "
+            "with its facts (names, times, numbers). If it is empty or an error, say you "
+            "couldn't get it.%s" % (label, (result or "(nothing came back)").strip(), heard))
 
 
 def _renderable(call: dict) -> dict:
@@ -462,17 +529,22 @@ class FrontSeat:
 
     def routed_turn(self, system: str, messages: list, *, tool=None, args=None,
                     ack: str = "", question: str = "", run_tool=None, on_delta=None,
-                    max_tokens: int = 400, temperature=None, timings=None) -> str:
+                    max_tokens: int = 400, temperature=None, timings=None,
+                    label: str = "", tool_timeout_s: float = 60.0) -> str:
         """One spoken turn whose tool, if any, system one already chose
         (services/laya_router). The front never sees a tool catalogue.
 
         ``question``: the router's one clarifying question is the reply.
         ``tool``: it starts on a thread through ``run_tool`` (the surface's
         governed runner) while ``ack`` is spoken; the front then answers from
-        the result, which reaches it as the Qwen3 tool-result turn: its own
-        acknowledgement carrying the call, then the result. A barge stops
-        the wait; the read it started finishes on its own and is not spoken.
-        Otherwise the front simply answers."""
+        the result, which rides in the owner's own turn as a labelled block
+        with the instruction to state what it says or say it could not be
+        had. (As a Qwen3 tool-result turn after its "own" acknowledgement, a
+        1.7B narrated the acknowledgement or refused with the result in hand:
+        the 2026-10-09 bench, 2 of 15.) A barge stops the wait; the read it
+        started finishes on its own and is not spoken. A tool that outlives
+        ``tool_timeout_s`` (the governed runner's own limit is shorter) is
+        reported as slow, never guessed at. Otherwise the front answers."""
         from agent_friday.services.model_router import turn_cancelled
         speak = (lambda s: on_delta(s) if on_delta else None)
         if question:
@@ -494,18 +566,22 @@ class FrontSeat:
         worker.start()
         if ack:
             speak(ack + " ")
+        deadline = time.monotonic() + float(tool_timeout_s)
         while worker.is_alive():
             if turn_cancelled():
                 return ack
+            if time.monotonic() > deadline:
+                slow = "That's taking longer than it should; I'll leave it running and tell you if it comes back."
+                speak(slow)
+                return (ack + " " + slow).strip()
             worker.join(0.05)
         result = box.get("result")
         if not isinstance(result, str):
             result = json.dumps(result, ensure_ascii=False, default=str)
-        call = {"id": "laya-1", "type": "function",
-                "function": {"name": tool, "arguments": json.dumps(dict(args or {}))}}
-        convo = list(messages) + [
-            {"role": "assistant", "content": ack, "tool_calls": [call]},
-            {"role": "tool", "tool_call_id": "laya-1", "content": result}]
+        convo = list(messages)
+        last = dict(convo[-1]) if convo and convo[-1].get("role") == "user" else {"role": "user", "content": ""}
+        last["content"] = (str(last.get("content") or "") + result_block(label or tool, result, ack)).strip()
+        convo = (convo[:-1] if convo and convo[-1].get("role") == "user" else convo) + [last]
         answer = self.run_turn(system, convo, {"tools": []}, on_delta=on_delta,
                                max_tokens=max_tokens, temperature=temperature,
                                timings=timings)

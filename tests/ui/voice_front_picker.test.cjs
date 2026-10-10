@@ -60,32 +60,43 @@ function find(node, pred, out = []) {
 const text = n => (n && typeof n === 'object') ? (n.children || []).map(text).join('') : (n == null || n === false ? '' : String(n));
 const radios = t => find(t, n => n.props && n.props.role === 'radio');
 
-test('Bonsai is chosen by default and the Qwen3 builds are offered', async () => {
+test('Automatic is the default and every model can be chosen once it can run', async () => {
   const saved = [];
   const h = host({ s: {}, save: d => saved.push(d) },
-    [{ id: 'voice-front-bonsai-1.7b', installed: true }, { id: 'voice-front-4b', installed: true },
-     { id: 'voice-front-1.7b', installed: false }]);
+    [{ id: 'voice-front-bonsai-1.7b', installed: true, runtime_ready: true },
+     { id: 'voice-front-4b', installed: true, runtime_ready: null },
+     { id: 'voice-front-1.7b', installed: false, runtime_ready: null }]);
   await flush(); await flush();
   const r = radios(h.tree);
-  assert.deepEqual(r.map(text), ['Ternary Bonsai 1.7B', 'Qwen3 4B', 'Qwen3 1.7B']);
-  assert.equal(r[0].props['aria-checked'], true, 'Bonsai is the default');
-  r[1].props.onClick();
+  assert.deepEqual(r.map(text), ['Automatic', 'Ternary Bonsai 1.7B', 'Qwen3 4B', 'Qwen3 1.7B']);
+  assert.equal(r[0].props['aria-checked'], true, 'Automatic is the default');
+  r[2].props.onClick();
   assert.equal(JSON.stringify(saved), JSON.stringify([{ voice_front_model: 'qwen3-4b-instruct-2507' }]), 'the 4B can be chosen');
-  assert.equal(r[2].props.onClick, undefined, 'a model that is not downloaded cannot be chosen');
-  assert.equal(r[2].props['aria-disabled'], true);
+  assert.equal(r[3].props.onClick, undefined, 'a model that is not downloaded cannot be chosen');
+  assert.equal(r[3].props['aria-disabled'], true);
 });
 
-test('a saved choice that is not downloaded says the main model answers until it is', async () => {
+test('Bonsai without the PrismML runtime cannot be chosen, and says why', async () => {
+  const h = host({ s: {}, save() {} },
+    [{ id: 'voice-front-bonsai-1.7b', installed: true, runtime_ready: false }]);
+  await flush(); await flush();
+  const b = radios(h.tree)[1];
+  assert.equal(b.props.onClick, undefined);
+  assert.match(b.props.title, /PrismML runtime/);
+});
+
+test('a saved choice that cannot run says another model answers, and why', async () => {
   const h = host({ s: { voice_front_model: 'ternary-bonsai:1.7b' }, save() {} },
     [{ id: 'voice-front-bonsai-1.7b', installed: false }]);
   await flush(); await flush();
   const status = find(h.tree, n => n.props && n.props.role === 'status');
   assert.equal(status.length, 1);
-  assert.match(text(status[0]), /not downloaded yet/);
+  assert.match(text(status[0]), /not downloaded yet.*answers until then, and says so/);
 });
 
 test('the choices are the server enum, and app.html mirrors them', () => {
   const ids = [...block(index).matchAll(/id: '([^']+)', artifact/g)].map(m => m[1]);
+  assert.equal(ids[0], 'auto');
   const routes = fs.readFileSync(path.join(root, 'src/agent_friday/routes/core_routes.py'), 'utf8');
   const enumLine = routes.split('\n').find(l => l.includes('"voice_front_model": ('));
   assert.deepEqual(ids.slice().sort(), [...enumLine.matchAll(/"([^"]+)"/g)].map(m => m[1]).slice(1).sort());

@@ -102,8 +102,62 @@ def _news_args(text: str, m=None) -> dict:
     return out
 
 
-#: tool -> (spoken label, argument template, required argument or None)
+_WORKSPACE_WORDS = {"inbox": "email", "mail": "email", "notes": "wiki", "podcasts": "media",
+                    "podcast": "media"}
+
+
+def _nav_args(text: str, m=None) -> dict:
+    q = (m.group("q") if m is not None else "").strip().lower()
+    return {"kind": "workspace", "query": _WORKSPACE_WORDS.get(q, q)} if q else {}
+
+
+_PLAYER = {"pause": "pause", "hold": "pause", "resume": "resume", "continue": "resume",
+           "unpause": "resume", "stop": "stop", "play": "play", "skip": "next_chapter",
+           "next": "next_chapter", "previous": "previous_chapter", "back": "previous_chapter"}
+
+
+def _player_args(text: str, m=None) -> dict:
+    return {"action": _PLAYER[m.group("act").lower()]} if m is not None else {}
+
+
+def _media_args(text: str, m=None) -> dict:
+    q = _clean_query(m.group("q")) if m is not None else ""
+    out = {"query": q} if q else {}
+    if re.search(r"\b(?:music|songs?|playlist|album|track)\b", text, re.I):
+        out["kind"] = "audio"
+    return out
+
+
+def _pace_args(text: str, m=None) -> dict:
+    t = text.lower()
+    if re.search(r"\bslow(?:er)?\b|more slowly", t):
+        return {"action": "set", "scope": "session", "pace": "measured"}
+    if re.search(r"\bfaster|quicker|speed up\b", t):
+        return {"action": "set", "scope": "session", "pace": "brisk"}
+    if re.search(r"\bshort(?:er)?|brief(?:er)?|concise|less detail\b", t):
+        return {"action": "set", "scope": "session", "depth": "concise"}
+    return {"action": "set", "scope": "session", "depth": "detailed"}
+
+
+def _task_args(text: str, m=None) -> dict:
+    q = _clean_query(m.group("q")) if m is not None and m.groupdict().get("q") else ""
+    return {"op": "stop", "target": q}
+
+
+#: tool -> (spoken label, argument template, required argument or None).
+#: Every tool here is one the action gate classes INTERNAL, or one that
+#: raises its own card (SELF_GATED: undo_action); tests pin it against
+#: governance.action_gate, never against a name prefix.
 TOOLS: Dict[str, Tuple[str, Callable, Optional[str]]] = {
+    # Friday's own screen, player and background work: reversible, local.
+    "navigate_to": ("opening it", _nav_args, "query"),
+    "podcast_play": ("on it", _player_args, None),
+    "media_play": ("starting that", _media_args, None),
+    "voice_preferences": ("adjusting how I talk", _pace_args, None),
+    "task_control": ("stopping that", _task_args, None),
+    "undo_action": ("undoing that", _no_args, None),
+    "answer_card": ("recording your answer", _no_args, None),
+    # Reads.
     "query_calendar": ("checking your calendar", _no_args, None),
     "check_email": ("checking your email", _email_args, None),
     "search_email": ("searching your email", _query, "query"),
@@ -114,6 +168,10 @@ TOOLS: Dict[str, Tuple[str, Callable, Optional[str]]] = {
     "search_wiki": ("checking your notes", _query, "query"),
     "search_past_conversations": ("looking back through our conversations", _query, "query"),
 }
+
+#: Tools that send the owner's words to an outside provider: tier 1 asks
+#: before running them; only a sealed tier-0 pattern runs them.
+ASK_BEFORE_GUESSING = frozenset({"search_web"})
 
 #: What the router asks when it knows the tool but not what to look for.
 _ASK_FOR = {
@@ -132,13 +190,20 @@ _URGENT = re.compile(r"\b(urgent|important|priority|pressing)\b", re.I)
 _TOP_STORIES = re.compile(r"(?:the\s+)?(?:news|headlines|top stories|today|the day)", re.I)
 
 #: An imperative that changes something: never the router's to run.
+#: Polite openers, any number of them: "can you please send ..." is a send.
+_POLITE = (r"^(?:(?:um+|uh+|so|okay|ok|hey|friday|please|and|can you|could you|would you|"
+           r"will you|go ahead and|i want you to|i need you to|i'd like you to)[\s,]+)*")
+
 _ACT = re.compile(
-    r"^(?:please\s+|can you\s+|could you\s+|go ahead and\s+)?"
+    _POLITE +
     r"(?:send|reply|respond|forward|delete|remove|trash|archive|move|rename|copy|"
     r"schedule|book|cancel|reschedule|add|create|make|write|draft|post|publish|"
     r"buy|pay|order|unsubscribe|mark|turn (?:on|off)|switch (?:on|off)|enable|"
     r"disable|set|change|update|install|uninstall|share|invite|accept|decline|"
-    r"put|text|call|message|remind me to|save|clear|empty|restore|undo)\b",
+    r"put|text|call|message|remind me to|save|clear|empty|restore)\b"
+    # A fragment or an idiom is not a request to change anything: "cancel
+    # that", "move on", "make sense?", "set?" carry no object to act on.
+    r"(?!\s*(?:that|it|this|them)?\s*[?.!]*$)(?!\s+(?:on|sense|up)\b\s*[?.!]*$)",
     re.I)
 
 #: Not a request at all: "don't check my email", "are you able to look things
@@ -160,6 +225,37 @@ _REQUEST_FORM = re.compile(
 
 _Q = r"(?P<q>.+?)"
 _END = r"\s*[?.!]*\s*$"
+
+_WORKSPACES = (r"calendar|news|e-?mail|inbox|mail|settings|library|files|wiki|notes|media|"
+               r"podcasts?|home|chat|projects?|activity|workflows|crew|people|health|finance|"
+               r"career|code|studio|knowledge|trust|system")
+
+#: Friday's own screen, player and background work. Checked FIRST and
+#: anchored at the start, so "don't play music" or "stop checking" never
+#: match: a negation is not an imperative.
+_ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
+    ("task_control",
+     _POLITE + r"(?:stop|cancel|halt|kill)\s+(?:the\s+|that\s+|my\s+)?(?:background\s+)?"
+     r"(?:task|job|workflow|research|delegation)\b(?:\s+(?:called|named|about|for)\s+" + _Q + r")?" + _END),
+    ("undo_action", _POLITE + r"undo(?:\s+(?:that|it|the last (?:change|thing)))?" + _END),
+    ("podcast_play",
+     _POLITE + r"(?P<act>pause|resume|continue|unpause|stop|play|skip|next|previous|back)\b"
+     r"(?:\s+(?:the\s+|this\s+|my\s+)?(?:podcast|episode|playback|audio|chapter|it|that))+" + _END),
+    ("voice_preferences",
+     _POLITE + r"(?:(?:speak|talk|go)\s+(?:a (?:bit|little)\s+)?(?:slower|more slowly|faster|quicker|slow down|speed up)|"
+     r"slow down|speed up|(?:keep it|be)\s+(?:short|brief|briefer|concise)|"
+     r"(?:give me\s+)?(?:shorter|longer|more detailed) answers|more detail)" + _END),
+    ("media_play", _POLITE + r"play\s+(?:me\s+)?(?:some\s+|the\s+|my\s+)?" + _Q + _END),
+    ("navigate_to",
+     _POLITE + r"(?:open|show(?: me)?|go to|switch to|bring up|take me to|pull up)\s+(?:up\s+)?(?:my\s+|the\s+)?"
+     r"(?P<q>" + _WORKSPACES + r")(?:\s+(?:workspace|page|tab|screen|app))?" + _END),
+]]
+
+#: A spoken answer to a card: a yes or a no and nothing else.
+_YES = re.compile(r"^(?:friday,?\s+)?(?:yes|yeah|yep|sure|ok(?:ay)?|go ahead|do it|approve(?:d)?|confirm(?:ed)?|"
+                  r"please do|that's fine|sounds good)\b[\s,.!]*(?:go ahead|do it|please)?[\s,.!]*$", re.I)
+_NO = re.compile(r"^(?:friday,?\s+)?(?:no|nope|don'?t|do not|decline|deny|cancel(?: that| it)?|"
+                 r"never mind|stop)\b[\s,.!]*(?:thanks|thank you)?[\s,.!]*$", re.I)
 
 #: (tool, pattern). First match wins; order is most specific first.
 _RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
@@ -246,6 +342,12 @@ _SMALL_TALK = re.compile(
 
 
 def _tier0(text: str) -> Optional[Route]:
+    for tool, pat in _ACTION_RULES:
+        m = pat.search(text)
+        if m:
+            label, template, required = TOOLS[tool]
+            return _with_args(tool, template(text, m), 0.95, "rule", label, required,
+                              reason="pattern")
     if _NOT_A_REQUEST.search(text):
         return Route("no_tool", confidence=0.95, layer="rule",
                      reason="a negation or a question about what Friday can do")
@@ -321,8 +423,16 @@ SEEDS: Dict[str, List[str]] = {
         "book a table for two", "turn the lights off", "archive these messages"],
 }
 
-_lock = threading.Lock()
+#: Two locks: the prototypes are built (encoder load, ~1 s) under their own,
+#: on the worker thread only, so a turn waiting for its budget never queues
+#: behind a build; the executor's lock guards nothing slow.
+_proto_lock = threading.Lock()
+_pool_lock = threading.Lock()
 _protos = None
+_build_failed_at = 0.0
+#: After a failed build, tier 1 is not retried for this long (a turn then
+#: degrades at once instead of re-trying the build every time).
+BUILD_RETRY_S = 60.0
 _exec: Optional[ThreadPoolExecutor] = None
 
 
@@ -340,11 +450,24 @@ def _build() -> Tuple[List[str], list]:
 
 
 def _prototypes():
-    global _protos
-    with _lock:
-        if _protos is None:
-            _protos = _build()
+    global _protos, _build_failed_at
+    if _protos is not None:
         return _protos
+    with _proto_lock:
+        if _protos is None:
+            if time.time() - _build_failed_at < BUILD_RETRY_S:
+                raise RuntimeError("the router's prototypes failed to build recently")
+            try:
+                _protos = _build()
+            except Exception:
+                _build_failed_at = time.time()
+                raise
+        return _protos
+
+
+def ready() -> bool:
+    """True once tier 1 can answer without a build."""
+    return _protos is not None
 
 
 def warm() -> None:
@@ -357,7 +480,7 @@ def warm() -> None:
 
 def _pool() -> ThreadPoolExecutor:
     global _exec
-    with _lock:
+    with _pool_lock:
         if _exec is None:
             _exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="laya-router")
         return _exec
@@ -392,6 +515,12 @@ def _tier1(text: str) -> Route:
         return Route("no_tool", confidence=round(conf, 3), layer="laya2", candidates=cands,
                      reason="weak action reading")
     label, template, required = TOOLS[best]
+    if best in ASK_BEFORE_GUESSING and conf >= ASK_THRESHOLD:
+        # A guess never sends the owner's words to an outside search
+        # provider: only a sealed pattern ("search the web for ...") does.
+        return Route("ask", tool=best, confidence=round(conf, 3), layer="laya2", label=label,
+                     question="Do you want me to search the web for that?", candidates=cands,
+                     reason="a guess at an outward search is asked, never run")
     if conf >= ACT_THRESHOLD and margin >= MARGIN_THRESHOLD:
         r = _with_args(best, template(text), round(conf, 3), "laya2", label, required,
                        reason="nearest prototype")
@@ -409,18 +538,29 @@ def _tier1(text: str) -> Route:
 
 def route(text: str, *, tools: Optional[Sequence[str]] = None,
           budget_ms: int = DEFAULT_BUDGET_MS, surface: str = "voice",
-          log: bool = True) -> Route:
+          log: bool = True, pending_card: Optional[str] = None) -> Route:
     """Decide for one turn within ``budget_ms``. Never raises.
 
     ``tools`` is what this session holds; a tool it does not hold is never
     chosen (that request is ``defer``). A slow or missing encoder degrades
     to tier 0 alone; a turn tier 0 cannot place is ``no_tool``, which is the
-    generating model's own turn.
+    generating model's own turn. ``pending_card`` is the one organize card
+    waiting in this conversation, if exactly one is: a bare yes or no then
+    answers it (answer_card still requires the owner's own words, said after
+    the card was raised).
     """
     t0 = time.perf_counter()
     text = " ".join(str(text or "").split())
     held = set(tools) if tools is not None else None
-    r = _tier0(text) if text else Route("no_tool", reason="empty")
+    r = None
+    if text and pending_card:
+        decision = "approve" if _YES.match(text) else "decline" if _NO.match(text) else None
+        if decision:
+            r = Route("tool", tool="answer_card", args={"card_id": pending_card, "decision": decision},
+                      confidence=0.95, layer="rule", label=TOOLS["answer_card"][0],
+                      reason="a spoken answer to the waiting card")
+    if r is None:
+        r = _tier0(text) if text else Route("no_tool", reason="empty")
     if r is None:
         try:
             from agent_friday.services import laya2_encoder

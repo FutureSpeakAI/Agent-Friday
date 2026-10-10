@@ -76,6 +76,10 @@ ARTIFACTS = {
         "size_mb": 442,
         "licence": "Apache-2.0",
         "dest": "models/gguf/Ternary-Bonsai-1.7B-PQ2_0.gguf",
+        # Served only on this runtime (voice_front.required_engine); the
+        # Settings rows say so when it is missing, and voice_front.resolve
+        # falls back to a front that runs.
+        "runtime": "prism-fork",
     },
     "voice-front-4b": {
         "label": "Qwen3-4B-Instruct-2507 Q4_K_M (voice front)",
@@ -223,5 +227,18 @@ def public_rows() -> list:
                     "kind": a["kind"],
                     "optional": bool(a.get("optional")),
                     "requires": list(a.get("requires") or []),
-                    "installable": ok, "why_not": why})
+                    "installable": ok, "why_not": why,
+                    "runtime": a.get("runtime"),
+                    "runtime_ready": _runtime_ready(a.get("runtime"))})
     return out
+
+
+def _runtime_ready(name):
+    """None when the artifact needs no runtime; else whether it is installed."""
+    if not name:
+        return None
+    try:
+        from agent_friday.services import model_download as _md
+        return _md.runtime_binary(name) is not None
+    except Exception:
+        return False

@@ -1460,7 +1460,14 @@ def _brain_parked_for_call(settings, front_model) -> bool:
         return True
     # A co-resident front stays beside the brain only when the card has room
     # for it above the display reserve. Loading it into a full card is the
-    # over-commit the lease exists to prevent; "cannot tell" parks too.
+    # over-commit the lease exists to prevent; "cannot tell" parks too. With
+    # no CUDA device there is no card to share, so nothing to park for.
+    try:
+        from agent_friday.services.nemo_voice import gpu_status
+        if not (gpu_status(fresh=True) or {}).get("cuda"):
+            return False
+    except Exception:
+        pass
     try:
         from agent_friday.services.voice_workers import admit_gpu
         admit_gpu(_vf.vram_need_mib(front_model), "voice front")
@@ -1546,8 +1553,12 @@ def _arm_voice_front(settings, progress=None, holder="session"):
     failure is given back."""
     from agent_friday.services import voice_front as _vf
     from agent_friday.services.voice_engine import build_voice_tool_contract
-    model = _vf.selected_model(settings)
-    if not _vf.installed(model):
+    # A chosen front that cannot run here (not downloaded, or Bonsai without
+    # the PrismML runtime) falls back to one that can, and the owner is told.
+    model, notice = _vf.resolve(settings)
+    if notice and progress:
+        progress(notice)
+    if model is None:
         return None
     label = _vf.FRONT_MODELS[model]["label"]
     taken = {"seat": None, "lease": None, "holder": holder}
@@ -1870,7 +1881,7 @@ def _resolve_voice_engine(settings=None):
             _brain_state = _local_brain_state()
             try:
                 from agent_friday.services import voice_front as _vf
-                _front_ready = _vf.installed(_vf.selected_model(settings))
+                _front_ready = _vf.resolve(settings)[0] is not None
             except Exception:
                 _front_ready = False
             # With a voice front installed the FRONT answers; the brain is the
@@ -2231,9 +2242,10 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
 #: them; the speaker answers from what came back and never invents a result.
 VOICE_SPEAKER_RULE = (
     "TOOLS ARE HANDLED FOR YOU: Friday's quick judgement looks things up "
-    "before you answer; when it has, the result is in this conversation as a "
-    "tool result, after your own short acknowledgement. Answer from that "
-    "result and do not repeat the acknowledgement. You never call tools and "
+    "before you answer; when it has, the owner's turn ends with a block headed "
+    "WHAT FRIDAY JUST LOOKED UP. Answer from that block: say what it says, with "
+    "its facts. The owner has already heard a short acknowledgement; never "
+    "repeat it or talk about it. You never call tools and "
     "never write tool syntax. If the owner asked for something and there is "
     "no result for it, say plainly that you couldn't check that just now: "
     "never describe a calendar, an inbox, a file, a search or a story you "
@@ -2282,6 +2294,45 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
     block = persona_block(style)
     text = f"{block}\n{body}\n\n{block}" if block else body
     return seal_system_prompt(text, "voice speaker prompt")
+
+
+#: What the voice says when a change goes to the deeper mind: when it runs
+#: is the deeper mind's business (it may wait for the call to end), so the
+#: words promise a report, not an outcome.
+DEFER_ACK = "I'll hand that to my deeper mind; it'll report back."
+
+
+def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None) -> dict:
+    """What a routed voice turn does: services/laya_router's decision, with
+    this surface's policy for "defer" (a change goes to delegate_to_friday,
+    a governed background task whose own gates and cards decide it, exactly
+    as in text mode). Returns {tool, args, ack, question, label, receipt}."""
+    from agent_friday.services import laya_router as _lr
+    r = (route_fn or _lr.route)(user_text, tools=list(held), surface="voice",
+                                pending_card=pending_card)
+    tool, args = (r.tool, dict(r.args)) if r.decision == "tool" else (None, None)
+    ack, label = _lr.acknowledgement(r), r.label
+    handed = None
+    if r.decision == "defer" and "delegate_to_friday" in held:
+        tool, args = "delegate_to_friday", {"request": str(user_text)[:4000]}
+        ack, label, handed = DEFER_ACK, "handed to the deeper mind", "delegate_to_friday"
+    receipt = dict(_lr.receipt(r), ran=tool, handed_to=handed)
+    return {"tool": tool, "args": args, "ack": ack, "label": label,
+            "question": r.question if r.decision == "ask" else "", "receipt": receipt}
+
+
+def _pending_voice_card(since: float):
+    """The one organize card raised since ``since`` and still waiting, or None
+    (none, or several: a bare yes must not pick between them)."""
+    try:
+        from agent_friday.services import approvals as _ap
+        from agent_friday.services import item_actions as _ia
+        cards = [r for r in _ap.list_approvals(status="pending")
+                 if (r.get("payload") or {}).get("handler") == _ia.HANDLER
+                 and float(r.get("created_at") or 0) >= float(since)]
+        return cards[0]["approval_id"] if len(cards) == 1 else None
+    except Exception:
+        return None
 
 
 def _speaker_volatile(volatile: str) -> str:
@@ -2349,7 +2400,7 @@ def _warm_seat_prefix() -> dict:
     settings = _load_settings() or {}
     try:
         from agent_friday.services import voice_front as _vf
-        if _vf.installed(_vf.selected_model(settings)):
+        if _vf.resolve(settings)[0] is not None:
             # The front answers the turns and prefills its own prefix when a
             # session arms; warming the brain's would spend its slot for nothing.
             return {"warmed": False, "reason": "the voice front answers; it prefills at arm"}
@@ -3214,30 +3265,24 @@ if sock is not None:
                         partial_text, settings, volatile=_volatile())}],
                     _front["contract"])
 
+            _route_since = _time.time()
+
             def _routed_front_turn(user_text, on_delta):
                 # System one decides; the governed runner executes; the front
                 # speaks (ftv/program/reference/laya_router_addendum_2026-10-09).
-                from agent_friday.services import laya_router as _lr
-                held = list(_front["contract"].get("names") or [])
-                r = _lr.route(user_text, tools=held, surface="voice")
-                tool, args = (r.tool, r.args) if r.decision == "tool" else (None, None)
-                ack = _lr.acknowledgement(r)
-                if r.decision == "defer" and "delegate_to_friday" in held:
-                    # A request to change something goes to the deeper mind,
-                    # whose own gates and cards decide it, as in text mode.
-                    tool, args = "delegate_to_friday", {"request": str(user_text)[:4000]}
-                    ack = "I'll hand that to my deeper mind."
-                _send({"type": "route", **_lr.receipt(r),
-                       "ran": tool, "handed_to": tool if r.decision == "defer" else None})
+                plan = _voice_route_plan(user_text, list(_front["contract"].get("names") or []),
+                                         pending_card=_pending_voice_card(_route_since))
+                _send({"type": "route", **plan["receipt"]})
                 return _front["seat"].routed_turn(
                     _front["prompt"],
                     _local_voice_messages(_tool_session.get("conversation_id"), user_text,
                                           settings, volatile=_speaker_volatile(_volatile())),
-                    tool=tool, args=args, ack=ack,
-                    question=r.question if r.decision == "ask" else "",
+                    tool=plan["tool"], args=plan["args"], ack=plan["ack"],
+                    question=plan["question"], label=plan["label"],
                     run_tool=lambda n, a: _local_voice_tool(n, a, _send, _tool_session),
                     on_delta=on_delta, max_tokens=_voice_reply_cap(settings, user_text),
-                    temperature=settings.get("temperature"), timings=_timings)
+                    temperature=settings.get("temperature"), timings=_timings,
+                    tool_timeout_s=float(settings.get("voice_tool_hard_limit_s") or 45) + 15)
 
             def _front_turn(user_text, on_delta):
                 _tool_session["owner_text"] = str(user_text or "")[:4000]
