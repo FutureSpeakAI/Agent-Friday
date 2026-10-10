@@ -2592,8 +2592,11 @@ DEFAULT_SETTINGS = {
         # podcast_engine.RECOMMENDED_FORMAT is the same table.
         "format": {"briefing": "solo", "front_page": "solo", "editorial": "solo",
                    "weekly": "duo", "any": "duo"},
-        "length": {"front_page": "short", "briefing": "short",
-                   "weekly": "standard", "editorial": "standard"},
+        # How long each show runs, and "any" for an episode the owner asks for:
+        # "short" (about 2 minutes), "standard" (about 5, recommended) or
+        # "long" (about 10). podcast_engine.LENGTH_MINUTES is the same table.
+        "length": {"front_page": "standard", "briefing": "standard",
+                   "weekly": "standard", "editorial": "standard", "any": "standard"},
         "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
                   "b": {"name": "Emma", "voice": "bf_emma"}},
         "on_ready": "notify",

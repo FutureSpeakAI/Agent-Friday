@@ -17571,6 +17571,14 @@ function podcastLinked(ep) {
   (ep.lines || []).forEach(ln => (ln.cites || []).forEach(c => cited.add(c)));
   return (ep.sources || []).filter(s => cited.has(s.id) && /^https?:\/\//.test(s.url || ''));
 }
+// The linked sources segment by segment (episode.segments, services/podcast_engine.py
+// segment_sources); an episode made before segments were kept lists them once.
+function podcastSegments(ep) {
+  const linked = new Set(podcastLinked(ep).map(s => s.id));
+  const segs = (ep.segments || []).map(g => ({ chapter: g.chapter, title: g.title || '',
+    sources: (g.sources || []).filter(s => linked.has(s.id)) })).filter(g => g.sources.length);
+  return segs.length ? segs : [{ chapter: 0, title: '', sources: podcastLinked(ep) }];
+}
 const PODCAST_SHOWS = [['briefing', 'The Briefing'], ['front_page', 'Front Page'], ['editorial', 'The Editorial'], ['weekly', 'The Week'], ['any', 'Your own episodes']];
 function PodcastBadges({ ep }) {
   const h = React.createElement;
@@ -17734,7 +17742,11 @@ function PodcastPlayer() {
     }
     if (tap.ctx && tap.ctx.state === 'suspended') tap.ctx.resume().catch(() => {});
     let raf = 0;
-    const loop = () => {
+    // Whose line is playing follows the audio, not the frame rate: the scene can
+    // draw at two or three frames a second on a weak GPU, so the state is also
+    // refreshed by a timer and by the audio's own progress, and a co-host's line
+    // never keeps Friday's speaking state for the length of a slow frame.
+    const tick = () => {
       const lns = (epRef.current && epRef.current.lines) || [];
       let ln = null;
       for (const l of lns) { if ((l.start || 0) <= a.currentTime + 0.05) ln = l; else break; }
@@ -17749,11 +17761,18 @@ function PodcastPlayer() {
       window._fridayHoloAmplitude = amp;
       if (!window._fridayMoodSignals) window._fridayMoodSignals = {};
       window._fridayMoodSignals.ttsActive = hers;
+    };
+    const loop = () => {
+      tick();
       raf = requestAnimationFrame(loop);
     };
     loop();
+    const iv = setInterval(tick, 100);
+    a.addEventListener('timeupdate', tick);
     return () => {
       cancelAnimationFrame(raf);
+      clearInterval(iv);
+      a.removeEventListener('timeupdate', tick);
       window._fridayHoloAmplitude = 0;
       if (window._fridayMoodSignals) window._fridayMoodSignals.ttsActive = false;
     };
@@ -17923,9 +17942,12 @@ function PodcastPlayer() {
       }, h('b', null, who(ln.speaker) + ': '), fridayTM(ln.text), (ln.cites || []).map(cite)))),
     podcastLinked(ep).length ? h('div', { role: 'list', 'aria-label': 'Sources', style: { marginTop: 10, borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
       h('div', { style: { fontWeight: 600, color: PODCAST_C.accent, marginBottom: 4 } }, 'Sources'),
-      podcastLinked(ep).map(s => h('div', { key: s.id, role: 'listitem', style: { fontSize: PODCAST_C.md, margin: '2px 0' } },
-        s.outlet ? h('b', null, s.outlet + ': ') : null,
-        h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title)))) : null,
+      // Grouped by segment: each claim can be traced to the report it rests on.
+      podcastSegments(ep).map(g => [g.title ? h('div', { key: 'seg-' + g.chapter, style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim, marginTop: 4 } }, g.title) : null]
+        .concat(g.sources.map(s => h('div', { key: g.chapter + ':' + s.id, role: 'listitem', style: { fontSize: PODCAST_C.md, margin: '2px 0' } },
+          s.outlet ? h('b', null, s.outlet + ': ') : null,
+          h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title),
+          s.read ? h('span', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm } }, ' · ' + s.read) : null))))) : null,
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
   return popped ? ReactDOM.createPortal(frame, popped.el) : frame;
@@ -17950,7 +17972,7 @@ function PodcastButton({ sources, title, compact, className }) {
     setState('busy');
     try {
       const r = await fetch('/api/podcasts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sources: sources, length: 'short' }) });
+        body: JSON.stringify({ sources: sources }) });
       const d = await r.json();
       if (d.status === 'ok') {
         setState('queued');
@@ -18040,7 +18062,8 @@ function PodcastsView() {
   const h = React.createElement;
   const [eps, setEps] = useState([]);
   const [rows, setRows] = useState([{ kind: 'text', value: '' }]);
-  const [length, setLength] = useState('short');
+  // '': the length set in Settings > Voice > Podcasts for the episodes you ask for.
+  const [length, setLength] = useState('');
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -18110,7 +18133,7 @@ function PodcastsView() {
       h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
         h('button', { className: 'btn', onClick: () => setRows(rows.concat([{ kind: 'file', value: '' }])) }, '+ Add source'),
         h('select', { 'aria-label': 'Length', value: length, style: field, onChange: (e) => setLength(e.target.value) },
-          [['short', 'Short (~5 min)'], ['standard', 'Standard (~10 min)'], ['long', 'Long (~30 min)']].map(o => h('option', { key: o[0], value: o[0], style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, o[1]))),
+          [['', 'Your usual length'], ['short', 'Short, about 2 minutes'], ['standard', 'Standard, about 5 minutes (recommended)'], ['long', 'Long, about 10 minutes']].map(o => h('option', { key: o[0], value: o[0], style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, o[1]))),
         h('input', { 'aria-label': 'Angle or emphasis (optional)', placeholder: 'Angle or emphasis (optional)', value: instructions, style: Object.assign({ flex: 1, minWidth: 180 }, field), onChange: (e) => setInstructions(e.target.value) }),
         h('button', { className: 'btn active', disabled: busy, onClick: make }, busy ? 'Starting…' : 'Make episode')),
       msg ? h('div', { role: 'status', style: { fontSize: PODCAST_C.md, color: PODCAST_C.dim } }, msg) : null,
@@ -18215,7 +18238,7 @@ function SendTo({
         const r = await fetch('/api/podcasts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sources: [{ kind: 'text', text: typeof c === 'string' ? c : JSON.stringify(c, null, 1), title: personName || dataType || ('From ' + fridayName()) }], length: 'short' })
+          body: JSON.stringify({ sources: [{ kind: 'text', text: typeof c === 'string' ? c : JSON.stringify(c, null, 1), title: personName || dataType || ('From ' + fridayName()) }] })
         });
         const d = await r.json();
         setStatus(d.status === 'ok' ? 'ok' : 'fail');
@@ -56007,7 +56030,13 @@ function SettingsTabVoice({
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "What voice can't do, and why",
     desc: ("Voice can do anything chat can: what its quick tools do not cover, it hands to " + fridayName() + " in the background. These limits remain, and why.")
-  }, /*#__PURE__*/React.createElement(VoiceRestrictions, null)), gem && /*#__PURE__*/React.createElement(StSection, {
+  }, /*#__PURE__*/React.createElement(VoiceRestrictions, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Podcasts",
+    desc: "The episodes " + fridayName() + " writes and speaks on this computer: the News shows and the ones you ask for."
+  }, /*#__PURE__*/React.createElement(PodcastLengthRow, {
+    s: s,
+    save: save
+  })), gem && /*#__PURE__*/React.createElement(StSection, {
     title: "Gemini Live options",
     desc: "These apply only to the Gemini Live session."
   }, /*#__PURE__*/React.createElement(StToggle, {
@@ -61931,7 +61960,8 @@ const LOCAL_AI_KIND_WORDS = {
   scheduled: 'scheduled',
   prefix_warm: 'warm-up',
   runner: 'background job',
-  task: 'task'
+  task: 'task',
+  podcast: 'podcast'
 };
 function localAiChipText(q) {
   const n = q && q.count || 0;
@@ -62097,6 +62127,55 @@ function LocalAiIdleRow({
     key: n,
     value: String(n)
   }, n + ' minutes' + (n === 10 ? ' (default)' : '')))));
+}
+// Settings > Voice > Podcasts: how long each show's episodes run when spoken
+// (services/podcast_engine.py LENGTH_MINUTES). One row, a choice per show.
+const PODCAST_LENGTHS = [['short', 'Short, about 2 minutes'], ['standard', 'Standard, about 5 minutes (recommended)'], ['long', 'Long, about 10 minutes']];
+const PODCAST_LENGTH_SHOWS = [['front_page', 'The Front Page'], ['briefing', 'The Briefing'], ['weekly', 'The Week'], ['editorial', 'The Editorial'], ['any', 'Episodes you ask for']];
+function PodcastLengthRow({
+  s,
+  save
+}) {
+  const pod = s && s.podcasts || {};
+  const cur = pod.length || {};
+  // The whole podcasts block is saved: the settings store replaces it, not merges it.
+  const pick = (key, v) => save({
+    podcasts: Object.assign({}, pod, {
+      length: Object.assign({}, cur, {
+        [key]: v
+      })
+    })
+  });
+  return /*#__PURE__*/React.createElement(StRow, {
+    label: "Episode length",
+    desc: "How long each show runs when spoken. Standard tells three or four stories in depth, each from its full article where the page can be read. A longer episode takes longer to write and speak on this computer; a shorter one tells fewer stories.",
+    settingKey: "settings.podcasts.length"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6
+    }
+  }, PODCAST_LENGTH_SHOWS.map(([key, label]) => /*#__PURE__*/React.createElement("label", {
+    key: key,
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      color: 'var(--st-label)'
+    }
+  }, label, /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    "aria-label": label + ': episode length',
+    value: cur[key] || 'standard',
+    onChange: e => pick(key, e.target.value)
+  }, PODCAST_LENGTHS.map(([v, t]) => /*#__PURE__*/React.createElement("option", {
+    key: v,
+    value: v
+  }, t)))))));
 }
 function StandaloneApprovals() {
   const items = useApprovalFeed();

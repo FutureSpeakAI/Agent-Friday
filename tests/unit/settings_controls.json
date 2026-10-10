@@ -4966,5 +4966,19 @@
   "reader_needle": "settings.get(\"background_idle_minutes\", DEFAULT_IDLE_MINUTES)",
   "status": "ok",
   "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Podcasts",
+  "label": "Episode length",
+  "kind": "select per show",
+  "keys": [
+   "podcasts.length"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/podcast_engine.py",
+  "reader_needle": "got = (settings().get(\"length\") or {}).get(key)",
+  "status": "ok",
+  "note": "One choice per show (the four News shows and the episodes you ask for). Validated on save (routes/core_routes._check_podcast_length); podcast_engine.length_for decides each new episode's length."
  }
 ]

@@ -22,8 +22,14 @@ The invariants this module keeps:
   source is `privacy: "private"`, may not use a cloud voice, and is described
   to a cloud voice session only through `podcast_tools._private_summary`.
 * **The routine is never held up.** News routines call `create()`, which only
-  writes a queued episode and wakes the worker. The worker renders when the
-  scheduler's idle gate allows (see `_gate_reason`).
+  writes a queued episode and wakes the worker. The worker writes the script
+  as a time-bound job in the Local AI queue (`queue_job`): one at a time,
+  yielding to chat and voice turns, never waiting for idle.
+* **Depth from the reporting, not invention.** Each story the outline picks
+  is read in full where its page can be read (`deepen`), and a fact the
+  writer takes from the article is checked against the passages it was
+  given; one that is in no source is cut. A story whose page cannot be read
+  is told from its summary, briefly.
 """
 
 from __future__ import annotations
@@ -47,8 +53,71 @@ from agent_friday.services import podcast_sources as sources_mod
 
 log = logging.getLogger(__name__)
 
-LENGTH_WORDS = {"short": 700, "standard": 1500, "long": 4500}
-LENGTH_CHAPTERS = {"short": 3, "standard": 5, "long": 8}
+# ── how long an episode runs ────────────────────────────────────────────────
+#
+# A length is spoken time. Standard (about five minutes) is the recommended
+# one: the default for every routine and for every new episode. The word
+# targets come from the rate the renderer achieves (podcast_render
+# .spoken_words_per_minute, measured), less the stings and the fixed opening
+# and sign-off, which are spoken too.
+
+LENGTHS = ("short", "standard", "long")
+RECOMMENDED_LENGTH = "standard"
+LENGTH_MINUTES = {"short": 2, "standard": 5, "long": 10}
+#: Stories a newscast tells at each length: fewer, each told in depth.
+LENGTH_STORIES = {"short": 2, "standard": 4, "long": 6}
+#: A cold open (the top story), a chapter per further story, a one-sentence close.
+LENGTH_CHAPTERS = {k: n + 1 for k, n in LENGTH_STORIES.items()}
+#: Words the fixed opening and sign-off add (`signature_lines`): about 25 for
+#: an open with the place, day, time and weather, about 17 for the sign-off.
+SIGNATURE_WORDS = 42
+#: The close is one sentence (`edit_script` keeps only its first).
+CLOSE_WORDS = 30
+
+
+def _target_words(length: str) -> int:
+    """Script words (signature excluded) that fill `length` when spoken."""
+    speech_s = LENGTH_MINUTES[length] * 60 - render.fixed_seconds()
+    spoken = speech_s * render.spoken_words_per_minute() / 60.0
+    return int(round((spoken - SIGNATURE_WORDS) / 10.0)) * 10
+
+
+LENGTH_WORDS = {k: _target_words(k) for k in LENGTHS}
+
+#: What the local model may spend writing one episode, scaled to its script:
+#: output tokens for the outline, one chapter, and a whole-script revision
+#: (a JSON line costs about two tokens a word; the revision has twice that
+#: room), and how many revision passes the script-quality gate gets.
+WRITER_BUDGET = {
+    k: {"outline": 2000, "chapter": 3000,
+        "revise": max(4000, 5 * LENGTH_WORDS[k]),
+        "revisions": 3 if k == "long" else 2}
+    for k in LENGTHS
+}
+#: A local call's time limit: a floor, or the call's output at a slow local
+#: seat's six tokens a second plus two minutes to read the prompt.
+WRITER_TIMEOUT_FLOOR_S = 900
+WRITER_SLOW_TOKENS_PER_S = 6
+
+
+def writer_timeout_s(max_tokens: int) -> int:
+    return int(max(WRITER_TIMEOUT_FLOOR_S, max_tokens / WRITER_SLOW_TOKENS_PER_S + 120))
+
+
+def speak_budget_s(n_lines: int, words: int) -> int:
+    """The time the whole episode may take to speak: three times its length,
+    or thirty seconds a line, never under fifteen minutes."""
+    return int(max(900, 30 * n_lines, 3 * render.spoken_seconds(words)))
+
+
+#: Article tokens a story's chapter is given (page_reader.select: the lead,
+#: then the passages its headline and summary point to), and the share of
+#: them a whole-script revision may carry for all the stories together.
+ARTICLE_TOKENS = 700
+REVISE_ARTICLE_TOKENS = 1800
+#: Less text than this from a page is not an article: the summary is used.
+MIN_ARTICLE_CHARS = 400
+
 PENDING = ("queued", "waiting", "writing", "speaking", "checking")
 FINISHED = ("ready", "failed", "cancelled")
 
@@ -101,7 +170,8 @@ VOICE_HEADROOM_MB = 4096
 #: What the owner reads when even parking the brain cannot make that room.
 NO_ROOM_TO_SPEAK = ("There isn't room on this computer to speak it right now. "
                     "Friday will try again in a few minutes.")
-#: Revision passes the writer gets when the script-quality gate finds problems.
+#: Revision passes the writer gets when the script-quality gate finds problems
+#: (a standard episode; `WRITER_BUDGET` has each length's).
 MAX_REVISIONS = 2
 #: Fewer words than this that survived the source check is no episode.
 MIN_SCRIPT_WORDS = 8
@@ -109,8 +179,11 @@ MIN_SCRIPT_WORDS = 8
 DEFAULTS = {
     "enabled_for_routines": {r: True for r in ROUTINES},
     "format": dict(RECOMMENDED_FORMAT),
-    "length": {"front_page": "short", "briefing": "short",
-               "weekly": "standard", "editorial": "standard"},
+    # Every show, and "any" (an episode not made by a routine), at the
+    # recommended length unless the owner chose another.
+    "length": {"front_page": RECOMMENDED_LENGTH, "briefing": RECOMMENDED_LENGTH,
+               "weekly": RECOMMENDED_LENGTH, "editorial": RECOMMENDED_LENGTH,
+               "any": RECOMMENDED_LENGTH},
     "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
               "b": {"name": "Emma", "voice": "bf_emma"}},
     "on_ready": "notify",
@@ -200,16 +273,73 @@ def check_format(routine: str, fmt: str) -> None:
         raise PodcastRefused("a show is \"solo\" (%s alone) or \"duo\" (two hosts)" % her_name())
 
 
+def _save_podcasts(change: dict) -> None:
+    """Write `change` into the owner's podcasts settings. The settings store
+    replaces a top-level block it does not deep-merge, so the block is
+    written whole: setting one show's format or length never resets the
+    other shows, the hosts or the routines' switches."""
+    from agent_friday.core import _load_settings, _save_settings
+    own = copy.deepcopy((_load_settings() or {}).get("podcasts") or {})
+    _merge_into(own, change)
+    _save_settings({"podcasts": own})
+
+
 def set_format(routine: str, fmt: str) -> None:
     key = routine or "any"
     check_format(routine, fmt)
-    from agent_friday.core import _save_settings
-    _save_settings({"podcasts": {"format": {key: fmt}}})
+    _save_podcasts({"format": {key: fmt}})
 
 
 def formats() -> dict:
     return {k: {"format": format_for("" if k == "any" else k), "recommended": v}
             for k, v in RECOMMENDED_FORMAT.items()}
+
+
+#: The shows a length is set for: each routine, and "any" for every episode
+#: not made by a routine.
+LENGTH_SHOWS = ROUTINES + ("any",)
+
+
+def length_for(routine: str = "") -> str:
+    """"short", "standard" or "long" for a routine's episodes ("" or "any":
+    every other episode)."""
+    key = routine if routine in LENGTH_SHOWS else "any"
+    got = (settings().get("length") or {}).get(key)
+    return got if got in LENGTHS else RECOMMENDED_LENGTH
+
+
+def length_from_minutes(minutes) -> str:
+    """The length nearest a number of minutes ("make it ten minutes")."""
+    try:
+        m = float(minutes)
+    except (TypeError, ValueError):
+        raise PodcastRefused("say the length in minutes, or short, standard or long")
+    return min(LENGTHS, key=lambda k: (abs(LENGTH_MINUTES[k] - m), LENGTH_MINUTES[k]))
+
+
+def check_length(routine: str, length: str) -> None:
+    """Refuse a show or a length that does not exist."""
+    key = routine or "any"
+    if key not in LENGTH_SHOWS and key != "all":
+        raise PodcastRefused("no such show %r; one of: %s, or all" % (routine, ", ".join(LENGTH_SHOWS)))
+    if length not in LENGTHS:
+        raise PodcastRefused("a length is short (about %d minutes), standard (about %d) or long (about %d)"
+                             % tuple(LENGTH_MINUTES[k] for k in LENGTHS))
+
+
+def set_length(routine: str, length: str) -> None:
+    """Set one show's length, or every show's ("all")."""
+    check_length(routine, length)
+    keys = LENGTH_SHOWS if routine == "all" else (routine or "any",)
+    _save_podcasts({"length": {k: length for k in keys}})
+
+
+def lengths() -> dict:
+    """Each show's length, with its minutes and the recommended one."""
+    return {k: {"length": length_for("" if k == "any" else k),
+                "minutes": LENGTH_MINUTES[length_for("" if k == "any" else k)],
+                "recommended": RECOMMENDED_LENGTH}
+            for k in LENGTH_SHOWS}
 
 
 def root() -> Path:
@@ -365,7 +495,6 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         except Exception:
             pass
     cfg = settings()
-    length = length if length in LENGTH_WORDS else "standard"
     if mode not in ("conversation", "data"):
         mode = "data" if any(sources_mod.is_dataset(r) for r in refs) else "conversation"
     private = any(_ref_is_private(r) for r in refs)
@@ -378,6 +507,8 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
     # whatever mode the model asked for. Past episodes never steer it.
     routine = (attached or {}).get("routine") or next(
         (str(r.get("routine")) for r in refs if r.get("kind") == "news_run" and r.get("routine")), "")
+    # A length asked for is kept; otherwise the show's own setting decides.
+    length = length if length in LENGTHS else length_for(routine)
     ep = {
         "id": _new_id(),
         "title": (title or "").strip()[:160],
@@ -396,6 +527,9 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         "hosts": hosts,
         "format": format_for(routine),
         "home": home_city(),
+        # Each story is told from its full article where the page can be read
+        # (`deepen`), not only from the feed's summary.
+        "depth": True,
         "created_at": time.time(),
     }
     save(ep)
@@ -466,7 +600,7 @@ def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, 
     from agent_friday.services import reasoning_trace as _rt
     with local_only_guard.local_only("Podcast"), _rt.scope("podcast", "Podcast script"):
         out = local_call.call_json(system, user, seat, max_tokens=max_tokens,
-                                   retries=1, timeout=900)
+                                   retries=1, timeout=writer_timeout_s(max_tokens))
         if out is None:
             _rt.set_reason("the local model did not return a usable script")
         else:
@@ -573,7 +707,8 @@ NEWS_RULES = (
     "- Say only the times the calendar gives, exactly. Say \"before\" or "
     "\"after\" only when the calendar's order says so. Say a place the way a "
     "person would (the venue or the street), never a postal code or country.\n"
-    "- Cover as many stories as fit, and spend the words on the news. Never "
+    "- Tell the stories the plan chose, each in depth, and spend the words on "
+    "the news; never pad a story with words that add no fact. Never "
     "repeat a phrase or an image. The close is one sentence of synthesis: what "
     "the news adds up to, or the one thing to watch, and it names the stories it "
     "connects. It never re-reads earlier lines or recaps the stories.\n"
@@ -606,7 +741,23 @@ def _system_prompt(ep: dict) -> str:
     return "\n".join(parts)
 
 
-def _source_block(docs: list[dict], only: set | None = None) -> str:
+#: What the writer is asked of each story told from its full article.
+DEPTH_RULES = (
+    "Tell each story here in depth, from its sources only:\n"
+    "- what happened, with at least one concrete fact or number from the source;\n"
+    "- why it matters;\n"
+    "- what happened before, only as the article or another source listed here tells it;\n"
+    "- what to watch next, only what a source says is coming.\n"
+    "When a source does not say one of these, leave it out: say less rather than "
+    "invent. When two outlets report the same event, name both aloud and say what "
+    "each adds. A fact from a FULL ARTICLE cites that article's source id.\n")
+
+
+def _source_block(docs: list[dict], only: set | None = None, *,
+                  article_tokens: int = 0) -> str:
+    """The sources as the writer reads them. With `article_tokens`, a story
+    read in full (`deepen`) also carries the passages of its article, cut to
+    that many tokens; without, only its summary."""
     out = []
     for d in docs:
         if only and d["sid"] not in only:
@@ -618,33 +769,151 @@ def _source_block(docs: list[dict], only: set | None = None) -> str:
         if d.get("kind") in ("news", "story") and d.get("outlet") and not d.get("role"):
             # What the story's spoken lede needs that the text may not say plainly.
             body += "\nSay the outlet as \"%s\"." % (quality.spoken_outlet(d) or d["outlet"])
+        if article_tokens and d.get("read"):
+            from agent_friday.services import page_reader
+            passages = page_reader.select_text(d["read"], "%s %s" % (d["title"], d["text"]),
+                                               article_tokens)
+            body += ("\nFULL ARTICLE, passages read from the outlet's page (cite [%s] for "
+                     "what you take from it):\n%s" % (d["sid"], passages))
+        elif article_tokens and d.get("depth") == "summary":
+            body += "\nOnly this summary could be read: tell this story briefly, from it alone."
         out.append(head + "\n" + body)
     return "\n\n".join(out)
 
 
+def _readable(d: dict) -> bool:
+    """A public news story with a web link: its article may be read."""
+    return (d.get("kind") in ("news", "story")
+            and d.get("role") not in ("digest", "overview", "event")
+            and str(d.get("url") or "").startswith(("http://", "https://")))
+
+
+def deepen(ep: dict, docs: list[dict], chapters: list[dict]) -> list[dict]:
+    """Read the full article of each story the outline chose, so the writer
+    works from the reporting and not from a feed's two-line summary.
+
+    * Only the stories the plan picked are read, up to the length's story
+      count (`LENGTH_STORIES`), each with the other outlets' reports of the
+      same event, which are also added to that chapter's sources so it can be
+      told from both.
+    * Pages are read through `article_text` (services/page_reader: the
+      SSRF-guarded fetcher, publisher link first). Nothing about the episode
+      or the owner is sent: a page is fetched as a reader fetches it.
+    * The passages the writer will be given go in the story's `read`; the
+      script check takes support from them as well as from the summary
+      (podcast_quality.stories), so a fact the writer took from the article
+      stands and one that is in neither is cut.
+    * A page that cannot be read leaves the story on its summary, marked so:
+      the writer is told to say less, never to fill in.
+
+    Returns one record per story considered: {sid, outlet, title, url, read}.
+    """
+    from agent_friday.services import page_reader
+    story_list = quality.stories(docs)
+    by_story = {s["sid"]: s for s in story_list}
+    by_doc = {d["sid"]: d for d in docs}
+    order: list = []
+    for ch in chapters:
+        for sid in ch.get("sources") or []:
+            st = by_story.get(sid)
+            if st and st["cluster"] not in order:
+                order.append(st["cluster"])
+    # One event, every outlet that reported it, in the same chapter.
+    for ch in chapters:
+        srcs = [s for s in (ch.get("sources") or [])]
+        for sid in list(srcs):
+            st = by_story.get(sid)
+            for m in sorted(st["cluster"]) if st else ():
+                if m not in srcs:
+                    srcs.append(m)
+        ch["sources"] = srcs
+    record = []
+    for cluster in order[:LENGTH_STORIES.get(ep.get("length"), LENGTH_STORIES[RECOMMENDED_LENGTH])]:
+        for sid in sorted(cluster):
+            d = by_doc.get(sid)
+            if d is None:
+                continue
+            text = article_text(d.get("url") or "") if _readable(d) else ""
+            if len(text or "") >= MIN_ARTICLE_CHARS:
+                d["read"] = page_reader.select_text(text, "%s %s" % (d["title"], d.get("text") or ""),
+                                                    ARTICLE_TOKENS)
+                d["depth"] = "article"
+            else:
+                d["depth"] = "summary"
+            record.append({"sid": sid, "title": d["title"], "outlet": d.get("outlet") or "",
+                           "url": d.get("url") or "", "read": d["depth"]})
+    return record
+
+
+#: A story chapter whose draft has less than this share of its words gets one
+#: more pass (`_extend`).
+SHORT_DRAFT_SHARE = 0.6
+
+
+def _extend(ep: dict, system: str, docs: list[dict], use: set, got: list[dict],
+            more_words: int, chapter: int, solo: bool) -> tuple[list, list]:
+    """One more pass on a story chapter that came back short: the lines that
+    follow the ones written, from the same sources, under the same depth
+    rules. Returns (lines, rejected)."""
+    valid = {d["sid"] for d in docs}
+    written = "\n".join("%s: %s" % (ep["hosts"][ln["speaker"]]["name"], ln["text"]) for ln in got)
+    raw, _m = _llm_json(system, (
+        "SOURCES:\n\n%s\n\n%s"
+        "THIS PART SO FAR (it continues after these lines; never repeat them):\n%s\n\n"
+        "It is short by about %d words. Write the lines that come next, from these "
+        "sources only: what came before, why it matters, what to watch next, and the "
+        "concrete facts the article gives that are not said yet. If the sources have "
+        "nothing more, return no lines. Never mention these instructions. "
+        "Return {\"lines\": [{\"speaker\": \"a\"%s, \"text\": \"...\", \"cites\": [\"S1\"]}]}."
+        % (_source_block(docs, use, article_tokens=ARTICLE_TOKENS), DEPTH_RULES, written,
+           more_words, "" if solo else " or \"b\"")),
+        max_tokens=WRITER_BUDGET[ep.get("length") if ep.get("length") in LENGTHS
+                                 else RECOMMENDED_LENGTH]["chapter"])
+    return clean_lines(raw.get("lines") or [], valid, chapter=chapter,
+                       facts=ep.get("_facts"), solo=solo)
+
+
+def chapter_words(words: int, n_chapters: int) -> list[int]:
+    """Each chapter's share of the episode's words. The close is one sentence;
+    the rest is shared by the cold open and the stories."""
+    if quality.close_chapter(n_chapters) is None:
+        return [max(80, words // max(1, n_chapters))] * max(1, n_chapters)
+    body = max(80, (words - CLOSE_WORDS) // (n_chapters - 1))
+    return [body] * (n_chapters - 1) + [CLOSE_WORDS]
+
+
 def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
-    """Outline, one chapter at a time, then the script-quality gate with up to
-    MAX_REVISIONS revision passes. Returns {title, chapters, lines, rejected,
-    model, script_check}."""
-    words = LENGTH_WORDS[ep["length"]]
-    n_ch = LENGTH_CHAPTERS[ep["length"]]
+    """Outline, the full articles of the stories it chose (`deepen`), one
+    chapter at a time, then the script-quality gate with the length's revision
+    passes. Returns {title, chapters, lines, rejected, model, script_check,
+    depth}."""
+    length = ep["length"] if ep.get("length") in LENGTHS else RECOMMENDED_LENGTH
+    words = LENGTH_WORDS[length]
+    n_ch = LENGTH_CHAPTERS[length]
+    budget = WRITER_BUDGET[length]
     solo = ep.get("format") == "solo"
     system = _system_prompt(ep)
     valid = {d["sid"] for d in docs}
+    newscast = bool((ep.get("attached") or {}).get("routine")) and bool(quality.stories(docs))
+    pick = ("Choose the %d most important stories and tell fewer, each in depth: the "
+            "cold open tells the top story, each body chapter one more (with every "
+            "outlet's report of the same event). " % LENGTH_STORIES[length]) if newscast else ""
     outline, model = _llm_json(system, (
         "SOURCES:\n\n%s\n\n"
-        "Plan an episode of about %d words (%d minutes spoken). Return "
+        "Plan an episode of about %d words (%d minutes spoken). %sReturn "
         "{\"title\": \"...\", \"chapters\": [{\"title\": \"...\", \"sources\": [\"S1\"], "
         "\"points\": [\"...\"]}]} with %d chapters: a cold open that states the "
         "single most important thing, %d body chapters, and a short close."
-        % (_source_block(docs), words, max(1, words // 150), n_ch, max(1, n_ch - 2))),
-        max_tokens=2000)
+        % (_source_block(docs), words, LENGTH_MINUTES[length], pick, n_ch, max(1, n_ch - 2))),
+        max_tokens=budget["outline"])
     chapters = [c for c in (outline.get("chapters") or []) if isinstance(c, dict)][:n_ch + 2]
     if not chapters:
         chapters = [{"title": ep.get("title") or "The story", "sources": sorted(valid)}]
     title = (ep.get("title") or str(outline.get("title") or "").strip()[:160]
              or show_name(ep) or "A podcast")
-    per = max(80, words // len(chapters))
+    depth = deepen(ep, docs, chapters) if ep.get("depth") else []
+    deep = {r["sid"] for r in depth}
+    shares = chapter_words(words, len(chapters))
     who = ("Every line is speaker \"a\"; there is no second host. At most three "
            "sentences per line." if solo else
            "Alternate between the two hosts, at most three sentences per line.")
@@ -656,6 +925,9 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
                  "again: %s." % ", ".join(words)) if words else "")
     for i, ch in enumerate(chapters):
         use = {s for s in (ch.get("sources") or []) if s in valid} or valid
+        per = shares[i]
+        # A story read in full is told from its article, to the depth rules.
+        in_depth = bool(use & deep) and i != len(chapters) - 1
         tail = "\n".join("%s: %s" % (ep["hosts"][ln["speaker"]]["name"], ln["text"])
                          for ln in lines[-3:])
         opening = ("naming the show and %s" % (ep["hosts"]["a"]["name"] if solo else "both hosts"))
@@ -671,21 +943,32 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         raw, _m = _llm_json(system, (
             "SOURCES FOR THIS CHAPTER:\n\n%s\n\n"
             "Chapter %d of %d: \"%s\". Points: %s\n"
-            "ALREADY WRITTEN, for continuity only (never repeat these lines):\n%s\n\n%s\n"
+            "ALREADY WRITTEN, for continuity only (never repeat these lines):\n%s\n\n%s\n%s"
             "Write about %d words. %s Never mention chapters, sections or these "
             "instructions in the dialogue. "
             "Return {\"lines\": [{\"speaker\": \"a\"%s, "
             "\"text\": \"...\", \"cites\": [\"S1\"]}]}."
-            % (_source_block(docs, use), i + 1, len(chapters), ch.get("title", ""),
+            % (_source_block(docs, use, article_tokens=ARTICLE_TOKENS if in_depth else 0),
+               i + 1, len(chapters), ch.get("title", ""),
                "; ".join(str(p) for p in (ch.get("points") or [])[:6]) or "(your call)",
-               tail or "(nothing yet)", where + used_up(lines), per, who,
+               tail or "(nothing yet)", where + used_up(lines),
+               DEPTH_RULES if in_depth else "", per, who,
                "" if solo else " or \"b\"")),
-            max_tokens=3000)
+            max_tokens=budget["chapter"])
         got, bad = clean_lines(raw.get("lines") or [], valid, chapter=i,
                                facts=ep.get("_facts"), solo=solo)
         got, echoed = _drop_echoes(got, lines)
-        lines += got
         rejected += bad + echoed
+        said = sum(len(ln["text"].split()) for ln in got)
+        if in_depth and got and said < SHORT_DRAFT_SHARE * per:
+            # A small model writes a third of what it is asked for. A story
+            # read in full has more to tell: one more pass adds it, from the
+            # same sources and rules, never padding.
+            more, bad = _extend(ep, system, docs, use, got, per - said, i, solo)
+            more, echoed = _drop_echoes(more, lines + got)
+            got += more
+            rejected += bad + echoed
+        lines += got
         if progress:
             progress(i + 1, len(chapters))
     lines = merge_turns(lines)
@@ -711,9 +994,10 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
 
     best, best_problems = lines, problems
     revisions = 0
-    while problems and revisions < MAX_REVISIONS:
+    while problems and revisions < budget["revisions"]:
         revisions += 1
-        revised, bad = _revise(ep, system, docs, lines, problems, len(chapters), solo)
+        revised, bad = _revise(ep, system, docs, lines, problems, len(chapters), solo,
+                               max_tokens=budget["revise"])
         if revised:
             revised, edited = edit_script(revised, docs, len(chapters), ep.get("home") or "")
             revised, cut = _drop_dead_lines(revised, problems_of(revised), offset)
@@ -748,7 +1032,7 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
                           "sources": [s for s in (c.get("sources") or []) if s in valid]}
                          for i, c in enumerate(chapters)],
             "lines": lines, "rejected": rejected, "model": model,
-            "left_out": left_out, "script_check": check}
+            "left_out": left_out, "script_check": check, "depth": depth}
 
 
 #: Problems a line can be dropped for outright: nothing is lost by not saying it.
@@ -853,8 +1137,12 @@ def leave_out_failing_stories(docs: list[dict], lines: list[dict], problems: lis
 
 
 def _revise(ep: dict, system: str, docs: list[dict], lines: list[dict], problems: list[dict],
-            n_chapters: int, solo: bool) -> tuple[list, list]:
-    """One revision pass: the whole script, the problems by line, the sources."""
+            n_chapters: int, solo: bool, *, max_tokens: int = 4000) -> tuple[list, list]:
+    """One revision pass: the whole script, the problems by line, the sources
+    (the stories read in full keep a share of their article's passages, so a
+    fact the draft took from one can stay)."""
+    read = sum(1 for d in docs if d.get("read"))
+    share = REVISE_ARTICLE_TOKENS // read if read else 0
     signed = with_signature(lines, ep, n_chapters, docs)
     offset = next((i for i, ln in enumerate(signed) if not ln.get("signature")), 0)
     script = [{"line": i + offset, "chapter": ln.get("chapter", 0), "speaker": ln["speaker"],
@@ -868,9 +1156,9 @@ def _revise(ep: dict, system: str, docs: list[dict], lines: list[dict], problems
         "stays. The problems are notes to you, the writer: never say them aloud "
         "or talk about them in the script. Keep each line's chapter. %s Return {\"lines\": [{\"chapter\": 0, "
         "\"speaker\": \"a\", \"text\": \"...\", \"cites\": [\"S1\"]}]} for the whole script."
-        % (_source_block(docs), json.dumps(script, ensure_ascii=False), found,
+        % (_source_block(docs, article_tokens=share), json.dumps(script, ensure_ascii=False), found,
            "Every line is speaker \"a\"." if solo else "")),
-        max_tokens=4000)
+        max_tokens=max_tokens)
     valid = {d["sid"] for d in docs}
     out, bad = [], []
     for item in raw.get("lines") or []:
@@ -1406,7 +1694,32 @@ def _public_sources(docs: list[dict]) -> list[dict]:
                 rec["via"] = quality._site_name(d["outlet"].lower().removeprefix("www.")).capitalize()
         if d.get("kind") == "event":
             rec["when"] = quality.clock_text(d.get("start") or "")
+        if d.get("depth"):
+            # How the story was told: from its full article, or its summary alone.
+            rec["read"] = "full article" if d["depth"] == "article" else "summary only"
         out.append(rec)
+    return out
+
+
+def segment_sources(lines: list[dict], chapters: list[dict], sources: list[dict]) -> list[dict]:
+    """The episode's notes: for each segment (chapter), the sources its lines
+    cite, in the order first cited, each with its outlet, headline and link,
+    so every claim can be traced to the report it rests on. Her own notes and
+    analysis are not a source and are not listed."""
+    src = {s["id"]: s for s in sources or []}
+    out = []
+    for ci, ch in enumerate(chapters or []):
+        seen: list = []
+        for ln in lines or []:
+            if ln.get("chapter") != ci or ln.get("signature"):
+                continue
+            for c in ln.get("cites") or []:
+                s = src.get(c)
+                if s and c not in seen and s.get("role") not in ("overview", "digest"):
+                    seen.append(c)
+        out.append({"chapter": ci, "title": ch.get("title") or "",
+                    "sources": [{k: src[c][k] for k in ("id", "outlet", "title", "url", "read", "when")
+                                 if src[c].get(k)} for c in seen]})
     return out
 
 
@@ -1433,6 +1746,68 @@ def _cloud_speak():
     return speak
 
 
+#: How a podcast shows in the Local AI queue (services/seat_supervisor).
+QUEUE_KIND = "podcast"
+
+
+def queue_job(ep: dict) -> dict:
+    """The episode's job in the Local AI queue (background_gate.background_job).
+
+    Time-bound, never deferrable: an episode is made because the owner asked
+    for it or because its routine is due, so it never waits for the computer
+    to be idle. It still runs one at a time and yields to chat and voice
+    turns before each model call. The label names the show, never the
+    episode's title, which may be private."""
+    show = show_name(ep)
+    return {"kind": QUEUE_KIND, "key": "podcast:" + str(ep.get("id") or ""),
+            "label": ("%s episode" % show) if show else "a podcast episode",
+            "deferrable": False}
+
+
+def _write(eid: str, ep: dict, orb: str, stop) -> dict | None:
+    """The writing stage: sources, the script, the gate. Returns the updated
+    episode, or None when it was stopped while writing."""
+    ep = _update(eid, status="writing", stage_detail="the local model is writing")
+    docs = _gather(ep)
+    if not docs:
+        raise render.RenderError("no_sources", "There was nothing to talk about.")
+    if (ep.get("attached") or {}).get("routine") and not ep.get("open"):
+        ep = _update(eid, open=stamp_open(dict(ep))["open"])
+    script = write_script(ep, docs, progress=lambda i, n: (
+        _update(eid, progress={"stage": "writing", "done": i, "of": n}),
+        _orb(orb, "progress", ep, (i / n) * 0.4)))
+    if stop():
+        return None
+    hard = [p for p in script["script_check"]["problems"] if p["code"] in quality.HARD_CODES]
+    if hard:
+        # Kept for review as a draft: never as `lines`, which mean an
+        # episode that can be played.
+        _update(eid, script_check=script["script_check"], rejected=script["rejected"],
+                draft_lines=script["lines"], sources=_public_sources(docs))
+        raise render.RenderError("script_rejected", quality.failure_message(hard))
+    # Counted in words: a solo show merges her sentences into few lines.
+    if sum(len(ln["text"].split()) for ln in script["lines"] if not ln.get("signature")) < MIN_SCRIPT_WORDS:
+        raise render.RenderError(
+            "script_empty", "The local model's script did not survive the "
+            "source check (%d lines cut)." % len(script["rejected"]))
+    sources = _public_sources(resolve_heard(docs, script["lines"]))
+    ep = _update(eid, title=script["title"], chapters=script["chapters"],
+                 lines=script["lines"], rejected=script["rejected"],
+                 script_check=script["script_check"],
+                 left_out=script.get("left_out") or None,
+                 format=ep.get("format") or "duo",
+                 sources=sources,
+                 segments=segment_sources(script["lines"], script["chapters"], sources),
+                 # Which stories were told from their full article, which from a summary.
+                 articles=script.get("depth") or None,
+                 writer_model=script["model"],
+                 facts=[{k: f[k] for k in ("id", "text", "expr") if k in f}
+                        for f in ep.get("_facts") or [] if not f.get("names_only")] or None,
+                 charts=ep.get("charts"), data=ep.get("data"),
+                 source_errors=ep.get("source_errors"))
+    return _update(eid, **_about(ep))
+
+
 def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
     """Write, speak and check one episode. Resumes after the last stage done.
 
@@ -1445,43 +1820,18 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
     stop = should_stop or (lambda: (load(eid) or {}).get("status") == "cancelled")
     orb = "podcast-" + eid
     _orb(orb, "start", ep)
+    from agent_friday.services import background_gate as _bg
     try:
         if not ep.get("lines"):
-            ep = _update(eid, status="writing", stage_detail="the local model is writing")
-            docs = _gather(ep)
-            if not docs:
-                raise render.RenderError("no_sources", "There was nothing to talk about.")
-            if (ep.get("attached") or {}).get("routine") and not ep.get("open"):
-                ep = _update(eid, open=stamp_open(dict(ep))["open"])
-            script = write_script(ep, docs, progress=lambda i, n: (
-                _update(eid, progress={"stage": "writing", "done": i, "of": n}),
-                _orb(orb, "progress", ep, (i / n) * 0.4)))
-            if stop():
+            # Writing runs on the local model, through the Local AI queue as a
+            # time-bound job: one at a time, after the job ahead of it, and
+            # paused before each model call while a chat or voice turn is
+            # under way, but never held for idle (the owner asked for it, or
+            # its routine is due).
+            with _bg.background_job(**queue_job(ep)):
+                ep = _write(eid, ep, orb, stop)
+            if ep is None:
                 return load(eid)
-            hard = [p for p in script["script_check"]["problems"] if p["code"] in quality.HARD_CODES]
-            if hard:
-                # Kept for review as a draft: never as `lines`, which mean an
-                # episode that can be played.
-                _update(eid, script_check=script["script_check"], rejected=script["rejected"],
-                        draft_lines=script["lines"], sources=_public_sources(docs))
-                raise render.RenderError("script_rejected", quality.failure_message(hard))
-            # Counted in words: a solo show merges her sentences into few lines.
-            if sum(len(ln["text"].split()) for ln in script["lines"] if not ln.get("signature")) < MIN_SCRIPT_WORDS:
-                raise render.RenderError(
-                    "script_empty", "The local model's script did not survive the "
-                    "source check (%d lines cut)." % len(script["rejected"]))
-            ep = _update(eid, title=script["title"], chapters=script["chapters"],
-                         lines=script["lines"], rejected=script["rejected"],
-                         script_check=script["script_check"],
-                         left_out=script.get("left_out") or None,
-                         format=ep.get("format") or "duo",
-                         sources=_public_sources(resolve_heard(docs, script["lines"])),
-                         writer_model=script["model"],
-                         facts=[{k: f[k] for k in ("id", "text", "expr") if k in f}
-                                for f in ep.get("_facts") or [] if not f.get("names_only")] or None,
-                         charts=ep.get("charts"), data=ep.get("data"),
-                         source_errors=ep.get("source_errors"))
-            ep = _update(eid, **_about(ep))
         if stop():
             return load(eid)
         if script_only:
@@ -1506,7 +1856,8 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
                     _update(eid, progress={"stage": "speaking", "done": i, "of": n})
                     if i % 5 == 0 or i == n else None,
                     _orb(orb, "progress", ep, 0.4 + 0.5 * i / n)))
-        pcm, timings = _render() if speak is not None else _speak_with_room(eid, _render, len(ep["lines"]))
+        pcm, timings = _render() if speak is not None else _speak_with_room(
+            eid, _render, len(ep["lines"]), sum(len(ln["text"].split()) for ln in ep["lines"]))
         d = _dir(eid)
         wav = d / "audio.wav"
         render.write_wav(pcm, wav)
@@ -1552,6 +1903,10 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
         if e.code == "cancelled":
             return load(eid)
         return _retry_or_fail(eid, orb, ep, e)
+    except _bg.JobCancelled:
+        # Cancelled from the Local AI queue: the owner's stop, like the episode's own.
+        _orb(orb, "fail", ep, detail="stopped")
+        return _update(eid, status="cancelled", stage_detail="stopped from the Local AI queue")
     except MemoryError:
         # Loading or running the voice on a computer short of RAM: the moment,
         # not the episode. Retried like a busy model.
@@ -1578,7 +1933,7 @@ def _room_to_speak() -> bool:
     return head is None or head >= VOICE_HEADROOM_MB
 
 
-def _speak_with_room(eid: str, run, n_lines: int):
+def _speak_with_room(eid: str, run, n_lines: int, words: int = 0):
     """Speak the episode, making room first when the machine is short: the
     arbiter parks the brain for the speaking job (heavy_job) and puts it back
     afterwards, verified. When even that leaves no room, or the arbiter cannot
@@ -1604,7 +1959,8 @@ def _speak_with_room(eid: str, run, n_lines: int):
             return {"pcm": pcm, "timings": timings}
         finally:
             render.release_speaker()            # the room goes back before the brain does
-    hj = arbiter.heavy_job("podcast_voice", job, timeout_s=max(900, 30 * n_lines), expect_files=False)
+    hj = arbiter.heavy_job("podcast_voice", job, timeout_s=speak_budget_s(n_lines, words),
+                           expect_files=False)
     if hj.get("ok") and isinstance(hj.get("result"), dict):
         return hj["result"]["pcm"], hj["result"]["timings"]
     exc = hj.get("exception")
@@ -1659,10 +2015,26 @@ def transcript_bytes(ep: dict) -> bytes:
         out.append("Weather: %s (%s), city level." % (op["weather_source"], op.get("weather_url") or ""))
     out += ["", "TRANSCRIPT"]
     chapters = ep.get("chapters") or []
+    segs = {s["chapter"]: s for s in (ep.get("segments")
+                                      or segment_sources(ep.get("lines") or [], chapters,
+                                                         ep.get("sources") or []))}
+
+    def notes(c):
+        """The segment's sources, so each claim in it can be traced."""
+        got = (segs.get(c) or {}).get("sources") or []
+        if not got:
+            return []
+        return ["  Sources for this segment:"] + [
+            "    - %s%s%s%s" % ((s.get("outlet") + ": ") if s.get("outlet") else "", s.get("title") or s["id"],
+                               (" — " + s["url"]) if str(s.get("url") or "").startswith("http") else "",
+                               (" (%s)" % s["read"]) if s.get("read") else "")
+            for s in got]
     chap = None
     for ln in ep.get("lines") or []:
         c = ln.get("chapter")
         if c != chap and c is not None and c < len(chapters):
+            if chap is not None:
+                out += notes(chap)
             chap = c
             out += ["", "== %s ==" % chapters[c]["title"]]
         mine = "%s's analysis" % names.get("a", her_name())
@@ -1678,6 +2050,8 @@ def transcript_bytes(ep: dict) -> bytes:
                         or s.get("title") or cid)
         out.append("[%s] %s: %s%s" % (mmss(ln.get("start")), names.get(ln.get("speaker"), ""),
                                       ln["text"], ("   (" + "; ".join(tags) + ")") if tags else ""))
+    if chap is not None:
+        out += notes(chap)
     cited = {c for ln in ep.get("lines") or [] for c in ln.get("cites") or []}
     heard = [s for s in ep.get("sources") or []
              if s["id"] in cited and str(s.get("url") or "").startswith("http")]
@@ -1815,36 +2189,30 @@ def wake() -> None:
 
 
 def _gate_reason(ep: dict) -> str:
-    """Why this episode must wait, or "" when it may render now.
+    """Why this episode must wait, or "" when it may start now.
 
-    * An episode the owner just asked for waits only for stand-down and for
-      something else holding the GPU exclusively.
-    * A routine episode also waits for 60 s of owner inactivity and for other
-      scheduled runs to finish, at any hour.
-    * A long episode waits for the owner's own idle window.
+    Every episode is time-bound work: the owner asked for it, or its routine
+    is due. It waits only for stand-down and for something else holding the
+    GPU exclusively, never for the computer to be idle, at any length. Taking
+    turns on the local model is the Local AI queue's (`queue_job`): writing
+    waits there for the job ahead of it and for any chat or voice turn.
     """
-    from agent_friday.services import scheduler
     # The voice's room is not a gate: writing needs none, and speaking makes its
     # own (`_speak_with_room` parks the brain through the arbiter when short).
-    if ep.get("priority") == "now":
-        try:
-            from agent_friday.services import stand_down
-            if stand_down.is_stood_down():
-                return "Friday is stood down — you asked for the machine"
-        except Exception:
-            pass
-        try:
-            from agent_friday.services.residency_arbiter import exclusive_lease
-            lease = exclusive_lease()
-            if lease:
-                return "the GPU is held by %s" % (lease.get("role") or lease.get("holder") or "other work")
-        except Exception:
-            pass
-        return ""
-    if ep.get("length") == "long":
-        return scheduler.idle_work_blocked_reason()
-    return scheduler.idle_work_blocked_reason(
-        spec={"from_hour": 0, "to_hour": 24, "idle_after_s": 60})
+    try:
+        from agent_friday.services import stand_down
+        if stand_down.is_stood_down():
+            return "Friday is stood down — you asked for the machine"
+    except Exception:
+        pass
+    try:
+        from agent_friday.services.residency_arbiter import exclusive_lease
+        lease = exclusive_lease()
+        if lease:
+            return "the GPU is held by %s" % (lease.get("role") or lease.get("holder") or "other work")
+    except Exception:
+        pass
+    return ""
 
 
 def pending() -> list[dict]:

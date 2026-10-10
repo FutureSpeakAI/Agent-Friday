@@ -416,6 +416,41 @@ _NOTE_LEN_S = 0.75
 _STING_PEAK = 0.22
 
 
+# ── how fast an episode is spoken ───────────────────────────────────────────
+#
+# Episode lengths are set in spoken time, so the word targets come from the
+# rate this renderer achieves, not from a rule of thumb. The one episode whose
+# length is on record: a Front Page solo episode, Kokoro af_heart on the CPU,
+# 149 words in 6 lines, 70 s from the first note of the intro to the last of
+# the outro. The stings and the silences around them are fixed; what is left
+# is speech and the pauses between lines, so the rate below has the pauses in it.
+
+#: The measured episode (words spoken, seconds of audio).
+MEASURED_EPISODE = {"words": 149, "seconds": 70.0}
+
+
+def sting_seconds() -> float:
+    """The generated intro (or outro): its notes overlap, the last one rings out."""
+    return (len(MOTIF_HZ) - 1) * _NOTE_STEP_S + _NOTE_LEN_S
+
+
+def fixed_seconds() -> float:
+    """Audio every episode has whatever its script: both stings and their gaps."""
+    return 2 * (sting_seconds() + GAP_STING_S)
+
+
+def spoken_words_per_minute() -> float:
+    """Words per minute of the speech between the stings, pauses included:
+    149 words in 67 s, about 133."""
+    m = MEASURED_EPISODE
+    return m["words"] / ((m["seconds"] - fixed_seconds()) / 60.0)
+
+
+def spoken_seconds(words: int) -> float:
+    """How long `words` of script take to say, stings included."""
+    return fixed_seconds() + 60.0 * max(0, int(words)) / spoken_words_per_minute()
+
+
 def motif(kind: str) -> list[float]:
     return list(MOTIF_HZ) if kind == "intro" else list(reversed(MOTIF_HZ))
 

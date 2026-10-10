@@ -138,6 +138,7 @@ KIND_LABELS = {
     "prefix_warm": "getting the local model ready",
     "runner": "a background job",
     "task": "a background task",
+    "podcast": "a podcast episode",
 }
 
 
