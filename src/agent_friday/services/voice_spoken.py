@@ -47,14 +47,19 @@ _LATE_PREFIX = re.compile(r"(?s)^\s*\[LATE RESULT[^\]]*\]\s*")
 _MD_LINK = re.compile(r"\[([^\]\n]{1,300})\]\((?:[^)\s]+)\)")
 #: Bold and italics; a lone "_" is left alone (file names use it).
 _MD_EMPH = re.compile(r"(\*\*|__|\*)(?=\S)(.+?)(?<=\S)\1")
-#: List and heading markup at the start of a line (multi-line text only: a
-#: one-line prose clause that starts "- " is not a list).
-_MD_LINE = re.compile(r"(?m)^[ \t]*(?:#{1,6}[ \t]+|[-*+•][ \t]+|>[ \t]*)")
+#: List and heading markup at the start of a line. The clause chunker splits
+#: a list into one clause per item, so it is stripped at the start of every
+#: line, a one-line clause included; a dash inside a sentence stays.
+_MD_LINE = re.compile(r"(?m)^[ \t]*(?:#{1,6}[ \t]+|[-*+\u2022][ \t]+|>[ \t]*)")
+#: "1. " / "2) " opening a list item (followed by a capital letter).
+_MD_NUMBERED = re.compile(r"(?m)^[ \t]*\d{1,2}[.)][ \t]+(?=[A-Z])")
 _MD_LEFTOVER = re.compile(r"(?m)\*\*|__|`+|^[ \t]*[-*_]{3,}[ \t]*$")
+#: Trademark, registered and copyright signs (NFKC would spell "TM").
+_MARKS = re.compile("[\u2122\u00ae\u00a9]")
 #: Chat-template markers and the characters that hide or reorder text.
 _TEMPLATE = re.compile(r"<\||\|>")
 _HIDDEN = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f"
-                     "­؜᠎​-‏‪-‮⁠-⁯﻿￹-￻]")
+                     "\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]")
 
 
 def speakable(text: str) -> str:
@@ -63,8 +68,8 @@ def speakable(text: str) -> str:
     if not s:
         return s
     s = _MD_LINK.sub(r"\1", s)
-    if "\n" in s.strip():
-        s = _MD_LINE.sub("", s)
+    s = _MD_LINE.sub("", s)
+    s = _MD_NUMBERED.sub("", s)
     for _ in range(2):
         s = _MD_EMPH.sub(r"\2", s)
     s = _MD_LEFTOVER.sub("", s)
@@ -74,7 +79,8 @@ def speakable(text: str) -> str:
 def _clean(v) -> str:
     """Record text made safe to speak: one line, no markdown, no template
     markers, no control / bidi / zero-width characters."""
-    s = unicodedata.normalize("NFKC", str(v or ""))
+    s = _MARKS.sub("", str(v or ""))
+    s = unicodedata.normalize("NFKC", s)
     s = _HIDDEN.sub("", s)
     s = _TEMPLATE.sub(" ", s)
     s = re.sub(r"\s+", " ", s)
@@ -176,8 +182,26 @@ def _until(d: date, today: date) -> str:
 
 
 #: The owner asked about what already happened: finished events stay.
-_PAST_ASK = re.compile(r"(?i)\b(earlier|this morning|did i|was i|had i|have i had|already|"
-                       r"past|missed|yesterday|last (?:night|week))\b")
+PAST_ASK = re.compile(
+    r"(?i)\b(?:earlier(?: today)?|did i (?:have|miss)|what (?:was|were) on my calendar|"
+    r"what i had|what did i have|was i|had i|have i had|already|missed|yesterday|"
+    r"last (?:night|week)|in the past|"
+    r"past (?:events?|meetings?|appointments?|week|hour|few hours)\b)"
+    r"(?!\s*\d)")
+
+
+def event_finished(start, end, now: datetime) -> bool:
+    """Has the event with these start/end strings already ended at `now`
+    (local)? An all-day event ends after its last day; a timed one at its
+    end, or at its start when it has no end. Unparseable: not finished."""
+    s, all_day = _parse(start)
+    if s is None:
+        return False
+    e, _e_all_day = _parse(end)
+    if all_day:
+        last = (e.date() - timedelta(days=1)) if e is not None else s.date()
+        return max(last, s.date()) < now.date()
+    return (e if e is not None else s) <= now
 
 
 def _incomplete(data: dict) -> bool:
@@ -191,10 +215,10 @@ _PARTIAL = "Some of your accounts couldn't be read, so that may not be everythin
 
 def _calendar(data: dict, now: datetime, asked: str = "") -> str | None:
     events = [e for e in (data.get("events") or []) if isinstance(e, dict)]
-    if not events:
-        return None
+    if not events and not data.get("finished") and data.get("window_complete") is not False:
+        return None       # a truly empty calendar: voice_front's fixed sentence
     today = now.date()
-    keep_past = bool(_PAST_ASK.search(asked or ""))
+    keep_past = bool(PAST_ASK.search(asked or ""))
     days: dict = {}
     undated = []
     for e in events:
@@ -231,6 +255,10 @@ def _calendar(data: dict, now: datetime, asked: str = "") -> str | None:
     kept = sum(len(v) for v in days.values()) + len(undated)
     total = kept + max(0, _total(data, len(events)) - len(events))
     if not kept:
+        if data.get("window_complete") is False:
+            # The fetch stopped at its limit: what is left was never read.
+            return "Everything I could see on your calendar has already happened, " \
+                   "and I couldn't see the rest of today just now."
         return "Nothing more on your calendar today or tomorrow." + (
             " " + _PARTIAL if _incomplete(data) else "")
     spoken, left, told = [], SPOKEN_ITEMS, 0
@@ -254,10 +282,10 @@ def _calendar(data: dict, now: datetime, asked: str = "") -> str | None:
 # ── email ────────────────────────────────────────────────────────────────────
 
 def _assistant_names() -> set:
-    names = {"friday", "agent friday"}
+    names = {"friday", "agent friday", "agent friday tm"}
     try:
         from agent_friday.services.podcast_engine import her_name
-        n = str(her_name() or "").strip().lower()
+        n = _clean(her_name() or "").strip().lower()
         if n:
             names |= {n, "agent " + n}
     except Exception:
@@ -338,6 +366,10 @@ def _check_email(data: dict) -> str:
         return out
     unread = [m for m in msgs if m.get("unread")]
     if not unread:
+        if n_unread:
+            # Unread mail exists past the listed newest messages.
+            return "You have %s unread %s; the newest ones are read." % (
+                count, _plural(n_unread, "email", "emails"))
         if not msgs:
             return "Nothing new in your email."
         return "Nothing unread. Your latest email is %s." % _mail_item(msgs[0])
@@ -352,6 +384,8 @@ def _check_email(data: dict) -> str:
 def _email(data: dict, tool: str) -> str | None:
     msgs = [m for m in (data.get("messages") or []) if isinstance(m, dict)]
     if tool == "check_email":
+        if not msgs and _offline(data):
+            return "My offline copy has nothing new, and I couldn't reach your mail just now."
         if not msgs and not data.get("urgent_only"):
             return None
         out = _check_email(data)

@@ -558,11 +558,23 @@ def _renderable(call: dict) -> dict:
 _BREAK = re.compile(r"\n[ \t]*\n")
 
 
+#: A first paragraph that only clears its throat ("Sure!", "Okay.",
+#: "Here's what I found.") carries no fact: the answer is the next one.
+_LEAD_IN = re.compile(
+    r"(?i)^(?:sure|okay|ok|alright|all right|of course|certainly|got it|right|"
+    r"great|absolutely|let me (?:see|check)|here you go|here(?:'s| is) what (?:i|you) "
+    r"(?:found|have|wrote|said)|i found (?:this|that|something))\b[^.!?:]{0,40}[.!?:]?$")
+
+
 def _weak_paragraph(p: str) -> bool:
-    """Too little to stop at: under one sentence, a heading, or a lead-in
-    that ends in a colon."""
+    """Too little to stop at: under one sentence, a heading, a lead-in that
+    ends in a colon or an exclamation, or a stock lead-in ("Sure.", "Here's
+    what I found."). A short factual sentence
+    ("You wrote to plant garlic.") is an answer, not a lead-in."""
     t = p.strip()
-    return (not t or t.startswith("#") or t.endswith(":")
+    return (not t or t.startswith("#") or t.endswith(":") or t.endswith("!")
+            or t.lower().rstrip(".").endswith(" found")
+            or bool(_LEAD_IN.match(t))
             or not re.search(r"[.!?][\"')\]]*(\s|$)", t))
 
 
@@ -589,10 +601,13 @@ class _ParagraphGate:
         self.seen = ""
         self.sent = 0
         self.closed = False
+        self.resp = None          # the streaming response this round reads
+        self.round_chars = 0      # what this round streamed
 
     def feed(self, piece: str):
         if self.closed or not piece:
             return
+        self.round_chars += len(piece)
         self.seen += piece
         end = _spoken_end(self.seen)
         lead = len(self.seen) - len(self.seen.lstrip())
@@ -605,7 +620,18 @@ class _ParagraphGate:
             self.on_delta(self.seen[self.sent:upto])
             self.sent = upto
         if end is not None:
-            self.closed = True
+            self.close()
+
+    def close(self):
+        """The answer is complete: close the response so the seat stops
+        generating instead of running on to its ceiling holding the slot."""
+        self.closed = True
+        resp, self.resp = self.resp, None
+        if resp is not None:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def next_round(self):
         """A continuation follows: what it says is joined with a space."""
@@ -795,7 +821,17 @@ class FrontSeat:
                 body["tool_choice"] = "none"      # answer with what you have
             resp = self._post(body, stream=True)
             resp.raise_for_status()
-            out = _consume_sse_completion(resp, on_delta=gate.feed if gate is not None else on_delta)
+            if gate is not None:
+                gate.resp, gate.round_chars = resp, 0
+            try:
+                out = _consume_sse_completion(resp, on_delta=gate.feed if gate is not None else on_delta)
+            except Exception:
+                # The gate closed the response under the read: the answer is
+                # complete, not a transport failure.
+                if gate is None or not gate.closed:
+                    raise
+                out = {"choices": [{"message": {"role": "assistant", "content": gate.seen},
+                                    "finish_reason": "stop"}]}
             if timings is not None and rnd == 0:
                 timings.update(out.get("timings") or {})
             ch = (out.get("choices") or [{}])[0]
@@ -808,8 +844,8 @@ class FrontSeat:
                         return refusal
             text = msg.get("content") or ""
             if gate is not None:
-                if not gate.seen and text:
-                    gate.feed(text)       # a non-streaming reply
+                if not gate.round_chars and text:
+                    gate.feed(text)       # this round did not stream: feed it whole
                 text = gate.text()
                 spoken[:] = [text] if text else []
             elif text.strip():

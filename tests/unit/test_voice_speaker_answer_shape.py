@@ -29,6 +29,7 @@ import re
 import pytest
 
 from agent_friday.routes import voice as rv
+from agent_friday.services import laya_router as lr
 from agent_friday.services import office_engine as oe
 from agent_friday.services import voice_front as vf
 
@@ -800,9 +801,163 @@ def test_n_more_uses_the_tools_own_total():
 
 
 def test_a_prose_clause_keeps_its_dash_and_markup_alone_is_not_spoken():
-    assert vs.speakable("- that one, the second.") == "- that one, the second."
+    # A dash inside a sentence stays; a bullet opening a clause (the chunker
+    # splits a list into one clause per item) goes.
+    assert vs.speakable("It's the second - that one.") == "It's the second - that one."
+    assert vs.speakable("- that one, the second.") == "that one, the second."
     from agent_friday.services import voice_session
     engine = SimpleNamespace(device="cpu", synthesize_stream=lambda text, cancel: [text])
     me = SimpleNamespace(gpu_queue=None)
     assert voice_session.VoiceSession._synth(me, engine, "**", None) == []
     assert voice_session.VoiceSession._synth(me, engine, "**Rain** today.", None) == ["Rain today."]
+
+
+# ── verification round ───────────────────────────────────────────────────────
+
+class _FixedNow(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 10, 10, 16, 30)
+
+
+def _calendar_tool(monkeypatch, events, **inp):
+    from agent_friday.services import voice_engine as ve
+    monkeypatch.setattr(ve, "datetime", _FixedNow)
+    monkeypatch.setattr(ve, "_voice_calendar", lambda: list(events))
+    return ve._tool_query_calendar(inp)
+
+
+def _busy_day():
+    # calendar_engine's event shape: start_time / end_time, in start order.
+    done = [{"title": "Meeting %d" % i, "start_time": "2026-10-10T%02d:00:00" % (3 + i),
+             "end_time": "2026-10-10T%02d:45:00" % (3 + i)} for i in range(13)]
+    later = [{"title": "Review", "start_time": "2026-10-10T17:00:00", "end_time": "2026-10-10T17:30:00"},
+             {"title": "Dinner", "start_time": "2026-10-10T19:00:00", "end_time": "2026-10-10T21:00:00"}]
+    return done + later
+
+
+def test_a_busy_morning_never_hides_the_afternoon(monkeypatch):
+    shape = _calendar_tool(monkeypatch, _busy_day())
+    data = json.loads(shape)
+    assert data["count"] == 2 and data["finished"] == 13 and data["window_complete"] is True
+    assert vs.structured_reply(shape, "query_calendar", now=SAT) == (
+        "Today you have Review at 5 PM and Dinner at 7 PM.")
+
+
+def test_nothing_more_is_said_only_when_the_fetch_covered_the_window(monkeypatch):
+    full = [{"title": "M%d" % i, "start_time": "2026-10-10T08:%02d:00" % i,
+             "end_time": "2026-10-10T08:%02d:30" % i} for i in range(50)]
+    shape = _calendar_tool(monkeypatch, full)
+    assert json.loads(shape)["window_complete"] is False
+    said = vs.structured_reply(shape, "query_calendar", now=SAT)
+    assert "Nothing more" not in said and "couldn't see the rest" in said, said
+    done = _calendar_tool(monkeypatch, _busy_day()[:13])
+    assert vs.structured_reply(done, "query_calendar", now=SAT) == (
+        "Nothing more on your calendar today or tomorrow.")
+
+
+def test_a_past_question_reads_the_finished_events(monkeypatch):
+    shape = _calendar_tool(monkeypatch, _busy_day(), include_past=True)
+    data = json.loads(shape)
+    assert data["count"] == 15 and len(data["events"]) == 12 and data["finished"] == 0
+    r = lr.route("What was on my calendar this morning?", log=False)
+    assert r.tool == "query_calendar" and r.args == {"include_past": True}
+    assert lr.route("What's on my calendar today?", log=False).args == {}
+
+
+@pytest.mark.parametrize("text,past", [
+    ("What was on my calendar this morning?", True),
+    ("what I had earlier", True),
+    ("Did I miss anything today?", True),
+    ("What's on after half past 4?", False),
+    ("Anything past 4?", False),
+    ("What's on my calendar?", False),
+])
+def test_past_questions_are_recognised(text, past):
+    assert bool(vs.PAST_ASK.search(text)) is past
+
+
+def test_unread_mail_beyond_the_newest_is_never_nothing_unread(monkeypatch):
+    cards = _cards(12, unread=False) + _cards(3, unread=True, start=12)
+    said = vs.structured_reply(_check_email(monkeypatch, cards), "check_email")
+    assert said == "You have 3 unread emails; the newest ones are read.", said
+
+
+def test_an_empty_offline_copy_is_not_nothing_new(monkeypatch):
+    shape = _check_email(monkeypatch, [], source="cache")
+    out, sent, _ = _routed("check_email", "checking your email", shape)
+    assert sent == [] and out.endswith(
+        "My offline copy has nothing new, and I couldn't reach your mail just now."), out
+
+
+class _Closable(_Stream):
+    closed = False
+
+    def close(self):
+        _Closable.closed = True
+
+
+def test_the_response_is_closed_when_the_answer_is_complete():
+    _Closable.closed = False
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    seat._post = lambda body, stream: _Closable(
+        ["You wrote to plant garlic.", "\n\n", "I will now", " review", " each one."], "length")
+    out = seat.routed_turn("SYS", [{"role": "user", "content": "x"}], tool="search_wiki",
+                           args={}, ack="Okay.", label="", run_tool=lambda n, a: "text",
+                           max_tokens=800)
+    assert out == "Okay. You wrote to plant garlic."
+    assert _Closable.closed, "the seat is told to stop generating"
+
+
+@pytest.mark.parametrize("lead", ["Sure!", "Okay.", "Here's what I found.", "Here's what you wrote:",
+                                  "Of course."])
+def test_a_lead_in_is_not_the_answer(lead):
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    seat._post = lambda body, stream: _Stream(
+        [lead + "\n\nYou wrote to plant garlic.\n\nI will now review."])
+    out = seat.routed_turn("SYS", [{"role": "user", "content": "x"}], tool="search_wiki",
+                           args={}, ack="Okay.", label="", run_tool=lambda n, a: "text",
+                           max_tokens=800)
+    assert "You wrote to plant garlic." in out and "I will" not in out, out
+
+
+@pytest.mark.parametrize("clause,said", [
+    ("- Standup at 9", "Standup at 9"),
+    ("* Gym at 7", "Gym at 7"),
+    ("• Dinner with Sam", "Dinner with Sam"),
+    ("1. Rain today.", "Rain today."),
+    ("2) Council votes.", "Council votes."),
+    ("It's the second - that one.", "It's the second - that one."),
+    ("3.5 percent growth.", "3.5 percent growth."),
+])
+def test_a_bullet_opening_a_clause_is_not_spoken(clause, said):
+    assert vs.speakable(clause) == said
+
+
+def test_a_trademarked_assistant_name_is_still_the_assistant(monkeypatch):
+    cards = [{"sender": "Agent Friday™ <x@y.example>", "subject": "Hi", "snippet": "",
+              "unread": True}]
+    got = vs.structured_reply(_check_email(monkeypatch, cards), "check_email")
+    assert "from someone at y.example about Hi" in got, got
+
+
+def test_a_continuation_that_did_not_stream_is_still_spoken(monkeypatch):
+    from agent_friday.services import model_router as mr
+    rounds = [("You wrote that the council", "length", True), ("approved it.", "stop", False)]
+
+    def consume(resp, on_delta=None, **kw):
+        text, reason, streamed = rounds.pop(0)
+        if streamed and on_delta:
+            on_delta(text)
+        return {"choices": [{"message": {"role": "assistant", "content": text},
+                             "finish_reason": reason}], "timings": {"predicted_n": 120}}
+    monkeypatch.setattr(mr, "_consume_sse_completion", consume)
+    seat = vf.FrontSeat(8199)
+    seat.model = "ternary-bonsai:1.7b"
+    seat._post = lambda body, stream: SimpleNamespace(raise_for_status=lambda: None)
+    out = seat.routed_turn("SYS", [{"role": "user", "content": "x"}], tool="search_wiki",
+                           args={}, ack="Okay.", label="", run_tool=lambda n, a: "text",
+                           max_tokens=800, brief_tokens=rv._routed_brief_cap({}, "x"))
+    assert out == "Okay. You wrote that the council approved it."
