@@ -1,10 +1,13 @@
 """Changes to the owner's own mailbox in Gmail itself: archive, read/unread,
 star, important, labels, spam and Trash, one conversation at a time.
 
-Every change records exactly what it did per conversation, so undo reverses
-that change and nothing else: archiving a conversation that was already out of
-the inbox records nothing to put back, and a conversation moved to Trash is
-taken back out with Gmail's own untrash.
+Every change records exactly what it did per message, so undo reverses that
+change and nothing else: archiving a conversation that was already out of the
+inbox records nothing to put back, your own sent replies never gain a label
+they did not lose, a message that arrives afterwards is not touched, and a
+conversation moved to Trash is taken back out with Gmail's own untrash. If the
+per-message record could not be taken, the change still runs and undo says it
+cannot be exact.
 
 It needs gmail.modify on the account ("Reconnect with sending"); without it
 nothing is attempted and the caller is told so.
@@ -69,18 +72,62 @@ def _svc(account_id: str):
     return _service(creds)
 
 
-def _thread_labels(svc, thread_id: str) -> set:
+#: Gmail's batchModify takes at most this many message ids.
+_BATCH = 1000
+
+#: What undo says for a conversation whose exact per-message state was never recorded.
+UNDO_INEXACT = "Friday could not record this conversation's exact state, so it can't undo exactly"
+
+
+def _why(e: Exception) -> str:
+    if isinstance(e, gmail_api.GmailError):
+        return exception_text(e)
+    return gmail_api.describe(e).get("message") or exception_text(e)
+
+
+def _thread_messages(svc, thread_id: str) -> dict:
+    """{message id: set of its labels} for every message in the conversation right now."""
     t = gmail_api.execute(svc.users().threads().get(userId="me", id=thread_id, format="minimal"))
-    out = set()
+    out = {}
     for m in t.get("messages") or []:
-        out.update(m.get("labelIds") or [])
+        if not m.get("id"):
+            raise ValueError("a message came back without an id")
+        out[m["id"]] = set(m.get("labelIds") or [])
     return out
 
 
+def _apply_groups(svc, groups: dict) -> dict:
+    """Run {(add, remove): [message ids]} as Gmail batchModify calls. Returns {message id: why}
+    for the messages that could not be changed: a refused group is retried one message at a
+    time, so one vanished message never blocks the others."""
+    errors = {}
+    for (add, remove), mids in groups.items():
+        body = {"addLabelIds": list(add), "removeLabelIds": list(remove)}
+        for i in range(0, len(mids), _BATCH):
+            chunk = mids[i:i + _BATCH]
+            try:
+                gmail_api.execute(svc.users().messages().batchModify(
+                    userId="me", body=dict(body, ids=chunk)))
+                continue
+            except Exception as e:
+                if len(chunk) == 1:
+                    errors[chunk[0]] = _why(e)
+                    continue
+            for mid in chunk:
+                try:
+                    gmail_api.execute(svc.users().messages().modify(userId="me", id=mid, body=dict(body)))
+                except Exception as e:
+                    errors[mid] = _why(e)
+    return errors
+
+
 def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=()) -> dict:
-    """Apply label changes to whole conversations. Returns
-    {"changed": {thread_id: {"added": [...], "removed": [...]}}, "failed": {thread_id: error}}.
-    `changed` holds only what was actually different before, which is what undo reverses."""
+    """Apply label changes to conversations, message by message. Returns
+    {"changed": {thread_id: {"added": [...], "removed": [...], "messages": {message_id:
+    {"added": [...], "removed": [...]}}}}, "failed": {thread_id: error}}.
+    `messages` holds only the labels each message really gained or lost, which is what undo
+    reverses; a message that arrives later is not in it. If a conversation's state could not
+    be read first, the change still runs and the entry says `inexact`, so undo says so too."""
     add, remove = [l for l in add if l], [l for l in remove if l]
     touched = set(add) | set(remove)
     if _FORBIDDEN & touched:
@@ -89,21 +136,36 @@ def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=()) ->
         raise UserFacingValueError("spam is reported with the spam action, not as a label")
     svc = _svc(account_id)
     changed, failed = {}, {}
+    plan, groups = {}, {}                  # tid -> {mid: (add, remove)}; (add, remove) -> [mid]
     for tid in dict.fromkeys(t for t in thread_ids if t):
         try:
-            before = _thread_labels(svc, tid)
-            # UNREAD is per message: removing it from a conversation clears it
-            # everywhere; adding it marks the conversation unread.
-            to_add = [l for l in add if l not in before or l == "UNREAD"]
-            to_remove = [l for l in remove if l in before]
-            if to_add or to_remove:
+            before = _thread_messages(svc, tid)
+        except Exception as first:
+            try:                           # no record to undo from: run it, and say so
                 gmail_api.execute(svc.users().threads().modify(
-                    userId="me", id=tid, body={"addLabelIds": to_add, "removeLabelIds": to_remove}))
-            changed[tid] = {"added": [l for l in to_add if l not in before], "removed": to_remove}
-        except gmail_api.GmailError as e:
-            failed[tid] = exception_text(e)
-        except Exception as e:                   # one bad conversation never stops the rest
-            failed[tid] = gmail_api.describe(e).get("message") or exception_text(e)
+                    userId="me", id=tid, body={"addLabelIds": add, "removeLabelIds": remove}))
+                changed[tid] = {"added": [], "removed": [], "messages": {}, "inexact": _why(first)}
+            except Exception as e:         # one bad conversation never stops the rest
+                failed[tid] = _why(e)
+            continue
+        plan[tid] = {}
+        for mid, labels in before.items():
+            m_add = tuple(l for l in add if l not in labels)
+            m_rem = tuple(l for l in remove if l in labels)
+            if m_add or m_rem:
+                plan[tid][mid] = (m_add, m_rem)
+                groups.setdefault((m_add, m_rem), []).append(mid)
+    errors = _apply_groups(svc, groups) if groups else {}
+    for tid, per_msg in plan.items():
+        done = {mid: {"added": list(a), "removed": list(r)}
+                for mid, (a, r) in per_msg.items() if mid not in errors}
+        bad = [errors[mid] for mid in per_msg if mid in errors]
+        if bad:
+            failed[tid] = bad[0]
+        if done or not bad:
+            changed[tid] = {"added": sorted({l for d in done.values() for l in d["added"]}),
+                            "removed": sorted({l for d in done.values() for l in d["removed"]}),
+                            "messages": done}
     return {"changed": changed, "failed": failed}
 
 
@@ -137,9 +199,11 @@ def apply_action(account_id: str, thread_ids, action: str) -> dict:
 
 
 def undo(account_id: str, changed: dict) -> dict:
-    """Reverse exactly what modify_threads or trash_threads reported."""
+    """Reverse exactly what modify_threads or trash_threads reported: each message gets back
+    only the labels it gained or lost, and a conversation that was not recorded per message is
+    reported as failed rather than guessed at."""
     svc = _svc(account_id)
-    failed = {}
+    failed, groups, owner = {}, {}, {}
     for tid, ch in (changed or {}).items():
         if ch.get("trashed") or ch.get("untrashed"):
             try:
@@ -148,17 +212,24 @@ def undo(account_id: str, changed: dict) -> dict:
             except Exception as e:
                 failed[tid] = exception_text(e)
             continue
-        add, remove = list(ch.get("removed") or []), list(ch.get("added") or [])
-        if _FORBIDDEN & (set(add) | set(remove)):
-            failed[tid] = "refused"
+        if ch.get("inexact") or ("messages" not in ch and (ch.get("added") or ch.get("removed"))):
+            failed[tid] = UNDO_INEXACT
             continue
-        if not (add or remove):
+        per_msg = {}
+        for mid, d in (ch.get("messages") or {}).items():
+            back_add, back_rem = list((d or {}).get("removed") or []), list((d or {}).get("added") or [])
+            if _FORBIDDEN & (set(back_add) | set(back_rem)):
+                failed[tid] = "refused"
+                break
+            if back_add or back_rem:
+                per_msg[mid] = (tuple(back_add), tuple(back_rem))
+        if tid in failed:
             continue
-        try:
-            gmail_api.execute(svc.users().threads().modify(
-                userId="me", id=tid, body={"addLabelIds": add, "removeLabelIds": remove}))
-        except Exception as e:
-            failed[tid] = exception_text(e)
+        for mid, key in per_msg.items():
+            groups.setdefault(key, []).append(mid)
+            owner[mid] = tid
+    for mid, why in (_apply_groups(svc, groups) if groups else {}).items():
+        failed.setdefault(owner[mid], why)
     return {"failed": failed}
 
 

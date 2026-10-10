@@ -11,6 +11,24 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Undoing a mailbox change is now exact for every message in a conversation.**
+  Undo used to work on the whole conversation, so undoing an archive or a move
+  gave the Inbox label to your own sent replies, undoing "mark as read" marked
+  messages unread that you had already read, and "mark as unread" could not be
+  undone even though it said it had been. Friday now records which labels each
+  message really gained or lost, and undo puts back only those, on only those
+  messages. A message that arrives after the change is left alone. If Friday
+  could not take that record, the change still runs and Undo tells you it can't
+  undo that conversation exactly, instead of saying it did. A batch also needs
+  fewer Gmail calls: one call per kind of change instead of one per
+  conversation.
+
+---
+
 ## [1.0.2-beta.1] - Agent Friday Beta 1.0.2 (2026-10-10)
 
 Agent Friday™ Beta 1.0.2 (version `1.0.2b1`, tag `v1.0.2-beta.1`, build
