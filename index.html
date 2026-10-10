@@ -879,6 +879,17 @@ window.addEventListener('DOMContentLoaded',function(){
         .ws-tab-link { font-size: 12px; color: #9fd0ff; text-decoration: none; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.3); border-radius: 7px; background: transparent; cursor: pointer; }
         .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
         .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
+        /* The Local AI queue chip (LocalAiQueueChip): waiting is neutral, working is violet; no motion. */
+        .local-ai-chip { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 7px; cursor: pointer; font-family: var(--fr-font-mono); font-size: var(--fr-text-xs); letter-spacing: 0.04em; color: var(--fr-label); background: transparent; border: 1px solid var(--fr-neutral); white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+        .local-ai-chip.working { color: var(--fr-violet-soft); border-color: var(--fr-violet); }
+        .local-ai-chip:hover { border-color: var(--fr-violet-soft); }
+        .local-ai-list-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: var(--fr-text); }
+        .local-ai-list-note { font-size: var(--fr-text-sm); color: var(--fr-dim); margin-bottom: 10px; line-height: 1.5; }
+        .local-ai-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.08); }
+        .local-ai-row-text { flex: 1 1 auto; min-width: 0; }
+        .local-ai-row-label { color: var(--fr-text); font-size: 12px; overflow-wrap: anywhere; }
+        .local-ai-row-meta { color: var(--fr-dim); font-size: var(--fr-text-xs); font-family: var(--fr-font-mono); }
+        .local-ai-row[data-state="running"] .local-ai-row-meta { color: var(--fr-violet-soft); }
         .ws-tab-ask.none { border-color: rgba(255,255,255,0.12); background: transparent; color: #7f93ad; }
         .ws-tab-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column;
             padding: 14px 18px 24px; box-sizing: border-box; }
@@ -61673,7 +61684,12 @@ function SettingsTabAdvanced({
   save
 }) {
   // SettingsTabWork brings its own "Proposed work" and "Queue" sections.
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsTabWork, null), /*#__PURE__*/React.createElement(IntelligenceDiagnostics, null), /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsTabWork, null), /*#__PURE__*/React.createElement(StSection, {
+    title: "Local AI queue"
+  }, /*#__PURE__*/React.createElement(LocalAiIdleRow, {
+    s: s,
+    save: save
+  })), /*#__PURE__*/React.createElement(IntelligenceDiagnostics, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Knowledge graph indexing"
   }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
     s: s,
@@ -61901,6 +61917,134 @@ function ApprovalProvenance({ p }) {
 // Pending approval cards, for a tab with no desktop around it: a header
 // chip that counts them, a toast when a new one arrives, and the cards
 // themselves with Approve / Deny (the same /decide call as System > Approvals).
+// ── The Local AI queue chip (top bar) ──
+// Background work for the local model (wiki notes from a voice chat, scheduled
+// jobs, spawned tasks) waits in ONE queue (services/seat_supervisor +
+// services/background_gate) and runs one job at a time, never during a chat
+// or voice turn. This chip says so: "Local AI: N queued", plus "running:
+// <label>" while one runs; hidden when the queue is empty. Click opens the
+// list: label, kind, why it waits, Run now (skips only the idle wait) and
+// Cancel. Labels are plain words, never a job's content. Waiting is neutral
+// and working is violet (BRAND.md: amber is for "needs you"); nothing moves.
+const LOCAL_AI_KIND_WORDS = {
+  wiki_distill: 'wiki notes',
+  scheduled: 'scheduled',
+  prefix_warm: 'warm-up',
+  runner: 'background job',
+  task: 'task'
+};
+function localAiChipText(q) {
+  const n = q && q.count || 0;
+  const run = q && q.running && q.running[0];
+  const parts = [];
+  if (n) parts.push(n + ' queued');
+  if (run) parts.push((run.state === 'paused' ? 'paused: ' : 'running: ') + run.label);
+  return 'Local AI: ' + parts.join(' · ');
+}
+function LocalAiQueueChip() {
+  const [q, setQ] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState('');
+  const load = () => apiFetch('/api/local-queue', {
+    cache: 'no-store'
+  }).then(r => r.ok ? r.json() : null).then(d => {
+    if (d) setQ(d);
+  }).catch(() => {});
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = e => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+  const act = (id, what) => {
+    setBusy(id + ':' + what);
+    apiFetch('/api/local-queue/' + encodeURIComponent(id) + '/' + what, {
+      method: 'POST'
+    }).then(r => r.json()).then(d => {
+      if (d && d.queue) setQ(d.queue);
+    }).catch(() => {}).then(() => setBusy(''));
+  };
+  const jobs = q && q.jobs || [];
+  if (!jobs.length) return null;
+  const working = !!(q.running && q.running.length);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: 'local-ai-chip' + (working ? ' working' : ''),
+    "data-testid": "local-ai-queue-chip",
+    "aria-haspopup": "dialog",
+    "aria-expanded": open ? 'true' : 'false',
+    onClick: () => setOpen(v => !v),
+    title: 'Background work waiting for your local AI model. It runs one job at a time and never during your chats.'
+  }, localAiChipText(q)), open && /*#__PURE__*/React.createElement("div", {
+    className: "ws-tab-drawer local-ai-list",
+    role: "dialog",
+    "aria-label": "Local AI queue",
+    "data-testid": "local-ai-queue-list"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "local-ai-list-head"
+  }, /*#__PURE__*/React.createElement("b", null, "Local AI queue"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-label": 'Close',
+    title: 'Close',
+    className: "ws-tab-link",
+    onClick: () => setOpen(false)
+  }, "✕")), /*#__PURE__*/React.createElement("div", {
+    className: "local-ai-list-note"
+  }, "One job at a time on your local model. Your chats and voice always go first."), jobs.map(j => /*#__PURE__*/React.createElement("div", {
+    key: j.id,
+    className: "local-ai-row",
+    "data-state": j.state
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "local-ai-row-text"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "local-ai-row-label"
+  }, j.label), /*#__PURE__*/React.createElement("div", {
+    className: "local-ai-row-meta"
+  }, (LOCAL_AI_KIND_WORDS[j.kind] || j.kind) + ' · ' + (j.state === 'running' ? 'running now' : j.why || 'waiting'))), j.state === 'queued' && j.deferrable && !j.run_now && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ws-tab-link",
+    disabled: !!busy,
+    onClick: () => act(j.id, 'run-now'),
+    title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.'
+  }, "Run now"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ws-tab-link",
+    disabled: !!busy,
+    onClick: () => act(j.id, 'cancel'),
+    title: j.state === 'queued' ? 'Remove from the queue' : 'Stop before its next step'
+  }, "Cancel")))));
+}
+// Settings > Advanced: how long the computer must be idle before deferrable
+// background work (wiki notes, daily creation, the session summary) starts.
+const LOCAL_AI_IDLE_CHOICES = [5, 10, 15, 30, 60];
+function LocalAiIdleRow({
+  s,
+  save
+}) {
+  const v = Number(s && s.background_idle_minutes) || 10;
+  return /*#__PURE__*/React.createElement(StRow, {
+    label: "Background AI work waits until you've been away for",
+    desc: "Wiki notes from your chats, the daily creation and other work that can wait starts only after this long with no keyboard or mouse, and pauses when you come back. Chats and voice always go first.",
+    settingKey: "background_idle_minutes"
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    "aria-label": "Background AI work waits until you've been away for",
+    value: String(v),
+    onChange: e => save({
+      background_idle_minutes: Number(e.target.value)
+    })
+  }, LOCAL_AI_IDLE_CHOICES.map(n => /*#__PURE__*/React.createElement("option", {
+    key: n,
+    value: String(n)
+  }, n + ' minutes' + (n === 10 ? ' (default)' : '')))));
+}
 function StandaloneApprovals() {
   const items = useApprovalFeed();
   const [open, setOpen] = useState(false);
@@ -68187,7 +68331,7 @@ function App() {
       alignItems: 'center',
       gap: 10
     }
-  }, /*#__PURE__*/React.createElement(StandaloneApprovals, null), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement(StandaloneApprovals, null), /*#__PURE__*/React.createElement(LocalAiQueueChip, null), /*#__PURE__*/React.createElement("span", {
     className: "top-bar-clock",
     style: {
       fontFamily: 'JetBrains Mono',

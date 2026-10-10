@@ -411,6 +411,18 @@ NEWS_ROUTINES = {
     "sch_weekly_editorial",
 }
 
+#: Builtins whose result is for a time of day (the editions): in the Local AI
+#: queue they still run one at a time and yield to interactive turns, but they
+#: do not wait for the computer to be idle. Every other builtin that reaches a
+#: local model is deferrable work and waits for idle (services/background_gate).
+TIME_BOUND_BUILTINS = frozenset({
+    "news_morning",
+    "front_page_evening",
+    "afternoon_briefing",
+    "weekly_digest",
+    "weekly_editorial",
+})
+
 
 def _default_enabled(meta) -> bool:
     """A builtin's seed state. `default_enabled` may be a callable, for a job
@@ -484,15 +496,24 @@ _IDLE_DEFAULT_WINDOW = (9, 23)       # 09:00-23:00, so it never runs overnight
 
 
 def _idle_settings():
-    """The user's on/off switch and window, from settings."""
+    """The user's on/off switch and window, from settings. The idle wait is
+    the one Settings row for all background work, `background_idle_minutes`;
+    the older `idle_work.idle_after_s` no longer sets it (a schedule's own
+    `spec.idle_after_s` still does)."""
     try:
         from agent_friday.core import _load_settings
-        blk = (_load_settings() or {}).get("idle_work") or {}
+        _all = _load_settings() or {}
+        blk = _all.get("idle_work") or {}
     except Exception:
-        blk = {}
+        _all, blk = {}, {}
+    try:
+        from agent_friday.services import background_gate as _bg
+        _default_after = _bg.idle_minutes_setting(_all) * 60.0
+    except Exception:
+        _default_after = _IDLE_DEFAULT_AFTER_S
     return {
         "enabled": bool(blk.get("enabled", True)),
-        "after_s": float(blk.get("idle_after_s") or _IDLE_DEFAULT_AFTER_S),
+        "after_s": float(_default_after),
         "from_hour": int(blk.get("from_hour", _IDLE_DEFAULT_WINDOW[0])),
         "to_hour": int(blk.get("to_hour", _IDLE_DEFAULT_WINDOW[1])),
     }
@@ -525,12 +546,22 @@ def idle_work_blocked_reason(rec=None, spec=None, now=None):
         pass
 
     after = float(spec.get("idle_after_s", cfg["after_s"]))
+    # One idle signal for all background work: the minimum of Windows'
+    # last-input time and Friday's own activity (services/background_gate).
+    # When the OS signal cannot be read, the machine counts as not idle until
+    # the gate's drain cap.
     try:
-        from agent_friday.services import work_queue as _wq
-        idle = _wq.idle_seconds()
+        from agent_friday.services import background_gate as _bg
+        st = _bg.idle_state()
+        idle = float(st["idle_s"])
     except Exception:
         return "could not read how long you have been away"
-    if idle < after:
+    if not st["os_readable"]:
+        if idle < _bg.DRAIN_CAP_S:
+            return ("could not read how long the computer has been idle; idle "
+                    "work waits until Friday has seen nothing for %d h"
+                    % int(_bg.DRAIN_CAP_S // 3600))
+    elif idle < after:
         return ("you were active %d s ago; idle work waits for %d s"
                 % (int(idle), int(after)))
 
@@ -1022,52 +1053,65 @@ def _run_task_inner(rec):
         # have inherited the interactive 999-round budget with nobody watching.
         from agent_friday.services import reasoning_trace as _rt
         from agent_friday.services import turn_budget as _tbud
-        with _rt.scope("scheduled", rec.get("name") or ref or "Scheduled job"), \
-                _tbud.unattended():
-            # `local_only` used to be read ONLY on the agent_prompt path below, so
-            # every builtin schedule -- daily creation, the briefings, the news front
-            # page -- ignored it completely and each job picked its own model. The
-            # flag is a property of the RUN, so it is applied here as a context that
-            # the cloud transports refuse inside.
-            if task.get("local_only"):
-                from agent_friday.services import local_only_guard as _log_guard
-                # The owner allowed these jobs onto a cloud model when no local
-                # one serves: run on exactly that model, and NOT inside the
-                # local-only guard, which would refuse it.
-                # News routines never take the cloud pin: News is local-only
-                # and waits for the seat instead (`local_news_run`).
-                _cm = None if rec.get("id") in NEWS_ROUTINES else _cloud_model_for(rec)
-                if _cm and not _resolve_local_seat():
-                    with _log_guard.cloud_pinned(_cm, meta.get("label") or ref):
-                        return meta["fn"]()
-                _label = meta.get("label") or ref
-                with _log_guard.local_only(_label):
-                    _why = _parked_reason()
-                    if _why:
-                        _paused(rec, _waiting_text(_label, _why),
-                                no_local_model=False)
-                    try:
-                        result = meta["fn"]()
-                    except _log_guard.CloudRefused as exc:
-                        if _resolve_local_seat():
-                            raise SkippedRun(str(exc)) from exc
-                        _paused(rec, _waiting_text(
-                            _label, "no local seat is serving right now"))
-                    except SkippedRun:
-                        raise
-                    except Exception as exc:
-                        # A local-only run whose model call failed while no
-                        # seat serves did not fail on its own merits: it
-                        # waits for the seat like a parked run.
-                        if _resolve_local_seat():
+        # The Local AI queue: a builtin that reaches a LOCAL model is admitted
+        # at its first local call and holds its place until it returns; one
+        # that never does never queues. Time-bound editions still queue (one
+        # job at a time, yielding to interactive turns) but never wait for
+        # idle; everything else waits until the computer is idle.
+        from agent_friday.services import background_gate as _bg
+        try:
+            with _rt.scope("scheduled", rec.get("name") or ref or "Scheduled job"), \
+                    _tbud.unattended(), \
+                    _bg.background_job(kind="scheduled",
+                                       key="schedule:" + str(rec.get("id") or ref),
+                                       label=meta.get("label") or ref,
+                                       deferrable=ref not in TIME_BOUND_BUILTINS):
+                # `local_only` used to be read ONLY on the agent_prompt path below, so
+                # every builtin schedule -- daily creation, the briefings, the news front
+                # page -- ignored it completely and each job picked its own model. The
+                # flag is a property of the RUN, so it is applied here as a context that
+                # the cloud transports refuse inside.
+                if task.get("local_only"):
+                    from agent_friday.services import local_only_guard as _log_guard
+                    # The owner allowed these jobs onto a cloud model when no local
+                    # one serves: run on exactly that model, and NOT inside the
+                    # local-only guard, which would refuse it.
+                    # News routines never take the cloud pin: News is local-only
+                    # and waits for the seat instead (`local_news_run`).
+                    _cm = None if rec.get("id") in NEWS_ROUTINES else _cloud_model_for(rec)
+                    if _cm and not _resolve_local_seat():
+                        with _log_guard.cloud_pinned(_cm, meta.get("label") or ref):
+                            return meta["fn"]()
+                    _label = meta.get("label") or ref
+                    with _log_guard.local_only(_label):
+                        _why = _parked_reason()
+                        if _why:
+                            _paused(rec, _waiting_text(_label, _why),
+                                    no_local_model=False)
+                        try:
+                            result = meta["fn"]()
+                        except _log_guard.CloudRefused as exc:
+                            if _resolve_local_seat():
+                                raise SkippedRun(str(exc)) from exc
+                            _paused(rec, _waiting_text(
+                                _label, "no local seat is serving right now"))
+                        except SkippedRun:
                             raise
-                        _paused(rec, _waiting_text(
-                            _label, f"the local seat did not answer: {exc}"))
-                    if _editorial_degraded(result) and not _resolve_local_seat():
-                        _paused(rec, _waiting_text(
-                            _label, "the local seat did not answer the editorial"))
-                    return result
-            return meta["fn"]()
+                        except Exception as exc:
+                            # A local-only run whose model call failed while no
+                            # seat serves did not fail on its own merits: it
+                            # waits for the seat like a parked run.
+                            if _resolve_local_seat():
+                                raise
+                            _paused(rec, _waiting_text(
+                                _label, f"the local seat did not answer: {exc}"))
+                        if _editorial_degraded(result) and not _resolve_local_seat():
+                            _paused(rec, _waiting_text(
+                                _label, "the local seat did not answer the editorial"))
+                        return result
+                return meta["fn"]()
+        except _bg.JobCancelled as exc:
+            raise PausedNoLocalModel(str(exc)) from exc
     if kind == "workflow":
         return _run_workflow(rec, task)
     # agent_prompt — run through the existing background-task machinery so the
@@ -1115,25 +1159,30 @@ def _run_task_inner(rec):
     # cost money (mostly cache-write tokens). The context closes that. A run
     # allowed onto the cloud is pinned to its model instead; `_spawn_task`
     # carries the pin into the task's own thread.
+    # In the Local AI queue a scheduled prompt is time-bound: it waits for a
+    # free seat and for interactive turns, never for idle. Its label is the
+    # schedule's own name, which the owner chose.
+    _sched_job = {"kind": "scheduled", "label": rec.get("name") or "a scheduled job",
+                  "deferrable": False}
     if _cloud:
         from agent_friday.services import local_only_guard as _log_guard
         with _log_guard.cloud_pinned(_cloud, rec.get("name") or "this schedule"):
             tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                               description=f"scheduled:{rec.get('id')}",
                               orb_icon="⏰", tools=task.get("tools"),
-                              model=_model, schedule_id=rec.get("id"))
+                              model=_model, schedule_id=rec.get("id"), job=_sched_job)
     elif task.get("local_only"):
         from agent_friday.services import local_only_guard as _log_guard
         with _log_guard.local_only(rec.get("name") or "this schedule"):
             tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                               description=f"scheduled:{rec.get('id')}",
                               orb_icon="⏰", tools=task.get("tools"),
-                              model=_model, schedule_id=rec.get("id"))
+                              model=_model, schedule_id=rec.get("id"), job=_sched_job)
     else:
         tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                           description=f"scheduled:{rec.get('id')}", orb_icon="⏰",
                           tools=task.get("tools"), model=_model,
-                          schedule_id=rec.get("id"))
+                          schedule_id=rec.get("id"), job=_sched_job)
     # Link the scheduler's process orb to the spawned task so the notification
     # detail panel can stream the task's live log.
     orb_id = rec.get("_orb_id")
@@ -1159,6 +1208,9 @@ def _run_task_inner(rec):
                 "timeout", "error", "cancelled"}
     while _time.time() < deadline:
         snap = _task_snapshot(tid) or {}
+        if snap.get("status") == "queued-for-seat" or snap.get("paused_reason"):
+            # Time spent waiting in the Local AI queue is not run time.
+            deadline = max(deadline, _time.time() + timeout)
         if snap.get("status") in terminal:
             if snap.get("status") in ("failed", "error"):
                 raise RuntimeError(snap.get("result") or "agent task failed")
@@ -2042,7 +2094,13 @@ def _away_drain_tick() -> None:
                       _held.get("kind") or "current")
             return
         from agent_friday.services.residency_arbiter import get_arbiter
-        res = work_queue.drain("heavy", _drain_runner, arbiter=get_arbiter())
+        from agent_friday.services import background_gate as _bg
+        # Through the Local AI queue: one job at a time, after idle, never
+        # during an interactive turn.
+        with _bg.background_job(kind="scheduled", key="away_drain:heavy",
+                                label="work you parked for when you're away",
+                                deferrable=True):
+            res = work_queue.drain("heavy", _drain_runner, arbiter=get_arbiter())
         _log.info("away-drain completed: %s", res)
         _announce_drain(res)
     except Exception as e:

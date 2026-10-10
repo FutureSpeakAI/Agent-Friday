@@ -990,6 +990,10 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
             repeat the call that just failed, which is what turned a 19-minute
             turn into no answer at all.
             """
+            # The Local AI queue's choke point (services/background_gate),
+            # as on the llama-server path in _call_openai.
+            from agent_friday.services.background_gate import before_local_model_call
+            before_local_model_call(model)
             _t0 = _time.time()
             _mt = int(_over.get("max_tokens") or max_tokens or 0) or None
             _think = False if _over.get("no_reasoning") else None
@@ -2041,6 +2045,13 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                         encoding="utf-8")
                 except Exception:
                     pass
+            # The Local AI queue's choke point: a background job's request to
+            # a local seat waits here, before it is sent, while an interactive
+            # turn is active (services/background_gate). Interactive turns
+            # pass straight through.
+            if local_bypass:
+                from agent_friday.services.background_gate import before_local_model_call
+                before_local_model_call(model)
             _t0 = _time.time()
             def _post_current(**request_kwargs):
                 if (session_ctx or {}).get("crew_agent_id"):

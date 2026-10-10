@@ -841,6 +841,8 @@ CLAUDE_TOOLS = [
          "workspace": {"type": "string", "description": "For kind=workspace: which workspace."},
          "section": {"type": "string", "description": "A tab or section by name or id, e.g. 'feed', 'Models', 'Hard stop'."}},
          "required": ["kind"]}},
+    {"name": "queue_status", "description": "Read the Local AI queue: background work on the local model, what waits and why. Read-only.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "check_situation", "description": "Read live activity/load: focused/open workspaces, CPU/RAM/GPU/disk, serving or loaded models, chat turns, tasks, scheduled/background jobs, queue, stand-down and today's spend. pin=true adds a live summary to later turns in this conversation; pin=false stops it.",
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
@@ -3269,6 +3271,14 @@ def _current_conversation_id():
         return (core._TURNS.get(tid) or {}).get('conversation_id')
 
 
+def _tool_queue_status(inp):
+    """Tool handler: the Local AI queue in a sentence or two (services/
+    seat_supervisor.spoken_summary). Labels and reasons only, never a job's
+    content."""
+    from agent_friday.services import seat_supervisor as _ss
+    return _ss.spoken_summary(local_queue_snapshot())
+
+
 def _tool_check_situation(inp):
     """Tool handler: the live situation, from state the server already holds
     (services/situation), optionally pinned into this conversation's turns."""
@@ -5374,10 +5384,15 @@ def _seat_supervisor():
     with _SEAT_SUPERVISOR_LOCK:
         if _SEAT_SUPERVISOR is None:
             from agent_friday.services import seat_supervisor as _ss
+            from agent_friday.services import background_gate as _bg
             sup = _ss.SeatSupervisor(
                 thread_factory=_start_pending_task_thread,
                 reclaim_seat=None,
                 on_queued_wait=_offer_cloud_while_waiting,
+                # The background work queue's one rule: no start (and no next
+                # model call) during an interactive turn; deferrable work
+                # waits for idle (services/background_gate).
+                gate=_bg.block_reason,
             )
             # Register the answer path at the same moment as the ask path, so
             # a card can never exist with nothing listening for its decision.
@@ -5389,6 +5404,147 @@ def _seat_supervisor():
             sup.start()
             _SEAT_SUPERVISOR = sup
         return _SEAT_SUPERVISOR
+
+
+# --- The Local AI queue (hotfix 1.0.2): job fields, merging, the job context ---
+
+_JOB_KEY_LOCK = threading.RLock()
+_JOB_KEY_LOCAL = threading.local()
+
+
+def _queue_job_fields(job, *, runner=None, prompt=''):
+    """The TASKS fields that describe a task in the Local AI queue."""
+    import hashlib as _hl
+    from agent_friday.services import background_gate as _bg
+    job = dict(job or {})
+    kind = str(job.get('kind') or ('runner' if runner is not None else 'task'))
+    out = {
+        # job_ prefixes keep these apart from any other meaning of "kind" or
+        # "label" a task record or its journal may carry.
+        'job_kind': kind,
+        'job_key': job.get('key') or None,
+        'job_label': job.get('label') or None,
+        'deferrable': bool(job.get('deferrable')),
+        'voice_handoff': bool(job.get('voice_handoff')),
+        'job_digest': job.get('digest') or (
+            _hl.sha256((prompt or '').encode('utf-8', 'replace')).hexdigest()[:16]
+            if job.get('key') else None),
+        'parent_turn': _bg.current_chat_turn(),
+    }
+    cur = _bg.CURRENT_JOB.get()
+    if cur and cur.get('id'):
+        out['nested_in'] = cur['id']
+    return out
+
+
+def _merge_queued_job(jobf, model, prompt, description):
+    """Dedupe before a second task exists. Returns the id the request merged
+    into, '' when the same content already ran (nothing to do), or None when
+    a new task is needed."""
+    try:
+        sup = _seat_supervisor()
+    except Exception:
+        return None
+    key = jobf.get('job_key')
+    seat = _admission_seat_for(model)
+    existing = sup.find_queued_job(key, seat)
+    if existing:
+        # Latest payload wins: the waiting task runs with this prompt.
+        with TASKS_LOCK:
+            rec = TASKS.get(existing)
+            if rec is None:
+                return None
+            rec['prompt'] = prompt
+            if description:
+                rec['description'] = description
+            name = rec.get('name')
+            orb_icon, rmodel, tools = '🛰', rec.get('model'), rec.get('tools')
+        if not sup.merge(existing, job_digest=jobf.get('job_digest'), prompt=prompt):
+            return None
+        with _PENDING_TASK_THREADS_LOCK:
+            if existing in _PENDING_TASK_THREADS:
+                _PENDING_TASK_THREADS[existing] = _make_task_thread(
+                    existing, name, prompt, description or '', orb_icon=orb_icon,
+                    model=rmodel, tools=tools, runner=None)
+                with TASKS_LOCK:
+                    TASK_THREADS[existing] = _PENDING_TASK_THREADS[existing]
+        _task_log(existing, 'A newer request for the same job was merged into this one.')
+        return existing
+    if sup.already_ran(key, jobf.get('job_digest')):
+        return ''
+    return None
+
+
+def _background_job_target(task_id, fn, *args, **kwargs):
+    """A task's thread body, run as the admitted background job `task_id`:
+    every local model call it makes waits at the choke point while an
+    interactive turn is active (services/background_gate)."""
+    from agent_friday.services import background_gate as _bg
+    with _bg.admitted_job(task_id):
+        return fn(*args, **kwargs)
+
+
+def _make_task_thread(task_id, name, prompt, description, *, orb_icon='🛰',
+                      model=None, tools=None, runner=None):
+    if runner is not None:
+        return threading.Thread(target=_background_job_target,
+                                args=(task_id, _runner_task_worker, task_id, runner),
+                                daemon=True, name=f"task-{task_id[:8]}")
+    return threading.Thread(target=_background_job_target,
+                            args=(task_id, _task_worker, task_id, name, prompt, description),
+                            kwargs={'orb_icon': orb_icon, 'model': model, 'tools': tools},
+                            daemon=True, name=f"task-{task_id[:8]}")
+
+
+def local_queue_snapshot():
+    """The Local AI queue for the chip, the tray, the API and queue_status."""
+    from agent_friday.services import background_gate as _bg
+    try:
+        snap = _seat_supervisor().snapshot()
+    except Exception:
+        snap = {"running": [], "queued": [], "count": 0, "jobs": []}
+    try:
+        st = _bg.idle_state()
+        snap["idle"] = {"idle": bool(st["idle"]), "idle_s": int(st["idle_s"]),
+                        "threshold_s": int(st["threshold_s"]),
+                        "os_readable": bool(st["os_readable"])}
+    except Exception:
+        snap["idle"] = None
+    return snap
+
+
+def local_queue_run_now(job_id):
+    try:
+        return _seat_supervisor().run_now(job_id)
+    except Exception:
+        return False
+
+
+def local_queue_cancel(job_id):
+    """Cancel from the queue. A queued task becomes `cancelled` and never
+    starts; a running one stops before its next model call."""
+    def _teardown(record):
+        tid = record.get('id')
+        with TASKS_LOCK:
+            known = tid in TASKS
+        if not known:
+            return
+        with _PENDING_TASK_THREADS_LOCK:
+            was_pending = _PENDING_TASK_THREADS.pop(tid, None) is not None
+        if was_pending:
+            _task_set(tid, status='cancelled', ended=_time.time(),
+                      result='[Cancelled] Removed from the Local AI queue before it started.')
+            _task_log(tid, 'Cancelled from the Local AI queue before it started.')
+            try:
+                _seat_supervisor().on_task_end(tid, status='cancelled')
+            except Exception:
+                pass
+        else:
+            _task_log(tid, 'Cancel requested from the Local AI queue: it stops before its next model call.')
+    try:
+        return _seat_supervisor().cancel(job_id, on_cancel=_teardown)
+    except Exception:
+        return False
 
 
 def _verify_workflow_task(task_id, reply, tool_trace):
@@ -5647,8 +5803,17 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
                 runner=None, pin_to_seat=False, workflow_context=None,
                 chain_retry=0, parent_task_id=None, task_id=None, inherited_policy=None,
-                crew_context=None):
+                crew_context=None, job=None):
     """Spawn a background task.
+
+    job: optional dict describing this task in the Local AI queue:
+        ``kind`` (e.g. "wiki_distill"), ``key`` (dedupe: a second request with
+        a key that is still queued merges into the waiting task, latest prompt
+        wins, and the same key with the same content does not run twice),
+        ``label`` (plain words for the chip; never the task's content) and
+        ``deferrable`` (waits until the computer is idle). Without it the task
+        is an ordinary background task: it still queues for a busy local seat
+        and yields to interactive turns, but does not wait for idle.
 
     pin_to_seat: run every leg on `model` (a local seat) and nowhere else; a
         failure is the task's failure, never a cloud leg answering for it.
@@ -5698,6 +5863,17 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         — a caller that asked for a safety scope must never silently get an
         unscoped dispatch instead); raises RuntimeError in that case.
     """
+    if (job or {}).get('key') and not getattr(_JOB_KEY_LOCAL, 'held', False):
+        # Dedupe and admission are one step for a keyed job: simultaneous
+        # triggers for the same key (a voice session closing on two paths at
+        # once) must find each other, not each queue a job.
+        _call = dict(locals())
+        with _JOB_KEY_LOCK:
+            _JOB_KEY_LOCAL.held = True
+            try:
+                return _spawn_task(**_call)
+            finally:
+                _JOB_KEY_LOCAL.held = False
     if crew_context is not None:
         if not isinstance(crew_context, dict) or runner is None:
             raise ValueError("Crew work requires its bound context and scoped runner")
@@ -5718,6 +5894,11 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         if pinned != profile["model"]:
             raise UserFacingPermissionError("This run's model pin conflicts with this Crew agent's selected model.", status=403)
         crew_context = json.loads(json.dumps(crew_context))
+    _job = _queue_job_fields(job, runner=runner, prompt=prompt)
+    if _job.get('job_key'):
+        _merged = _merge_queued_job(_job, model, prompt, description)
+        if _merged is not None:
+            return _merged or None
     task_id = task_id or str(uuid.uuid4())
     with TASKS_LOCK:
         if task_id in TASKS:
@@ -5796,6 +5977,10 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'seat': (_admitted_seat := _admission_seat_for(model)),
             'seat_is_local': _admitted_seat.startswith('local/'),
             'tool_calls': 0,
+            # The Local AI queue: kind, dedupe key, plain-words label, idle
+            # rule, the chat turn this was spawned from (a job never waits on
+            # the turn that is waiting on it) and the inline job it nests in.
+            **_job,
             # Reasoning trace: this task's own trace id, and the trace of
             # whatever spawned it (the chat turn, a scheduled job) so the tray
             # nests the subagent's reasoning under its parent. Captured HERE,
@@ -5841,20 +6026,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         )
     except Exception:
         pass
-    if runner is not None:
-        th = threading.Thread(target=_runner_task_worker, args=(task_id, runner),
-                              daemon=True, name=f"task-{task_id[:8]}")
-        with TASKS_LOCK:
-            for _dead in [k for k, v in TASK_THREADS.items() if not v.is_alive()]:
-                TASK_THREADS.pop(_dead, None)
-            TASK_THREADS[task_id] = th
-        th.start()
-        return task_id
-    th = threading.Thread(target=_task_worker,
-                          args=(task_id, name, prompt, description),
-                          kwargs={'orb_icon': orb_icon, 'model': model,
-                                  'tools': tools},
-                          daemon=True, name=f"task-{task_id[:8]}")
+    th = _make_task_thread(task_id, name, prompt, description, orb_icon=orb_icon,
+                           model=model, tools=tools, runner=runner)
     # The worker keeps writing after the task's status turns terminal (the
     # wrap-up log lines, the evaluator's verdict, the completion report), so
     # "status is terminal" is not "the worker is done". Anything that needs
@@ -5869,7 +6042,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     # user-facing notice that local AI runs one job at a time; the
     # supervisor promotes FIFO when the seat frees. FAIL-OPEN: a supervisor
     # error must never strand a task, so on any exception the thread starts
-    # unconditionally, exactly as before this change.
+    # unconditionally, exactly as before this change. Runner tasks come
+    # through the same door: their model calls reach the same seat.
     try:
         _admission = _seat_supervisor().wire_spawn(TASKS[task_id])
     except Exception as _sup_err:
@@ -5878,7 +6052,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     if _admission == 'queued-for-seat':
         with _PENDING_TASK_THREADS_LOCK:
             _PENDING_TASK_THREADS[task_id] = th
-        _task_log(task_id, 'queued-for-seat: local seat busy; this task starts when the seat frees. Local AI runs one job at a time and needs time to run.')
+        _why = (TASKS.get(task_id) or {}).get('wait_reason') or 'waits for the local model'
+        _task_log(task_id, 'queued-for-seat (%s): this task starts when the local seat is free. Local AI runs one job at a time and needs time to run.' % _why)
         try:
             _journal_state(task_id)
         except Exception:
@@ -6921,6 +7096,12 @@ def _runner_task_worker_untraced(task_id, runner, resumed=False):
             _hb.stop()
         except Exception:
             pass
+        # A runner holds its seat in the Local AI queue like any task: free
+        # it and promote the next job.
+        try:
+            _seat_supervisor().on_task_end(task_id)
+        except Exception:
+            pass
         _tj.pop_task()
 
 
@@ -6937,12 +7118,28 @@ def resume_runner_task(task_id, runner):
                                     'its last completed step.')
     if rec is None:
         return False
-    th = threading.Thread(target=_runner_task_worker, args=(task_id, runner),
+    th = threading.Thread(target=_background_job_target,
+                          args=(task_id, _runner_task_worker, task_id, runner),
                           kwargs={'resumed': True}, daemon=True,
                           name=f"task-{task_id[:8]}")
     with TASKS_LOCK:
         TASK_THREADS[task_id] = th
-    th.start()
+        rec = TASKS.get(task_id) or {}
+        rec.setdefault('id', task_id)
+        if not rec.get('seat'):
+            rec['seat'] = _admission_seat_for(rec.get('model'))
+            rec['seat_is_local'] = rec['seat'].startswith('local/')
+        rec.setdefault('job_kind', 'runner')
+    # Through the same door as at spawn; fail open, as at spawn.
+    try:
+        _admission = _seat_supervisor().wire_spawn(rec) if rec else 'running'
+    except Exception:
+        _admission = 'running'
+    if _admission == 'queued-for-seat':
+        with _PENDING_TASK_THREADS_LOCK:
+            _PENDING_TASK_THREADS[task_id] = th
+    else:
+        th.start()
     return True
 
 
@@ -7664,6 +7861,7 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate": _tool_navigate,
     "navigate_to": _tool_navigate_to,
     "check_situation": _tool_check_situation,
+    "queue_status": _tool_queue_status,
     "set_workspace_layout": _tool_set_workspace_layout,
     "show_my_day": _tool_show_my_day,
     "set_chat_tray": _tool_set_chat_tray,
@@ -8082,6 +8280,7 @@ TOOL_RINGS: dict[str, int] = {
     # phone-origin turn (ring 0 only) cannot drive the screen at home.
     "navigate_to":          1,
     "check_situation":      0,   # reads state the server already holds
+    "queue_status":         0,   # reads the Local AI queue, labels only
     # Lays out the owner's own screen and remembers it; ring 1 like navigate_to.
     "set_workspace_layout": 1,
     # Shows the start screen's cluster, or sets when it shows; the owner's own screen.

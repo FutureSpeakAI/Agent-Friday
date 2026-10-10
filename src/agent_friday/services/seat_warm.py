@@ -62,6 +62,44 @@ def warm(model_id: str, port: int | None = None) -> dict:
         return {"warmed": False, "seat": model_id, "reason": "seat_prefix_warm is off"}
     if not _is_brain(model_id):
         return {"warmed": False, "seat": model_id, "reason": "not the brain seat"}
+    # The Local AI queue: the warm is a background job like any other. It
+    # runs only when it can start at once (nothing interactive, no other job
+    # on the seat); otherwise it is skipped, because a busy seat is warm
+    # already and a turn that is running warms it itself.
+    from agent_friday.services import background_gate as _bg
+    job_id = None
+    try:
+        from agent_friday.services.agent import _seat_supervisor
+        sup = _seat_supervisor()
+        job_id = sup.admit_inline({"kind": "prefix_warm", "job_key": "warm:" + str(model_id),
+                                   "label": "getting the local model ready",
+                                   "seat": "local/" + str(model_id),
+                                   "seat_is_local": True, "deferrable": False},
+                                  wait=False)
+    except Exception as e:  # noqa: BLE001
+        _log.info("seat prefix warm: queue unavailable (%s); warming directly", e)
+        sup = None
+    if sup is not None and job_id is None:
+        _log.info("seat prefix warm skipped for %s: the local model is busy", model_id)
+        return {"warmed": False, "seat": model_id,
+                "reason": "skipped: an interactive turn or another job has the seat"}
+    try:
+        with _bg.admitted_job(job_id) if job_id else _nullcontext():
+            return _warm_admitted(model_id, port, settings, t0)
+    finally:
+        if job_id:
+            try:
+                sup.on_task_end(job_id)
+            except Exception:
+                pass
+
+
+def _nullcontext():
+    import contextlib
+    return contextlib.nullcontext()
+
+
+def _warm_admitted(model_id: str, port, settings: dict, t0: float) -> dict:
     try:
         from agent_friday.services.agent import _generate_agent
         from agent_friday.services.model_router import TIMINGS_SINK

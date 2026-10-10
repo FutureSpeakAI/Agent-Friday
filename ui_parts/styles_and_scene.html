@@ -68,6 +68,17 @@
         .ws-tab-link { font-size: 12px; color: #9fd0ff; text-decoration: none; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.3); border-radius: 7px; background: transparent; cursor: pointer; }
         .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
         .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
+        /* The Local AI queue chip (LocalAiQueueChip): waiting is neutral, working is violet; no motion. */
+        .local-ai-chip { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 7px; cursor: pointer; font-family: var(--fr-font-mono); font-size: var(--fr-text-xs); letter-spacing: 0.04em; color: var(--fr-label); background: transparent; border: 1px solid var(--fr-neutral); white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+        .local-ai-chip.working { color: var(--fr-violet-soft); border-color: var(--fr-violet); }
+        .local-ai-chip:hover { border-color: var(--fr-violet-soft); }
+        .local-ai-list-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: var(--fr-text); }
+        .local-ai-list-note { font-size: var(--fr-text-sm); color: var(--fr-dim); margin-bottom: 10px; line-height: 1.5; }
+        .local-ai-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.08); }
+        .local-ai-row-text { flex: 1 1 auto; min-width: 0; }
+        .local-ai-row-label { color: var(--fr-text); font-size: 12px; overflow-wrap: anywhere; }
+        .local-ai-row-meta { color: var(--fr-dim); font-size: var(--fr-text-xs); font-family: var(--fr-font-mono); }
+        .local-ai-row[data-state="running"] .local-ai-row-meta { color: var(--fr-violet-soft); }
         .ws-tab-ask.none { border-color: rgba(255,255,255,0.12); background: transparent; color: #7f93ad; }
         .ws-tab-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column;
             padding: 14px 18px 24px; box-sizing: border-box; }

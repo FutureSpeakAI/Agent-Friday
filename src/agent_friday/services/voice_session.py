@@ -316,6 +316,22 @@ class VoiceSession:
         # task, the deeper mind's answer) arrive over services/
         # voice_live_channel and are spoken between turns, never over one.
         self._inject_q: "queue.Queue" = queue.Queue()
+        # A live local voice session is interactive for its whole length: a
+        # background job that took the single local slot between two turns
+        # would make the next spoken answer wait behind it. Background work
+        # holds off until close() (or until this session is found dead).
+        try:
+            import weakref as _weakref
+            from agent_friday.services import background_gate as _bg
+            _me = _weakref.ref(self)
+
+            def _alive():
+                s = _me()
+                return s is not None and not s.done.is_set()
+            _bg.interactive_begin("voice-session:" + str(self.session_id), "voice",
+                                  alive=_alive)
+        except Exception:
+            pass
 
     # ── frames ───────────────────────────────────────────────────────────
 
@@ -994,6 +1010,13 @@ class VoiceSession:
 
     def close(self) -> None:
         self.done.set()
+        # The call is over: background local-model work may have the seat
+        # again (and this session's own distillation is queued below).
+        try:
+            from agent_friday.services import background_gate as _bg
+            _bg.interactive_end("voice-session:" + str(self.session_id))
+        except Exception:
+            pass
         t = self._current_turn
         if t is not None:
             t["cancel"].set()

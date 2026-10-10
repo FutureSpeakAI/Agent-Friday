@@ -193,7 +193,8 @@ def note_carried(key: str, carrier: str, text: str):
 # a third party. A value found there is shown on a card for information only.
 OWN_DATA_TOOLS = {"search_contacts", "list_sending_accounts", "list_tasks",
                   "read_wiki", "search_wiki", "personality_show",
-                  "list_workspace_history", "workflow_status", "check_situation"}
+                  "list_workspace_history", "workflow_status", "check_situation",
+                  "queue_status"}
 
 # Fields in a structured result that name the other party of a message. A
 # reply to the sender of an email is the ordinary case; a new address found in
@@ -471,6 +472,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     # Opening an item on the owner's own screen, and reading Friday's state.
     "navigate_to": {},
     "check_situation": {},
+    "queue_status": {},
     # See & Touch: ticking, pointing and filtering carry no sensitive argument; the text of a fill is a message
     # body, so a link or address in it that Friday read in something outside is flagged.
     "screen_select": {"text": "message_body"},

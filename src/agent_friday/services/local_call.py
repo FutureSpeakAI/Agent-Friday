@@ -260,6 +260,15 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     """
     import requests
 
+    # The Local AI queue's choke point (services/background_gate): inside a
+    # background job this waits while an interactive turn is active. A job
+    # cancelled from the queue gets the "failure" answer, since this never raises.
+    try:
+        from agent_friday.services.background_gate import before_local_model_call
+        before_local_model_call(model)
+    except Exception:
+        return ""
+
     base = seat_endpoint(model)
     if base:
         return _openai_style(base, system, user, model, json_mode, max_tokens,

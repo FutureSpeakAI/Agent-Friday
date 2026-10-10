@@ -104,7 +104,46 @@ def queue_state():
         "stats": wq.stats(),
         "batches": {c: wq.batch_ready(c) for c in
                     ("heavy", "image", "background")},
+        # The Local AI queue (one door for background local-model work) and
+        # its combined idle signal, the same state /api/local-queue serves.
+        "local_queue": _local_queue_snapshot(),
     })
+
+
+# ── the Local AI queue ───────────────────────────────────────────────────────
+# Background local-model jobs (wiki distillation, scheduled jobs, spawned
+# tasks, the prefix warm) wait in ONE queue: the seat supervisor's
+# (services/seat_supervisor, services/background_gate). These routes are what
+# the top-bar chip and the tray read and the two controls it offers. Labels
+# only: no job's content ever appears here.
+
+def _local_queue_snapshot():
+    from agent_friday.services.agent import local_queue_snapshot
+    return local_queue_snapshot()
+
+
+@work_plan_bp.route("/api/local-queue", methods=["GET"])
+@login_required
+def local_queue_state():
+    return jsonify(_local_queue_snapshot())
+
+
+@work_plan_bp.route("/api/local-queue/<job_id>/run-now", methods=["POST"])
+@login_required
+def local_queue_run_now(job_id):
+    """Skip the idle wait for one job. It still runs one at a time and still
+    yields to an interactive turn."""
+    from agent_friday.services.agent import local_queue_run_now as _run_now
+    ok = bool(_run_now(job_id))
+    return jsonify({"ok": ok, "queue": _local_queue_snapshot()}), (200 if ok else 404)
+
+
+@work_plan_bp.route("/api/local-queue/<job_id>/cancel", methods=["POST"])
+@login_required
+def local_queue_cancel(job_id):
+    from agent_friday.services.agent import local_queue_cancel as _cancel
+    ok = bool(_cancel(job_id))
+    return jsonify({"ok": ok, "queue": _local_queue_snapshot()}), (200 if ok else 404)
 
 
 @work_plan_bp.route("/api/work/queue/<item_id>", methods=["DELETE"])
