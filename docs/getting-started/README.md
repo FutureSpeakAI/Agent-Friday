@@ -1,4 +1,4 @@
-# Getting started with Agent Friday™ Beta 1.0.1
+# Getting started with Agent Friday™ Beta 1.0.2
 
 This page takes you from the download to your first conversation, and then to
 voice. It assumes a Windows 10 or 11 PC and about twenty minutes. Nothing here
@@ -21,7 +21,7 @@ your disk free after the download and hides any model that would use more.
 ## 1. Download
 
 Open the [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest)
-and download `AgentFriday-Setup-1.0.1-beta.1.exe` (about 640 MB). The file
+and download `AgentFriday-Setup-1.0.2-beta.1.exe` (about 640 MB). The file
 carries its own copy of Python and every package Friday uses, so nothing else
 has to be installed first.
 
@@ -31,7 +31,7 @@ The release page publishes the file's SHA-256 checksum. In PowerShell, in the
 folder you downloaded to:
 
 ```powershell
-Get-FileHash .\AgentFriday-Setup-1.0.1-beta.1.exe -Algorithm SHA256
+Get-FileHash .\AgentFriday-Setup-1.0.2-beta.1.exe -Algorithm SHA256
 ```
 
 The `Hash` it prints must match the checksum on the release page, character for
@@ -43,7 +43,7 @@ The first time you run the file, Windows may show a blue box titled **Windows
 protected your PC**, with the publisher shown as **Unknown publisher**.
 
 The box appears because the setup program is not code-signed. A signature is a
-certificate that Windows can trace to a company it knows, and Beta 1.0.1 does not
+certificate that Windows can trace to a company it knows, and Beta 1.0.2 does not
 have one yet. Getting one is the next priority. The warning does not mean
 Windows found a problem in the file. It means Windows has no reputation record
 for it. That is why the checksum in step 2 matters: it confirms the file is the

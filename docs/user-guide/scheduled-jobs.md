@@ -45,6 +45,35 @@ When a local model is running, they run there, whatever you chose below.
 without activity, between 09:00 and 23:00. This window is the `idle_work`
 setting.
 
+## Background AI work waits its turn
+
+Work that uses your local model in the background goes through one queue: wiki
+notes from voice chats, the built-in scheduled jobs and background tasks. The
+rules:
+
+- Jobs run one at a time. A job never starts while you are in a chat or a local
+  voice turn, and a job that is running pauses before its next step until the
+  turn ends.
+- Work that can wait, such as wiki notes and daily creation, starts only after
+  the computer has been idle for a set time. Set it in **Settings > Advanced >
+  Local AI queue**: "Background AI work waits until you've been away for"
+  (5, 10, 15, 30 or 60 minutes; default 10).
+- Jobs with a time still run on time: the morning news (7:00), the afternoon
+  briefing (16:00) and the evening front page (18:00), and the weekly digest
+  and editorial. They run one at a time and behind your chats, but they do not
+  wait for idle.
+- A second request for work that is already waiting joins it.
+
+While work waits or runs, a **Local AI: N queued** chip appears in the top bar.
+It is hidden when the queue is empty. Choose it to see each job, why it waits,
+and two buttons: **Run now**, which skips only the idle wait, and **Cancel**.
+The tray icon's tooltip shows the same ("Local AI: 3 tasks queued · next: ... ·
+waits for idle"). Only labels appear, never what a job contains.
+
+Cloud models are not queued. Cloud voice calls (Gemini Live) do not pause
+background local-model work; an open call does keep work that can wait
+waiting.
+
 ## On a PC with no local model
 
 If no local model is running when one of these jobs is due, the run is

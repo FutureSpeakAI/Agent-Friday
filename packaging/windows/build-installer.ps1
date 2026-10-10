@@ -674,7 +674,7 @@ Say-Step 'Compiling the installer with Inno Setup'
 
 # --- The release's names and numbers, from the one place that owns them ----
 function ConvertTo-ReleaseTag {
-    <#  1.0.1b1 (PEP 440, as pyproject.toml spells it) -> 1.0.1-beta.1 (the tag
+    <#  1.0.2b1 (PEP 440, as pyproject.toml spells it) -> 1.0.2-beta.1 (the tag
         and the file name). A plain 5.14.3 stays as it is. #>
     param([Parameter(Mandatory)][string] $Pep440)
     $mm = [regex]::Match($Pep440, '^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$')

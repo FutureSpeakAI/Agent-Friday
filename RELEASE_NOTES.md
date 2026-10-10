@@ -1,91 +1,59 @@
-# Agent Friday™ Beta 1.0.1
+# Agent Friday™ Beta 1.0.2
 
 *FutureSpeak.AI™*
 
-Agent Friday™ is a private AI agent that runs on your own Windows PC. Beta 1.0.1
-follows Beta 1.0, the first release of the app. It is a **pre-release**: it is
-meant to be tried, and it has rough edges, listed below.
+Agent Friday™ is a private AI agent that runs on your own Windows PC. Beta 1.0.2
+is a hotfix after Beta 1.0.1, which followed Beta 1.0, the first release of the
+app. It is a **pre-release**: it is meant to be tried, and it has rough edges,
+listed below.
 
-## Local voice now runs on Ternary Bonsai 1.7B
+## Background AI work waits its turn
 
-Local voice and Quick reflexes now run on Ternary Bonsai 1.7B, PrismML's
-ternary build of Qwen3-1.7B (PQ2_0, about 442 MB, Apache-2.0). It is the
-recommended fast responder in setup and in Settings > Models. Qwen3 4B Instruct
-and Qwen3 1.7B stay available as alternatives.
+Background jobs that use your local model now go through one queue. That covers
+wiki notes from voice chats, scheduled briefings and background tasks.
 
-- **Choosing a model.** The setting `voice_front_model` now defaults to
-  `auto`: the first model that can run on your PC, in the order Ternary Bonsai
-  1.7B, Qwen3 4B, Qwen3 1.7B. A model you pick yourself always wins. An install
-  that has only a Qwen3 model keeps it.
-- **The PrismML runtime.** Bonsai needs the PrismML llama.cpp runtime, which
-  comes with a Bonsai deep thinker. If it is missing, Friday answers with a
-  Qwen3 model that is installed and says so. Settings shows why Bonsai cannot
-  be picked.
-- **How a voice turn works.** A fast on-device classifier, Friday's quick
-  judgement, decides whether a request needs a look-up (calendar, email, files,
-  the wiki, past conversations, news or the web) or one of Friday's own actions
-  (open a workspace, play a podcast or media, voice preferences, stop a running
-  task, undo). Friday runs it. Calendar events, email, files, news and web
-  results are read to you straight from what came back ("Today you have Standup
-  at 9 AM and Dinner with Sam at 7 PM."), and a failed or empty look-up gets a
-  plain sentence ("I couldn't check your email just now."). The small model only
-  phrases free text, such as your notes, in one short paragraph.
-- **Room for the voice.** When the voice models and the deep thinker cannot
-  share the graphics card, Friday pauses the deep thinker for the call so the
-  voice runs on the card. Work you hand to the deeper mind during the call
-  waits until the call ends.
-- **Safety rules.** Anything that changes the world outside Friday (send,
-  reply, delete, create an event) goes to the full agent and through the usual
-  approval card. A web or news search that Friday guessed at asks before it
-  searches. A spoken "yes" or "no" answers an approval card only when Friday has
-  just read that card aloud in the same call. Text that Friday looks up is
-  treated as data, never as instructions.
-- **Speed.** On our test PC (a 12 GB NVIDIA card, with the Kokoro voice on the
-  GPU), a conversational reply starts about 0.1 seconds after you stop speaking
-  (median). A look-up turn speaks a short acknowledgement at once, and the
-  answer starts about 0.4 seconds later. Other computers will differ.
+- **One at a time, and behind you.** A job never starts while you are in a chat
+  or a local voice turn. A job that is already running pauses before its next
+  step and carries on when you are done.
+- **Work that can wait, waits for you to be away.** Deferrable jobs, such as
+  wiki notes, start only after the computer has been idle for 10 minutes. You
+  can change that in Settings > Advanced: "Background AI work waits until
+  you've been away for" (5, 10, 15, 30 or 60 minutes).
+- **Work with a time still runs on time.** The 7:00 news, the 16:00 briefing and
+  the 18:00 front page do not wait for idle. They still run one at a time and
+  behind you.
+- **Duplicates merge.** A second request for work that is already waiting
+  joins the first.
+- **You can see it.** A "Local AI: N queued" chip appears in the top bar while
+  work waits or runs. It opens a list with what waits and why, and a **Run
+  now** and a **Cancel** for each job. **Run now** skips only the idle wait. The
+  tray tooltip shows the same. Ask by voice: "what's in your queue?"
 
-## Also in 1.0.1
+## Also in 1.0.2
 
-- **Settings > Models.** The **Get** button for a local model opened a consent
-  card that showed only its title, with no Fetch or Cancel button, far below
-  the button. The card now shows its five lines and the Fetch and Cancel
-  buttons.
-- **Podcasts.** An episode was refused whole when the script check cut one
-  story's opening line and left the next line without its outlet. Now a story
-  the check cannot let through is left out and the episode airs with the rest.
-  The episode notes and transcript list each story left out and why. If nothing
-  is left to air, the message names the headline and what its first line
-  lacked.
-- **Local only.** Image, video-frame and audio inspection, outreach drafts,
-  code art, poems, image quality checks and image generation now respect Local
-  only: they use a local model or say plainly that they cannot run locally.
-  Nothing is sent to a cloud model.
-- **Wiki setup** no longer sends your name, birthdate and location to any model.
-  It fills in a template.
-- **Gemini text-to-speech** treats settings it cannot read as Local only.
-- **Dependencies.** The lockfile moves to Werkzeug 3.1.9, multidict 6.9.1 and
-  fsspec 2026.9.0, which fix security advisories.
+- **Settings** reads never wait on a stopped Ollama. A voice turn could stall
+  for seconds on the refused connection.
+- A timing check in the test suite no longer fails by a hair.
 
 ## Upgrading
 
-Run this installer over an existing Beta 1.0 (v1.0.0-beta.1) or 5.x install,
-including 5.14.3. It upgrades in place. Before it changes anything, setup stops
+Run this installer over an existing Beta 1.0.1 (v1.0.1-beta.1), Beta 1.0
+(v1.0.0-beta.1) or 5.x install, including 5.14.3. It upgrades in place. Before it changes anything, setup stops
 Friday and backs up your data folder to a dated folder under `.friday-backups`
 in your user folder, and your vault is part of that backup. When it finishes, it
 checks that your data folder has every file it had before and that your vault's
-key files are unchanged. Both upgrade paths are tested before each release.
+key files are unchanged. Upgrades from 5.14.3, Beta 1.0 and Beta 1.0.1 are tested before each release.
 Details are in [Upgrading from 5.x](#upgrading-from-5x) below.
 
 ## Download and install
 
-Download `AgentFriday-Setup-1.0.1-beta.1.exe` (about 640 MB) from the assets
+Download `AgentFriday-Setup-1.0.2-beta.1.exe` (about 640 MB) from the assets
 below. The same hash is in the `.sha256` file beside it.
 
 **SHA-256:** `<SHA256 PLACEHOLDER: filled in when the release is published>`
 
 1. Check the file. In PowerShell:
-   `Get-FileHash .\AgentFriday-Setup-1.0.1-beta.1.exe -Algorithm SHA256`.
+   `Get-FileHash .\AgentFriday-Setup-1.0.2-beta.1.exe -Algorithm SHA256`.
    The `Hash` must match the line above.
 2. Double-click the file. It installs for your Windows account only, needs no
    administrator rights, and brings its own Python and every package, so you
@@ -140,9 +108,9 @@ anything, setup stops Friday and copies your data to a dated folder under
 data folder has every file it had before and that your vault's key files are
 unchanged. Your notes, settings and passphrase are never deleted by an update.
 
-Beta 1.0.1 (1.0.1b1) is numerically lower than 5.14.3 and is newer. Friday and
-the setup program order releases by build sequence, so a 5.x build or Beta 1.0 is never
-offered to this beta as an upgrade.
+Beta 1.0.2 (1.0.2b1) is numerically lower than 5.14.3 and is newer. Friday and
+the setup program order releases by build sequence, so a 5.x build, Beta 1.0 or
+Beta 1.0.1 is never offered to this beta as an upgrade.
 
 ## Uninstalling
 
@@ -161,7 +129,11 @@ matter:
   RAM to run on the processor, where it is slow (an estimate of 3 to 6 tokens
   per second), and a 12 GB NVIDIA card for fast, long-context use.
 - The optional, more accurate "turbo" speech listener is not offered yet.
+- The first local voice call after a while takes about a minute to start,
+  because the voice models load onto the graphics card. Cloud voice calls
+  (Gemini Live) do not pause background local-model work; only local voice
+  turns do.
 - It has had little time on real computers. Please report what you find at
   [github.com/FutureSpeakAI/Agent-Friday/issues](https://github.com/FutureSpeakAI/Agent-Friday/issues).
 
-Build sequence: 101000101
+Build sequence: 101000201

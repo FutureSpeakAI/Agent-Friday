@@ -26,7 +26,7 @@ from tests.unit._installer_ps import LIB, needs_powershell, ps_json, read_text, 
 UPGRADE = read_text(LIB / "Upgrade.ps1")
 HEAD = ". '%s'\n. '%s'\n" % (LIB / "Common.ps1", LIB / "Upgrade.ps1")
 
-TABLE = ["5.14.3", "v5.14.3", "5.9.0", "1.0.0b1", "v1.0.0-beta.1", "1.0.1b1", "v1.0.1-beta.1", "1.0.0", "v1.0.0-rc.2", "v1.0.0-beta.2",
+TABLE = ["5.14.3", "v5.14.3", "5.9.0", "1.0.0b1", "v1.0.0-beta.1", "1.0.1b1", "v1.0.1-beta.1", "1.0.2b1", "v1.0.2-beta.1", "1.0.0", "v1.0.0-rc.2", "v1.0.0-beta.2",
          "1.1.0b1", "6.0.0", "5.14.3+meta", "1.0.0rc1", "not a version",
          "4.5.0", "4.4.0", "2.0.0", "3.1.0", "1.2.0", "1.1.5", "5.200.300"]
 
@@ -109,7 +109,7 @@ def test_an_older_setup_never_replaces_a_newer_install(tmp_path):
 @needs_powershell
 def test_the_same_release_may_be_reinstalled(tmp_path):
     root, home = tmp_path / "AgentFriday", tmp_path / "home"
-    _install(root, "1.0.1b1")
+    _install(root, "1.0.2b1")
     _data_home(home)
     out = run_ps(HEAD + "try { Invoke-UpgradePreflight -InstallRoot '%s' -NewSequence %d | Out-Null; 'proceeded' } catch { 'refused' }\n" % (root, release.BUILD_SEQUENCE),
                  tmp_path, env={"FRIDAY_HOME": str(home), "FRIDAY_BACKUP_ROOT": str(tmp_path / "b")})
@@ -126,6 +126,19 @@ $r = Invoke-UpgradePreflight -InstallRoot '%s' -NewSequence %d
 [ordered]@{ seq = $r.Existing.Sequence; backup = ($null -ne $r.Backup) } | ConvertTo-Json -Compress
 """ % (root, release.BUILD_SEQUENCE), tmp_path, env={"FRIDAY_HOME": str(home), "FRIDAY_BACKUP_ROOT": str(tmp_path / "b")})
     assert out["seq"] == 101_000_001 < release.BUILD_SEQUENCE
+    assert out["backup"] is True
+
+
+@needs_powershell
+def test_beta_1_0_1_installs_are_upgraded_in_place_with_a_backup_first(tmp_path):
+    root, home = tmp_path / "AgentFriday", tmp_path / "home"
+    _install(root, "1.0.1b1")
+    _data_home(home)
+    out = ps_json(HEAD + """
+$r = Invoke-UpgradePreflight -InstallRoot '%s' -NewSequence %d
+[ordered]@{ seq = $r.Existing.Sequence; backup = ($null -ne $r.Backup) } | ConvertTo-Json -Compress
+""" % (root, release.BUILD_SEQUENCE), tmp_path, env={"FRIDAY_HOME": str(home), "FRIDAY_BACKUP_ROOT": str(tmp_path / "b")})
+    assert out["seq"] == 101_000_101 < release.BUILD_SEQUENCE
     assert out["backup"] is True
 
 

@@ -292,7 +292,7 @@ def test_draft_is_ignored(captured, monkeypatch):
 
 
 # ── Releases are ordered by build sequence, not by version number ────────────
-# Agent Friday Beta 1.0.x is 1.0.1b1: numerically below the 5.x line it replaces.
+# Agent Friday Beta 1.0.x is 1.0.2b1: numerically below the 5.x line it replaces.
 
 def test_a_newer_sequence_is_an_update_even_when_the_version_number_is_lower(captured, monkeypatch):
     """The final 1.0.0 follows 5.14.3 although 1 < 5."""

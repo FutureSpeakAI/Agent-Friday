@@ -85,7 +85,7 @@ decision requests, dated.
 
 ## Release information
 
-- [CHANGELOG](../CHANGELOG.md) The Beta 1.0.1 and Beta 1.0 entries, then the 5.x record.
+- [CHANGELOG](../CHANGELOG.md) The Beta 1.0.2, Beta 1.0.1 and Beta 1.0 entries, then the 5.x record.
 - [RELEASE_NOTES](../RELEASE_NOTES.md), the human-facing notes for the current release.
 - [KNOWN_ISSUES](../KNOWN_ISSUES.md), current, unresolved, user-impacting limitations.
 

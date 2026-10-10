@@ -1,6 +1,6 @@
 # Known Issues
 
-**For Agent Friday™ Beta 1.0.1 (1.0.1b1).**
+**For Agent Friday™ Beta 1.0.2 (1.0.2b1).**
 
 This file lists what is broken, unverified, or deliberately limited in a way
 you may hit. Each entry was checked against the code on that date. Fixed
@@ -92,7 +92,16 @@ you hit something that is not here, please open an issue.
   so a second GPU seat or local image generation may fail to allocate. "I need
   my machine" in Settings > Models releases the GPU.
 
-## 2a. Open in 1.0.1: voice routing
+## 2a. Open in 1.0.2: local voice calls and the Local AI queue
+
+- **The first local voice call after a while takes about a minute to start.**
+  The voice models load onto the graphics card first. The first answer in a
+  call is also slower than the ones after it.
+- **Cloud voice calls (Gemini Live) do not pause background local-model
+  work.** Only local voice turns do. Work that can wait, such as wiki notes,
+  still waits while you are active at the keyboard.
+
+## 2b. Open in 1.0.1: voice routing
 
 - **Stop the music and volume by voice.** "Stop the music" and volume changes
   are not handled yet.
@@ -129,7 +138,7 @@ you hit something that is not here, please open an issue.
 
 Listed separately from "broken". These are not claims that things work.
 
-- **Beta 1.0.1 has had little time on real computers.** Please report what you
+- **Beta 1.0.2 has had little time on real computers.** Please report what you
   find.
 - **The phone has not carried real traffic.** Texts, voicemail and approvals
   by text are unit-tested; live calls have run only against a simulated

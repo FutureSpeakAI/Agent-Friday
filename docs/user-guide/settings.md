@@ -143,6 +143,10 @@ use.
 
 - **Proposed work.** When Friday judges a job might be heavy, she lays out the
   steps here and asks how you want it run. **Queue** lists background work.
+- **Local AI queue.** "Background AI work waits until you've been away for"
+  sets how long the computer must be idle (5, 10, 15, 30 or 60 minutes;
+  default 10) before background work that can wait starts. See
+  [Scheduled jobs](scheduled-jobs.md#background-ai-work-waits-its-turn).
 - **This machine** and **Provider activity** diagnostics, and **Turn limits**:
   rounds, time and a token ceiling per turn.
 - **Knowledge graph indexing**: where indexing runs and nightly reindexing.

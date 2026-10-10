@@ -131,5 +131,5 @@ For a Beta 1.0 or later base, which ships a setup program rather than a zip,
 give `-BaseExe` instead of `-BaseZip` (the two are mutually exclusive). The
 harness installs it silently (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, with
 `/ModelsCloud=1` so no model is downloaded), then runs the same vault, data and
-upgrade checks. The installer workflow runs it once per base, v5.14.3 and
-v1.0.0-beta.1.
+upgrade checks. The installer workflow runs it once per base: v5.14.3, v1.0.0-beta.1 and
+v1.0.1-beta.1.

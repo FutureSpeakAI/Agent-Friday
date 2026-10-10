@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-friday"
-version = "1.0.1b1"
+version = "1.0.2b1"
 description = "Agent Friday by FutureSpeak.AI â€” a sovereign, provider-agnostic desktop AI agent."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/FutureSpeakAI/Agent-Friday/actions/workflows/tests.yml/badge.svg)](https://github.com/FutureSpeakAI/Agent-Friday/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: Beta 1.0.1](https://img.shields.io/badge/release-Beta%201.0.1-informational.svg)](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest)
+[![Release: Beta 1.0.2](https://img.shields.io/badge/release-Beta%201.0.2-informational.svg)](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest)
 
 **A private AI agent that runs on your own Windows PC.** It chats, listens and
 talks, drafts your mail, keeps your calendar, makes documents and remembers what
@@ -11,7 +11,7 @@ sends nothing about you anywhere.
 
 ![The Friday desktop](docs/images/desktop.png)
 
-Agent Friday™ Beta 1.0.1 follows Beta 1.0, the first release of the app. It is a pre-release:
+Agent Friday™ Beta 1.0.2 follows Beta 1.0.1 and Beta 1.0, the first release of the app. It is a pre-release:
 it is meant to be tried, and it has rough edges. They are listed in
 [Known issues](KNOWN_ISSUES.md).
 
@@ -62,7 +62,7 @@ it is meant to be tried, and it has rough edges. They are listed in
 
 ## Download
 
-1. Download `AgentFriday-Setup-1.0.1-beta.1.exe` (about 640 MB) from the
+1. Download `AgentFriday-Setup-1.0.2-beta.1.exe` (about 640 MB) from the
    [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest).
 2. Check its SHA-256 against the one on the release page, then run it. The setup
    program is not code-signed yet, so Windows SmartScreen shows **Unknown
@@ -119,7 +119,7 @@ More in [Privacy: local and cloud](docs/user-guide/privacy.md),
 | [Getting started](docs/getting-started/README.md) | Download, SmartScreen, setup, first conversation, voice |
 | [User guide](docs/README.md#user-guide) | Settings, See & Touch, Library, Media, Chat Hub, Podcasts, Workflows, Mail, Calendar, Voice and more |
 | [Troubleshooting](docs/user-guide/troubleshooting.md) and [FAQ](docs/user-guide/faq.md) | Fixes for real failures, logs, backup, uninstall |
-| [Release notes](RELEASE_NOTES.md), [Changelog](CHANGELOG.md), [Known issues](KNOWN_ISSUES.md) | What is in Beta 1.0.1 and what is not right yet |
+| [Release notes](RELEASE_NOTES.md), [Changelog](CHANGELOG.md), [Known issues](KNOWN_ISSUES.md) | What is in Beta 1.0.2 and what is not right yet |
 
 ## For developers
 

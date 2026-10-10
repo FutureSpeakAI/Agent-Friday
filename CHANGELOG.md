@@ -11,6 +11,43 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ---
 
+## [1.0.2-beta.1] - Agent Friday Beta 1.0.2 (2026-10-10)
+
+Agent Friday™ Beta 1.0.2 (version `1.0.2b1`, tag `v1.0.2-beta.1`, build
+sequence 101000201) is a hotfix after Beta 1.0.1. It installs over Beta 1.0.1,
+Beta 1.0 and 5.x in place, with the data backed up first.
+
+### Added
+
+- One Local AI queue for background local-model work: wiki notes from voice
+  chats, scheduled jobs, spawned tasks and the prefix warm-up. Jobs run one at
+  a time, never during a chat or a local voice turn. A running job pauses
+  before its next model call and continues when the turn ends. A second request
+  for work already waiting merges into it.
+- Work that can wait, such as wiki notes, starts only after the computer has
+  been idle for a set time. Settings > Advanced > Local AI queue has the row
+  "Background AI work waits until you've been away for" (5, 10, 15, 30 or 60
+  minutes; default 10). The setting is `background_idle_minutes`.
+- A "Local AI: N queued" chip in the top bar, hidden while the queue is empty.
+  It opens a list that says what waits and why, with **Run now** (skips only
+  the idle wait) and **Cancel**. The tray tooltip says the same.
+- The voice tool `queue_status` ("what's in your queue?") reads the queue
+  aloud. It is read-only.
+- `/api/local-queue` and its run-now and cancel routes.
+
+### Changed
+
+- The morning news, the afternoon briefing and the evening front page (and the
+  weekly digest and editorial) still run on time. They wait for a free model
+  and for your chats, not for idle.
+
+### Fixed
+
+- Reading settings no longer waits on a stopped Ollama. A voice turn could
+  stall for seconds on the refused connection.
+- A float-rounding timing check in the test suite (`test_local_tool_time_budget`)
+  no longer fails by a hair.
+
 ## [1.0.1-beta.1] - Agent Friday Beta 1.0.1 (2026-10-09)
 
 Agent Friday™ Beta 1.0.1 (version `1.0.1b1`, tag `v1.0.1-beta.1`, build

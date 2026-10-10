@@ -87,6 +87,15 @@ conversational reply starts about 0.1 seconds after you stop speaking (median),
 and a look-up answer starts about 0.4 seconds after the acknowledgement. Other
 computers will differ.
 
+### Asking about background work
+
+Ask "what's in your queue?" or "what are you doing in the background?" and
+Friday reads the Local AI queue aloud with the voice tool `queue_status`: what
+is running, how many jobs wait, and why the next one waits ("it waits for
+idle", "it waits for your chat to finish"). It is read-only and says only job
+labels, never what a job contains. See
+[Scheduled jobs](scheduled-jobs.md#background-ai-work-waits-its-turn).
+
 ## Talking to Friday
 
 Press the microphone button in the chat. The browser asks for microphone access

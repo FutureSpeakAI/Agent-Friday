@@ -53,6 +53,7 @@ SEQUENCE_TABLE = {
     "5.9.0": 50900, "5.14.3": 51403, "v5.14.3": 51403, "5.14.3+meta": 51403,
     "1.0.0b1": 101_000_001, "1.0.0-beta.1": 101_000_001, "v1.0.0-beta.1": 101_000_001,
     "1.0.1b1": 101_000_101, "v1.0.1-beta.1": 101_000_101,
+    "1.0.2b1": 101_000_201, "v1.0.2-beta.1": 101_000_201,
     "v1.0.0-rc.2": 101_000_051, "1.0.0": 101_000_099, "1.2.0": 101_020_099, "1.1.5": 101_010_599,
     "6.0.0": 106_000_099,
 }
@@ -66,7 +67,7 @@ def test_the_shared_sequence_table():
 def test_old_line_installs_are_older_than_beta_and_the_final_release():
     seq = release.sequence_for_version
     for old in ("2.0.0", "3.1.0", "4.4.0", "4.5.0", "5.14.3"):
-        assert seq(old) < release.BUILD_SEQUENCE < seq("1.0.1"), old
+        assert seq(old) < release.BUILD_SEQUENCE < seq("1.0.2"), old
     assert seq("4.5.0") < seq("5.14.3")
 
 
@@ -130,3 +131,19 @@ def test_published_notes_order_beta_1_0_1_above_beta_1_0():
     assert release.sequence_of_release(newer) == 101_000_101
     assert release.sequence_of_release(older) == 101_000_001
     assert release.sequence_of_release(newer) > release.sequence_of_release(older) > release.sequence_of_release(legacy)
+
+
+def test_beta_1_0_2_is_after_beta_1_0_1_which_is_after_beta_1_0():
+    seq = release.sequence_for_version
+    assert seq("1.0.2b1") == 101_000_201
+    assert seq("v1.0.2-beta.1") == 101_000_201
+    assert seq("1.0.2b1") > seq("1.0.1b1") > seq("1.0.0b1") > seq("5.14.3")
+    assert release.BUILD_SEQUENCE == seq("1.0.2b1")
+    assert seq("1.0.1b1") < seq("1.0.1") < seq("1.0.2b1") < seq("1.0.2")
+
+
+def test_published_notes_order_beta_1_0_2_above_beta_1_0_1():
+    newer = {"tag_name": "v1.0.2-beta.1", "body": "notes\nBuild sequence: 101000201\n"}
+    older = {"tag_name": "v1.0.1-beta.1", "body": "notes\nBuild sequence: 101000101\n"}
+    assert release.sequence_of_release(newer) == 101_000_201
+    assert release.sequence_of_release(newer) > release.sequence_of_release(older)

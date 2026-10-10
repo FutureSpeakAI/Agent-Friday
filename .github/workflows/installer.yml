@@ -9,9 +9,9 @@ name: installer
 #                    menu, /api/health, uninstall keeping the person's data,
 #                    reinstall over it
 #                    (packaging/windows/tests/verify-clean-install.ps1)
-#   upgrade          a matrix over BOTH previous releases, v5.14.3 and v1.0.0-beta.1:
+#   upgrade          a matrix over the previous releases, v5.14.3, v1.0.0-beta.1 and v1.0.1-beta.1:
 #                    install that release the way it ships (a zip and Install Agent
-#                    Friday.cmd for 5.x, the setup program for Beta 1.0), create a vault,
+#                    Friday.cmd for 5.x, the setup program for Beta 1.0 and 1.0.1), create a vault,
 #                    upgrade in place with the new exe, prove the passphrase and
 #                    the data survive, the data was backed up first, and the
 #                    shortcuts landed
@@ -29,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       previous:
-        description: "Published release to upgrade from (tag); leave empty to prove both v5.14.3 and v1.0.0-beta.1"
+        description: "Published release to upgrade from (tag); leave empty to prove v5.14.3, v1.0.0-beta.1 and v1.0.1-beta.1"
         required: false
         default: ""
   push:
@@ -55,7 +55,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          # pyproject spells a beta 1.0.1b1 (PEP 440); the tag spells it 1.0.1-beta.1.
+          # pyproject spells a beta 1.0.2b1 (PEP 440); the tag spells it 1.0.2-beta.1.
           $v = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           $m = [regex]::Match($v, '^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$')
           if (-not $m.Success) { throw "pyproject version $v is not a version this workflow understands" }
@@ -131,7 +131,7 @@ jobs:
       matrix:
         # Both previous lines must upgrade in place: 5.14.3 (a zip) and Beta 1.0
         # (a setup program). A manual run may name a single base instead.
-        base: ${{ fromJSON(github.event.inputs.previous && format('["{0}"]', github.event.inputs.previous) || '["v5.14.3","v1.0.0-beta.1"]') }}
+        base: ${{ fromJSON(github.event.inputs.previous && format('["{0}"]', github.event.inputs.previous) || '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1"]') }}
     env:
       PREVIOUS_RELEASE: ${{ matrix.base }}
     steps:
@@ -219,4 +219,4 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
             --repo "${{ github.repository }}" --verify-tag --latest \
-            --title "Agent Friday Beta 1.0.1" --notes-file "$RUNNER_TEMP/notes.md"
+            --title "Agent Friday Beta 1.0.2" --notes-file "$RUNNER_TEMP/notes.md"
