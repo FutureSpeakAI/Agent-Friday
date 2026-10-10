@@ -37,6 +37,8 @@ class _Card:
         self.release_polls = 0
         self.polls_since_park = 0
         self.clock = 0.0
+        self.plan_parks = True
+        self.stand_down_works = True
 
     def brain_freed(self):
         return self.parked and self.release_polls is not None \
@@ -56,14 +58,31 @@ class _Card:
 
 
 class _Arbiter:
+    """`plan_parks`: the grant's own eviction stands the brain down (its plan
+    names the seat). False models the live case: an adopted brain the plan
+    does not name, so the grant displaces nothing. `stand_down_works`: what
+    stand_down_for_voice (by model id) achieves."""
+
     def __init__(self, card):
         self.card = card
 
-    def grant(self, kind, ttl_s=300):
+    def _park(self):
         self.card.parked = True
         self.card.polls_since_park = 0
+
+    def grant(self, kind, ttl_s=300):
         self.card.log.append(("park", kind))
-        return {"ok": True, "lease": {"kind": kind, "displaced": [{"role": "brain"}]}}
+        if self.card.plan_parks:
+            self._park()
+            return {"ok": True, "lease": {"kind": kind, "displaced": ["interactive_brain"]}}
+        return {"ok": True, "lease": {"kind": kind, "displaced": []}}
+
+    def stand_down_for_voice(self, model_id):
+        self.card.log.append(("stand-down", model_id))
+        if self.card.stand_down_works:
+            self._park()
+            return {"ok": True, "why_missed": "interactive_brain is adopted, not pinned"}
+        return {"ok": True, "why_missed": "interactive_brain is adopted, not pinned"}
 
     def release(self, kind=None):
         self.card.parked = False
@@ -166,7 +185,12 @@ def call(app, monkeypatch, tmp_path):
     monkeypatch.setattr(vw, "gpu_queue", lambda: None)
 
     # The brain, the arbiter and the front.
-    monkeypatch.setattr(residency_arbiter, "get_arbiter", lambda: _Arbiter(card))
+    arbiter = _Arbiter(card)
+    monkeypatch.setattr(residency_arbiter, "get_arbiter", lambda: arbiter)
+    # The arbiter's survey of live seats (process and port): the brain's
+    # llama-server answers until it is parked.
+    monkeypatch.setattr(residency_arbiter, "survey_live_seats", lambda *a, **k: (
+        {} if card.parked else {"fixture-brain": (4242, 8090)}))
     monkeypatch.setattr("agent_friday.services.build_hours.is_active", lambda *a, **k: False)
     monkeypatch.setattr(voice_front, "resolve", lambda settings=None: (BONSAI, ""))
     seat = _FrontSeat(card)
@@ -338,3 +362,32 @@ def test_a_release_still_rising_at_the_limit_stops_at_twenty_seconds(call, monke
     call.card.release_polls = None
     w = vw.wait_for_room(100000)
     assert w["ok"] is False and w["settled"] is False and w["waited_s"] == 20.0
+
+
+def test_an_adopted_brain_the_park_missed_is_stood_down_and_then_admitted(call):
+    # The live failure: the grant displaced nothing (the brain was adopted,
+    # not a seat the plan names), so the card stayed full.
+    call.card.plan_parks = False
+    frames = call.run()
+    log = call.card.log
+    assert ("stand-down", "fixture-brain") in log, log
+    assert log.index(("stand-down", "fixture-brain")) < log.index(("gpu", "ear")), log
+    served, = [f for f in frames if f.get("type") == "served_by"]
+    assert served["mouth"] == "kokoro@cuda" and served["brain"] == "parked (voice call)"
+    assert call.card.low >= RESERVE_MIB
+
+
+def test_a_brain_that_will_not_park_is_reported_and_no_front_overfills_the_card(call):
+    call.card.plan_parks = False
+    call.card.stand_down_works = False
+    frames = call.run()
+    log = call.card.log
+    assert ("front", BONSAI) not in log, "no model is loaded below the display reserve"
+    assert call.card.low is None or call.card.low >= RESERVE_MIB, call.card.low
+    served, = [f for f in frames if f.get("type") == "served_by"]
+    assert served["brain"] != "parked (voice call)", served
+    assert served["mind"] == "fixture-brain@local (thinking mode)", served
+    codes = {f.get("code") for f in frames if f.get("type") == "error-nonfatal"}
+    assert {"local_voice_brain_not_parked", "local_voice_front_refused"} <= codes, codes
+    status = [f.get("text") for f in frames if f.get("type") == "status"]
+    assert any("does not fit on the card right now" in (t or "") for t in status), status
