@@ -215,6 +215,18 @@ try {
     foreach ($svc in 'W3SVC', 'WAS') {
         if (Get-Service -Name $svc -ErrorAction SilentlyContinue) { Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue }
     }
+    # Stopping IIS does not free port 80 at once: http.sys can keep IIS's
+    # endpoint for a few seconds, accept connections on 127.0.0.1:80 and never
+    # answer them (https on 443 is unaffected). Stop the http.sys driver too on
+    # this disposable runner, and wait until it no longer serves port 80.
+    net stop http /y 2>&1 | Out-Null
+    $httpSysGone = $false
+    foreach ($i in 1..30) {
+        $q = (netsh http show servicestate view=requestq 2>$null) -join "`n"
+        if ($q -notmatch ':80/') { $httpSysGone = $true; break }
+        Start-Sleep -Seconds 1
+    }
+    Write-Host "http.sys port 80 released: $httpSysGone"
     $la = Api '/api/local-address'
     $hostName = [string]$la.host
     if (-not $hostName) { $hostName = 'agent.friday' }
@@ -252,6 +264,16 @@ try {
             Write-Host "  127.0.0.1:80 with Host $hostName -> $($direct.StatusCode) server: $($direct.Headers['Server'])"
         } catch { Write-Host "  127.0.0.1:80 with Host $hostName -> $($_.Exception.Message)" }
         Write-Host ("  resolves to: " + ((Resolve-DnsName $hostName -ErrorAction SilentlyContinue | ForEach-Object { $_.IPAddress }) -join ', '))
+        # Friday's proxy over https: if this answers, the proxy is alive and the
+        # port 80 connection never reached it.
+        try {
+            [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+            $tls = Invoke-WebRequest -Uri "https://$hostName/api/local-address/ping" -UseBasicParsing -TimeoutSec 10
+            Write-Host "  https ping -> $($tls.StatusCode) $($tls.Content)"
+        } catch { Write-Host "  https ping -> $($_.Exception.Message)" }
+        Write-Host "  http.sys on port 80:"
+        netsh http show servicestate view=requestq 2>$null | Select-String ':80' | ForEach-Object { Write-Host "    $_" }
+        netstat -ano | Select-String ':80\s' | ForEach-Object { Write-Host "    $_" }
     }
     Check 'address' (($null -ne $named) -and ($named.StatusCode -eq 200) -and ($body -match 'FRIDAY')) `
           ("http://$hostName/ -> " + $(if ($named) { "$($named.StatusCode) $($named.Headers['Content-Type']); title: '$title'; server: $($named.Headers['Server'])" } else { "no answer ($namedErr)" }) + "; listener ok: $($serve.ok)")
