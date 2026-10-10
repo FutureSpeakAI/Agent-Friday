@@ -15,6 +15,6 @@
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
-    "@playwright/test": "^1.59.1"
+    "@playwright/test": "^1.63.0"
   }
 }
