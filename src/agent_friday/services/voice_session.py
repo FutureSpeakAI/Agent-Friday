@@ -377,7 +377,7 @@ class VoiceSession:
         for k in ("ear", "mind", "mouth"):
             self.stage(k, "idle")
         self._set_state("listening")
-        self._status("live")
+        self._status("Ready")
 
     # ── client → server ──────────────────────────────────────────────────
 

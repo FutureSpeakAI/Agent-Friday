@@ -122,8 +122,9 @@ def call(app, monkeypatch, tmp_path):
     # GPU workers that ask for room exactly as VoiceWorker.start does, then
     # occupy it; no child process.
     def start(self, progress=None):
-        vw.admit_gpu(self.declared_mib, self.stage)
+        claimed = vw.claim_gpu(self.declared_mib, self.stage)
         card.take(self.declared_mib)
+        vw.unclaim_gpu(claimed)
         card.log.append(("gpu", self.stage))
         self.device, self.model = "cuda", self.args.get("model") or self.engine
         self.voice = self.args.get("voice")
@@ -250,7 +251,8 @@ def test_the_call_parks_the_brain_before_it_admits_the_ear_and_the_mouth(call):
     assert ("gpu", "ear") in log and ("gpu", "mouth") in log, (
         "the ear and the mouth are admitted to the GPU once the brain is parked: %s" % log)
     assert park < log.index(("gpu", "ear")) and park < log.index(("gpu", "mouth")), log
-    assert log.index(("gpu", "mouth")) < log.index(("front", BONSAI)), log
+    # The three stages load together once the card has room: all after the park.
+    assert park < log.index(("front", BONSAI)), log
     assert ("cpu", "ear") not in log and ("cpu", "mouth") not in log, log
     refused = [f for f in frames if f.get("code") == "local_voice_gpu_refused"]
     assert refused == [], refused
@@ -258,7 +260,7 @@ def test_the_call_parks_the_brain_before_it_admits_the_ear_and_the_mouth(call):
     assert served["mouth"] == "kokoro@cuda" and served["ear"].endswith("@cuda"), served
     assert served["brain"] == "parked (voice call)" and not served["degraded"]
     status = [f.get("text") for f in frames if f.get("type") == "status"]
-    assert status.index("making room for the voice") < status.index("starting Ternary Bonsai 1.7B")
+    assert status.index("making room for the voice") < status.index("Warming up the voice")
 
 
 def test_the_park_is_given_back_when_the_call_ends(call):
@@ -285,7 +287,7 @@ def test_on_an_8_gb_card_the_front_is_counted_before_the_ear_and_mouth(call):
     assert ("front", BONSAI) in call.card.log
     assert call.card.low >= RESERVE_MIB, (call.card.low, call.card.log)
     refused = [f["message"] for f in frames if f.get("code") == "local_voice_gpu_refused"]
-    assert refused and "held for the voice front" in refused[0], refused
+    assert refused and "held for the voice stages loading" in refused[0], refused
 
 
 def test_a_failure_after_the_park_gives_the_room_back(call, monkeypatch):
@@ -370,17 +372,11 @@ def test_served_by_says_parked_only_when_the_brain_is_measured_gone(call, monkey
 
 
 def test_a_refused_front_moves_the_engines_off_the_card_before_the_brain_returns(call, monkeypatch):
-    # After the ear and mouth are in, another program takes 5 GB: the front
-    # no longer fits. The ear and mouth leave the card BEFORE the lease (and
-    # with it the brain) is given back.
-    take = call.card.take
-
-    def take_then_grab(mib):
-        take(mib)
-        if mib == WORKING_SETS["kokoro-cuda"] and not getattr(call.card, "grabbed", False):
-            call.card.grabbed = True
-            call.card.taken += 5000
-    monkeypatch.setattr(call.card, "take", take_then_grab)
+    # Another program holds 5 GB: the park frees the brain's room but the front
+    # still does not fit beside it. The front is refused up front, the ear and
+    # mouth that did fit leave the card BEFORE the lease (and with it the
+    # brain) is given back.
+    call.card.taken += 5000
     frames = call.run()
     log = call.card.log
     assert ("front", BONSAI) not in log, log
@@ -399,7 +395,7 @@ def test_a_call_that_parked_the_brain_ends_by_clearing_the_card_before_the_resto
     served, = [f for f in frames if f.get("type") == "served_by"]
     assert served["ear"].endswith("@cuda") and served["mouth"] == "kokoro@cuda"
     log = call.card.log
-    end = log[log.index(("front", BONSAI)) + 1:]
+    end = log[-4:]
     assert end == [("stop", "front"), ("stop", "ear"), ("stop", "mouth"),
                    ("unpark", "voice_call")], end
     # Back where it started: the brain restored and nothing of the voice left.

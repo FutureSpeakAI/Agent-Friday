@@ -130,6 +130,32 @@ class reserving:
         return False
 
 
+#: Card promised to stages that have been admitted and are still loading. A
+#: stage's memory is not on the card until its worker has loaded, so several
+#: stages loading AT ONCE would each be admitted against the same free figure.
+#: An admitted stage claims its need until its load ends; the next admission
+#: counts every claim as taken, so the sum can never breach the reserve.
+_CLAIMED_MIB = [0]
+_CLAIM_LOCK = threading.Lock()
+
+
+def claim_gpu(need_mib: int, stage: str) -> int:
+    """Admit `need_mib` for `stage` AND claim it, atomically. Returns the
+    claimed MiB (hand it to ``unclaim_gpu`` when the load ends, either way).
+    Raises :class:`GpuRefused` exactly as ``admit_gpu`` does."""
+    need = max(0, int(need_mib or 0))
+    with _CLAIM_LOCK:
+        admit_gpu(need, stage)
+        with _RESERVED_LOCK:
+            _CLAIMED_MIB[0] += need
+    return need
+
+
+def unclaim_gpu(mib: int) -> None:
+    with _RESERVED_LOCK:
+        _CLAIMED_MIB[0] = max(0, _CLAIMED_MIB[0] - max(0, int(mib or 0)))
+
+
 def card_free() -> dict:
     """The card as admission measures it: ``{"cuda", "free_mib",
     "reserve_mib", "ok", "detail"}``. ``free_mib`` is the CONSERVATIVE figure:
@@ -213,9 +239,10 @@ def admit_gpu(need_mib: int, stage: str) -> dict:
                          f"GPU voice not loaded: no CUDA device is available "
                          f"({card['detail'] or 'no GPU'}). Running the {stage} on the CPU.")
     reserve, free_mib = card["reserve_mib"], card["free_mib"]
-    held_for = _RESERVED_MIB[0]
+    held_for = _RESERVED_MIB[0] + _CLAIMED_MIB[0]
     if not card["ok"] or free_mib - held_for - int(need_mib) < reserve:
-        promised = (f" ({held_for:,} MiB of it held for the voice front)" if held_for else "")
+        promised = (f" ({held_for:,} MiB of it held for the voice stages loading)"
+                    if held_for else "")
         raise GpuRefused(
             "local_voice_gpu_refused",
             f"GPU voice not loaded: {free_mib:,} MiB free{promised} against a {reserve:,} MiB "
@@ -322,16 +349,21 @@ class VoiceWorker:
 
     def start(self, progress=None) -> "VoiceWorker":
         """Admit, lease, spawn, load. Raises GpuRefused / WorkerDied."""
+        claimed = 0
         if self._want_lease:
-            admit_gpu(self.declared_mib, self.stage)
-            dec = acquire_lease(self.engine, self.holder, self.declared_mib, self.idle_s)
-            if not dec.get("granted"):
-                raise GpuRefused("local_voice_gpu_refused",
-                                 f"GPU voice not loaded: the arbiter declined "
-                                 f"{self.declared_mib:,} MiB for the {self.stage} "
-                                 f"({dec.get('reason') or 'no reason given'}). "
-                                 f"Running the {self.stage} on the CPU instead.")
-            self.lease_id = dec["lease_id"]
+            claimed = claim_gpu(self.declared_mib, self.stage)
+            try:
+                dec = acquire_lease(self.engine, self.holder, self.declared_mib, self.idle_s)
+                if not dec.get("granted"):
+                    raise GpuRefused("local_voice_gpu_refused",
+                                     f"GPU voice not loaded: the arbiter declined "
+                                     f"{self.declared_mib:,} MiB for the {self.stage} "
+                                     f"({dec.get('reason') or 'no reason given'}). "
+                                     f"Running the {self.stage} on the CPU instead.")
+                self.lease_id = dec["lease_id"]
+            except BaseException:
+                unclaim_gpu(claimed)
+                raise
         try:
             if progress:
                 progress(f"loading {self.engine}")
@@ -350,6 +382,8 @@ class VoiceWorker:
         except Exception:
             self.stop(reason="load_failed")
             raise
+        finally:
+            unclaim_gpu(claimed)        # the memory is on the card now (or never was)
         self.last_job_at = time.monotonic()
         self._idle_thread = threading.Thread(target=self._idle_loop, daemon=True,
                                              name=f"voice-idle-{self.stage}")

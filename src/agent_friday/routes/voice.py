@@ -1621,6 +1621,100 @@ def _front_reserve_mib(room) -> int:
         return 0
 
 
+class _StageRun:
+    """One voice stage loading on its own thread. ``result()`` joins and
+    returns the value or raises what the stage raised; ``discard(release)``
+    joins and hands whatever it produced to `release` (a failed start must
+    not leave a stage loading, or its product unreleased)."""
+
+    def __init__(self, name, fn):
+        self.name, self._val, self._exc = name, None, None
+        self._t = threading.Thread(target=self._run, args=(fn,),
+                                   name="voice-start-" + name, daemon=True)
+        self._t.start()
+
+    def _run(self, fn):
+        try:
+            self._val = fn()
+        except BaseException as e:  # noqa: BLE001
+            self._exc = e
+
+    def result(self):
+        self._t.join()
+        if self._exc is not None:
+            raise self._exc
+        return self._val
+
+    def discard(self, release=None):
+        self._t.join()
+        if self._exc is None and self._val is not None and release:
+            try:
+                release(self._val)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _claim_front_room(room) -> None:
+    """Admit the front's card BEFORE the ear and mouth start loading beside it,
+    and hold it until the front has armed (``_unclaim_front_room``): the three
+    load at once, and each later admission counts what is still loading."""
+    model = (room or {}).get("model")
+    if not model or room.get("front_refused"):
+        return
+    from agent_friday.services import voice_front as _vf
+    from agent_friday.services import voice_workers as _vw
+    need = _front_reserve_mib(room)
+    if need <= 0:
+        return
+    label = _vf.FRONT_MODELS[model]["label"]
+    try:
+        room["front_claim_mib"] = _vw.claim_gpu(need, "voice front")
+        room["front_claimed"] = True
+    except _vw.GpuRefused as e:
+        msg = ("%s does not fit on the card right now (%s), so the main model "
+               "answers this call." % (label, e.message.split(": ", 1)[-1]
+                                       .split(" Running")[0].rstrip(".")))
+        _vw._notice("local_voice_front_refused", msg)
+        room["front_refused"] = msg
+
+
+def _unclaim_front_room(room) -> None:
+    mib = (room or {}).pop("front_claim_mib", 0)
+    if mib:
+        from agent_friday.services import voice_workers as _vw
+        _vw.unclaim_gpu(mib)
+
+
+def _warm_timing_path():
+    from agent_friday.services import voice_workers as _vw
+    return _vw._working_sets_path().parent / "voice_start_timing.json"
+
+
+def _last_warm_seconds():
+    """How long the last local voice start took to load, or None. Measured on
+    this machine by the start itself; there is no default to fall back on."""
+    try:
+        v = float(json.loads(_warm_timing_path().read_text(encoding="utf-8"))["seconds"])
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
+def _record_warm_seconds(seconds) -> None:
+    try:
+        p = _warm_timing_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"seconds": round(float(seconds), 1)}), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _warming_text(seconds) -> str:
+    if not seconds:
+        return "Warming up the voice"
+    return "Warming up the voice - about %d s" % max(1, int(round(float(seconds))))
+
+
 def _engines_off_the_card(_vw, selection, ear, mouth, progress=None):
     """The ear and mouth moved to the CPU (a GPU worker is stopped and the
     stage rebuilt with the "never" policy); CPU engines are kept."""
@@ -1924,7 +2018,9 @@ def _arm_voice_front(settings, progress=None, holder="session", room=None):
         # back by whoever holds GPU engines in the room it freed: the session
         # moves its ear and mouth off the card first, so the brain's restore
         # gets the room it had (here, with no engines, it is given back now).
-        refused = _front_refused(seat, model, label)
+        refused = (room.get("front_refused")
+                   or ("" if room.get("front_claimed")
+                       else _front_refused(seat, model, label)))
         if refused:
             room["front_refused"] = refused
             if progress:
@@ -2711,14 +2807,21 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
 DEFER_ACK = "I'll hand that to my deeper mind; it'll report back."
 
 
-def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None) -> dict:
+def _lr_follow_turns() -> int:
+    from agent_friday.services import laya_router as _lr
+    return _lr.FOLLOW_UP_TURNS
+
+
+def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None,
+                      last_route=None) -> dict:
     """What a routed voice turn does: services/laya_router's decision, with
     this surface's policy for "defer" (a change goes to delegate_to_friday,
     a governed background task whose own gates and cards decide it, exactly
     as in text mode). Returns {tool, args, ack, question, label, receipt}."""
     from agent_friday.services import laya_router as _lr
+    kw = {"last_route": last_route} if last_route else {}
     r = (route_fn or _lr.route)(user_text, tools=list(held), surface="voice",
-                                pending_card=pending_card)
+                                pending_card=pending_card, **kw)
     tool, args = (r.tool, dict(r.args)) if r.decision == "tool" else (None, None)
     ack, label = _lr.acknowledgement(r), r.label
     handed = None
@@ -2838,8 +2941,19 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
             spoken = []
     if spoken:
         tool_session["voiced_cards"] = list(spoken)    # answer_card's one rule (agent)
+    # The previous turn's look-up, for a follow-up that drops its subject
+    # ("what about tomorrow?"); it goes stale after a few turns.
+    _prev = tool_session.get("last_route")
+    if _prev:
+        _prev["age"] = int(_prev.get("age", 0)) + 1
+        if _prev["age"] > _lr_follow_turns():
+            tool_session.pop("last_route", None)
+            _prev = None
     plan = _voice_route_plan(user_text, list(front["contract"].get("names") or []),
-                             pending_card=_pending_voice_card(spoken, _cid))
+                             pending_card=_pending_voice_card(spoken, _cid),
+                             last_route=_prev)
+    if plan.get("tool") and plan["tool"] != "delegate_to_friday" and plan.get("args") is not None:
+        tool_session["last_route"] = {"tool": plan["tool"], "args": dict(plan["args"]), "age": 0}
     send({"type": "route", **plan["receipt"]})
     _carried = {"ids": [], "line": ""}
 
@@ -3687,6 +3801,7 @@ if sock is not None:
         _sel = _vm.read_selection(settings)
         _prog = lambda m: _send({"type": "status", "text": str(m)})  # noqa: E731
         _send({"type": "status", "text": "starting local voice"})
+        _warm0 = _time.monotonic()
         # Make room FIRST: when this call parks the brain, the park happens
         # before the ear and mouth ask the card, so they are admitted against
         # the room the park frees, not refused against the resident brain.
@@ -3702,23 +3817,49 @@ if sock is not None:
         # Whatever leaves this span by an exception, from the park to the
         # armed front, gives the room back (an arm failure has already
         # given back its share; giving back twice is a no-op).
+        # The ear, the mouth and the front are independent processes: they load
+        # AT ONCE. The front's card is admitted and claimed first, and every
+        # stage claims its own on admission, so the sum is checked, never each
+        # stage against a card that has not yet felt the others. The page says
+        # what is happening, with the last measured duration when there is one.
+        _warm_say = lambda m: _vlog.info("voice start: %s", m)  # noqa: E731
+        _prog(_warming_text(_last_warm_seconds()))
+        _claim_front_room(_room)
+        _front_run = _StageRun("front", lambda: _arm_voice_front(
+            settings, progress=_warm_say, holder=_vsession, room=_room))
+
+        def _front_gone():
+            _front_run.discard(_release_voice_front)
+            _unclaim_front_room(_room)
         try:
             try:
-                # The front loads after the ear and mouth: its need is held while
-                # they are admitted, so all three fit above the display reserve.
-                with _vw.reserving(_front_reserve_mib(_room)):
-                    ear = _vw.session_engine("ear", _sel["ear"], progress=_prog)
-                    # The mouth degrades (GPU -> CPU Kokoro -> Piper) and never raises
-                    # GpuRefused: a session is not refused for where its voice runs.
-                    mouth = _vw.session_engine("mouth", _sel["mouth"], progress=_prog)
+                _ear_run = _StageRun("ear", lambda: _vw.session_engine(
+                    "ear", _sel["ear"], progress=_warm_say))
+                # The mouth degrades (GPU -> CPU Kokoro -> Piper) and never raises
+                # GpuRefused: a session is not refused for where its voice runs.
+                _mouth_run = _StageRun("mouth", lambda: _vw.session_engine(
+                    "mouth", _sel["mouth"], progress=_warm_say))
+                _ear_exc = _mouth_exc = None
+                try:
+                    ear = _ear_run.result()
+                except BaseException as _e1:  # noqa: BLE001
+                    _ear_exc = _e1
+                try:
+                    mouth = _mouth_run.result()
+                except BaseException as _e2:  # noqa: BLE001
+                    _mouth_exc = _e2
+                if _ear_exc or _mouth_exc:
+                    raise (_ear_exc or _mouth_exc)
             except _vw.GpuRefused as _ge:
                 # Only the ear can land here (its `required` policy).
+                _front_gone()
                 _release_voice_front(_room)
                 from agent_friday.services import reasoning_trace as _rt_v
                 _rt_v.set_reason("local voice refused by the GPU: " + str(_ge.message))
                 _send({"type": "error", "error": _ge.code, "detail": _ge.message})
                 return
             except Exception as _le:
+                _front_gone()
                 _release_voice_front(_room)
                 _vlog.error("session aborted: engine load failed: %s: %s",
                             type(_le).__name__, _le)
@@ -3782,8 +3923,10 @@ if sock is not None:
             # deep work through ask_friday/delegate_to_friday. With no front
             # installed the brain answers, at its own pace, and says so.
             try:
-                _front = _arm_voice_front(settings, progress=_prog, holder=_vsession,
-                                          room=_room)
+                try:
+                    _front = _front_run.result()
+                finally:
+                    _unclaim_front_room(_room)
             except Exception as _fe:
                 _vlog.error("session refused: voice front failed: %s: %s",
                             type(_fe).__name__, _fe)
@@ -3799,8 +3942,10 @@ if sock is not None:
                 _release_voice_front(_room)
                 _room["lease"] = None
         except BaseException:
+            _front_gone()
             _release_voice_front(_room)
             raise
+        _record_warm_seconds(_time.monotonic() - _warm0)
         # Notices raised while arming (a front that did not fit).
         for _n in list(_vw.NOTICES):
             _send({"type": "error-nonfatal", "code": _n.get("code"),
