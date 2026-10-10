@@ -67,7 +67,11 @@ def test_a_qwen_front_keeps_the_default_engines(tmp_path):
 def _parked(monkeypatch, model, admit):
     from agent_friday.routes import voice as voice_routes
     from agent_friday.services import voice_workers
+    from agent_friday.services import nemo_voice
     monkeypatch.setattr(voice_workers, "admit_gpu", admit)
+    # A card to share: with no CUDA device nothing is parked (tested on its
+    # own); these cases are about whether the front fits beside the brain.
+    monkeypatch.setattr(nemo_voice, "gpu_status", lambda fresh=False: {"cuda": True})
     return voice_routes._brain_parked_for_call({"voice_brain_during_calls": "auto"}, model)
 
 
