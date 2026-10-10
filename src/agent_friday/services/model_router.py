@@ -2029,6 +2029,10 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # — data stays on-device — exactly like the Ollama path.
             # A local provider serving a model the daemon relays to ollama.com
             # (`glm-4.6:cloud`) is not on-device: the model decides too.
+            if _is_cloud_model_tag(model):
+                # No image gate exists: a cloud-relayed model gets no image parts.
+                from agent_friday.services.egress_gate import withhold_cloud_tagged_images
+                payload = withhold_cloud_tagged_images(payload, pname, model)
             if not local_bypass or _is_cloud_model_tag(model):
                 payload = _seal_or_block(payload, pname, model=model)
             # Streaming is a wire choice, not a contract change: the SSE

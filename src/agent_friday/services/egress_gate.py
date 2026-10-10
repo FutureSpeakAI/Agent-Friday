@@ -1523,6 +1523,15 @@ def gate_ollama_body(body: dict[str, Any], model: str = "",
                                model=model)
 
 
+_IMAGE_PART_TYPES = ("image_url", "input_image", "image")
+
+
+def withhold_cloud_tagged_images(body, provider, model):
+    """Public name for the model_router seam: images out of a body bound for a
+    cloud-tagged model (native Ollama `images` and OpenAI-style image parts)."""
+    return _withhold_ollama_images(body, provider, model)
+
+
 def _withhold_ollama_images(body: dict[str, Any], provider: str, model: str) -> dict[str, Any]:
     """Drop native Ollama ``images`` (base64 strings on the body or on a
     message) from a body bound for a cloud-tagged model. No image gate exists
@@ -1547,6 +1556,15 @@ def _withhold_ollama_images(body: dict[str, Any], provider: str, model: str) -> 
             if isinstance(m, dict) and "images" in m:
                 _drop(m["images"], "messages[%d].images" % i)
                 m = {k: v for k, v in m.items() if k != "images"}
+            if isinstance(m, dict) and isinstance(m.get("content"), list):
+                # OpenAI-style content parts: image_url / input_image / image.
+                parts = [p for p in m["content"]
+                         if not (isinstance(p, dict) and p.get("type") in _IMAGE_PART_TYPES)]
+                if len(parts) != len(m["content"]):
+                    record_binary_egress(provider, "messages[%d].content[image]" % i,
+                                         action="withheld", reason=why,
+                                         byte_len=len(json.dumps(m["content"])) - len(json.dumps(parts)))
+                    m = {**m, "content": parts}
             msgs.append(m)
         out["messages"] = msgs
     return out

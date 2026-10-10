@@ -299,7 +299,7 @@ class TestOpenAIShapeSeatServingACloudTaggedModelIsSealed:
                       "classification": "local", "base_url": "http://127.0.0.1:1234/v1",
                       "auth": {"type": "none"}}
 
-    def _run(self, monkeypatch, model):
+    def _run(self, monkeypatch, model, content=None):
         import json as _json
         import requests
         import agent_friday.services.model_router as smr
@@ -324,7 +324,7 @@ class TestOpenAIShapeSeatServingACloudTaggedModelIsSealed:
             sent.append(_json.dumps(json))
             return _Resp()
         monkeypatch.setattr(requests, "post", post)
-        smr._call_openai([{"role": "user", "content": CANARY}], model=model, tools=None,
+        smr._call_openai([{"role": "user", "content": content or CANARY}], model=model, tools=None,
                          provider=dict(self.LOCAL_PROVIDER), stream=False)
         return sent
 
@@ -382,3 +382,34 @@ def test_every_gate_call_in_an_ollama_path_passes_the_model(rel):
 def test_the_ollama_seams_call_the_gate():
     for rel in ("routing/ollama_manager.py", "services/local_call.py"):
         assert "gate_ollama_body(" in (SRC / rel).read_text(encoding="utf-8-sig"), rel
+
+
+class TestOpenAIStyleImagePartsAreWithheldFromCloudTaggedModels:
+    """``_call_openai`` already drops a message whose content list holds anything
+    but text blocks, so an image part cannot enter by that door; the payload
+    seam strips it anyway, and records it, for any path that builds one."""
+    PIXELS = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"  # synthetic
+
+    def _body(self):
+        return {"model": "glm-4.6:cloud", "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "what is this"},
+            {"type": "image_url", "image_url": {"url": self.PIXELS}}]}]}
+
+    @pytest.mark.parametrize("model", CLOUD_TAGGED)
+    def test_the_seam_strips_image_parts_and_records_it(self, monkeypatch, tmp_path, model):
+        monkeypatch.setattr(eg, "_DEFAULT_LOG", tmp_path / "egress.log")
+        body = self._body()
+        out = eg.withhold_cloud_tagged_images(body, "lmstudio-test", model)
+        assert out["messages"][0]["content"] == [{"type": "text", "text": "what is this"}]
+        assert self.PIXELS in _flat(body), "the caller's body is not edited"
+        assert "withheld" in (tmp_path / "egress.log").read_text(encoding="utf-8")
+
+    def test_a_body_without_images_is_equal(self):
+        body = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+        assert eg.withhold_cloud_tagged_images(body, "p", "glm-4.6:cloud") == body
+
+    @pytest.mark.parametrize("model", CLOUD_TAGGED)
+    def test_no_image_reaches_the_wire_from_call_openai(self, monkeypatch, model):
+        run = TestOpenAIShapeSeatServingACloudTaggedModelIsSealed()._run
+        sent = run(monkeypatch, model, content=self._body()["messages"][0]["content"])
+        assert all("iVBORw0KGgo" not in s for s in sent)
