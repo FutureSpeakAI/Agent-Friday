@@ -204,6 +204,36 @@ class OllamaManager:
                 self._probe_event = None
             event.set()
 
+    def peek_models(self):
+        """The last known installed-model list, never opening a connection:
+        the cached list (even when stale), or None when nothing is known yet.
+        A stale or missing list starts ONE refresh behind the caller.
+
+        For callers that must not wait on the network, above all provider
+        resolution inside every settings load: a voice turn reads settings,
+        and a refused loopback connect costs seconds on Windows."""
+        now = time.time()
+        cached = self._models_cache
+        if cached is None or (now - self._models_ts) >= self._models_ttl:
+            self._start_models_refresh()
+        return cached
+
+    def _start_models_refresh(self):
+        with self._probe_lock:
+            if getattr(self, "_models_refreshing", False):
+                return
+            self._models_refreshing = True
+
+        def _refresh():
+            try:
+                self.list_models()
+            except Exception:
+                pass
+            finally:
+                with self._probe_lock:
+                    self._models_refreshing = False
+        threading.Thread(target=_refresh, daemon=True, name="ollama-models").start()
+
     def list_models(self):
         now = time.time()
         if self._models_cache is not None and (now - self._models_ts) < self._models_ttl:
