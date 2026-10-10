@@ -3512,6 +3512,134 @@ function DiscussPanel({ story, onClose }) {
 // same in ui_parts/app.html. Episodes never play on their own: the player
 // opens on a click, a notification's "Listen", or a voice request
 // ({type:'podcast'} on the desktop bus, see fridayRunActions).
+// ═══ THE AVATAR FOLLOWS THE AUDIO THAT IS PLAYING ═══
+// Every source that can make the avatar speak (the voice engine, a podcast, any
+// recording) reports its own state under its own name; the avatar's two signals
+// are the combination: speaking when any source is, as loud as the loudest. A
+// source that falls silent, or stops, no longer blanks one that is still going.
+const FRIDAY_AVATAR_SOURCES = {};
+let fridayAvatarWrote = false;
+function fridayAvatarSignal(source, speaking, amp) {
+  if (speaking == null) delete FRIDAY_AVATAR_SOURCES[source];
+  else FRIDAY_AVATAR_SOURCES[source] = { s: !!speaking, a: Math.max(0, amp || 0) };
+  let s = false, a = 0;
+  for (const k in FRIDAY_AVATAR_SOURCES) {
+    const v = FRIDAY_AVATAR_SOURCES[k];
+    if (v.s) s = true;
+    if (v.a > a) a = v.a;
+  }
+  // No source is left: put the signals at rest once, and then leave them to
+  // whoever else writes them (read-aloud, the Front Page voice).
+  const any = Object.keys(FRIDAY_AVATAR_SOURCES).length > 0;
+  if (!any && !fridayAvatarWrote) return;
+  fridayAvatarWrote = any;
+  window._fridayHoloAmplitude = a;
+  if (!window._fridayMoodSignals) window._fridayMoodSignals = {};
+  window._fridayMoodSignals.ttsActive = s;
+}
+window.fridayAvatarSignal = fridayAvatarSignal;
+// Any <audio> or <video> that is really playing drives the avatar from the
+// element's own events (play, pause, ended, seeking, timeupdate) and its own
+// sound (captureStream taps it without rerouting it, so playback never depends
+// on this). A player that knows whose voice is on can say so: speaking(el) is
+// asked on every refresh. An element nobody attached is attached on its first
+// 'play' (the capture listener below), so a recording opened anywhere counts.
+const fridayMediaAvatar = (function () {
+  const known = new WeakMap();
+  const live = new Set();
+  let ctx = null, raf = 0, iv = 0, seq = 0;
+  const audible = (el) => !el.paused && !el.ended && !el.muted && el.volume > 0 && el.readyState >= 2;
+  function tap(st) {
+    if (st.an || st.tries >= 5) return;
+    st.tries++;
+    try {
+      const stream = (st.el.captureStream || st.el.mozCaptureStream).call(st.el);
+      if (!stream.getAudioTracks().length) return;
+      if (!ctx) { const Ctx = window.AudioContext || window.webkitAudioContext; ctx = new Ctx(); }
+      st.an = ctx.createAnalyser();
+      st.an.fftSize = 256;
+      ctx.createMediaStreamSource(stream).connect(st.an);
+      st.buf = new Uint8Array(st.an.frequencyBinCount);
+    } catch (_) { st.an = null; }
+  }
+  function report(st) {
+    const on = audible(st.el) && st.speaking(st.el) !== false;
+    let amp = 0;
+    if (on && st.an) {
+      st.an.getByteFrequencyData(st.buf);
+      let sum = 0;
+      for (let i = 0; i < st.buf.length; i++) sum += st.buf[i];
+      amp = Math.min(1, sum / st.buf.length / 128);
+    }
+    fridayAvatarSignal(st.key, on, amp);
+  }
+  function loop() { live.forEach(report); raf = requestAnimationFrame(loop); }
+  function refresh(st) {
+    if (audible(st.el)) {
+      if (!live.has(st)) live.add(st);
+      tap(st);
+      if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+      if (!raf) loop();
+      // Not the frame rate: a weak GPU draws two frames a second, and whose
+      // line is playing must follow the audio, so a timer refreshes it too.
+      if (!iv) iv = setInterval(() => live.forEach(report), 100);
+      report(st);
+    } else {
+      live.delete(st);
+      fridayAvatarSignal(st.key, null);
+      if (!live.size) {
+        if (raf) cancelAnimationFrame(raf);
+        if (iv) clearInterval(iv);
+        raf = 0; iv = 0;
+      }
+    }
+  }
+  const EVENTS = ['play', 'playing', 'pause', 'ended', 'emptied', 'abort', 'error', 'waiting', 'seeked', 'timeupdate', 'volumechange', 'loadeddata'];
+  function attach(el, opts) {
+    if (!el || !el.addEventListener) return function () {};
+    let st = known.get(el);
+    if (!st) {
+      st = { el: el, key: 'media:' + (++seq), tries: 0, an: null, buf: null, speaking: () => true, off: null };
+      const on = () => refresh(st);
+      EVENTS.forEach(ev => el.addEventListener(ev, on));
+      st.off = () => {
+        EVENTS.forEach(ev => el.removeEventListener(ev, on));
+        live.delete(st);
+        fridayAvatarSignal(st.key, null);
+        known.delete(el);
+        if (!live.size) { if (raf) cancelAnimationFrame(raf); if (iv) clearInterval(iv); raf = 0; iv = 0; }
+      };
+      known.set(el, st);
+    }
+    if (opts && typeof opts.speaking === 'function') st.speaking = opts.speaking;
+    refresh(st);
+    return st.off;
+  }
+  document.addEventListener('play', (e) => {
+    const t = e.target;
+    if (t && (t.tagName === 'AUDIO' || t.tagName === 'VIDEO')) attach(t);
+  }, true);
+  return { attach: attach };
+})();
+window.fridayMediaAvatar = fridayMediaAvatar;
+// Friday's own media player is the one `PodcastPlayer` below. Every place that
+// opens a podcast or a recording asks it here: an episode by its id, a recording
+// by its file. It opens at once and plays; a card carries what it needs (an
+// episode card its `source_ref`, an audio card its `file_url`).
+function fridayPlayMedia(item, opts) {
+  if (!item) return false;
+  const o = opts || {};
+  const op = o.open ? 'open' : 'play';
+  if (item.kind === 'episode' && item.source_ref) { fridayPodcast(op, item.source_ref, { t: o.at }); return true; }
+  if ((item.kind === 'audio' || item.kind === 'music') && item.file_url) {
+    window.dispatchEvent(new CustomEvent('friday-podcast', {
+      detail: { op: op, episode_id: '', t: o.at, media: { id: item.id, title: item.title, url: item.file_url, kind: item.kind, duration_s: (item.extra || {}).duration_s || 0 } }
+    }));
+    return true;
+  }
+  return false;
+}
+window.fridayPlayMedia = fridayPlayMedia;
 function fridayPodcast(op, episodeId, extra) {
   window.dispatchEvent(new CustomEvent('friday-podcast', {
     detail: Object.assign({ op: op, episode_id: episodeId || '' }, extra || {})
@@ -3613,6 +3741,7 @@ function PodcastPlayer() {
   const [ep, setEp] = useState(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [dur, setDur] = useState(0);
   const [rate, setRate] = useState(1);
   const [showText, setShowText] = useState(false);
   const [srcOpen, setSrcOpen] = useState(null);
@@ -3626,13 +3755,26 @@ function PodcastPlayer() {
   epRef.current = ep;
   const report = (playingNow) => {
     const e = epRef.current, a = audio.current;
-    if (!e || !a) return;
+    if (!e || !a || e.generic) return;
     fetch('/api/podcasts/now-playing', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ episode_id: e.id, t: a.currentTime, playing: !!playingNow })
     }).catch(() => {});
   };
-  const load = async (id, play) => {
+  const load = async (id, play, media) => {
+    if (media) {
+      // A recording that is not an episode: the same player, the file itself.
+      const key = 'media:' + (media.id || media.url);
+      if (epRef.current && epRef.current.id === key) {
+        if (play && audio.current) audio.current.play().catch(() => {});
+        return;
+      }
+      pendingPlay.current = !!play;
+      setT(0); setDur(0); setSrcOpen(null);
+      setEp({ id: key, generic: true, title: media.title || 'Recording', show: 'Media', credit: 'Media',
+        audio_url: media.url, duration_s: media.duration_s || 0, chapters: [], lines: [], hosts: {}, sources: [] });
+      return;
+    }
     if (!id) return;
     if (epRef.current && epRef.current.id === id) {
       if (play && audio.current) audio.current.play().catch(() => {});
@@ -3678,7 +3820,7 @@ function PodcastPlayer() {
     const op = d.op || 'open';
     if (op === 'open' || op === 'play') {
       if (d.t != null) pendingSeek.current = Number(d.t) || 0;
-      load(d.episode_id, op === 'play');
+      load(d.episode_id, op === 'play', d.media);
       return;
     }
     if (op === 'seek') { seek(Number(d.t) || 0); return; }
@@ -3700,70 +3842,26 @@ function PodcastPlayer() {
     return () => clearInterval(iv);
   }, [playing, ep && ep.id]);
   useEffect(() => { if (audio.current) audio.current.playbackRate = rate; }, [rate, ep && ep.id]);
-  // The avatar shows Friday speaking while an episode plays one of HER lines
-  // (a co-host's line is not her state): the same two signals the voice and
-  // read-aloud paths set, from the episode's real audio. captureStream taps the
-  // element without rerouting it, so playback never depends on this.
-  const speakTap = useRef(null);
+  // The avatar shows Friday speaking while the audio plays one of HER lines
+  // (a co-host's line is not her state), and for a plain recording while it
+  // plays: from the audio element's own playback (fridayMediaAvatar), whichever
+  // way the player was opened. A pause, the end or a closed player rests it.
   useEffect(() => {
     const a = audio.current;
-    if (!playing || !a) return;
-    const hostsNow = (epRef.current && epRef.current.hosts) || {};
+    if (!a) return undefined;
     const herName = fridayName();
-    const isHer = (s) => s === 'a' || ((hostsNow[s] || {}).name || '') === herName;
-    let tap = speakTap.current;
-    if (!tap || tap.el !== a) {
-      tap = { el: a };
-      try {
-        const stream = (a.captureStream || a.mozCaptureStream).call(a);
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        tap.ctx = new Ctx();
-        tap.an = tap.ctx.createAnalyser();
-        tap.an.fftSize = 256;
-        tap.ctx.createMediaStreamSource(stream).connect(tap.an);
-        tap.buf = new Uint8Array(tap.an.frequencyBinCount);
-      } catch (_) { tap.an = null; }
-      speakTap.current = tap;
-    }
-    if (tap.ctx && tap.ctx.state === 'suspended') tap.ctx.resume().catch(() => {});
-    let raf = 0;
-    // Whose line is playing follows the audio, not the frame rate: the scene can
-    // draw at two or three frames a second on a weak GPU, so the state is also
-    // refreshed by a timer and by the audio's own progress, and a co-host's line
-    // never keeps Friday's speaking state for the length of a slow frame.
-    const tick = () => {
-      const lns = (epRef.current && epRef.current.lines) || [];
+    return fridayMediaAvatar.attach(a, { speaking: (el) => {
+      const e = epRef.current;
+      if (!e || e.generic) return true;
+      const hostsNow = e.hosts || {};
       let ln = null;
-      for (const l of lns) { if ((l.start || 0) <= a.currentTime + 0.05) ln = l; else break; }
-      const hers = !!ln && isHer(ln.speaker);
-      let amp = 0;
-      if (hers && tap.an) {
-        tap.an.getByteFrequencyData(tap.buf);
-        let s = 0;
-        for (let i = 0; i < tap.buf.length; i++) s += tap.buf[i];
-        amp = Math.min(1, s / tap.buf.length / 128);
-      }
-      window._fridayHoloAmplitude = amp;
-      if (!window._fridayMoodSignals) window._fridayMoodSignals = {};
-      window._fridayMoodSignals.ttsActive = hers;
-    };
-    const loop = () => {
-      tick();
-      raf = requestAnimationFrame(loop);
-    };
-    loop();
-    const iv = setInterval(tick, 100);
-    a.addEventListener('timeupdate', tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearInterval(iv);
-      a.removeEventListener('timeupdate', tick);
-      window._fridayHoloAmplitude = 0;
-      if (window._fridayMoodSignals) window._fridayMoodSignals.ttsActive = false;
-    };
-  }, [playing, ep && ep.id]);
+      for (const l of (e.lines || [])) { if ((l.start || 0) <= el.currentTime + 0.05) ln = l; else break; }
+      return !!ln && (ln.speaker === 'a' || ((hostsNow[ln.speaker] || {}).name || '') === herName);
+    } });
+  }, [ep && ep.id, !!popped]);
   if (!ep) return null;
   const lines = ep.lines || [];
+  const total = ep.duration_s || dur;
   let cur = -1;
   lines.forEach((ln, i) => { if ((ln.start || 0) <= t + 0.05) cur = i; });
   const line = lines[cur];
@@ -3857,14 +3955,15 @@ function PodcastPlayer() {
       h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.credit || ep.show),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, margin: '2px 0 4px' } },
         ep.credit || ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
-      h(PodcastBadges, { ep: ep })),
+      ep.generic ? null : h(PodcastBadges, { ep: ep })),
     popped ? btn('⇲', 'Put the player back in the window', dockBack) : btn('⧉', 'Pop the player out', popOut),
     btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); dockBack(); setEp(null); })),
   h('audio', {
-    ref: audio, preload: 'metadata', src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/audio',
+    ref: audio, preload: 'metadata', src: ep.generic ? ep.audio_url : '/api/podcasts/' + encodeURIComponent(ep.id) + '/audio',
     onLoadedMetadata: () => {
       const a = audio.current;
       if (!a) return;
+      setDur(isFinite(a.duration) ? a.duration : 0);
       if (pendingSeek.current != null) { a.currentTime = pendingSeek.current; setT(a.currentTime); pendingSeek.current = null; }
       if (pendingPlay.current) { pendingPlay.current = false; a.play().catch(() => {}); }
     },
@@ -3872,24 +3971,24 @@ function PodcastPlayer() {
     onPlay: () => { setPlaying(true); report(true); },
     onPause: () => { setPlaying(false); report(false); },
     onEnded: () => { setPlaying(false); report(false); }
-  }, h('track', { kind: 'captions', src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/captions.vtt', srcLang: 'en', label: 'English', default: true })),
+  }, ep.generic ? null : h('track', { kind: 'captions', src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/captions.vtt', srcLang: 'en', label: 'English', default: true })),
   h('input', {
-    type: 'range', min: 0, max: Math.max(1, ep.duration_s || 0), step: 1, value: Math.floor(t),
-    'aria-label': 'Position', 'aria-valuetext': podcastClock(t) + ' of ' + podcastClock(ep.duration_s),
+    type: 'range', min: 0, max: Math.max(1, total), step: 1, value: Math.floor(t),
+    'aria-label': 'Position', 'aria-valuetext': podcastClock(t) + ' of ' + podcastClock(total),
     onChange: (e) => seek(Number(e.target.value)), style: { width: '100%', accentColor: PODCAST_C.accent }
   }),
   h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-    btn('⏮', 'Previous chapter', () => stepChapter(-1)),
+    ep.generic ? null : btn('⏮', 'Previous chapter', () => stepChapter(-1)),
     btn(playing ? '⏸' : '▶', playing ? 'Pause' : 'Play', () => { const a = audio.current; if (a) (a.paused ? a.play().catch(() => {}) : a.pause()); }),
-    btn('⏭', 'Next chapter', () => stepChapter(1)),
-    h('span', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.mono } }, podcastClock(t) + ' / ' + podcastClock(ep.duration_s)),
+    ep.generic ? null : btn('⏭', 'Next chapter', () => stepChapter(1)),
+    h('span', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.mono } }, podcastClock(t) + ' / ' + podcastClock(total)),
     h('span', { style: { flex: 1 } }),
     h('select', {
       'aria-label': 'Playback speed', value: rate, onChange: (e) => setRate(Number(e.target.value)),
       style: { background: 'transparent', color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6 }
     }, [0.8, 1, 1.25, 1.5, 1.75, 2].map(r => h('option', { key: r, value: r, style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, r + '×'))),
-    btn(showSources ? 'Hide sources' : 'Sources', showSources ? 'Hide the sources' : 'Show the sources', () => setShowSources(!showSources), { 'aria-expanded': showSources }),
-    btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
+    ep.generic ? null : btn(showSources ? 'Hide sources' : 'Sources', showSources ? 'Hide the sources' : 'Show the sources', () => setShowSources(!showSources), { 'aria-expanded': showSources }),
+    ep.generic ? null : btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
   nowSources.length ? h('div', { 'aria-label': 'Now citing', 'aria-live': 'polite', style: { display: 'flex', flexDirection: 'column', gap: 4, borderLeft: '3px solid ' + PODCAST_C.accent, paddingLeft: 8, background: PODCAST_C.accentSoft, borderRadius: 6, padding: '6px 8px' } },
     h('div', { style: { fontSize: PODCAST_C.xs, color: PODCAST_C.dim, textTransform: 'uppercase', letterSpacing: '0.08em' } }, 'Now citing'),
     nowSources.map(s => h('div', { key: s.id, style: { fontSize: PODCAST_C.md, lineHeight: 1.35 } },
@@ -23990,7 +24089,7 @@ function App(){
     // The avatar reacts at once: Friday stopped, so the scene stops showing
     // her speaking now (ignoring the analyser's fading tail for a quarter of
     // a second), and shows that it is listening.
-    window._fridayHoloAmplitude=0;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;
+    fridayAvatarSignal('voice',false,0);
     v._voiceSpokeAt=0;v._ampQuietUntil=performance.now()+250;
     if(!/^voiceStop/.test(caller||'')){try{window.fridayVibe&&window.fridayVibe.setSystemMood&&window.fridayVibe.setSystemMood('LISTENING')}catch(_){}}
     // Talked over (the server's interrupt, or Escape): the structure yields.
@@ -24067,15 +24166,16 @@ function App(){
         v.usePlayerWorklet=false;
         console.warn('[voice] AudioWorklet player unavailable — falling back to per-chunk BufferSource scheduling:',err);
       }
-      const _voiceAmpLoop=()=>{if(!v.audioCtx){window._fridayHoloAmplitude=0;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;return}v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);let s=0;for(let i=0;i<v.holoAmpBuf.length;i++)s+=v.holoAmpBuf[i];const _amp=performance.now()<(v._ampQuietUntil||0)?0:Math.min(1,(s/v.holoAmpBuf.length)/128);window._fridayHoloAmplitude=_amp;
+      const _voiceAmpLoop=()=>{if(!v.audioCtx){fridayAvatarSignal('voice',null);return}v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);let s=0;for(let i=0;i<v.holoAmpBuf.length;i++)s+=v.holoAmpBuf[i];const _amp=performance.now()<(v._ampQuietUntil||0)?0:Math.min(1,(s/v.holoAmpBuf.length)/128);
         // Flip the scene to the SPEAKING mood (green energy, faster particles, brighter
         // bloom) whenever Friday is actually emitting voice audio. holoAnalyser taps the
         // OUTPUT node, so this only spikes on Friday's speech — never on the user's mic.
         // Hold ~350ms past the last loud frame so brief gaps between words don't strobe
         // the color back to LISTENING mid-sentence.
-        if(!window._fridayMoodSignals)window._fridayMoodSignals={};
+        // The signals are the combination of every source (a podcast or a
+        // recording playing too): this one reports under its own name.
         if(_amp>0.05)v._voiceSpokeAt=performance.now();
-        window._fridayMoodSignals.ttsActive=(performance.now()-(v._voiceSpokeAt||0))<350;
+        fridayAvatarSignal('voice',(performance.now()-(v._voiceSpokeAt||0))<350,_amp);
         v._holoFrame=requestAnimationFrame(_voiceAmpLoop)};_voiceAmpLoop();
       const _outputId=agentSettings.audio_output_device_id;
       if(_outputId&&v.audioCtx.setSinkId){try{await v.audioCtx.setSinkId(_outputId)}catch(e){console.warn('[voice] setSinkId failed:',e)}}
@@ -24521,8 +24621,7 @@ function App(){
       try{v2.micStream&&v2.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
       try{v2.audioCtx&&v2.audioCtx.close()}catch(_){}
       try{if(v2._holoFrame)cancelAnimationFrame(v2._holoFrame)}catch(_){}
-      window._fridayHoloAmplitude=0;
-      if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;
+      fridayAvatarSignal('voice',null);
       window._fridayMicLevel=0;window.__fridayVoiceMicOpen=false;
       voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false};
       setMicLevel(0);
@@ -24602,8 +24701,7 @@ function App(){
     try{v.micStream&&v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
     try{if(v._holoFrame)cancelAnimationFrame(v._holoFrame)}catch(_){}
     try{v.audioCtx&&v.audioCtx.close()}catch(_){}
-    window._fridayHoloAmplitude=0;
-    if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;
+    fridayAvatarSignal('voice',null);
     // The scene reads the mic level: zero it, or the listening ripple goes on.
     window._fridayMicLevel=0;window.__fridayVoiceMicOpen=false;
     voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false};
