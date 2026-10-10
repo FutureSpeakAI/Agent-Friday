@@ -1,4 +1,11 @@
-tests/unit/test_tts_local_only_fails_closed.py
-tests/api/test_tts_pii_gate.py
-tests/api/test_offline_voice_resilience.py
-tests/unit/test_news_is_local_only.py
+tests/unit/test_ternary_bonsai_voice.py
+tests/unit/test_voice_routed_turn.py
+tests/unit/test_voice_gate_fixes.py
+tests/unit/test_voice_review_2c646e7f.py
+tests/unit/test_laya_router.py
+tests/unit/test_voice_front_calls_first.py
+tests/unit/test_voice_front_fits_every_model.py
+tests/api/test_voice_front_seat_lifecycle.py
+tests/unit/test_local_seats.py
+tests/unit/test_first_run_models.py
+tests/unit/test_installer_model_picker.py
