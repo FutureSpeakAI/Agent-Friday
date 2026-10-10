@@ -823,6 +823,23 @@ def _hold(stage: str, engine) -> None:
             pass
 
 
+def release_gpu_engines(reason: str = "released") -> list:
+    """Stop the held GPU ear and mouth workers (their lease and their memory
+    go with the process); CPU engines stay held. Returns the stages stopped.
+    A call that parked the brain runs this before giving the park back, so
+    the brain's restore has the room it had."""
+    with _HELD_LOCK:
+        items = [(k, e) for k, e in _HELD.items() if isinstance(e, (WorkerEar, WorkerMouth))]
+        for k, _e in items:
+            _HELD.pop(k, None)
+    for k, e in items:
+        try:
+            e.close()
+        except Exception as ex:  # noqa: BLE001
+            log.warning("voice %s worker did not stop (%s): %s", k, reason, ex)
+    return [k for k, _e in items]
+
+
 def release_all(reason: str = "released") -> None:
     with _HELD_LOCK:
         items = list(_HELD.items())

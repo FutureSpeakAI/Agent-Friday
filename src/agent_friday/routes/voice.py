@@ -1717,6 +1717,18 @@ def _voice_lease_give(holder) -> None:
         _VOICE_LEASE_HOLDERS.discard(str(holder))
         if _VOICE_LEASE_HOLDERS:
             return
+    # The last call that parked the brain is ending. Its GPU ear and mouth
+    # leave the card BEFORE the park is given back (the front was disarmed
+    # already): restored beside them, the brain would push the card under
+    # the display reserve. A call that did not park keeps the idle unload.
+    try:
+        from agent_friday.services import voice_workers as _vw
+        stopped = _vw.release_gpu_engines("the voice call ended")
+        if stopped:
+            _log.info("voice call ended: stopped the GPU %s before the brain's restore",
+                      " and ".join(stopped))
+    except Exception as e:  # noqa: BLE001
+        _log.warning("voice call end: GPU engines not stopped: %s", e)
     try:
         from agent_friday.services import residency_arbiter as ra
         arb = ra.get_arbiter()

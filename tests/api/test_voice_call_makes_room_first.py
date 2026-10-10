@@ -88,7 +88,11 @@ class _FrontSeat:
         return {"ms": 1}
 
     def disarm(self, holder="session"):
-        pass
+        # The front's llama-server stops and its memory comes back.
+        from agent_friday.services import voice_front
+        if ("front", BONSAI) in self.card.log:
+            self.card.take(-voice_front.vram_need_mib(BONSAI))
+            self.card.log.append(("stop", "front"))
 
 
 @pytest.fixture
@@ -127,8 +131,12 @@ def call(app, monkeypatch, tmp_path):
         return self
     monkeypatch.setattr(vw.VoiceWorker, "start", start)
     monkeypatch.setattr(vw.VoiceWorker, "alive", lambda self: True)
-    monkeypatch.setattr(vw.VoiceWorker, "stop",
-                        lambda self, reason="": card.log.append(("stop", self.stage)))
+    def stop(self, reason=""):
+        if getattr(self, "_alive", False):
+            self._alive = False
+            card.take(-self.declared_mib)
+        card.log.append(("stop", self.stage))
+    monkeypatch.setattr(vw.VoiceWorker, "stop", stop)
     monkeypatch.setattr(vw, "_HELD", {})
     monkeypatch.setattr(vw, "NOTICES", [])
 
@@ -384,3 +392,26 @@ def test_a_refused_front_moves_the_engines_off_the_card_before_the_brain_returns
     assert served["ear"].endswith("@cpu") and served["mouth"].endswith("@cpu"), served
     codes = {f.get("code") for f in frames if f.get("type") == "error-nonfatal"}
     assert "local_voice_front_refused" in codes, codes
+
+
+def test_a_call_that_parked_the_brain_ends_by_clearing_the_card_before_the_restore(call):
+    frames = call.run()
+    served, = [f for f in frames if f.get("type") == "served_by"]
+    assert served["ear"].endswith("@cuda") and served["mouth"] == "kokoro@cuda"
+    log = call.card.log
+    end = log[log.index(("front", BONSAI)) + 1:]
+    assert end == [("stop", "front"), ("stop", "ear"), ("stop", "mouth"),
+                   ("unpark", "voice_call")], end
+    # Back where it started: the brain restored and nothing of the voice left.
+    assert not call.card.parked and call.card.taken == 0
+    assert call.card.free_mib() == FREE_WITH_BRAIN_MIB
+
+
+def test_a_call_that_did_not_park_keeps_the_idle_unload(call, monkeypatch):
+    from agent_friday.routes import voice as rv
+    monkeypatch.setattr(rv, "_brain_parked_for_call", lambda *a, **k: False)
+    call.card.parked = True       # room enough beside the brain for the whole voice
+    call.run()
+    log = call.card.log
+    assert ("unpark", "voice_call") not in log and ("park", "voice_call") not in log
+    assert ("stop", "ear") not in log and ("stop", "mouth") not in log, log
