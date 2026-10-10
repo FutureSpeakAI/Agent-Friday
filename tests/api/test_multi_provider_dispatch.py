@@ -169,9 +169,9 @@ def test_local_provider_bypasses_egress_seal(monkeypatch):
     sealed = {"called": False}
     real_seal = smr._seal_or_block
 
-    def _spy_seal(payload, provider):
+    def _spy_seal(payload, provider, model=""):
         sealed["called"] = True
-        return real_seal(payload, provider)
+        return real_seal(payload, provider, model)
 
     monkeypatch.setattr(smr, "_seal_or_block", _spy_seal)
     from agent_friday.services.provider_registry import get_provider_registry
@@ -200,9 +200,9 @@ def test_cloud_claiming_local_still_sealed(monkeypatch):
     seal_calls = []
     real_seal = smr._seal_or_block
 
-    def _spy_seal(payload, provider):
+    def _spy_seal(payload, provider, model=""):
         seal_calls.append(provider)
-        return real_seal(payload, provider)
+        return real_seal(payload, provider, model)
 
     monkeypatch.setattr(smr, "_seal_or_block", _spy_seal)
     from agent_friday.services.provider_registry import get_provider_registry

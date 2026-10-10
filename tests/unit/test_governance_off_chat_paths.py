@@ -508,6 +508,8 @@ REVIEWED_SINKS = {
         "the owner's click (routes/gmail_send.py), or a proposal approved on a card",
     ("services/gmail_mailbox.py", "undo"):
         "reverses a change the owner just made, from the owner's click",
+    ("services/gmail_mailbox.py", "_apply_groups"):
+        "the batch writer behind modify_threads and undo, called only by them",
     ("services/gmail_mailbox.py", "create_label"):
         "the owner's click in Messages",
     ("services/calendar_write.py", "create_event"):
