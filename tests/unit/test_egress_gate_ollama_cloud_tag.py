@@ -254,6 +254,90 @@ class TestRetrievalLedgerLabelsCloudRelayedAsCloud:
             assert seen[-1] == want
 
 
+class TestNativeOllamaImagesAreWithheldFromCloudTaggedModels:
+    """No image gate exists, and the text gate never read ``images``: a
+    cloud-tagged model gets none, and each drop is recorded."""
+
+    PIXELS = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="  # synthetic
+
+    @pytest.fixture(autouse=True)
+    def _log(self, monkeypatch, tmp_path):
+        self.log = tmp_path / "egress.log"
+        monkeypatch.setattr(eg, "_DEFAULT_LOG", self.log)
+
+    @pytest.mark.parametrize("model", CLOUD_TAGGED)
+    def test_message_images_never_reach_a_cloud_tagged_model(self, model):
+        body = {"model": model, "stream": False, "messages": [
+            {"role": "user", "content": "what is on this screen", "images": [self.PIXELS]}]}
+        out = gate_ollama_body(body, model)
+        assert self.PIXELS not in _flat(out)
+        assert all("images" not in m for m in out["messages"])
+        assert out["messages"][0]["role"] == "user"
+        assert self.PIXELS in _flat(body), "the caller's own body is not edited"
+
+    @pytest.mark.parametrize("model", CLOUD_TAGGED)
+    def test_generate_body_images_never_reach_a_cloud_tagged_model(self, model):
+        out = gate_ollama_body({"model": model, "prompt": "describe", "images": [self.PIXELS]}, model)
+        assert "images" not in out and self.PIXELS not in _flat(out)
+
+    def test_the_withholding_is_recorded(self):
+        gate_ollama_body({"model": "glm-4.6:cloud", "messages": [
+            {"role": "user", "content": "hi", "images": [self.PIXELS]}]}, "glm-4.6:cloud")
+        assert "withheld" in self.log.read_text(encoding="utf-8")
+
+    def test_a_plain_local_model_keeps_its_images(self):
+        body = {"model": LOCAL_MODEL, "messages": [
+            {"role": "user", "content": "hi", "images": [self.PIXELS]}]}
+        assert gate_ollama_body(body, LOCAL_MODEL) is body
+
+
+class TestOpenAIShapeSeatServingACloudTaggedModelIsSealed:
+    """``_call_openai`` skips the seal for a verified-local provider, unless the
+    model is cloud-tagged (an LM Studio / vLLM host relaying ``glm-4.6:cloud``)."""
+
+    LOCAL_PROVIDER = {"name": "lmstudio-test", "adapter": "openai-compatible",
+                      "classification": "local", "base_url": "http://127.0.0.1:1234/v1",
+                      "auth": {"type": "none"}}
+
+    def _run(self, monkeypatch, model):
+        import json as _json
+        import requests
+        import agent_friday.services.model_router as smr
+        sent = []
+
+        class _Resp:
+            status_code = 200
+            headers = {"Content-Type": "application/json"}
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"model": model, "choices": [{"message": {"role": "assistant", "content": "ok"},
+                                                      "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+
+            def close(self):
+                pass
+
+        def post(url, headers=None, json=None, timeout=None, **kw):
+            sent.append(_json.dumps(json))
+            return _Resp()
+        monkeypatch.setattr(requests, "post", post)
+        smr._call_openai([{"role": "user", "content": CANARY}], model=model, tools=None,
+                         provider=dict(self.LOCAL_PROVIDER), stream=False)
+        return sent
+
+    @pytest.mark.parametrize("model", CLOUD_TAGGED)
+    def test_cloud_tagged_model_on_a_local_openai_host_is_scrubbed(self, monkeypatch, model):
+        sent = self._run(monkeypatch, model)
+        assert sent and CANARY_FRAGMENT not in sent[0]
+
+    def test_plain_local_model_on_the_same_host_is_sent_as_written(self, monkeypatch):
+        sent = self._run(monkeypatch, LOCAL_MODEL)
+        assert sent and CANARY_FRAGMENT in sent[0]
+
+
 # ── Guard: every gate call in an Ollama path carries the model ───────────────
 
 _OLLAMA_FILES = [

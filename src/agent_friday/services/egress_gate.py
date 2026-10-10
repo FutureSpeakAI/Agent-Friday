@@ -1518,8 +1518,38 @@ def gate_ollama_body(body: dict[str, Any], model: str = "",
         _sg = None
     if _sg is not None:
         _sg.check(provider, what="%s cloud model call" % model, model=model)
+    body = _withhold_ollama_images(body, provider, model)
     return gate_worker_payload(body, base_url="http://localhost", provider=provider,
                                model=model)
+
+
+def _withhold_ollama_images(body: dict[str, Any], provider: str, model: str) -> dict[str, Any]:
+    """Drop native Ollama ``images`` (base64 strings on the body or on a
+    message) from a body bound for a cloud-tagged model. No image gate exists
+    (a text classifier cannot judge pixels) and the text gate never read this
+    key, so the closed answer is to withhold; each drop is recorded."""
+    if not isinstance(body, dict):
+        return body
+    why = "cloud-tagged Ollama model %s; images cannot be gated" % model
+
+    def _drop(imgs, field: str) -> None:
+        if imgs:
+            n = sum(len(i) for i in imgs if isinstance(i, (str, bytes))) \
+                if isinstance(imgs, (list, tuple)) else 0
+            record_binary_egress(provider, field, action="withheld", reason=why, byte_len=n)
+
+    out = dict(body)
+    if "images" in out:
+        _drop(out.pop("images"), "images")
+    if isinstance(out.get("messages"), list):
+        msgs = []
+        for i, m in enumerate(out["messages"]):
+            if isinstance(m, dict) and "images" in m:
+                _drop(m["images"], "messages[%d].images" % i)
+                m = {k: v for k, v in m.items() if k != "images"}
+            msgs.append(m)
+        out["messages"] = msgs
+    return out
 
 
 def _scrub_all(obj, lookup: dict):
