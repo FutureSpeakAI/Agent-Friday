@@ -615,26 +615,32 @@ def undo_email(receipt: dict, approval_id: str | None = None) -> dict:
     """Reverse exactly what a mail receipt changed."""
     from agent_friday.services import gmail_mailbox as gm
     changed = (receipt.get("undo") or {}).get("email") or {}
-    failed_n, total = 0, 0
+    failed_n, inexact_n, total = 0, 0, 0
     for acct, ch in changed.items():
         total += len(ch)
         try:
-            failed_n += len((gm.undo(acct, ch) or {}).get("failed") or {})
+            bad = (gm.undo(acct, ch) or {}).get("failed") or {}
+            failed_n += len(bad)
+            inexact_n += sum(1 for why in bad.values() if why == gm.UNDO_INEXACT)
         except Exception:
             failed_n += len(ch)
     back = total - failed_n
+    # A conversation whose exact state was never recorded is not "put back": the owner is told
+    # that undo cannot be exact for it, not that it failed at random.
+    tail = ""
+    if failed_n:
+        tail = "; %d could not be" % failed_n
+        if inexact_n:
+            tail += " (%d can't be undone exactly)" % inexact_n
     journal.update(receipt["receipt_id"], undone=failed_n == 0, undone_at=time.time(),
                    undo_failed=failed_n)
     return journal.record("undo_action", "undo", "email",
                           items=[{"receipt_id": receipt["receipt_id"]}],
-                          summary="Put back %s%s." % (_plural(back, "conversation"),
-                                                      "; %d could not be" % failed_n if failed_n else ""),
+                          summary="Put back %s%s." % (_plural(back, "conversation"), tail),
                           status="complete" if not failed_n else ("partial" if back else "failed"),
                           approval_id=approval_id,
                           conversation_id=(receipt.get("run") or {}).get("conversation_id"),
-                          extra={"said": "Put back %s%s." % (
-                              _plural(back, "conversation"),
-                              "; %d could not be" % failed_n if failed_n else "")})
+                          extra={"said": "Put back %s%s." % (_plural(back, "conversation"), tail)})
 
 
 # ── Files ───────────────────────────────────────────────────────────────────

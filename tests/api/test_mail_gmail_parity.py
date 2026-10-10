@@ -36,7 +36,7 @@ class _Svc:
             def threads(self):
                 class T:
                     def get(self, userId=None, id=None, format=None):      # noqa: A002,N803
-                        return _Req(lambda: {"id": id, "messages": [{"labelIds": sorted(THREADS[id])}]})
+                        return _Req(lambda: {"id": id, "messages": [{"id": id + ".m", "labelIds": sorted(THREADS[id])}]})
 
                     def modify(self, userId=None, id=None, body=None):     # noqa: A002,N803
                         def run():
@@ -65,6 +65,15 @@ class _Svc:
 
             def messages(self):
                 class M:
+                    def batchModify(self, userId=None, body=None):         # noqa: N802,N803
+                        def run():
+                            for mid in body["ids"]:
+                                tid = mid[:-2]                              # one message per thread: "<tid>.m"
+                                CALLS.append(("modify", tid, list(body["addLabelIds"]), list(body["removeLabelIds"])))
+                                THREADS[tid] = (THREADS[tid] | set(body["addLabelIds"])) - set(body["removeLabelIds"])
+                            return {}
+                        return _Req(run)
+
                     def get(self, userId=None, id=None, format=None, metadataHeaders=None):  # noqa: A002,N803
                         import base64
                         if format == "raw":

@@ -27,7 +27,7 @@ class _Svc:
             def threads(self):
                 class T:
                     def get(self, userId=None, id=None, format=None):      # noqa: A002,N803
-                        return _Req(lambda: {"id": id, "messages": [{"labelIds": sorted(THREADS[id])}]})
+                        return _Req(lambda: {"id": id, "messages": [{"id": id + ".m", "labelIds": sorted(THREADS[id])}]})
 
                     def modify(self, userId=None, id=None, body=None):     # noqa: A002,N803
                         def run():
@@ -36,6 +36,18 @@ class _Svc:
                             return {"id": id}
                         return _Req(run)
                 return T()
+
+            def messages(self):
+                class M:
+                    def batchModify(self, userId=None, body=None):         # noqa: N802,N803
+                        def run():
+                            for mid in body["ids"]:
+                                tid = mid[:-2]                              # one message per thread: "<tid>.m"
+                                CALLS.append((tid, list(body["addLabelIds"]), list(body["removeLabelIds"])))
+                                THREADS[tid] = (THREADS[tid] | set(body["addLabelIds"])) - set(body["removeLabelIds"])
+                            return {}
+                        return _Req(run)
+                return M()
 
             def labels(self):
                 class L:
@@ -64,7 +76,7 @@ def _fake(monkeypatch):
 def test_archive_changes_gmail_and_undo_reverses_only_what_changed():
     out = gm.apply_action("acct_m", ["t1", "t2"], "archive")
     assert THREADS["t1"] == {"UNREAD"} and THREADS["t2"] == {"STARRED"}
-    assert out["changed"]["t2"] == {"added": [], "removed": []}          # was not in the inbox
+    assert out["changed"]["t2"] == {"added": [], "removed": [], "messages": {}}   # was not in the inbox
     assert ("t2", [], ["INBOX"]) not in CALLS                               # so nothing was sent for it
     gm.undo("acct_m", out["changed"])
     assert THREADS["t1"] == {"INBOX", "UNREAD"} and THREADS["t2"] == {"STARRED"}
