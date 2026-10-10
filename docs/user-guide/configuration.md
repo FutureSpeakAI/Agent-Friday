@@ -231,7 +231,7 @@ Workflows workspace. See [scheduled jobs](scheduled-jobs.md).
 | `local_voice_gpu_asr_model` | `"nvidia/nemotron-3.5-asr-streaming-0.6b"` | Speech recognition on the GPU tier. |
 | `local_voice_gpu_tts` | `"fastpitch-hifigan"` | Speech on the GPU tier. |
 | `voice_silence_ms` | `500` | Silence that ends your turn on the local voice. |
-| `voice_front_model` | `"qwen3-4b-instruct-2507"` | The small fast model that answers live voice turns: `qwen3-4b-instruct-2507` or `qwen3-1.7b`. The main model takes deep work in the background. |
+| `voice_front_model` | `"auto"` | The small fast model that answers live voice turns: `auto` (the first that can run on this PC, in the order `ternary-bonsai:1.7b`, `qwen3-4b-instruct-2507`, `qwen3-1.7b`), or one of those three by name. An explicit name wins; Ternary Bonsai 1.7B needs the PrismML runtime that comes with a Bonsai deep thinker. The main model takes deep work in the background. |
 | `voice_brain_during_calls` | `"auto"` | What the main local model does during a voice call: `auto` keeps it loaded beside the fast model when the card holds both and parks it otherwise; `parked`; `resident`. |
 | `voice_async_routing` | `"local_only"` | Where a deep question asked by voice goes: `local_only` (the main local model, or after the call) or `follow_model_routing` (your routing, cloud included, behind the same gates). |
 | `voice_response_depth` | `"adaptive"` | `adaptive`, `concise` or `detailed`. |

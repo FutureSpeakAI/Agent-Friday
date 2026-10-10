@@ -18154,6 +18154,43 @@ function voiceArtifactPinCopy(group) {
 function voiceArtifactSize(mb) {
   return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
 }
+/** Which model answers you in a local voice call (`voice_front_model`).
+ *  Ternary Bonsai 1.7B is the default; the Qwen3 builds stay choosable. A
+ *  model is offered once its download (below) is on this computer, so a
+ *  choice never silently lands on a model that is not there. */
+const VOICE_FRONT_CHOICES = [
+  { id: 'auto', artifact: null, label: 'Automatic', hint: 'Ternary Bonsai 1.7B when it can run here, otherwise the Qwen3 model you have.' },
+  { id: 'ternary-bonsai:1.7b', artifact: 'voice-front-bonsai-1.7b', label: 'Ternary Bonsai 1.7B', hint: 'The default. Small enough to stay beside the main model when the card has room.' },
+  { id: 'qwen3-4b-instruct-2507', artifact: 'voice-front-4b', label: 'Qwen3 4B', hint: 'Larger. Pauses the main model while you talk.' },
+  { id: 'qwen3-1.7b', artifact: 'voice-front-1.7b', label: 'Qwen3 1.7B', hint: 'The earlier small model.' }
+];
+function VoiceFrontPicker({ s, save }) {
+  const [have, setHave] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/voice/artifacts').then(r => r.json()).then(d => {
+      const m = {};
+      (d && d.artifacts || []).forEach(a => { m[a.id] = { installed: !!a.installed, runtime: a.runtime_ready !== false }; });
+      setHave(m);
+    }).catch(() => setHave({}));
+  }, []);
+  const sel = s.voice_front_model || 'auto';
+  const why = o => !o.artifact || have === null ? '' : !(have[o.artifact] || {}).installed ? ' is not downloaded yet.'
+    : !(have[o.artifact] || {}).runtime ? ' needs the PrismML runtime, which comes with a Bonsai model from Settings > Models.' : '';
+  return React.createElement(StRow, { label: 'Local voice model', desc: 'The model that answers you in a local voice call and runs its quick tools. Download a model in the list below to choose it.' },
+    React.createElement('div', { role: 'radiogroup', 'aria-label': 'Local voice model', style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+      VOICE_FRONT_CHOICES.map(o => {
+        const off = !!why(o) && sel !== o.id;
+        return React.createElement('button', {
+          key: o.id, role: 'radio', 'aria-checked': sel === o.id, 'aria-disabled': off,
+          className: 'settings-btn ' + (sel === o.id ? 'active' : ''),
+          style: { fontSize: 12, padding: '7px 14px', opacity: off ? 0.4 : 1, cursor: off ? 'not-allowed' : 'pointer' },
+          title: off ? o.label + why(o) : o.hint,
+          onClick: off ? undefined : () => save({ voice_front_model: o.id })
+        }, o.label);
+      })),
+    !!why(VOICE_FRONT_CHOICES.find(o => o.id === sel) || {}) && React.createElement('div', { role: 'status', style: { fontSize: 11.5, color: '#f59e0b', marginTop: 6 } },
+      (VOICE_FRONT_CHOICES.find(o => o.id === sel) || {}).label + why(VOICE_FRONT_CHOICES.find(o => o.id === sel) || {}) + ' Another local voice model that can run answers until then, and says so.'));
+}
 function LocalVoiceModels() {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
@@ -18259,6 +18296,7 @@ function SettingsTabVoice({s,save}){
       </StRow>}
     </StSection>
     <StSection title="Local voice models" desc="The pieces of on-device voice, whichever mode is selected now. Nothing downloads until you confirm its size.">
+      <VoiceFrontPicker s={s} save={save}/>
       <LocalVoiceModels/>
     </StSection>
     <StSection title="Conversation style" desc="These preferences apply to your next voice session.">

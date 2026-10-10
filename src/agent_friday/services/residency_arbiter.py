@@ -924,8 +924,34 @@ class LlamaServerBackend:
             pass
         return None
 
+    @staticmethod
+    def _front_engine(model_id):
+        """For a voice front that names the runtime it requires: (name, the
+        binary or None when that runtime is not installed). Otherwise None.
+
+        The front is a role, not a Model Soup choice, so it is never in the
+        model store and `_declared_engine` cannot see what it needs. Ternary
+        Bonsai's PQ2_0 file loads only on the PrismML fork; tried on stock
+        llama.cpp it exits, and the Ollama fallback would listen on another
+        port than the front's. Such a front gets its engine and nothing else.
+        """
+        if not str(model_id).startswith("voice-front:"):
+            return None
+        try:
+            from agent_friday.services import voice_front as _vf
+            name = _vf.required_engine(str(model_id).split(":", 1)[1])
+        except Exception:
+            return None
+        if not name:
+            return None
+        from agent_friday.services import model_download as _md
+        return name, _md.runtime_binary(name)
+
     def engines_for(self, model_id):
         """Engines to try, best first, with anything already learned first."""
+        front = self._front_engine(model_id)
+        if front is not None:
+            return [front[1]] if front[1] else []
         known = _ENGINE_MEMO.get(model_id)
         order = [self.binary]
         if self.fallback and Path(self.fallback).exists():
@@ -1013,6 +1039,11 @@ class LlamaServerBackend:
                      n_cpu_moe=None, timeout=300, lora_path=None,
                      mmproj_path=None):
         engines = self.engines_for(model_id)
+        front = self._front_engine(model_id)
+        if not engines and front is not None:
+            raise TransitionError(
+                "%s needs the %s runtime, which is not installed; install it "
+                "from Settings > Models" % (model_id, front[0]))
         if not engines:
             raise TransitionError("no llama-server binary found (looked at %s "
                                   "and %s)" % (self.binary, self.fallback))

@@ -111,11 +111,13 @@ def read_selection(settings: dict | None = None) -> dict:
     mode = str(s.get("voice_engine") or "local").strip().lower()
     if mode == "auto":            # auto is a synonym for local
         mode = "local"
-    from agent_friday.services.voice_front import selected_model
+    from agent_friday.services.voice_front import resolve, selected_model
     mind = {"engine": "seat", "reply_cap": _reply_cap(s),
             "target": "brain" if mode == "gemini" else "local_voice"}
     if mind["target"] == "local_voice":
-        mind["front_model"] = selected_model(s)
+        # The front that will actually serve (a chosen one that cannot run
+        # here falls back; voice_front.resolve).
+        mind["front_model"] = resolve(s)[0] or selected_model(s)
     return {
         "mode": mode,
         "ear": {"engine": "faster-whisper",
@@ -248,7 +250,7 @@ def _run_mind(selection: dict, progress) -> dict:
     from agent_friday.services import voice_front as _vf
     selection = selection if selection.get("target") else read_selection()["mind"]
     _front = selection.get("front_model")
-    if selection["target"] == "local_voice" and _vf.installed(_front):
+    if selection["target"] == "local_voice" and _vf.runnable(_front):
         return _run_front_mind(_front, progress)
     from agent_friday.services import local_seats
     seat = local_seats.resolve("brain")

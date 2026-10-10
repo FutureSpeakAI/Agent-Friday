@@ -21,6 +21,7 @@ the licence.
 | Nemotron 3.5 streaming speech recognition (int8, CPU) | The ear. Turns your speech into text as you talk. | about 454 MB |
 | sherpa-onnx runtime | The program library the ear runs in. | about 3 MB |
 | Silero VAD v6 | Hears when you start and stop speaking. | about 2 MB |
+| Ternary Bonsai 1.7B PQ2_0 | Recommended fast reply model for short voice questions and Quick reflexes. Needs the PrismML runtime that comes with a Bonsai deep thinker. | about 442 MB |
 | Qwen3-4B-Instruct-2507 Q4_K_M | Fast reply model for short voice questions (best quality). | about 2.3 GB |
 | Qwen3-1.7B Q4_K_M | A smaller fast reply model that fits beside the main model. | about 1.2 GB |
 | misaki | Tells the Kokoro voice how to pronounce words. | about 4 MB |
@@ -89,6 +90,7 @@ shows a status message. Voice does not stop working.
 ## Licences
 
 - Nemotron 3.5 speech recognition: OpenMDW-1.1.
+- Ternary Bonsai 1.7B (PrismML's ternary build of Qwen3-1.7B): Apache-2.0.
 - Qwen3 models: Apache-2.0.
 - Silero VAD: MIT.
 - NeMo FastPitch and HiFi-GAN: NVIDIA's NeMo model terms.

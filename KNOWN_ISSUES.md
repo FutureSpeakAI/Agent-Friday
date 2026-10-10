@@ -92,6 +92,19 @@ you hit something that is not here, please open an issue.
   so a second GPU seat or local image generation may fail to allocate. "I need
   my machine" in Settings > Models releases the GPU.
 
+## 2a. Open in 1.0.1: voice routing
+
+- **Stop the music and volume by voice.** "Stop the music" and volume changes
+  are not handled yet.
+- **Casual phrases can be taken as a request.** A few phrases ("clear enough",
+  "mark my words") can be read as a request and handed to the full agent.
+  Outward actions still need your approval.
+- **A two-part request does only the first part.** "Check my email and reply to
+  Sam" does the look-up and drops the reply. Ask for the reply on its own.
+- **"Stop the task" with no name** stops the task on screen.
+- **A left-out podcast story can still be mentioned.** Another story's line
+  may refer to a story the script check left out.
+
 ## 3. Deliberate behaviour that can surprise
 
 - **`local_only` refuses rather than falls back.** With no local model

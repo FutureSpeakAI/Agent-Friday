@@ -38,7 +38,7 @@ prepare local voice before you need it.
   off, and **Stop** cancels a running one.
 
 The pieces are the streaming speech recogniser (the ear), a voice-activity
-detector, the two fast responder models, and pronunciation helpers for the
+detector, the fast responder models, and pronunciation helpers for the
 Kokoro voice. [Local voice models and the GPU option](local-voice-gpu-tier.md)
 lists each piece with its size.
 
@@ -49,15 +49,43 @@ responder, so you are not waiting on the large model. It has the same voice
 tools as cloud voice. When a request needs more thought or your private notes,
 it hands the work to Friday's main model and speaks the result.
 
-There are two fast responder models, both Qwen3:
+There are three fast responder models:
 
-- **Qwen3 4B Instruct** gives the best quality. While you talk, the large model
-  steps aside, because there is not room for both.
+- **Ternary Bonsai 1.7B** is the recommended one (about 442 MB). It is
+  PrismML's ternary build of Qwen3-1.7B and stays loaded beside the large
+  model. It runs on the PrismML runtime, which comes with a Bonsai deep thinker.
+- **Qwen3 4B Instruct** gives the best quality of the Qwen3 models. While you
+  talk, the large model steps aside, because there is not room for both.
 - **Qwen3 1.7B** is smaller and stays loaded beside the large model.
 
 You choose one on the installer's model page, and the first-run download fetches
-it. If no fast responder is installed, the main model answers voice turns
+it. The setting `voice_front_model` defaults to `auto`, which picks the first
+model that can run on this PC, in the order above; a model you choose yourself
+wins. If the PrismML runtime is missing, Friday answers with a Qwen3 model that
+is installed and says so, and Settings > Models shows why Bonsai cannot be
+picked. If no fast responder is installed, the main model answers voice turns
 itself, which is slower.
+
+#### How a voice turn is routed
+
+A fast on-device classifier, Friday's quick judgement, decides whether a
+request needs a look-up (calendar, email, files, the wiki, past conversations,
+news or the web) or one of Friday's own actions (open a workspace, play a
+podcast or media, voice preferences, stop a running task, undo). Friday runs it
+and the fast responder only speaks the answer. A look-up turn speaks a short
+acknowledgement first.
+
+- Anything that changes the world outside Friday (send, reply, delete, create an
+  event) goes to the full agent and through the usual approval card.
+- A web or news search that Friday guessed at asks before it searches.
+- A spoken "yes" or "no" answers an approval card only when Friday has just read
+  that card aloud in the same call.
+- Text that Friday looks up is treated as data, never as instructions.
+
+On our test PC (a 12 GB NVIDIA card, with the Kokoro voice on the GPU), a
+conversational reply starts about 0.1 seconds after you stop speaking (median),
+and a look-up answer starts about 0.4 seconds after the acknowledgement. Other
+computers will differ.
 
 ## Talking to Friday
 

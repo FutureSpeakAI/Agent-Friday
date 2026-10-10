@@ -60,10 +60,11 @@ administrator access. There are four decisions.
    memory, graphics card and free disk. It then shows two jobs, each with the
    models that fit.
    - **Fast responder.** Answers voice conversations and quick replies. The
-     choices are Qwen3 4B (better answers; Friday pauses the deep thinker while
-     you talk) and Qwen3 1.7B (smaller; it stays loaded beside the deep
-     thinker). Each choice includes the speech listener, and the size shown
-     counts it.
+     recommended choice is Ternary Bonsai 1.7B (about 442 MB; it stays loaded
+     beside the deep thinker). The alternatives are Qwen3 4B (better answers;
+     Friday pauses the deep thinker while you talk) and Qwen3 1.7B (smaller
+     than the 4B; it also stays loaded beside the deep thinker). Each choice
+     includes the speech listener, and the size shown counts it.
    - **Deep thinker.** Does the harder work. It is a Bonsai model. The one
      Friday is tuned for is Bonsai 2 27B, about 6 GB. A computer with less
      memory is offered an older, lighter Ternary Bonsai model instead.
@@ -140,7 +141,7 @@ before it fetches anything. Each download is pinned to an exact version and
 checked after it arrives.
 
 The parts are the streaming speech listener and its helpers, the fast reply
-model (the Qwen3 model you chose in setup, or the other one), and a few
+model (the one you chose in setup, or another), and a few
 optional pronunciation helpers. The larger, more accurate listener is not
 offered yet.
 

@@ -1,0 +1,82 @@
+{
+  "_note": "Held-out eval for services/laya_router. Written as spoken requests, independently of the router's seed sentences (which must never be copied from here). Each case: the decision, the tool, and argument checks. args_contains: every listed word appears (case-insensitive) in that argument; args_equal: exact value. No real person, account or file.",
+  "cases": [
+    {"text": "What's on my calendar this afternoon?", "decision": "tool", "tool": "query_calendar"},
+    {"text": "do I have anything tomorrow morning", "decision": "tool", "tool": "query_calendar"},
+    {"text": "when's my next meeting", "decision": "tool", "tool": "query_calendar"},
+    {"text": "am I free at three today?", "decision": "tool", "tool": "query_calendar"},
+    {"text": "what does my day look like", "decision": "tool", "tool": "query_calendar"},
+    {"text": "Any appointments I should know about today?", "decision": "tool", "tool": "query_calendar"},
+
+    {"text": "Any urgent emails?", "decision": "tool", "tool": "check_email", "args_equal": {"urgent_only": true}},
+    {"text": "check my email", "decision": "tool", "tool": "check_email"},
+    {"text": "did anyone email me?", "decision": "tool", "tool": "check_email"},
+    {"text": "anything new in my inbox", "decision": "tool", "tool": "check_email"},
+    {"text": "do I have any important messages waiting", "decision": "tool", "tool": "check_email", "args_equal": {"urgent_only": true}},
+    {"text": "how many unread emails have I got", "decision": "tool", "tool": "check_email"},
+
+    {"text": "Search my email for the invoice from Acme.", "decision": "tool", "tool": "search_email", "args_contains": {"query": ["invoice", "acme"]}},
+    {"text": "find the email about the dentist appointment", "decision": "tool", "tool": "search_email", "args_contains": {"query": ["dentist"]}},
+    {"text": "look in my inbox for the flight confirmation", "decision": "tool", "tool": "search_email", "args_contains": {"query": ["flight"]}},
+    {"text": "did the landlord send me anything about the lease", "decision": "tool", "tool": "search_email", "args_contains": {"query": ["lease"]}},
+    {"text": "pull up the email from the school about the field trip", "decision": "tool", "tool": "search_email", "args_contains": {"query": ["field trip"]}},
+
+    {"text": "What's the latest news about the Artemis moon mission?", "decision": "tool", "tool": "search_news", "args_contains": {"query": ["artemis"]}},
+    {"text": "what's in the news today", "decision": "tool", "tool": "search_news"},
+    {"text": "any headlines about the election", "decision": "tool", "tool": "search_news", "args_contains": {"query": ["election"]}},
+    {"text": "tell me the top stories", "decision": "tool", "tool": "search_news"},
+    {"text": "what's happening with interest rates in the news", "decision": "tool", "tool": "search_news", "args_contains": {"query": ["interest rates"]}},
+    {"text": "is there any news on the hurricane", "decision": "tool", "tool": "search_news", "args_contains": {"query": ["hurricane"]}},
+
+    {"text": "Search the web for the Louvre's opening hours.", "decision": "tool", "tool": "search_web", "args_contains": {"query": ["louvre", "opening hours"]}},
+    {"text": "look up the best way to clean a cast iron pan", "decision": "tool", "tool": "search_web", "args_contains": {"query": ["cast iron"]}},
+    {"text": "google how tall the Eiffel Tower is", "decision": "tool", "tool": "search_web", "args_contains": {"query": ["eiffel tower"]}},
+    {"text": "can you find online what time the hardware store closes", "decision": "tool", "tool": "search_web", "args_contains": {"query": ["hardware store"]}},
+    {"text": "search for reviews of the new electric bike", "decision": "tool", "tool": "search_web", "args_contains": {"query": ["electric bike"]}},
+
+    {"text": "Give me my morning briefing.", "decision": "tool", "tool": "get_briefing"},
+    {"text": "brief me", "decision": "tool", "tool": "get_briefing"},
+    {"text": "what's my daily briefing say", "decision": "tool", "tool": "get_briefing"},
+    {"text": "run through today's briefing", "decision": "tool", "tool": "get_briefing"},
+
+    {"text": "Find the file on my computer called budget.", "decision": "tool", "tool": "search_files", "args_contains": {"query": ["budget"]}},
+    {"text": "where's my tax spreadsheet", "decision": "tool", "tool": "search_files", "args_contains": {"query": ["tax"]}},
+    {"text": "find the document named project proposal", "decision": "tool", "tool": "search_files", "args_contains": {"query": ["project proposal"]}},
+    {"text": "do I have a file about the kitchen renovation", "decision": "tool", "tool": "search_files", "args_contains": {"query": ["kitchen renovation"]}},
+    {"text": "locate the photos from the beach trip on my computer", "decision": "tool", "tool": "search_files", "args_contains": {"query": ["beach trip"]}},
+
+    {"text": "Search my wiki for the page about the garden project.", "decision": "tool", "tool": "search_wiki", "args_contains": {"query": ["garden project"]}},
+    {"text": "what do my notes say about the book club", "decision": "tool", "tool": "search_wiki", "args_contains": {"query": ["book club"]}},
+    {"text": "check my wiki for anything on the car loan", "decision": "tool", "tool": "search_wiki", "args_contains": {"query": ["car loan"]}},
+    {"text": "look in my notes for the recipe ideas", "decision": "tool", "tool": "search_wiki", "args_contains": {"query": ["recipe"]}},
+
+    {"text": "What did I say about the roof repair in an earlier conversation?", "decision": "tool", "tool": "search_past_conversations", "args_contains": {"query": ["roof repair"]}},
+    {"text": "remind me what we talked about regarding the vacation", "decision": "tool", "tool": "search_past_conversations", "args_contains": {"query": ["vacation"]}},
+    {"text": "didn't we discuss the new laptop last week", "decision": "tool", "tool": "search_past_conversations", "args_contains": {"query": ["laptop"]}},
+    {"text": "what did you tell me earlier about the warranty", "decision": "tool", "tool": "search_past_conversations", "args_contains": {"query": ["warranty"]}},
+
+    {"text": "Good morning, how are you today?", "decision": "no_tool"},
+    {"text": "Thanks, that's all for now.", "decision": "no_tool"},
+    {"text": "tell me something interesting about octopuses", "decision": "no_tool"},
+    {"text": "how should I think about refinancing right now", "decision": "no_tool"},
+    {"text": "you're funny", "decision": "no_tool"},
+    {"text": "what's the difference between a crocodile and an alligator", "decision": "no_tool"},
+    {"text": "I had a really long day", "decision": "no_tool"},
+    {"text": "can you explain how a mortgage works", "decision": "no_tool"},
+    {"text": "okay", "decision": "no_tool"},
+    {"text": "what do you think I should cook tonight", "decision": "no_tool"},
+    {"text": "never mind", "decision": "no_tool"},
+    {"text": "give me a motivational quote", "decision": "no_tool"},
+    {"text": "that's great news", "decision": "no_tool"},
+    {"text": "who wrote pride and prejudice", "decision": "no_tool"},
+
+    {"text": "send an email to my sister saying I'll be late", "decision": "defer"},
+    {"text": "delete the budget file", "decision": "defer"},
+    {"text": "schedule a meeting with the plumber tomorrow at ten", "decision": "defer"},
+    {"text": "reply to the landlord and say yes", "decision": "defer"},
+    {"text": "cancel my three o'clock", "decision": "defer"},
+    {"text": "archive all the newsletters in my inbox", "decision": "defer"},
+    {"text": "move the tax spreadsheet into the finance folder", "decision": "defer"},
+    {"text": "turn off the notifications", "decision": "defer"}
+  ]
+}

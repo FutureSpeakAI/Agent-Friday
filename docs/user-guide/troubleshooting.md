@@ -48,7 +48,7 @@ only models that fit, but other programs also use memory.
 | Your computer | What setup offers | What to expect |
 |---|---|---|
 | Under about 10 GB of memory | No local deep thinker | Use a cloud model. |
-| About 12 GB of memory | The older, lighter Ternary Bonsai 4B as the deep thinker, and the Qwen3 voice models | Lighter and less capable than Bonsai 2 27B. |
+| About 12 GB of memory | The older, lighter Ternary Bonsai 4B as the deep thinker, and the Ternary Bonsai 1.7B or Qwen3 voice models | Lighter and less capable than Bonsai 2 27B. |
 | 16 GB of memory, no usable graphics card | Bonsai 2 27B on the processor, 8,192 tokens of context | Slow. An estimate is 3 to 6 tokens per second. Close other programs, or use a cloud model for the deep thinker. |
 | 16 GB, NVIDIA card with 6 or 8 GB | Bonsai 2 27B split between the card and the processor | Faster than the processor alone. |
 | NVIDIA card with 10 GB | The whole model on the card, 16,384 tokens of context | Fast for short work. |

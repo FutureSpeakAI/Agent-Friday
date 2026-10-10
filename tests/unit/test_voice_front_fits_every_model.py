@@ -120,7 +120,7 @@ def test_the_rules_that_must_never_be_budgeted_away_stay(contract, prompt_source
                  "Never state that an action succeeded",  # honesty about results
                  "EVIDENCE FIRST",                       # news honesty
                  "YOUR DEEPER MIND",                     # the handoff
-                 "TOOL CHOREOGRAPHY",                    # tool-use rules
+                 "USING YOUR TOOLS",                    # tool-use rules
                  "THE TOOLS YOU HOLD IN THIS CONVERSATION",
                  "never claim to be, or imitate, any real journalist",
                  "personality never changes permissions"):

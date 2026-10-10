@@ -12,7 +12,7 @@ packages are pinned to an exact version.
 
 Licences were read from the upstream cards for the spec (§4.1) and are
 re-checked when a pin is set: Nemotron (OpenMDW-1.1), Qwen3 (Apache-2.0),
-Silero VAD (MIT), misaki (Apache-2.0 per its package metadata; the spec
+Silero VAD (MIT), Ternary Bonsai (Apache-2.0, checked 2026-10-09), misaki (Apache-2.0 per its package metadata; the spec
 said MIT), faster-whisper turbo (MIT).
 """
 from __future__ import annotations
@@ -60,6 +60,26 @@ ARTIFACTS = {
         "size_mb": 2,
         "licence": "MIT",
         "source": "PyPI (snakers4/silero-vad)",
+    },
+    "voice-front-bonsai-1.7b": {
+        "label": "Ternary Bonsai 1.7B PQ2_0 (voice front)",
+        "kind": "file",
+        # PrismML's ternary build of Qwen3-1.7B. It is served on the PrismML
+        # llama.cpp fork (voice_front.required_engine), which the Bonsai brain
+        # install already puts in place.
+        "source": "prism-ml/Ternary-Bonsai-1.7B-gguf (Hugging Face)",
+        "url": ("https://huggingface.co/prism-ml/Ternary-Bonsai-1.7B-gguf/resolve/"
+                "{revision}/Ternary-Bonsai-1.7B-PQ2_0.gguf"),
+        "revision": "983b5dec2ff16aab79990711ba0f828a499a7e6a",
+        "sha256": "de68ba48a8dacb21979915991e7741b917869d71410a370df951c0c3a237ae50",
+        "size_bytes": 463290464,
+        "size_mb": 442,
+        "licence": "Apache-2.0",
+        "dest": "models/gguf/Ternary-Bonsai-1.7B-PQ2_0.gguf",
+        # Served only on this runtime (voice_front.required_engine); the
+        # Settings rows say so when it is missing, and voice_front.resolve
+        # falls back to a front that runs.
+        "runtime": "prism-fork",
     },
     "voice-front-4b": {
         "label": "Qwen3-4B-Instruct-2507 Q4_K_M (voice front)",
@@ -154,8 +174,9 @@ PURPOSE = {
     "voice-ear-streaming": "Ear: turns your speech into text as you talk, on this computer.",
     "sherpa-onnx": "Ear runtime: the small program library the ear model runs in.",
     "voice-vad-v6": "Ear helper: hears when you start and stop speaking.",
-    "voice-front-4b": "Fast reply model: answers short voice questions quickly (best quality).",
-    "voice-front-1.7b": "Fast reply model: a smaller one that fits beside the main model.",
+    "voice-front-bonsai-1.7b": "Fast reply model: answers voice questions and runs quick tools (the default; small enough to sit beside the main model).",
+    "voice-front-4b": "Fast reply model: a larger Qwen3 alternative (pauses the main model while you talk).",
+    "voice-front-1.7b": "Fast reply model: the Qwen3-1.7B alternative.",
     "misaki": "Voice helper: tells the Kokoro voice how to pronounce words.",
     "espeak-ng-helper": "Voice helper (optional): pronounces unusual names.",
     "espeakng-loader": "Voice helper (optional): the library the name pronouncer needs.",
@@ -206,5 +227,18 @@ def public_rows() -> list:
                     "kind": a["kind"],
                     "optional": bool(a.get("optional")),
                     "requires": list(a.get("requires") or []),
-                    "installable": ok, "why_not": why})
+                    "installable": ok, "why_not": why,
+                    "runtime": a.get("runtime"),
+                    "runtime_ready": _runtime_ready(a.get("runtime"))})
     return out
+
+
+def _runtime_ready(name):
+    """None when the artifact needs no runtime; else whether it is installed."""
+    if not name:
+        return None
+    try:
+        from agent_friday.services import model_download as _md
+        return _md.runtime_binary(name) is not None
+    except Exception:
+        return False

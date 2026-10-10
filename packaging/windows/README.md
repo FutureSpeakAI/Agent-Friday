@@ -68,8 +68,9 @@ every step the way it always has (each verified, none trusting an exit code).
   reads memory, the graphics card and free disk, applies the pick rules of
   `src\agent_friday\resources\bonsai2-tiers.json`, and lists only the Bonsai
   models that fit, for two required jobs: the deep thinker (Bonsai) and the fast
-  responder (the Qwen3 voice front from `resources\voice_front_options.json`,
-  sized with the speech ear and sherpa-onnx). The
+  responder (the voice front from `resources\voice_front_options.json`: Ternary
+  Bonsai 1.7B, recommended, or Qwen3 4B or 1.7B),
+  sized with the speech ear and sherpa-onnx. The
   recommended one is labelled and never preselected; a cloud option and an
   explicit download-consent checkbox sit on the same page. Setup downloads no
   weights: it writes `first-run.json` beside the install, and
