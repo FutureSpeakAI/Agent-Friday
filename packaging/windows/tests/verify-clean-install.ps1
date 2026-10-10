@@ -121,7 +121,7 @@ Check 'shortcuts' ($lnk.Desktop -and $lnk.StartMenu) `
 
 $apps = $null
 try { $apps = Get-ItemProperty -Path $AppsKey -ErrorAction Stop } catch { }
-Check 'apps' ($null -ne $apps -and $apps.DisplayName -eq 'Agent Friday Beta 1.0.2' -and [string]$apps.DisplayVersion -match '^1\.0\.1-beta\.1$') `
+Check 'apps' ($null -ne $apps -and $apps.DisplayName -eq 'Agent Friday Beta 1.0.2' -and [string]$apps.DisplayVersion -match '^1\.0\.2-beta\.1$') `
       $(if ($apps) { "$($apps.DisplayName) $($apps.DisplayVersion)" } else { 'no Apps entry' })
 
 $firstRun = $null
