@@ -70,9 +70,10 @@ and two buttons: **Run now**, which skips only the idle wait, and **Cancel**.
 The tray icon's tooltip shows the same ("Local AI: 3 tasks queued · next: ... ·
 waits for idle"). Only labels appear, never what a job contains.
 
-Cloud models are not queued. Cloud voice calls (Gemini Live) do not pause
-background local-model work; an open call does keep work that can wait
-waiting.
+Cloud models are not queued. A local voice call keeps work that can wait
+waiting until the call ends. Cloud voice calls (Gemini Live) do not pause
+background local-model work: during one, work that can wait still waits
+while you use the keyboard or mouse, but talking alone does not count.
 
 ## On a PC with no local model
 
