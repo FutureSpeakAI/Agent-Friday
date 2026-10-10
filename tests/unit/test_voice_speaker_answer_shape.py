@@ -749,7 +749,7 @@ def test_spoken_lists_offer_no_follow_up_and_a_repeat_news_request_moves_on():
     assert titles[0] in covered and "School board meets Tuesday" not in covered
     import inspect
     src = inspect.getsource(rv)
-    assert '_tool_session.setdefault("spoken", []).append(' in src
+    assert 'tool_session.setdefault("spoken", []).append(' in src
 
 
 def test_template_markers_and_hidden_characters_are_never_spoken(monkeypatch):

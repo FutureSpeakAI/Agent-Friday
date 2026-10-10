@@ -24,6 +24,8 @@ class _Live:
         self.cards, self.ran = [], []
         self.session = {"conversation_id": CALL, "owner_text": "", "card_watch": rv._LiveCardWatch()}
         monkeypatch.setattr(ap, "list_approvals", lambda status=None, **kw: list(self.cards))
+        monkeypatch.setattr(ap, "get_approval", lambda i: next(
+            (c for c in self.cards if c["approval_id"] == i), None))
         monkeypatch.setattr(ia, "_quiet", lambda: False)
         from agent_friday.services import voice_engine
         monkeypatch.setattr(voice_engine, "_voice_room_mode", lambda: room)

@@ -216,7 +216,7 @@ def test_native_crew_completion_rechecks_before_recording_and_sending(monkeypatc
         _voice_orb_start=lambda tool: "fixture-orb",
         _discard_voice_orb=lambda orb: discarded.append(orb) if orb else None,
         _voice_orb_finish=lambda *args: finished.append(args),
-        _time=SimpleNamespace(time=lambda: 0), _voice_tool_with_limit=run_with_limit,
+        _time=SimpleNamespace(time=lambda: 0), _voice_tool_with_limit=run_with_limit, _live_card_tool=run_with_limit,
         _voice_tool_run=lambda *args: "Private result marker",
         _gate_voice_tool_result=lambda result, tool: gated.append(result) or result,
         _tell_hold=lambda: None, _user_words_ts=[0],

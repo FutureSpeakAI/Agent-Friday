@@ -64,6 +64,7 @@ from agent_friday.services.local_voice import (
     split_sentences,
 )  # noqa: E501
 from agent_friday.services import voice_manifest as _vm
+from agent_friday.services import item_actions as _item_actions
 
 #: The local voice path's log channel. Named `friday.local_voice` so the
 #: /ws/voice-local handler's records interleave with the engine's own in
@@ -748,7 +749,8 @@ class _LiveCardWatch:
 
     def arm(self, ids, line):
         for i in ids:
-            self.cards[str(i)] = {"line": _spoken_words(line), "said": "", "done": False, "cut": False}
+            self.cards[str(i)] = {"line": _spoken_words(line), "said": "", "done": False,
+                                  "cut": False, "age": 0}
 
     def heard(self, text):
         """A piece of Friday's output transcription that was voiced."""
@@ -756,6 +758,14 @@ class _LiveCardWatch:
             if not c["done"] and not c["cut"]:
                 c["said"] += str(text or "")            # pieces may split a word
                 c["done"] = c["line"] in _spoken_words(c["said"])
+                c["age"] = 0
+
+    def owner_turn(self):
+        """The owner began a new utterance. A question counts for the answer
+        that follows it (age 1) and no later one, as on the local voice."""
+        for c in self.cards.values():
+            if c["done"]:
+                c["age"] += 1
 
     def cut(self):
         """A barge: any question not yet whole was not heard whole."""
@@ -765,15 +775,20 @@ class _LiveCardWatch:
 
     def verified(self, card_id) -> bool:
         c = self.cards.get(str(card_id or ""))
-        return bool(c and c["done"] and not c["cut"])
+        return bool(c and c["done"] and not c["cut"] and c["age"] <= 1)
+
+
+def _live_room_mode() -> bool:
+    try:
+        from agent_friday.services.voice_engine import _voice_room_mode
+        return bool(_voice_room_mode())
+    except Exception:
+        return True          # cannot tell: the stricter reading
 
 
 _LIVE_CARD_ASK = ("\n\nTHE QUESTION FOR THE USER: say these words exactly, do not paraphrase, then "
                   "wait for their answer: ")
-_LIVE_CARD_UNHEARD = ("NOT RECORDED: Friday has not been heard asking that card's question in full, "
-                      "so a bare yes or no cannot decide it. Ask the user to confirm on screen, or "
-                      "to say what the card does (for example, 'yes, archive them'). To ask it "
-                      "again, say these words exactly: ")
+_LIVE_CARD_UNHEARD = _item_actions.UNVOICED_CARD + " To ask it again, say these words exactly: "
 
 
 async def _live_card_tool(fname, fargs, send, session, runner=None):
@@ -781,13 +796,17 @@ async def _live_card_tool(fname, fargs, send, session, runner=None):
     rule: a card raised by a tool result carries its sealed question for
     Gemini to say verbatim, and ``answer_card`` on a bare yes or no runs only
     if Friday's transcript shows that question was said whole and uncut."""
-    from agent_friday.services import laya_router as _lr
     watch = session.setdefault("card_watch", _LiveCardWatch()) if session is not None else _LiveCardWatch()
     cid = (session or {}).get("conversation_id")
+    if session is not None:
+        session.pop("voiced_cards", None)
     if fname == "answer_card":
         said = str((session or {}).get("owner_text") or "").strip()
         card = str((fargs or {}).get("card_id") or "")
-        if (_lr._YES.match(said) or _lr._NO.match(said)) and not watch.verified(card):
+        if watch.verified(card):
+            if session is not None:
+                session["voiced_cards"] = [card]       # the one rule, applied in agent
+        elif _item_actions.unvoiced_card_approval_blocked(card, said, _live_room_mode()):
             ids, line = _sealed_card_line("card_id=" + card, cid)
             if ids:
                 watch.arm(ids, line)
@@ -2757,12 +2776,15 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
     except Exception:           # the session is not built yet: nothing was delivered
         sess = None
     spoken = []
+    tool_session.pop("voiced_cards", None)
     if sealed.get("ids"):
         try:
             if sess is not None and sess.line_delivered(sealed.get("turn"), sealed.get("line")):
                 spoken = list(sealed["ids"])
         except Exception:
             spoken = []
+    if spoken:
+        tool_session["voiced_cards"] = list(spoken)    # answer_card's one rule (agent)
     plan = _voice_route_plan(user_text, list(front["contract"].get("names") or []),
                              pending_card=_pending_voice_card(spoken, _cid))
     send({"type": "route", **plan["receipt"]})
@@ -5454,6 +5476,8 @@ if sock is not None:
                                                     if not _crew[0].external_active:
                                                         _crew[0].host_begin(**_crew_host)
                                                 _vlog(f'input_transcription: {in_tr.text!r}')
+                                                if not in_buf:
+                                                    _voice_session["card_watch"].owner_turn()
                                                 in_buf.append(in_tr.text)
                                                 _voice_session["owner_text"] = ''.join(in_buf)[-600:]
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})

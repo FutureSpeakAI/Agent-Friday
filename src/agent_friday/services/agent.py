@@ -4000,6 +4000,15 @@ def _tool_answer_card(inp):
     from agent_friday.services import item_actions as _ia
     inp = inp or {}
     surface = _CURRENT_SURFACE.get() or "chat"
+    if surface.startswith("voice"):
+        # A spoken yes decides a card only if the card's own question was
+        # voiced on this session (the call sets ``voiced_cards``) or the
+        # words name its action. Every voice surface, one rule.
+        cid = str(inp.get("card_id") or "")
+        voiced = {str(i) for i in ((_CURRENT_TOOL_CONTEXT.get() or {}).get("voiced_cards") or [])}
+        if cid not in voiced and _ia.unvoiced_card_approval_blocked(
+                cid, _CURRENT_OWNER_TEXT.get(), _voice_room()):
+            return _ia.UNVOICED_CARD
     tok = _ia.QUIET.set(_cloud_voice())
     try:
         return _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),

@@ -426,7 +426,7 @@ def test_native_crew_delegation_checks_call_origin_before_logging_and_execution(
         _turn_tools=[], _safe_send=lambda frame: None,
         _voice_orb_start=lambda name: orbs.append(name) or "orb",
         _voice_orb_finish=lambda *args: None, _time=SimpleNamespace(time=lambda: 0),
-        _voice_tool_with_limit=run_with_limit,
+        _voice_tool_with_limit=run_with_limit, _live_card_tool=run_with_limit,
         _voice_tool_run=lambda *args: calls.append(args) or "accepted",
         _gate_voice_tool_result=lambda result, name: result,
         _tell_hold=lambda: None, _user_words_ts=[0],

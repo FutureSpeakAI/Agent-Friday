@@ -2068,6 +2068,44 @@ def _not_recorded(want: str, room_mode: bool) -> dict:
         " (with several people in the room, a spoken OK must name Friday)" if room_mode else "")}
 
 
+#: What a spoken approval of a card whose question was not voiced is told.
+UNVOICED_CARD = ("NOT RECORDED: Friday has not been heard asking that card's question in full, "
+                 "so a bare yes or no cannot decide it. Ask the user to confirm on screen, or "
+                 "to say what the card does (for example, 'yes, archive them').")
+
+
+def card_action_words(card_id: str) -> set:
+    """The words that name a card's action: its action key and, for mail, the
+    verb the card is titled with. Nothing looser (no synonyms, no inflections)
+    counts as naming it; an unknown card names nothing."""
+    from agent_friday.services import approvals as ap
+    rec = ap.get_approval(str(card_id or "").strip()) or {}
+    action = str((rec.get("payload") or {}).get("action") or "").strip().lower()
+    if not action:
+        return set()
+    words = set(action.split("_"))
+    if action in EMAIL_ACTIONS:
+        words.add(EMAIL_ACTIONS[action][0])
+    return {w for w in words if w}
+
+
+def unvoiced_card_approval_blocked(card_id: str, owner_words: str, room_mode: bool = False) -> bool:
+    """True when the owner's spoken words would APPROVE ``card_id`` (however
+    they are worded: "yes, Friday", "yeah sure", "uh, yes") but the card's
+    question is not known to have been voiced and the words do not name its
+    action. A refusal, or words that decide nothing, are never blocked. The
+    caller applies this only to a card it cannot show was voiced this turn."""
+    from agent_friday.services import local_context as _lc
+    try:
+        verdict = _lc.spoken_decision(owner_words, room_mode)
+    except Exception:
+        return True
+    if verdict in (None, "deny"):
+        return False
+    said = set(re.findall(r"[a-z]+", str(owner_words or "").lower()))
+    return not (said & card_action_words(card_id))
+
+
 def answer_card(card_id: str, claimed: str, owner_words: str, *, room_mode: bool = False,
                 surface: str = "chat") -> dict:
     """Decide one of Friday's organize cards from the owner's own words.
