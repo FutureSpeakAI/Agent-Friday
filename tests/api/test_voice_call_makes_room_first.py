@@ -31,9 +31,23 @@ class _Card:
         self.log = []
         self.brain_mib = BRAIN_MIB
         self.low = None          # the least free the card ever had
+        # A real park returns before the seat's process has exited and the
+        # driver has the memory back: it frees after `release_polls` polls of
+        # the wait (0: at once; None: never).
+        self.release_polls = 0
+        self.polls_since_park = 0
+        self.clock = 0.0
+
+    def brain_freed(self):
+        return self.parked and self.release_polls is not None \
+            and self.polls_since_park >= self.release_polls
 
     def free_mib(self):
-        return FREE_WITH_BRAIN_MIB + (self.brain_mib if self.parked else 0) - self.taken
+        return FREE_WITH_BRAIN_MIB + (self.brain_mib if self.brain_freed() else 0) - self.taken
+
+    def tick(self, seconds):
+        self.clock += seconds
+        self.polls_since_park += 1
 
     def take(self, mib):
         self.taken += mib
@@ -47,8 +61,9 @@ class _Arbiter:
 
     def grant(self, kind, ttl_s=300):
         self.card.parked = True
+        self.card.polls_since_park = 0
         self.card.log.append(("park", kind))
-        return {"ok": True}
+        return {"ok": True, "lease": {"kind": kind, "displaced": [{"role": "brain"}]}}
 
     def release(self, kind=None):
         self.card.parked = False
@@ -96,6 +111,9 @@ def call(app, monkeypatch, tmp_path):
     monkeypatch.setattr(hardware_profile, "vram_headroom", lambda reserve_mib=None: {
         "ok": True, "free_mib": card.free_mib()})
     monkeypatch.setattr(vw, "declared_mib", lambda engine: WORKING_SETS.get(engine, 1024))
+    # The park wait's clock and sleep: fake, so a slow release costs no time.
+    monkeypatch.setattr(vw, "_sleep", card.tick, raising=False)
+    monkeypatch.setattr(vw, "_clock", lambda: card.clock, raising=False)
 
     # GPU workers that ask for room exactly as VoiceWorker.start does, then
     # occupy it; no child process.
@@ -283,3 +301,40 @@ def test_the_cpu_kokoro_fallback_never_loads_onto_cuda(monkeypatch):
                                   cpu_only=True)._resolve_device() == "cpu"
     from agent_friday.services import voice_workers as vw
     assert vw.KokoroCpuMouth("af_heart")._tts.cpu_only is True
+
+
+def test_the_call_waits_for_the_parked_brain_to_free_the_card(call):
+    # The brain's memory comes back four polls (2 s) after the park returns:
+    # admitted at once, the ear and mouth would see the old free figure.
+    call.card.release_polls = 4
+    frames = call.run()
+    log = call.card.log
+    assert ("gpu", "ear") in log and ("gpu", "mouth") in log, log
+    assert ("cpu", "ear") not in log and ("cpu", "mouth") not in log, log
+    served, = [f for f in frames if f.get("type") == "served_by"]
+    assert served["mouth"] == "kokoro@cuda" and served["ear"].endswith("@cuda"), served
+    assert not served.get("park")
+    status = [f.get("text") for f in frames if f.get("type") == "status"]
+    assert "waiting for the card to clear" in status
+    assert 0 < call.card.clock <= 20
+
+
+def test_a_park_that_never_frees_falls_back_and_says_so(call):
+    call.card.release_polls = None
+    frames = call.run()
+    assert ("cpu", "ear") in call.card.log and ("cpu", "mouth") in call.card.log
+    served, = [f for f in frames if f.get("type") == "served_by"]
+    assert "still clearing after the main model was parked" in served["park"], served
+    notes = [f for f in frames if f.get("code") == "local_voice_park_slow"]
+    assert notes and "after the main model was parked" in notes[0]["message"], notes
+    assert call.card.clock <= 20.5, "the wait is bounded"
+
+
+def test_a_release_still_rising_at_the_limit_stops_at_twenty_seconds(call, monkeypatch):
+    from agent_friday.services import voice_workers as vw
+    # Free memory creeps up 1 MiB a poll and never reaches the room needed.
+    base = call.card.free_mib
+    monkeypatch.setattr(call.card, "free_mib", lambda: base() + call.card.polls_since_park)
+    call.card.release_polls = None
+    w = vw.wait_for_room(100000)
+    assert w["ok"] is False and w["settled"] is False and w["waited_s"] == 20.0

@@ -130,6 +130,76 @@ class reserving:
         return False
 
 
+def card_free() -> dict:
+    """The card as admission measures it: ``{"cuda", "free_mib",
+    "reserve_mib", "ok", "detail"}``. ``free_mib`` is the CONSERVATIVE figure:
+    nvidia-smi's "genuinely free" whenever it answered (F2), else the
+    headroom probe's free (also nvidia-smi based)."""
+    from agent_friday.services import hardware_profile as hwp
+    from agent_friday.services.nemo_voice import gpu_status
+    reserve = _display_reserve_mib()
+    g = gpu_status(fresh=True) or {}
+    if not g.get("cuda"):
+        return {"cuda": False, "free_mib": 0, "reserve_mib": reserve, "ok": False,
+                "detail": g.get("detail") or ""}
+    hr = hwp.vram_headroom(reserve_mib=reserve) or {}
+    real_gb = g.get("vram_free_real_gb")
+    free_mib = (int(float(real_gb) * 1024) if real_gb is not None
+                else int(hr.get("free_mib") or 0))
+    return {"cuda": True, "free_mib": free_mib, "reserve_mib": reserve,
+            "ok": hr.get("ok") is not False, "detail": ""}
+
+
+#: The longest a call waits for a parked seat's memory to come back.
+PARK_WAIT_S = 20.0
+#: How often the wait measures the card.
+PARK_POLL_S = 0.5
+#: Polls the free figure must hold still, after rising, to count as settled;
+#: and how long it may hold still without ever rising (nothing more is
+#: coming back) before the wait gives up early.
+_SETTLED_POLLS = 3
+_FLAT_POLLS = 12
+_sleep = time.sleep
+_clock = time.monotonic
+
+
+def wait_for_room(need_mib: int, timeout_s: float = PARK_WAIT_S,
+                  poll_s: float = PARK_POLL_S) -> dict:
+    """Wait, bounded, for a just-parked seat's memory to show up as free.
+
+    A park returns when the arbiter has told the seat to stop, not when its
+    process has exited and the driver has given the memory back: admission
+    measured at that moment still sees the resident model. This measures
+    the card the way ``admit_gpu`` does until there is room for `need_mib`
+    above the display reserve, or the free figure has risen and then held
+    still (the release has landed; there is simply less room than hoped),
+    or has held still for _FLAT_POLLS polls without rising, or `timeout_s`
+    passes. Returns ``{"ok", "waited_s", "free_mib",
+    "reserve_mib", "settled"}``; ``ok`` False means the room never came."""
+    t0 = _clock()
+    first = last = None
+    steady = 0
+    while True:
+        card = card_free()
+        free = card["free_mib"]
+        if not card["cuda"]:
+            return {"ok": False, "waited_s": round(_clock() - t0, 2), "free_mib": 0,
+                    "reserve_mib": card["reserve_mib"], "settled": True}
+        if card["ok"] and free - _RESERVED_MIB[0] - int(need_mib) >= card["reserve_mib"]:
+            return {"ok": True, "waited_s": round(_clock() - t0, 2), "free_mib": free,
+                    "reserve_mib": card["reserve_mib"], "settled": True}
+        first = free if first is None else first
+        steady = steady + 1 if (last is not None and free == last) else 0
+        last = free
+        if (steady >= _SETTLED_POLLS and free > first) or steady >= _FLAT_POLLS:
+            return {"ok": False, "waited_s": round(_clock() - t0, 2), "free_mib": free,
+                    "reserve_mib": card["reserve_mib"], "settled": True}
+        if _clock() - t0 >= timeout_s:
+            return {"ok": False, "waited_s": round(_clock() - t0, 2), "free_mib": free,
+                    "reserve_mib": card["reserve_mib"], "settled": False}
+        _sleep(poll_s)
+
+
 def admit_gpu(need_mib: int, stage: str) -> dict:
     """Decide whether `need_mib` may be taken from the card for `stage`.
 
@@ -137,22 +207,14 @@ def admit_gpu(need_mib: int, stage: str) -> dict:
     :class:`GpuRefused` with ``local_voice_gpu_refused`` and the arithmetic.
     Never blocks; never loads anything.
     """
-    from agent_friday.services import hardware_profile as hwp
-    from agent_friday.services.nemo_voice import gpu_status
-    reserve = _display_reserve_mib()
-    g = gpu_status(fresh=True) or {}
-    if not g.get("cuda"):
+    card = card_free()
+    if not card["cuda"]:
         raise GpuRefused("local_voice_gpu_refused",
                          f"GPU voice not loaded: no CUDA device is available "
-                         f"({g.get('detail') or 'no GPU'}). Running the {stage} on the CPU.")
-    hr = hwp.vram_headroom(reserve_mib=reserve) or {}
-    # The CONSERVATIVE figure: nvidia-smi's "genuinely free" whenever it
-    # answered (F2), else the headroom probe's free (also nvidia-smi based).
-    real_gb = g.get("vram_free_real_gb")
-    free_mib = (int(float(real_gb) * 1024) if real_gb is not None
-                else int(hr.get("free_mib") or 0))
+                         f"({card['detail'] or 'no GPU'}). Running the {stage} on the CPU.")
+    reserve, free_mib = card["reserve_mib"], card["free_mib"]
     held_for = _RESERVED_MIB[0]
-    if hr.get("ok") is False or free_mib - held_for - int(need_mib) < reserve:
+    if not card["ok"] or free_mib - held_for - int(need_mib) < reserve:
         promised = (f" ({held_for:,} MiB of it held for the voice front)" if held_for else "")
         raise GpuRefused(
             "local_voice_gpu_refused",

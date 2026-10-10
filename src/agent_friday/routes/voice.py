@@ -1549,8 +1549,36 @@ def _make_room_for_voice(settings, selection=None, progress=None, holder="sessio
         return room
     if _brain_parked_for_call(settings, model,
                               extra_mib=_voice_stage_need_mib(selection)):
-        room["lease"] = _voice_lease_take(settings, holder, progress)
+        granted = {}
+        room["lease"] = _voice_lease_take(settings, holder, progress, granted=granted)
+        displaced = (granted.get("lease") or {}).get("displaced")
+        if granted and displaced != []:
+            # The park returns when the seat is told to stop, not when its
+            # memory is back: wait (bounded) for the card to show the room
+            # before the ear, mouth and front are admitted against it.
+            room["park_wait"] = _await_parked_room(room, selection, progress)
     return room
+
+
+def _await_parked_room(room, selection, progress=None) -> dict:
+    from agent_friday.services import voice_workers as _vw
+    need = _front_reserve_mib(room) + _voice_stage_need_mib(selection)
+    if need <= 0:
+        return {"ok": True, "waited_s": 0.0}
+    if progress:
+        progress("waiting for the card to clear")
+    w = _vw.wait_for_room(need)
+    if not w.get("ok"):
+        _vw._notice(
+            "local_voice_park_slow",
+            "The card had %s MiB free %s after the main model was parked "
+            "(the voice needs about %s MiB above a %s MiB display reserve); "
+            "what does not fit runs on the CPU." % (
+                format(int(w.get("free_mib") or 0), ","),
+                ("and was still freeing up after %g s" % w.get("waited_s", 0))
+                if not w.get("settled") else "once it settled",
+                format(int(need), ","), format(int(w.get("reserve_mib") or 0), ",")))
+    return w
 
 
 #: Sessions holding the voice-call lease. The Arbiter holds ONE lease; two
@@ -1559,10 +1587,11 @@ _VOICE_LEASE_HOLDERS: set = set()
 _VOICE_LEASE_LOCK = threading.Lock()
 
 
-def _voice_lease_take(settings, holder, progress=None):
+def _voice_lease_take(settings, holder, progress=None, granted=None):
     """Park the brain for this call (mode V-B). The lease kind ("voice_call")
     when the session holds the voice-call lease, None when there is no
-    arbiter; raises when the card cannot be cleared."""
+    arbiter; raises when the card cannot be cleared. ``granted`` (a dict) is
+    filled with the arbiter's answer when THIS call parked the seats."""
     from agent_friday.services import residency_arbiter as ra
     arb = ra.get_arbiter()
     if arb is None:
@@ -1575,6 +1604,8 @@ def _voice_lease_take(settings, holder, progress=None):
             if not got.get("ok"):
                 raise RuntimeError("the card could not be cleared for the voice: "
                                    + str(got.get("error") or "refused"))
+            if granted is not None:
+                granted.update(got)
         _VOICE_LEASE_HOLDERS.add(str(holder))
     return "voice_call"
 
@@ -1732,7 +1763,7 @@ def _run_after_call(items, conversation_id, wait_s=None, poll_s=10.0) -> None:
     threading.Thread(target=_go, daemon=True, name="voice-after-call").start()
 
 
-def _served_by(ear, mouth, seat, front=None, brain_parked=False) -> dict:
+def _served_by(ear, mouth, seat, front=None, brain_parked=False, park_wait=None) -> dict:
     """The serving identities a local session states (``served_by`` frame).
 
     Read from the running engines' own ``describe()``, never from settings,
@@ -1758,6 +1789,12 @@ def _served_by(ear, mouth, seat, front=None, brain_parked=False) -> dict:
         "mouth": f"{m.get('engine') or '?'}@{m.get('device') or '?'}",
         "voice": m.get("voice"),
         "degraded": m.get("degraded") or "",
+        # Set when the parked brain's memory had not come back in time, so
+        # what did not fit runs on the CPU: the reason, not a guess.
+        "park": ("" if not park_wait or park_wait.get("ok") else
+                 "the card was still clearing after the main model was parked "
+                 "(%s MiB free after %g s)" % (format(int(park_wait.get("free_mib") or 0), ","),
+                                              park_wait.get("waited_s", 0))),
     }
 
 
@@ -3412,7 +3449,8 @@ if sock is not None:
             # when something degrades). The owner always sees which model answers.
             _send({"type": "served_by", **_served_by(
                 ear, mouth, _brain, front=_front and _front["label"],
-                brain_parked=bool(_front and _front.get("lease")))})
+                brain_parked=bool(_front and _front.get("lease")),
+                park_wait=(_room or {}).get("park_wait"))})
 
             # One volatile block (clock, auto-context, continuity, tone) per
             # utterance, shared by the speculative prefill and the turn: if each

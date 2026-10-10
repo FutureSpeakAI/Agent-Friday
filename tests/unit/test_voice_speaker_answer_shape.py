@@ -341,7 +341,17 @@ def test_a_partial_or_cached_list_says_so():
         "That's from my offline copy, so it may be out of date.")
 
 
-def test_a_routed_list_makes_no_model_call():
+class _AtNow(datetime):
+    """voice_spoken's clock frozen at NOW: SIX's events are fixed times on
+    NOW's day, and a real clock later than 9 AM (correctly) drops Standup."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return NOW
+
+
+def test_a_routed_list_makes_no_model_call(monkeypatch):
+    monkeypatch.setattr(vs, "datetime", _AtNow)
     for tool, label, result, expect in [
             ("query_calendar", "checking your calendar", SIX, "Standup at 9 AM"),
             ("check_email", "checking your email", THREE_UNREAD, "from Jordan Lee")]:
