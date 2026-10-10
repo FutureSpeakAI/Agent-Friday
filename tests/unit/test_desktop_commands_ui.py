@@ -134,7 +134,7 @@ def test_the_desktop_reports_what_each_workspace_opens_to(desk):
     ws = st["manifest"]["workspaces"]
     assert {"feed", "frontpage", "readlater"} <= {s["id"] for s in ws["news"]["sections"]}
     assert ws["news"]["key"] == "tab"
-    assert {"general", "intelligence", "accounts", "costs"} <= {s["id"] for s in ws["settings"]["sections"]}
+    assert {"general", "intelligence", "connections", "costs"} <= {s["id"] for s in ws["settings"]["sections"]}
     assert "thread_id" in ws["messages"]["keys"], "friday_mail.js's declaration did not arrive"
     assert "node" in ws["knowledge"]["keys"]
 
@@ -170,8 +170,10 @@ def test_a_settings_section_is_brought_into_view(desk):
                                         "tab": "accounts", "section": "Signing PDFs"},
                    {"workspace": "settings", "key": "section", "value": "SIGNING PDFS"})
     assert res["opened"] is True and res["matched"] is True, res
+    # "accounts" is an earlier layout's tab id: it lands on Connections, the
+    # tab that holds Signing PDFs now (SETTINGS_TAB_ALIASES).
     assert page.evaluate("fridayCollectTabState('settings', null)") == {
-        "tab": "accounts", "section": "SIGNING PDFS"}
+        "tab": "connections", "section": "SIGNING PDFS"}
     # The smooth scroll settles; a loaded machine can take seconds, so wait for
     # the condition itself rather than a fixed time.
     # Its heading is on screen: inside the pane, and below the pane's sticky
@@ -204,7 +206,7 @@ def test_a_section_that_is_not_drawn_is_not_claimed(desk):
                                          "tab": "accounts", "section": "MCP servers"},
                    {"workspace": "settings", "key": "section", "value": "MCP servers"})
     assert res["opened"] is True and res["matched"] is False, res
-    assert "tab=accounts" in res["note"]
+    assert "tab=connections" in res["note"]
 
 
 def test_a_workspace_that_cannot_report_says_so(desk):
