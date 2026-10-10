@@ -102,6 +102,8 @@ you hit something that is not here, please open an issue.
 - **A two-part request does only the first part.** "Check my email and reply to
   Sam" does the look-up and drops the reply. Ask for the reply on its own.
 - **"Stop the task" with no name** stops the task on screen.
+- **"And N more" has no follow-up yet.** A long list ends with how many more
+  there are. Ask for them by name or narrow the question ("my email from Sam").
 - **A left-out podcast story can still be mentioned.** Another story's line
   may refer to a story the script check left out.
 
