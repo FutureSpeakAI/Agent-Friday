@@ -55,6 +55,13 @@ permissions are paused, and sends you to **Privacy & Data, File access**.
   people are in the room, how long a silence ends your turn, and
   push-to-transcribe (the shortcut and how long to hold it).
 - **What voice can't do, and why.**
+- **Podcasts: Episode length.** How long each show runs when spoken, set
+  separately for The Front Page, The Briefing, The Week, The Editorial and the
+  episodes you ask for: Short (about 2 minutes), Standard (about 5 minutes, the
+  recommended default) or Long (about 10 minutes). Standard tells three or four
+  stories in depth. A longer episode takes longer to write and speak on this
+  computer; a shorter one tells fewer stories. It applies from the next
+  episode. See [Podcasts](podcasts.md#how-long-an-episode-runs).
 - **Gemini Live options**, shown for the Gemini engine only: expressive speech,
   keeping long sessions going, using tools while talking, speaking style and
   language.

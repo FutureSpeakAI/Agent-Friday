@@ -93,10 +93,12 @@ def test_the_link_claim_needs_a_link_for_every_story_heard(ds):
 
 
 def test_low_density_in_a_solo_newscast(ds):
+    # Fewer stories told in depth is the aim (about 0.6 a minute), but two
+    # items stretched over seven minutes is padding, not depth.
     thin = [ln for ln in good_lines(ds) if ln.get("signature") or ln["chapter"] == 0]
     thin = thin + [dict(thin[1], text="That interview matters most, and here is the long "
                                       "version of why it matters so much to your whole day, "
-                                      "said slowly, at length, several times over. " * 12)]
+                                      "said slowly, at length, several times over. " * 30)]
     assert "low_density" in _codes(q.script_problems(thin, ds, n_chapters=3, news=True,
                                                      personal=True, solo=True))
 

@@ -56,6 +56,7 @@ TOOL_OF = {
     "settings.hologram.window": "hologram_window",
     "settings.calls.stand_back": "call_mode",
     "settings.podcasts.format": "podcast_format",
+    "settings.podcasts.length": "podcast_length",
 }
 KEYS_OF = {
     "switch_model": ("capability_routing", "orchestrator_model"),
@@ -65,6 +66,7 @@ KEYS_OF = {
     "hologram_window": ("tracking",),
     "call_mode": ("call_mode",),
     "podcast_format": ("podcasts",),
+    "podcast_length": ("podcasts",),
 }
 LABELS = {
     "switch_model": "the chat model",
@@ -74,6 +76,7 @@ LABELS = {
     "hologram_window": "the hologram window",
     "call_mode": "standing back for calls",
     "podcast_format": "who hosts a show",
+    "podcast_length": "how long a show runs",
 }
 
 
@@ -284,7 +287,7 @@ register_hooks()
 #: path prefix -> how to say it to the tool that owns the row. The path is the Settings row's key.
 PATHS = ("settings.models.chat_model", "settings.display.workspace_layout.<workspace>", "settings.display.start_screen",
          "settings.accessibility.big_mode", "settings.hologram.window.<dial>", "settings.calls.stand_back",
-         "settings.podcasts.format.<show>")
+         "settings.podcasts.format.<show>", "settings.podcasts.length.<show>")
 _LAYOUT_VALUES = ("normal", "fullscreen_chat")
 
 
@@ -322,6 +325,13 @@ def _route(path: str, value: str):
     if p.startswith("settings.podcasts.format"):
         show = p.split(".", 3)[3] if p.count(".") >= 3 else "any"
         return "podcast_format", {"routine": show, "format": v}
+    if p.startswith("settings.podcasts.length"):
+        show = p.split(".", 3)[3] if p.count(".") >= 3 else "any"
+        # "10" or "10 minutes" is a number of minutes; anything else is a length's name.
+        mins = v.lower().replace("minutes", "").replace("minute", "").replace("min", "").strip()
+        if mins.replace(".", "", 1).isdigit():
+            return "podcast_length", {"routine": show, "minutes": float(mins)}
+        return "podcast_length", {"routine": show, "length": v.lower()}
     return "SETTING_FAIL: no setting is called %r. The ones I can change: %s." % (path, "; ".join(PATHS))
 
 

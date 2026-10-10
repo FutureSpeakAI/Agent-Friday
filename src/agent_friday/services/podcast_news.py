@@ -321,7 +321,7 @@ def queue_for_run(routine: str, run_id: str) -> dict | None:
         run_path(routine, run_id)        # validates the id
         prev = pe.for_run(routine, run_id)
         ep = pe.create([{"kind": "news_run", "routine": routine, "run_id": run_id}],
-                       length=(cfg.get("length") or {}).get(routine) or "short",
+                       length=pe.length_for(routine),
                        origin="routine",
                        attached={"routine": routine, "run_id": run_id})
         if prev and prev.get("id") != ep["id"]:

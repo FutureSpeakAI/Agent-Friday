@@ -87,6 +87,17 @@ conversational reply starts about 0.1 seconds after you stop speaking (median),
 and a look-up answer starts about 0.4 seconds after the acknowledgement. Other
 computers will differ.
 
+### Podcasts by voice
+
+Say "make a podcast from my notes on the ferry project", "play the Briefing",
+"next chapter" or "what's the source for that?" and Friday does it directly.
+To change how long a show runs, say it plainly: "make the Front Page podcast 10
+minutes", "make tomorrow's Briefing longer", "make my own episodes short".
+Friday hands that to her full agent in the background (the length tool is not
+one of the quick voice tools), reads you the old and new length, and changes
+nothing until you say yes on the card. The lengths are about 2, 5 (recommended)
+and 10 minutes; see [Podcasts](podcasts.md#how-long-an-episode-runs).
+
 ### Asking about background work
 
 Ask "what's in your queue?" or "what are you doing in the background?" and

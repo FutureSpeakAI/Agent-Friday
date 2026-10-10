@@ -353,16 +353,20 @@ def test_a_request_waits_only_for_stand_down_and_the_gpu_lease(monkeypatch):
     assert "image job" in pe._gate_reason({"priority": "now"})
 
 
-def test_routine_and_long_episodes_use_the_scheduler_idle_gate(monkeypatch):
-    from agent_friday.services import scheduler
+def test_routine_and_long_episodes_are_time_bound_and_never_wait_for_idle(monkeypatch):
+    """A routine's episode is due when its routine runs: it takes its turn in
+    the Local AI queue (which yields to chat and voice) and never waits for
+    the owner to be away, at any length (test_podcast_depth has the queue)."""
+    from agent_friday.services import residency_arbiter, scheduler, stand_down
     monkeypatch.setattr(render, "commit_headroom_mb", lambda: 64 * 1024)
-    seen = []
     monkeypatch.setattr(scheduler, "idle_work_blocked_reason",
-                        lambda rec=None, spec=None, now=None: seen.append(spec) or "")
-    pe._gate_reason({"priority": "routine", "length": "short"})
-    pe._gate_reason({"priority": "routine", "length": "long"})
-    assert seen[0] == {"from_hour": 0, "to_hour": 24, "idle_after_s": 60}
-    assert seen[1] is None          # the owner's own idle window
+                        lambda *a, **k: pytest.fail("a podcast must not wait for idle"))
+    monkeypatch.setattr(stand_down, "is_stood_down", lambda: False)
+    monkeypatch.setattr(residency_arbiter, "exclusive_lease", lambda: None)
+    assert pe._gate_reason({"priority": "routine", "length": "short"}) == ""
+    assert pe._gate_reason({"priority": "routine", "length": "long"}) == ""
+    monkeypatch.setattr(residency_arbiter, "exclusive_lease", lambda: {"role": "image job"})
+    assert "image job" in pe._gate_reason({"priority": "routine", "length": "standard"})
 
 
 # ── speech: local files only ────────────────────────────────────────────────

@@ -293,8 +293,9 @@ INTERNAL_TOOLS = frozenset({
     "speak_text", "list_voices", "read_session_output", "load_tools",
     # Podcasts: an episode is written and spoken on this computer and saved in
     # Friday's own folder; playing it steers the owner's own screen; the
-    # format is the owner's own podcast setting on this computer.
+    # format and the length are the owner's own podcast settings on this computer.
     "make_podcast", "podcast_list", "podcast_play", "podcast_source", "podcast_format",
+    "podcast_length",
     "media_show", "media_cards", "media_turn",
     # media_play finds one audio or video card in the owner's own Media index
     # and tells the owner's own screen to open it in the quick look and play

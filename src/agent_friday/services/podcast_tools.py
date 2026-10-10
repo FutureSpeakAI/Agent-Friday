@@ -186,14 +186,15 @@ def _tool_make_podcast(inp):
                                               "Ask from inside the conversation, or name it."})
     try:
         ep = pe.create(refs, title=str(inp.get("title") or ""),
-                       length=str(inp.get("length") or "standard"),
+                       # No length asked for: the owner's setting for the episodes they ask for.
+                       length=str(inp.get("length") or ""),
                        mode=str(inp.get("mode") or "auto"),
                        instructions=str(inp.get("instructions") or ""),
                        voice_engine=str(inp.get("voice") or "local"),
                        origin="user")
     except pe.PodcastRefused as e:
         return json.dumps({"status": "refused", "message": str(e)})
-    mins = {"short": 5, "standard": 10, "long": 30}[ep["length"]]
+    mins = pe.LENGTH_MINUTES[ep["length"]]
     return json.dumps({
         "status": "queued", "episode_id": ep["id"], "privacy": ep["privacy"],
         "mode": ep["mode"], "sources": len(refs),
@@ -232,6 +233,58 @@ def _tool_podcast_format(inp):
             return json.dumps({"status": "error", "message": str(e)})
     return json.dumps({"status": "ok", "formats": pe.formats(),
                        "message": ("%s is now %s." % (routine or "any", fmt)) if fmt else ""})
+
+
+def _length_words(length: str) -> str:
+    return "%s (about %d minutes)" % (length, pe.LENGTH_MINUTES[length])
+
+
+def _tool_podcast_length(inp):
+    """Read or set how long a show's episodes run ("make tomorrow's Front Page
+    longer", "make the front page podcast ten minutes"). A change is held for
+    the owner's own yes, like every setting a tool writes."""
+    inp = inp or {}
+    routine = str(inp.get("routine") or "").strip().lower()
+    routine = "" if routine == "any" else routine
+    length = str(inp.get("length") or "").strip().lower()
+    step = str(inp.get("change") or "").strip().lower()
+    try:
+        if not length and inp.get("minutes") not in (None, ""):
+            length = pe.length_from_minutes(inp.get("minutes"))
+        if not length and step in ("longer", "shorter"):
+            # One step from where the show is now ("make tomorrow's longer").
+            now = pe.LENGTHS.index(pe.length_for("" if routine == "all" else routine))
+            length = pe.LENGTHS[max(0, min(len(pe.LENGTHS) - 1, now + (1 if step == "longer" else -1)))]
+        if length:
+            pe.check_length(routine, length)
+    except pe.PodcastRefused as e:
+        return json.dumps({"status": "error", "message": str(e)})
+    if not length:
+        return json.dumps({"status": "ok", "lengths": pe.lengths(),
+                           "recommended": pe.RECOMMENDED_LENGTH, "message": ""})
+    from agent_friday.services import setting_proposals as _sp
+    shows = pe.LENGTH_SHOWS if routine == "all" else ((routine or "any"),)
+    olds = sorted({pe.length_for("" if k == "any" else k) for k in shows}, key=pe.LENGTHS.index)
+    what = ("every show" if routine == "all" else
+            pe.SHOW_NAMES.get(routine) or "the episodes you ask for")
+    longer = pe.LENGTH_MINUTES[length] > min(pe.LENGTH_MINUTES[x] for x in olds)
+    try:
+        held = _sp.hold("podcast_length", inp, old=" and ".join(_length_words(x) for x in olds),
+                        new=_length_words(length), label="how long %s runs" % what,
+                        consequence=("A longer episode takes longer to write and speak on this computer."
+                                     if longer else "A shorter episode tells fewer stories."))
+    except Exception as e:  # noqa: BLE001 - a setting is never written without its check
+        return json.dumps({"status": "error", "message": "The change could not be put to you: %s" % e})
+    if held:
+        return json.dumps({"status": "needs_yes" if held.startswith("SETTING_NEEDS_YES") else "ok",
+                           "message": held})
+    try:
+        pe.set_length(routine, length)
+    except pe.PodcastRefused as e:
+        return json.dumps({"status": "error", "message": str(e)})
+    return json.dumps({"status": "ok", "lengths": pe.lengths(),
+                       "message": "%s now runs %s, from the next episode."
+                                  % (what[:1].upper() + what[1:], _length_words(length))})
 
 
 def _tool_podcast_list(inp):
@@ -353,7 +406,7 @@ TOOLS = [
              "items": {"type": "object"}},
          "topic": {"type": "string", "description": "Use the owner's wiki notes on this topic."},
          "length": {"type": "string", "enum": ["short", "standard", "long"],
-                    "description": "short ~5 min, standard ~10 min, long ~30 min"},
+                    "description": "short ~2 min, standard ~5 min, long ~10 min"},
          "mode": {"type": "string", "enum": ["auto", "conversation", "data"]},
          "title": {"type": "string"},
          "instructions": {"type": "string", "description": "Angle or emphasis the owner asked for."},
@@ -366,6 +419,18 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "routine": {"type": "string", "enum": ["briefing", "front_page", "editorial", "weekly", "any"]},
          "format": {"type": "string", "enum": ["solo", "duo"]}}}},
+    {"name": "podcast_length",
+     "description": ("How long a show's episodes run: short ~2 min, standard ~5 min "
+                     "(recommended), long ~10 min. No length, minutes or change: read all. "
+                     "\"Make tomorrow's longer\": change=longer for that show. Waits for the "
+                     "owner's yes."),
+     "input_schema": {"type": "object", "properties": {
+         "routine": {"type": "string", "enum": ["front_page", "briefing", "weekly", "editorial",
+                                                "any", "all"],
+                     "description": "any: episodes the owner asks for; all: every show."},
+         "length": {"type": "string", "enum": ["short", "standard", "long"]},
+         "minutes": {"type": "number"},
+         "change": {"type": "string", "enum": ["longer", "shorter"]}}}},
     {"name": "podcast_list",
      "description": "List podcast episodes, newest first: title, status, length, chapters, privacy. Filter by routine (front_page, briefing, weekly, editorial). Read them back as sentences, not a table.",
      "input_schema": {"type": "object", "properties": {
@@ -395,10 +460,10 @@ TOOLS = [
 
 #: make_podcast writes an episode on this computer (ring 1). Listing and
 #: source lookup only read (ring 0). Playing steers the owner's own screen,
-#: like navigate_to (ring 1). podcast_format changes the owner's own podcast
-#: setting on this computer (ring 1).
+#: like navigate_to (ring 1). podcast_format and podcast_length change the
+#: owner's own podcast settings on this computer (ring 1).
 RINGS = {"make_podcast": 1, "podcast_list": 0, "podcast_play": 1, "podcast_source": 0,
-         "podcast_format": 1}
+         "podcast_format": 1, "podcast_length": 1}
 
 HANDLERS = {
     "make_podcast": _tool_make_podcast,
@@ -406,6 +471,7 @@ HANDLERS = {
     "podcast_play": _tool_podcast_play,
     "podcast_source": _tool_podcast_source,
     "podcast_format": _tool_podcast_format,
+    "podcast_length": _tool_podcast_length,
 }
 
 
@@ -414,6 +480,10 @@ HANDLERS = {
 #: its latency budget. Their handlers and rings are registered like the rest,
 #: so voice and the loader run them wherever they are named.
 NEWS_ONLY = ("podcast_format",)
+#: podcast_length is in the always-on text catalogue but not on the voice
+#: contract (voice_engine._VOICE_SHARED_TOOLS), which has no room for another
+#: schema: a spoken "make the front page ten minutes" reaches it through
+#: ask_friday, whose turn has this catalogue.
 
 
 def register(claude_tools, handlers, rings, workspace_tools=None):

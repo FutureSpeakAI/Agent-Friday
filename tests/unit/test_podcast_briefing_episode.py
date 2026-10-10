@@ -40,6 +40,8 @@ def home(tmp_path, monkeypatch):
             else:
                 cur[k] = v
     monkeypatch.setattr(core, "_save_settings", save)
+    # A unit test never reads a real publisher's page (podcast_engine.deepen).
+    monkeypatch.setattr(pe, "article_text", lambda url: "")
     return tmp_path
 
 
