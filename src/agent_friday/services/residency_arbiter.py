@@ -1860,6 +1860,8 @@ def adopt_live_seats() -> list:
 
 #: How often the seat watch looks for seats started outside this process.
 SEAT_WATCH_S = 60.0
+#: The wait between a release's restore tries (swapped in tests).
+_restore_sleep = time.sleep
 _SEAT_WATCH = {"thread": None, "stop": None}
 
 
@@ -2602,8 +2604,10 @@ class Arbiter:
                     # parked for the call so the voice front and the mouth
                     # fit; release restores them exactly as the other kinds
                     # do. The front itself is served by services/voice_front,
-                    # outside the plan, so nothing is loaded here.
-                    displaced = self._evict_pinned()
+                    # outside the plan, so nothing is loaded here. The brain's
+                    # model goes even when it also serves the sidekick (the
+                    # front keeps Friday speaking; see _evict_pinned).
+                    displaced = self._evict_pinned(for_voice_call=True)
                     self.lease = {"kind": kind, "role": "voice",
                                   "model_id": None,
                                   "displaced": displaced,
@@ -2668,7 +2672,20 @@ class Arbiter:
                     # is "parked", and restoring it means not launching.
                     self._record("parked", "plan", None, 0.0)
                 else:
-                    self._restore_pinned(self.lease.get("displaced"))
+                    missing = self._restore_with_retry(self.lease.get("displaced"))
+                    if missing:
+                        # The card is given back either way; a seat that did
+                        # not come back is said, never swallowed.
+                        self.lease = None
+                        self.state = STATE_DEGRADED
+                        el = round(time.time() - t0, 2)
+                        self._record("release-degraded", kind,
+                                     ",".join(m for _r, m in missing), el)
+                        return {"ok": False, "transition_s": el,
+                                "error": "not serving after the %s lease ended: %s" % (
+                                    kind, ", ".join("%s (%s)" % (m, r) for r, m in missing)),
+                                "seat_problems": {m: self.seat_problems.get(m)
+                                                  for _r, m in missing}}
                 self.lease = None
                 self.state = STATE_DEFAULT
                 el = round(time.time() - t0, 2)
@@ -2677,6 +2694,50 @@ class Arbiter:
             except Exception as e:
                 self.state = STATE_DEGRADED
                 return {"ok": False, "error": str(e)}
+
+    #: Tries a release makes to bring the displaced seats back, and the waits
+    #: between them.
+    RESTORE_TRIES = 3
+    RESTORE_BACKOFF_S = (1.0, 2.0)
+
+    def _restore_with_retry(self, roles):
+        """`_restore_pinned(roles)`, verified: every displaced llama seat's
+        model must be served afterwards. A try that raises or leaves a seat
+        unserved is retried (RESTORE_TRIES, with backoff); what is still not
+        served is recorded in `seat_problems`, logged, and returned as
+        [(role, model_id)]. Caller holds the lock."""
+        roles = list(roles or [])
+        wanted = {r: s["model_id"] for r, s in self._pinned_llama_seats()
+                  if r in roles and r not in rp.RETAINED_THROUGH_LEASE}
+        err = None
+        missing = []
+        for attempt in range(self.RESTORE_TRIES):
+            err = None
+            try:
+                self._restore_pinned(roles)
+            except Exception as e:  # noqa: BLE001
+                err = e
+            try:
+                served = set(self.llama.procs) | set(self.ollama.resident() or [])
+            except Exception:
+                served = set(self.llama.procs)
+            missing = [(r, m) for r, m in wanted.items() if m not in served]
+            if not missing and err is None:
+                return []
+            if attempt + 1 < self.RESTORE_TRIES:
+                _restore_sleep(self.RESTORE_BACKOFF_S[min(attempt, len(self.RESTORE_BACKOFF_S) - 1)])
+        if not missing:
+            # Every displaced llama seat is serving; what raised was another
+            # part of the restore (an embedder), which notes its own problem.
+            __import__("logging").getLogger("friday.residency").warning(
+                "[arbiter] restore after a lease raised but the seats are serving: %s", err)
+            return []
+        for role, model_id in missing:
+            self._note_seat_problem(
+                role, model_id,
+                "not restored after a lease (%d tries)%s" % (
+                    self.RESTORE_TRIES, ": %s" % err if err else ""))
+        return missing
 
     def renew(self, kind, ttl_s):
         """Extend the held lease of `kind` by `ttl_s` from now.
@@ -3370,7 +3431,7 @@ class Arbiter:
             return emb
         return None
 
-    def _evict_pinned(self):
+    def _evict_pinned(self, for_voice_call=False):
         """Stand down the seats a lease may take. R10 says which it may not.
 
         Every pinned llama.cpp seat on the card is displaceable whatever its
@@ -3384,9 +3445,20 @@ class Arbiter:
         hung rather than busy. The maintainer's ruling: "keep e2b awake so
         Friday is always alive." A model that also serves the sidekick is
         retained with it.
+
+        ``for_voice_call``: the one exception. During a local voice call
+        Friday is not mute (the voice front is a live local model), so the
+        model that is the interactive brain is displaced even when it also
+        serves the sidekick; on a one-model plan (every role on the brain's
+        model) the call would otherwise park nothing and its voice would
+        never fit. The sidekick ROLE is still never displaced by name, and
+        every other lease keeps R10 exactly.
         """
         displaced = []
         keep_models = self._retained_models()
+        if for_voice_call:
+            brain = ((self.plan or {}).get("seats") or {}).get("interactive_brain") or {}
+            keep_models = keep_models - {brain.get("model_id")}
         cands = [(r, s) for r, s in self._pinned_llama_seats()]
         emb = self._gpu_embedder()
         if emb is not None:

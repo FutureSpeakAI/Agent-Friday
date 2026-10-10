@@ -1532,6 +1532,46 @@ def _front_reserve_mib(room) -> int:
         return 0
 
 
+def _engines_off_the_card(_vw, selection, ear, mouth, progress=None):
+    """The ear and mouth moved to the CPU (a GPU worker is stopped and the
+    stage rebuilt with the "never" policy); CPU engines are kept."""
+    out = []
+    for stage, eng in (("ear", ear), ("mouth", mouth)):
+        if isinstance(eng, (_vw.WorkerEar, _vw.WorkerMouth)):
+            try:
+                eng.close()
+            except Exception:
+                pass
+            sel = dict((selection or {}).get(stage) or {}, device_policy="never")
+            eng = (_vw.build_ear(sel, progress=progress) if stage == "ear"
+                   else _vw.build_mouth(sel, progress=progress))
+        out.append(eng)
+    return out[0], out[1]
+
+
+def _front_refused(seat, model, label) -> str:
+    """Why the front cannot be loaded on the card now ("" when it can, when
+    it is already serving, or when there is no card to measure)."""
+    from agent_friday.services import voice_front as _vf
+    from agent_friday.services import voice_workers as _vw
+    try:
+        if getattr(seat, "model", None) == model and seat.holders() > 0:
+            return ""
+    except Exception:
+        pass
+    if not _vw.card_free().get("cuda"):
+        return ""
+    try:
+        _vw.admit_gpu(_vf.vram_need_mib(model), "voice front")
+        return ""
+    except _vw.GpuRefused as e:
+        msg = ("%s does not fit on the card right now (%s), so the main model "
+               "answers this call." % (label, e.message.split(": ", 1)[-1]
+                                       .split(" Running")[0].rstrip(".")))
+        _vw._notice("local_voice_front_refused", msg)
+        return msg
+
+
 def _make_room_for_voice(settings, selection=None, progress=None, holder="session"):
     """The first step of a local call: choose the front and, when this call
     parks the brain, park it NOW, before any voice engine asks the card for
@@ -1551,13 +1591,57 @@ def _make_room_for_voice(settings, selection=None, progress=None, holder="sessio
                               extra_mib=_voice_stage_need_mib(selection)):
         granted = {}
         room["lease"] = _voice_lease_take(settings, holder, progress, granted=granted)
-        displaced = (granted.get("lease") or {}).get("displaced")
-        if granted and displaced != []:
-            # The park returns when the seat is told to stop, not when its
-            # memory is back: wait (bounded) for the card to show the room
-            # before the ear, mouth and front are admitted against it.
-            room["park_wait"] = _await_parked_room(room, selection, progress)
+        try:
+            displaced = (granted.get("lease") or {}).get("displaced")
+            if granted and displaced != []:
+                # The park returns when the seat is told to stop, not when its
+                # memory is back: wait (bounded) for the card to show the room
+                # before the ear, mouth and front are admitted against it.
+                room["park_wait"] = _await_parked_room(room, selection, progress)
+            _measure_brain_park(room, granted)
+        except BaseException:
+            # Nothing after the grant may strand this call's hold on it.
+            if room.get("lease"):
+                _voice_lease_give(holder)
+            raise
     return room
+
+
+def _brain_serving(brain):
+    """Is the brain model's llama-server answering right now? True / False
+    from the arbiter's survey of live seats (process and port), None when
+    it cannot be told."""
+    if not brain:
+        return None
+    try:
+        from agent_friday.services import residency_arbiter as ra
+        return brain in (ra.survey_live_seats() or {})
+    except Exception:
+        return None
+
+
+def _measure_brain_park(room, granted) -> None:
+    """A granted lease is not a parked brain: the arbiter parks what its plan
+    lets it. Measure what is serving and record it (``room["brain_parked"]``:
+    True, False, or None when it cannot be told), with a notice when the
+    brain is still loaded."""
+    try:
+        from agent_friday.services import local_seats as _seats
+        brain = _seats.resolve("brain")
+    except Exception:
+        brain = None
+    room["brain"] = brain
+    serving = _brain_serving(brain)
+    if serving is None:
+        displaced = (granted.get("lease") or {}).get("displaced")
+        room["brain_parked"] = bool(displaced) if granted else None
+    else:
+        room["brain_parked"] = not serving
+    if room["brain_parked"] is False:
+        from agent_friday.services import voice_workers as _vw
+        _vw._notice("local_voice_brain_not_parked",
+                    "The main model (%s) is still loaded on the card, so the voice "
+                    "has only the room left beside it." % brain)
 
 
 def _await_parked_room(room, selection, progress=None) -> dict:
@@ -1639,7 +1723,10 @@ def _voice_lease_give(holder) -> None:
         if arb is not None:
             # Only the voice-call lease: if ours lapsed and another job took
             # the card, that lease is not ours to end.
-            arb.release(kind="voice_call")
+            res = arb.release(kind="voice_call") or {}
+            if res.get("ok") is False:
+                _log.error("voice call lease released, but the parked seats did not "
+                           "all come back: %s", res.get("error"))
     except Exception as e:  # noqa: BLE001
         _log.warning("voice call lease release failed: %s", e)
 
@@ -1667,7 +1754,8 @@ def _arm_voice_front(settings, progress=None, holder="session", room=None):
     from agent_friday.services.voice_engine import build_voice_tool_contract
     # A chosen front that cannot run here (not downloaded, or Bonsai without
     # the PrismML runtime) falls back to one that can, and the owner is told.
-    if room is None:
+    own_room = room is None
+    if own_room:
         room = _make_room_for_voice(settings, progress=progress, holder=holder)
     model = room.get("model")
     if model is None:
@@ -1676,6 +1764,20 @@ def _arm_voice_front(settings, progress=None, holder="session", room=None):
     taken = {"seat": None, "lease": room.get("lease"), "holder": holder}
     try:
         seat = _vf.get()
+        # The front is admitted like the ear and the mouth: a model is never
+        # loaded into a card below the display reserve. When it does not fit,
+        # the main model answers, as with no front at all. The park is given
+        # back by whoever holds GPU engines in the room it freed: the session
+        # moves its ear and mouth off the card first, so the brain's restore
+        # gets the room it had (here, with no engines, it is given back now).
+        refused = _front_refused(seat, model, label)
+        if refused:
+            room["front_refused"] = refused
+            if progress:
+                progress(refused)
+            if own_room:
+                _release_voice_front(taken)
+            return None
         if progress:
             progress(f"starting {label}")
         seat.arm(model, holder=holder)
@@ -3431,9 +3533,21 @@ if sock is not None:
                        "detail": f"Friday's local voice could not start: {_fe}. "
                                  f"Try again, or switch to cloud voice."})
                 return
+            if _front is None and _room.get("front_refused"):
+                # The main model answers. Its park is given back, but only
+                # after the ear and mouth leave the room the park freed, so
+                # the brain's restore has the card it had.
+                ear, mouth = _engines_off_the_card(_vw, _sel, ear, mouth, _prog)
+                _release_voice_front(_room)
+                _room["lease"] = None
         except BaseException:
             _release_voice_front(_room)
             raise
+        # Notices raised while arming (a front that did not fit).
+        for _n in list(_vw.NOTICES):
+            _send({"type": "error-nonfatal", "code": _n.get("code"),
+                   "message": _n.get("message"), "action": None})
+        del _vw.NOTICES[:]
         # Anything that fails between arming the front and the loop below
         # gives the front and the brain's park back (the loop's finally
         # covers the rest of the call).
@@ -3449,7 +3563,10 @@ if sock is not None:
             # when something degrades). The owner always sees which model answers.
             _send({"type": "served_by", **_served_by(
                 ear, mouth, _brain, front=_front and _front["label"],
-                brain_parked=bool(_front and _front.get("lease")),
+                # Parked only when the brain was measured gone, never because
+                # a lease was granted.
+                brain_parked=bool(_front and _front.get("lease")
+                                  and (_room or {}).get("brain_parked") is not False),
                 park_wait=(_room or {}).get("park_wait"))})
 
             # One volatile block (clock, auto-context, continuity, tone) per
