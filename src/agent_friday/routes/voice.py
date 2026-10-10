@@ -2243,7 +2243,7 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
 VOICE_SPEAKER_RULE = (
     "TOOLS ARE HANDLED FOR YOU: Friday's quick judgement looks things up "
     "before you answer; when it has, the owner's turn ends with a block headed "
-    "WHAT FRIDAY JUST LOOKED UP. Answer from that block: say what it says, with "
+    "What Friday just looked up, fenced as data. Answer from that block: say what it says, with "
     "its facts. The owner has already heard a short acknowledgement; never "
     "repeat it or talk about it. You never call tools and "
     "never write tool syntax. If the owner asked for something and there is "
