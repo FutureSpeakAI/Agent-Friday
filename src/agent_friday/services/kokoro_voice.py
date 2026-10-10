@@ -418,9 +418,13 @@ class KokoroTTS:
     Kokoro (an offline render, a test) opts in explicitly.
     """
 
-    def __init__(self, voice=DEFAULT_KOKORO_VOICE, allow_cpu=False, lang_code=KOKORO_LANG_CODE):
+    def __init__(self, voice=DEFAULT_KOKORO_VOICE, allow_cpu=False, lang_code=KOKORO_LANG_CODE,
+                 cpu_only=False):
         self.voice = voice or DEFAULT_KOKORO_VOICE
-        self.allow_cpu = bool(allow_cpu)
+        # cpu_only: the caller was refused the card (or chose the CPU), so
+        # an in-process CUDA load would take VRAM no admission granted.
+        self.cpu_only = bool(cpu_only)
+        self.allow_cpu = bool(allow_cpu) or self.cpu_only
         self.lang_code = lang_code or KOKORO_LANG_CODE
         self._pipeline = None
         self._device = None
@@ -460,6 +464,8 @@ class KokoroTTS:
                 + ". This is what a `--no-deps` install leaves behind. "
                   "Reinstall it with its dependencies: `pip install kokoro "
                   "misaki espeakng-loader`. (%s)" % _imp["error"])
+        if self.cpu_only:
+            return "cpu"
         try:
             import torch
             cuda = bool(torch.cuda.is_available())

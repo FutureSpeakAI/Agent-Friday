@@ -656,7 +656,9 @@ class KokoroCpuMouth(MouthEngine):
 
     def __init__(self, voice: str = "af_heart"):
         from agent_friday.services.kokoro_voice import KokoroTTS
-        self._tts = KokoroTTS(voice, allow_cpu=True)
+        # The CPU fallback runs on the CPU: this process loading Kokoro onto
+        # CUDA would take the card admission just refused, unleased.
+        self._tts = KokoroTTS(voice, allow_cpu=True, cpu_only=True)
         self.voice = voice
 
     def load(self, progress=None):
@@ -873,6 +875,28 @@ def build_mouth(selection: dict, progress=None) -> MouthEngine:
     eng.degraded = degraded
     _hold("mouth", eng)
     return eng
+
+
+def session_engine(stage: str, selection: dict, progress=None):
+    """The engine a session uses for `stage` ("ear" or "mouth"): the held
+    engine, unless it is a CPU fallback while the selection may use the card,
+    in which case the card is asked again (it may have room now that the
+    session has parked the brain). The builders reuse a held GPU worker."""
+    sel = selection or {}
+    cur = held(stage)
+    if cur is not None:
+        if stage == "ear":
+            retry = (isinstance(cur, CpuWhisperEar)
+                     and str(sel.get("device_policy") or "if_free") != "never")
+        else:
+            retry = (str(sel.get("engine") or "") == "kokoro"
+                     and str(sel.get("device_policy") or "preferred") != "never"
+                     and isinstance(cur, (KokoroCpuMouth, PiperMouth)))
+        if not retry:
+            return cur
+    if stage == "ear":
+        return build_ear(sel, progress=progress)
+    return build_mouth(sel, progress=progress)
 
 
 # ── manifest runners (the ENGINE_RUNNERS entries for ear and mouth) ─────────

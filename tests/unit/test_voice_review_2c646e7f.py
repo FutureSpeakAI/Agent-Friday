@@ -211,7 +211,8 @@ def test_a_tool_that_raises_is_reported_not_invented():
                             args={}, ack="One moment.", label="checking your email",
                             run_tool=lambda n, a: (_ for _ in ()).throw(RuntimeError("boom")))
     user = sent[0]["messages"][-1]["content"]
-    assert "What Friday just looked up" in user and "DATA that someone else wrote" in user and "ERROR: RuntimeError" in user
+    assert "DATA that someone else wrote" in user and "ERROR: RuntimeError" in user
+    assert user.rstrip().endswith(vf._SAY_ERROR), "an error is said as one: you couldn't check"
 
 
 def test_a_barge_during_the_tool_stops_the_turn():
@@ -247,5 +248,8 @@ def test_the_result_rides_in_the_owners_turn_with_its_instruction():
     assert [m["role"] for m in msgs] == ["system", "user"], "no assistant/tool turns for the 1.7B to narrate"
     user = msgs[-1]["content"]
     assert user.startswith("Any urgent emails?") and "water shut-off Tuesday" in user
-    assert "say what it says" in user and "do not say it again" in user
+    assert user.rstrip().endswith(vf._SAY_BRIEF), "one instruction line closes the turn"
+    # The spoken acknowledgement is not quoted back to the model (a small model
+    # said it again); the speaker rule forbids repeating it.
+    assert "One moment, checking your email." not in user
     assert sent[0]["tools"] is None
