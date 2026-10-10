@@ -2287,7 +2287,8 @@ DEFAULT_SETTINGS = {
     # ── The voice front (local voice spec §4.1, §6) ──
     # The small fast model that answers live voice turns on its own seat; the
     # brain takes deep work asynchronously. Read by services/voice_front.
-    "voice_front_model": "qwen3-4b-instruct-2507",   # qwen3-4b-instruct-2507 | qwen3-1.7b
+    "voice_front_model": "auto",   # auto (first that runs here: Bonsai 1.7B, then Qwen3 4B, 1.7B) | ternary-bonsai:1.7b | qwen3-4b-instruct-2507 | qwen3-1.7b
+    "voice_tool_routing": "laya",   # laya (system one routes tools; the front speaks) | model (the front calls tools)
     # The brain during a call: "auto" = beside the front when the card holds
     # both, else parked for the call; "parked"; "resident".
     "voice_brain_during_calls": "auto",

@@ -150,10 +150,13 @@ def test_the_deep_seat_is_bonsai_and_the_fast_seat_is_the_voice_front(tmp_path):
     for o in out["deep"] + out["fast"]:
         assert o["bytes"] > 0 and o["size"], "every option shows its size on disk"
     assert "bonsai2:27b" in ids(out["deep"])
-    # The fast seat offers what the voice stack actually serves, never a Bonsai model.
+    # The fast seat offers what the voice stack actually serves: Ternary Bonsai
+    # 1.7B (the owner's 2026-10-09 ruling) and the Qwen3 builds, never a
+    # brain-sized Bonsai.
     from agent_friday.services import voice_front as vf
     assert set(ids(out["fast"])) <= set(vf.FRONT_MODELS)
-    assert not any(i.startswith(("ternary-bonsai", "bonsai")) for i in ids(out["fast"]))
+    assert "ternary-bonsai:1.7b" in ids(out["fast"])
+    assert not set(ids(out["fast"])) & {"bonsai2:27b", "ternary-bonsai:4b", "ternary-bonsai:8b"}
 
 
 @needs_powershell
@@ -169,14 +172,15 @@ def test_the_fast_options_and_their_sizes_are_the_voice_artifacts(tmp_path):
 
 @needs_powershell
 def test_the_recommended_front_follows_the_machine(tmp_path):
-    """The 1.7B sits beside the deep thinker on smaller machines; the 4B where
-    there is room to spare (voice_front's solo / co_resident roles)."""
+    """Ternary Bonsai 1.7B is recommended wherever it fits, small machine or
+    big; both Qwen3 builds stay offered as the alternatives."""
     small = probe(tmp_path, ram_mib=16384)
     big = probe(tmp_path, ram_mib=65536)
     rec = lambda o: [x["id"] for x in o["fast"] if x["recommended"]]
-    assert rec(small) == ["qwen3-1.7b"]
-    assert rec(big) == ["qwen3-4b-instruct-2507"]
-    assert set(ids(small["fast"])) == {"qwen3-1.7b", "qwen3-4b-instruct-2507"}, "both fit 16 GB; the 4B is still offered"
+    assert rec(small) == ["ternary-bonsai:1.7b"]
+    assert rec(big) == ["ternary-bonsai:1.7b"]
+    assert set(ids(small["fast"])) == {"ternary-bonsai:1.7b", "qwen3-1.7b", "qwen3-4b-instruct-2507"},         "all three fit 16 GB; the Qwen3 builds are still offered"
+    assert [x["packing"] for x in small["fast"] if x["id"] == "ternary-bonsai:1.7b"] == ["PQ2_0"]
 
 
 @needs_powershell
@@ -239,16 +243,17 @@ def test_the_disk_floor_is_kept(tmp_path):
 # The owner's own machine: 32 GB of memory and a 12 GB RTX 4070.
 RTX_4070 = dict(ram_mib=32768, gpu_name="NVIDIA GeForce RTX 4070", gpu_vendor="nvidia", vram_mib=12282,
                 vram_known=True, idle_used_mib=900, bandwidth_gb_s=89.6)
-EVERY_OPTION = {"bonsai2:27b", "ternary-bonsai:4b", "ternary-bonsai:8b", "qwen3-4b-instruct-2507", "qwen3-1.7b"}
+EVERY_OPTION = {"bonsai2:27b", "ternary-bonsai:4b", "ternary-bonsai:8b", "ternary-bonsai:1.7b",
+                "qwen3-4b-instruct-2507", "qwen3-1.7b"}
 
 
 @needs_powershell
 def test_a_roomy_rtx_4070_lists_both_seats_recommends_and_says_nothing_is_missing(tmp_path):
     out = probe(tmp_path, disk_free_mib=200000, **RTX_4070)
     assert {"bonsai2:27b", "ternary-bonsai:4b", "ternary-bonsai:8b"} <= set(ids(out["deep"]))
-    assert set(ids(out["fast"])) == {"qwen3-4b-instruct-2507", "qwen3-1.7b"}
+    assert set(ids(out["fast"])) == {"ternary-bonsai:1.7b", "qwen3-4b-instruct-2507", "qwen3-1.7b"}
     assert [o["id"] for o in out["deep"] if o["recommended"]] == ["bonsai2:27b"]
-    assert [o["id"] for o in out["fast"] if o["recommended"]] == ["qwen3-4b-instruct-2507"]
+    assert [o["id"] for o in out["fast"] if o["recommended"]] == ["ternary-bonsai:1.7b"]
     assert out["unfit"] == [] and out["notes"] == []
 
 
@@ -278,7 +283,7 @@ def test_with_24_gb_free_the_27b_is_greyed_and_the_rest_are_selectable_without_f
     assert [u["id"] for u in out["unfit"]] == ["bonsai2:27b"]
     assert out["unfit"][0]["seat"] == "deep_thinker" and out["unfit"][0]["reason"] == "needs 25 GB free"
     assert set(ids(out["deep"])) == {"ternary-bonsai:4b", "ternary-bonsai:8b"}
-    assert set(ids(out["fast"])) == {"qwen3-4b-instruct-2507", "qwen3-1.7b"}
+    assert set(ids(out["fast"])) == {"ternary-bonsai:1.7b", "qwen3-4b-instruct-2507", "qwen3-1.7b"}
     assert out["notes"] == [], "something fits in both seats, so no cloud message and the choice is the person's"
 
 

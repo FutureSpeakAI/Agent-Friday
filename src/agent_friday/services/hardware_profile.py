@@ -313,6 +313,15 @@ def _display_reserve_mode() -> str:
     return "fixed" if mode == "fixed" else "adaptive"
 
 
+def _impossible_desktop(mib, total) -> bool:
+    """A desktop said to hold more than MAX_DISPLAY_FRACTION of its card is a
+    model being counted as the desktop (an idle baseline sampled while a seat
+    was resident and not subtracted), not a compositor. The same ceiling
+    refresh_display_reserve() puts on the live reading."""
+    return (isinstance(total, int) and total > 0
+            and int(mib) > int(total * MAX_DISPLAY_FRACTION))
+
+
 def display_reserve_floor_mib(os_family: str, gpu: dict | None = None) -> int:
     """The least VRAM the desktop is granted on this card. PURE given its
     inputs and the settings mode.
@@ -323,7 +332,8 @@ def display_reserve_floor_mib(os_family: str, gpu: dict | None = None) -> int:
     fixed = MIN_DISPLAY_RESERVE_MIB.get(os_family, 512)
     measured = (gpu or {}).get("vram_baseline_mib")
     if (not isinstance(measured, int) or measured < 0
-            or _display_reserve_mode() == "fixed"):
+            or _display_reserve_mode() == "fixed"
+            or _impossible_desktop(measured, (gpu or {}).get("vram_total_mib"))):
         return fixed
     return max(ADAPTIVE_RESERVE_MIN_MIB.get(os_family, 512),
                measured + ADAPTIVE_RESERVE_MARGIN_MIB)
@@ -675,8 +685,14 @@ def refresh_baseline(profile: dict, *, assert_idle: bool = False,
     for g in profile.get("gpus", []):
         cur = live.get(g["index"])
         if cur:
-            g["vram_baseline_mib"] = max(
-                0, cur["vram_used_mib"] - max(0, int(ours_resident_mib or 0)))
+            floor = max(0, cur["vram_used_mib"] - max(0, int(ours_resident_mib or 0)))
+            if _impossible_desktop(floor, cur.get("vram_total_mib") or g.get("vram_total_mib")):
+                # A seat was resident and not subtracted: keep the floor we had.
+                _log.warning("GPU %s idle baseline of %d MiB refused: above %d%% of "
+                             "the card, so a model was counted as the desktop",
+                             g["index"], floor, int(MAX_DISPLAY_FRACTION * 100))
+                continue
+            g["vram_baseline_mib"] = floor
             g["vram_baseline_at"] = stamp
     save(profile)
     return profile
