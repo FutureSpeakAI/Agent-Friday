@@ -42,6 +42,7 @@ is dropped.
 """
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import logging
@@ -49,7 +50,6 @@ import re
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -462,9 +462,16 @@ def decide(text: str, profile: str = DEFAULT_PROFILE):
 
 # ── shadow ──────────────────────────────────────────────────────────────────
 
-_shadow_pool: Optional[ThreadPoolExecutor] = None
+#: Shadow runs are queued and drained by ONE runner thread inside ONE visible job: a burst of routed turns
+#: shows a single "Laya tool head (shadow)" card, not one card per turn. The card closes after this many
+#: seconds with nothing left to run, so the next burst (the next idle window) opens a new one.
+SHADOW_IDLE_WINDOW_S = 20.0
 _shadow_lock = threading.Lock()
+_shadow_cv = threading.Condition(_shadow_lock)
+_shadow_q: "collections.deque" = collections.deque()
+_shadow_runner = False
 _shadow_pending = 0
+shadow_jobs_opened = 0          # visible jobs opened by the runner (a test and a diagnostic)
 
 
 def _sha16(obj) -> Optional[str]:
@@ -516,10 +523,39 @@ def _shadow_job(text, final, proto, surface, profile):
             _shadow_pending -= 1
 
 
+def _shadow_runner_loop(profile):
+    """The runner thread: one visible job for the whole burst, then it closes."""
+    global _shadow_runner, shadow_jobs_opened
+    try:
+        from agent_friday.services import visible_jobs as _vj
+        # queued=False: the head makes no local-model call, so it never needs a place in the Local AI queue.
+        with _vj.visible_job("Laya tool head (shadow)", kind="laya_head", workspace="system",
+                             eager=False, queued=False):
+            with _shadow_lock:
+                shadow_jobs_opened += 1
+            while True:
+                with _shadow_cv:
+                    if not _shadow_q:
+                        _shadow_cv.wait(SHADOW_IDLE_WINDOW_S)
+                    if not _shadow_q:
+                        _shadow_runner = False          # decided under the lock: the next shadow() starts a new runner
+                        return
+                    item = _shadow_q.popleft()
+                _shadow_job(*item)
+    except Exception as e:  # noqa: BLE001
+        _log.debug("shadow runner stopped: %s", type(e).__name__)
+    finally:
+        with _shadow_lock:
+            _shadow_runner = False
+            while _shadow_q:                            # nothing is left queued behind a dead runner
+                _shadow_q.popleft()
+                globals()["_shadow_pending"] -= 1
+
+
 def shadow(text: str, final, proto, surface: str, profile: str = DEFAULT_PROFILE, *, sync: bool = False) -> bool:
     """Log the head's choice beside the router's, off the turn's path. Drops
     the row when a backlog builds. Returns whether a row was queued."""
-    global _shadow_pool, _shadow_pending
+    global _shadow_runner, _shadow_pending
     if not text or not available(profile):
         return False
     if sync:
@@ -527,17 +563,25 @@ def shadow(text: str, final, proto, surface: str, profile: str = DEFAULT_PROFILE
             _shadow_pending += 1
         _shadow_job(text, final, proto, surface, profile)
         return True
-    with _shadow_lock:
+    with _shadow_cv:
         if _shadow_pending >= MAX_SHADOW_BACKLOG:
             return False
         _shadow_pending += 1
-        if _shadow_pool is None:
-            _shadow_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="laya-router-head")
-        pool = _shadow_pool
-    try:
-        pool.submit(_shadow_job, text, final, proto, surface, profile)
-    except Exception:
-        with _shadow_lock:
-            _shadow_pending -= 1
-        return False
+        _shadow_q.append((text, final, proto, surface, profile))
+        start = not _shadow_runner
+        if start:
+            _shadow_runner = True
+        else:
+            _shadow_cv.notify()
+    if start:
+        try:
+            threading.Thread(target=_shadow_runner_loop, args=(profile,), name="laya-router-head",
+                             daemon=True).start()
+        except Exception:
+            with _shadow_lock:
+                _shadow_runner = False
+                while _shadow_q:
+                    _shadow_q.popleft()
+                    _shadow_pending -= 1
+            return False
     return True
