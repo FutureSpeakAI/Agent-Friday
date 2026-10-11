@@ -89,7 +89,7 @@ def test_the_privacy_classifier_asks_before_it_constructs(monkeypatch):
     monkeypatch.setattr(ec, "ensure_available", lambda feature="": calls.append(feature) or True)
 
     class FakeST:
-        def __init__(self, name):
+        def __init__(self, name, device=None):
             calls.append("construct")
 
         def encode(self, texts, **k):
