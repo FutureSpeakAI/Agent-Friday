@@ -530,6 +530,7 @@ class VoiceSession:
                     part = ""
                 if part:
                     self._partials.append(part)
+                    self._hint_endpointer(" ".join(self._partials))
                     self.send({"type": "partial_transcript",
                                "text": " ".join(self._partials)})
             return
@@ -545,6 +546,14 @@ class VoiceSession:
                            detail="VAD endpointed an utterance; ASR returned no text")
             self.stage("ear", "idle")
 
+    def _hint_endpointer(self, text) -> None:
+        """Tell the endpointer what has been heard so far: a finished sentence
+        ends the turn sooner than one the owner is still building."""
+        try:
+            self.vad.transcript_hint = text
+        except Exception:
+            pass
+
     def _stream_feed(self, pcm: bytes) -> None:
         """One chunk to the streaming ear; a changed partial goes to the
         client, a stable one to the speculative prefill (single-flight: a
@@ -557,6 +566,7 @@ class VoiceSession:
         if not ev:
             return
         text, stable = ev
+        self._hint_endpointer(text)
         self.send({"type": "partial_transcript", "text": text})
         spec = self.hooks.get("speculate")
         if stable and spec is not None and self._speculating.acquire(blocking=False):

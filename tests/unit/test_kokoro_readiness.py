@@ -199,6 +199,15 @@ def test_load_does_not_swallow_a_well_formed_refusal(monkeypatch):
 
 # ------------------------------------------ the "starts, then dies" case
 
+@pytest.fixture(autouse=True)
+def _kokoro_files_are_cached(monkeypatch, request):
+    """A load reads the model, config and voice from the local cache by path
+    (never the hub); these tests are about the import and the g2p fallback.
+    The one real-inference test keeps the real cache."""
+    if "real_synthesis" in request.node.name:
+        return
+    monkeypatch.setattr(kv, "_cached_file", lambda name: "cached/" + name)
+
 def _fake_kokoro_module(fallback):
     """A stand-in `kokoro` module whose KPipeline yields a given g2p fallback."""
     import types
@@ -208,11 +217,22 @@ def _fake_kokoro_module(fallback):
         pass
 
     class _Pipe:
-        def __init__(self, lang_code=None, device=None):
+        def __init__(self, lang_code=None, device=None, model=None):
             self.g2p = _G2P()
             self.g2p.fallback = fallback
 
+    class _Model:
+        def __init__(self, config=None, model=None):
+            pass
+
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
     mod.KPipeline = _Pipe
+    mod.KModel = _Model
     return mod
 
 
@@ -310,11 +330,22 @@ def test_load_wires_espeak_before_importing_kokoro(monkeypatch):
     mod = types.ModuleType("kokoro")
 
     class _Pipe:
-        def __init__(self, lang_code=None, device=None):
+        def __init__(self, lang_code=None, device=None, model=None):
             calls.append("import_kokoro")
             self.g2p = type("g", (), {"fallback": object()})()
 
+    class _Model:
+        def __init__(self, config=None, model=None):
+            pass
+
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
     mod.KPipeline = _Pipe
+    mod.KModel = _Model
     monkeypatch.setitem(sys.modules, "kokoro", mod)
 
     tts.load()

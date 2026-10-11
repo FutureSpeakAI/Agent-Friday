@@ -72,6 +72,23 @@ def send_json(fh, obj: dict) -> None:
 
 # ── engines ──────────────────────────────────────────────────────────────────
 
+def _cuda_init_s():
+    """Seconds to bring up the CUDA context in this process (torch when it is
+    here, else CTranslate2); 0.0 when neither answers."""
+    t0 = time.perf_counter()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.zeros(1, device="cuda")
+    except Exception:
+        try:
+            import ctranslate2
+            ctranslate2.get_cuda_device_count()
+        except Exception:
+            pass
+    return round(time.perf_counter() - t0, 3)
+
+
 def _cuda_free_mib():
     try:
         import torch
@@ -117,15 +134,33 @@ class _KokoroCuda:
         self._tts = None
 
     def load(self, progress=None):
-        from agent_friday.services.kokoro_voice import KokoroTTS
+        from agent_friday.services.voice_start_profile import file_mib, timed
+        prof = {}
+        with timed(prof, "import_s"):
+            import torch  # noqa: F401  (the import is the cost being measured)
+            from agent_friday.services.kokoro_voice import KokoroTTS
+        prof["cuda_init_s"] = _cuda_init_s()
         before = _cuda_free_mib()
         self._tts = KokoroTTS(self.voice, allow_cpu=False)
-        self._tts.load(progress=progress)
+        with timed(prof, "model_load_s"):
+            self._tts.load(progress=progress)
+        try:
+            from huggingface_hub import try_to_load_from_cache
+            path = try_to_load_from_cache("hexgrad/Kokoro-82M", "kokoro-v1_0.pth")
+            if isinstance(path, str):
+                prof["model_path"], prof["file_mib"] = path, file_mib(path)
+        except Exception:
+            pass
         self.device = self._tts._device or "cuda"
+        with timed(prof, "warmup_s"):
+            try:
+                self._tts.synthesize("Ready.")        # first inference: kernels and caches
+            except Exception:
+                pass
         after = _cuda_free_mib()
         resident = (before - after) if (before is not None and after is not None) else None
         return {"resident_mib": max(0, resident) if resident is not None else None,
-                "voice": self.voice}
+                "voice": self.voice, "profile": prof}
 
     def synth_stream(self, text: str, cancelled):
         # KokoroTTS.synthesize returns the whole clause; one clause is one
@@ -151,26 +186,48 @@ class _WhisperCuda:
         self._m = None
 
     def load(self, progress=None):
-        from faster_whisper import WhisperModel
-        from agent_friday.services.local_voice import WHISPER_DIR
+        from agent_friday.services.voice_start_profile import file_mib, timed
+        prof = {}
+        with timed(prof, "import_s"):
+            from faster_whisper import WhisperModel
+            from agent_friday.services.local_voice import WHISPER_DIR
+        prof["cuda_init_s"] = _cuda_init_s()
         before = _cuda_free_mib()
         WHISPER_DIR.mkdir(parents=True, exist_ok=True)
+        # The checkpoint is resolved from the local cache alone: the load
+        # never asks the hub whether a newer revision exists.
+        src = self.size
         try:
-            self._m = WhisperModel(self.size, device="cuda", compute_type=self.compute,
-                                   download_root=str(WHISPER_DIR))
-        except Exception as e:
-            # int8_float16 needs a capable card; float16 is the §2.4 "best"
-            # figure anyway. One fallback, then the error propagates.
-            if self.compute != "float16":
-                self.compute = "float16"
-                self.model = f"{self.size} float16"
-                self._m = WhisperModel(self.size, device="cuda", compute_type="float16",
-                                       download_root=str(WHISPER_DIR))
-            else:
-                raise e
+            from faster_whisper.utils import download_model
+            src = download_model(self.size, local_files_only=True,
+                                 cache_dir=str(WHISPER_DIR))
+            prof["model_path"], prof["file_mib"] = str(src), file_mib(src)
+        except Exception:
+            src = self.size
+        with timed(prof, "model_load_s"):
+            try:
+                self._m = WhisperModel(src, device="cuda", compute_type=self.compute,
+                                       download_root=str(WHISPER_DIR), local_files_only=True)
+            except Exception as e:
+                # int8_float16 needs a capable card; float16 is the §2.4 "best"
+                # figure anyway. One fallback, then the error propagates.
+                if self.compute != "float16":
+                    self.compute = "float16"
+                    self.model = f"{self.size} float16"
+                    self._m = WhisperModel(src, device="cuda", compute_type="float16",
+                                           download_root=str(WHISPER_DIR),
+                                           local_files_only=True)
+                else:
+                    raise e
+        with timed(prof, "warmup_s"):
+            try:
+                self.transcribe(b"\x00\x00" * 16000)    # one second of silence
+            except Exception:
+                pass
         after = _cuda_free_mib()
         resident = (before - after) if (before is not None and after is not None) else None
-        return {"resident_mib": max(0, resident) if resident is not None else None}
+        return {"resident_mib": max(0, resident) if resident is not None else None,
+                "profile": prof}
 
     def synth_stream(self, text, cancelled):
         raise RuntimeError("whisper is an ear, not a mouth")
@@ -240,6 +297,7 @@ def serve(engine, inp, out) -> int:
                             "device": engine.device, "model": engine.model,
                             "voice": info.get("voice"),
                             "load_ms": int((time.perf_counter() - t0) * 1000),
+                            "profile": info.get("profile"),
                             "threads_at_load": threading.active_count()})
         except Exception as e:  # noqa: BLE001
             code = getattr(e, "code", None) or "engine_error"

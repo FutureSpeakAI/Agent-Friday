@@ -222,6 +222,39 @@ def _wav_to_pcm16(wav_bytes: bytes):
 #  VAD endpointer — accumulate speech, fire on trailing silence
 # ═══════════════════════════════════════════════════════════════════════════
 
+#: Words a spoken sentence cannot end on: the speaker is still going.
+_DANGLING = frozenset((
+    "a an the my your his her their our its this that these those some any "
+    "to of in on at for with from by about into onto over under than as "
+    "and or but so because if when while then also plus "
+    "is are was were am be been do does did will would can could should shall "
+    "um uh er hmm like").split())
+#: How an unpunctuated question or request begins.
+_OPENERS = frozenset((
+    "what what's whats when where who whose which how why is are do does did "
+    "can could will would should any anything tell show check read find search "
+    "give open play remind get list").split())
+
+
+def sentence_complete(text) -> bool:
+    """Whether `text`, a transcript so far, reads as a finished sentence: it
+    ends in terminal punctuation, or it is an unpunctuated question or request
+    (three or more words, opened by a question or request word) that does not
+    end on a word a sentence cannot end on. An ellipsis, a trailing comma or an
+    empty transcript is not finished."""
+    t = str(text or "").strip()
+    if not t:
+        return False
+    if t.endswith(("...", "…", ",", ";", ":", "-")):
+        return False
+    if t[-1] in ".?!":
+        return len(t.split()) >= 2 or t[-1] == "?"
+    words = t.lower().replace("’", "'").split()
+    if len(words) < 3 or words[0].strip(",") not in _OPENERS:
+        return False
+    return words[-1].strip(".,?!") not in _DANGLING
+
+
 class VADEndpointer:
     """Energy-based voice-activity endpointer (Silero-upgradeable).
 
@@ -236,10 +269,18 @@ class VADEndpointer:
     accumulate/endpoint logic is identical either way.
     """
 
+    #: With a transcript hint, a finished sentence ends the turn after
+    #: ``COMPLETE_MS`` of quiet and an unfinished one waits ``HOLD_MS``; with no
+    #: hint (or no words yet) the configured ``silence_ms`` applies.
+    COMPLETE_MS = 350
+    HOLD_MS = 800
+
     def __init__(self, rate=ASR_RATE, silence_ms=800, start_rms=600.0,
                  min_speech_ms=200, use_silero=None):
         self.rate = rate
         self.silence_ms = silence_ms
+        #: The transcript so far, set by the session as partials arrive.
+        self.transcript_hint = None
         self.start_rms = start_rms
         self.min_speech_ms = min_speech_ms
         # use_silero: None (default) = auto — prefer Silero when installed,
@@ -336,7 +377,7 @@ class VADEndpointer:
         if self._in_speech:
             self._silence_ms += dur
             self._buf.extend(pcm)  # keep a little trailing audio for the decoder
-            if (self._silence_ms >= self.silence_ms
+            if (self._silence_ms >= self._silence_target()
                     and self._speech_ms >= self.min_speech_ms):
                 return self.flush()
         else:
@@ -344,6 +385,14 @@ class VADEndpointer:
             if len(self._preroll) > self._preroll_max:
                 self._preroll.pop(0)
         return None
+
+    def _silence_target(self) -> float:
+        hint = (self.transcript_hint or "").strip()
+        if not hint:
+            return self.silence_ms
+        if sentence_complete(hint):
+            return min(self.silence_ms, self.COMPLETE_MS)
+        return max(self.silence_ms, self.HOLD_MS)
 
     def flush(self):
         """Return accumulated audio and reset, or None if nothing buffered."""
@@ -357,6 +406,7 @@ class VADEndpointer:
         self._speech_ms = 0.0
         self._silence_ms = 0.0
         self._preroll = []
+        self.transcript_hint = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -474,10 +524,19 @@ class WhisperASR:
             size = resolve_whisper_model(self.requested_size, device)
             if progress:
                 progress(f"Loading speech model ({size})…")
+            def _open(sz, dev, comp):
+                # From the local cache alone first, so a load never asks the
+                # hub whether a newer revision exists; a checkpoint that is not
+                # there yet (the first run) is fetched by the call that follows.
+                try:
+                    return WhisperModel(sz, device=dev, compute_type=comp,
+                                        download_root=str(download_root),
+                                        local_files_only=True)
+                except Exception:
+                    return WhisperModel(sz, device=dev, compute_type=comp,
+                                        download_root=str(download_root))
             try:
-                self._model = WhisperModel(
-                    size, device=device, compute_type=compute,
-                    download_root=str(download_root))
+                self._model = _open(size, device, compute)
             except Exception as exc:
                 # A CUDA build that will not initialise must not take local
                 # voice down with it — fall back to the floor and say so.
@@ -487,9 +546,7 @@ class WhisperASR:
                              "falling back to CPU int8", str(exc)[:160])
                 device, compute, why_cpu = "cpu", "int8", ExceptionText(str(exc)[:80])
                 size = resolve_whisper_model(self.requested_size, device)
-                self._model = WhisperModel(
-                    size, device=device, compute_type=compute,
-                    download_root=str(download_root))
+                self._model = _open(size, device, compute)
             self.model_size = size
             self._device = device
             self._compute = compute

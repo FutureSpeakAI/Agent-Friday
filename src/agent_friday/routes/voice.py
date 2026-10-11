@@ -1702,9 +1702,8 @@ def _last_warm_seconds():
 
 def _record_warm_seconds(seconds) -> None:
     try:
-        p = _warm_timing_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"seconds": round(float(seconds), 1)}), encoding="utf-8")
+        from agent_friday.services import voice_start_profile as _vsp
+        _vsp.update(_warm_timing_path(), seconds=round(float(seconds), 1))
     except Exception:
         pass
 
@@ -2030,7 +2029,9 @@ def _arm_voice_front(settings, progress=None, holder="session", room=None):
             return None
         if progress:
             progress(f"starting {label}")
-        seat.arm(model, holder=holder)
+        _t_arm = _time.perf_counter()
+        armed = seat.arm(model, holder=holder)
+        _arm_s = _time.perf_counter() - _t_arm
         taken["seat"] = seat
         contract = build_voice_tool_contract()
         speaker = voice_tool_routing(settings) == "laya"
@@ -2047,12 +2048,29 @@ def _arm_voice_front(settings, progress=None, holder="session", room=None):
         else:
             prompt = _build_front_system_prompt(settings, contract, label)
             seat.prefill(prompt, contract)
+        _record_front_profile(model, armed, _arm_s, seat, _time.perf_counter() - _t_arm)
     except Exception:
         _release_voice_front(taken)
         raise
     return {"seat": seat, "model": model, "label": label, "contract": contract,
             "speaker": speaker,
             "prompt": prompt, "lease": taken["lease"], "holder": holder}
+
+
+def _record_front_profile(model, armed, arm_s, seat, total_s) -> None:
+    """The front's start in the same terms as the ear and mouth: the seat's
+    load (llama-server spawn to healthy), the prefix warm-up, the total."""
+    try:
+        from agent_friday.services import voice_front as _vf
+        from agent_friday.services import voice_start_profile as _vsp
+        path = str(_vf.model_path(model))
+        prof = {"model_load_s": round(float(arm_s), 3),
+                "warmup_s": round((getattr(seat, "prefill_ms", None) or 0) / 1000.0, 3),
+                "model_path": path, "file_mib": _vsp.file_mib(path),
+                "reused": bool((armed or {}).get("reused"))}
+        _vsp.record(_vsp.finish("front", model, prof, total_s=total_s))
+    except Exception:
+        pass
 
 
 def _release_voice_front(front) -> None:
