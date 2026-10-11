@@ -3726,16 +3726,36 @@ def _meter_gemini_live_chunk(chunk, model_name: str) -> bool:
     names, try/except structure) instead of exercising real behavior.
     Never raises -- a metering failure must not break the live voice
     bridge, exactly as the original inline try/except guaranteed.
+
+    Semantics: each usage_metadata message describes ONE model turn (the
+    prompt re-read for that turn and that turn's output), not a running
+    session total, so every message is its own row and the rows are summed.
+    Neither the SDK types nor Google's Live API reference states this; it is
+    read from the stored rows: within a session the prompt count only grows
+    (context accrues) while the response count rises and falls about equally
+    often, which no running total could do. tools/voice_cost_audit.py repeats
+    that check against a ledger. The modality split, the cached share and the
+    tool-use prompt ride along as new nullable columns; they never change the
+    price of the row.
     """
     _um = getattr(chunk, "usage_metadata", None)
     if _um is None:
         return False
     try:
         from agent_friday.services import cost_meter as _cm
-        _cm.meter("gemini", model_name, {
+        _usage = {
             "input_tokens": getattr(_um, "prompt_token_count", 0) or 0,
             "output_tokens": getattr(_um, "response_token_count", 0) or 0,
-        }, kind="voice")
+        }
+        _audio, _text = _cm.modality_split(getattr(_um, "prompt_tokens_details", None))
+        for _key, _val in (
+                ("prompt_audio_tokens", _audio),
+                ("prompt_text_tokens", _text),
+                ("cached_prompt_tokens", getattr(_um, "cached_content_token_count", None)),
+                ("tool_use_prompt_tokens", getattr(_um, "tool_use_prompt_token_count", None))):
+            if _val is not None:
+                _usage[_key] = _val
+        _cm.meter("gemini", model_name, _usage, kind="voice")
         return True
     except Exception:
         return False
@@ -5759,8 +5779,9 @@ if sock is not None:
                                         # real, billed call and must be metered like any
                                         # other (PRICING carries rates for this exact
                                         # model). usage_metadata arrives
-                                        # per-chunk on the live stream (cumulative for the
-                                        # session so far, per the API's own semantics) —
+                                        # once per model turn on the live stream (a
+                                        # per-turn figure, not a session running total; see
+                                        # _meter_gemini_live_chunk) —
                                         # metered as its own row every time it shows up
                                         # rather than only once at teardown, since a leg can
                                         # end (GoAway, error, disconnect) without a clean

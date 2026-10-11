@@ -480,6 +480,16 @@ def _conn():
             for _c in ("key_profile", "codebase"):
                 if _c not in _cols:
                     _CONN.execute(f"ALTER TABLE cost_calls ADD COLUMN {_c} TEXT")
+            # ── Prompt composition (Gemini Live voice). ──
+            # A Live row's input_tokens is the whole prompt re-read for that
+            # turn; without the modality split, the cached share and the
+            # tool-use prompt, nobody can say how much of it is audio, text
+            # or declarations. Nullable and without a default: NULL means "the
+            # provider did not report it" (and every older row), never zero.
+            for _c in ("prompt_audio_tokens", "prompt_text_tokens",
+                       "cached_prompt_tokens", "tool_use_prompt_tokens"):
+                if _c not in _cols:
+                    _CONN.execute(f"ALTER TABLE cost_calls ADD COLUMN {_c} INT")
             _CONN.commit()
         return _CONN
 
@@ -514,8 +524,9 @@ def flush():
             "INSERT INTO cost_calls (ts, provider, model, input_tokens, "
             "output_tokens, cost_usd, duration_ms, workspace, kind, "
             "schedule_id, run_id, cache_read_tokens, cache_write_tokens, "
-            "key_profile, codebase) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "key_profile, codebase, prompt_audio_tokens, prompt_text_tokens, "
+            "cached_prompt_tokens, tool_use_prompt_tokens) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         conn.commit()
     return len(rows)
 
@@ -523,8 +534,15 @@ def flush():
 def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
            session_ctx=None, workspace=None, kind=None, schedule_id=None,
            run_id=None, cost_usd=None, cache_read_tokens=0,
-           cache_write_tokens=0, speed=None, key_profile=None, codebase=None):
+           cache_write_tokens=0, speed=None, key_profile=None, codebase=None,
+           prompt_audio_tokens=None, prompt_text_tokens=None,
+           cached_prompt_tokens=None, tool_use_prompt_tokens=None):
     """Record one model call. Buffered; flushed off the hot path.
+
+    The four ``prompt_*`` / ``*_prompt_tokens`` arguments describe what the
+    provider reported about the prompt's composition (Gemini Live today). They
+    are stored as given and never change the price: ``None`` is "not
+    reported".
 
     ``cost_usd`` overrides the locally computed price — used when the provider
     reports an authoritative figure (OpenRouter usage accounting returns the
@@ -564,12 +582,19 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
                         cost = live
                 except Exception:
                     pass
+        def _opt(v):
+            try:
+                return None if v is None else int(v)
+            except (TypeError, ValueError):
+                return None
         row = (_time.time(), provider or "", model or "", input_tokens,
                output_tokens, cost, int(duration_ms or 0),
                attr.get("workspace") or "", attr.get("kind") or "chat",
                attr.get("schedule_id"), attr.get("run_id"),
                cache_read_tokens, cache_write_tokens,
-               attr.get("key_profile"), attr.get("codebase"))
+               attr.get("key_profile"), attr.get("codebase"),
+               _opt(prompt_audio_tokens), _opt(prompt_text_tokens),
+               _opt(cached_prompt_tokens), _opt(tool_use_prompt_tokens))
         with _BUFFER_LOCK:
             _BUFFER.append(row)
             over = len(_BUFFER) >= 50
@@ -622,9 +647,42 @@ def meter(provider, model, usage, *, duration_ms=0, session_ctx=None, kind=None)
         cost_usd = float(reported) if reported not in (0, None, "") else None
     except (TypeError, ValueError):
         cost_usd = None
+    def _reported(key):
+        return usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
     return record(provider, model, in_tok, out_tok, duration_ms=duration_ms,
                   session_ctx=session_ctx, kind=kind, cost_usd=cost_usd,
-                  cache_read_tokens=cache_read, cache_write_tokens=cache_write)
+                  cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+                  prompt_audio_tokens=_reported("prompt_audio_tokens"),
+                  prompt_text_tokens=_reported("prompt_text_tokens"),
+                  cached_prompt_tokens=_reported("cached_prompt_tokens"),
+                  tool_use_prompt_tokens=_reported("tool_use_prompt_tokens"))
+
+
+def modality_split(details):
+    """Audio and text token counts from a provider's per-modality list.
+
+    ``details`` is Gemini's ``prompt_tokens_details`` (a list of objects or
+    dicts carrying ``modality`` and ``token_count``). Returns ``(audio, text)``;
+    a modality the list does not carry is ``None``, so "not reported" stays
+    distinct from "zero". Never raises.
+    """
+    audio = text = None
+    try:
+        for d in details or ():
+            if isinstance(d, dict):
+                mod, n = d.get("modality"), d.get("token_count")
+            else:
+                mod, n = getattr(d, "modality", None), getattr(d, "token_count", None)
+            if n is None:
+                continue
+            mod = str(getattr(mod, "value", mod) or "").upper()
+            if mod.endswith("AUDIO"):
+                audio = (audio or 0) + int(n)
+            elif mod.endswith("TEXT"):
+                text = (text or 0) + int(n)
+    except Exception:
+        return None, None
+    return audio, text
 
 
 # ── Queries ──────────────────────────────────────────────────────────────────
