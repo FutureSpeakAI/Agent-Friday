@@ -664,23 +664,9 @@ def _tier1(text: str) -> Route:
 
 # ── the contract ────────────────────────────────────────────────────────────
 
-def route(text: str, *, tools: Optional[Sequence[str]] = None,
-          budget_ms: int = DEFAULT_BUDGET_MS, surface: str = "voice",
-          log: bool = True, pending_card: Optional[str] = None,
-          last_route: Optional[dict] = None) -> Route:
-    """Decide for one turn within ``budget_ms``. Never raises.
-
-    ``tools`` is what this session holds; a tool it does not hold is never
-    chosen (that request is ``defer``). A slow or missing encoder degrades
-    to tier 0 alone; a turn tier 0 cannot place is ``no_tool``, which is the
-    generating model's own turn. ``pending_card`` is the one organize card
-    waiting in this conversation, if exactly one is: a bare yes or no then
-    answers it (answer_card still requires the owner's own words, said after
-    the card was raised).
-    """
-    t0 = time.perf_counter()
-    text = " ".join(str(text or "").split())
-    held = set(tools) if tools is not None else None
+def _sealed_rules(text: str, pending_card: Optional[str], last_route: Optional[dict]) -> Optional[Route]:
+    """Tier 0 and the follow-up rules for a normalised ``text``: deterministic,
+    no encoder, no I/O. None means only tier 1 could place the turn."""
     r = None
     if text and pending_card:
         decision = "approve" if _YES.match(text) else "decline" if _NO.match(text) else None
@@ -701,6 +687,50 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
             elif looks_elliptical(text):
                 r = Route("defer", confidence=0.9, layer="rule",
                           reason="a follow-up with no previous look-up to carry")
+    return r
+
+
+def rules_route(text: str, *, tools: Optional[Sequence[str]] = None, pending_card: Optional[str] = None,
+                last_route: Optional[dict] = None, reason: str = "") -> Route:
+    """The sealed rules alone, for a caller whose full ``route`` could not run in
+    time (services/laya's degraded path): the same rules ``route`` runs first
+    (stop, a bare yes or no to a waiting card, follow-ups), the same held-tool
+    filter, never the encoder, never a log row. A turn they cannot place is
+    ``no_tool`` at layer degraded. Never raises."""
+    t0 = time.perf_counter()
+    try:
+        text = " ".join(str(text or "").split())
+        held = set(tools) if tools is not None else None
+        r = _sealed_rules(text, pending_card, last_route)
+        if r is None:
+            r = Route("no_tool", layer="degraded", reason=reason or "sealed rules found nothing")
+        if r.tool and held is not None and r.tool not in held:
+            r = Route("defer", confidence=r.confidence, layer=r.layer, candidates=r.candidates,
+                      reason="%s is not held by this session" % r.tool)
+    except Exception as e:  # noqa: BLE001
+        r = Route("no_tool", layer="degraded", reason="rules unavailable: %s" % type(e).__name__)
+    r.elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    return r
+
+
+def route(text: str, *, tools: Optional[Sequence[str]] = None,
+          budget_ms: int = DEFAULT_BUDGET_MS, surface: str = "voice",
+          log: bool = True, pending_card: Optional[str] = None,
+          last_route: Optional[dict] = None) -> Route:
+    """Decide for one turn within ``budget_ms``. Never raises.
+
+    ``tools`` is what this session holds; a tool it does not hold is never
+    chosen (that request is ``defer``). A slow or missing encoder degrades
+    to tier 0 alone; a turn tier 0 cannot place is ``no_tool``, which is the
+    generating model's own turn. ``pending_card`` is the one organize card
+    waiting in this conversation, if exactly one is: a bare yes or no then
+    answers it (answer_card still requires the owner's own words, said after
+    the card was raised).
+    """
+    t0 = time.perf_counter()
+    text = " ".join(str(text or "").split())
+    held = set(tools) if tools is not None else None
+    r = _sealed_rules(text, pending_card, last_route)
     if r is None:
         try:
             from agent_friday.services import laya2_encoder

@@ -63,6 +63,7 @@ import contextvars
 import hashlib
 import json
 import logging
+import queue
 import threading
 import time
 import uuid
@@ -127,19 +128,23 @@ def versions(profile_id: Optional[str] = None) -> Dict[str, str]:
             from agent_friday.services import laya2_encoder, laya2_seeds
             out["base"] = "encoder-%s/seeds-%s-%s" % (laya2_encoder.MODEL_SHA256[:12], laya2_seeds.SEED_SET_ID,
                                                       laya2_seeds.content_hash()[:8])
-            _versions_cache["base"] = out["base"]
         except Exception:
             out["base"] = "unknown"
-    try:
-        from agent_friday.services import laya_router_head as lh
-        rec = lh._receipt()
-        if rec:
-            out["head"] = str(rec.get("config_sha256") or rec.get("id") or "certified")[:12]
-    except Exception:
-        pass
+        _versions_cache["base"] = out["base"]           # a failure is cached too: no retry on every turn
+    if not _versions_cache.get("no_head_module"):
+        try:
+            from agent_friday.services import laya_router_head as lh
+            rec = lh._receipt()
+            if rec:
+                out["head"] = str(rec.get("config_sha256") or rec.get("id") or "certified")[:12]
+        except ImportError:
+            _versions_cache["no_head_module"] = "1"     # this build has no tool head: never look again
+        except Exception:
+            pass
     try:
         from agent_friday.services import laya_calibration
-        out["calibration"] = laya_calibration.table_version()
+        if laya_calibration.is_warm():                  # never a file read on the turn's thread
+            out["calibration"] = laya_calibration.table_version()
     except Exception:
         pass
     return out
@@ -154,20 +159,69 @@ def log_path():
     return FRIDAY_DIR / "runtime" / LOG_DIRNAME / LOG_NAME
 
 
+#: Disk writes (the receipt, the router's own log row) never run on the turn's
+#: thread: a bounded queue drained by one daemon thread. A full queue drops the
+#: row rather than make the turn wait.
+WRITE_QUEUE_MAX = 512
+_writes: "queue.Queue" = queue.Queue(maxsize=WRITE_QUEUE_MAX)
+_writer: Optional[threading.Thread] = None
+
+
+def _drain() -> None:
+    while True:
+        fn = _writes.get()
+        try:
+            fn()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            _writes.task_done()
+
+
+def enqueue_write(fn: Callable[[], None]) -> bool:
+    """Run ``fn`` on the writer thread. False when the queue is full (dropped)."""
+    global _writer
+    try:
+        with _lock:
+            if _writer is None or not _writer.is_alive():
+                _writer = threading.Thread(target=_drain, name="laya-writer", daemon=True)
+                _writer.start()
+    except Exception:  # noqa: BLE001 - no writer thread: drop the row, never fail the turn
+        return False
+    try:
+        _writes.put_nowait(fn)
+        return True
+    except queue.Full:
+        return False
+
+
+def flush(timeout: float = 5.0) -> bool:
+    """Wait for queued writes (tests, shutdown). True when the queue emptied."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if _writes.unfinished_tasks == 0:
+            return True
+        time.sleep(0.005)
+    return _writes.unfinished_tasks == 0
+
+
+def _append(rec: dict, p) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, default=str, sort_keys=True) + "\n")
+
+
 def _store(rec: dict, persist: bool) -> None:
     with _lock:
         _ring[rec["receipt_id"]] = rec
         while len(_ring) > RING:
             _ring.popitem(last=False)
-    if not persist:
-        return
-    try:
-        p = log_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, default=str, sort_keys=True) + "\n")
-    except Exception:
-        pass
+    if persist:
+        try:
+            p = log_path()              # the path is fixed now, on the turn; only the write is deferred
+        except Exception:  # noqa: BLE001
+            return
+        enqueue_write(lambda: _append(rec, p))
 
 
 def receipt(receipt_id: str) -> Optional[dict]:
@@ -298,14 +352,21 @@ def _calibrated_route(ctx: Ctx, r) -> Optional[dict]:
 def _preset_route(ctx: Ctx, spec: dict) -> dict:
     from agent_friday.services import laya_router
     # Exactly the arguments the caller gave, so route() sees what it always saw.
-    r = laya_router.route(ctx.text, **dict(ctx.opts.get("route_kw") or {}))
+    kw = dict(ctx.opts.get("route_kw") or {})
+    want_log = bool(kw.get("log", True))
+    kw["log"] = False       # the router's own log row is written only if this answer is the one used (see ask)
+    r = laya_router.route(ctx.text, **kw)
     layer = _ROUTER_LAYER.get(r.layer, "t1")
     cal = _calibrated_route(ctx, r)
     verdict = _DECISION_VERDICT.get(r.decision, "no_tool")
     ans = _answer(r.decision, r.confidence, (cal or {}).get("set"), abstain=(layer == "degraded"))
     ans["tool"] = r.tool
-    return {"answer": ans, "layer": layer, "verdict": verdict, "native": r, "calibrated": cal,
-            "why": r.reason or r.layer, "tool": r.tool}
+    out = {"answer": ans, "layer": layer, "verdict": verdict, "native": r, "calibrated": cal,
+           "why": r.reason or r.layer, "tool": r.tool}
+    if want_log:
+        surface = str(kw.get("surface", "voice"))
+        out["commit"] = lambda: laya_router._write(ctx.text, r, surface)
+    return out
 
 
 @preset("point_act")
@@ -434,7 +495,8 @@ def _clamp_add_only(ans: dict, res: dict) -> bool:
 # trace id and the unattended mark. Everything else a rung might consult is a
 # ContextVar (cloud_intent, taint, the private-session origin, turn_plan,
 # decisions) and copy_context() already covers it. The remaining thread-locals
-# (attribution, tool_receipts, judgment_gate, cost_meter, task_journal) are
+# (attribution, tool_receipts, judgment_gate, cost_meter, task_journal, and the fetch pin, queue job key,
+# prompt-cache and last-stop marks) are
 # per-thread books a routing preset never reads or writes; carrying a book by
 # reference would be wrong, so they are deliberately not carried.
 _LOCAL_ONLY_FIELDS = ("active", "label", "pin", "pin_label")
@@ -510,9 +572,12 @@ def _worker(ctx: Ctx, questions: Dict[str, dict], results: dict, done: threading
             except Exception as e:  # noqa: BLE001
                 results[name] = {"error": "%s" % type(e).__name__}
     finally:
-        done.set()
-        if flags.get("abandoned"):
-            with _lock:
+        # One lock for "done" and "was I abandoned": ask() decides to abandon
+        # under the same lock, so a timeout that coincides with completion can
+        # neither leak a count nor decrement one that was never taken.
+        with _lock:
+            done.set()
+            if flags.get("abandoned"):
                 _stuck = max(0, _stuck - 1)
 
 
@@ -536,11 +601,16 @@ def ask(state: dict, questions: Dict[str, dict], caller: str, budget_ms: float,
         note = "too many earlier answers are still stuck"
     else:
         cvars = contextvars.copy_context()
-        threading.Thread(target=cvars.run, args=(_worker, ctx, questions, results, done, flags, _carry_snapshot()),
-                         name="laya-ask", daemon=True).start()
-        timed_out = not done.wait(max(0.0, float(budget_ms)) / 1000.0)
-        note = "over budget (%d ms)" % int(budget_ms)
-        if timed_out:
+        try:
+            threading.Thread(target=cvars.run, args=(_worker, ctx, questions, results, done, flags,
+                                                     _carry_snapshot()),
+                             name="laya-ask", daemon=True).start()
+            started = True
+        except Exception:  # noqa: BLE001 - e.g. "can't start new thread": degrade, never raise
+            started = False
+        timed_out = (not done.wait(max(0.0, float(budget_ms)) / 1000.0)) if started else True
+        note = ("over budget (%d ms)" % int(budget_ms)) if started else "could not start a worker"
+        if timed_out and started:
             with _lock:
                 if done.is_set():
                     timed_out = False
@@ -569,6 +639,8 @@ def ask(state: dict, questions: Dict[str, dict], caller: str, budget_ms: float,
             ans["mutation_class"] = mutation_class(tool)
         answers[name] = ans
         native[name] = res.get("native")
+        if callable(res.get("commit")):             # the rung's own log row, only for an answer that was used
+            enqueue_write(res["commit"])
         layer = res.get("layer") if res.get("layer") in LAYERS else "t1"
         layers.append(layer)
         if verdict is None and res.get("verdict") in VERDICTS:
@@ -640,8 +712,14 @@ def route_turn(text: str, *, caller: Optional[str] = None, mode: Optional[str] =
               budget_ms=tier1 + RULE_ALLOWANCE_MS)
     r = res["native"].get("route")
     if r is None:
-        r = laya_router.Route("no_tool", layer="degraded", reason="Laya over budget or unavailable",
-                              elapsed_ms=res["latency_ms"])
+        # Laya could not answer in time. The turn takes the router's sealed
+        # rules (stop, a bare yes or no to a waiting card, follow-ups), which are
+        # deterministic and do no I/O, run here on the caller's thread; what they
+        # cannot place is no_tool, the model's own turn.
+        r = laya_router.rules_route(text, tools=kw.get("tools"), pending_card=kw.get("pending_card"),
+                                    last_route=kw.get("last_route"), reason="Laya over budget or unavailable")
+        if kw.get("log", True):
+            enqueue_write(lambda: laya_router._write(" ".join(str(text or "").split()), r, surface))
     r.laya_receipt_id = res["receipt_id"]       # not a Route field: as_dict() is unchanged
     return r
 

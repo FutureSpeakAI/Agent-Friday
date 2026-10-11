@@ -2042,10 +2042,13 @@ def _arm_voice_front(settings, progress=None, holder="session", room=None):
             prompt = _build_front_speaker_prompt(settings, label)
             seat.prefill(prompt, {"tools": []})
             try:
-                from agent_friday.services import laya as _laya_warm
                 from agent_friday.services import laya_router as _lr
                 _lr.warm()
-                _laya_warm.warm()       # versions, calibration table: first-use cost off the turn
+            except Exception:
+                pass
+            try:                         # its own try: a Laya import failure never skips the router warm
+                from agent_friday.services import laya as _laya_warm
+                _laya_warm.warm()        # versions, calibration table: first-use cost off the turn
             except Exception:
                 pass
         else:
@@ -2904,7 +2907,8 @@ def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None,
     if r.decision == "defer" and "delegate_to_friday" in held:
         tool, args = "delegate_to_friday", {"request": str(user_text)[:4000]}
         ack, label, handed = DEFER_ACK, "handed to the deeper mind", "delegate_to_friday"
-    receipt = dict(_lr.receipt(r), ran=tool, handed_to=handed)
+    receipt = dict(_lr.receipt(r), ran=tool, handed_to=handed,
+                   laya_receipt=getattr(r, "laya_receipt_id", None))
     return {"tool": tool, "args": args, "ack": ack, "label": label,
             "question": r.question if r.decision == "ask" else "", "receipt": receipt}
 
