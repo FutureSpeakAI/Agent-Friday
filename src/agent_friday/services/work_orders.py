@@ -82,6 +82,7 @@ class OrderRefused(RuntimeError):
     """The turn may not submit work orders (a local model, or no cloud intent)."""
 
 
+# TODO(CS-2): orders and handles are in memory only; both must survive a restart.
 _LOCK = threading.RLock()
 _ORDERS: Dict[str, dict] = {}
 MAX_ORDERS = 500

@@ -469,6 +469,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # nothing left for it to drop, which is the point.
         from agent_friday.services import tool_catalogue as _TCat
         _turn_tools = tools if tools is not None else tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
+        _turn_tools = _without_cloud_only(_turn_tools)   # this loop runs on the local seat
         if _TCat.enabled() and _turn_tools:
             _open = _TCat.opening_set(
                 _turn_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
@@ -8008,6 +8009,18 @@ def _hub_chat(conversation_id=None) -> bool:
         return False
 
 
+#: Tools that exist only for a cloud model handing work to this PC (CS-1).
+_CLOUD_ONLY_TOOLS = frozenset({"submit_work_order", "work_order_status"})
+
+
+def _without_cloud_only(tools, local=True):
+    """The catalogue a local model is shown: no cloud-only tools. The handlers
+    still refuse a local caller; this keeps them out of its tool list too."""
+    if not local:
+        return tools
+    return [t for t in tools if t.get("name") not in _CLOUD_ONLY_TOOLS]
+
+
 def tools_for_workspace(workspace=None, base=None, conversation_id=None):
     """The catalogue for one turn: the always-on tools, the front workspace's
     own, and the hub's when the chat is in the hub. A tool outside the turn's
@@ -8015,7 +8028,12 @@ def tools_for_workspace(workspace=None, base=None, conversation_id=None):
     extra = list(WORKSPACE_TOOLS.get(str(workspace or ""), []))
     if str(workspace or "") != "hub" and _hub_chat(conversation_id):
         extra += [t for t in WORKSPACE_TOOLS.get("hub", []) if t not in extra]
-    return list(CLAUDE_TOOLS if base is None else base) + extra
+    out = list(CLAUDE_TOOLS if base is None else base) + extra
+    prov = _CURRENT_PROVIDER.get()
+    if prov is not None:
+        from agent_friday.services import slice_head
+        out = _without_cloud_only(out, local=slice_head.is_local(prov))
+    return out
 
 
 CLAUDE_TOOL_HANDLERS = {

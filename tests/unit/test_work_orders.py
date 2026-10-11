@@ -468,3 +468,27 @@ class TestRouterPhrase:
         from agent_friday.services import laya_router as lr
         r = lr.route("have Claude plan it, do it locally", log=False, head_mode="off")
         assert r.tool not in ("submit_work_order", "work_order_status")
+
+
+class TestLocalCatalogue:
+    def test_the_local_model_catalogue_omits_the_work_order_tools(self):
+        from agent_friday.services import agent
+        names = {"submit_work_order", "work_order_status"}
+        tok = agent._CURRENT_PROVIDER.set("ollama")
+        try:
+            local = {t["name"] for t in agent.tools_for_workspace()}
+        finally:
+            agent._CURRENT_PROVIDER.reset(tok)
+        assert not names & local
+        tok = agent._CURRENT_PROVIDER.set(CLOUD)
+        try:
+            cloud = {t["name"] for t in agent.tools_for_workspace()}
+        finally:
+            agent._CURRENT_PROVIDER.reset(tok)
+        assert names <= cloud
+
+    def test_the_helper_drops_them_for_a_local_seat(self):
+        from agent_friday.services import agent
+        tools = [{"name": "submit_work_order"}, {"name": "search_web"}]
+        assert agent._without_cloud_only(tools) == [{"name": "search_web"}]
+        assert agent._without_cloud_only(tools, local=False) == tools
