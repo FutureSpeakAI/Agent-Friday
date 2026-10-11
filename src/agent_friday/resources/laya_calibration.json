@@ -1,0 +1,218 @@
+{
+ "heads": {
+  "gate_opinion": {
+   "fitted": false,
+   "reason": "no labelled data for this head in dev sets 1-3; reads at its shipped temperature",
+   "tau": null
+  },
+  "resolve": {
+   "fitted": false,
+   "reason": "no labelled data for this head in dev sets 1-3; reads at its shipped temperature",
+   "tau": null
+  },
+  "router": {
+   "base_tau": 0.1,
+   "coverage": 0.9,
+   "fit": {
+    "accuracy": 0.6203,
+    "coverage_seen": 0.9114,
+    "ece_after": 0.0761,
+    "ece_before": 0.1682,
+    "set_size_mean": 3.342,
+    "singletons": 0.165
+   },
+   "fitted": true,
+   "fitted_on": "dev sets 1-3, every labelled turn whether or not a rule decided it; shadow only. The honest check is the sealed set 5, scored once by the lead.",
+   "labels": [
+    "act",
+    "check_email",
+    "conversation",
+    "get_briefing",
+    "query_calendar",
+    "search_email",
+    "search_files",
+    "search_news",
+    "search_past_conversations",
+    "search_web",
+    "search_wiki"
+   ],
+   "n_fit": 79,
+   "n_test": 72,
+   "population": "all",
+   "q_hat": 0.95078,
+   "sets": {
+    "laya_router_eval.json": "439331a0549a1d69",
+    "laya_router_holdout2.json": "849bab8aba9254ba",
+    "laya_router_holdout3.json": "fc6dd8ca740f1f4e"
+   },
+   "shadow": true,
+   "skipped": {
+    "no_truth": 0,
+    "rule": 0
+   },
+   "tau": 0.06467,
+   "test": {
+    "accuracy": 0.625,
+    "coverage_seen": 0.9444,
+    "ece_after": 0.0911,
+    "ece_before": 0.1934,
+    "set_size_mean": 3.625,
+    "singletons": 0.125
+   },
+   "thresholds": {
+    "act": 0.55,
+    "margin": 0.1
+   },
+   "tier1_only": {
+    "coverage_seen": 1.0,
+    "ece_after": 0.1114,
+    "ece_before": 0.1593,
+    "n": 30,
+    "set_size_mean": 3.733
+   }
+  },
+  "triage.mail": {
+   "base_tau": 0.041666666666666664,
+   "coverage": 0.9,
+   "fit": {
+    "accuracy": 0.9286,
+    "coverage_seen": 1.0,
+    "ece_after": 0.1062,
+    "ece_before": 0.1062,
+    "set_size_mean": 1.214,
+    "singletons": 0.786
+   },
+   "fitted": true,
+   "fitted_on": "author-written triage sets (not independent)",
+   "labels": [
+    "career",
+    "family",
+    "finance",
+    "futurespeak",
+    "noise",
+    "subscriptions"
+   ],
+   "n_fit": 14,
+   "n_test": 18,
+   "q_hat": 0.90768,
+   "set": "triage_eval_mail.json",
+   "shadow": true,
+   "tau": 0.04165,
+   "test": {
+    "accuracy": 0.9444,
+    "coverage_seen": 1.0,
+    "ece_after": 0.1073,
+    "ece_before": 0.1074,
+    "set_size_mean": 1.278,
+    "singletons": 0.722
+   },
+   "thresholds": {}
+  },
+  "triage.memory": {
+   "base_tau": 0.041666666666666664,
+   "coverage": 0.9,
+   "fit": {
+    "accuracy": 1.0,
+    "coverage_seen": 0.9333,
+    "ece_after": 0.0036,
+    "ece_before": 0.0525,
+    "set_size_mean": 0.933,
+    "singletons": 0.933
+   },
+   "fitted": true,
+   "fitted_on": "author-written triage sets (not independent)",
+   "labels": [
+    "bio",
+    "deadline",
+    "decision",
+    "none",
+    "preference"
+   ],
+   "n_fit": 15,
+   "n_test": 27,
+   "q_hat": 0.03771,
+   "set": "triage_eval_memory.json",
+   "shadow": true,
+   "tau": 0.02,
+   "test": {
+    "accuracy": 0.8148,
+    "coverage_seen": 0.6667,
+    "ece_after": 0.1665,
+    "ece_before": 0.0579,
+    "set_size_mean": 0.778,
+    "singletons": 0.778
+   },
+   "thresholds": {}
+  },
+  "triage.news": {
+   "base_tau": 0.041666666666666664,
+   "coverage": 0.9,
+   "fit": {
+    "accuracy": 0.9333,
+    "coverage_seen": 1.0,
+    "ece_after": 0.0515,
+    "ece_before": 0.0804,
+    "set_size_mean": 1.067,
+    "singletons": 0.933
+   },
+   "fitted": true,
+   "fitted_on": "author-written triage sets (not independent)",
+   "labels": [
+    "analysis",
+    "hard",
+    "promo",
+    "service"
+   ],
+   "n_fit": 15,
+   "n_test": 25,
+   "q_hat": 0.56919,
+   "set": "triage_eval_news.json",
+   "shadow": true,
+   "tau": 0.02,
+   "test": {
+    "accuracy": 1.0,
+    "coverage_seen": 1.0,
+    "ece_after": 0.0297,
+    "ece_before": 0.0861,
+    "set_size_mean": 1.04,
+    "singletons": 0.96
+   },
+   "thresholds": {}
+  },
+  "triage.notify": {
+   "base_tau": 0.041666666666666664,
+   "coverage": 0.9,
+   "fit": {
+    "accuracy": 0.8333,
+    "coverage_seen": 1.0,
+    "ece_after": 0.2019,
+    "ece_before": 0.1694,
+    "set_size_mean": 1.167,
+    "singletons": 0.833
+   },
+   "fitted": true,
+   "fitted_on": "author-written triage sets (not independent)",
+   "labels": [
+    "fyi",
+    "needs_you"
+   ],
+   "n_fit": 12,
+   "n_test": 13,
+   "q_hat": 0.77157,
+   "set": "triage_eval_notifications.json",
+   "shadow": true,
+   "tau": 0.06627,
+   "test": {
+    "accuracy": 0.9231,
+    "coverage_seen": 1.0,
+    "ece_after": 0.1511,
+    "ece_before": 0.1473,
+    "set_size_mean": 1.462,
+    "singletons": 0.538
+   },
+   "thresholds": {}
+  }
+ },
+ "note": "Numbers and ids only. Fitted on dev sets 1-3 by tools/laya_calibrate.py; shadow: the calibrated decision is logged next to the current one and changes nothing.",
+ "version": "cal-0d6875223b"
+}
