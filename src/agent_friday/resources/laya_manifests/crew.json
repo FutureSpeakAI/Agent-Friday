@@ -77,7 +77,7 @@
   {
    "id": "crew.turn",
    "trigger": "button",
-   "also": ["laya", "voice"],
+   "also": ["voice"],
    "model_class": "brain",
    "helper": "task",
    "activity_label": "A crew agent at work",

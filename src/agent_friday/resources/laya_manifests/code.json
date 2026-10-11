@@ -124,7 +124,6 @@
   {
    "id": "code.worker",
    "trigger": "button",
-   "also": ["laya", "voice"],
    "model_class": "brain",
    "helper": "visible_job",
    "task_kind": "worker",

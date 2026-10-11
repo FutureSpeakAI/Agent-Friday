@@ -130,7 +130,6 @@
   {
    "id": "library.search",
    "trigger": "button",
-   "also": ["laya", "voice"],
    "model_class": "brain",
    "helper": "visible_job",
    "task_kind": "library_search",
@@ -140,7 +139,6 @@
   {
    "id": "library.question",
    "trigger": "button",
-   "also": ["laya", "voice"],
    "model_class": "brain",
    "helper": "visible_job",
    "task_kind": "kg_question",
@@ -150,7 +148,6 @@
   {
    "id": "library.research",
    "trigger": "button",
-   "also": ["voice"],
    "model_class": "brain",
    "helper": "visible_job",
    "task_kind": "research",

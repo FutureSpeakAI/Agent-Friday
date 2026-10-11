@@ -296,7 +296,7 @@
   {
    "id": "news.podcast",
    "trigger": "button",
-   "also": ["laya", "voice"],
+   "also": ["voice"],
    "model_class": "speech",
    "helper": "visible_job",
    "task_kind": "podcast",
