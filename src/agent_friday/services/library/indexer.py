@@ -168,6 +168,8 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
     doc_id = store.upsert_document(str(p), sha256=sha, size=st.st_size, mtime=st.st_mtime, kind=kind,
                                    ext=p.suffix.lower().lstrip("."), scope=scope_root, folder_id=fid,
                                    title=withhold.title(safe_title(p.stem)), shelf=shelf or "open")
+    if prior and prior["state"] == "indexed" and (prior["sha256"] != sha or str(prior["shelf"] or "open") != str(shelf or "open")):
+        _drop_stale_drafts(doc_id)                    # however this re-read ends, drafts of the old text go
     if kind is None:
         store.set_state(doc_id, "skipped:unsupported", "this kind of file isn't read yet")
         return {"state": "skipped", "doc_id": doc_id, "detail": "unsupported"}
@@ -191,6 +193,7 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
     sample = "\n".join(b["text"] for b in blocks[:40])[:4000]
     chosen = shelf or (classify(p, title, sample) if classify else "open")
     if chosen == "vault" and not store.vault_open():
+        _drop_stale_drafts(doc_id)
         store.set_state(doc_id, "skipped:sensitive", "looks sensitive, and the vault isn't set up")
         return {"state": "skipped", "doc_id": doc_id, "detail": "sensitive"}
     # Everything stored, embedded or quoted from here on is made from text with every key and token
@@ -199,6 +202,7 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
         blocks = withhold.blocks(blocks)
         title = withhold.title(title)
     except withhold.Withheld as e:
+        _drop_stale_drafts(doc_id)
         store.set_state(doc_id, "skipped:credential", str(e))
         return {"state": "skipped", "doc_id": doc_id, "detail": "credential"}
     except Exception:  # noqa: BLE001 - a check that cannot run is not a pass
@@ -240,7 +244,7 @@ def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob
                 kinds: set[str] | None = None, classify: Classify | None = None,
                 allowed: Callable[[Path], bool] | None = None, gate=None, force: bool = False,
                 on_gone: Callable[[int], None] | None = None, hooks=None,
-                only: Iterable[str | Path] | None = None) -> dict:
+                only: Iterable[str | Path] | None = None, covered: Callable[[Path], bool] | None = None) -> dict:
     """Index new and changed files under `scope`; purge rows of files that are
     gone. `allowed` is the consent check: a path it refuses is not read.
     `on_gone(doc_id)` removes a document whose file is gone the way a removal does (graph,
@@ -271,14 +275,14 @@ def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob
         # Consent is read live before every file, and again once the pause point has let it through (that
         # wait can last hours): a removal, a never-send mark or an unverifiable ledger stops the pass here.
         if allowed and not allowed(p):
-            if not allowed(Path(scope)):
+            if covered is not None and not covered(Path(scope)):
                 break                                   # the folder itself is no longer covered: read nothing more
             out["skipped"] += 1
             continue
         if hooks is not None:
             hooks.before(p)
             if allowed and not allowed(p):
-                if not allowed(Path(scope)):
+                if covered is not None and not covered(Path(scope)):
                     break
                 out["skipped"] += 1
                 hooks.done(p, {"state": "skipped"})
@@ -319,8 +323,10 @@ class Indexer:
 
     def __init__(self, principal: str = OWNER, *, can_run: Callable[[], bool] | None = None,
                  classify: Classify | None = None, allowed: Callable[[Path], bool] | None = None,
-                 gate=None, job_factory=None):
+                 gate=None, job_factory=None, covered: Callable[[Path], bool] | None = None):
         self.principal = principal
+        #: scope -> does the owner's consent still cover the folder itself (grants.scope_covered).
+        self.covered = covered
         #: (scope, kw) -> the Local AI queue job that reads that folder (library/index_job), or None.
         self.job_factory = job_factory
         self.can_run = can_run or (lambda: True)
@@ -427,10 +433,10 @@ class Indexer:
     def _pass(self, store, scope: str, kw: dict, only, job, vj) -> None:
         if job is None:
             sweep_scope(store, scope, classify=self.classify, allowed=self.allowed, gate=self.gate,
-                        on_gone=self._remove_gone, only=only, **kw)
+                        on_gone=self._remove_gone, only=only, covered=self.covered, **kw)
             return
         job.attach(vj)
         with job as j:                               # admitted through the Local AI queue; may be cancelled
             out = sweep_scope(store, scope, classify=self.classify, allowed=self.allowed, gate=self.gate,
-                              on_gone=self._remove_gone, hooks=j, only=only, **kw)
+                              on_gone=self._remove_gone, hooks=j, only=only, covered=self.covered, **kw)
             j.finish(store, out)

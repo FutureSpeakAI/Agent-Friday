@@ -92,7 +92,7 @@ def _gone_ids(idx: dict | None = None) -> set:
     return out
 
 
-def _still_ok(store, doc, principal: str) -> bool:
+def _still_ok(store, doc, principal: str, blocks=None) -> bool:
     """Is this document still one a draft may be made from? The row exists with the same bytes, indexed on the
     open shelf, the owner's consent still covers it (read live; an unverifiable ledger covers nothing), it is
     not forgotten, and its tier and copy marks still say public and original."""
@@ -112,6 +112,12 @@ def _still_ok(store, doc, principal: str) -> bool:
         meta = store.get_doc_meta(doc["id"])
         if meta is None or meta["sensitivity"] is None or int(meta["sensitivity"]) > 1 or meta["dup_of"] is not None:
             return False
+        # Forgetting a person deletes the passages and blocks that name them without touching the file's bytes:
+        # a draft made from text that is no longer all there is dropped.
+        for bid, text in blocks or ():
+            r = store.one("SELECT text FROM blocks WHERE id=?", (bid,))
+            if r is None or r["text"] != text:
+                return False
         return True
     except Exception:  # noqa: BLE001 - a check that cannot run is not a pass
         return False
@@ -379,17 +385,9 @@ def _blocks(store, doc) -> list[tuple[int, str]]:
 
 
 def _prompt_text(blocks: list[tuple[int, str]]) -> str:
-    out, used = [], 0
-    for _bid, text in blocks:
-        t = _norm(text)
-        if not t:
-            continue
-        if used + len(t) > MAX_CHARS:
-            out.append(t[:max(0, MAX_CHARS - used)])
-            break
-        out.append(t)
-        used += len(t)
-    return "\n".join(out)
+    """Exactly what the sensitivity classifier read (shelf.tier_of): the raw blocks joined by newlines, cut at
+    MAX_CHARS, before any whitespace is collapsed."""
+    return "\n".join(text for _bid, text in blocks)[:MAX_CHARS]
 
 
 def draft_document(store, doc, model: str, complete=None, principal: str = lstore.OWNER) -> list[str]:
@@ -406,7 +404,7 @@ def draft_document(store, doc, model: str, complete=None, principal: str = lstor
     with _lock:
         # The model may have waited a long time for the owner to be away. Whatever happened meanwhile (a
         # removal, a forget, an edit, a withdrawn consent, a new tier) decides whether anything is written.
-        if not _still_ok(store, doc, principal):
+        if not _still_ok(store, doc, principal, blocks):
             return []
         return write_items(doc, store.get_doc_meta(doc["id"]), model, checked)
 
@@ -422,8 +420,8 @@ def run_pass(principal: str, scope: str, *, complete=None, model: str | None = N
     docs = eligible(store, scope)
     done = proposed = 0
     for d in docs:
-        if before is not None:
-            before()
+        if before is not None and before() == "hold":
+            return {"state": "held", "done": done, "total": len(docs), "proposed": proposed}
         if not _still_ok(store, d, principal):
             continue                                   # no consent now, forgotten, changed: the model never reads it
         ids = draft_document(store, d, model, complete, principal)
@@ -539,6 +537,14 @@ class Stager:
         """Draft from one folder as ONE visible job (Activity names the local model, shows the steps and the
         trace, and gives its place in the Local AI queue). The job is deferrable: it waits for idle and never
         runs during a chat or a meeting."""
+        out = self._draft_once(scope, index_job)
+        while out.get("state") == "held":
+            # The job ended and gave its queue slot back; nothing waits behind a paused draft. When the
+            # hold is lifted a new job takes its place in line and carries on with the rest.
+            wait_for_holds(self.principal)
+            out = self._draft_once(scope, index_job)
+
+    def _draft_once(self, scope: str, index_job) -> dict:
         pr = index_job.progress_for(self.principal)
         key = str(scope)
         rec = {k: v for k, v in pr.data["folders"].items() if index_job._scope_root(k) == key}
@@ -557,7 +563,7 @@ class Stager:
             for k in rec:
                 pr.set(k, stage=out)
             pr.save()
-            return
+            return out
 
         with visible_job("Drafting notes from " + name, kind="library_stage", workspace="library",
                          deferrable=True, key="library_stage:" + key,
@@ -569,13 +575,17 @@ class Stager:
                 vj.log("%d of %d documents drafted, %d proposed" % (done, total, proposed))
             def between():
                 vj.check_stop()
-                wait_for_holds(self.principal, vj)
+                why = holds(self.principal)
+                if why:
+                    vj.log("Paused: " + why.replace("paused: ", "") + ". Giving the queue back until then.")
+                    return "hold"
             out = run_pass(self.principal, scope, progress=shown, before=between)
             vj.set_result("%d of %d documents drafted, %d proposed" % (out["done"], out["total"], out["proposed"])
-                          if out["state"] == "done" else "Nothing drafted (%s)" % out["state"])
+                          if out["state"] in ("done", "held") else "Nothing drafted (%s)" % out["state"])
         for k in rec:
             pr.set(k, stage=out)
         pr.save()
+        return out
 
 
 _stagers: dict[str, Stager] = {}

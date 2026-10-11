@@ -326,3 +326,92 @@ def test_reviewing_a_draft_is_a_gated_library_action_and_the_server_starts_the_l
     root = Path(__file__).resolve().parents[2]
     assert '_gated("library_draft_review"' in (root / "src/agent_friday/routes/library.py").read_text(encoding="utf-8")
     assert "_library_runtime.start_background()" in (root / "src/agent_friday/server.py").read_text(encoding="utf-8")
+
+
+# ── re-review conditions ─────────────────────────────────────────────────────────
+
+def test_a_draft_is_dropped_when_a_block_the_model_read_was_deleted_by_forget_person(consent):
+    from agent_friday.services.library import staging
+    st = _store()
+    did = _doc(st, "a")
+
+    def slow_model(system, user, model):
+        st.x("DELETE FROM blocks WHERE doc_id=? AND ord=0", (did,))   # forget-person removed the passage naming them
+        return {"facts": [FACT]}
+    assert staging.draft_document(st, st.get_document(did), "m", slow_model) == []
+    assert staging.list_items() == []
+
+
+def test_a_folder_with_a_glob_grant_is_covered_and_the_glob_judges_each_file(tmp_path):
+    from agent_friday.services.library import grants, index_job, indexer
+    root = tmp_path / "Mixed"
+    write_docs(root, {"a.md": "Notes about the harbor and the tides.", "b.txt": "Other notes about cranes.",
+                      "c.md": "More notes about the harbor and rope."})
+    grants.add_scope("owner", str(root), glob="*.md")
+    assert grants.scope_covered("owner", root) is True
+    assert index_job.FolderJob("owner", str(root))._covered() is True
+    st = _store()
+    indexer.sweep_scope(st, root, allowed=lambda p: grants.allowed("owner", p),
+                        covered=lambda s: grants.scope_covered("owner", s))
+    names = sorted(d["path"].replace("\\", "/").rsplit("/", 1)[-1] for d in st.list_documents())
+    assert names == ["a.md", "c.md"], "the .md files are read, the others skipped, the pass is not ended"
+
+
+def test_a_removed_folder_is_no_longer_covered(tmp_path):
+    from agent_friday.services.library import grants
+    root = tmp_path / "Gone"
+    write_docs(root, {"a.md": "Notes."})
+    ev = grants.add_scope("owner", str(root), glob="*.md")
+    assert grants.scope_covered("owner", root) is True
+    grants.remove_scope("owner", ev["id"])
+    assert grants.scope_covered("owner", root) is False
+
+
+def test_a_held_drafting_pass_ends_its_job_and_waits_outside_the_queue(monkeypatch):
+    from agent_friday.services import visible_jobs
+    from agent_friday.services.library import index_job, staging
+    calls, waited, state = [], [], {"hold": True}
+    monkeypatch.setattr(staging, "_local_model", lambda: "m")
+    monkeypatch.setattr(staging, "eligible", lambda store, scope: [1])
+    monkeypatch.setattr(staging, "holds", lambda principal="owner": "paused by you" if state["hold"] else "")
+
+    def fake_pass(principal, scope, progress=None, before=None, **kw):
+        calls.append(visible_jobs.current() is not None)
+        if len(calls) == 1:
+            assert before() == "hold"
+            return {"state": "held", "done": 0, "total": 2, "proposed": 0}
+        return {"state": "done", "done": 2, "total": 2, "proposed": 1}
+
+    def fake_wait(principal, vj=None):
+        waited.append(visible_jobs.current() is None)       # no job, so no queue slot, while it waits
+        state["hold"] = False
+    monkeypatch.setattr(staging, "run_pass", fake_pass)
+    monkeypatch.setattr(staging, "wait_for_holds", fake_wait)
+    staging.Stager("owner")._one("/scope", index_job)
+    assert calls == [True, True] and waited == [True]
+
+
+def test_a_re_read_that_fails_still_drops_the_drafts_of_the_old_text(tmp_path, monkeypatch):
+    from agent_friday.services.library import indexer, procrun, staging
+    root = _folder(tmp_path, 1)
+    st = _store()
+    indexer.sweep_scope(st, root)
+    doc = st.list_documents()[0]
+    staging.write_items(doc, None, "m", {"summary": None, "facts": [dict(FACT, block_id=1)]})
+    path = root / "n0.txt"
+    path.write_text("Rewritten with other words about cranes, rope and weather.", encoding="utf-8")
+
+    def broken(*a, **k):
+        raise RuntimeError("the reader failed")
+    monkeypatch.setattr(procrun, "run_task", broken)
+    assert indexer.index_file(st, path, root)["state"] == "failed"
+    assert staging.list_items(doc_id=doc["id"]) == []
+
+
+def test_the_model_reads_the_same_raw_text_the_classifier_read(consent):
+    from agent_friday.services.library import staging
+    st = _store()
+    padded = "\n".join("Line %d   " % i + " " * 400 + "end" for i in range(12))
+    did = _doc(st, "padded", padded)
+    blocks = staging._blocks(st, st.get_document(did))
+    assert staging._prompt_text(blocks) == "\n".join(t for _i, t in blocks)[:staging.MAX_CHARS]

@@ -116,7 +116,8 @@ def indexer_for(principal: str = OWNER) -> Indexer:
         if ix is None:
             ix = Indexer(principal, classify=shelf.chooser(principal),
                          allowed=lambda p, pr=principal: grants.allowed(pr, p),
-                         gate=lambda: gate(lambda: ix._stop), job_factory=index_job.factory(principal))
+                         gate=lambda: gate(lambda: ix._stop), job_factory=index_job.factory(principal),
+                         covered=lambda s, pr=principal: grants.scope_covered(pr, s))
             _indexers[principal] = ix
         return ix
 

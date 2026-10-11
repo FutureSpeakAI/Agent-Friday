@@ -418,7 +418,7 @@ class FolderJob:
         ledger that cannot be verified all say no."""
         try:
             from agent_friday.services.library import grants
-            return bool(grants.allowed(self.principal, Path(self.scope)))
+            return bool(grants.scope_covered(self.principal, Path(self.scope)))
         except Exception:  # noqa: BLE001 - a check that cannot run is not consent
             return False
 

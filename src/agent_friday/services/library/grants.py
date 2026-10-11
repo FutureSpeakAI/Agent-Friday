@@ -236,6 +236,40 @@ def active_scopes(principal: str, *, expand: bool = True) -> list[dict]:
     return out
 
 
+def scope_covered(principal: str, scope) -> bool:
+    """Is this folder (or file) still one the owner's consent covers? Read live. A grant with a glob such as
+    `*.md` covers its folder: the glob judges each FILE (`allowed`), never the folder's own name. False while
+    the ledger is suspended, for a never-send path and for a credential place."""
+    if suspended():
+        return False
+    fg = _fg()
+    p = Path(scope)
+    if fg.check_grant(p).state == "denied":
+        return False
+    try:
+        rp = p.resolve()
+    except OSError:
+        return False
+    from agent_friday.services.library import indexer
+    if indexer._refused(rp):
+        return False
+    for a in active_scopes(principal):
+        try:
+            root = _resolved_root(str(Path(a["path"])))
+        except OSError:
+            continue
+        if _norm(rp) == _norm(root):
+            return True
+        if a.get("type") != "file":
+            try:
+                rel = rp.relative_to(root)
+            except ValueError:
+                continue
+            if a.get("recursive", True) or len(rel.parts) <= 1:
+                return True
+    return False
+
+
 def suspended() -> bool:
     return bool(_fg()._load_state().suspended)
 
