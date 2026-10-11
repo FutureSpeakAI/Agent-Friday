@@ -1255,7 +1255,9 @@ def _odd_case(text: str) -> set:
     return {w.lower() for w in re.findall(r"\b[a-z]+[A-Z][A-Za-z]*\b", text or "")}
 
 
-_FIGURE_RE = re.compile(r"\$?\d[\d,.]*[%BbMmKk]?\b")
+# Linear on untrusted text: a match never starts inside a number, and a figure
+# is bounded, so a long digit run cannot be retried from every position.
+_FIGURE_RE = re.compile(r"(?<![\d,.$])\$?\d[\d,.]{0,40}[%BbMmKk]?\b")
 
 
 def _figure_core(f: str) -> str:
