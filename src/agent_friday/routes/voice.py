@@ -2999,8 +2999,9 @@ def _persist_local_turn(tool_session, user_text, agent_text, conversation_id):
     """Save a completed local voice turn. A turn that read a card aloud or asked a question built from the
     owner's screen keeps only a neutral line in the conversation (set by ``_run_routed_front_turn``): the
     words were spoken, but a later typed turn on a cloud model reads this history."""
-    kept = tool_session.pop("history_text", None) or agent_text
-    return _persist_voice_turn(user_text, kept, conversation_id=conversation_id, provider="local")
+    neutral = tool_session.pop("history_text", None)
+    saved = _persist_voice_turn(user_text, neutral or agent_text, conversation_id=conversation_id, provider="local")
+    return neutral or saved       # the session logs the neutral line for the end-of-call summary too
 _CARD_LINE_FALLBACK = ("I have a change waiting for your OK; the details are on your screen. "
                        "Shall I go ahead?")
 

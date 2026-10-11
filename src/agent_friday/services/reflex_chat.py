@@ -466,21 +466,6 @@ _POINT_OK = ("NAV_OK", "SELECT_OK", "SELECT_PARTIAL")
 NEUTRAL_ASK = "I need to know which one you mean. The choices are on your screen."
 
 
-def _card_sample(result: str) -> str:
-    """A row sample of the card a result raised (“subject” from sender), from the card itself, for
-    the sealed chat line. '' when it cannot be read: the line then gives the count alone."""
-    try:
-        m = re.search(r"card_id=([\w-]+)", result or "")
-        if not m:
-            return ""
-        from agent_friday.services import approvals
-        from agent_friday.services import item_actions as _ia
-        rec = approvals.get_approval(m.group(1)) or {}
-        return _ia.card_sample((rec.get("payload") or {}).get("preview"))
-    except Exception:
-        return ""
-
-
 def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authenticated):
     """Run Laya's safe-write call (the governed organize_email handler), which can only raise
     ONE card. The line the owner reads is sealed: the verb, a count and their own label."""
@@ -496,9 +481,10 @@ def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authen
     entry = {"name": r.tool, "input": {"action": r.args.get("action")}, "result": ""}
     history = None
     if result.startswith("CARD_RAISED"):
-        sample = _card_sample(result)
-        outcome, reply = "card", _lt.line("safe_write_card", what=(what + (" (" + sample + ")" if sample else "")))
-        history = _lt.line("safe_write_card", what=what).text       # the count and the owner's own label; no title or name
+        # The notice names the count and the owner's own label, never a title or a sender: the card on their
+        # screen has the rows.
+        outcome, reply = "card", _lt.line("safe_write_card", what=what)
+        history = reply.text
         entry["result"] = history
     elif result.startswith("NOT DONE") or status in ("deny", "error"):
         outcome, reply = "refused", _lt.line("point_refused", detail=_first_line(result))

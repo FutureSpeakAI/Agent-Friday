@@ -942,7 +942,12 @@ class VoiceSession:
             try:
                 p = self.hooks.get("persist")
                 if p:
-                    p(said, reply, turn["conversation_id"])
+                    got = p(said, reply, turn["conversation_id"])
+                    if (isinstance(got, str) and got and not _unsaved and self.turn_log
+                            and self.turn_log[-1] == (said, reply)):
+                        # The turn read a card aloud or asked a question built from the screen: the call's
+                        # summary (which may run on a cloud model) gets the neutral line the conversation keeps.
+                        self.turn_log[-1] = (said, got)
             except Exception:
                 pass
             try:

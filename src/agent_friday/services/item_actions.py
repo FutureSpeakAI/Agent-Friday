@@ -653,8 +653,16 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
                     % (_plural(newer_n, "newer message"), "is" if newer_n == 1 else "are"))
     if detail["why"]:
         said.append("Why (Friday's words): " + detail["why"])
+    if laya_card:
+        from agent_friday.services import laya_safe_writes as _lsw2
+        if _lsw2.mode() != "on":
+            raise Refused("Laya's safe writes were turned off while this card was being made, so there is none")
     card = _raise_card("email", action, detail, title=title, body=" ".join(said),
                        requested_by=requested_by, replaces=replaces)
+    if laya_card:
+        from agent_friday.services import laya_safe_writes as _lsw2
+        if _lsw2.mode() != "on":            # turned off in the instant between the check and the store
+            _lsw2.expire_pending_cards()
     if card.get("status") == "pending_approval":
         _tell_held(detail, "held", card_id=card.get("approval_id") or "")
     out = {**card, "count": n, "readback": email_readback(sel, action, label, room_mode),
@@ -730,17 +738,6 @@ def run_email(detail: dict, approval_id: str | None = None) -> dict:
                           approval_id=approval_id, conversation_id=detail.get("conversation_id"),
                           extra={"query": detail.get("query") or "", "said": said,
                                  **_laya_receipt(detail)})
-
-
-def card_sample(preview, n: int = 2) -> str:
-    """A short sample of a card's rows for a sealed line: the first few subjects with their sender
-    (an address, on a card Laya raised). Cleaned text only; '' when there is nothing to show."""
-    bits = []
-    for p in list(preview or [])[:n]:
-        subj, who = _clean_row(p.get("subject"), 60), _clean_row(p.get("sender"), 80)
-        if subj:
-            bits.append("“%s”%s" % (subj, (" from " + who) if who else ""))
-    return " and ".join(bits)
 
 
 def _laya_receipt(detail: dict) -> dict:

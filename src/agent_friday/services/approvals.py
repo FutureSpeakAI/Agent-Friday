@@ -101,6 +101,11 @@ DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 #: "yes" must never be what lets a file's contents reach a cloud model. The
 #: bare "owner" label is NOT a click: it is the default of every in-process
 #: caller, so only the explicit "owner:ui" the page sends counts.
+#: Who may APPROVE a card Laya raised herself (payload.origin == "laya_safe_write"): the Approve button on the
+#: screen, or the owner's voice through the sealed-line and naming rules (local_context.decide_by_voice). Not a text
+#: message, not a typed reply, not any other channel; declining is open to every channel.
+LAYA_CARD_APPROVERS = frozenset({"owner:ui", "owner:/voice/"})
+
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
@@ -650,6 +655,9 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
         if decision == "approve" and screen_only is not None and decided_by not in screen_only:
             return dict(rec), False
+        if (decision == "approve" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
+                and decided_by not in LAYA_CARD_APPROVERS):
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
@@ -932,10 +940,9 @@ def _notify_pending(record: Dict[str, Any]) -> None:
         pass
     body = (record.get("description") or record.get("action_description") or "")
     if (record.get("payload") or {}).get("origin") == "laya_safe_write":
-        # A card Laya raised names each sender's ADDRESS on its on-screen lines (the display name is the
-        # sender's to choose). The tray notice, and anything that forwards it, carries names only.
-        import re as _re
-        body = _re.sub(r"\s*<[^<>\n]{0,160}>", "", body)
+        # A card Laya raised lists subjects, sender names and addresses on its on-screen lines. The notice
+        # (and anything that forwards it) says only what was asked and where to look.
+        body = "Open Friday to see which conversations, and to approve or decline it."
     try:
         _ne.push(
             meta=meta,
