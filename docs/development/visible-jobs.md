@@ -99,3 +99,18 @@ visible surface (the chat turn, the voice surface, a phone call, the setup
 wizard, a workspace chat), the task machinery that is itself the registry, and
 small infrastructure checks with their own result page (a key probe, the privacy
 judge). Each entry says why. A job is wrapped, never allow-listed.
+
+## Declaring a workspace's jobs
+
+Each workspace's Laya manifest (`src/agent_friday/resources/laya_manifests/<id>.json`) lists
+the jobs the workspace can launch in `jobs`. An entry names the job's `id`, what starts it
+(`trigger`: a button, a schedule, an idle sweep, Laya or voice), the kind of model it needs
+(`model_class`), and the `task_kind` and `activity_label` its `visible_job` call gives it,
+with the `entry` function the call decorates. A scheduled job also names its `schedule_ref`
+(the `register_builtin_task` ref). A launcher that is its own TASKS record (a Crew request)
+has `helper: "task"` and is the allow-listed entry in `scripts/check_visible_jobs.py`.
+
+`tests/test_laya_workspace_contracts.py` holds the manifests to the source: every declared job
+is a real `visible_job` call with that kind and label, and every `visible_job` kind in the tree
+belongs to a manifest (or to `UNOWNED_KINDS` there, with the reason). Add the job to the
+manifest in the same change that adds the call.

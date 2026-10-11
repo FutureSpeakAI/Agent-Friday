@@ -405,3 +405,32 @@ dragging · the scene uncovered by default.
 **Brand.** Only tokens · Orbitron only for display · amber only for needs-you and the maker's
 name in the wordmark · deny magenta only for a refusal or a stop · error red only for a
 failure or a destructive action · glass panels · the hologram untouched.
+
+## 11. Laya in every workspace
+
+Friday acts in every workspace, not only the ones with the most buttons. A surface is not
+finished until she can see it, point at it and act in it, by voice as well as by click. So a
+new or changed surface designs its voice and its Laya verbs together with its buttons.
+
+- **One contract per workspace.** `src/agent_friday/resources/laya_manifests/<id>.json` lists
+  the rows the workspace publishes (kind, id, facets, whether they tick, how one opens), every
+  verb (tool, argument template, gate class, phrasings, undo, eval cases), the jobs it can
+  launch, and a `not_for_laya` entry, with a one-line reason, for every UI action that has no
+  verb.
+- **Rows are shown, not described.** A list publishes its rows to the screen stage (§7) so
+  "select these" and "the ones from Mara" resolve to exact rows. A private list (health, money,
+  family) publishes kinds and positions only.
+- **Every control has a voice route or a reason.** If a button changes something, its verb
+  names the gate class and the undo. If it must stay a click (money, publishing, accounts,
+  keys), say so in the manifest: "money stays with the owner".
+- **Every job is visible.** A button that starts model work shows a task in Activity with the
+  model, status, reasoning and queue place. The manifest's `jobs` names each one, with the
+  task kind and label `visible_job` gives it.
+- **Say what was done.** Spoken results come from what the page confirmed, never from the
+  intent; a workspace-level open says the workspace ("opening Career"), not the row.
+- **The manifest describes; the gate decides.** The gate class in a manifest must equal
+  `action_gate`'s, and can never loosen it.
+- **Checked in CI.** `tests/test_laya_workspace_contracts.py` fails when a workspace has no
+  manifest, a UI action is neither a verb nor justified, a verb lacks a phrasing or an eval
+  case, a job is not a real `visible_job`, or a code table drifts from the manifests. Coverage
+  per workspace may only go up.
