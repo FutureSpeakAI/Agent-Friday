@@ -680,8 +680,8 @@ def maybe_offer(settings: Optional[dict], *, cloud: bool) -> bool:
         from agent_friday.core import _save_settings
         _save_settings({"cloud_context_slicing_offer": "pending"})
         try:
-            from agent_friday.services import desktop_bus
-            desktop_bus.broadcast({"type": "slicing_offer"}, kind="desktop")
+            from agent_friday.services import notice_registry as _nr
+            _nr.bus_broadcast("E72", {"type": "slicing_offer"}, kind="desktop")
         except Exception:
             pass
         return True
