@@ -326,6 +326,9 @@ INTERNAL_TOOLS = frozenset({
     "hologram_window",
     # Standing back for a call: the owner's own machine and own setting.
     "call_mode",
+    # Laya beside a cloud call: reads the call's own receipt; the reflex setting
+    # only narrows without a card, widening goes through setting_proposals.
+    "live_laya",
     # File permissions: lists them, removes one (only ever narrowing what
     # leaves), or raises an approval card. It creates no grant: that happens
     # only when the owner approves the card on screen.

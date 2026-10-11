@@ -28,6 +28,7 @@ from pathlib import Path
 from collections import deque as _deque
 from agent_friday.services import voice_live_channel as _voice_live_channel
 from agent_friday.services import voice_conversation_state as _vcs
+from agent_friday.services import live_laya as _live_laya
 from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
@@ -5305,6 +5306,7 @@ if sock is not None:
                 agent_text = ''.join(out_buf).strip()
                 in_buf.clear()
                 out_buf.clear()
+                _live_laya.for_call(_voice_session).on_turn_end(user_text)
                 if not user_text and not agent_text:
                     return
                 if agent_text and not _crew[0]:
@@ -5504,6 +5506,7 @@ if sock is not None:
                             # failure) is invisible after the fact.
                             _log.info("voice tool call: %s(%s)", fname, fargs)
                             _turn_tools.append(fname)
+                            _live_laya.for_call(_voice_session).on_gemini_call(fname, fargs)
                             _safe_send({"type": "status", "text": f"⚙ {fname}"})
                             # PROCESS ORB -- the execution receipt. Every text
                             # tool call registers one (services/agent.py
@@ -5539,6 +5542,8 @@ if sock is not None:
                                 return refused
                             if not isinstance(result, str):
                                 result = str(result)
+                            result = _live_laya.for_call(_voice_session).shape_result(
+                                fname, fargs, result, _voice_session.get("owner_text") or "")
                             result = result[:8000]
                             # Tool results are CLOUD EGRESS: emails, wiki
                             # excerpts, calendar attendees ship to Google here.
@@ -5551,6 +5556,7 @@ if sock is not None:
                             # NeverSendBlocked verdict fall through to the
                             # ungated result).
                             result = _gate_voice_tool_result(result, fname)
+                            _live_laya.for_call(_voice_session).note_sent(fname, result)
                             refused = _refused_crew_response(fname, fid, _orb_id)
                             if refused is not None:
                                 return refused
@@ -5847,6 +5853,7 @@ if sock is not None:
                                                 _voice_session["owner_text"] = ''.join(in_buf)[-600:]
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})
                                                 _user_words_ts[0] = _time.time()
+                                                _live_laya.for_call(_voice_session).on_input(in_tr.text)
                                                 _turn_timed[0] = False
                                             mt = getattr(sc, 'model_turn', None)
                                             if mt and getattr(mt, 'parts', None):
@@ -6269,6 +6276,15 @@ if sock is not None:
 
                         _leg_started = _time.time()
                         _cur_sess[0] = session_ai
+                        try:
+                            _live_laya.for_call(
+                                _voice_session, send=_safe_send,
+                                run_tool=lambda _n, _a: _voice_tool_run(_n, _a, _safe_send, _voice_session),
+                                trusted=bool(session.get("authenticated")) and bool(_is_local_request())
+                                and _voice_room_mode(live_settings) != "room",
+                            ).attach(session_ai, _cfg_try, asyncio.get_running_loop())
+                        except Exception as _lle:
+                            _vlog(f'live_laya attach skipped: {_lle}')
                         _leg_bytes_at_start = _audio_bytes_to_gemini
                         _record_mic_audio_egress("open")
                         # F6: name the provider receiving the microphone, on
@@ -6453,6 +6469,8 @@ if sock is not None:
                                 _vlog(f'leg close error (ignored): {_xe}')
                             _leg_bytes = max(0, _audio_bytes_to_gemini - _leg_bytes_at_start)
                             _record_mic_audio_egress("close", byte_len=_leg_bytes)
+                            _live_laya.for_call(_voice_session).close_leg(
+                                _audio_bytes_to_gemini, final=done.is_set())
                             # F6: the receipt names the byte count. Cumulative
                             # for the session so a renewed leg does not reset
                             # what the user is told left the machine.

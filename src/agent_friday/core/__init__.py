@@ -2314,6 +2314,15 @@ DEFAULT_SETTINGS = {
     # brain takes deep work asynchronously. Read by services/voice_front.
     "voice_front_model": "auto",   # auto (first that runs here: Bonsai 1.7B, then Qwen3 4B, 1.7B) | ternary-bonsai:1.7b | qwen3-4b-instruct-2507 | qwen3-1.7b
     "voice_tool_routing": "laya",   # laya (system one routes tools; the front speaks) | model (the front calls tools)
+    # Laya beside a cloud (Gemini Live) call, services/live_laya. The reflex
+    # reads the call's own transcript: off | shadow (default: writes what she
+    # would do next to what Gemini did, runs nothing) | on (runs the classes
+    # below, and only those past the agreement gate in tools/live_reflex_agreement).
+    "voice_live_reflex": "shadow",
+    "voice_live_reflex_classes": [],       # open | select | play | timer | read; empty until the owner clears one
+    "voice_live_idempotency_s": 8,         # the same Live tool call with equal arguments inside this window runs once (0 = off)
+    "voice_live_reduce_over_chars": 3000,  # a tool result larger than this is cut to what the question needs before it goes to Google
+    "voice_live_reduce_local_model": "off",  # off | seat_if_up: let an already-running local model help cut a result (never loads one)
     # The brain during a call: "auto" = beside the front when the card holds
     # both, else parked for the call; "parked"; "resident".
     "voice_brain_during_calls": "auto",

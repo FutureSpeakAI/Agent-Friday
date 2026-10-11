@@ -545,7 +545,20 @@ def _preflight(name, args, schema, sc, cfg) -> Outcome:
                 f"[VERIFIER FIX] '{name}' did not run: " + "; ".join(fixes)
                 + f". You sent: {shown}. Fix the call and try again; nothing was asked of the owner."))
 
+    # 2a. a Gemini Live call, judged by Laya as well (services/live_laya): a row
+    # that is not on the owner's screen is a fix-it, a change the owner's words
+    # did not ask for is a question. Added checks only; nothing above is relaxed.
+    live_asks = []
+    if sc.get("surface") == "voice-live":
+        from agent_friday.services import live_laya
+        live_fixes, live_asks = live_laya.verify(name, args, sc)
+        if live_fixes:
+            return Outcome("fixit", (
+                f"[VERIFIER FIX] '{name}' did not run: " + "; ".join(live_fixes)
+                + ". Fix the call and try again; nothing was asked of the owner."))
+
     out = Outcome()
+    out.escalate.extend(live_asks)
     outward = None
 
     def _outward() -> bool:

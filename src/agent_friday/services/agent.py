@@ -10962,6 +10962,16 @@ try:
 except Exception as _cte:  # never let optional deps break the agent import
     print(f"  [CALL] registration skipped: {_cte}")
 
+# Laya beside a cloud voice call (live_laya): what the call sent Google, and
+# whether she acts on her own during calls. Typed chat calls the tool; on a
+# call Laya's own reflex layer hears both questions (the Live declarations have
+# no token budget left for another tool). See services/live_laya.py.
+try:
+    from agent_friday.services import live_laya as _live_laya
+    _live_laya.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _llte:  # never let optional deps break the agent import
+    print(f"  [LIVE LAYA] registration skipped: {_llte}")
+
 # File access (file_access): list, ask for, remove and re-grant file
 # permissions. Asking raises one approval card; the grant itself is created only
 # when the owner approves that card on screen. Shared into voice. See
@@ -11972,7 +11982,11 @@ def _bind_browser_dispatch(fn):
     return dispatch
 
 
+from agent_friday.services import live_laya as _live_laya
+
+
 @_bind_browser_dispatch
+@_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 

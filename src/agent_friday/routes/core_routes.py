@@ -1413,6 +1413,8 @@ _VOICE_ENUMS = {
     # The voice front (local voice spec §6).
     "voice_front_model": ("auto", "ternary-bonsai:1.7b", "qwen3-4b-instruct-2507", "qwen3-1.7b"),
     "voice_tool_routing": ("laya", "model"),
+    "voice_live_reflex": ("off", "shadow", "on"),
+    "voice_live_reduce_local_model": ("off", "seat_if_up"),
     "voice_brain_during_calls": ("auto", "parked", "resident"),
     "voice_async_routing": ("local_only", "follow_model_routing"),
     # Not a voice key, but the same rule: an unknown value would silently

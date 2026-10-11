@@ -57,6 +57,7 @@ TOOL_OF = {
     "settings.calls.stand_back": "call_mode",
     "settings.podcasts.format": "podcast_format",
     "settings.podcasts.length": "podcast_length",
+    "settings.laya.live_reflex": "live_laya",
 }
 KEYS_OF = {
     "switch_model": ("capability_routing", "orchestrator_model"),
@@ -67,6 +68,7 @@ KEYS_OF = {
     "call_mode": ("call_mode",),
     "podcast_format": ("podcasts",),
     "podcast_length": ("podcasts",),
+    "live_laya": ("voice_live_reflex",),
 }
 LABELS = {
     "switch_model": "the chat model",
@@ -77,6 +79,7 @@ LABELS = {
     "call_mode": "standing back for calls",
     "podcast_format": "who hosts a show",
     "podcast_length": "how long a show runs",
+    "live_laya": "Laya acting on her own during cloud calls",
 }
 
 
@@ -287,7 +290,8 @@ register_hooks()
 #: path prefix -> how to say it to the tool that owns the row. The path is the Settings row's key.
 PATHS = ("settings.models.chat_model", "settings.display.workspace_layout.<workspace>", "settings.display.start_screen",
          "settings.accessibility.big_mode", "settings.hologram.window.<dial>", "settings.calls.stand_back",
-         "settings.podcasts.format.<show>", "settings.podcasts.length.<show>")
+         "settings.podcasts.format.<show>", "settings.podcasts.length.<show>",
+         "settings.laya.live_reflex")
 _LAYOUT_VALUES = ("normal", "fullscreen_chat")
 
 
@@ -322,6 +326,8 @@ def _route(path: str, value: str):
             return "SETTING_FAIL: %s is a number." % p.rsplit(".", 1)[1]
     if p == "settings.calls.stand_back":
         return "call_mode", {"action": "set_mode", "mode": v}
+    if p == "settings.laya.live_reflex":
+        return "live_laya", {"action": "reflex", "mode": v.lower()}
     if p.startswith("settings.podcasts.format"):
         show = p.split(".", 3)[3] if p.count(".") >= 3 else "any"
         return "podcast_format", {"routine": show, "format": v}

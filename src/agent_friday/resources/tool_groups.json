@@ -54,6 +54,10 @@
   "more_tools": [
    "voice"
   ],
+  "live_laya": [
+   "voice",
+   "privacy"
+  ],
   "ask_local_for_context": [
    "privacy"
   ],
