@@ -10,11 +10,12 @@ the cloud_only behaviour of each local-answer path that LIVE has:
 
   laya_router (acknowledgements, asks)              -> fixed sets only
   local voice front (defer line, acknowledgement)   -> fixed words only
+  reflex_chat (typed "open the X", point-and-act)   -> template lines + receipt
+  chat_tool_routing (DA-0 chat routing)             -> a cloud turn never gets a
+                                                       Laya ask in place of an answer
   reflex_turn (Laya 2 tier 1)                       -> shadow only: it writes no reply
   cloud_preferred's outage answer                   -> allowed ONLY there
 
-Live has no reflex_chat, point-and-act or chat_tool_routing (they are on the b11
-branches), so their template-and-receipt tests are not here; they come with them.
 
 What it cannot prove, and says so: the words of the local voice front's answer
 come from the local model the owner chose as the voice engine
@@ -28,9 +29,11 @@ import pathlib
 
 import pytest
 
+from agent_friday.services import chat_tool_routing as ctr
 from agent_friday.services import cloud_intent as ci
 from agent_friday.services import laya_router as lr
 from agent_friday.services import laya_templates as lt
+from agent_friday.services import reflex_chat as rc
 
 SRC = pathlib.Path(ci.__file__).resolve().parents[1]
 SOURCES = {"cloud_model", "laya_template", "owner_engine"}
@@ -91,8 +94,172 @@ def test_the_external_fixed_sets_exist():
         assert kind in lt.KINDS
 
 
+# ── reflex_chat: every reply is a template line ──────────────────────────────
+
 def _tree(rel):
     return ast.parse((SRC / rel).read_text(encoding="utf-8-sig"))
+
+
+def _is_template_call(node):
+    """A call on laya_templates (`_lt.line(...)`, `_laya_templates.rule_question(...)`)."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in ("_lt", "_laya_templates"))
+
+
+def test_reflex_chat_builds_every_reply_from_a_template():
+    tree = _tree("services/reflex_chat.py")
+    replies = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
+               and any(isinstance(t, ast.Name) and t.id == "reply" for t in n.targets)]
+    assert len(replies) >= 10, "the scan found too few reply assignments"
+    bad = []
+    for n in replies:
+        v = n.value
+        branches = [v.body, v.orelse] if isinstance(v, ast.IfExp) else [v]
+        if not all(_is_template_call(b) for b in branches):
+            bad.append(n.lineno)
+    assert not bad, "free-text reply in reflex_chat at line(s) %s" % bad
+
+
+def test_reflex_chat_results_carry_the_laya_receipt():
+    tree = _tree("services/reflex_chat.py")
+    returned = [n for n in ast.walk(tree) if isinstance(n, ast.Return)
+                and isinstance(n.value, ast.Dict)
+                and any(isinstance(k, ast.Constant) and k.value == "reply" for k in n.value.keys)]
+    assert len(returned) >= 3
+    for r in returned:
+        keys = {k.value for k in r.value.keys if isinstance(k, ast.Constant)}
+        assert "laya" in keys, "reflex result at line %d has no Laya receipt" % r.lineno
+
+
+class _Agent:
+    """Just enough of services.agent for the reflex runner; nothing else runs."""
+    def __init__(self, result):
+        self.result = result
+        self.ran = []
+
+    @staticmethod
+    def _fresh_screen_stage(*a, **k):
+        return None                      # no page reports a list: point-and-act stands down
+
+    def prepare_confirmation_ctx(self, session_id, message, ctx):
+        return ctx
+
+    def _execute_tool(self, tool, args, session_ctx=None, **kw):
+        self.ran.append(tool)
+        return self.result
+
+    @staticmethod
+    def _tool_call_status(result):
+        if result.startswith("[CONFIRMATION REQUIRED]"):
+            return "deny"
+        if result.startswith("PENDING"):
+            return "pending"
+        if result.startswith("ERROR"):
+            return "error"
+        return "ok"
+
+
+class _Chosen:
+    title = "Go-live checklist"
+
+
+class _Res:
+    def __init__(self, status, **kw):
+        self.status = status
+        self.text = kw.get("text", "")
+        self.command = kw.get("command")
+        self.chosen = kw.get("chosen")
+        self.question = kw.get("question", "")
+        self.reason = kw.get("reason", "")
+
+
+def _open(monkeypatch, tool_result, res):
+    import agent_friday.services as services
+    stub = _Agent(tool_result)
+    monkeypatch.setattr(services, "agent", stub, raising=False)
+    monkeypatch.setattr(rc, "_record_plan", lambda *a, **k: None)
+    out = rc.open_turn("open the go-live checklist", {}, session_id="s", conversation_id="c",
+                       turn_id="t", settings={"reflex_open_enabled": True}, local=True,
+                       resolve=lambda text: res)
+    return out, stub
+
+
+CMD = {"tool": "navigate_to", "input": {"kind": "email", "id": "t-1"}}
+
+
+@pytest.mark.parametrize("tool_result,outcome,expect", [
+    ("NAV_OK:shown", "done", "Done: opened Go-live checklist (instant, no model)."),
+    ("[CONFIRMATION REQUIRED] wait for their reply: \"Open it?\"", "asked", "Open it?"),
+    ("PENDING card", "card",
+     "Opening Go-live checklist is waiting on an approval card. Nothing was opened yet."),
+    ("ERROR no", "refused",
+     "I did not open Go-live checklist: ERROR no (instant, no model; nothing ran)."),
+    ("something odd", "not_confirmed",
+     "I could not confirm Go-live checklist opened: something odd (instant, no model)."),
+])
+def test_in_cloud_only_a_reflex_confirmation_is_a_receipted_template(
+        monkeypatch, tool_result, outcome, expect):
+    assert ci.routing_mode() == "cloud_only"
+    out, stub = _open(monkeypatch, tool_result, _Res("command", command=CMD, chosen=_Chosen()))
+    assert out["outcome"] == outcome
+    assert out["reply"] == expect                       # fixed words, no model
+    assert out["laya"]["laya"] is True                  # the "Laya" receipt
+    assert out["laya"]["template"] and out["laya"]["kind"] in lt.KINDS
+    assert stub.ran == ["navigate_to"]                  # she acted; she did not compose
+
+
+def test_in_cloud_only_a_resolver_ask_is_a_receipted_rule_question(monkeypatch):
+    out, stub = _open(monkeypatch, "", _Res("ask", question="Which checklist: A or B?"))
+    assert out["outcome"] == "ask" and out["reply"] == "Which checklist: A or B?"
+    assert out["laya"] == {"laya": True, "template": "rule_ask:resolver", "kind": "ask"}
+    assert stub.ran == []
+
+
+# ── DA-0 chat routing: a cloud turn is never answered by a Laya ask ──────────
+
+def _ask_route(*a, **k):
+    return lr.Route("ask", tool="search_email", question="What should I look for in your email?",
+                    layer="rule", label="searching your email")
+
+
+def _tool_route(conf):
+    def _r(*a, **k):
+        return lr.Route("tool", tool="check_email", confidence=conf, layer="rule",
+                        label="checking your email")
+    return _r
+
+
+SETTINGS = {"chat_tool_routing": "laya"}
+
+
+def _decide(route_fn, *, local):
+    return ctr.decide("look in my email", {}, settings=SETTINGS, held=["search_email", "check_email"],
+                      local=local, trusted=True, route_fn=route_fn)
+
+
+def test_a_cloud_turn_is_never_answered_by_a_laya_ask():
+    tr = _decide(_ask_route, local=False)
+    assert tr.action == "model" and tr.cloud is True      # the cloud model's turn
+
+
+def test_a_cloud_turn_runs_only_a_sealed_tool_and_the_model_still_answers():
+    assert _decide(_tool_route(0.95), local=False).action == "run"
+    assert _decide(_tool_route(0.6), local=False).action == "model"
+
+
+def test_a_local_seat_ask_is_a_receipted_template():
+    tr = _decide(_ask_route, local=True)
+    assert tr.action == "ask"
+    res = ctr.ask_result(tr)
+    assert res["reply"] == "What should I look for in your email?"
+    assert res["laya"] == {"laya": True, "template": "rule_ask:laya_router", "kind": "ask"}
+
+
+def test_the_instant_reply_forwards_the_receipt_to_the_client():
+    src = (SRC / "routes" / "chat.py").read_text(encoding="utf-8-sig")
+    assert '"laya": result.get("laya")' in src
+    assert "_ctr.ask_result(_laya_tr)" in src
 
 
 # ── reflex_turn: shadow only, it writes no reply ─────────────────────────────────────────
