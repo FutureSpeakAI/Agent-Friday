@@ -3321,7 +3321,20 @@ def _tool_queue_status(inp):
     seat_supervisor.spoken_summary). Labels and reasons only, never a job's
     content."""
     from agent_friday.services import seat_supervisor as _ss
-    return _ss.spoken_summary(local_queue_snapshot())
+    from agent_friday.services import slice_head as _sh
+    names = _sh.is_local(_CURRENT_PROVIDER.get())
+    try:
+        # Activity is the one list of every task (services/activity_lane): say what runs and what
+        # waits across all of them. Task names go only to a model on this computer; a cloud model
+        # hears counts, and a private task is never named.
+        from agent_friday.services import activity_lane as _al
+        lane = _al.spoken_running(names=names)
+        local = _ss.spoken_summary(local_queue_snapshot())
+        if lane.startswith("Nothing is running"):
+            return local
+        return lane + " " + local if names else lane
+    except Exception:
+        return _ss.spoken_summary(local_queue_snapshot())
 
 
 def _tool_request_context(inp):

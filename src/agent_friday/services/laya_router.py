@@ -320,7 +320,8 @@ _RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
     # "What's in your queue?", "what are you doing in the background?"
     ("queue_status",
      r"\b(?:what(?:'s| is)? (?:in|on) (?:your|the) (?:local )?(?:ai )?(?:work )?queue|"
-     r"what(?:'s| is| are)? (?:you )?(?:doing|working on|running) in the background)\b"),
+     r"what(?:'s| is| are)? (?:you )?(?:doing|working on|running) in the background|"
+     r"what(?:'s| is| are) (?:you )?(?:currently |all )?(?:running|queued)(?: right now| at the moment)?)\b"),
     ("search_past_conversations",
      r"\b(?:what did (?:i|we|you) (?:say|tell (?:me|you)|talk about|discuss|mention)|"
      r"(?:what )?(?:did|have) we (?:talk|discuss|speak)|remind me what we (?:said|talked about|discussed)|"
