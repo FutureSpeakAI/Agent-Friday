@@ -30,6 +30,10 @@
   "mcp_": "connectors"
  },
  "tools": {
+  "add_knowledge": [
+   "files",
+   "workspace"
+  ],
   "annotate_calendar_events": [
    "calendar"
   ],
