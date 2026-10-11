@@ -2553,10 +2553,6 @@ def test_forget_and_wipe_clear_the_owners_text_from_process_memory(w):
     fill()
     lp.wipe(lp.OWNER_PROFILE)
     assert empty()
-    _dana_world(w)
-    fill()
-    lp.people_purge({"dana"}, set())
-    assert empty()
 
 
 def test_a_control_is_bound_to_its_conversation_and_armed_only_by_the_page(w, tool):
@@ -2574,3 +2570,65 @@ def test_a_control_is_bound_to_its_conversation_and_armed_only_by_the_page(w, to
     agent._CURRENT_OWNER_TEXT.set("Friday, forget that")
     agent.prepare_confirmation_ctx("sess-typed", "Friday, forget that", {"conversation_id": "ctl"})
     assert tool.handle({"op": "forget_last"}).startswith("NOT DONE") and len(w.rows()) == 1
+
+
+def test_the_forget_flag_is_set_only_after_the_purge_and_the_cached_artifact_is_dropped_with_it(w):
+    """S1: no turn is served the pre-forget artifact while the purge runs, or after a locked forget."""
+    pats = _dana_world(w)
+    lp.rebuild(lp.OWNER_PROFILE)
+    assert lp.OWNER_PROFILE in lp._live_cache
+    w.monkeypatch.setattr(lp, "_forgotten_patterns", lambda: pats)
+    lp._forget_applied.clear()
+    seen = {}
+    real = lp._purge_matching
+
+    def spy(profile, p, rebuild_after=True):
+        seen["flag"] = lp._forget_applied.get(profile)
+        w.monkeypatch.setattr(lp, "_kick_prime", lambda profile: None)
+        seen["live"] = lp._live(profile)
+        return real(profile, p, rebuild_after)
+    w.monkeypatch.setattr(lp, "_purge_matching", spy)
+    assert lp._apply_forget_list(lp.OWNER_PROFILE) is True
+    assert not seen["flag"] and seen["live"] is None                              # nothing served while it purges
+    assert lp._forget_applied[lp.OWNER_PROFILE] is True
+    # and a forget with the vault locked drops the cached artifact where the flag goes False
+    w.monkeypatch.setattr(lp, "_purge_matching", real)
+    lp.rebuild(lp.OWNER_PROFILE)
+    w.key[0] = None
+    with pytest.raises(RuntimeError):
+        lp.people_purge({"dana"}, set())
+    assert lp.OWNER_PROFILE not in lp._live_cache and lp._forget_applied[lp.OWNER_PROFILE] is False
+    # red when: the flag is set before the purge, or the snapshot stays cached when it goes False
+
+
+def test_a_row_still_embedding_when_the_owner_clicks_is_not_written_after_it(w):
+    """m1 residual: the flush can time out; the write re-checks the epoch and the gates under the lock."""
+    import threading
+    lp.capture_inline = False
+    gate, real = threading.Event(), lp.embed_private
+    w.monkeypatch.setattr(lp, "embed_private", lambda text: (gate.wait(5), real(text))[1])
+    w.monkeypatch.setattr(lp, "CONTROL_FLUSH_S", 0.2)                             # the flush gives up before the embed ends
+    w.correct("show my agenda", "query_calendar", routed=("tool", "conversation"), cid="c2")
+    lp.wipe(lp.OWNER_PROFILE)                                                      # the click, mid-embed
+    gate.set()
+    assert lp.flush_capture(10.0) and w.rows() == []
+    gate.clear()
+    w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"), cid="c3")
+    lp.use_settings({lp.SETTING_ON: False})                                        # learning goes off mid-embed
+    gate.set()
+    assert lp.flush_capture(10.0) and w.rows() == []
+    # red when: the epoch and learning state are judged only before the embedding
+
+
+def test_forgetting_a_person_clears_only_what_names_them_from_memory(w):
+    """S2."""
+    _dana_world(w)
+    lp.embed_private("show my agenda")
+    lp.embed_private("ask dana about my agenda")
+    lp.note_routed("ask dana about lunch", w.route("tool", "query_calendar"), conversation_id="c8")
+    lp.note_routed("show my agenda", w.route("tool", "query_calendar"), conversation_id="c9")
+    lp._control_turn.update(op="reset", text="reset what you learned", at=w.clock[0], cid="c9")
+    lp.people_purge({"dana"}, set())
+    assert [e["text"] for e in lp._held] == ["show my agenda"]
+    assert "show my agenda" in lp._private_vecs and "ask dana about my agenda" not in lp._private_vecs
+    assert lp._control_turn

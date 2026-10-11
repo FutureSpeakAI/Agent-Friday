@@ -435,16 +435,40 @@ _forget_applied: Dict[str, bool] = {}
 #: Bumped by wipe, reset and rollback; a captured row from an earlier epoch is dropped, so a row queued
 #: before the owner's click cannot land after it.
 _epoch = [0]
+#: Taken for the final check and the write of a captured row, and to bump the epoch: a row that is still
+#: embedding when the owner clicks cannot be written after the click.
+_write_lock = threading.Lock()
+#: Profiles whose forget list is being applied right now (the purge refreshes the snapshot, which must not
+#: ask again).
+_applying: set = set()
 
 
-def scrub_memory() -> None:
+def _mark_pending(profile: str) -> None:
+    """The forget list may have changed: serve nothing, and drop the cached artifact, until it is applied."""
+    _forget_applied[profile] = False
+    _live_cache.pop(profile, None)
+
+
+def scrub_memory(pats=None) -> None:
     """Forget the owner's text held in process memory: the vector cache keyed by raw sentences, the held
-    turns waiting for an answer, and the last control sentence. Called by every forget and by wipe."""
+    turns waiting for an answer, and the last control sentence. With no ``pats`` (every forget of one item,
+    and wipe) all of it goes; with the patterns of a forgotten person only what names them goes."""
+    if pats is None:
+        with _private_lock:
+            _private_vecs.clear()
+        with _lock:
+            _held.clear()
+        _control_turn.clear()
+        return
     with _private_lock:
-        _private_vecs.clear()
+        for k in [k for k in _private_vecs if _names_person(k, pats)]:
+            _private_vecs.pop(k, None)
     with _lock:
+        keep = [e for e in _held if not _names_person(e.get("text"), pats)]
         _held.clear()
-    _control_turn.clear()
+        _held.extend(keep)
+    if _names_person(str(_control_turn.get("text") or ""), pats):
+        _control_turn.clear()
 
 
 def embed_private(text: str) -> Optional[List[float]]:
@@ -1149,7 +1173,8 @@ def _settle_capture() -> None:
     """Before a click that wipes, resets or rolls back: let the queued rows land (bounded), then start a
     new epoch, so a row said before the click can never be written after it."""
     flush_capture(CONTROL_FLUSH_S)
-    _epoch[0] += 1
+    with _write_lock:                                    # waits for a row that is being written right now
+        _epoch[0] += 1
 
 
 def flush_capture(timeout: Optional[float] = None) -> bool:
@@ -1189,7 +1214,13 @@ def _persist(profile: str, row: dict) -> Optional[str]:
     v = embed_private(text)
     if v is not None:
         row["vec"] = [round(float(x), 5) for x in v]
-    res = keep_row(profile, row)
+    with _write_lock:
+        # The embedding can take seconds. Judge again, now, with the click excluded: a wipe, reset or roll
+        # back, learning going off, or the owner going off the record, since the check above.
+        if epoch != _epoch[0] or not _active(profile):
+            _count("dropped_late")
+            return None
+        res = keep_row(profile, row)
     _count(res.split(":")[0])
     if res in ("stored", "staged"):
         _last_kept_at[0] = now_fn()
@@ -1316,7 +1347,7 @@ def _load_snapshot(profile: str) -> None:
     or the priming thread, never on the router's worker or a turn."""
     if not store.vault_open():
         return
-    if not _forget_applied.get(profile) and not _apply_forget_list(profile):
+    if not _forget_applied.get(profile) and profile not in _applying and not _apply_forget_list(profile):
         _live_cache.pop(profile, None)                  # the forget list is unreadable: serve nothing
         return
     st = _state(profile)
@@ -1798,9 +1829,9 @@ def people_purge(names, emails) -> int:
         return 0
     profile = current_profile() or OWNER_PROFILE
     flush_capture(timeout=5.0)                            # a correction still in the queue is not left behind
-    scrub_memory()
+    scrub_memory(pats)
     with _build_lock:
-        _forget_applied[profile] = False                  # the forget list changed: serve nothing until it is applied
+        _mark_pending(profile)                            # the forget list changed: serve nothing until it is applied
         if not store.vault_open():
             dropped = store.clear_staging(profile)
             try:
@@ -1812,8 +1843,12 @@ def people_purge(names, emails) -> int:
                 return 0                                  # nothing was ever kept: nothing to forget
             raise RuntimeError("the vault is locked: %d waiting correction(s) were dropped; the sealed ones are "
                                "removed when it next opens" % dropped)
-        n = _purge_matching(profile, pats)
-        _forget_applied[profile] = True
+        _applying.add(profile)
+        try:
+            n = _purge_matching(profile, pats)
+            _forget_applied[profile] = True               # only after the purge has completed
+        finally:
+            _applying.discard(profile)
         return n
 
 
@@ -1860,13 +1895,16 @@ def _apply_forget_list(profile: str) -> bool:
     if pats is None:
         return False
     with _build_lock:
-        _forget_applied[profile] = True                   # set first: the purge refreshes the snapshot, which asks
+        _applying.add(profile)                            # the purge refreshes the snapshot, which must not ask again
         try:
             if pats:
                 _purge_matching(profile, pats, rebuild_after=False)
+            _forget_applied[profile] = True               # only AFTER the purge has completed
         except Exception:
-            _forget_applied[profile] = False
+            _mark_pending(profile)
             raise
+        finally:
+            _applying.discard(profile)
     return True
 
 
@@ -1881,8 +1919,12 @@ def purge_forgotten_people(profile: str, rebuild_after: bool = False) -> int:
     if not pats:
         return 0
     with _build_lock:
-        n = _purge_matching(profile, pats, rebuild_after=rebuild_after)
-        _forget_applied[profile] = True
+        _applying.add(profile)
+        try:
+            n = _purge_matching(profile, pats, rebuild_after=rebuild_after)
+            _forget_applied[profile] = True
+        finally:
+            _applying.discard(profile)
         return n
 
 
