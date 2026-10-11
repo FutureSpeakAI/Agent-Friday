@@ -50,7 +50,12 @@ def _no_settings_memory_across_tests(monkeypatch):
 
 @pytest.fixture
 def owned(friday_dir, monkeypatch):
-    """settings.json holds an owner's choice; nothing is cached in memory."""
+    """A fresh settings.json holding an owner's choice; nothing cached.
+
+    Fresh per test: a test whose fix is missing (the red run) writes into the
+    file, and the next test must not inherit what it wrote."""
+    core._invalidate_settings_cache()
+    core.SETTINGS_FILE.unlink(missing_ok=True)
     core._save_settings({"agent_name": OWNER_NAME})
     core._invalidate_settings_cache()
     # Short retry windows keep the failing-read tests fast; absent on a
@@ -280,6 +285,7 @@ def test_a_replace_that_never_lands_leaves_the_file_and_no_temp(owned, monkeypat
 def test_a_good_read_elsewhere_does_not_launder_a_failed_one(owned, monkeypatch):
     """Thread A reads while the file is unreadable and copies the result;
     thread B then reads successfully; A's whole-dict save must still fail."""
+    _forget_last_good(monkeypatch)       # the failed read serves defaults
     a = dict(_load_while_unreadable(monkeypatch))     # A: failed read, copied
     assert core._load_settings_raw()["agent_name"] == OWNER_NAME   # B: good read
     a["show_all_workspaces"] = False
@@ -303,6 +309,7 @@ def test_a_failed_read_elsewhere_does_not_block_a_valid_save(owned, monkeypatch)
 
 
 def test_a_delta_of_a_failed_read_is_refused(owned, monkeypatch):
+    _forget_last_good(monkeypatch)       # the failed read serves defaults
     before = _load_while_unreadable(monkeypatch)
     after = dict(before)
     after["orchestrator_model"] = "bound-from-defaults"
@@ -313,6 +320,7 @@ def test_a_delta_of_a_failed_read_is_refused(owned, monkeypatch):
 
 
 def test_boot_seat_binding_over_a_failed_read_writes_nothing(owned, monkeypatch):
+    _forget_last_good(monkeypatch)       # the failed read serves defaults
     from agent_friday import server
     from agent_friday.services import hardware_profile as hwp
     from agent_friday.services import residency_catalog as rc
