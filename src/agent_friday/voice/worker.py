@@ -77,27 +77,40 @@ def _cuda_init_s():
     here, else CTranslate2); 0.0 when neither answers."""
     t0 = time.perf_counter()
     try:
-        import torch
-        if torch.cuda.is_available():
-            torch.zeros(1, device="cuda")
-    except Exception:
-        try:
-            import ctranslate2
+        if "torch" in sys.modules and sys.modules["torch"] is not None:
+            import torch
+            if torch.cuda.is_available():
+                torch.zeros(1, device="cuda")
+        else:
+            import ctranslate2          # a whisper worker never loads torch
             ctranslate2.get_cuda_device_count()
-        except Exception:
-            pass
+    except Exception:
+        pass
     return round(time.perf_counter() - t0, 3)
 
 
 def _cuda_free_mib():
+    """Free VRAM on card 0 in MiB. torch's answer when torch is loaded (the
+    kokoro worker); otherwise nvidia-smi, so a whisper worker never imports
+    torch just to take a measurement."""
+    if "torch" in sys.modules and sys.modules["torch"] is not None:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                free, _total = torch.cuda.mem_get_info(0)
+                return int(free // (1024 * 1024))
+        except Exception:
+            pass
+        return None
     try:
-        import torch
-        if torch.cuda.is_available():
-            free, _total = torch.cuda.mem_get_info(0)
-            return int(free // (1024 * 1024))
+        import subprocess
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits",
+             "-i", "0"], capture_output=True, text=True, timeout=10,
+            creationflags=0x08000000 if sys.platform == "win32" else 0).stdout.strip()
+        return int(out.splitlines()[0])
     except Exception:
-        pass
-    return None
+        return None
 
 
 class _Fake:
@@ -189,7 +202,8 @@ class _WhisperCuda:
         from agent_friday.services.voice_start_profile import file_mib, timed
         prof = {}
         with timed(prof, "import_s"):
-            from faster_whisper import WhisperModel
+            from agent_friday.services.light_imports import faster_whisper_model
+            WhisperModel = faster_whisper_model()
             from agent_friday.services.local_voice import WHISPER_DIR
         prof["cuda_init_s"] = _cuda_init_s()
         before = _cuda_free_mib()
@@ -297,7 +311,10 @@ def serve(engine, inp, out) -> int:
                             "device": engine.device, "model": engine.model,
                             "voice": info.get("voice"),
                             "load_ms": int((time.perf_counter() - t0) * 1000),
-                            "profile": info.get("profile"),
+                            "profile": dict(info.get("profile") or {},
+                                            **({"preimported_s": engine.preimported_s}
+                                               if getattr(engine, "preimported_s", None) is not None
+                                               else {})),
                             "threads_at_load": threading.active_count()})
         except Exception as e:  # noqa: BLE001
             code = getattr(e, "code", None) or "engine_error"
@@ -400,6 +417,8 @@ def main(argv=None) -> int:
     ap.add_argument("--voice", default=None)
     ap.add_argument("--model", default=None)
     ap.add_argument("--compute", default=None)
+    ap.add_argument("--preimport", action="store_true",
+                    help="import the engine's libraries now and wait for the load")
     args = ap.parse_args(argv)
     # Never let a library print to stdout: it is the wire.
     out = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
@@ -411,7 +430,30 @@ def main(argv=None) -> int:
     except Exception as e:  # noqa: BLE001
         send_json(out, {"error": "bad_engine", "detail": str(e)})
         return 2
+    if args.preimport:
+        # A warm worker: the libraries are in memory before the load arrives,
+        # so a call pays the model load only. No model, no CUDA context.
+        t0 = time.perf_counter()
+        try:
+            preimport(args.engine)
+        except Exception:  # noqa: BLE001
+            pass                      # the load reports it if it matters
+        engine.preimported_s = round(time.perf_counter() - t0, 3)
     return serve(engine, inp, out)
+
+
+def preimport(name: str) -> None:
+    """Import what ``name``'s load will import, and nothing else."""
+    if name == "kokoro-cuda":
+        import torch  # noqa: F401
+        from kokoro import KModel, KPipeline  # noqa: F401
+        import misaki.en  # noqa: F401
+        import spacy  # noqa: F401
+        from agent_friday.services import kokoro_voice  # noqa: F401
+    elif name == "whisper-cuda":
+        from agent_friday.services.light_imports import faster_whisper_model
+        faster_whisper_model()
+        from agent_friday.services import local_voice  # noqa: F401
 
 
 if __name__ == "__main__":

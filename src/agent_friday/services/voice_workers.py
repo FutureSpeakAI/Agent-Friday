@@ -289,6 +289,141 @@ class WorkerDied(RuntimeError):
     pass
 
 
+def _worker_cmd(engine: str, args: dict, preimport: bool = False) -> list:
+    cmd = [sys.executable, "-m", "agent_friday.voice.worker", "--engine", engine]
+    for k in ("voice", "model", "compute"):
+        if (args or {}).get(k):
+            cmd += [f"--{k}", str(args[k])]
+    if preimport:
+        cmd.append("--preimport")
+    return cmd
+
+
+def _popen_worker(engine: str, args: dict, preimport: bool = False):
+    env = dict(os.environ)
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    # A voice worker loads files that are already on disk (fetched by the
+    # installer); it has no reason to reach the hub, so it cannot.
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
+    env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    return subprocess.Popen(_worker_cmd(engine, args, preimport), stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+                            creationflags=_POPEN_FLAGS)
+
+
+# ── warm workers ────────────────────────────────────────────────────────────
+#
+# A worker process whose libraries are imported and that holds NO model and no
+# CUDA context. Measured: the kokoro worker spends ~16 s importing torch,
+# transformers and kokoro before it loads a 312 MiB file in ~2 s; a warm one
+# has paid that already, and costs ~800 MiB of RAM (580 MiB private) while it
+# waits. So it is kept only under a free-RAM gate and an idle TTL, and only for
+# the engines whose import dominates (the whisper worker imports in 0.5 s and
+# 52 MiB; see services/light_imports).
+WARM_ENGINES = ("kokoro-cuda",)
+WARM_MIN_FREE_RAM_MB = 2560
+WARM_TTL_S = 600.0
+_WARM: dict = {}
+_WARM_LOCK = threading.Lock()
+
+
+def _free_ram_mb():
+    try:
+        import psutil
+        return int(psutil.virtual_memory().available // (1024 * 1024))
+    except Exception:
+        return None
+
+
+def prewarm(engine: str, args: dict | None = None, *, reason: str = "") -> bool:
+    """Start a warm worker for `engine` unless one waits or RAM is short.
+    True when one is (now) waiting. Never raises, never touches the GPU."""
+    if engine not in WARM_ENGINES:
+        return False
+    args = dict(args or {})
+    key = _worker_cmd(engine, args)
+    free = _free_ram_mb()
+    with _WARM_LOCK:
+        cur = _WARM.get(engine)
+        if cur is not None and cur["proc"].poll() is None and cur["key"] == key:
+            cur["expires"] = time.monotonic() + WARM_TTL_S
+            return True
+        if free is not None and free < WARM_MIN_FREE_RAM_MB:
+            log.info("warm %s worker not started (%s): %d MiB RAM free, %d needed",
+                     engine, reason or "prewarm", free, WARM_MIN_FREE_RAM_MB)
+            return False
+    try:
+        proc = _popen_worker(engine, args, preimport=True)
+    except Exception as e:  # noqa: BLE001
+        log.warning("warm %s worker not started: %s", engine, e)
+        return False
+    stale = None
+    with _WARM_LOCK:
+        stale = _WARM.get(engine)
+        _WARM[engine] = {"proc": proc, "key": key, "expires": time.monotonic() + WARM_TTL_S}
+    if stale is not None:
+        _kill_warm(stale)
+    threading.Thread(target=_warm_expiry, args=(engine, proc), daemon=True,
+                     name="voice-warm-ttl-" + engine).start()
+    log.info("warm %s worker started (%s)", engine, reason or "prewarm")
+    return True
+
+
+def take_warm(engine: str, args: dict | None = None):
+    """The waiting warm worker for exactly this engine and arguments, or None."""
+    key = _worker_cmd(engine, dict(args or {}))
+    with _WARM_LOCK:
+        cur = _WARM.get(engine)
+        if cur is None:
+            return None
+        if cur["key"] != key or cur["proc"].poll() is not None:
+            _WARM.pop(engine, None)
+            dead = cur
+        else:
+            _WARM.pop(engine, None)
+            return cur["proc"]
+    _kill_warm(dead)
+    return None
+
+
+def _kill_warm(entry) -> None:
+    try:
+        entry["proc"].kill()
+    except Exception:
+        pass
+
+
+def release_warm(reason: str = "released") -> int:
+    """End every waiting warm worker. Returns how many."""
+    with _WARM_LOCK:
+        items = list(_WARM.values())
+        _WARM.clear()
+    for e in items:
+        _kill_warm(e)
+    return len(items)
+
+
+def _warm_expiry(engine: str, proc) -> None:
+    while True:
+        with _WARM_LOCK:
+            cur = _WARM.get(engine)
+            if cur is None or cur["proc"] is not proc:
+                return                  # taken or replaced: not ours to end
+            wait = cur["expires"] - time.monotonic()
+        if wait <= 0:
+            with _WARM_LOCK:
+                cur = _WARM.get(engine)
+                if cur is not None and cur["proc"] is proc:
+                    _WARM.pop(engine, None)
+                else:
+                    return
+            _kill_warm(cur)
+            log.info("warm %s worker ended: idle %.0f s", engine, WARM_TTL_S)
+            return
+        time.sleep(min(wait, 5.0))
+
+
 class VoiceWorker:
     """Parent-side handle for one ``friday-voice-worker`` child.
 
@@ -332,20 +467,10 @@ class VoiceWorker:
     # ── lifecycle ────────────────────────────────────────────────────────
 
     def _default_spawn(self):
-        cmd = [sys.executable, "-m", "agent_friday.voice.worker", "--engine", self.engine]
-        for k in ("voice", "model", "compute"):
-            if self.args.get(k):
-                cmd += [f"--{k}", str(self.args[k])]
-        env = dict(os.environ)
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        # A voice worker loads files that are already on disk (fetched by the
-        # installer); it has no reason to reach the hub, so it cannot.
-        env["HF_HUB_OFFLINE"] = "1"
-        env["TRANSFORMERS_OFFLINE"] = "1"
-        env["HF_HUB_DISABLE_TELEMETRY"] = "1"
-        return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, env=env,
-                                creationflags=_POPEN_FLAGS)
+        warm = take_warm(self.engine, self.args)
+        if warm is not None:
+            return warm                 # imports already done; the load is next
+        return _popen_worker(self.engine, self.args)
 
     def start(self, progress=None) -> "VoiceWorker":
         """Admit, lease, spawn, load. Raises GpuRefused / WorkerDied."""
@@ -919,6 +1044,7 @@ def release_own_gpu(reason: str = "released") -> dict:
 
 
 def release_all(reason: str = "released") -> None:
+    release_warm(reason)
     with _HELD_LOCK:
         items = list(_HELD.items())
         _HELD.clear()

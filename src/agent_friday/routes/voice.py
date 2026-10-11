@@ -2073,6 +2073,26 @@ def _record_front_profile(model, armed, arm_s, seat, total_s) -> None:
         pass
 
 
+def _prewarm_voice(settings, reason: str) -> None:
+    """Warm the kokoro worker (imports only, under the free-RAM gate and an
+    idle TTL) so the next call pays the model load, not the library import.
+    Skipped when the mouth is not the GPU kokoro. Never raises."""
+    if os.environ.get("FRIDAY_TESTING") or os.environ.get("FRIDAY_NO_PREWARM"):
+        return
+    try:
+        from agent_friday.services import voice_workers as _vw
+        sel = (_vm.read_selection(settings or {}) or {}).get("mouth") or {}
+        if (str(sel.get("engine") or "") != "kokoro"
+                or str(sel.get("device_policy") or "preferred") == "never"):
+            return
+        voice = str(sel.get("voice") or "af_heart")
+        threading.Thread(target=_vw.prewarm, args=("kokoro-cuda", {"voice": voice}),
+                         kwargs={"reason": reason}, daemon=True,
+                         name="voice-prewarm").start()
+    except Exception:
+        pass
+
+
 def _release_voice_front(front) -> None:
     """Give back what the session took: its hold on the front seat (evicted
     when no call holds it) and its share of the brain's park."""
@@ -3181,6 +3201,8 @@ def voice_session_info():
     same object the Settings card, the HUD and the model's self-description
     render. Reading it never runs a proof; ``/api/voice/arm`` does that."""
     info = _resolve_voice_engine()
+    if info.get("engine") == "local":
+        _prewarm_voice(_load_settings() or {}, "session-info")
     try:
         m = _vm.get_manifest()
         m.refresh_selection()
@@ -4253,6 +4275,7 @@ if sock is not None:
             # The front seat and the brain's park end with the call; then the
             # deep questions that waited for it run on the brain.
             _release_voice_front(_front)
+            _prewarm_voice(settings, "call ended")
             _run_after_call(list(_tool_session.get("after_call") or []),
                             _tool_session.get("conversation_id"))
             try:
