@@ -4817,6 +4817,15 @@ if sock is not None:
                 ws.send(json.dumps({"type": "error", "error": "crew_room_unavailable",
                                     "detail": "Open an enabled Crew room before starting a Crew call."}))
                 return
+        # CV-A (services/live_session_plan): the capped voice-only instruction,
+        # the Laya-chosen tool kit and the call's budget. Subtracts only; the
+        # egress gate below still judges whatever is left.
+        from agent_friday.services import live_session_plan as _lsp
+        sys_text, _lsp_plan = _lsp.plan_session(
+            sys_text, live_settings,
+            _voice_tool_names if live_settings.get("voice_tools", True) else [],
+            workspace=str(request.args.get('workspace') or ''),
+            opening=str(request.args.get('opening') or ''))
         sys_text = _gate_voice_system_instruction(sys_text)
         # Hard spending cap (services/spend_guard): a NEW live session is a
         # new paid stream, so it is refused when the cap has tripped. A
@@ -4851,9 +4860,7 @@ if sock is not None:
         if live_proactive:
             live_cfg_kwargs["proactivity"] = types.ProactivityConfig(proactive_audio=True)
         if live_context_compression:
-            live_cfg_kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
-                sliding_window=types.SlidingWindow(),
-            )
+            live_cfg_kwargs["context_window_compression"] = _lsp_plan.compression_config(types)
 
         # Agentic voice: hand the Live model a real tool surface (search the news
         # feed, search the web, open a source in the browser with a highlight,
@@ -4871,7 +4878,7 @@ if sock is not None:
         # given -- not from a comment about them. The client keeps it on
         # screen for the session; it is not a transient status.
         try:
-            _reach_names = list(_voice_tool_names()) if live_voice_tools else []
+            _reach_names = list(_lsp_plan.declared_names()) if live_voice_tools else []
         except Exception:
             _reach_names = []
         try:
@@ -4908,12 +4915,12 @@ if sock is not None:
             pass
         if live_voice_tools:
             try:
-                _vtools = _build_voice_live_tools(types)
+                _vtools = _build_voice_live_tools(types, kit=_lsp_plan.kit_arg())
                 if _vtools:
                     live_cfg_kwargs["tools"] = _vtools
                     # Log the RESOLVED names, not the native table's length --
                     # an undercount here is how a surface drifts unnoticed.
-                    _vnames = _voice_tool_names()
+                    _vnames = _lsp_plan.declared_names()
                     _vlog(f'voice tools enabled: {len(_vnames)} declarations')
                     _log.info("voice live tools enabled: %d declarations (%s)",
                               len(_vnames), ", ".join(_vnames))
@@ -5076,6 +5083,7 @@ if sock is not None:
                               # What he cares about now, how much to say, what is
                               # open (services/voice_conversation_state).
                               "conv_state": _vcs.new_state()}
+            _voice_session["lsp"] = _lsp_plan
             from agent_friday.services.voice_delivery import initialize_session_preferences
             initialize_session_preferences(_voice_session, live_settings)
 
@@ -5391,7 +5399,7 @@ if sock is not None:
                 if (per_model_kwargs.get("tools")
                         and _model_requires_non_blocking_tools(model_name)):
                     try:
-                        _nb_tools = _build_voice_live_tools(types, behavior="NON_BLOCKING")
+                        _nb_tools = _build_voice_live_tools(types, behavior="NON_BLOCKING", kit=_lsp_plan.kit_arg())
                         if _nb_tools:
                             per_model_kwargs["tools"] = _nb_tools
                     except Exception as _nbe:
@@ -5787,6 +5795,7 @@ if sock is not None:
                                         # end (GoAway, error, disconnect) without a clean
                                         # close. _meter_gemini_live_chunk() never raises.
                                         _meter_gemini_live_chunk(chunk, model_name)
+                                        _lsp_plan.on_usage(chunk)
                                         # GoAway: Gemini is about to retire this session
                                         # (connection lifetime / context cap). Don't cut a
                                         # response mid-word: if Friday is speaking, drain
@@ -5834,6 +5843,7 @@ if sock is not None:
                                                 if not in_buf:
                                                     _voice_session["card_watch"].owner_turn()
                                                 in_buf.append(in_tr.text)
+                                                _lsp_plan.on_input_text(in_tr.text)   # CV-A: local prefetch only
                                                 _voice_session["owner_text"] = ''.join(in_buf)[-600:]
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})
                                                 _user_words_ts[0] = _time.time()
@@ -5922,6 +5932,11 @@ if sock is not None:
                                                     _voiced_turns[0] += 1
                                                     _repin = persona_due(_voiced_turns[0])
                                                 _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
+                                                _bud = _lsp_plan.on_turn_complete(model_name)   # CV-A: one soft-budget heads-up, panel totals
+                                                if _bud["note"]:
+                                                    _inject_q.append((_bud["note"], "notice"))
+                                                if _bud["frame"]:
+                                                    _safe_send(_bud["frame"])
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
                                                 # The conversation so far, when it
@@ -6002,6 +6017,13 @@ if sock is not None:
                                                 (not _model_speaking[0] and _tool_inflight[0] == 0)
                                                 or _time.time() >= _goaway_drain_deadline[0]):
                                             _vlog('GoAway drain complete — ending leg for renewal')
+                                            sdone.set()
+                                            return
+                                        # CV-A: more_tools widened the set; renew the leg
+                                        # (same handle, new tools) once nothing is mid-flight.
+                                        if (_lsp_plan.reconnect_due(resume_handle[0] is not None)
+                                                and not _model_speaking[0] and _tool_inflight[0] == 0):
+                                            _vlog('more_tools: ending leg to declare the widened tool set')
                                             sdone.set()
                                             return
                                     except Exception as e:
@@ -6168,6 +6190,16 @@ if sock is not None:
                                                 "window or tab"})
                             done.set()
                             break
+                        # CV-A: tools change only here, at a leg boundary. A
+                        # more_tools call widened the set; the instruction's
+                        # tool-surface note is re-made and re-gated with it.
+                        _wt = _lsp_plan.tools_for_leg(
+                            types, _model_requires_non_blocking_tools(model_name))
+                        if _wt is not None:
+                            per_model_kwargs["tools"] = _wt
+                            per_model_kwargs["system_instruction"] = types.Content(parts=[types.Part(
+                                text=_gate_voice_system_instruction(_lsp_plan.instruction_for_leg()))])
+                            per_model_cfg = types.LiveConnectConfig(**per_model_kwargs)
                         _use_handle = (resume_handle[0]
                                        if (_supports_resumption
                                            and resume_handle[0] is not None

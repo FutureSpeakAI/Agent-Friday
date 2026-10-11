@@ -1,0 +1,59 @@
+{
+ "schema": 1,
+ "comment": "Laya contract for the cloud voice session controls (CV-A). Not a workspace manifest: these verbs act on the call itself, so they sit outside the workspace UI-action audit. tests/unit/test_live_session_plan.py holds each verb to a live voice tool, its gate class and its ring.",
+ "verbs": [
+  {
+   "id": "voice_session.fewer_tools",
+   "tool": "more_tools",
+   "args": {"group": "fewer"},
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["use fewer tools", "keep your toolset small", "you don't need all those tools"],
+   "deictic": [],
+   "undo": {"via": "more_tools", "args": {"group": "everything"}},
+   "voice": {"live": true, "shared": false},
+   "effect": "narrows the declared set at the next reconnect; nothing leaves the machine"
+  },
+  {
+   "id": "voice_session.everything",
+   "tool": "more_tools",
+   "args": {"group": "everything"},
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["give me everything", "give me all your tools", "turn on all your tools"],
+   "deictic": [],
+   "undo": {"via": "more_tools", "args": {"group": "fewer"}},
+   "voice": {"live": true, "shared": false},
+   "effect": "declares every tool at the next reconnect"
+  },
+  {
+   "id": "voice_session.add_group",
+   "tool": "more_tools",
+   "args": {"group": "<group>"},
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["I'll need your calendar tools", "add the mail tools"],
+   "deictic": [],
+   "undo": {"via": "more_tools", "args": {"group": "fewer"}},
+   "voice": {"live": true, "shared": false},
+   "effect": "adds one tool group at the next reconnect"
+  },
+  {
+   "id": "voice_session.call_cost",
+   "tool": "call_cost",
+   "args": {},
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["how much has this call cost?", "what has this call cost so far?", "how much have I spent on voice today?"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "effect": "reads the call's metered cost and today's voice total; sends nothing"
+  }
+ ],
+ "held_out_eval": [
+  {"text": "can you stop using so many tools", "expect_tool": "more_tools", "expect_group": "fewer"},
+  {"text": "okay now give me the whole toolbox", "expect_tool": "more_tools", "expect_group": "everything"},
+  {"text": "what's this conversation costing me", "expect_tool": "call_cost"}
+ ]
+}

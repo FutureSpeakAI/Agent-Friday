@@ -18516,6 +18516,16 @@ function SettingsTabVoice({s,save}){
       <StToggle label={(fridayName() + " may speak first")} value={!!s.voice_proactive} onChange={()=>save({voice_proactive:!s.voice_proactive})} desc="She can ask a follow-up question without waiting to be spoken to."/>
       <StToggle label="Keep long sessions going" value={s.voice_context_compression!==false} onChange={()=>save({voice_context_compression:s.voice_context_compression===false})} desc="Drops the oldest turns as a session grows so it can run for hours. Off, a session ends after about 15 minutes."/>
       <StToggle label="Use tools while talking" value={s.voice_tools!==false} onChange={()=>save({voice_tools:s.voice_tools===false})} desc={("Lets " + fridayName() + " call her tools mid-conversation.")}/>
+      <div role="group" aria-label="Trim what each call carries" style={{padding:'10px 0'}}>
+        <div style={{fontSize:13,fontWeight:600}}>Trim what each call carries</div>
+        <div style={{fontSize:11.5,opacity:0.8,margin:'4px 0 8px',lineHeight:1.5}}>Each voice call re-sends a briefing and a list of tools every turn. In our offline test that was about 33K tokens before and about 6K trimmed (an estimate; yours depends on what she remembers about you). Her safety rules are always kept. Measure only changes nothing: it logs on this PC, as counts, what trimming would have left out and whether you then needed it.</div>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          {[['off','Off','Send everything, as before.'],['shadow','Measure only (recommended)','Send everything, and log what trimming would have dropped.'],['on','Trim','Send a short voice-only briefing and about 20 tools. Ask for more tools by voice.']].map(([v,l,d])=>{const cur=(s.voice_live_trim||'shadow')===v;return <div key={v} style={{flex:'1 1 150px',minWidth:150}}>
+            <button type="button" aria-pressed={cur} onClick={()=>save({voice_live_trim:v})} style={{width:'100%',padding:'6px 10px',cursor:'pointer',fontSize:12.5,borderRadius:6,border:'1px solid '+(cur?'var(--st-accent)':'var(--st-border, rgba(255,255,255,0.18))'),background:cur?'rgba(0,229,255,0.12)':'transparent',color:'inherit'}}>{l}{cur?' \u00b7 in use':''}</button>
+            <div style={{fontSize:11,opacity:0.7,marginTop:3,lineHeight:1.4}}>{d}</div>
+          </div>})}
+        </div>
+      </div>
       <StSavedSlider label={<span>Variety{s.voice_temperature!=null&&<button type="button" onClick={()=>save({voice_temperature:null})} style={{marginLeft:10,background:'none',border:'none',padding:0,color:'var(--st-accent)',cursor:'pointer',fontSize:11.5,textDecoration:'underline'}}>use the model default</button>}</span>}
         desc="How much the wording varies from one reply to the next. Unset uses the model's own default."
         value={s.voice_temperature??1.0} min={0} max={2} step={0.05}

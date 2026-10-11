@@ -48,6 +48,12 @@
   "ask_friday": [
    "voice"
   ],
+  "call_cost": [
+   "voice"
+  ],
+  "more_tools": [
+   "voice"
+  ],
   "ask_local_for_context": [
    "privacy"
   ],

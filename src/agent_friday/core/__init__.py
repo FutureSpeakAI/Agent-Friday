@@ -2201,6 +2201,13 @@ DEFAULT_SETTINGS = {
     "voice_affective": True,               # Live API enable_affective_dialog
     "voice_proactive": True,               # Live API proactivity.proactive_audio
     "voice_context_compression": True,     # Live API sliding-window compression; ON by default so the context-window cap never silently terminates a long voice session (pairs with session_resumption renewal)
+    # Cloud voice session plan (services/live_session_plan, Beta 1.1 CV-A).
+    "voice_live_trim": "shadow",           # off | shadow (send today's session; log what trimming would have dropped) | on (the capped voice-only instruction and a Laya-chosen tool kit)
+    "voice_live_instruction_max_tokens": 9000,   # the cap "on" applies; safety text is never cut to meet it; 0 = no cap even when on
+    "voice_live_tool_kit_size": 20,        # about how many tools the kit declares (8-40)
+    "voice_live_compression_trigger_tokens": 24000,  # prompt size that starts folding away the oldest turns; 0 = Google's default window
+    "voice_live_compression_target_tokens": 12000,   # what is kept after a fold
+    "voice_live_soft_budget_usd": 0.0,     # one spoken heads-up per call at this cost; 0 = off. Never cuts a call
     "voice_barge_grace_ms": 800,           # ignore mic this long after Friday starts speaking (echo-canceller warmup)
     "voice_barge_sustain_ms": 200,         # Gemini Live speaker-safe mode: deliberate speech must persist this long (two of its ~171 ms mic frames) to interrupt playback
     "voice_local_barge_sustain_ms": 170,   # local voice: the same, over its ~85 ms mic frames (two frames), so she stops within ~300 ms of the first word

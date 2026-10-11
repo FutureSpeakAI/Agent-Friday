@@ -56258,7 +56258,32 @@ function SettingsTabVoice({
       voice_tools: s.voice_tools === false
     }),
     desc: ("Lets " + fridayName() + " call her tools mid-conversation.")
-  }), /*#__PURE__*/React.createElement(StSavedSlider, {
+  }), /*#__PURE__*/React.createElement("div", {
+    role: "group",
+    "aria-label": "Trim what each call carries",
+    style: { padding: '10px 0' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 13, fontWeight: 600 }
+  }, "Trim what each call carries"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 11.5, opacity: 0.8, margin: '4px 0 8px', lineHeight: 1.5 }
+  }, "Each voice call re-sends a briefing and a list of tools every turn. In our offline test that was about 33K tokens before and about 6K trimmed (an estimate; yours depends on what she remembers about you). Her safety rules are always kept. Measure only changes nothing: it logs on this PC, as counts, what trimming would have left out and whether you then needed it."), /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 10, flexWrap: 'wrap' }
+  }, [['off','Off','Send everything, as before.'],['shadow','Measure only (recommended)','Send everything, and log what trimming would have dropped.'],['on','Trim','Send a short voice-only briefing and about 20 tools. Ask for more tools by voice.']].map(([v, l, d]) => {
+    const cur = (s.voice_live_trim || 'shadow') === v;
+    return /*#__PURE__*/React.createElement("div", {
+      key: v,
+      style: { flex: '1 1 150px', minWidth: 150 }
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-pressed": cur,
+      onClick: () => save({
+        voice_live_trim: v
+      }),
+      style: { width: '100%', padding: '6px 10px', cursor: 'pointer', fontSize: 12.5, borderRadius: 6, border: '1px solid ' + (cur ? 'var(--st-accent)' : 'var(--st-border, rgba(255,255,255,0.18))'), background: cur ? 'rgba(0,229,255,0.12)' : 'transparent', color: 'inherit' }
+    }, l, cur ? ' \u00b7 in use' : ''), /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 11, opacity: 0.7, marginTop: 3, lineHeight: 1.4 }
+    }, d));
+  }))), /*#__PURE__*/React.createElement(StSavedSlider, {
     label: /*#__PURE__*/React.createElement("span", null, "Variety", s.voice_temperature != null && /*#__PURE__*/React.createElement("button", {
       type: "button",
       onClick: () => save({

@@ -338,6 +338,10 @@ INTERNAL_TOOLS = frozenset({
     "home_cards", "customize_workspace",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
+    # Cloud-voice session helpers: more_tools only changes which of Friday's own
+    # tools the NEXT leg declares (each still passes its own gate when called);
+    # call_cost reads this call's metered total.
+    "more_tools", "call_cost",
     # find_free_slots reads free/busy only. release_holds deletes nothing but
     # Friday's own holds: each event is re-read and must carry Friday's active
     # hold marker for that series and no attendees, and nobody is notified,

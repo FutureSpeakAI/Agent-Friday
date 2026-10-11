@@ -285,6 +285,18 @@ she stops when Gemini hears you start talking, best with headphones;
 `no-barge`: speaker-safe, she stops only when you are clearly louder than
 her own voice coming back through the mic; Esc stops her in both).
 
+What a Gemini Live call is told and may call (every turn re-sends it, so it is
+the cost of the call; `tools/voice_session_tokens.py` measures it on this PC):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `voice_live_trim` | `"shadow"` | One switch for both trims. `"off"`: today's session. `"shadow"`: today's session exactly, and a log kept on this PC (counts and names only, never text) of what trimming would have dropped and whether you then needed it. `"on"`: a capped voice-only briefing and a short kit of about 20 tools chosen from your workspace, the hour, what you use and what you said. Switch it in Settings, Voice, Gemini Live options; nothing is preselected for you. Say "give me everything" or "use fewer tools" to change the toolset mid-call. |
+| `voice_live_instruction_max_tokens` | `9000` | The cap "on" applies to the call's system instruction (estimated tokens). The text-chat-only parts go first, then optional context in a fixed order. Her cLaws, the action policy, honesty text, persona and the voice rules are never dropped to meet it; if they alone are over the cap they are sent and the log says so. `0`: no cap even when on. |
+| `voice_live_tool_kit_size` | `20` | About how many tools the kit declares when trim is on (8 to 40). |
+| `voice_live_compression_trigger_tokens` | `24000` | The prompt size at which the oldest turns are folded away. `0`: Google's default window. Applied only when trim is "on"; needs `voice_context_compression`. |
+| `voice_live_compression_target_tokens` | `12000` | What is kept after a fold. |
+| `voice_live_soft_budget_usd` | `0` (off) | One spoken heads-up per call when it reaches this estimated cost. It never cuts a call. The voice panel shows this call's cost and today's voice total whatever this is set to. |
+
 Cloud voices: `elevenlabs_model` (`"eleven_flash_v2_5"`), `elevenlabs_voice_id`,
 `inworld_model` (`"inworld-tts-2-flash"`), `inworld_voice_id`,
 `inworld_plan_tier` (`"on_demand"`). The two API keys are stored encrypted

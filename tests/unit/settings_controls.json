@@ -2113,6 +2113,20 @@
  {
   "section": "Voice",
   "panel": "Voice & Tracking",
+  "label": "Trim what each call carries",
+  "kind": "three buttons (off, measure only, trim)",
+  "keys": [
+   "voice_live_trim"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/live_session_plan.py",
+  "reader_needle": "(settings or {}).get(\"voice_live_trim\")",
+  "status": "ok",
+  "note": "Gemini mode only. Measure only (the default) sends today's session and logs counts on this PC."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
   "label": "Use tools while talking",
   "kind": "toggle",
   "keys": [

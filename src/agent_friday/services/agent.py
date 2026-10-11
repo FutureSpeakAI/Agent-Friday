@@ -8497,6 +8497,10 @@ TOOL_RINGS: dict[str, int] = {
     "get_article_deep_dive": 2,
     "get_source_trust":     2,
     "ask_friday":           2,
+    # Cloud-voice session helpers (services/live_session_plan): widen this
+    # call's own tool list at its next reconnect; say what the call has cost.
+    "more_tools":           1,
+    "call_cost":            0,
     "search_web":           2,
     "search_news":          2,   # fetches the live RSS/Brave feed (network)
     "browse_web":           2,

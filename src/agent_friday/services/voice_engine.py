@@ -733,7 +733,23 @@ _VOICE_LIVE_TOOLS = [
      "so plainly rather than guessing.",
      {"question": ("string", "The question, in full, as Friday's local model should hear it.")},
      ["question"]),
+    # Beta 1.1 CV-A (services/live_session_plan): cloud voice declares a short,
+    # Laya-chosen toolset; these two are how the owner and the model reach the
+    # rest and see what the call costs. Cloud only (CLOUD_LIVE_ONLY).
+    ("more_tools",
+     "Add tools to this call by group (mail, calendar, tasks, files, web, wiki_knowledge, media, "
+     "creative, system_desktop, workspace, news, career, code, people_trust, privacy, settings, "
+     "workflows, phone, crew, computer_control, personality), or 'everything' (\"give me everything\"). 'fewer' (\"use fewer tools\") "
+     "narrows it. They arrive when the call reconnects, a moment later: say so, and do not "
+     "call them before.",
+     {"group": ("string", "A tool group, 'everything' or 'fewer'.")}, ["group"]),
+    ("call_cost",
+     "What this call has cost so far, and today's voice total. Use for 'how much has this call cost?'.",
+     {}, []),
 ]
+
+#: Declared to the Live API only; the local voice contract has no use for them.
+CLOUD_LIVE_ONLY = frozenset({"more_tools", "call_cost"})
 
 
 def _ask_friday_local(question: str, session: dict) -> str:
@@ -999,7 +1015,9 @@ def _voice_tool_names():
     note are built from, so the prompt can never name a tool the API was not
     given.
     """
-    return [t[0] for t in _VOICE_LIVE_TOOLS] + [n for n, _d, _s in _voice_shared_tool_specs()]
+    # more_tools exists only when a Laya-chosen kit is declared (live_session_plan).
+    return ([t[0] for t in _VOICE_LIVE_TOOLS if t[0] != "more_tools"]
+            + [n for n, _d, _s in _voice_shared_tool_specs()])
 
 
 #: Ceiling on the rendered voice tool contract (local voice spec §2, P1). The
@@ -1090,6 +1108,8 @@ _COMPACT_TOOL_DESCRIPTIONS = {
     "undo_action": "Undo organize receipt_id or this chat's latest organize change; mail undo needs approval.",
     "answer_card": "Record the user's just-spoken approve|decline on an organize/undo card; group approval must name the agent. RUNNING is not done.",
     "answer_share_request": "Record the user's just-spoken approve|decline on a pending private share.",
+    "more_tools": "Add tools by group (mail, calendar, files, web, media, code, ...) or 'everything'; 'fewer' narrows. They arrive at the next reconnect.",
+    "call_cost": "What this call has cost so far and today's voice total.",
     "ask_friday": "Ask local full question about notes/memory/knowledge graph/files/calendar/email; speak the gated answer, never guess withheld data.",
     "discover_capabilities": "Find full instructions by exact name or intent query; empty query lists tools.",
     "read_file": "Read local files; absolute/home-relative path. offset=1-based(default 1); limit≤2000(default 2000).",
@@ -1255,7 +1275,8 @@ def build_voice_tool_contract(full: bool = False, compact: bool = True) -> dict:
                     or {"type": "object", "properties": {}}}})
         except Exception as e:  # pragma: no cover - import-time failure
             _log.error("full voice toolkit unavailable (registry import failed): %s", e)
-    tools = [t for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED]
+    tools = [t for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED
+             and t["function"]["name"] not in CLOUD_LIVE_ONLY]
     if compact:
         tools = [_compact_declaration(t) for t in tools]
     tokens = len(json.dumps(tools, ensure_ascii=False)) // 4
@@ -1275,12 +1296,36 @@ def _navigate_tool_description(desc):
     return desc.replace("{workspace_ids}", workspace_registry.tool_list())
 
 
-def _build_voice_live_tools(types, behavior=None):
+def _cloud_compact(name, desc, schema):
+    """(description, schema) in the compact form the local contract uses."""
+    t = _compact_declaration({"type": "function", "function": {
+        "name": name, "description": desc, "parameters": copy.deepcopy(schema)}})
+    f = t["function"]
+    return f["description"], f["parameters"]
+
+
+def _compact_native(name, desc, props, required):
+    """A native tool's (description, props) with compact wording; types and
+    required fields are untouched."""
+    cdesc, cschema = _cloud_compact(
+        name, _navigate_tool_description(desc), _native_tool_schema(props, required))
+    cprops = (cschema.get("properties") or {})
+    out = {}
+    for pname, (ptype, pdesc) in props.items():
+        out[pname] = (ptype, (cprops.get(pname) or {}).get("description"))
+    return cdesc, out
+
+
+def _build_voice_live_tools(types, behavior=None, kit=None):
     """Render _VOICE_LIVE_TOOLS as a google.genai Tool list for the Live config.
 
     `types` is google.genai.types (imported inside the live handler). Returns a
     single-element list holding one Tool with all function declarations, or []
     if the SDK shape is unavailable (caller then runs tool-free).
+
+    `kit` (services/live_session_plan) is {"names": set, "compact": bool}: only
+    those tools are declared, with the compact descriptions when asked. None
+    declares everything with full descriptions, as before.
 
     `behavior` is an optional google.genai Behavior applied to EVERY
     declaration — "NON_BLOCKING" for the models that refuse BLOCKING function
@@ -1311,7 +1356,15 @@ def _build_voice_live_tools(types, behavior=None):
         "boolean": types.Type.BOOLEAN,
     }
     decls = []
+    _keep = set(kit["names"]) if kit and kit.get("names") else None
+    _compact = bool(kit and kit.get("compact"))
     for name, desc, props, required in _VOICE_LIVE_TOOLS:
+        if _keep is not None and name not in _keep:
+            continue
+        if name == "more_tools" and _keep is None:
+            continue            # nothing to widen when everything is declared
+        if _compact:
+            desc, props = _compact_native(name, desc, props, required)
         # "array" is a list of strings; every other type is a scalar.
         schema_props = {
             pname: (types.Schema(type=types.Type.ARRAY, description=pdesc,
@@ -1334,6 +1387,10 @@ def _build_voice_live_tools(types, behavior=None):
     # therefore never declared -- it must not arrive as a silently truncated
     # tool the model then calls with arguments the handler does not understand.
     for name, desc, schema in _voice_shared_tool_specs():
+        if _keep is not None and name not in _keep:
+            continue
+        if _compact:
+            desc, schema = _cloud_compact(name, desc, schema)
         try:
             rendered = _json_schema_to_genai(types, schema, _type_map, name)
         except Exception as e:
@@ -1862,6 +1919,15 @@ def _voice_tool_run(name, args, send_client, session=None):
     def _governed(tool, fn, a):
         return _execute_tool(tool, a, handler=fn, session_ctx=_voice_ctx(session))
 
+    try:
+        from agent_friday.services import live_session_plan as _lsp
+        _lsp.note_call(session, name)       # usage + the kit-miss log; never raises
+        if name == "more_tools":
+            return _governed(name, lambda a: _lsp.tool_more_tools(a, session), args)
+        if name == "call_cost":
+            return _governed(name, lambda a: _lsp.tool_call_cost(a, session), args)
+    except Exception as _lspe:  # pragma: no cover - a planner fault must not drop the tool call
+        _log.debug("live session plan hook skipped: %s", _lspe)
     try:
         if name == "voice_preferences":
             from agent_friday.services.workflow_tools import voice_preferences
