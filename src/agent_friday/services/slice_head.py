@@ -469,9 +469,13 @@ def last_turn_for(conversation_id) -> Optional[str]:
 #  THE SLICER (one per prompt preparation)
 # ---------------------------------------------------------------------------
 
-def is_local(provider) -> bool:
-    """The egress gate's own verdict on a provider; unknown means cloud."""
+def is_local(provider, model: str = "") -> bool:
+    """The egress gate's own verdict on a provider; unknown means cloud. A model
+    Ollama relays to its cloud (`glm-4.6:cloud`) is cloud whatever the provider."""
     try:
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        if model and is_cloud_model_tag(model):
+            return False
         from agent_friday.services.egress_gate import is_local_provider
         return bool(is_local_provider(provider))
     except Exception:
@@ -621,14 +625,16 @@ class Slicer:
 
 
 def for_turn(message: str, *, conversation_id=None, provider: str = "cloud",
-             turn_id: Optional[str] = None, settings: Optional[dict] = None) -> Slicer:
+             turn_id: Optional[str] = None, settings: Optional[dict] = None,
+             model: str = "") -> Slicer:
     """The Slicer for one preparation of one turn's prompt. Never raises.
 
-    `provider` is the leg being prepared; a local leg is never sliced. The
+    `provider` is the leg being prepared (and `model` the model on it, so a
+    cloud-tagged Ollama seat counts as cloud); a local leg is never sliced. The
     plan is recorded for the turn (shadow) whether or not it is applied.
     """
     t0 = time.perf_counter()
-    cloud = not is_local(provider)
+    cloud = not is_local(provider, model)
     try:
         scores = scores_for(message)
     except Exception as e:  # noqa: BLE001

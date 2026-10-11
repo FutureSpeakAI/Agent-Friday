@@ -795,8 +795,23 @@ def _meter(provider: str, model: str, text: str, elapsed_ms: int,
         return None
 
 
+def _require_engine(provider: str, label: str) -> None:
+    """The routing-mode checkpoint for a cloud voice the owner picked
+    (cloud_intent.require_owner_engine): local_only refuses with the fixed
+    sentence, every other mode passes on the owner's engine choice, and both
+    leave a receipt."""
+    from agent_friday.services import cloud_intent as _ci
+    try:
+        _ci.require_owner_engine(provider, "cloud voice (%s)" % label)
+    except _ci.NoCloudIntent as e:
+        raise CloudVoiceUnavailable(
+            str(e), code="cloud_voice_local_only",
+            offer="Use Friday's local voice.", requested=provider)
+
+
 def _synth_elevenlabs(text: str, key: str, model: str, voice: str, *, speed=None):
     """POST /text-to-speech/{voice_id}. HTTP client imported lazily (C3)."""
+    _require_engine("elevenlabs", "ElevenLabs")
     import requests
     url = "%s/text-to-speech/%s" % (PROVIDERS["elevenlabs"]["base_url"], voice)
     payload = {"text": text, "model_id": model}
@@ -823,6 +838,7 @@ def _synth_inworld(text: str, key: str, model: str, voice: str, *, speed=None):
     Q5 - whether Inworld has an ElevenLabs-style key-id trap - is unverified, so
     no format assertion is made about the key here.
     """
+    _require_engine("inworld", "Inworld")
     import base64
     import requests
     url = "%s/voice" % PROVIDERS["inworld"]["base_url"]

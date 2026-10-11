@@ -175,6 +175,28 @@ def test_a_local_leg_is_never_sliced_even_when_opted_in(home, monkeypatch, tmp_p
     assert _prompt(monkeypatch, tmp_path, slicer, provider="ollama") == full
 
 
+def test_an_ollama_cloud_tagged_seat_is_sliced_like_a_cloud_leg(home):
+    """/api/chat/send passes the leg's model: a seat Ollama relays to its cloud is cloud."""
+    settings = {"cloud_context_slicing": "slice"}
+    tagged = sh.for_turn("hello there", conversation_id="c1", provider="ollama",
+                         turn_id="t1", settings=settings, model="glm-4.6:cloud")
+    assert tagged.cloud is True and tagged.active
+    plain = sh.for_turn("hello there", conversation_id="c1", provider="ollama",
+                        turn_id="t2", settings=settings, model="gemma3:12b")
+    assert plain.cloud is False and not plain.active
+    assert sh.is_local("ollama", "gpt-oss:120b-cloud") is False
+    assert sh.is_local("ollama", "gemma3:12b") is True
+
+
+def test_chat_send_hands_the_seat_model_to_the_slicer():
+    import pathlib
+    import agent_friday.routes.chat as chat_mod
+    src = pathlib.Path(chat_mod.__file__).read_text(encoding="utf-8-sig")
+    send = src[src.index("def chat_send("):]
+    assert "model=_slice_model" in send
+    assert "_slice_head.is_local(provider_name, _slice_model)" in send
+
+
 def test_opted_in_cloud_payload_is_a_subset_of_the_full_payload(home, monkeypatch, tmp_path):
     full = _prompt(monkeypatch, tmp_path)
     for scores in (_scores(), _scores(**{s: 0.4 for s in sh.SLICES}),

@@ -91,9 +91,23 @@ OWNER_ENGINE_TRANSPORTS = {
     ("services/cloud_voice.py", "_synth_inworld"):
         "speech synthesis on the cloud voice the owner picked; synthesize() refuses local_only before it",
     ("services/elevenlabs_tools.py", "_request"):
-        "ElevenLabs speech tools (speak_text, list_voices): ring-gated agent tools with their own egress "
-        "gate; NOT yet governed by the routing mode (open question for the lead)",
+        "ElevenLabs speech tools (speak_text, list_voices): ring-gated agent tools with their own egress gate",
 }
+
+
+def test_the_owner_engine_transports_go_through_the_owner_engine_checkpoint():
+    """The host sits in a provider table, so the scan cannot see these; each is held to
+    `require_owner_engine` (local_only refuses, other modes pass on the owner's choice)
+    by name."""
+    bad = []
+    for rel, name in sorted(OWNER_ENGINE_TRANSPORTS):
+        fn = _find_function(_PARSED, rel, name)
+        calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call)] if fn else []
+        names = {(c.func.attr if isinstance(c.func, ast.Attribute) else getattr(c.func, "id", ""))
+                 for c in calls}
+        if not names & {"require_owner_engine", "_require_engine"}:
+            bad.append("%s::%s" % (rel, name))
+    assert not bad, "cloud voice transports without the owner-engine checkpoint: %s" % bad
 
 #: Client factories: a function that builds a cloud client and calls `require`
 #: first. A call through one counts as the check for the statement after it.

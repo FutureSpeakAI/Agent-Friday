@@ -3146,9 +3146,14 @@ def chat_send():
             from agent_friday.services import turn_plan as _tplan_send
             if _tplan_send.current_turn_id() != _turn_id:
                 _tplan_send.begin_turn(_turn_id)
+            # The model on a local leg is the conversation's seat or the saved
+            # local model; one that Ollama relays to its cloud is sliced as cloud.
+            _slice_model = (_conv_seat_model
+                            or str((settings.get('model_routing') or {}).get('local_model') or ''))
             _slicer = _slice_head.for_turn(
                 message, conversation_id=_conversation_id, provider=provider_name,
-                turn_id=_tplan_send.current_turn_id(), settings=settings)
+                turn_id=_tplan_send.current_turn_id(), settings=settings,
+                model=_slice_model)
             prompt, sources = _build_context_prompt(
                 message, workspace, vision_description,
                 provider=provider_name,
@@ -3188,7 +3193,7 @@ def chat_send():
                 prompt = prompt + _slicer.gate_block(
                     "screen", _screen_block_for(provider_name, _conversation_id),
                     name="on_screen")
-                if not _slice_head.is_local(provider_name):
+                if not _slice_head.is_local(provider_name, _slice_model):
                     prompt = prompt + _slice_head.render_released(
                         _conversation_id, _tplan_send.current_turn_id())
             except Exception:
