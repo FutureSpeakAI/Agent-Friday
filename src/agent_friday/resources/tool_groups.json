@@ -1,0 +1,801 @@
+{
+ "version": 1,
+ "comment": "Every registered tool belongs to one primary group and optionally one secondary. Tools registered at runtime from MCP servers take the group in prefix_groups. annotation_overrides are the reviewed exceptions to the hints derived from TOOL_RINGS.",
+ "groups": {
+  "mail": "Email: search, draft, organise, sending accounts.",
+  "calendar": "Calendar events, free slots, holds and booking.",
+  "tasks": "Google Tasks.",
+  "files": "Local files, documents, PDFs, Office files and Drive.",
+  "web": "Search, fetch and drive the web; sites and domains.",
+  "wiki_knowledge": "The wiki, the knowledge graph, the Library and past conversations.",
+  "media": "Playing, listening to, organising and turning media; podcasts; speech.",
+  "creative": "Making images, video, music, decks, sites and content.",
+  "system_desktop": "This computer: shell, clipboard, notifications, the desktop surface.",
+  "computer_control": "Mouse, keyboard and screen control (ring 3).",
+  "workspace": "Navigating and arranging Friday's own workspaces and cards.",
+  "news": "The News workspace and its stories.",
+  "career": "The job-search folder, scans, evaluations and tailoring.",
+  "code": "The Chat Hub's codebase tools, plans, previews and interactive sessions.",
+  "people_trust": "People, contacts, the trust graph and follow-ups.",
+  "privacy": "What may leave the machine: share requests and local context.",
+  "settings": "Settings, models, capabilities and voice preferences.",
+  "workflows": "Stored workflows, skills and background tasks.",
+  "phone": "Calls and texts from Friday's number, and call mode.",
+  "crew": "Crew agents: invite, ask, steer.",
+  "personality": "Friday's personality, honesty and sycophancy checks.",
+  "voice": "Tools that exist only on the voice front.",
+  "connectors": "Tools from connected MCP servers (mcp_ prefix), registered at runtime."
+ },
+ "prefix_groups": {
+  "mcp_": "connectors"
+ },
+ "tools": {
+  "annotate_calendar_events": [
+   "calendar"
+  ],
+  "answer_card": [
+   "workspace"
+  ],
+  "answer_share_request": [
+   "privacy"
+  ],
+  "artifact_put": [
+   "code"
+  ],
+  "ask_crew": [
+   "crew"
+  ],
+  "ask_friday": [
+   "voice"
+  ],
+  "ask_local_for_context": [
+   "privacy"
+  ],
+  "avatar_evolution": [
+   "system_desktop"
+  ],
+  "big_mode": [
+   "system_desktop"
+  ],
+  "book_slot": [
+   "calendar"
+  ],
+  "browse_web": [
+   "web"
+  ],
+  "browser_click": [
+   "web"
+  ],
+  "browser_close": [
+   "web"
+  ],
+  "browser_open": [
+   "web"
+  ],
+  "browser_read": [
+   "web"
+  ],
+  "browser_scroll": [
+   "web"
+  ],
+  "browser_select": [
+   "web"
+  ],
+  "browser_type": [
+   "web"
+  ],
+  "build_mode": [
+   "code"
+  ],
+  "call_by_phone": [
+   "phone"
+  ],
+  "call_mode": [
+   "phone",
+   "system_desktop"
+  ],
+  "career_evaluate": [
+   "career"
+  ],
+  "career_inbox": [
+   "career"
+  ],
+  "career_run_script": [
+   "career"
+  ],
+  "career_scan": [
+   "career"
+  ],
+  "career_status": [
+   "career"
+  ],
+  "career_tailor": [
+   "career"
+  ],
+  "career_update_tracker": [
+   "career"
+  ],
+  "check_email": [
+   "mail"
+  ],
+  "check_situation": [
+   "system_desktop"
+  ],
+  "click": [
+   "computer_control"
+  ],
+  "codebase_agent": [
+   "code"
+  ],
+  "codebase_costs": [
+   "code"
+  ],
+  "codebase_edit": [
+   "code"
+  ],
+  "codebase_engine": [
+   "code"
+  ],
+  "codebase_export": [
+   "code"
+  ],
+  "codebase_key": [
+   "code"
+  ],
+  "codebase_read": [
+   "code"
+  ],
+  "codebase_run": [
+   "code"
+  ],
+  "codebase_seat": [
+   "code"
+  ],
+  "codebase_understand": [
+   "code"
+  ],
+  "codebase_undo": [
+   "code"
+  ],
+  "compare_image_takes": [
+   "creative"
+  ],
+  "complete_task": [
+   "tasks"
+  ],
+  "compose_timeline": [
+   "creative"
+  ],
+  "content_create_post": [
+   "creative",
+   "web"
+  ],
+  "content_post_status": [
+   "creative",
+   "web"
+  ],
+  "content_repurpose": [
+   "creative",
+   "web"
+  ],
+  "content_schedule_post": [
+   "creative",
+   "web"
+  ],
+  "correct_wiki": [
+   "wiki_knowledge"
+  ],
+  "create_calendar_event": [
+   "calendar"
+  ],
+  "create_presentation": [
+   "creative"
+  ],
+  "create_task": [
+   "tasks"
+  ],
+  "create_website": [
+   "creative"
+  ],
+  "create_workflow": [
+   "workflows"
+  ],
+  "creative_project": [
+   "creative"
+  ],
+  "customize_workspace": [
+   "workspace"
+  ],
+  "deep_research": [
+   "web",
+   "wiki_knowledge"
+  ],
+  "delegate_to_friday": [
+   "voice"
+  ],
+  "delete_task": [
+   "tasks"
+  ],
+  "discover_capabilities": [
+   "settings"
+  ],
+  "discuss_story": [
+   "news"
+  ],
+  "domain_action": [
+   "web",
+   "code"
+  ],
+  "draft_email": [
+   "mail"
+  ],
+  "epistemic_score": [
+   "personality"
+  ],
+  "file_access": [
+   "files"
+  ],
+  "fill_pdf_form": [
+   "files"
+  ],
+  "find_calendar_events": [
+   "calendar"
+  ],
+  "find_free_slots": [
+   "calendar"
+  ],
+  "generate_image": [
+   "creative"
+  ],
+  "generate_music": [
+   "creative"
+  ],
+  "generate_video": [
+   "creative"
+  ],
+  "get_article_deep_dive": [
+   "news"
+  ],
+  "get_briefing": [
+   "news",
+   "workspace"
+  ],
+  "get_career_pipeline": [
+   "career"
+  ],
+  "get_source_trust": [
+   "news",
+   "people_trust"
+  ],
+  "hand_cursor": [
+   "system_desktop"
+  ],
+  "hold_slots": [
+   "calendar"
+  ],
+  "hologram_window": [
+   "system_desktop"
+  ],
+  "home_cards": [
+   "workspace"
+  ],
+  "improve_workspace": [
+   "code"
+  ],
+  "inspect_audio": [
+   "media"
+  ],
+  "inspect_image": [
+   "media"
+  ],
+  "install_package": [
+   "code",
+   "system_desktop"
+  ],
+  "knowledge_communities": [
+   "wiki_knowledge"
+  ],
+  "knowledge_query": [
+   "wiki_knowledge"
+  ],
+  "knowledge_related": [
+   "wiki_knowledge"
+  ],
+  "learn_skill": [
+   "workflows"
+  ],
+  "library_show": [
+   "wiki_knowledge",
+   "files"
+  ],
+  "library_status": [
+   "wiki_knowledge",
+   "files"
+  ],
+  "list_crew": [
+   "crew"
+  ],
+  "list_pdf_fields": [
+   "files"
+  ],
+  "list_sending_accounts": [
+   "mail"
+  ],
+  "list_tasks": [
+   "tasks"
+  ],
+  "list_voices": [
+   "media",
+   "creative"
+  ],
+  "list_workspace_history": [
+   "workspace"
+  ],
+  "local_model_status": [
+   "settings"
+  ],
+  "local_models_advise": [
+   "settings"
+  ],
+  "make_podcast": [
+   "media",
+   "news"
+  ],
+  "media_cards": [
+   "media"
+  ],
+  "media_diet_note": [
+   "news"
+  ],
+  "media_play": [
+   "media"
+  ],
+  "media_show": [
+   "media"
+  ],
+  "media_turn": [
+   "media"
+  ],
+  "move_mouse": [
+   "computer_control"
+  ],
+  "navigate": [
+   "workspace"
+  ],
+  "navigate_to": [
+   "workspace"
+  ],
+  "navigate_workspace": [
+   "workspace"
+  ],
+  "note_conversation_state": [
+   "voice"
+  ],
+  "notifications": [
+   "system_desktop"
+  ],
+  "office": [
+   "files",
+   "creative"
+  ],
+  "office_check": [
+   "files",
+   "creative"
+  ],
+  "open_path": [
+   "files",
+   "system_desktop"
+  ],
+  "open_project": [
+   "code"
+  ],
+  "open_url": [
+   "web",
+   "system_desktop"
+  ],
+  "organize_calendar": [
+   "calendar"
+  ],
+  "organize_email": [
+   "mail"
+  ],
+  "organize_files": [
+   "files"
+  ],
+  "organize_media": [
+   "media"
+  ],
+  "organize_wiki": [
+   "wiki_knowledge"
+  ],
+  "people_at": [
+   "people_trust"
+  ],
+  "person_timeline": [
+   "people_trust"
+  ],
+  "personality_check_sycophancy": [
+   "personality"
+  ],
+  "personality_show": [
+   "personality"
+  ],
+  "plan_approve": [
+   "code"
+  ],
+  "plan_first": [
+   "code"
+  ],
+  "plan_milestone": [
+   "code"
+  ],
+  "podcast_format": [
+   "news"
+  ],
+  "podcast_length": [
+   "news"
+  ],
+  "podcast_list": [
+   "media"
+  ],
+  "podcast_play": [
+   "media"
+  ],
+  "podcast_source": [
+   "media"
+  ],
+  "press_key": [
+   "computer_control"
+  ],
+  "propose_crew_agent": [
+   "crew"
+  ],
+  "propose_wiki_update": [
+   "wiki_knowledge"
+  ],
+  "publish_artifact": [
+   "code",
+   "web"
+  ],
+  "query_calendar": [
+   "calendar"
+  ],
+  "query_trust_graph": [
+   "people_trust"
+  ],
+  "queue_status": [
+   "settings"
+  ],
+  "read_doc": [
+   "files"
+  ],
+  "read_file": [
+   "files"
+  ],
+  "read_session_output": [
+   "code",
+   "system_desktop"
+  ],
+  "read_skill": [
+   "workflows"
+  ],
+  "read_wiki": [
+   "wiki_knowledge"
+  ],
+  "release_holds": [
+   "calendar"
+  ],
+  "revert_workspace": [
+   "workspace"
+  ],
+  "revise_share_request": [
+   "privacy"
+  ],
+  "run_command": [
+   "system_desktop"
+  ],
+  "run_sandboxed": [
+   "system_desktop"
+  ],
+  "run_workflow": [
+   "workflows"
+  ],
+  "save_google_contact": [
+   "people_trust"
+  ],
+  "save_output": [
+   "files",
+   "creative"
+  ],
+  "screen_select": [
+   "workspace"
+  ],
+  "screenshot": [
+   "computer_control"
+  ],
+  "scroll": [
+   "computer_control"
+  ],
+  "search_contacts": [
+   "people_trust"
+  ],
+  "search_drive": [
+   "files"
+  ],
+  "search_email": [
+   "mail"
+  ],
+  "search_files": [
+   "files"
+  ],
+  "search_library": [
+   "wiki_knowledge",
+   "files"
+  ],
+  "search_news": [
+   "news"
+  ],
+  "search_past_conversations": [
+   "wiki_knowledge"
+  ],
+  "search_web": [
+   "web"
+  ],
+  "search_wiki": [
+   "wiki_knowledge"
+  ],
+  "send_to_session": [
+   "code",
+   "system_desktop"
+  ],
+  "set_chat_tray": [
+   "workspace"
+  ],
+  "set_follow_up": [
+   "people_trust"
+  ],
+  "set_setting": [
+   "settings"
+  ],
+  "set_workspace_layout": [
+   "workspace"
+  ],
+  "show_files_3d": [
+   "files",
+   "workspace"
+  ],
+  "show_my_day": [
+   "workspace"
+  ],
+  "show_preview": [
+   "code"
+  ],
+  "sign_pdf": [
+   "files"
+  ],
+  "site_action": [
+   "web",
+   "code"
+  ],
+  "spawn_interactive_session": [
+   "code",
+   "system_desktop"
+  ],
+  "spawn_task": [
+   "workflows"
+  ],
+  "speak_text": [
+   "media",
+   "creative"
+  ],
+  "start_creative_pipeline": [
+   "creative"
+  ],
+  "steer_crew": [
+   "crew"
+  ],
+  "switch_model": [
+   "settings"
+  ],
+  "talk_crew": [
+   "crew"
+  ],
+  "task_control": [
+   "workflows"
+  ],
+  "text_by_phone": [
+   "phone"
+  ],
+  "type_text": [
+   "computer_control"
+  ],
+  "undo_action": [
+   "workspace"
+  ],
+  "update_calendar_event": [
+   "calendar"
+  ],
+  "update_task": [
+   "tasks"
+  ],
+  "voice_preferences": [
+   "settings"
+  ],
+  "workflow_action": [
+   "workflows"
+  ],
+  "workflow_status": [
+   "workflows"
+  ],
+  "workspace_swap": [
+   "code"
+  ],
+  "write_clipboard": [
+   "system_desktop"
+  ],
+  "write_file": [
+   "files"
+  ]
+ },
+ "annotation_overrides": {
+  "answer_card": {
+   "openWorldHint": false
+  },
+  "answer_share_request": {
+   "openWorldHint": false
+  },
+  "ask_crew": {
+   "openWorldHint": false
+  },
+  "ask_friday": {
+   "openWorldHint": false
+  },
+  "ask_local_for_context": {
+   "openWorldHint": false
+  },
+  "browse_web": {
+   "readOnlyHint": true
+  },
+  "browser_read": {
+   "readOnlyHint": true
+  },
+  "career_run_script": {
+   "destructiveHint": true
+  },
+  "check_email": {
+   "readOnlyHint": true
+  },
+  "correct_wiki": {
+   "destructiveHint": true
+  },
+  "create_presentation": {
+   "openWorldHint": false
+  },
+  "create_website": {
+   "openWorldHint": false
+  },
+  "delegate_to_friday": {
+   "openWorldHint": false
+  },
+  "delete_task": {
+   "destructiveHint": true
+  },
+  "draft_email": {
+   "openWorldHint": false
+  },
+  "find_free_slots": {
+   "readOnlyHint": true
+  },
+  "get_article_deep_dive": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  },
+  "get_source_trust": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  },
+  "inspect_audio": {
+   "openWorldHint": false,
+   "readOnlyHint": true
+  },
+  "inspect_image": {
+   "openWorldHint": false,
+   "readOnlyHint": true
+  },
+  "install_package": {
+   "openWorldHint": true
+  },
+  "list_sending_accounts": {
+   "readOnlyHint": true
+  },
+  "list_tasks": {
+   "readOnlyHint": true
+  },
+  "list_voices": {
+   "readOnlyHint": true
+  },
+  "note_conversation_state": {
+   "readOnlyHint": false
+  },
+  "office": {
+   "openWorldHint": false
+  },
+  "open_path": {
+   "openWorldHint": false
+  },
+  "organize_email": {
+   "destructiveHint": true
+  },
+  "organize_files": {
+   "destructiveHint": true
+  },
+  "organize_wiki": {
+   "destructiveHint": true
+  },
+  "read_doc": {
+   "readOnlyHint": true
+  },
+  "read_session_output": {
+   "readOnlyHint": true,
+   "destructiveHint": false
+  },
+  "release_holds": {
+   "destructiveHint": true
+  },
+  "revert_workspace": {
+   "destructiveHint": true
+  },
+  "revise_share_request": {
+   "openWorldHint": false
+  },
+  "run_command": {
+   "destructiveHint": true,
+   "openWorldHint": true
+  },
+  "run_sandboxed": {
+   "openWorldHint": false
+  },
+  "screenshot": {
+   "readOnlyHint": true,
+   "destructiveHint": false
+  },
+  "search_contacts": {
+   "readOnlyHint": true
+  },
+  "search_drive": {
+   "readOnlyHint": true
+  },
+  "search_email": {
+   "readOnlyHint": true
+  },
+  "search_news": {
+   "readOnlyHint": true
+  },
+  "search_past_conversations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  },
+  "search_web": {
+   "readOnlyHint": true
+  },
+  "spawn_task": {
+   "openWorldHint": false
+  },
+  "steer_crew": {
+   "openWorldHint": false
+  },
+  "switch_model": {
+   "openWorldHint": false
+  },
+  "talk_crew": {
+   "openWorldHint": false
+  },
+  "undo_action": {
+   "openWorldHint": false,
+   "destructiveHint": true
+  },
+  "write_file": {
+   "destructiveHint": true
+  }
+ }
+}
