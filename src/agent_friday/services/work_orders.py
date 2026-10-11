@@ -21,15 +21,20 @@ The order is UNTRUSTED INPUT, always:
   ignored: the class is the lowest the inputs allow, P1 by default, and P3 as
   soon as any input is vault or private-tier.
 * A cloud model gets no private-count oracle: below P0 an acceptance check never
-  decides the status it can see, a failure carries no reason, and each
-  conversation has a cap on open orders, on orders per hour and on repeats of the
-  same request. Records expire (``RECORD_TTL_S``) and are saved without the
-  documents' text.
+  decides the status it can see, its ``deadline_s`` is ignored, a failure carries no
+  reason, and what it hears about an order is the same shape at every class and
+  at a time fixed in code (``work_order_returns``). Each conversation has a cap on
+  open orders, on orders per hour and on repeats of the same request, and the
+  machine has an hourly cap across conversations. Records expire
+  (``RECORD_TTL_S``) and are saved without the documents' text.
+* The owner's switch (``work_orders_enabled``) is read before every step, not only at
+  submit: turning it off cancels queued and waiting orders and stops a running one
+  before its next step, each with a notice.
 * ``specified_by`` and ``order_id`` are set here, never read from the order.
 * ``writes`` are recorded as INTENTS. Nothing here writes anything; once an
   order passes its acceptance checks the executor turns each intent into a
-  pending proposal through the existing governed path. SOUL is not a writable
-  target.
+  pending wiki proposal through the existing governed tool. SOUL, settings, the
+  graph and the profile are not writable targets.
 """
 from __future__ import annotations
 
@@ -77,11 +82,11 @@ ACCEPTANCE_CHECKS = frozenset({
 OUTPUT_TYPES = frozenset({"string", "number", "integer", "boolean", "list", "object"})
 _FIELD_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
 
-#: Where a write could one day land, and what it becomes (CS-3). SOUL is absent
-#: on purpose: it is not writable from a work order in 1.1. ``settings`` is absent
-#: too: a setting card raised from a cloud model's words would read as Friday's own
-#: wish, and no provenance line exists for it yet.
-WRITE_TARGETS = frozenset({"wiki", "kg", "profile"})
+#: Where a write can land: a pending wiki proposal. SOUL and ``settings`` are absent on
+#: purpose (a setting card raised from a cloud model's words would read as Friday's own
+#: wish). ``kg`` and ``profile`` are absent because no governed tool takes them yet: a
+#: fact the cloud wrote would reach the memory review queue as if Friday had noticed it.
+WRITE_TARGETS = frozenset({"wiki"})
 WRITE_OPS = frozenset({"create", "update", "link", "append"})
 
 _TOP_KEYS = frozenset({
@@ -107,10 +112,15 @@ RECORD_TTL_S = 7 * 24 * 3600.0
 MAX_OPEN_PER_CONV = 4
 MAX_PER_CONV_WINDOW = 30
 MAX_SAME_GOAL_WINDOW = 3
+#: Across every conversation: a cloud model that opens a new conversation to start the
+#: per-conversation counts again meets this one.
+MAX_ALL_WINDOW = 60
 RATE_WINDOW_S = 3600.0
 ENDED_STATES = ("done", "failed", "failed_acceptance", "cancelled")
 #: Start the executor on submit. Tests that only exercise validation turn it off.
 AUTOSTART: List[bool] = [True]
+#: Read the owner's switch before work runs. Tests of the executor alone turn it off.
+ENFORCE_SWITCH: List[bool] = [True]
 _BOOTED = [False]
 _ACTIVE: set = set()
 IDLE_POLL_S = 5.0
@@ -123,11 +133,68 @@ OPEN_STATES = ("queued", "running", "waiting_for_model", "waiting_for_idle")
 # ── who may submit ───────────────────────────────────────────────────────────
 
 def _is_local_provider(provider, model: str) -> bool:
+    """True when the turn's model is local. Any error reads as local, so the turn is
+    refused: ``cloud_intent._is_local`` swallows its own errors and answers "cloud", so the
+    policy is asked here directly."""
     try:
-        from agent_friday.services import cloud_intent
-        return cloud_intent._is_local(provider, model)
+        from agent_friday.services.seat_policy import is_local_descriptor, is_local_seat
+        if isinstance(provider, dict):
+            from agent_friday.services.local_only_guard import is_cloud_model_tag
+            return (not is_cloud_model_tag(model)) and is_local_descriptor(provider)
+        return is_local_seat(provider, model)
     except Exception:
-        return True      # when in doubt the turn is treated as local: refuse
+        return True
+
+
+def enabled() -> bool:
+    """The owner's switch. Off unless set; unreadable reads as off."""
+    try:
+        from agent_friday.core import _load_settings
+        return bool((_load_settings() or {}).get("work_orders_enabled"))
+    except Exception:
+        return False
+
+
+def switch_blocks() -> bool:
+    """True when work must not run now because the owner's switch is off."""
+    return bool(ENFORCE_SWITCH[0]) and not enabled()
+
+
+def notify_owner(title: str, body: str, *, key: str, bad: bool = False) -> None:
+    """Tell the owner something about the work orders on this PC. Local text only: a cloud
+    model's words are never in a notice. Never raises."""
+    try:
+        from agent_friday import notifications_engine
+        notifications_engine.push(title=title, body=body, priority="high" if bad else "medium",
+                                  source="work_orders", kind="warning" if bad else "work_order",
+                                  dedupe_key=key)
+    except Exception:
+        _log.debug("work-order notice could not be posted", exc_info=True)
+
+
+def enforce_switch(*, load: bool = False) -> int:
+    """With the switch off: cancel every order that has not ended (a queued or waiting one
+    at once, a running one before its next step) and tell the owner. Returns how many.
+    ``load`` brings the saved orders in first; without it nothing is decrypted or read."""
+    if not switch_blocks():
+        return 0
+    if load:
+        _boot()
+    n = 0
+    with _LOCK:
+        for rec in _ORDERS.values():
+            if rec["status"] not in OPEN_STATES:
+                continue
+            rec["cancel"], rec["cancel_reason"] = True, "switch_off"
+            if rec["status"] != "running":
+                rec["status"], rec["ended"] = "cancelled", time.time()
+            n += 1
+    if n:
+        persist()
+        notify_owner("Work orders were switched off",
+                     "%d work order%s cancelled because the switch is off." % (n, " was" if n == 1 else "s were"),
+                     key="work_orders:switch_off")
+    return n
 
 
 def cloud_turn_allowed(provider, model: str = "") -> Tuple[bool, str]:
@@ -349,6 +416,8 @@ def validate(order, conversation_id: str, *, provider: str = "", model: str = ""
         "privacy_class": cls,
         "priority": priority,
         "writes": writes,
+        # Set only by local code (grant_wide_search); never read from the order.
+        "wide_search": False,
         "handles": sorted(set(all_handles)),
     }}
 
@@ -459,6 +528,19 @@ def restore(snap: dict) -> int:
 
 
 # ── submit and status ────────────────────────────────────────────────────────
+
+def grant_wide_search(order_id: str) -> bool:
+    """The owner lets ONE order that has not started search the whole wiki (what it finds
+    is private-tier, and its result stays below the privacy class). Local code only: no
+    tool, route or cloud path calls this."""
+    with _LOCK:
+        rec = _ORDERS.get(str(order_id or ""))
+        if rec is None or rec["status"] not in ("queued", "validated"):
+            return False
+        rec["order"]["wide_search"] = True
+    persist()
+    return True
+
 
 def _sched_class(priority: str) -> str:
     return "background" if priority == "when_idle" else "user_job"
@@ -576,10 +658,11 @@ _TOO_MANY = ("This conversation has asked for too many work orders, or the same 
 
 
 def goal_key(goal_text) -> str:
-    """The request's keywords, sorted: two goals with the same words are one request."""
+    """The keywords the search step actually uses (its first three), sorted: two goals that
+    search for the same words are one request, however many words follow them."""
     try:
         from agent_friday.services.work_order_executor import terms_of
-        return " ".join(sorted(terms_of(goal_text, 12)))
+        return " ".join(sorted(terms_of(goal_text, 3)))
     except Exception:
         return ""
 
@@ -592,6 +675,8 @@ def _rate_refusal(conv: str, key: str, now: float) -> str:
         return _TOO_MANY
     recent = [r for r in mine if now - float(r.get("created") or 0) < RATE_WINDOW_S]
     if len(recent) >= MAX_PER_CONV_WINDOW:
+        return _TOO_MANY
+    if sum(1 for r in _ORDERS.values() if now - float(r.get("created") or 0) < RATE_WINDOW_S) >= MAX_ALL_WINDOW:
         return _TOO_MANY
     if key and sum(1 for r in recent if r.get("goal_key") == key) >= MAX_SAME_GOAL_WINDOW:
         return _TOO_MANY
@@ -678,6 +763,9 @@ def result_text(order_id: str, conversation_id: str) -> str:
 def start(order_id: str) -> bool:
     """Run (or resume) an open order on a worker thread, inside the local
     scheduler's class for it. False when it is already running or finished."""
+    if switch_blocks():
+        enforce_switch()
+        return False
     with _LOCK:
         rec = _ORDERS.get(str(order_id or ""))
         if rec is None or order_id in _ACTIVE or rec["status"] not in OPEN_STATES:
@@ -697,6 +785,9 @@ def _wait_for_idle(rec: dict) -> None:
     except Exception:
         return
     while not rec.get("cancel"):
+        if switch_blocks():                     # the owner turned it off while the order waited
+            enforce_switch()
+            return
         try:
             if ls.owner_idle_s() >= ls.idle_window_s():
                 return
@@ -707,27 +798,55 @@ def _wait_for_idle(rec: dict) -> None:
 
 
 def _worker(order_id: str) -> None:
+    """Run one order. It is visible to the owner from the moment it starts (a task card and
+    a notice), including when it cannot run: the local scheduler is part of lane f3, and
+    until it is present the import below raises, the order fails closed with no tool run,
+    and the owner is told."""
+    rec = None
     try:
         rec = live(order_id)
         if rec is None:
             return
         if rec["order"]["priority"] == "when_idle":
             _wait_for_idle(rec)
-        from agent_friday.services import local_scheduler, work_order_executor, work_order_returns
+        if rec.get("cancel") or switch_blocks():
+            enforce_switch()
+            if rec["status"] not in ENDED_STATES:
+                update(order_id, status="cancelled", ended=time.time())
+            return
         from agent_friday.services.visible_jobs import visible_job
-        # One visible task per order (local_scheduler is lane/b11-f3: until it lands the
-        # import above raises and the order fails closed, nothing runs unadmitted).
-        with visible_job("Work order", kind="work_order", workspace="library", eager=False), \
-                local_scheduler.work("work order", cls=rec["sched_class"], needs="a local model"):
-            work_order_executor.run(order_id)
-        work_order_returns.after_run(rec)
+        # The card is created at once (eager), so a failure below shows on it. Nothing runs
+        # before local_scheduler.work admits it.
+        with visible_job("Work order", kind="work_order", workspace="library", eager=True):
+            from agent_friday.services import local_scheduler, work_order_executor, work_order_returns
+            with local_scheduler.work("work order", cls=rec["sched_class"], needs="a local model"):
+                notify_owner("A work order is running on this PC",
+                             "%s. You can cancel it in Activity." % _label(rec).capitalize(),
+                             key="work_orders:start:%s" % order_id)
+                work_order_executor.run(order_id)
+            work_order_returns.after_run(rec)
+        _report_end(rec)
     except BaseException:                                      # noqa: BLE001 - a worker must not die loudly
         _log.warning("work order %s worker stopped", order_id, exc_info=True)
         update(order_id, status="failed", error="the worker stopped unexpectedly", ended=time.time())
+        if rec is not None:
+            _report_end(rec)
     finally:
         with _LOCK:
             _ACTIVE.discard(order_id)
         persist_now()
+
+
+def _report_end(rec: dict) -> None:
+    """Tell the owner when an order did not finish. Their words, not the cloud's."""
+    st = rec.get("status")
+    if st in ("failed", "failed_acceptance"):
+        notify_owner("A work order did not finish",
+                     "%s stopped before it finished; nothing was sent back to the cloud model beyond that it did "
+                     "not complete." % _label(rec).capitalize(), key="work_orders:failed:%s" % rec["order_id"], bad=True)
+    elif st == "cancelled" and rec.get("cancel_reason") == "switch_off":
+        notify_owner("A work order was cancelled", "%s was stopped because work orders are switched off."
+                     % _label(rec).capitalize(), key="work_orders:cancelled:%s" % rec["order_id"], bad=True)
 
 
 def resume(order_id: str) -> bool:
@@ -761,8 +880,11 @@ def receipt_section(turn_id: str) -> dict:
     """The ``work_orders`` section of a turn receipt: the handles a cloud model
     was shown in this turn, and every slice returned to it, as kind, size and
     class. Never content."""
-    _boot()
     tid = str(turn_id or "")
+    if switch_blocks():
+        # Switched off: no saved order is decrypted or loaded just to write a receipt.
+        return {"handles_seen": [], "returns": []}
+    _boot()
     returns = []
     with _LOCK:
         for rec in _ORDERS.values():

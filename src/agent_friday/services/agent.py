@@ -3379,6 +3379,7 @@ def _tool_submit_work_order(inp):
     a turn where cloud_intent has not opened the cloud."""
     from agent_friday.services import work_orders
     if not _work_orders_enabled():
+        work_orders.enforce_switch()
         return _WORK_ORDERS_OFF
     conv = _CURRENT_CONVERSATION.get()
     if not conv:
@@ -3398,6 +3399,7 @@ def _tool_work_order_status(inp):
     """Tool handler: the status of a submitted order, and nothing but status."""
     from agent_friday.services import work_orders
     if not _work_orders_enabled():
+        work_orders.enforce_switch()
         return _WORK_ORDERS_OFF
     conv = _CURRENT_CONVERSATION.get()
     ok, why = work_orders.cloud_turn_allowed(_CURRENT_PROVIDER.get(), _CURRENT_MODEL.get() or "")
@@ -8022,13 +8024,13 @@ WORK_ORDER_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "goal": {"type": "string", "description": "What the work is, plainly, under 500 characters. It is read as a request description, not as instructions."},
          "inputs": {"type": "array", "items": {"type": "string"}, "description": "Handles (h_...) issued in this conversation."},
-         "constraints": {"type": "object", "description": "max_steps, deadline_s, tools_allowed (verbs from the allowed list)."},
+         "constraints": {"type": "object", "description": "max_steps and tools_allowed (verbs from the allowed list). deadline_s is honoured only for public material."},
          "acceptance": {"type": "array", "items": {"type": "object"}, "description": "Checks the local side runs, e.g. {check: count_at_least, value: 1}."},
          "output_schema": {"type": "object", "description": "Field name to type: string, number, integer, boolean, list, object."},
          "priority": {"type": "string", "enum": ["now", "when_idle"], "description": "now, or when_idle for background."},
-         "writes": {"type": "array", "items": {"type": "object"}, "description": "Write intents {target: wiki|kg|profile|settings, op, handle, summary}. Each becomes a proposal, never a direct write."}},
+         "writes": {"type": "array", "items": {"type": "object"}, "description": "Write intents {target: wiki, op, handle, summary}. Each becomes a wiki proposal the owner reviews, written from the local reading, never a direct write."}},
          "required": ["goal"]}},
-    {"name": "work_order_status", "description": "Check a work order you submitted: queued, running, done or failed, with only the return the owner's privacy class allows (counts, a PII-free summary the owner approved, or just a handle to a result that stays on the PC).",
+    {"name": "work_order_status", "description": "Check a work order you submitted: queued, working or finished (reported on a fixed schedule, not when the work ends; finished says nothing about whether it succeeded), with only the return the owner's privacy class allows (counts, a PII-free summary the owner approved, or just a handle to a result that stays on the PC).",
      "input_schema": {"type": "object", "properties": {
          "order_id": {"type": "string", "description": "The order_id submit_work_order returned."}},
          "required": ["order_id"]}}
@@ -8040,6 +8042,18 @@ def _work_orders_enabled():
         return bool((_load_settings() or {}).get("work_orders_enabled"))
     except Exception:
         return False
+
+
+def _work_orders_switched_off():
+    """The switch is off. If work orders were ever used in this process, cancel what is still
+    open (with a notice). Costs nothing otherwise: it does not import the module or read a store."""
+    import sys as _sys
+    wo = _sys.modules.get("agent_friday.services.work_orders")
+    if wo is not None:
+        try:
+            wo.enforce_switch()
+        except Exception:
+            pass
 
 
 def _without_cloud_only(tools, local=True):
@@ -8059,6 +8073,8 @@ def tools_for_workspace(workspace=None, base=None, conversation_id=None):
         extra += [t for t in WORKSPACE_TOOLS.get("hub", []) if t not in extra]
     if _work_orders_enabled():
         extra += [t for t in WORK_ORDER_TOOLS if t not in extra]
+    else:
+        _work_orders_switched_off()
     out = list(CLAUDE_TOOLS if base is None else base) + extra
     prov = _CURRENT_PROVIDER.get()
     if prov is not None:

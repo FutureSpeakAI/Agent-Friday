@@ -11,15 +11,22 @@ decided here, by the order's privacy class, and nothing else decides it:
   P2_summary    a PII-free summary through the existing ``local_context``
                 pipeline (scrub, floor, then ALWAYS a card), plus the same
                 bucketed counts. Not in local_only (no cloud model is in play there).
-  P3_local_only {order_id, status, result_handle}, nothing else
+  P3_local_only an empty result and a result handle, nothing else
 
 The class is Friday's: the lowest the inputs allow, and the owner's setting. A
 cloud model cannot raise it; a mode that does not allow P2 lowers it to P1.
 
-* Below P0 the cloud cannot learn whether an order's result was empty or full
-  from its status: a failure is reported as "did_not_complete" with no step and
-  no check name, and acceptance checks never gate the status (the executor
-  runs them for the owner's view only).
+* What the cloud hears about progress is queued, working or finished, and nothing
+  else. Below P0 the payload has the same fields at every class, and "finished" means
+  only that the order ended, by whatever route: done, failed, failed an advisory check,
+  cancelled, with a model that answered or one that did not. The result handle is
+  minted the same way for all of them.
+* "Finished" is reported at a time fixed in code (``REPORT_GRID_S`` after the order was
+  made, on a fixed grid), not when the order really ended and never at a time the cloud
+  can choose, so how long local work took, and whether a model ran, are not a signal.
+  The cloud's ``deadline_s`` is ignored below P0.
+* Acceptance checks never gate the status below P0 (the executor runs them for the
+  owner's view only).
 * The egress gate runs on EVERY return, for the destination the turn really has
   (a cloud-relayed model tag is cloud). If it changes the payload or cannot run,
   the cloud hears only that the result was held back.
@@ -45,9 +52,15 @@ P2_MODES = ("local_preferred", "cloud_preferred", "cloud_only")
 #: How strict each class is: the larger number shares less.
 _STRICT = {"P0_public": 0, "P2_summary": 1, "P1_aggregate": 2, "P3_local_only": 3}
 
+#: The progress words a cloud model hears. Every ended state is "finished".
 CLOUD_STATE = {"queued": "queued", "validated": "queued", "waiting_for_idle": "queued",
-               "running": "running", "waiting_for_model": "running", "done": "done",
-               "failed": "failed", "failed_acceptance": "failed", "cancelled": "cancelled"}
+               "running": "working", "waiting_for_model": "working", "done": "finished",
+               "failed": "finished", "failed_acceptance": "finished", "cancelled": "finished"}
+ENDED = ("done", "failed", "failed_acceptance", "cancelled")
+#: "Finished" becomes visible at created + n * REPORT_GRID_S, n the first step at or after the
+#: order really ended (at least 1). A fixed schedule the cloud cannot choose; 0 turns the wait
+#: off for tests.
+REPORT_GRID_S = 300.0
 
 _DATE_WORDS = ("today", "this week", "this month", "this year", "older", "undated")
 _SIZE_WORDS = ("tiny", "small", "medium", "large")
@@ -59,6 +72,26 @@ FIXED_WORDS = frozenset(_handles.KINDS) | frozenset(_DATE_WORDS) | frozenset(_SI
 _FIELD = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
 MAX_LIST = 50
 MAX_DEPTH = 3
+
+
+def report_slot(rec: dict) -> float:
+    """When "finished" may be reported for an order that has ended: the next point on the
+    fixed grid after it really ended."""
+    created, ended = float(rec.get("created") or 0.0), float(rec.get("ended") or 0.0)
+    if REPORT_GRID_S <= 0:
+        return ended
+    steps = max(1, int(-(-(max(0.0, ended - created)) // REPORT_GRID_S)))
+    return created + steps * REPORT_GRID_S
+
+
+def reported_state(rec: dict, now: float = 0.0) -> str:
+    """queued, working or finished, as the cloud may hear it now."""
+    st = rec.get("status")
+    if st in ENDED:
+        if (now or time.time()) >= report_slot(rec):
+            return "finished"
+        return "working"                  # it has ended, but the schedule says not yet
+    return CLOUD_STATE.get(st, "queued")
 
 
 def stricter(a: str, b: str) -> str:
@@ -187,53 +220,59 @@ def _size(obj) -> int:
 def for_cloud(rec: dict, *, provider: str, model: str = "") -> Tuple[dict, List[dict]]:
     """The payload a cloud model hears about this order now, and the slices it
     is made of (``kind``, ``size``, ``cls``). Pure of side effects except the
-    result handle and the gate's own log."""
+    result handle and the gate's own log.
+
+    Below P0 the fields are the same at every class and for every way an order can end:
+    order_id, status, priority, result, result_handle, summary_state. Only their values
+    move, and only on the fixed report schedule."""
     cls = effective_class(rec)
     p0 = cls == "P0_public"
     conv = rec["order"]["conversation_id"]
-    st = rec["status"]
-    state = CLOUD_STATE.get(st, "unknown")
-    if state == "failed" and not p0:
-        # Below P0 a failure says only that it did not complete: which step, which
-        # check or why would each be a function of what the documents held.
-        state = "did_not_complete"
-    payload: dict = {"order_id": rec["order_id"], "status": state}
-    if state == "done" and rec.get("result_handle") and not _result_handle(rec):
-        payload["status"] = state = "expired"       # the result is gone; it is not made again
-    slices: List[dict] = [{"kind": "status", "size": _size(payload), "cls": cls}]
-    if cls != "P3_local_only" and state != "expired":
-        payload.update(privacy_class=cls, priority=rec["order"]["priority"])
-        if state not in ("done", "did_not_complete"):
-            payload["result"] = None
-    if state == "failed" and p0:
-        if rec.get("failed_step") is not None:
-            payload["failed_step"] = int(rec["failed_step"])
-        from agent_friday.services.work_orders import ACCEPTANCE_CHECKS
-        names = [c for c in rec.get("failed_checks") or [] if c in ACCEPTANCE_CHECKS]
-        if names:
-            payload["failed_checks"] = names
+    state = reported_state(rec)
+    finished = state == "finished"
+    payload: dict = {"order_id": rec["order_id"], "status": state,
+                     "priority": rec["order"]["priority"], "result": None,
+                     "result_handle": "", "summary_state": "none"}
+    if p0:
+        payload["privacy_class"] = cls
     held: dict = {}
-    if state == "done":
-        result = rec.get("result") or {}
-        if cls == "P3_local_only":
-            payload["result_handle"] = _result_handle(rec)
-            slices.append({"kind": "result_handle", "size": len(payload["result_handle"]), "cls": cls})
-        elif p0:
-            payload["result"] = result
-            slices.append({"kind": "result", "size": _size(result), "cls": cls})
-        else:                                           # P1 and P2: bucketed counts only
-            agg = aggregate_only(rec.get("safe") or {}, conv, float(rec.get("created") or 0.0))
-            payload["result"] = agg
-            slices.append({"kind": "aggregate", "size": _size(agg), "cls": cls})
-            if cls == "P2_summary":
-                p2 = rec.get("p2") or {}
-                payload["summary_state"] = {"sent": "sent", "pending": "awaiting_owner"}.get(
-                    p2.get("state"), "none")
-                if p2.get("state") == "sent" and p2.get("text"):
-                    held["summary"] = str(p2["text"])
-                    slices.append({"kind": "p2_summary", "size": len(held["summary"]), "cls": cls})
+    slices: List[dict] = []
+    if finished:
+        h = _result_handle(rec)
+        if not h:
+            payload = {"order_id": rec["order_id"], "status": "expired"}
+        else:
+            payload["result_handle"] = h
+            slices.append({"kind": "result_handle", "size": len(h), "cls": cls})
+            if p0:
+                done = rec.get("status") == "done"
+                payload["outcome"] = "done" if done else "failed"
+                payload["result"] = (rec.get("result") or {}) if done else {}
+                slices.append({"kind": "result", "size": _size(payload["result"]), "cls": cls})
+                if not done:
+                    if rec.get("failed_step") is not None:
+                        payload["failed_step"] = int(rec["failed_step"])
+                    from agent_friday.services.work_orders import ACCEPTANCE_CHECKS
+                    names = [c for c in rec.get("failed_checks") or [] if c in ACCEPTANCE_CHECKS]
+                    if names:
+                        payload["failed_checks"] = names
+            elif cls == "P3_local_only":
+                payload["result"] = {}
+            else:                                       # P1 and P2: bucketed counts, whatever the ending
+                agg = aggregate_only(rec.get("safe") or {}, conv, float(rec.get("created") or 0.0))
+                payload["result"] = agg if isinstance(agg, dict) else {}
+                slices.append({"kind": "aggregate", "size": _size(payload["result"]), "cls": cls})
+                if cls == "P2_summary":
+                    p2 = rec.get("p2") or {}
+                    # One state for "waiting for the owner", "withheld by the floor" and "no
+                    # summary was made": the cloud cannot tell a clean summary from a blocked one.
+                    payload["summary_state"] = "sent" if p2.get("state") == "sent" else "awaiting_owner"
+                    if p2.get("state") == "sent" and p2.get("text"):
+                        held["summary"] = str(p2["text"])
+                        slices.append({"kind": "p2_summary", "size": len(held["summary"]), "cls": cls})
+    slices.insert(0, {"kind": "status", "size": _size(payload), "cls": cls})
     if not _gate(payload, provider, model):
-        slim = {"order_id": rec["order_id"], "status": state,
+        slim = {"order_id": rec["order_id"], "status": payload["status"],
                 "withheld": "The privacy gate held this result back on this PC."}
         return slim, [{"kind": "withheld", "size": _size(slim), "cls": cls, "gated": True}]
     # A P2 summary already passed the floor and the owner's card or grant (which wrote the
@@ -252,9 +291,13 @@ def after_run(rec: dict) -> None:
     """When an order has finished: give it a result handle, and for P2 offer the
     summary through the local_context pipeline (a card, or a conversation grant)."""
     from agent_friday.services import work_orders as wo
+    if rec.get("status") not in ENDED:
+        return
+    if wo.switch_blocks():                  # the owner turned work orders off: no card, no share
+        return
+    _result_handle(rec)                    # the same for every ending
     if rec.get("status") != "done":
         return
-    _result_handle(rec)
     if effective_class(rec) != "P2_summary" or rec.get("p2"):
         return
     raw = str(rec.get("summary") or "").strip() or _digest(rec)

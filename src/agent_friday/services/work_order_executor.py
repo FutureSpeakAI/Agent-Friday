@@ -36,12 +36,19 @@ Invariants (each has a test):
   numbers would read the count off exactly.
 * A step never fails because a filter left nothing to read (that too would be a
   one-bit answer about private content); it records a note and carries on.
-* ``search`` stays inside the handles the cloud was already given. Only a P3 order,
-  whose result stays on this PC, searches the whole wiki, and what it finds is
-  private-tier.
-* Writes: a ``WriteIntent`` becomes a pending proposal through the existing
-  governed path (``propose_wiki_update``, ``memory_proposals``) once, after the
-  order has finished. Nothing is written directly. SOUL and settings are not targets.
+* ``search`` stays inside the handles the cloud was already given, at every class.
+  An order searches the whole wiki only when the owner granted that for that one
+  order (``work_orders.grant_wide_search``); what it finds is private-tier.
+* A step never fails because of what the documents or the local model held: an
+  unreadable or empty document, a model that errors, answers nothing or answers
+  something that is not the JSON asked for, all leave a local note and the plan
+  carries on. Otherwise a goal that steers the model could turn a private fact into
+  a status. The cloud's own ``deadline_s`` is not honoured below P0 either: the
+  deadline is a fixed local one.
+* Writes: a ``WriteIntent`` becomes a pending wiki proposal through the existing
+  governed tool (``propose_wiki_update``) once, after the order has finished.
+  Nothing is written directly, and a cloud model's own words are never the text
+  of a proposal. SOUL, settings, the knowledge graph and the profile are not targets.
 * Checkpoints keep handles and small derived facts. A document's text is held in
   memory while the order runs, is dropped when it ends, and is never saved; a
   resumed step reads again.
@@ -84,6 +91,9 @@ LAYA_BUDGET_MS = 400.0
 #: A step that needs a model waits this long for one to be up before it parks.
 MODEL_WAIT_TRIES = 3
 MODEL_WAIT_S = 10.0
+#: The deadline for an order below P0, whatever ``constraints.deadline_s`` said. A cloud-set
+#: limit that fails a step once the local work runs long would turn timing into a status.
+FIXED_DEADLINE_S = 1800.0
 
 _STOP = frozenset((
     "the a an and or of to in on for with from that this those these about into over under "
@@ -400,12 +410,13 @@ def _step_resolve(env: Env, ctx: dict, step: dict, order: dict) -> None:
 def _step_search(env: Env, ctx: dict, step: dict, order: dict) -> None:
     """Search inside the handles the cloud already holds: the wiki pages among the
     inputs that match are kept, the others dropped, and no handle is minted, so the
-    cloud cannot reach a page it was never given. A P3 order (its result stays on
-    this PC) may search the whole wiki; what it finds is private-tier."""
+    cloud cannot reach a page it was never given. Only an order the owner granted a
+    wider search for (``wide_search``, set by local code alone) searches the whole
+    wiki; what it finds is private-tier. The owner's privacy class does not widen it."""
     terms = terms_of(order.get("goal_text"), 3)
     if not terms:
         return
-    wide = order.get("privacy_class") == "P3_local_only"
+    wide = bool(order.get("wide_search"))
     scope = {}                                    # path -> the input item that names that page
     for it in ctx["items"]:
         rec = _handles.lookup(it["handle"], env.conv)
@@ -464,8 +475,6 @@ def _step_read(env: Env, ctx: dict, step: dict, order: dict) -> None:
             ok += 1
         except StepFailed as e:
             it["error"] = str(e)[:160]
-    if ctx["items"] and ok == 0:
-        raise StepFailed("could not read any input: %s" % (ctx["items"][0].get("error") or "unknown"))
     if ok < len(ctx["items"]):
         ctx["notes"].append("%d of %d inputs could not be read" % (len(ctx["items"]) - ok, len(ctx["items"])))
 
@@ -588,10 +597,27 @@ def _step_summarise(env: Env, ctx: dict, step: dict, order: dict) -> None:
             "Output only the summary.")
     if env.retry:
         task += " Your last answer failed a check: be complete and concrete."
-    out = env.model(task, str(order.get("goal_text") or ""), docs).strip()
-    if not out:
-        raise StepFailed("the local model gave no answer")
+    out = _ask(env, ctx, task, order, docs)
+    if not out:                          # an empty answer, an error and a good answer end the same way
+        ctx["notes"].append("the local model gave no answer")
+        return
     ctx["values"]["summary"] = out[:1500]
+
+
+def _ask(env: Env, ctx: dict, task: str, order: dict, docs: List[str]) -> str:
+    """One local model call. A model that errors counts as one that said nothing: what the
+    cloud hears must not depend on whether the model ran or worked. Parking (no model up)
+    and cancelling still propagate; they say nothing about the documents."""
+    try:
+        return str(env.model(task, str(order.get("goal_text") or ""), docs) or "").strip()
+    except (Parked, Cancelled):
+        raise
+    except BaseException as e:                                    # noqa: BLE001
+        if type(e).__name__ in ("JobCancelled", "LocalWorkCancelled") or not isinstance(e, Exception):
+            raise
+        _log.debug("the local model call failed", exc_info=True)
+        ctx["notes"].append("the local model call failed: %s" % type(e).__name__)
+        return ""
 
 
 def _parse_json_object(raw: str) -> Optional[dict]:
@@ -621,10 +647,11 @@ def _step_extract(env: Env, ctx: dict, step: dict, order: dict) -> None:
             % json.dumps(schema, sort_keys=True))
     if env.retry:
         task += " Your last answer was not valid; return only the JSON object."
-    out = env.model(task, str(order.get("goal_text") or ""), docs)
-    d = _parse_json_object(out)
-    if d is None:
-        raise StepFailed("the local model did not return the JSON asked for")
+    d = _parse_json_object(_ask(env, ctx, task, order, docs))
+    if d is None:                        # no JSON is not a failure: the fields are simply empty
+        ctx["notes"].append("the local model did not return the JSON asked for")
+        ctx["values"]["extracted"] = {}
+        return
     ctx["values"]["extracted"] = {k: d.get(k) for k in schema}
 
 
@@ -775,8 +802,9 @@ def apply_writes(env: Env, order: dict, ctx: dict, writes: List[dict],
                  save: Optional[Callable[[List[dict]], None]] = None) -> List[dict]:
     """Turn each WriteIntent into a PENDING proposal through its governed path,
     once. Returns the updated intents. Nothing is written directly: a wiki
-    proposal waits in Knowledge, a fact waits in the memory review queue. SOUL
-    and settings are never targets."""
+    proposal waits in Knowledge. Its text is what the local model produced from
+    the documents, never the cloud's own words (those ride only as a labelled,
+    fenced note). SOUL, settings, the graph and the profile are never targets."""
     result = ctx.get("result") or {}
     local_text = str(ctx["values"].get("summary") or result.get("summary") or "").strip()
     provider = (order.get("specified_by") or {}).get("provider") or "a cloud model"
@@ -802,17 +830,7 @@ def apply_writes(env: Env, order: dict, ctx: dict, writes: List[dict],
                     from agent_friday.services import wiki_engine
                     wiki_engine._attach_cloud_note(m.group(1), cloud_note(provider, note))
                 w.update(state="proposed", proposal="wiki", detail=str(r)[:200])
-            elif w["target"] in ("kg", "profile"):
-                if not local_text and not note:
-                    raise StepFailed("there was nothing to propose")
-                from agent_friday.services import memory_proposals
-                text = (local_text or note)[:400]
-                n = memory_proposals.propose_from_head(
-                    [{"text": text, "category": "project" if w["target"] == "kg" else "preference"}],
-                    time.strftime("%Y-%m-%d"), model="work-order:%s" % env.order_id)
-                w.update(state="proposed" if n else "skipped", proposal="memory_review",
-                         detail="stored" if n else "already proposed")
-            else:
+            else:                                # the graph and the profile have no governed tool here
                 raise StepFailed("that target is not writable from a work order")
         except StepFailed as e:
             w.update(state="not_proposed", detail=str(e)[:160])
@@ -855,7 +873,7 @@ def run(order_id: str, *, tool_fn=None, model_fn=None, laya_fn=None) -> dict:
         return wo.public_view(rec)
     order = rec["order"]
     env = Env(order_id, order["conversation_id"], tool_fn=tool_fn, model_fn=model_fn,
-              laya_fn=laya_fn, cancelled=lambda: bool(rec.get("cancel")))
+              laya_fn=laya_fn, cancelled=lambda: bool(rec.get("cancel")) or wo.switch_blocks())
     if not rec.get("plan"):
         wo.update(order_id, plan=plan(order))
     steps = rec["plan"]
@@ -868,9 +886,9 @@ def run(order_id: str, *, tool_fn=None, model_fn=None, laya_fn=None) -> dict:
         while True:
             for i in range(int(cp["next"]), len(steps)):
                 step = steps[i]
-                if rec.get("cancel"):
+                if rec.get("cancel") or wo.switch_blocks():       # the owner's switch is read before every step
                     raise Cancelled()
-                if rec.get("active_s", 0.0) > float(order["constraints"].get("deadline_s", 600)):
+                if rec.get("active_s", 0.0) > deadline_for(rec, order):
                     raise StepFailed("the order ran past its deadline")
                 t0 = time.time()
                 try:
@@ -917,20 +935,38 @@ def run(order_id: str, *, tool_fn=None, model_fn=None, laya_fn=None) -> dict:
     except Parked as e:
         wo.update(order_id, status="waiting_for_model", error=str(e)[:160])
     except StepFailed as e:
-        wo.update(order_id, status="failed", error=str(e)[:200], ended=time.time())
+        wo.update(order_id, status="failed", error=str(e)[:200], ended=time.time(),
+                  safe=_safe_or_empty(order, ctx))
     except BaseException as e:                                    # noqa: BLE001
         if type(e).__name__ in ("JobCancelled", "LocalWorkCancelled"):
             wo.update(order_id, status="cancelled", ended=time.time())
         elif isinstance(e, Exception):
             _log.warning("work order %s failed: %s", order_id, e, exc_info=True)
             wo.update(order_id, status="failed", error="%s: %s" % (type(e).__name__, str(e)[:160]),
-                      ended=time.time())
+                      ended=time.time(), safe=_safe_or_empty(order, ctx))
         else:
             raise
-    if rec.get("status") in ("done", "cancelled", "failed_acceptance"):
+    if rec.get("status") in ("done", "cancelled", "failed_acceptance", "failed"):
         wo.strip_text(rec)                   # the order is over: the documents' text goes with it
     wo.persist_now()
     return wo.public_view(rec)
+
+
+def deadline_for(rec: dict, order: dict) -> float:
+    """The active-time limit for this order. The cloud's own ``deadline_s`` counts only at
+    P0 (public inputs); below it a fixed local limit applies, so a cloud cannot pick a
+    threshold that turns the time local work took into a status."""
+    if _gating(rec):
+        return float((order.get("constraints") or {}).get("deadline_s", 600))
+    return FIXED_DEADLINE_S
+
+
+def _safe_or_empty(order: dict, ctx: dict) -> dict:
+    """The same bucketed counts a finished order carries, from whatever the plan reached."""
+    try:
+        return build_safe(order, ctx)
+    except Exception:                                            # noqa: BLE001
+        return {}
 
 
 def _gating(rec: dict) -> bool:
@@ -963,4 +999,4 @@ def _rehydrate(env: Env, ctx: dict, steps: List[dict], start: int) -> None:
             it["error"] = str(e)[:160]
     ctx["items"] = keep
     if keep and not any(i.get("read") for i in keep):
-        raise StepFailed("could not read any input again: %s" % (keep[0].get("error") or "unknown"))
+        ctx["notes"].append("no input could be read again")
