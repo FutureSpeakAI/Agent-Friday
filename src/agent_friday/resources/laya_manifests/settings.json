@@ -87,54 +87,6 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": ["tests/unit/test_simple_cards.py::test_the_router_hides_and_shows_the_cards_through_the_chat_tray_tool"]
-  },
-  {
-   "id": "settings.local_voice_measure",
-   "action": "settings.local_voice_measure",
-   "group": "settings",
-   "ui": {"control": "local voice: Measure now"},
-   "tool": "local_voice_readiness",
-   "also_tools": [],
-   "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
-   "phrasings": ["measure local voice"],
-   "deictic": [],
-   "undo": null,
-   "voice": {"live": false, "shared": false},
-   "quiet_result": null,
-   "eval": []
-  },
-  {
-   "id": "settings.local_voice_status",
-   "action": "settings.local_voice_status",
-   "group": "settings",
-   "ui": {"control": "local voice: can it run here, and why cloud voice"},
-   "tool": "local_voice_readiness",
-   "also_tools": [],
-   "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
-   "phrasings": ["can you run voice locally now?", "is local voice ready"],
-   "deictic": [],
-   "undo": null,
-   "voice": {"live": false, "shared": false},
-   "quiet_result": null,
-   "eval": []
-  },
-  {
-   "id": "settings.local_voice_switch_offer",
-   "action": "settings.local_voice_switch_offer",
-   "group": "settings",
-   "ui": {"control": "local voice: switch offer (switch / stay)"},
-   "tool": "set_setting",
-   "also_tools": [],
-   "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
-   "phrasings": ["switch to local voice", "stay on cloud voice"],
-   "deictic": [],
-   "undo": null,
-   "voice": {"live": false, "shared": true},
-   "quiet_result": null,
-   "eval": []
   }
  ],
  "jobs": [
@@ -168,6 +120,21 @@
  ],
  "not_for_laya": [
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
+  {
+   "action": "settings.local_voice_measure",
+   "kind": "by_design",
+   "reason": "Measure now runs the PC hard, so it is the owner's press in Settings > Voice; by voice, ask_friday queues it for when the owner is away."
+  },
+  {
+   "action": "settings.local_voice_status",
+   "kind": "by_design",
+   "reason": "Not a router tool: local_voice_readiness is outside the full voice contract, and a test pins it out of the router. Voice asks it through ask_friday."
+  },
+  {
+   "action": "settings.local_voice_switch_offer",
+   "kind": "by_design",
+   "reason": "The switch to local voice is the owner's yes on its own card, once; Laya never takes it."
+  },
   {
    "action": "settings.interruptions",
    "kind": "by_design",
