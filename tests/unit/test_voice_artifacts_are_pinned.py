@@ -86,12 +86,38 @@ def test_an_archive_cannot_write_outside_its_folder(tmp_path):
     assert not (tmp_path / "escaped.txt").exists()
 
 
-def test_voice_workers_run_with_the_hub_offline():
+def test_voice_workers_run_with_the_hub_offline(monkeypatch):
+    """Every path that starts a worker process, cold or warm, gives it an
+    environment with the hub off; a warm worker that a call later takes was
+    started by the same path."""
+    import subprocess
     from agent_friday.services import voice_workers as vw
-    src = inspect.getsource(vw.VoiceWorker._default_spawn)
-    for k in ('env["HF_HUB_OFFLINE"] = "1"', 'env["TRANSFORMERS_OFFLINE"] = "1"',
-              'env["HF_HUB_DISABLE_TELEMETRY"] = "1"'):
-        assert k in src
+    envs = []
+
+    class _P:
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+    def popen(cmd, **kw):
+        envs.append(kw["env"])
+        return _P()
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
+        monkeypatch.setenv(k, "0")                  # a parent that is not offline
+    monkeypatch.setattr(vw, "_WARM", {})
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: 99999)
+    w = vw.VoiceWorker("kokoro-cuda", "mouth", args={"voice": "af_heart"}, lease=False)
+    w._default_spawn()                                         # cold spawn
+    assert vw.prewarm("kokoro-cuda", {"voice": "af_heart"})    # warm spawn (--preimport)
+    taken = w._default_spawn()                                 # reuse of the warm one
+    assert taken is not None and len(envs) == 2
+    for env in envs:
+        assert env["HF_HUB_OFFLINE"] == "1" and env["TRANSFORMERS_OFFLINE"] == "1"
+        assert env["HF_HUB_DISABLE_TELEMETRY"] == "1"
+    vw.release_warm("test")
 
 
 def test_the_server_turns_hub_telemetry_off_before_core_imports():

@@ -325,7 +325,7 @@ _VOICE_LIVE_TOOLS = [
      "workspace. If the result has connected:false, the Calendar integration just "
      "needs a one-time connection — tell the user that and OFFER to help connect "
      "it; do NOT say you can't access their calendar.",
-     {"day": ("string", "Only this day, as YYYY-MM-DD (today or tomorrow).")}, []),
+     {}, []),
     ("check_email",
      "Check recent email for urgent or unread items. Use when "
      "they ask 'any urgent emails', 'what's in my inbox', or 'did I hear back "

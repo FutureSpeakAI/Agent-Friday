@@ -299,14 +299,21 @@ def _worker_cmd(engine: str, args: dict, preimport: bool = False) -> list:
     return cmd
 
 
-def _popen_worker(engine: str, args: dict, preimport: bool = False):
+def _worker_env() -> dict:
+    """The environment every voice worker process starts with, cold or warm.
+    A worker loads files that are already on disk (fetched by the installer);
+    it has no reason to reach the hub, so it cannot."""
     env = dict(os.environ)
     env.setdefault("PYTHONUNBUFFERED", "1")
-    # A voice worker loads files that are already on disk (fetched by the
-    # installer); it has no reason to reach the hub, so it cannot.
     env["HF_HUB_OFFLINE"] = "1"
     env["TRANSFORMERS_OFFLINE"] = "1"
     env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    return env
+
+
+def _popen_worker(engine: str, args: dict, preimport: bool = False):
+    """The one place a worker process is started (cold spawn and warm worker)."""
+    env = _worker_env()
     return subprocess.Popen(_worker_cmd(engine, args, preimport), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
                             creationflags=_POPEN_FLAGS)
