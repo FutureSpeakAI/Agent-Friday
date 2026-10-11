@@ -2,10 +2,12 @@
 
     GET    /api/meetings/status            recording state for the indicator
     GET    /api/meetings/suggest           a title from the calendar event now
-    POST   /api/meetings/start             {consent_ack, confirm, consent_version,
+    GET    /api/meetings/start-card        the consent statement, its version, the
+                                           jurisdiction note and a single-use token
+    POST   /api/meetings/start             {consent_ack, nonce, consent_version,
                                             title, event_id, keep_audio,
                                             max_duration_s, system_audio,
-                                            speak_consent}
+                                            speak_consent, consent_line}
     POST   /api/meetings/stop
     GET    /api/meetings/live              live partial text while recording
     GET    /api/meetings/consent           the editable consent line and note
@@ -30,10 +32,11 @@ transcript holds what other people said. Both stay with the person sitting at
 this machine: a remote session or an observer credential is refused.
 
 NEVER AUTO-STARTED. `meetings_start` is the only caller of
-MeetingManager.start. It forwards `consent_ack` and `confirm` exactly as the
-page's start card sent them, and the manager refuses anything but True for
-both. The suggestion routes only ever offer a card; accepting one opens the
-start card and starts nothing.
+MeetingManager.start. It forwards `consent_ack` and the start card's `nonce`
+exactly as the page sent them; the manager refuses anything but True for the
+first and a token it handed out a moment ago, once, for the second. A
+`confirm` in the body is ignored. The suggestion routes only ever offer a card;
+accepting one opens the start card and starts nothing.
 """
 
 from flask import Blueprint, Response, jsonify, request
@@ -78,10 +81,22 @@ def meetings_suggest():
     return jsonify({"status": "ok", "event": ev or None})
 
 
+@meetings_bp.route('/api/meetings/start-card')
+def meetings_start_card():
+    """What the start card shows (the consent statement, its version, the
+    jurisdiction note and the editable line) and the single-use token its start
+    button sends. Asking for it starts nothing."""
+    card = mc.get_manager().issue_start_card()
+    return jsonify({"status": "ok"} | mp.consent() | card)
+
+
 @meetings_bp.route('/api/meetings/start', methods=['POST'])
 def meetings_start():
     d = request.get_json(silent=True) or {}
     try:
+        # `confirm` is never read from the request: the start is confirmed by
+        # the token the start card was handed, which is single use and short
+        # lived. A body that merely says confirm:true starts nothing.
         st = mc.get_manager().start(
             consent_ack=d.get("consent_ack") is True,
             consent_version=d.get("consent_version"),
@@ -91,7 +106,8 @@ def meetings_start():
             max_duration_s=d.get("max_duration_s"),
             system_audio=d.get("system_audio") is True,
             speak_consent=d.get("speak_consent") is True,
-            confirm=d.get("confirm") is True)
+            consent_line=d.get("consent_line"),
+            nonce=d.get("nonce"))
     except mc.MeetingError as e:
         return _fail(e)
     return jsonify({"status": "ok"} | st)

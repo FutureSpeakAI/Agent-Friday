@@ -107,6 +107,7 @@ class Harness:
 
     def start(self, **kw):
         kw.setdefault("consent_ack", True)
+        kw.setdefault("consent_version", mc.CONSENT_VERSION)
         kw.setdefault("confirm", True)
         return self.m.start(**kw)
 

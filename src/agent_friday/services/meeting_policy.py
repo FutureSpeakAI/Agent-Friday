@@ -415,14 +415,17 @@ def reset_suggestions() -> dict:
     return suggestion_state()
 
 
-def speak_line_if_asked(speaker, *, want: bool | None = None) -> bool:
+def speak_line_if_asked(speaker, *, want: bool | None = None,
+                        line: str | None = None) -> bool:
     """Say the consent line aloud, when the owner asked for that. `speaker` is
-    a callable taking the text. Returns True if it was spoken."""
+    a callable taking the text. `line` is the wording on the start card right
+    now (it may be edited and not saved); without it the saved line is said.
+    Returns True if it was spoken."""
     c = consent()
     if not (c["speak"] if want is None else want):
         return False
     try:
-        speaker(c["line"])
+        speaker(clean_consent_line(line) or c["line"])
         return True
     except Exception as e:  # noqa: BLE001
         log.info("the consent line was not spoken: %s", e)

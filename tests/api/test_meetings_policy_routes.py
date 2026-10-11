@@ -17,6 +17,14 @@ from agent_friday.services import meeting_policy as mp
 REMOTE = {"REMOTE_ADDR": "203.0.113.9"}
 
 
+def start_body(client, **extra):
+    """What the start card sends: the consent version and the single-use token
+    it was handed."""
+    card = client.get("/api/meetings/start-card").get_json()
+    return {"consent_ack": True, "nonce": card["nonce"],
+            "consent_version": card["consent_version"]} | extra
+
+
 def tone(seconds):
     n = int(mc.RATE * seconds)
     return array.array("h", (int(8000 * math.sin(2 * math.pi * 440 * i / mc.RATE))
@@ -123,26 +131,25 @@ def test_a_suggestion_comes_once_per_event_and_two_declines_turn_it_off(client, 
 
 
 def test_no_suggestion_while_a_meeting_is_recording(client, env):
-    client.post("/api/meetings/start", json={"consent_ack": True, "confirm": True})
+    client.post("/api/meetings/start", json=start_body(client))
     assert client.get("/api/meetings/suggestion").get_json()["suggestion"] is None
 
 
 def test_the_start_card_can_ask_for_system_audio_and_the_factory_hears_it(client, env):
-    r = client.post("/api/meetings/start", json={"consent_ack": True, "confirm": True, "system_audio": True})
+    r = client.post("/api/meetings/start", json=start_body(client, system_audio=True))
     assert r.status_code == 200
     assert env.calls[0] == {"system_audio": True}
     client.post("/api/meetings/stop")
 
 
 def test_system_audio_is_off_unless_it_is_exactly_true(client, env):
-    client.post("/api/meetings/start", json={"consent_ack": True, "confirm": True, "system_audio": "yes"})
+    client.post("/api/meetings/start", json=start_body(client, system_audio="yes"))
     assert env.calls[0] == {"system_audio": False}
     client.post("/api/meetings/stop")
 
 
 def test_deleting_only_the_audio_keeps_the_notes(client, env):
-    st = client.post("/api/meetings/start", json={"consent_ack": True, "confirm": True,
-                                                   "keep_audio": True}).get_json()
+    st = client.post("/api/meetings/start", json=start_body(client, keep_audio=True)).get_json()
     env.calls[1].on(tone(0.9))
     client.post("/api/meetings/stop")
     assert env.wait_idle(5)
@@ -158,8 +165,7 @@ def test_deleting_only_the_audio_keeps_the_notes(client, env):
 
 
 def test_deleting_the_audio_of_a_recording_is_refused(client, env):
-    st = client.post("/api/meetings/start", json={"consent_ack": True, "confirm": True,
-                                                   "keep_audio": True}).get_json()
+    st = client.post("/api/meetings/start", json=start_body(client, keep_audio=True)).get_json()
     r = client.delete("/api/meetings/%s/audio" % st["id"])
     assert r.status_code == 409 and r.get_json()["code"] == "recording"
 

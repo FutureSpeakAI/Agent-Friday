@@ -138,7 +138,7 @@ def test_a_meeting_from_start_to_delete_sends_nothing_anywhere(tmp_path, monkeyp
         email_requester=lambda **k: emails.append(k) or {"approval_id": "ap1"},
         tick_s=0.01, chunk_s=1.0)
 
-    st = m.start(consent_ack=True, confirm=True, title="Planning", keep_audio=True)
+    st = m.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION, title="Planning", keep_audio=True)
     mid = st["id"]
     m._active.source.on(tone(0.9))
     m.stop()
@@ -173,7 +173,7 @@ def test_the_canary_is_never_on_disk_in_the_clear(tmp_path, monkeypatch):
         scheduler=lambda mid: types.SimpleNamespace(release=lambda: None),
         partials_factory=lambda: None, speech_gate=lambda pcm: True,
         ledger=lambda *a, **k: None, retention=lambda: "", tick_s=0.01, chunk_s=1.0)
-    m.start(consent_ack=True, confirm=True, title=CANARY, keep_audio=True)
+    m.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION, title=CANARY, keep_audio=True)
     m._active.source.on(tone(0.9))
     m.stop()
     assert m.wait_idle(10)
@@ -207,7 +207,7 @@ def test_a_cloud_provider_is_refused_while_the_notes_run(tmp_path, monkeypatch):
         scheduler=lambda mid: types.SimpleNamespace(release=lambda: None),
         partials_factory=lambda: None, speech_gate=lambda pcm: True,
         ledger=lambda *a, **k: None, retention=lambda: "", tick_s=0.01, chunk_s=1.0)
-    m.start(consent_ack=True, confirm=True)
+    m.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION)
     m._active.source.on(tone(0.9))
     m.stop()
     assert m.wait_idle(10)

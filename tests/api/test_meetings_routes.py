@@ -53,6 +53,14 @@ def mgr(tmp_path, monkeypatch):
     m.wait_idle(5)
 
 
+def start_body(client, **extra):
+    """What the start card sends: the consent version and the single-use token
+    it was handed."""
+    card = client.get("/api/meetings/start-card").get_json()
+    return {"consent_ack": True, "nonce": card["nonce"],
+            "consent_version": card["consent_version"]} | extra
+
+
 def test_start_needs_consent_then_records_and_stops(client, mgr):
     r = client.post("/api/meetings/start", json={"title": "Interview"})
     assert r.status_code == 400
@@ -70,8 +78,13 @@ def test_start_needs_consent_then_records_and_stops(client, mgr):
     assert r.status_code == 400 and r.get_json()["code"] == "confirm_required"
     assert mgr.sources == []
 
+    # a bare confirm:true in the body is not a start: the card's token is
     r = client.post("/api/meetings/start", json={
         "consent_ack": True, "confirm": True, "consent_version": mc.CONSENT_VERSION})
+    assert r.status_code == 400 and r.get_json()["code"] == "confirm_required"
+    assert mgr.sources == []
+
+    r = client.post("/api/meetings/start", json=start_body(client))
     assert r.status_code == 200, r.get_json()
     mid = r.get_json()["id"]
     assert client.get("/api/meetings/status").get_json()["recording"] is True
@@ -112,3 +125,35 @@ def test_tasks_need_a_choice(client, mgr):
 def test_a_follow_up_needs_recipient_subject_and_body(client, mgr):
     r = client.post("/api/meetings/abcdefabcdef/follow-up", json={"to": "a@b.example"})
     assert r.status_code == 400
+
+
+def test_the_start_card_hands_out_the_consent_text_and_a_single_use_token(client, mgr, monkeypatch):
+    from agent_friday.services import meeting_policy as mp
+    monkeypatch.setattr(mp, "_get_settings", lambda: {})
+    card = client.get("/api/meetings/start-card").get_json()
+    assert card["status"] == "ok" and card["nonce"]
+    assert card["consent_text"] == mc.CONSENT_TEXT
+    assert card["consent_version"] == mc.CONSENT_VERSION
+    assert card["jurisdiction_note"], "the jurisdiction note is part of the card"
+    assert mgr.sources == [], "asking for the card started nothing"
+
+    body = {"consent_ack": True, "nonce": card["nonce"],
+            "consent_version": card["consent_version"]}
+    assert client.post("/api/meetings/start", json=body).status_code == 200
+    client.post("/api/meetings/stop")
+    assert mgr.wait_idle(5)
+    r = client.post("/api/meetings/start", json=body)
+    assert r.status_code == 400 and r.get_json()["code"] == "confirm_required"
+    assert len(mgr.sources) == 1
+
+
+def test_a_start_without_the_consent_version_the_card_showed_is_refused(client, mgr):
+    card = client.get("/api/meetings/start-card").get_json()
+    r = client.post("/api/meetings/start", json={"consent_ack": True, "nonce": card["nonce"]})
+    assert r.status_code == 400 and r.get_json()["code"] == "consent_changed"
+    assert mgr.sources == []
+
+
+def test_the_start_card_is_for_the_person_at_this_machine(client, mgr):
+    r = client.get("/api/meetings/start-card", environ_base={"REMOTE_ADDR": "203.0.113.9"})
+    assert r.status_code in (401, 403)

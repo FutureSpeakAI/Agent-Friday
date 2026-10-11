@@ -79,7 +79,7 @@ def record(m, keep_audio=True, notes=True):
     """One finished meeting. Returns its id."""
     if not notes:
         m.seat_resolver = lambda: None
-    st = m.start(consent_ack=True, confirm=True, title="Planning", keep_audio=keep_audio)
+    st = m.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION, title="Planning", keep_audio=keep_audio)
     m._active.source.on(tone(0.9))
     m.stop()
     assert m.wait_idle(5)
@@ -149,7 +149,7 @@ def test_starting_with_the_spoken_line_says_it_through_the_speaker_hook(store):
         partials_factory=lambda: None, ledger=lambda *a, **k: None, retention=lambda: "",
         speaker=said.append, tick_s=0.01)
     try:
-        m.start(consent_ack=True, confirm=True, speak_consent=True)
+        m.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION, speak_consent=True)
         deadline = time.monotonic() + 3
         while not said and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -168,7 +168,7 @@ def test_not_asking_for_the_spoken_line_says_nothing(store):
         partials_factory=lambda: None, ledger=lambda *a, **k: None, retention=lambda: "",
         speaker=said.append, tick_s=0.01)
     try:
-        m.start(consent_ack=True, confirm=True)
+        m.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION)
         time.sleep(0.1)
         assert said == []
     finally:
@@ -260,7 +260,7 @@ def test_the_real_ledger_keeps_counts_and_drops_everything_else(tmp_path, monkey
 
 
 def test_a_recording_meeting_cannot_be_deleted_or_have_its_audio_deleted(store, mgr):
-    st = mgr.start(consent_ack=True, confirm=True, keep_audio=True)
+    st = mgr.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION, keep_audio=True)
     for fn in (mgr.delete, mgr.delete_audio):
         with pytest.raises(mc.MeetingError) as e:
             fn(st["id"])
@@ -344,7 +344,7 @@ def test_keeping_text_deletes_nothing(store, mgr):
 
 def test_a_meeting_in_progress_is_never_swept(store, mgr):
     mp.set_retention(audio="30_days", text="days", days=1)
-    st = mgr.start(consent_ack=True, confirm=True, keep_audio=True)
+    st = mgr.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION, keep_audio=True)
     assert mp.sweep(mgr) == {"audio_files": 0, "meetings": 0}
     assert mgr.status()["id"] == st["id"]
 
