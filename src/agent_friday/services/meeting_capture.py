@@ -150,6 +150,9 @@ NO_LOCAL_SEAT_CLOUD = ("The model chosen for local work is a cloud model, and "
 #: How long the start card's single-use token stays valid, and how many are kept.
 START_NONCE_TTL_S = 600.0
 START_NONCE_MAX = 8
+#: How long stop() waits for a start that is still opening its devices before
+#: it hands the closing to start() itself.
+START_STOP_WAIT_S = 15.0
 
 STOP_REASONS = {
     "owner": "You stopped the recording.",
@@ -162,6 +165,10 @@ STOP_REASONS = {
 }
 
 _ID_RE = re.compile(r"^[0-9a-f]{12}$")
+
+
+class _StopRequested(Exception):
+    """Raised inside start() when a stop arrived while the sources were opening."""
 
 
 class MeetingError(UserFacingError):
@@ -508,6 +515,24 @@ def _remove_tree(path: Path) -> bool:
     return not path.exists()
 
 
+def _remove_meeting_folder(d: Path) -> bool:
+    """Remove a meeting folder with the same retries as the audio, record last.
+    Everything but `meeting.json.enc` goes first; if any of it cannot be removed
+    the record stays, so the meeting is still readable and can be deleted again."""
+    try:
+        for child in list(d.iterdir()):
+            if child.name == "meeting.json.enc":
+                continue
+            if child.is_dir():
+                if not _remove_tree(child):
+                    return False
+            else:
+                child.unlink()
+    except OSError:
+        return False
+    return _remove_tree(d)
+
+
 def _load(mid: str) -> dict:
     p = _dir(mid) / "meeting.json.enc"
     if not p.exists():
@@ -676,6 +701,10 @@ class _Recording:
         self.system_error = ""
         self.start_done = threading.Event()   # set once start() has finished, well or badly
         self.start_failed = False             # start() tore this recording down itself
+        self.stopping = False                 # a stop was asked for; the source may still be open
+        self.stop_reason_req = "owner"
+        self.finished = False                 # the source is stopped and the record closed
+        self.finish_lock = threading.Lock()
 
     def chan(self, name: str) -> _Channel:
         c = self.chans.get(name)
@@ -767,6 +796,7 @@ class MeetingManager:
             # sample; until then the indicator says "starting".
             "capturing": r.first_sample_at is not None,
             "starting": not r.start_done.is_set(),
+            "stopping": r.stopping,
             "source": m["source"],
             # What is being recorded, for the indicator, the tray and the
             # meeting view: the same words everywhere.
@@ -783,40 +813,45 @@ class MeetingManager:
         }
 
     # -- the start card's token --------------------------------------------
-    def issue_start_card(self) -> dict:
+    def issue_start_card(self, session: str = "") -> dict:
         """What the start card shows and the single-use token its button must
         send. Asking for the card starts nothing; the token only proves that
         this request came from a card that was handed out a moment ago."""
         now = time.monotonic()
         token = secrets.token_urlsafe(18)
         with self._lock:
-            for k in [k for k, exp in self._nonces.items() if exp <= now]:
+            for k in [k for k, v in self._nonces.items() if v[0] <= now]:
                 del self._nonces[k]
             while len(self._nonces) >= START_NONCE_MAX:
-                del self._nonces[min(self._nonces, key=self._nonces.get)]
-            self._nonces[token] = now + START_NONCE_TTL_S
+                del self._nonces[min(self._nonces, key=lambda k: self._nonces[k][0])]
+            self._nonces[token] = (now + START_NONCE_TTL_S, str(session or ""))
         return {"nonce": token, "ttl_s": int(START_NONCE_TTL_S),
                 "consent_text": CONSENT_TEXT, "consent_version": CONSENT_VERSION}
 
-    def _nonce_valid(self, token) -> bool:
+    def _nonce_valid(self, token, session: str = "") -> bool:
         if not isinstance(token, str) or not token:
             return False
         with self._lock:
-            exp = self._nonces.get(token)
-        return exp is not None and exp > time.monotonic()
+            v = self._nonces.get(token)
+        return v is not None and v[0] > time.monotonic() and v[1] == str(session or "")
 
-    def _consume_start_nonce(self, token) -> bool:
+    def _consume_start_nonce(self, token, session: str = "") -> bool:
+        """Spend a token once. It is bound to the screen session it was issued
+        to: a token fetched by one session is no good to another."""
         if not isinstance(token, str) or not token:
             return False
         with self._lock:
-            exp = self._nonces.pop(token, None)
-        return exp is not None and exp > time.monotonic()
+            v = self._nonces.get(token)
+            if v is None or v[1] != str(session or ""):
+                return False
+            del self._nonces[token]
+        return v[0] > time.monotonic()
 
     # -- start -------------------------------------------------------------
     def start(self, *, consent_ack=False, consent_version=None, title="",
               event_id="", keep_audio=False, max_duration_s=None,
               system_audio=False, confirm=False, speak_consent=None,
-              nonce=None, consent_line=None) -> dict:
+              nonce=None, consent_line=None, session="") -> dict:
         """Start recording. Needs the owner's confirmed consent (`consent_ack`),
         the version of the consent statement the card showed
         (`consent_version`, required) and their explicit start: either
@@ -832,7 +867,7 @@ class MeetingManager:
             raise MeetingError("consent_required",
                                "Confirm the consent statement to start "
                                "recording: " + CONSENT_TEXT)
-        if confirm is not True and not self._nonce_valid(nonce):
+        if confirm is not True and not self._nonce_valid(nonce, session):
             raise MeetingError("confirm_required",
                                "Recording starts only when you press start on "
                                "the start card. Nothing was recorded.")
@@ -851,7 +886,7 @@ class MeetingManager:
             raise MeetingError("bad_duration",
                                "The maximum length must be between one minute "
                                "and eight hours.")
-        if confirm is not True and not self._consume_start_nonce(nonce):
+        if confirm is not True and not self._consume_start_nonce(nonce, session):
             raise MeetingError("confirm_required",
                                "Recording starts only when you press start on "
                                "the start card. Nothing was recorded.")
@@ -930,6 +965,7 @@ class MeetingManager:
             except Exception as e:
                 log.warning("meeting %s: not admitted to the scheduler: %s", mid, e)
                 r.hold = None
+            self._stop_checkpoint(r)
             r.t0 = self.clock()
             try:
                 source.start(lambda pcm, channel="you", _r=r: self._on_pcm(_r, pcm, channel))
@@ -938,18 +974,27 @@ class MeetingManager:
                         % log_failure(e, "Meeting microphone failed"))
                 raise MeetingError("device_error", _why, 503,
                                    detail="The microphone would not start: %s" % e) from e
+            # A stop that arrived while the device was opening is honoured
+            # here, at once, after every step that can take a while.
+            self._stop_checkpoint(r)
             m["system_audio"] = bool(getattr(source, "system_audio_active", False))
             if want_system and not m["system_audio"]:
                 self._system_audio_failed(
                     r, getattr(source, "system_error", "") or "it did not start.")
             self._start_partials(r)
+            self._stop_checkpoint(r)
             r.watchdog = threading.Thread(target=self._watch, args=(r,),
                                           name="meeting-watchdog", daemon=True)
             r.watchdog.start()
+            self._stop_checkpoint(r)
             log.info("meeting %s recording (%s, max %ds)", mid, m["source"], max_s)
             if speak_consent:
                 threading.Thread(target=self._speak_consent, args=(consent_line,),
                                  name="meeting-consent-line", daemon=True).start()
+        except _StopRequested:
+            # The owner (or an auto-stop) asked to stop while the sources were
+            # opening: close it as an ordinary stop, source stopped first.
+            self._finish_stop(r, r.stop_reason_req)
         except BaseException as e:
             self._abort_start(r, e)
             if isinstance(e, MeetingError) or not isinstance(e, Exception):
@@ -963,23 +1008,30 @@ class MeetingManager:
             r.start_done.set()
         return self.status()
 
+    @staticmethod
+    def _stop_checkpoint(r: _Recording) -> None:
+        if r.stop_evt.is_set():
+            raise _StopRequested()
+
     def _abort_start(self, r: _Recording, exc: BaseException) -> None:
         """Undo a start that failed after the recording was published. Never
         raises: every step is tried, and the recording is marked as an error so
         the transcript worker does not finish it as a meeting."""
         m = r.meeting
         r.start_failed = True
-        with self._lock:
-            if self._active is r:
-                self._active = None
-            if self._last_stop and self._last_stop.get("id") == m["id"]:
-                self._last_stop = None
         r.stop_evt.set()
+        # Status keeps saying "recording" until the source has really stopped.
         try:
             if r.source is not None:
                 r.source.stop()
         except Exception as e:  # noqa: BLE001
             log.warning("meeting %s: source did not stop cleanly: %s", m["id"], type(e).__name__)
+        with self._lock:
+            if self._active is r:
+                self._active = None
+            if self._last_stop and self._last_stop.get("id") == m["id"]:
+                self._last_stop = None
+        r.finished = True
         self._release_hold(r)
         if r.partial_thread is not None:
             r.partial_q.put(None)
@@ -1051,7 +1103,14 @@ class MeetingManager:
         hypothesis per channel. At each chunk boundary the stream restarts, so
         a partial never grows past one chunk."""
         while True:
-            item = r.partial_q.get()
+            try:
+                item = r.partial_q.get(timeout=0.5)
+            except queue.Empty:
+                # `stop_evt` is set by every stop and every aborted start, so a
+                # thread started after the sentinel was sent still ends.
+                if r.stop_evt.is_set():
+                    return
+                continue
             if item is None:
                 return
             name, pcm, boundary = item
@@ -1255,50 +1314,75 @@ class MeetingManager:
 
     # -- stop --------------------------------------------------------------
     def stop(self, reason: str = "owner", _rec=None) -> dict:
+        """Ask the recording to stop and wait for it to be stopped. The
+        recording stays published (status says "recording", with `stopping`)
+        until its source has actually stopped: nothing reports "not recording"
+        while a device may still be capturing."""
         with self._lock:
             r = self._active
             if r is None or (_rec is not None and r is not _rec):
                 raise MeetingError("not_recording", "Nothing is being recorded.", 409)
-            self._active = None
+            if r.stopping:
+                raise MeetingError("not_recording", "Nothing is being recorded.", 409)
+            r.stopping = True
+            r.stop_reason_req = reason
             self._last_stop = {"id": r.meeting["id"], "reason": reason,
                                "message": STOP_REASONS.get(reason, reason),
                                "at": _now_iso()}
+        r.stop_evt.set()
         # A stop that arrives while the sources are still opening waits for
-        # start() to finish (it holds no lock meanwhile), so the source is
-        # never stopped half-started.
-        r.start_done.wait(15.0)
+        # start() to finish (it holds no lock meanwhile). If start() is still
+        # busy after the wait, it closes the recording itself at its next
+        # checkpoint, so the source is stopped either way.
+        if not r.start_done.wait(START_STOP_WAIT_S):
+            return {"id": r.meeting["id"], "state": "stopping",
+                    "message": "Stopping the recording as soon as the microphone has opened."}
         if r.start_failed:
             raise MeetingError("not_recording", "Nothing is being recorded.", 409)
-        r.stop_evt.set()
-        err = ""
-        try:
-            r.source.stop()
-            err = getattr(r.source, "error", "") or ""
-        except Exception as e:
-            err = str(e)
+        self._finish_stop(r, reason)
         m = r.meeting
-        self._release_hold(r)
-        try:
-            self._flush(r)
-            if r.partial_thread is not None:
-                r.partial_q.put(None)
-            with self._io:
-                m["ended_at"] = _now_iso()
-                m["duration_s"] = round(self.clock() - r.t0, 1)
-                m["stop_reason"] = reason
-                m["state"] = "transcribing"
-                if reason == "device_error" and err:
-                    m["error"] = err[:300]
-                self._save_safe(m)
-        finally:
-            # The worker is always told to finish, so a failure above cannot
-            # leave a transcript worker waiting on a recording that is over.
-            r.q.put(None)
+        return _row(m) | {"message": STOP_REASONS.get(reason, reason)}
+
+    def _finish_stop(self, r: _Recording, reason: str) -> None:
+        """Close a recording once: stop the source, release the hold, queue the
+        last audio and tell the transcript worker to finish. `_active` is
+        cleared only after the source has stopped. Safe to call from two
+        threads; the second waits for the first and then returns."""
+        m = r.meeting
+        with r.finish_lock:
+            if r.finished:
+                return
+            err = ""
+            try:
+                r.source.stop()
+                err = getattr(r.source, "error", "") or ""
+            except Exception as e:
+                err = str(e)
+            self._release_hold(r)
+            try:
+                self._flush(r)
+                if r.partial_thread is not None:
+                    r.partial_q.put(None)
+                with self._io:
+                    m["ended_at"] = _now_iso()
+                    m["duration_s"] = round(self.clock() - r.t0, 1)
+                    m["stop_reason"] = reason
+                    m["state"] = "transcribing"
+                    if reason == "device_error" and err:
+                        m["error"] = err[:300]
+                    self._save_safe(m)
+            finally:
+                # The worker is always told to finish, so a failure above cannot
+                # leave a transcript worker waiting on a recording that is over.
+                r.q.put(None)
+                with self._lock:
+                    if self._active is r:
+                        self._active = None
+                r.finished = True
         if reason != "owner":
             self._notify(m, reason)
         log.info("meeting %s stopped (%s) after %.0fs", m["id"], reason,
                  m["duration_s"])
-        return _row(m) | {"message": STOP_REASONS.get(reason, reason)}
 
     def _notify(self, m: dict, reason: str) -> None:
         msg = "Recording stopped. %s The transcript is being finished." % (
@@ -1417,8 +1501,13 @@ class MeetingManager:
                 raise MeetingError("not_found", "No such meeting.", 404)
             n_audio = sum(len(v) for v in self._audio_files(d / "audio").values()) \
                 if (d / "audio").exists() else 0
+            if not _remove_meeting_folder(d):
+                # Nothing is half-deleted into an unreadable folder: the record
+                # is the last thing to go, so a failure leaves a readable meeting.
+                raise MeetingError("delete_incomplete",
+                                   "Some of this meeting could not be removed "
+                                   "right now. Try deleting it again.", 500)
             self._deleted.add(mid)
-            shutil.rmtree(d)
         self._count("meeting", reason, n_audio, 1)
         return {"deleted": mid, "exists": d.exists()}
 

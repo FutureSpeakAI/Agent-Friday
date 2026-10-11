@@ -12,6 +12,7 @@ import types
 import pytest
 
 from agent_friday.services import meeting_capture as mc
+from agent_friday.services import screen_click
 from agent_friday.services import meeting_policy as mp
 
 REMOTE = {"REMOTE_ADDR": "203.0.113.9"}
@@ -20,7 +21,7 @@ REMOTE = {"REMOTE_ADDR": "203.0.113.9"}
 def start_body(client, **extra):
     """What the start card sends: the consent version and the single-use token
     it was handed."""
-    card = client.get("/api/meetings/start-card").get_json()
+    card = client.post("/api/meetings/start-card").get_json()
     return {"consent_ack": True, "nonce": card["nonce"],
             "consent_version": card["consent_version"]} | extra
 
@@ -70,6 +71,8 @@ def env(tmp_path, monkeypatch):
         tick_s=0.05, chunk_s=1.0)
     m.calls, m.ledger_lines, m.cfg = calls, ledger, cfg
     monkeypatch.setattr(mc, "_manager", m)
+    # These tests are the page: its click on the screen is a given unless a test says otherwise.
+    monkeypatch.setattr(screen_click, "screen_session", lambda req: True)
     yield m
     try:
         m.stop()

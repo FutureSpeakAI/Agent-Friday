@@ -45,23 +45,31 @@ def wait_for(pred, timeout=5.0):
 class Src:
     kind = "microphone"
 
-    def __init__(self, max_s=0, start_gate=None, start_error=None):
+    def __init__(self, max_s=0, start_gate=None, start_error=None, stop_gate=None):
         self.error = ""
         self.on = None
         self.stopped = False
         self.started = threading.Event()
+        self.in_stop = threading.Event()
         self.gate = start_gate
+        self.stop_gate = stop_gate
         self.fail = start_error
+        self.order = []
 
     def start(self, on_pcm):
         self.on = on_pcm
         self.started.set()
         if self.gate is not None:
             self.gate.wait(10)
+        self.order.append("start_returned")
         if self.fail is not None:
             raise self.fail
 
     def stop(self):
+        self.in_stop.set()
+        if self.stop_gate is not None:
+            self.stop_gate.wait(10)
+        self.order.append("stop")
         self.stopped = True
 
 
@@ -133,6 +141,8 @@ def make(tmp_path, monkeypatch):
         for s in r.sources:
             if s.gate is not None:
                 s.gate.set()
+            if s.stop_gate is not None:
+                s.stop_gate.set()
         try:
             r.m.stop()
         except mc.MeetingError:
@@ -543,6 +553,134 @@ def test_the_tray_icon_changes_while_a_meeting_records(monkeypatch):
                         lambda: {"recording": True, "elapsed_s": 5}, raising=False)
     t._update_meeting_title()
     assert t.icon.icon is not base and t.icon.icon.getpixel((56, 56))[0] > 180
+    # One failed or slow poll does not hide the dot; two "not recording" answers do.
+    monkeypatch.setattr(t, "_meeting_status", lambda: {}, raising=False)
+    t._update_meeting_title()
+    assert t.icon.icon is not base, "one failed poll turned the recording dot off"
+    monkeypatch.setattr(t, "_meeting_status", lambda: {"recording": True, "elapsed_s": 9}, raising=False)
+    t._update_meeting_title()
     monkeypatch.setattr(t, "_meeting_status", lambda: {"recording": False}, raising=False)
     t._update_meeting_title()
+    assert t.icon.icon is not base
+    t._update_meeting_title()
     assert t.icon.icon is base
+
+
+# ── N2: status never says "not recording" while a source may be capturing ───
+
+def test_status_says_stopping_until_the_source_has_really_stopped(make):
+    gate = threading.Event()
+    r = make(src_kw={"stop_gate": gate})
+    r.start(title="Planning")
+    src = r.sources[-1]
+    out = []
+    t = threading.Thread(target=lambda: out.append(r.m.stop()), daemon=True)
+    t.start()
+    assert src.in_stop.wait(5)
+    st = r.m.status()
+    assert st["recording"] is True and st["stopping"] is True, "reported not-recording while the source was still open"
+    with pytest.raises(mc.MeetingError):
+        r.start()                      # no second recording while the first one is closing
+    gate.set()
+    t.join(5)
+    assert out and src.stopped
+    assert r.m.status()["recording"] is False
+
+
+def test_a_failed_start_keeps_saying_recording_until_the_source_has_stopped(make, monkeypatch):
+    gate = threading.Event()
+    r = make(src_kw={"stop_gate": gate})
+
+    def boom(self, rec):
+        raise RuntimeError("streaming ear failed to load")
+    monkeypatch.setattr(mc.MeetingManager, "_start_partials", boom)
+    errs = []
+
+    def go():
+        try:
+            r.start()
+        except mc.MeetingError as e:
+            errs.append(e.code)
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    assert wait_for(lambda: r.sources and r.sources[-1].in_stop.is_set())
+    assert r.m.status()["recording"] is True
+    gate.set()
+    t.join(5)
+    assert errs == ["start_failed"] and r.m.status()["recording"] is False
+
+
+def test_a_stop_that_outlasts_a_slow_start_is_finished_by_start_after_the_source_opens(make, monkeypatch):
+    monkeypatch.setattr(mc, "START_STOP_WAIT_S", 0.2)
+    gate = threading.Event()
+    r = make(src_kw={"start_gate": gate})
+    th = threading.Thread(target=lambda: r.start(title="Slow device"), daemon=True)
+    th.start()
+    assert wait_for(lambda: r.sources and r.sources[-1].started.is_set())
+    src = r.sources[-1]
+    row = r.m.stop()
+    assert row["state"] == "stopping"
+    assert not src.stopped, "the source was stopped while it was still opening"
+    assert r.m.status()["recording"] is True and r.m.status()["stopping"] is True
+    gate.set()
+    th.join(5)
+    assert wait_for(lambda: not r.m.status()["recording"])
+    assert src.order == ["start_returned", "stop"], "the source was left capturing after its stop"
+    assert r.m.wait_idle(5)
+    assert r.m.list()[0]["state"] in ("transcribing", "transcribed", "done")
+
+
+def test_a_late_partials_thread_ends_on_the_stop_signal():
+    rec = mc._Recording({"id": "a" * 12}, 60, 1.0)
+    rec.stop_evt.set()
+    t = threading.Thread(target=types.MethodType(mc.MeetingManager._partials_loop, object()),
+                         args=(rec,), daemon=True)
+    t.start()
+    t.join(3)
+    assert not t.is_alive(), "the partials thread waited forever for a sentinel that was already sent"
+
+
+# ── N1 (manager side): a token is bound to the screen session it was issued to ─
+
+def test_a_start_token_is_good_only_for_the_session_it_was_issued_to(make):
+    r = make()
+    card = r.m.issue_start_card(session="session-a")
+    with pytest.raises(mc.MeetingError) as e:
+        r.m.start(consent_ack=True, nonce=card["nonce"],
+                  consent_version=card["consent_version"], session="session-b")
+    assert e.value.code == "confirm_required" and r.sources == []
+    r.m.start(consent_ack=True, nonce=card["nonce"],
+              consent_version=card["consent_version"], session="session-a")
+    assert len(r.sources) == 1
+
+
+# ── delete(): the same retrying removal as the audio, record last ───────────
+
+def test_deleting_a_meeting_that_cannot_be_fully_removed_stays_readable_and_uncounted(make, monkeypatch):
+    r = make()
+    st = r.start(keep_audio=True)
+    mid = r.finish(st)
+    monkeypatch.setattr(mc, "_remove_tree", lambda p: False)
+    with pytest.raises(mc.MeetingError) as e:
+        r.m.delete(mid)
+    assert e.value.code == "delete_incomplete"
+    assert r.m.get(mid)["id"] == mid, "a half-deleted, unreadable folder was left"
+    assert r.ledger == [] and mid not in r.m._deleted
+
+
+def test_deleting_a_meeting_retries_a_file_another_program_holds(make, monkeypatch):
+    r = make()
+    st = r.start(keep_audio=True)
+    mid = r.finish(st)
+    real = mc.shutil.rmtree
+    seen = set()
+
+    def held_once(p, *a, **k):
+        if str(p) not in seen:
+            seen.add(str(p))
+            raise PermissionError("held by the indexer")
+        return real(p, *a, **k)
+    monkeypatch.setattr(mc.shutil, "rmtree", held_once)
+    out = r.m.delete(mid)
+    assert out["exists"] is False and not (r.root / mid).exists()
+    assert [k for k, _ in r.ledger] == ["meeting_deletion"]

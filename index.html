@@ -39392,7 +39392,9 @@ function MeetingsPanel() {
     setSpeak(!!d.speak);
   }).catch(() => {});
   // The start card's own text, version and single-use token come from one request; Start stays off until they have all arrived.
-  const loadCard = () => fetch('/api/meetings/start-card').then(r => r.json()).then(d => {
+  const loadCard = () => fetch('/api/meetings/start-card', {
+    method: 'POST'
+  }).then(r => r.json()).then(d => {
     if (d && d.status === 'ok' && d.nonce && d.consent_text && d.jurisdiction_note) {
       setCard(d);
       setConsent(d);

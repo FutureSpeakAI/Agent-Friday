@@ -2,7 +2,7 @@
 
     GET    /api/meetings/status            recording state for the indicator
     GET    /api/meetings/suggest           a title from the calendar event now
-    GET    /api/meetings/start-card        the consent statement, its version, the
+    POST   /api/meetings/start-card        the consent statement, its version, the
                                            jurisdiction note and a single-use token
     POST   /api/meetings/start             {consent_ack, nonce, consent_version,
                                             title, event_id, keep_audio,
@@ -39,9 +39,12 @@ first and a token it handed out a moment ago, once, for the second. A
 accepting one opens the start card and starts nothing.
 """
 
+import hashlib
+
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.services import meeting_capture as mc
+from agent_friday.services import screen_click
 from agent_friday.services import meeting_policy as mp
 from agent_friday.routes._errors import api_error, public_result
 
@@ -81,17 +84,35 @@ def meetings_suggest():
     return jsonify({"status": "ok", "event": ev or None})
 
 
-@meetings_bp.route('/api/meetings/start-card')
+_NOT_ON_SCREEN = ({"status": "error", "code": "screen_only",
+                   "error": "Recording starts only from the Start recording card "
+                            "in the Friday window."}, 403)
+
+
+def _session_id() -> str:
+    """The screen session a start card is bound to: a digest of the page's
+    rotating session token, never the token itself."""
+    tok = request.headers.get("X-Friday-Token") or ""
+    return hashlib.sha256(tok.encode("utf-8")).hexdigest()[:32]
+
+
+@meetings_bp.route('/api/meetings/start-card', methods=['POST'])
 def meetings_start_card():
     """What the start card shows (the consent statement, its version, the
     jurisdiction note and the editable line) and the single-use token its start
-    button sends. Asking for it starts nothing."""
-    card = mc.get_manager().issue_start_card()
+    button sends, bound to this screen session. Asking for it starts nothing,
+    and only the page in the Friday window may ask (a POST, so the page adds
+    its session token like any other change)."""
+    if not screen_click.screen_session(request):
+        return jsonify(_NOT_ON_SCREEN[0]), _NOT_ON_SCREEN[1]
+    card = mc.get_manager().issue_start_card(_session_id())
     return jsonify({"status": "ok"} | mp.consent() | card)
 
 
 @meetings_bp.route('/api/meetings/start', methods=['POST'])
 def meetings_start():
+    if not screen_click.screen_session(request):
+        return jsonify(_NOT_ON_SCREEN[0]), _NOT_ON_SCREEN[1]
     d = request.get_json(silent=True) or {}
     try:
         # `confirm` is never read from the request: the start is confirmed by
@@ -107,7 +128,7 @@ def meetings_start():
             system_audio=d.get("system_audio") is True,
             speak_consent=d.get("speak_consent") is True,
             consent_line=d.get("consent_line"),
-            nonce=d.get("nonce"))
+            nonce=d.get("nonce"), session=_session_id())
     except mc.MeetingError as e:
         return _fail(e)
     return jsonify({"status": "ok"} | st)

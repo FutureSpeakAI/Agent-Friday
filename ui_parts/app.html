@@ -12212,7 +12212,7 @@ function MeetingsPanel(){
   const [liveTx,setLiveTx]=useState({});
   const loadConsent=()=>fetch('/api/meetings/consent').then(r=>r.json()).then(d=>{setConsent(d);setLine(d.line||'');setSpeak(!!d.speak);}).catch(()=>{});
   // The start card's own text, version and single-use token come from one request; Start stays off until they have all arrived.
-  const loadCard=()=>fetch('/api/meetings/start-card').then(r=>r.json()).then(d=>{if(d&&d.status==='ok'&&d.nonce&&d.consent_text&&d.jurisdiction_note){setCard(d);setConsent(d);setLine(d.line||'');setSpeak(!!d.speak);}else setCard(null);}).catch(()=>setCard(null));
+  const loadCard=()=>fetch('/api/meetings/start-card',{method:'POST'}).then(r=>r.json()).then(d=>{if(d&&d.status==='ok'&&d.nonce&&d.consent_text&&d.jurisdiction_note){setCard(d);setConsent(d);setLine(d.line||'');setSpeak(!!d.speak);}else setCard(null);}).catch(()=>setCard(null));
   const loadRet=()=>fetch('/api/meetings/retention').then(r=>r.json()).then(setRet).catch(()=>{});
   const loadList=()=>fetch('/api/meetings').then(r=>r.json()).then(d=>setList(d.meetings||[])).catch(()=>{});
   const openMeeting=id=>fetch('/api/meetings/'+id).then(r=>r.json()).then(d=>{if(d.meeting){setSel(d.meeting);setPicked({});setFu(null);setShowTx(false);}else setMsg(d.error||'Could not open that meeting.');}).catch(()=>setMsg('Could not open that meeting.'));

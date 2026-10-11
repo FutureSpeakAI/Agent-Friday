@@ -548,3 +548,17 @@ def test_the_notes_run_is_a_job_the_owner_asked_for(tmp_path, monkeypatch):
     r.finish()
     assert r.m.get(mid)["summary"]["status"] == "done"
     assert ("Meeting notes", "user_job") in seen
+
+
+def test_the_notes_job_is_not_held_by_another_meetings_background_pause(sched):
+    """A foreground (non-deferrable) notes job is a user_job: another meeting's
+    recording pauses background work, never the notes the owner asked for."""
+    ls.set_residency_probe(lambda model: False)      # a swap: the gate looks at who is busy
+    hold = ls.hold_for_meeting("abc123def456")
+    try:
+        notes = tq.Ticket("n1", "user_job", "default", model="some-model", kind="meeting_notes")
+        assert ls.gate(notes) == ""
+        background = tq.Ticket("n2", "background", "default", model="some-model", kind="meeting_notes")
+        assert "meeting" in ls.gate(background)
+    finally:
+        hold.release()

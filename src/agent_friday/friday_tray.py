@@ -661,7 +661,17 @@ class FridayTray:
             tip = tray_tooltip(self._meeting_status()) if self.running else None
         except Exception:
             tip = None
-        self._show_recording_icon(bool(tip))
+        # The dot comes on at once and goes off only after two polls in a row
+        # say "not recording", so one slow or failed status poll cannot hide it
+        # while a recording is still going. (The tooltip follows each poll.)
+        if tip:
+            self._not_recording_polls = 0
+            self._show_recording_icon(True)
+        else:
+            n = int(getattr(self, "_not_recording_polls", 0)) + 1
+            self._not_recording_polls = n
+            if n >= 2:
+                self._show_recording_icon(False)
         if not tip and self.running:
             try:
                 from agent_friday.services.seat_supervisor import tray_tooltip as _queue_tip
