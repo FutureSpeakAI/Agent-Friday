@@ -18248,6 +18248,64 @@ function VoiceStackCard({ s, save, mc }) {
             [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']].map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l))),
           /*#__PURE__*/React.createElement("button", { className: `settings-btn ${s.local_voice_kokoro_allow_cpu ? 'active' : ''}`, style: { fontSize: 11, padding: '5px 10px', marginTop: 6 }, onClick: () => save({ local_voice_kokoro_allow_cpu: !s.local_voice_kokoro_allow_cpu }) }, s.local_voice_kokoro_allow_cpu ? 'Kokoro on the processor: allowed (default; slower than the card)' : 'Kokoro on the processor: off (Piper speaks when the card is busy)')))));
 }
+// ── Settings → Voice → Local voice readiness (Laya in every mode, LV-7) ──
+// Why the voice is on the cloud (your choice / local not ready / local not
+// measured), "Measure now" for a PC nobody has measured, the idle measuring
+// job's progress, and the one-time switch offer: both choices, nothing
+// preselected. "Not measured" is never worded as "can't". Everything shown
+// comes from /api/voice/local-readiness; this component decides nothing.
+function LocalVoiceReadiness({ s }) {
+  const E = React.createElement;
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const pollRef = useRef(null);
+  const load = useCallback(() => fetch('/api/voice/local-readiness').then(r => r.json()).then(d => { if (d && d.status === 'ok') setSt(d); }).catch(() => {}), []);
+  useEffect(() => { load(); }, [load, s.voice_engine, s.local_voice_switch_offer]);
+  // While a job waits or runs, look again every few seconds so its progress is true.
+  useEffect(() => {
+    clearTimeout(pollRef.current);
+    const j = st && st.job;
+    if (j && (j.state === 'waiting' || j.state === 'running')) pollRef.current = setTimeout(load, 5000);
+    return () => clearTimeout(pollRef.current);
+  }, [st, load]);
+  const post = (url, body) => {
+    setBusy(true); setMsg('');
+    return apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.status === 'ok') { setSt(d); setMsg(d.message || ''); try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {} try { fridayInvalidateModelCatalog(); } catch (_) {} }
+        else setMsg((d && d.message) || 'That did not go through.');
+      })
+      .catch(() => setMsg('Could not reach the server.'))
+      .finally(() => setBusy(false));
+  };
+  if (!st) return null;
+  const job = st.job || {};
+  const queued = job.state === 'waiting' || job.state === 'running';
+  const why = st.why_cloud || {};
+  const offer = st.offer;
+  const word = st.voice_state === 'capable' ? 'Local voice runs well on this PC.'
+    : st.voice_state === 'refused' ? 'Local voice is not ready on this PC' + (st.why ? ': ' + st.why : '') + '.'
+    : 'Local voice is not measured on this PC yet. That is not the same as it not working.';
+  const color = st.voice_state === 'capable' ? '#00ff80' : st.voice_state === 'refused' ? '#ef4444' : 'var(--warn, #e0a030)';
+  const when = st.assessed_at ? new Date(st.assessed_at) : null;
+  return E(StRow, { label: 'Local voice', desc: 'Whether voice can run on this PC, and why ' + fridayName() + ' is on cloud voice when she is. Measuring loads the voice models once, when you are away, and never during a call.', settingKey: 'local_voice_readiness' },
+    E('div', { style: { fontSize: 12, lineHeight: 1.5 } },
+      E('div', null, E('span', { style: { color, marginRight: 6 } }, st.voice_state === 'capable' ? '●' : st.voice_state === 'refused' ? '✕' : '○'), word),
+      why.on_cloud && E('div', { style: { fontSize: 11, opacity: 0.8, marginTop: 4 }, 'data-why-cloud': why.reason }, E('b', null, 'Why cloud voice: '), why.text),
+      st.voice_state === 'unknown' && E('div', { style: { marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+        E('button', { className: 'settings-btn', style: { fontSize: 11, padding: '5px 12px' }, disabled: busy || queued, onClick: () => post('/api/voice/local-readiness/measure') }, queued ? 'Measure queued' : 'Measure now'),
+        queued && E('span', { role: 'status', style: { fontSize: 11, opacity: 0.8 } }, job.phase || 'Waiting for you to be away')),
+      st.voice_state !== 'unknown' && queued && E('div', { role: 'status', style: { fontSize: 11, opacity: 0.8, marginTop: 6 } }, job.phase || 'Checking what this PC can run'),
+      when && !isNaN(when) && E('div', { style: { fontSize: 11, opacity: 0.55, marginTop: 6 } }, 'Last checked ' + when.toLocaleDateString()),
+      offer && E('div', { 'data-local-voice-offer': '1', style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, lineHeight: 1.5 } },
+        E('div', { style: { fontWeight: 600, marginBottom: 6 } }, offer.title),
+        E('div', { style: { marginBottom: 8 } }, offer.body),
+        E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          (offer.choices || []).map(c => E('button', { key: c.id, className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/local-readiness/offer', { choice: c.id }) }, c.label + (c.recommended ? ' (Recommended)' : ''))))),
+      msg && E('div', { role: 'status', style: { fontSize: 11, opacity: 0.8, marginTop: 6 } }, msg)));
+}
 // ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
 // One row of modes for the `voice_engine` setting. `auto` is gone from the
 // picker (it is read as `local`). A cloud mode shows its
@@ -18446,6 +18504,7 @@ function SettingsTabVoice({s,save}){
     {showWizard&&<VoiceSetupWizard onClose={()=>setShowWizard(false)}/>}
     <StSection title="Voice engine">
       <VoiceModePicker s={s} save={save} mc={mc}/>
+      <LocalVoiceReadiness s={s}/>
       {(s.voice_engine||'local')==='gemini'&&<StRow label="Gemini Live model" desc="The speech-to-speech model the cloud engine uses.">
         <select className="input" style={{width:'100%'}} value={s.voice_model||''} onChange={e=>save({voice_model:e.target.value})}>
           <option value="">— default —</option>
@@ -18659,6 +18718,13 @@ function CloudConsentRow({ consent, onChanged, compact }) {
       else setMsg((j && j.message) || 'Not recorded.');
     }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
   };
+  // "Not measured" offers Measure now: an idle background job, never during a call.
+  const measureNow = () => {
+    setBusy(true); setMsg('');
+    apiFetch('/api/voice/local-readiness/measure', { method: 'POST' }).then(r => r.json()).then(j => {
+      setMsg(j && j.status === 'ok' ? 'Queued. It runs when you have been away for a few minutes.' : ((j && j.message) || 'Could not queue the measurement.'));
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
   const when = c.at ? new Date(c.at) : null;
   const whenTxt = when && !isNaN(when) ? when.toLocaleDateString() : (c.source === 'legacy_unrestricted_cloud_flag' ? 'legacy flag' : 'never');
   const choiceTxt = c.answered === false || !c.choice ? 'not answered (gated)'
@@ -18669,8 +18735,15 @@ function CloudConsentRow({ consent, onChanged, compact }) {
     E('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
       E('span', { style: { color: 'rgba(255,255,255,0.9)' } }, 'Cloud consent: ' + choiceTxt),
       E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, 'answered ' + whenTxt),
-      c.snapshot_capable === false && E('span', { style: { color: '#f59e0b' } },
-        'the machine said local was not capable' + (c.snapshot_why ? ': ' + c.snapshot_why : '')),
+      c.snapshot_capable === false && (c.snapshot_state === 'refused'
+        ? E('span', { style: { color: '#f59e0b' } },
+          'the machine said local was not capable' + (c.snapshot_why ? ': ' + c.snapshot_why : ''))
+        : E('span', { style: { color: '#f59e0b' } },
+          'local was not measured when this was answered, so nothing has said it cannot run' + (c.snapshot_why ? ' (' + c.snapshot_why + ')' : ''))),
+      c.snapshot_capable === false && c.snapshot_state !== 'refused' && E('button', {
+        className: 'settings-btn', disabled: busy, onClick: measureNow,
+        style: { fontSize: 10, padding: '3px 9px' },
+      }, 'Measure now'),
       E('button', {
         className: 'settings-btn', disabled: busy, onClick: reask,
         style: { fontSize: 10, padding: '3px 9px' },
@@ -18682,7 +18755,9 @@ function CloudConsentRow({ consent, onChanged, compact }) {
     },
       E('div', { style: { color: cap && cap.capable ? '#00ff80' : '#f59e0b', marginBottom: 6 } },
         cap && cap.capable ? 'This machine can run private-local today.'
-          : 'This machine still cannot run the full private-local set: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'no reason given') + '.'),
+          : cap && cap.state === 'unknown'
+            ? 'This machine has not been measured for the full private-local set yet: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'nothing measured') + '. That is not the same as it not working.'
+            : 'This machine still cannot run the full private-local set: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'no reason given') + '.'),
       E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
         cap && cap.capable && E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('local_private') },
           'Keep it local and private'),
@@ -18877,6 +18952,7 @@ function PrivacyCloudConsent() {
     consent: {
       answered: st.answered, choice: st.choice, at: st.at, source: st.source,
       snapshot_capable: snap.capable,
+      snapshot_state: st.snapshot_state || snap.state,
       snapshot_why: snap.why || (snap.roles && snap.roles.text && snap.roles.text.why) || snap.chain_why,
     },
     onChanged: load,
