@@ -19129,6 +19129,9 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Laya chat pilot">
       <LayaPilotPanel s={s} save={save}/>
     </StSection>
+    <StSection title="What Laya learns about you">
+      <LayaLearningPanel s={s} save={save}/>
+    </StSection>
     <StSection title="Scheduled jobs: what they may do on their own">
       <GovernanceGrantsPanel/>
     </StSection>
@@ -19650,6 +19653,104 @@ function LayaLabelQueue({st, reload}) {
   );
 }
 // End Laya label queue
+
+function LayaLearningPanel({s, save}) {
+  // What Laya learns about you (services/laya_personal; swot spec d.2-d.4). The report
+  // card: what she learned, what she turned down and why, what waits for your OK, the
+  // routes she learns less about because of sensitivity, undo and forget per item, reset,
+  // wipe, roll back to one of the last three versions, and the only place a threshold
+  // can be loosened (a card, approved by a click here).
+  const E = React.createElement;
+  const [rep, setRep] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [wipeAsk, setWipeAsk] = useState(false);
+  const load = useCallback(() => {
+    apiFetch('/api/laya/learning')
+      .then(r => r.json())
+      .then(d => { if (d.status !== 'ok') throw new Error(d.message || 'Could not read what Laya learned.'); setRep(d); })
+      .catch(e => setMsg(e.message || 'Could not read what Laya learned.'));
+  }, []);
+  useEffect(() => { load(); }, [load, s.laya_personal_learning]);
+  const post = (path, body, key) => {
+    setBusy(key || path); setMsg('');
+    apiFetch('/api/laya/learning/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
+      .then(r => r.json())
+      .then(d => { setMsg(d.message || ''); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => { setBusy(''); setWipeAsk(false); });
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const head = {fontSize:11.5, color:'rgba(255,255,255,0.7)', margin:'12px 0 4px'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
+  const when = at => { try { return new Date(at * 1000).toLocaleDateString(); } catch (e) { return ''; } };
+  const btn = (label, onClick, key, extra) => E('button', Object.assign({className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, extra || {}), label);
+  const learning = rep && rep.learning;
+  const item = (it, actions) => E('div', {key: it.id, style: row},
+    E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, '“' + (it.text || '') + '” → ' + it.route),
+    E('div', {style: dim}, when(it.at) + ' · ' + (it.source === 'spoken' ? 'you said it' : it.source === 'brain' ? 'the deeper mind chose it' : 'typed or answered')
+      + (it.weight === 'weak' ? ' · tells me if an action was wanted' : '') + (it.off ? ' · set aside' : '')),
+    it.reason ? E('div', {style: dim}, it.reason) : null,
+    E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}}, actions));
+  const undoBtn = it => it.off ? btn('Put it back', () => post('undo', {id: it.id, off: false}, 'u' + it.id), 'put')
+                               : btn('Undo', () => post('undo', {id: it.id, off: true}, 'u' + it.id), 'undo');
+  const forgetBtn = it => btn('Forget', () => post('forget', {id: it.id}, 'f' + it.id), 'forget');
+  return E('div', null,
+    E('div', {'data-st-key': 'settings.laya.personal_learning'},
+      E(StToggle, {label:'Let Laya learn from my corrections', value: s.laya_personal_learning !== false,
+        onChange: () => save({laya_personal_learning: s.laya_personal_learning === false}),
+        desc:'On. When you correct Laya or answer one of her questions, she keeps those words, sealed in your vault on this PC for 180 days, and checks them against her test questions before she uses them. She does not keep what she can tell is sensitive, and when she cannot tell she keeps nothing. She never learns from silence, and a minor profile learns nothing. Nothing leaves this PC.'})),
+    rep && !rep.notice_ack && rep.learning && rep.learning.on && E('div', {role:'status', style:Object.assign({}, row, {borderColor:'rgba(255,179,71,0.25)'})},
+      E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)'}}, rep.notice),
+      E('div', {style:{marginTop:4}}, btn('Got it', () => post('notice', {}, 'notice'), 'notice'))),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'#f59e0b', marginTop:6}}, msg),
+    rep && E('div', {style: dim},
+      (learning && !learning.on ? learning.why + ' ' : '') +
+      (rep.vault === 'locked' ? 'The vault is locked: new corrections wait in a sealed buffer (' + (rep.staged || 0) + ') and nothing is read until it opens. ' : '') +
+      (rep.vault === 'no_key' ? (rep.vault_note || '') + ' ' : '') +
+      (rep.households ? rep.households.note + ' ' : '') +
+      'Kept for ' + rep.retention_days + ' days.'),
+    rep && (rep.notes || []).map((n, i) => E('div', {key: 'note' + i, style: dim}, n)),
+    rep && rep.vault === 'open' && E('div', null,
+      E('div', {style: head}, 'What she learned'),
+      (rep.learned || []).length === 0 && E('div', {style: dim}, 'Nothing yet. When you correct her, it lands here and she tells you.'),
+      (rep.learned || []).slice(0, 30).map(it => item(it, [undoBtn(it), forgetBtn(it)])),
+      (rep.rejected || []).length > 0 && E('div', {style: head}, 'What she turned down, and why'),
+      (rep.rejected || []).slice(0, 30).map(it => item(it, [forgetBtn(it)])),
+      (rep.waiting || []).length > 0 && E('div', {style: head}, 'Waiting for your OK'),
+      (rep.waiting || []).length > 0 && E('div', {style: dim}, 'The deeper mind made these choices. They teach Laya only after you confirm them.'),
+      (rep.waiting || []).slice(0, 20).map(it => item(it, [
+        btn('Yes, that was right', () => post('confirm', {id: it.id, confirm: true}, 'c' + it.id), 'yes'),
+        btn('No, drop it', () => post('confirm', {id: it.id, confirm: false}, 'd' + it.id), 'no')])),
+      (rep.under_learned || []).length > 0 && E('div', {style: head}, 'She learns less about these'),
+      (rep.under_learned || []).map(u => E('div', {key: u.route_id, style: dim}, u.route + ': ' + u.skipped + ' turn' + (u.skipped === 1 ? '' : 's') + ' not kept. ' + u.why)),
+      E('div', {style: head}, 'Versions'),
+      E('div', {style: dim}, 'She keeps the last three, plus how she shipped. Now in use: ' + (rep.live === 'base' ? 'how she shipped' : 'version ' + rep.live) + '.'),
+      (rep.versions || []).map(v => E('div', {key: v.id, style: Object.assign({}, row, {display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'})},
+        E('span', {style:{fontSize:11.5, color:'rgba(255,255,255,0.7)'}}, when(v.created) + ' · ' + v.phrasings + ' phrasing' + (v.phrasings === 1 ? '' : 's') + (v.live ? ' · in use' : '')),
+        !v.live && btn('Go back to this', () => post('rollback', {target: v.id}, 'r' + v.id), 'rb'))),
+      E('div', {style:{display:'flex', gap:6, flexWrap:'wrap', marginTop:6}},
+        btn('Back to how she shipped', () => post('rollback', {target: 'base'}, 'base'), 'base'),
+        btn('Reset (set everything aside)', () => post('reset', {}, 'reset'), 'reset'),
+        btn('Learn now', () => post('refit', {}, 'refit'), 'refit'),
+        wipeAsk ? [E('span', {key:'q', style: dim}, 'This deletes everything she kept, for good.'),
+                   btn('Yes, wipe it', () => post('wipe', {confirm: true}, 'wipe'), 'wipe'),
+                   btn('Keep it', () => setWipeAsk(false), 'keep')]
+                : btn('Wipe everything…', () => setWipeAsk(true), 'wipeask')),
+      rep.u2 && E('div', null,
+        E('div', {style: head}, 'How sure she is'),
+        E('div', {style: dim}, rep.u2.live
+          ? ('Her confidence is tuned to your corrections: she acts only above ' + (rep.u2.live.act != null ? Number(rep.u2.live.act).toFixed(2) : 'her shipped level') + '. She can only get more careful on her own.')
+          : 'Her confidence is still the shipped one. It tunes itself only after you have given her enough corrections, and only toward asking more.'),
+        rep.u2.pending && E('div', {style: dim}, 'A newer tuning is running unseen for a few days before it takes over.'),
+        rep.u2.last_gate && (rep.u2.last_gate.checks || []).map((c, i) => E('div', {key: i, style: dim}, (c.ok ? '✓ ' : '✗ ') + c.name + ': ' + c.detail))),
+      (rep.loosen || []).map(o => E('div', {key: o.head + o.name, style: row},
+        E('div', {style:{fontSize:11.5, color:'rgba(255,255,255,0.7)'}}, 'Let her act on a lower score?'),
+        E('div', {style: dim}, o.why),
+        o.can_offer && btn('Ask me to approve ' + Number(o.proposed).toFixed(2), () => post('loosen', {head: o.head, name: o.name, value: o.proposed}, 'loosen'), 'loosen'),
+        o.can_offer && E('div', {style: dim}, 'This raises a card in your approvals. Only a click there lets her act on less than the shipped score.')))));
+}
+// End Laya learning panel
 
 function ApprovalScannerPanel({s,save}){
   const [st,setSt]=useState(null);

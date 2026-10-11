@@ -4185,9 +4185,19 @@ def _tool_answer_card(inp):
             return _ia.UNVOICED_CARD
     tok = _ia.QUIET.set(_cloud_voice())
     try:
-        return _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
-                               _CURRENT_OWNER_TEXT.get(), room_mode=_voice_room(),
-                               surface=surface)["text"]
+        res = _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
+                              _CURRENT_OWNER_TEXT.get(), room_mode=_voice_room(),
+                              surface=surface)
+        if res.get("ok") and surface in ("voice", "chat"):
+            try:  # an approved or declined card is a weak label for Laya's personal layer (off unless learning is on;
+                  # a label needs a turn the owner's own local voice routed in this conversation, so a cloud call,
+                  # a phone or a delegated task never makes one)
+                from agent_friday.services import laya_personal as _lpers
+                _lpers.on_card_decision(str(inp.get("decision") or "").lower().startswith("approv"),
+                                        conversation_id=_CURRENT_CONVERSATION.get())
+            except Exception:
+                pass
+        return res["text"]
     finally:
         _ia.QUIET.reset(tok)
 
@@ -11168,6 +11178,15 @@ try:
 except Exception as _qte:  # never let optional deps break the agent import
     print(f"  [QUEUE] registration skipped: {_qte}")
 
+# What Laya has learned about the owner, and forgetting it (laya_learning): the
+# spoken side of Settings > Laya > What Laya learned. A shared text tool; voice
+# reaches it through the router's hand-off. See services/laya_learning_tools.py.
+try:
+    from agent_friday.services import laya_learning_tools as _laya_learning_tools
+    _laya_learning_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _llte:  # never let optional deps break the agent import
+    print(f"  [LAYA-LEARNING] registration skipped: {_llte}")
+
 # Can voice run locally, and measure it (local_voice_readiness): the spoken side
 # of Settings > Voice > Local voice. Loaded on demand. See
 # services/local_voice_tools.py and services/local_voice_readiness.py.
@@ -11776,6 +11795,14 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     # other than the owner (services: phone) acts only on a number that
     # appears here, never on one the model found in something it read.
     ctx["owner_text"] = str(message or "")[:4000]
+    try:                         # the typed learning controls work with the chat router off, too: but only for a
+        from agent_friday.core import _is_local_request   # page on this PC (a relay, a phone, a channel or a task is not)
+        if (_is_local_request() and not ctx.get("is_background_task")
+                and not ctx.get("origin") and not ctx.get("task_id")):
+            from agent_friday.services import laya_personal as _lp_ctl
+            _lp_ctl.note_control_utterance(message, conversation_id)
+    except Exception:
+        pass
     if not session_id:
         return ctx
     session_id = ctx["confirmation_key"]
@@ -15889,6 +15916,7 @@ ON_DEMAND_TOOLS = (
     "big_mode",
     "hologram_window",       # the hologram window's depth, by voice
     "local_voice_readiness",  # can voice run locally; measure it when idle (never switches)
+    "laya_learning",         # what Laya learned from the owner's corrections; forget, reset, roll back
 )
 WORKSPACE_TOOLS.setdefault("on_demand", []).extend(
     t for t in CLAUDE_TOOLS if isinstance(t, dict) and t.get("name") in ON_DEMAND_TOOLS)

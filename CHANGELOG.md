@@ -15,6 +15,33 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ### Added
 
+- **What Laya learns about you** (on by default; Settings > Privacy & Data).
+  When you correct her, or answer a question she asks, in a local voice call on
+  this PC, she keeps those words, sealed in your vault on this PC, and learns your
+  phrasing. Nothing said on a paired phone, through a relay, in a cloud voice call
+  or in a delegated task teaches her. A new phrasing must pass a collision check
+  and a re-score of her shipped test questions and of your own earlier answers
+  before she uses it; if anything she got right would turn wrong, she turns it
+  down and says why. Her confidence is retuned from your labels as a visible
+  Local AI queue job ("Learning from your corrections", on the processor only) that
+  runs only while you are signed in and at the PC, with the vault open and on AC
+  power, and it can only make her more careful on its own. A learned guess acts
+  only for a read-only local route you confirmed three times and a near-exact
+  repeat; everything else still asks. Nothing she can tell is sensitive is kept
+  (and when she cannot tell, nothing is), nothing while you are off the record or
+  in a voice call with several people in the room, and a minor profile learns
+  nothing. A notice, a report card (what she learned, what she turned down and
+  why, undo and forget per item, reset, wipe, and a roll back to one of her last
+  three versions) and spoken controls ("what have you learned?", "forget that",
+  "reset", "go back to how you were last week") come with it. Loosening a
+  threshold is yours alone, per head, by a card you click on screen. Corrections
+  are kept 180 days, at most 4,000 (the oldest go first, as if forgotten), and
+  **Forget** on a person in Contacts deletes every correction that names them.
+  Settings: `laya_personal_learning`, `laya_personal_retention_days`,
+  `laya_personal_shadow_days`.
+- When Laya asks which of several places you mean, she now always offers
+  "something else".
+
 - **One scheduler decides what the local models do next.** Every call to a
   local model now waits its turn in the order voice, chat, Local API, jobs you
   asked for, background. A model that is loaded finishes its waiting jobs before

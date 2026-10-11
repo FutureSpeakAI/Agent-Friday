@@ -131,7 +131,7 @@ ROUTE_MODULES = [
     'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'insights',
-    'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'learning', 'library', 'liveness', 'local_address', 'media', 'meetings', 'memory_proposals',
+    'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'learning', 'library', 'liveness', 'local_address', 'media', 'meetings', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
     'platform', 'podcasts', 'privacy_consent', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
     'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',

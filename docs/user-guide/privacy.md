@@ -102,6 +102,64 @@ the opt-in update check, and one-time model downloads when a feature first
 needs them) are listed, with how to turn each off, in
 [Background network activity](background-network.md).
 
+## What Laya learns about you
+
+Laya, the fast part of Friday that picks a tool for a simple request, learns from
+you on this PC in two small ways. It is **on by default**, with a notice, a
+report card and controls you can reach by screen or by voice. Turn it off any
+time in **Settings > Privacy & Data > What Laya learns about you**
+(`laya_personal_learning`).
+
+**What teaches her.** Only your own words in a local voice call on this PC.
+Nothing said on a paired phone, through a relay or tunnel, in a cloud voice call,
+by another agent or in a delegated task ever teaches her.
+
+| You do this | She treats it as |
+|---|---|
+| Correct her ("no, I meant my work calendar") | A firm label: you meant that. |
+| Answer a question she asks by choosing one of its options, or "something else" (every question offers it). A fresh request is not an answer. | A firm label. |
+| Approve or decline a card soon after a request she routed | A light signal: it tells her whether an action was wanted. |
+| Say nothing | Nothing. |
+
+**What she does with it.** A phrasing you confirmed becomes one more example for
+the route you meant, after two checks: if it sounds closer to a different route
+than to yours she uses it for that one request only, and she re-scores her own
+shipped test questions and a set of your own earlier answers she holds back, and
+turns the phrasing down, with the reason on the report card, if anything she got
+right would turn wrong. From your labels she may also tune how sure she must be
+before she acts. **She can only make herself more careful on her own.** She never
+acts on less than her shipped score unless you approve one card, for one head,
+from the report card, and only a click on the screen approves it, never a spoken
+"yes". A learned phrasing can let her act without asking in one case only: a
+read-only, local route that you have confirmed at least three times, for a
+near-exact repeat of one of those phrasings. Anything that reaches outside this
+PC (the web, search, past conversations) or is sensitive still asks first.
+
+**What she never keeps.** Anything she can tell is sensitive (money, health,
+legal, identity), and anything she cannot tell about; anything while you are off
+the record; anything said in a call with several people in the room; anything for
+a minor profile; anything when the vault has no key. Retuning runs as a **Local AI
+queue** job ("Learning from your corrections"), only while you are signed in and
+here, with the vault open and the PC on AC power, on the processor: it uses no
+graphics card and no model seat.
+
+**Where it lives.** Sealed in your vault, with the same key as the rest of the
+vault, on this PC, and never sent anywhere. While the vault is locked, new
+corrections wait in an encrypted buffer that only the vault can open. Nothing of
+yours is ever part of Friday's shipped models. Corrections are kept for 180 days
+(`laya_personal_retention_days`), then deleted with every saved version built
+from them.
+
+**Your controls.** The report card lists what she learned, each item with **Undo**
+and **Forget** (which deletes it and every saved version trained on it), what she
+turned down and why, and the routes she learns less about because of
+sensitivity. She keeps her last three versions plus how she shipped: **Go back to
+this**, **Reset** (sets everything aside) and **Wipe everything** (deletes it, after
+a second click; by voice it only raises a card that a click on the screen
+approves). By voice, once, with the owner's whole sentence: "what have you
+learned?", "forget that", "reset", "go back to how you were last week". **Forget**
+on a person in Contacts also deletes every correction that names them.
+
 ## Other people
 
 Friday will hold notes about people you mention or who write to you. In cloud

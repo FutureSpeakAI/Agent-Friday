@@ -228,6 +228,11 @@ INTERNAL_TOOLS = frozenset({
     # the local models are working on and takes a waiting job out of the line:
     # Friday's own queue, nothing reaches anyone else.
     "queue_status", "local_work",
+    # What Laya learned from the owner's own corrections (services/laya_learning_tools):
+    # a summary, and forget / reset / roll back / wipe of her own personal layer. It runs
+    # only on the owner's own words in the turn, changes nothing outside Friday's learning
+    # state, and reaches no one else. It can only make her shipped self the one in force.
+    "laya_learning",
     "set_chat_tray",
     # See & Touch (services/screen_stage): ticks rows on the owner's own screen. It shows
     # and changes nothing; every change to the mail still goes through organize_email.
