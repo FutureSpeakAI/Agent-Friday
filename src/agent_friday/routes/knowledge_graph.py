@@ -230,6 +230,9 @@ def kg_query():
 
 
 _TIER_B_STATE = {"running": False, "last": None, "started_at": None}
+#: Guards the check-and-mark of the state above: two requests must not both
+#: see "not running" and both start an index.
+_TIER_B_LOCK = threading.Lock()
 
 
 @knowledge_graph_bp.route("/api/knowledge-graph/reindex", methods=["POST"])
@@ -252,21 +255,21 @@ def kg_reindex():
         emit_kg_event("reindexed", info)
         return jsonify({"status": "ok", **info})
     if tier == "B":
-        if _TIER_B_STATE["running"]:
-            return jsonify({"status": "busy",
-                            "message": "Tier B index already running"}), 409
         mode = data.get("mode") or "delta"
         sync = bool(data.get("sync"))     # tests / small corpora
+        # Marked running HERE, by the request, not by the worker thread: set
+        # on the thread, a second request in the gap before it ran passed the
+        # check, and a request right after one that had finished saw a stale
+        # flag. started_at makes "how long has this been running" answerable
+        # via /api/knowledge-graph/reindex/status.
+        with _TIER_B_LOCK:
+            if _TIER_B_STATE["running"]:
+                return jsonify({"status": "busy",
+                                "message": "Tier B index already running"}), 409
+            _TIER_B_STATE["running"] = True
+            _TIER_B_STATE["started_at"] = time.time()
 
         def run():
-            _TIER_B_STATE["running"] = True
-            # started_at makes "how long has this been running" answerable via
-            # /api/knowledge-graph/reindex/status -- previously `running` was
-            # the entire signal, so a caller polling it saw running:true
-            # identically whether the job started 30 seconds or 7 hours ago
-            # (the same blind spot that lets a stuck run go undetected for
-            # hours).
-            _TIER_B_STATE["started_at"] = time.time()
             try:
                 from agent_friday.services.knowledge_graph import indexer
                 info = indexer.reindex_tier_b(
