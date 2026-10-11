@@ -9,6 +9,10 @@ cases:
   route (held filter)     a short held-tools list
   rules_route             the degraded path
 
+The trusted passes run with the rung budgets widened (route(rung_budget_ms=...), a parameter only the oracle
+passes); ``dump`` exits 4 if any trusted rung still timed out or was skipped, or a trusted turn ran out of
+time, because such a run is not deterministic.
+
 The only difference the port may make is NARROWER: a phrase that holds a change anywhere in the turn becomes
 a ``defer`` that names no tool (reason "an imperative that changes something", or a point-and-act defer for
 a change). That class is reported on its own per surface. On the trusted surfaces, the listed FEATURE probes
@@ -87,6 +91,17 @@ WRITES = ["put it on my calendar", "reply to the landlord", "email Sam that I'm 
 JOINERS = [" and ", ", then ", " and then ", ", also ", " after that ", "; "]
 
 
+#: A pointing word INSIDE a description, and "all the X": reads that must keep their read rule on the trusted path.
+DESC_VERBS = ["show me", "pull up", "open", "view", "bring up"]
+DESC_OBJECTS = ["the email about this week's invoice", "the email from Sarah about that meeting", "all the emails",
+                "the emails from this morning", "the invoice from this week", "the email about that meeting",
+                "all the news about Ukraine", "the newsletter from this month", "the email that Sarah sent this week",
+                "my unread emails", "the email from Sarah", "the messages from those people last week"]
+ORACLE_RUNG_BUDGET_MS = 3000
+
+
+def description_probes() -> list:
+    return ["%s %s" % (v, o) for v, o in itertools.product(DESC_VERBS, DESC_OBJECTS)]
 def regex_probes() -> list:
     out = []
     for o, b in itertools.product(OPENERS, RULE_BASES):
@@ -123,6 +138,8 @@ def build_cases(root: Path) -> list:
         add(text, kw)
     for text in regex_probes():
         add(text)
+    for text in description_probes():
+        add(text)
     for text in FEATURE_PROBES:
         add(text, feature=True)
     return cases
@@ -141,6 +158,12 @@ def _stage():
         {"ref": "mail:a@x:t3", "n": 3, "title": "Weekly newsletter", "facets": {"from": "News"}}]}, now=time.time())
 
 
+def nondeterministic(stats: dict, slow_turns: list) -> bool:
+    """A trusted rung timed out or was skipped, or a trusted laya.ask turn ran out of time: the run's results
+    depend on timing, so the oracle refuses to write them."""
+    return bool(stats.get("timeout") or stats.get("skipped") or slow_turns)
+
+
 def dump(src: Path, cases_path: Path, out: Path) -> int:
     sys.path.insert(0, str(src / "src"))
     from agent_friday.services import laya, laya2_encoder, laya_router as lr
@@ -157,7 +180,11 @@ def dump(src: Path, cases_path: Path, out: Path) -> int:
         print("REFUSED: the reading model did not load: %s" % e, file=sys.stderr)
         return 3
     takes_trust = "trusted" in inspect.signature(lr.route).parameters
+    takes_budget = "rung_budget_ms" in inspect.signature(lr.route).parameters
+    if hasattr(lr, "rung_stats"):
+        lr.rung_stats.update(timeout=0, skipped=0)
     stage = _stage() if takes_trust else None
+    slow_turns = []
     cases = json.loads(cases_path.read_text(encoding="utf-8"))
     rows, tier1 = [], 0
     for c in cases:
@@ -168,6 +195,8 @@ def dump(src: Path, cases_path: Path, out: Path) -> int:
             row["route_turn@%d" % b] = _row(laya.route_turn(t, caller="eval.diff", budget_ms=b, log=False, **kw))
             if takes_trust:
                 tk = dict(kw, trusted=True, quiet=False, stage=stage, pointed=None)
+                if takes_budget:          # the oracle alone widens the rung budgets, so a run is deterministic
+                    tk["rung_budget_ms"] = ORACLE_RUNG_BUDGET_MS
                 row["route_trusted@%d" % b] = _row(lr.route(t, budget_ms=b, log=False, **tk))
                 row["route_turn_trusted@%d" % b] = _row(laya.route_turn(t, caller="eval.diff", budget_ms=b, log=False, **tk))
             else:           # this tree has no trusted rungs: the trusted voice route IS the plain route
@@ -176,10 +205,19 @@ def dump(src: Path, cases_path: Path, out: Path) -> int:
         row["route_held"] = _row(lr.route(t, budget_ms=1000, log=False, tools=HELD, **kw))
         row["rules_route"] = _row(lr.rules_route(t, pending_card=kw.get("pending_card"), last_route=kw.get("last_route")))
         tier1 += row["route@1000"]["layer"] == "laya2"
+        for k in ("route_turn_trusted@1000", "route_turn_trusted@50"):
+            if takes_trust and "over budget or unavailable" in (row[k]["reason"] or ""):
+                slow_turns.append(t)
         rows.append(row)
     if tier1 == 0:
         print("REFUSED: no case was decided by tier 1: the reading model is not in the loop.", file=sys.stderr)
         return 3
+    stats = dict(getattr(lr, "rung_stats", {}))
+    if nondeterministic(stats, slow_turns):
+        print("REFUSED: a trusted rung timed out or was skipped (%s), or a trusted laya.ask turn ran out of time "
+              "(%d): the dump would not be deterministic. Close other work and run again." % (stats, len(slow_turns)),
+              file=sys.stderr)
+        return 4
     out.write_text(json.dumps({"src": str(src), "tier1_decided": tier1, "rows": rows}, indent=1), encoding="utf-8")
     print("dumped %d cases from %s (%d decided by tier 1)" % (len(rows), src, tier1))
     return 0

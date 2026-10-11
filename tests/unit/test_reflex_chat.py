@@ -435,3 +435,13 @@ def test_a_post_without_the_page_session_is_not_trusted_whatever_it_says():
 
 def test_a_voice_mode_post_is_not_a_typed_line():
     assert rc.trusted_surface({"source": "app_page", "voice_mode": True}, "yes", local=True) is False
+
+
+def test_a_palette_ask_with_no_conversation_named_leaves_the_pending_set_alone(monkeypatch):
+    _handler(monkeypatch)
+    _ask()
+    assert _armed()
+    out = rc.open_turn("open the email from Mara", dict(PAGE), session_id=SID, conversation_id=CONV, turn_id=None,
+                       settings=OPEN_ON, local=True, disarm=False,
+                       resolve=lambda t: _Res("ask", question="Did you mean the one from Mara?"))
+    assert out["outcome"] == "ask" and _armed()

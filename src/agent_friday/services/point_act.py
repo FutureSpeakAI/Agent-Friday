@@ -516,22 +516,58 @@ def _default_pointed(ws: str):
 #: EMAIL_NO_CARD), so for them the owner's words go on alone and no row ids ride with them.
 CARDED_INTENTS = frozenset({"archive", "move", "trash", "spam", "restore"})
 
-_DEMONSTRATIVE = re.compile(r"\b(?:these|those|that|this|them|ones?)\b")
+#: "all" points at the screen only as "all", "everything", "all of them/these/those" or "all of the ones on
+#: screen". "all the emails" is a description ("show me all the emails" is a read).
+_ALL_SCREEN = re.compile(
+    r"^(?:(?:all|everything|every ?thing)(?: (?:on|in|from) (?:the |this )?(?:screen|list|view|page|here))?"
+    r"|(?:all|both) of (?:them|it|these|those)|all of the ones(?: on (?:the )?screen)?)$")
+#: "three of them", "two of these".
+_COUNT_OF = re.compile(r"^(?:the )?(?:\d+|%s) of (?:them|these|those)$" % "|".join(_NUMW))
+#: Words after which a noun phrase's modifiers begin: "the email ABOUT this week's invoice", "the emails FROM this morning".
+_NP_CUT = frozenset({"from", "about", "regarding", "re", "concerning", "with", "which", "that", "in", "on", "sent",
+                     "today", "yesterday", "of", "by", "for", "at", "to", "as", "after", "before", "since"})
+_POINT_WORDS = ("this", "that", "these", "those")
+
+
+def _head_phrase(obj: str) -> List[str]:
+    """The noun phrase an object begins with, cut at its first modifier: ``the email about this week's invoice``
+    -> ``the email``. A pointing word counts only here, as the phrase's head, never inside a modifier."""
+    out: List[str] = []
+    for i, tok in enumerate(obj.split()):
+        if i >= 1 and tok in _NP_CUT:
+            break
+        out.append(tok)
+    return out
 
 
 def is_referential(p: Optional["Parsed"]) -> bool:
-    """Does the parse point at what is ON SCREEN (these, this, them, the second one, all of them, the ones from
-    X) rather than describe something to look up ("the email from Sarah", "my unread emails", "the news about X")?
-    Only the first is point-and-act's; a description is Friday's read rule or the resolver's."""
+    """Does the parse point at what is ON SCREEN rather than describe something to look up?
+
+    Pointing: these / this one / that email / them / the first (one) / the ones from X / three of them / the
+    two from Mara / all of them. A pointing word INSIDE a description does not point ("the email about this
+    week's invoice", "from that meeting", "the emails from this morning"), and "all the emails" is a read.
+    Only a pointing parse is point-and-act's; a description is Friday's read rule or the resolver's."""
     if p is None:
         return False
-    if p.kind in ("deictic", "all", "ordinals", "clear"):
+    if p.kind in ("deictic", "ordinals", "clear"):
         return True
+    if p.kind == "all":
+        return bool(_ALL_SCREEN.match(p.obj))
     if p.kind != "facets":
         return False
-    # "the ones from X", "those", "that", or a COUNT of rows ("the two from Mara", "the five unread"): the owner is
-    # counting what is on screen. "the email from Sarah" counts nothing and names a message to look up.
-    return bool(_DEMONSTRATIVE.search(p.obj)) or bool((p.data or {}).get("count"))
+    if _COUNT_OF.match(p.obj) or _ALL_SCREEN.match(p.obj):
+        return True
+    core = _head_phrase(p.obj)
+    while len(core) > 1 and core[0] in ("the", "my", "all"):
+        core = core[1:]
+    if not core:
+        return False
+    if core[0] in _POINT_WORDS:
+        return len(core) == 1 or (len(core) == 2 and core[1] in _HEAD) or core[-1] in ("one", "ones")
+    if core[-1] in ("one", "ones"):
+        return True
+    return _num(core[0]) is not None             # a count of rows: "the two from Mara", "the five unread"
+
 
 
 def looks_like(text: Any) -> bool:

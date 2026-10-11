@@ -136,7 +136,7 @@ def test_a_rung_over_budget_answers_none_and_the_next_turn_skips_it_instead_of_q
     assert calls == ["a"]
     go.set()
     end = time.time() + 3
-    while "t_slow" in lr._rung_busy and time.time() < end:
+    while ("voice", "t_slow") in lr._rung_busy and time.time() < end:
         time.sleep(0.01)
     assert lr._bounded("t_slow", lambda t: t.upper(), "c", 500) == "C"
 
@@ -205,3 +205,81 @@ def test_a_resolver_command_for_a_tool_the_router_does_not_hold_is_no_route(monk
 @pytest.mark.parametrize("text", ["select the five from Mara", "show me the two from Mara", "tick the three unread"])
 def test_a_count_of_rows_is_referential(text):
     assert pa.is_referential(pa.parse(text)), text
+
+
+# ── a pointing word is a pointing word only as the HEAD of the object ─────────────────
+
+DESCRIPTIONS = [
+    ("pull up the email about this week's invoice", "search_email"),
+    ("show me the email from Sarah about that meeting", "search_email"),
+    ("show me all the emails", None),
+    ("show me the emails from this morning", None),
+    ("show me the email about that meeting", None),
+    ("pull up the invoice from this week", None),
+    ("show me all the news about Ukraine", None),
+]
+
+
+@pytest.mark.parametrize("text,tool", DESCRIPTIONS)
+def test_a_pointing_word_inside_a_description_does_not_point(text, tool, monkeypatch):
+    assert not pa.is_referential(pa.parse(text)), text
+    base = lr.route(text, log=False, budget_ms=50, trusted=False)
+    if tool:
+        assert base.tool == tool, (text, base)
+    monkeypatch.setattr(pa, "plan", lambda *a, **k: (_ for _ in ()).throw(ScreenRead("read the screen")))
+    got = lr.route(text, log=False, budget_ms=50, trusted=True, stage=_stage(), pointed=None)
+    assert _decision(got) == _decision(base)
+
+
+@pytest.mark.parametrize("text", [
+    "open these", "open this one", "open that email", "select them", "tick the first one", "open the first",
+    "star the ones from Mara", "select the unread ones", "tick three of them", "all of them", "select everything",
+    "tick all of the ones on screen", "select all of these", "open the one from Dana", "show me the two from Mara",
+    "open those", "select those emails"])
+def test_a_pointing_word_as_the_head_of_the_object_points(text):
+    assert pa.is_referential(pa.parse(text)), text
+
+
+@pytest.mark.parametrize("text", ["select all the emails", "show me all the emails", "tick all the stories"])
+def test_all_the_x_alone_is_not_pointing(text):
+    assert not pa.is_referential(pa.parse(text)), text
+
+
+def test_a_hung_rung_is_tried_again_after_the_cooldown_and_voice_and_chat_do_not_share_it(monkeypatch):
+    import threading
+    go = threading.Event()
+    monkeypatch.setattr(lr, "RUNG_COOLDOWN_S", 0.2)
+    calls = []
+
+    def hang(text):
+        calls.append(text)
+        go.wait(5)
+        return "late"
+    assert lr._bounded("t_cool", hang, "a", 30, surface="voice") is None
+    assert lr._bounded("t_cool", hang, "b", 30, surface="voice") is None        # still within the cool-down
+    assert calls == ["a"]
+    assert lr._bounded("t_cool", lambda t: "chat:" + t, "c", 500, surface="chat") == "chat:c"   # its own state
+    time.sleep(0.25)
+    assert lr._bounded("t_cool", lambda t: "again:" + t, "d", 500, surface="voice") == "again:d"
+    go.set()
+
+
+def test_the_rung_counters_see_a_timeout_and_a_skip():
+    import threading
+    go = threading.Event()
+    lr.rung_stats.update(timeout=0, skipped=0)
+    lr._bounded("t_stat", lambda t: go.wait(5), "a", 30)
+    lr._bounded("t_stat", lambda t: None, "b", 30)
+    assert lr.rung_stats == {"timeout": 1, "skipped": 1}
+    go.set()
+
+
+def test_the_oracle_can_widen_the_rung_budgets_for_one_call_only(monkeypatch):
+    import inspect
+    assert "rung_budget_ms" in inspect.signature(lr.route).parameters
+    assert lr.POINT_BUDGET_MS == 200 and lr.RESOLVER_BUDGET_MS == 300         # production budgets are not touched
+    seen = []
+    monkeypatch.setattr(lr, "_bounded", lambda name, fn, text, budget, surface="voice": seen.append((name, budget)))
+    lr.route("open the second one", log=False, budget_ms=50, trusted=True, stage=_stage(), pointed=None, rung_budget_ms=9000)
+    lr.route("open the second one", log=False, budget_ms=50, trusted=True, stage=_stage(), pointed=None)
+    assert seen[0][1] == 9000 and seen[-1][1] in (200, 300)

@@ -350,7 +350,7 @@ def _first_line(text: str, n: int = 200) -> str:
 def open_turn(message: str, data: Optional[dict], *, session_id, conversation_id,
               turn_id: Optional[str], settings: Optional[dict],
               authenticated: bool = True, local: Optional[bool] = None,
-              resolve=None) -> Optional[dict]:
+              resolve=None, disarm: bool = True) -> Optional[dict]:
     """Resolve and run one "open the X" request, or None to take the normal turn.
 
     Returns {"reply", "tool_trace", "actions", "outcome"} when the turn was
@@ -360,7 +360,7 @@ def open_turn(message: str, data: Optional[dict], *, session_id, conversation_id
         if not open_enabled(settings):
             return None
         pointed = _point_act_turn(message, data, session_id=session_id, conversation_id=conversation_id,
-                                  turn_id=turn_id, authenticated=authenticated, local=local)
+                                  turn_id=turn_id, authenticated=authenticated, local=local, disarm=disarm)
         if pointed is not None:
             return pointed
         from agent_friday.services import laya_resolver
@@ -377,7 +377,8 @@ def open_turn(message: str, data: Optional[dict], *, session_id, conversation_id
         reason = str(getattr(res, "reason", "") or "")
         if status == "ask":
             count("open_ask")
-            _disarm(session_id, conversation_id)
+            if disarm:
+                _disarm(session_id, conversation_id)
             _record_plan(turn_id, shape="reflex_open", reason="resolver: asked which one",
                          reflex={"by": "resolver", "kind": "open", "outcome": "ask"})
             ask = _laya_templates.rule_question(str(res.question or res.text), "resolver")
@@ -447,7 +448,7 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
 _POINT_OK = ("NAV_OK", "SELECT_OK", "SELECT_PARTIAL")
 
 
-def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, authenticated, local):
+def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, authenticated, local, disarm=True):
     """Open or tick the on-screen rows a short typed line names, or ask which; None
     for everything else (a change to those rows is the normal turn). Trusted
     surfaces only, and only when a page reports a fresh list."""
@@ -464,7 +465,8 @@ def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, auth
         return None
     if r.decision == "ask":
         count("point_ask")
-        _disarm(session_id, conversation_id)
+        if disarm:
+            _disarm(session_id, conversation_id)
         _record_plan(turn_id, shape="reflex_point", reason="point-and-act: asked which rows",
                      reflex={"by": "rule", "kind": "point", "outcome": "ask"})
         ask = _laya_templates.rule_question(r.question, "point_act")

@@ -764,41 +764,60 @@ _RESOLVER_TOOLS = frozenset({"navigate_to"})
 #: an earlier turn is not queued behind: the next turn skips it until it ends.
 POINT_BUDGET_MS = 200
 RESOLVER_BUDGET_MS = 300
+#: A rung that never returns is skipped for this long, then tried again (a new thread): a hang is not a
+#: reason to lose the rung until restart. Busy state is per surface, so voice and typed chat never decide
+#: each other's turns.
+RUNG_COOLDOWN_S = 30.0
 _rung_pool: Optional[ThreadPoolExecutor] = None
-_rung_busy: set = set()
+_rung_busy: Dict[tuple, float] = {}
+#: What the bounded rungs did since the counters were last cleared: the decision-diff oracle refuses a dump if
+#: any rung timed out or was skipped (the run would not be deterministic).
+rung_stats: Dict[str, int] = {"timeout": 0, "skipped": 0}
 
 
-def _bounded(name: str, fn: Callable, text: str, budget_ms: float):
-    """``fn(text)`` on a worker thread within ``budget_ms``; None when it overruns, raises, or the same
-    rung is still busy from an earlier turn. Never blocks past the budget, never queues."""
+def _bounded(name: str, fn: Callable, text: str, budget_ms: float, surface: str = "voice"):
+    """``fn(text)`` on a worker thread within ``budget_ms``; None when it overruns, raises, or the same rung is
+    still busy on this surface from an earlier turn (until RUNG_COOLDOWN_S). Never blocks past the budget,
+    never queues."""
     global _rung_pool
+    key = (surface, name)
+    started = time.monotonic()
     with _pool_lock:
-        if name in _rung_busy:
+        began = _rung_busy.get(key)
+        if began is not None and started - began < RUNG_COOLDOWN_S:
+            rung_stats["skipped"] += 1
             return None
-        _rung_busy.add(name)
+        _rung_busy[key] = started
         if _rung_pool is None:
-            _rung_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="laya-rung")
+            _rung_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="laya-rung")
         pool = _rung_pool
+
+    def release():
+        with _pool_lock:
+            if _rung_busy.get(key) == started:       # a newer run after a cool-down keeps its own mark
+                del _rung_busy[key]
 
     def run():
         try:
             return fn(text)
         finally:
-            with _pool_lock:
-                _rung_busy.discard(name)
+            release()
     try:
         fut = pool.submit(run)
     except RuntimeError:
-        with _pool_lock:
-            _rung_busy.discard(name)
+        release()
         return None
     try:
         return fut.result(timeout=max(0.0, budget_ms) / 1000.0)
     except _FutureTimeout:
+        with _pool_lock:
+            rung_stats["timeout"] += 1
         return None
     except Exception as e:  # noqa: BLE001
         _log.debug("%s rung unavailable: %s", name, e)
         return None
+
+
 
 
 def point_act_route(text: str, *, stage, pointed, quiet: bool) -> Optional[Route]:
@@ -1303,7 +1322,7 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
           last_route: Optional[dict] = None,
           head_mode: Optional[str] = None, conversation_id: Optional[str] = None,
           trusted: bool = False, quiet: bool = False,
-          stage=_UNSET, pointed=_UNSET) -> Route:
+          stage=_UNSET, pointed=_UNSET, rung_budget_ms: Optional[float] = None) -> Route:
     """Decide for one turn within ``budget_ms``. Never raises.
 
     The signed-in profile whose own phrasings and raised act threshold tier 1 may use is not
@@ -1328,15 +1347,20 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
     turn is also offered to the personal layer (services/laya_personal.note_routed).
     ``stage`` and ``pointed`` default to what the pages report; ``quiet`` keeps
     names out of questions.
+    ``rung_budget_ms`` replaces both trusted rungs' budgets for ONE call: only the decision-diff oracle passes it
+    (so its runs are deterministic); production calls never do.
     """
     t0 = time.perf_counter()
     text = " ".join(str(text or "").split())
     held = set(tools) if tools is not None else None
     r = _sealed_rules(text, pending_card, last_route,
                       point=(lambda t: _bounded("point", lambda x: point_act_route(
-                          x, stage=stage, pointed=pointed, quiet=quiet), t, POINT_BUDGET_MS))
+                          x, stage=stage, pointed=pointed, quiet=quiet), t,
+                          POINT_BUDGET_MS if rung_budget_ms is None else rung_budget_ms, surface))
                       if trusted else None,
-                      resolver=(lambda t: _bounded("resolver", _resolver_route, t, RESOLVER_BUDGET_MS))
+                      resolver=(lambda t: _bounded("resolver", _resolver_route, t,
+                                                   RESOLVER_BUDGET_MS if rung_budget_ms is None else rung_budget_ms,
+                                                   surface))
                       if trusted else None)
     mode = _head_mode(head_mode) if text else "off"
     decided_by_rule = r is not None

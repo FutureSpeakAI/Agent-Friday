@@ -395,7 +395,9 @@ def reflex_open():
         auth = bool(session.get("authenticated")) or not bool(core.FRIDAY_PASSWORD)
         out = reflex_chat.open_turn(text, data, session_id=_current_session_id(),
                                     conversation_id=cid, turn_id=None,
-                                    settings=settings, authenticated=auth)
+                                    settings=settings, authenticated=auth,
+                                    # only a conversation the page named is its own to disarm: Main is not
+                                    disarm=bool(str(data.get("conversation_id") or "").strip()))
         if out is None:
             return jsonify({"status": "model", "reply": ""})
         return jsonify({"status": "ask" if out["outcome"] == "ask" else "done",

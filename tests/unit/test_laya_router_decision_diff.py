@@ -92,3 +92,18 @@ def test_dump_refuses_to_run_without_the_reading_model(tmp_path, monkeypatch):
 
 def test_run_refuses_a_missing_encoder_directory(tmp_path):
     assert dd.run(tmp_path, tmp_path, tmp_path / "s", tmp_path / "nope", "") == 3
+
+
+def test_a_run_with_a_rung_timeout_or_skip_or_a_slow_turn_is_refused():
+    assert not dd.nondeterministic({"timeout": 0, "skipped": 0}, [])
+    assert dd.nondeterministic({"timeout": 1, "skipped": 0}, [])
+    assert dd.nondeterministic({"timeout": 0, "skipped": 2}, [])
+    assert dd.nondeterministic({}, ["open the second one"])
+
+
+def test_the_description_probes_are_in_the_case_set_and_the_oracle_budget_is_wide():
+    cases = {c["text"] for c in dd.build_cases(Path(__file__).resolve().parents[2])}
+    for t in ("pull up the email about this week's invoice", "show me the email from Sarah about that meeting",
+              "show me all the emails", "show me the emails from this morning", "open the email about that meeting"):
+        assert t in cases, t
+    assert dd.ORACLE_RUNG_BUDGET_MS > 1000
