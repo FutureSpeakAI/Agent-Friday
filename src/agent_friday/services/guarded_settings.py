@@ -383,6 +383,32 @@ def narrow_record(key: str, value: Any) -> bool:
         return False
 
 
+def follow_file(key: str, file_value: Any) -> None:
+    """The setting file says ``file_value``. If that is narrower than the owner's recorded click (a hand edit,
+    a file write or a restore turned it down), bring the record down to it, on a background thread so a turn
+    never waits on the keychain; if that cannot be done the record is removed and the key reads as off. Cheap
+    (two stat calls) when nothing differs."""
+    try:
+        if rank(key, file_value) >= rank(key, owner_choice(key, block=False)):
+            return
+        with _LOCK:
+            if ("narrow", key) in _PENDING:
+                return
+            _PENDING.add(("narrow", key))
+
+        def run():
+            try:
+                narrow_record(key, file_value)
+            except Exception:       # noqa: BLE001
+                pass
+            finally:
+                with _LOCK:
+                    _PENDING.discard(("narrow", key))
+        _threading.Thread(target=run, name="guarded-settings-narrow", daemon=True).start()
+    except Exception:       # noqa: BLE001
+        pass
+
+
 def narrow_all(config: dict) -> None:
     """Narrow every guarded key's record to what ``config`` will hold (an absent key is the default)."""
     for key in GUARDED:

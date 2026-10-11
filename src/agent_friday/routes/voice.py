@@ -3066,6 +3066,11 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
     turn. If that cannot be shown, no bare yes counts: the owner answers on
     screen or says the card's action."""
     _cid = tool_session.get("conversation_id")
+    try:        # a spoken turn is another turn in this conversation: a card Laya raised by typing is no longer the last question
+        from agent_friday.services import reflex_chat as _rc
+        _rc.note_user_turn(_cid, user_text, False)
+    except Exception:
+        pass
     sealed = tool_session.pop("sealed_card", None) or {}
     try:
         sess = session() if session else None

@@ -17314,7 +17314,7 @@ function CommandPalette({
           source: 'app_page'
         })
       }).then(r => r.json()).then(d => {
-        if (d.status === 'done') {
+        if (d.status === 'done' || d.status === 'card') {
           onClose();
           fridayToast(d.reply || 'Done.');
         } else if (d.status === 'ask') setReflexMsg(d.reply || 'Which one did you mean?');else setReflexMsg('That one needs the model. Ask in chat.');

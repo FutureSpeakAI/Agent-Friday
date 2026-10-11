@@ -79,7 +79,9 @@ def _learning(settings: dict) -> bool:
 
 
 def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    """A keyed hash (this install's local key): a short utterance cannot be found again from a dictionary."""
+    from agent_friday.services import laya_safe_writes
+    return laya_safe_writes.keyed_hash(text, 64)
 
 
 def note_route(text: str, r, *, surface: str = "voice", conversation_id: Optional[str] = None, owner: bool = False,
@@ -256,7 +258,7 @@ def note_executed(tool: str, args: Optional[dict] = None, *, ok: bool, tainted=F
     with _lock:
         waiting = [e for e in _held
                    if not e["resolved"] and _same_conversation(e, conversation_id)
-                   and ((e["decision"] == "ask" and now - e["at"] <= ASK_WINDOW_S)
+                   and ((e["decision"] == "ask" and now - e["at"] <= ASK_WINDOW_S and _routable(tool))
                         or (e["decision"] == "defer" and now - e["at"] <= DEFER_WINDOW_S
                             and bool(task_id) and e.get("task_id") == task_id and _routable(tool)))]
         if len(waiting) != 1:

@@ -375,7 +375,7 @@ def reflex_open():
     Only with the opt-in on, only from this PC. The resolved command runs
     through the ordinary governed tool path (agent._execute_tool), so approvals
     and receipts are exactly those of the tool. {text[, conversation_id]} ->
-    {status: "done"|"ask"|"model"|"off"|"untrusted", reply}. "model" means the
+    {status: "done"|"card"|"ask"|"model"|"off"|"untrusted", reply}. "model" means the
     resolver could not settle it and the request belongs in chat.
     """
     data = request.get_json(silent=True) or {}
@@ -393,15 +393,20 @@ def reflex_open():
             return jsonify({"status": "untrusted", "reply": ""}), 403
         cid = _conv.resolve(str(data.get("conversation_id") or "").strip() or None)
         auth = bool(session.get("authenticated")) or not bool(core.FRIDAY_PASSWORD)
+        if str(data.get("conversation_id") or "").strip():
+            # a palette request is another turn in that conversation: an armed card is no longer the last question
+            reflex_chat.note_user_turn(cid, text, False)
         out = reflex_chat.open_turn(text, data, session_id=_current_session_id(),
                                     conversation_id=cid, turn_id=None,
                                     settings=settings, authenticated=auth,
                                     # only a conversation the page named is its own to disarm: Main is not
-                                    disarm=bool(str(data.get("conversation_id") or "").strip()))
+                                    disarm=bool(str(data.get("conversation_id") or "").strip()),
+                                    # ...and a card raised for no named conversation arms no typed yes anywhere
+                                    arm=bool(str(data.get("conversation_id") or "").strip()))
         if out is None:
             return jsonify({"status": "model", "reply": ""})
-        return jsonify({"status": "ask" if out["outcome"] == "ask" else "done",
-                        "outcome": out["outcome"], "reply": out["reply"]})
+        status = "ask" if out["outcome"] == "ask" else ("card" if out["outcome"] == "card" else "done")
+        return jsonify({"status": status, "outcome": out["outcome"], "reply": out["reply"]})
     except Exception as e:
         return api_error(e, "Couldn't open that")
 

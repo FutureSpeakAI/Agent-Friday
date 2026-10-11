@@ -37,7 +37,7 @@ MODES = ("laya", "model")
 CLOUD_MIN_CONFIDENCE = 0.9
 
 #: Router layers that read the owner's screen or item index.
-_SCREEN_LAYERS = frozenset({"point_act", "resolver"})
+_SCREEN_LAYERS = frozenset({"point_act", "resolver", "safe_write"})
 
 
 def mode(settings: Optional[dict]) -> str:

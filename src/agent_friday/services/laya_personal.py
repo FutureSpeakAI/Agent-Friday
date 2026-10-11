@@ -898,7 +898,7 @@ def _named_option(text: str, cands) -> Optional[str]:
 OWNER_SURFACES = frozenset({"voice", "chat"})
 #: Router layers whose answer comes from the owner's screen or the item index, not from the words (see
 #: services/laya_router): such a turn is never held for learning.
-SCREEN_LAYERS = frozenset({"point_act", "resolver"})
+SCREEN_LAYERS = frozenset({"point_act", "resolver", "safe_write"})
 
 #: The last learning control the owner said as a whole utterance and the router handed over (a rule whose
 #: reason is ``laya_router.LEARNING_CONTROL_REASON``). The tool acts on THIS, never on the rolling buffer of

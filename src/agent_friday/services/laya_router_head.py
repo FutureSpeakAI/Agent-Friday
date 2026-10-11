@@ -480,6 +480,11 @@ def _sha16(obj) -> Optional[str]:
     return hashlib.sha256(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
+def _keyed(text: str) -> str:
+    from agent_friday.services import laya_safe_writes
+    return laya_safe_writes.keyed_hash(text, 16)
+
+
 def shadow_row(text: str, p: Optional[Proposal], final, proto, surface: str, thr: Optional[float]) -> dict:
     """One log row: hashes, operations and numbers. No words, no values."""
     head = None
@@ -490,7 +495,7 @@ def shadow_row(text: str, p: Optional[Proposal], final, proto, surface: str, thr
                 "above_threshold": bool(p.score is not None and thr is not None and p.score >= thr)}
     ref = proto if proto is not None else final
     row = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "surface": surface, "mode": "shadow",
-           "text_sha": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16], "threshold": thr,
+           "text_sha": _keyed(text), "threshold": thr,
            "head": head,
            "proto": ({"decision": proto.decision, "tool": proto.tool, "confidence": proto.confidence,
                       "args_sha": _sha16(proto.args)} if proto is not None else None),
@@ -558,6 +563,12 @@ def shadow(text: str, final, proto, surface: str, profile: str = DEFAULT_PROFILE
     global _shadow_runner, _shadow_pending
     if not text or not available(profile):
         return False
+    try:
+        from agent_friday.services import off_record
+        if off_record.active():
+            return False                    # nothing about the conversation is written while off the record
+    except Exception:
+        pass
     if sync:
         with _shadow_lock:
             _shadow_pending += 1

@@ -3354,7 +3354,7 @@ function CommandPalette({onClose,onOpenWs,openWins,commands}){
     if(item.kind==='reflex'){
       apiFetch('/api/reflex/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q.trim(),source:'app_page'})})
         .then(r=>r.json()).then(d=>{
-          if(d.status==='done'){onClose();fridayToast(d.reply||'Done.')}
+          if(d.status==='done'||d.status==='card'){onClose();fridayToast(d.reply||(d.status==='card'?'Waiting on your card.':'Done.'))}
           else if(d.status==='ask')setReflexMsg(d.reply||'Which one did you mean?');
           else setReflexMsg('That one needs the model. Ask in chat.');
         }).catch(()=>setReflexMsg('Could not reach '+fridayName()+'. Ask in chat.'));

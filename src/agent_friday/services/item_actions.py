@@ -317,6 +317,8 @@ def _senders_of(msgs: list, cap: int = 3) -> tuple:
         name, addr = parseaddr(str((m or {}).get("from") or ""))
         addr = _address(str((m or {}).get("from") or ""))
         who = _clean_row(name, 40) or _clean_row(addr.split("@")[0], 40) or "someone"
+        if "@" in who:                     # a display name that is itself an address: the local part only
+            who = _clean_row(who.split("@")[0], 40) or "a sender"
         key = addr or who.lower()
         if key in seen:
             continue

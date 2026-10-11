@@ -147,6 +147,13 @@ def mode(settings: Optional[dict] = None) -> str:
     except Exception:
         return "off"
     v = v if v in ("shadow", "on") else "off"
+    try:
+        # A setting file turned DOWN by a hand edit, a file write or a restore turns the owner's record down
+        # with it, so a later write of "on" cannot re-arm the old click.
+        from agent_friday.services import guarded_settings as _gs
+        _gs.follow_file(SETTING, v)
+    except Exception:
+        pass
     if v == "off":
         return v
     try:
@@ -247,7 +254,7 @@ def _words(verb: Verb, n: int, label: str) -> str:
 #: How the rows were chosen, in the owner's words (the card says it).
 _RULE_WORDS = {"deictic:selection": "the rows you ticked", "deictic:cursor": "the row your hand was on",
                "deictic:open": "the one you have open", "deictic:focus": "the row you were on",
-               "deictic:pointed": "the ones I just pointed at"}
+               }
 
 
 def rule_words(method: str) -> str:
@@ -267,7 +274,7 @@ def _clean_label(raw: Any) -> str:
 #: The only ways point_act may have chosen the rows for a safe write: the deictic rules, the
 #: owner's numbers, and a sender / kind-of-mail rule. A ranking over row text ("choice"), a
 #: count that did not match, "all" and anything else is the model's.
-METHOD_OK = re.compile(r"^(?:(?:deictic|ordinals):[\w-]*|who|category|who\+category)$")
+METHOD_OK = re.compile(r"^(?:deictic:(?!pointed\b)[\w-]*|ordinals:[\w-]*|who|category|who\+category)$")
 
 #: Words that exclude or quantify. A phrase that holds one is not a plain pointer.
 _SCOPE = re.compile(
@@ -463,6 +470,21 @@ def _salt() -> Optional[bytes]:
         return None
 
 
+_PROCESS_SALT = secrets.token_bytes(32)
+_KEY_CACHE: Optional[bytes] = None
+
+
+def keyed_hash(text: Any, n: int = 16) -> str:
+    """HMAC-SHA256 of ``text`` under this install's local salt (a per-process one when the salt cannot be
+    made), cut to ``n`` hex digits. Equal texts hash equal within an install; a dictionary cannot reverse it."""
+    global _KEY_CACHE
+    key = _KEY_CACHE
+    if key is None:                         # read the salt file once per process, never on every turn
+        key = _salt() or _PROCESS_SALT
+        _KEY_CACHE = key
+    return hmac.new(key, str(text or "").encode("utf-8"), hashlib.sha256).hexdigest()[:n]
+
+
 def _h(text: Any, salt: Optional[bytes]) -> str:
     """A keyed hash (HMAC-SHA256 with the install's salt): a short command like "archive these"
     cannot be found again by hashing a dictionary. No salt, no hash."""
@@ -473,7 +495,13 @@ def _h(text: Any, salt: Optional[bytes]) -> str:
 
 def shadow(p: Optional[Proposal], why_not: str, text: str, surface: str) -> None:
     """Write what she WOULD have proposed. Counts and hashes only: no words,
-    no titles, no label. Executes nothing. Never raises."""
+    no titles, no label. Executes nothing. Writes nothing while off the record. Never raises."""
+    try:
+        from agent_friday.services import off_record
+        if off_record.active():
+            return
+    except Exception:
+        pass
     try:
         salt = _salt()
         row = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "surface": surface, "text_sha": _h(text, salt),
