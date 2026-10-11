@@ -262,7 +262,34 @@ def show_files_3d(inp: dict) -> str:
     return ui.files3d_show(inp if isinstance(inp, dict) else {})
 
 
+def add_knowledge(inp: dict) -> str:
+    """"Add my Obsidian vault": open the folder window on the owner's screen and say what looks
+    worth offering. Adds nothing: the folders the owner picks come back as ONE Library card,
+    decided on screen. Folder names are said only when the voice model runs on this PC."""
+    from agent_friday.services import knowledge_folders as kf
+    from agent_friday.services.library import ui
+    principal = pr.current()
+    if principal is None:
+        return "The Library is not available to this account."
+    rows = kf.suggestions(principal)
+    started = kf.start_voice_pick(principal)
+    ui.open_knowledge_panel()    # the folder window is the point; the panel is a bonus
+    heard = kf.spoken_suggestions(rows, local_model=_loop_is_local())
+    opened = ("The folder window is open on their screen now; they pick the folders there. "
+              if started.get("started") else "The folder window is already open on their screen. ")
+    return ("KNOWLEDGE_OK: " + opened + heard + " Nothing is chosen for them and nothing is added "
+            "until they pick folders and approve the card that appears on screen: a spoken yes does "
+            "not add anything. Reading a folder here is separate from letting a cloud model read "
+            "it; do not offer the cloud choice for a vault or a private folder.")
+
+
 TOOLS = [
+    {"name": "add_knowledge",
+     "description": ("Start with the user's own notes: opens the folder window on their screen and says "
+                     "what looks worth offering (Documents, an Obsidian or Logseq vault, Notion, "
+                     "Evernote, Zotero, project folders). Use for 'add my Obsidian vault' and the like. "
+                     "Adds nothing itself; their picks come back as one card they approve on screen."),
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "search_library",
      "description": ("Search the user's Library (documents they added: PDFs, Word files, notes, spreadsheets) "
                      "and get back labelled passages quoted from them, with page numbers. Use it for any "
@@ -292,9 +319,10 @@ TOOLS = [
          "lens": {"type": "string", "enum": ["library", "media", "files"]},
          "query": {"type": "string"}}}},
 ]
-RINGS = {"search_library": 0, "library_status": 0, "library_show": 0, "show_files_3d": 0}
+RINGS = {"search_library": 0, "library_status": 0, "library_show": 0, "show_files_3d": 0,
+         "add_knowledge": 0}
 HANDLERS = {"search_library": search_library, "library_status": library_status, "library_show": library_show,
-            "show_files_3d": show_files_3d}
+            "show_files_3d": show_files_3d, "add_knowledge": add_knowledge}
 NAMES = tuple(RINGS)
 
 

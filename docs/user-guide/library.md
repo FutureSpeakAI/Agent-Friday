@@ -32,6 +32,13 @@ tracks**, which reads the files and folders you have already given Friday access
 to, plus the folders Media is built from. Private files go only to the sealed vault shelf, and places Friday never reads stay excluded. Turning it off takes out of the Library
 what only that switch covered.
 
+You can also start from your own notes: **Settings > Privacy & Data > Your
+knowledge** opens the Windows folder window and lists places Friday found that
+usually hold notes (an Obsidian vault, Documents and so on), with a size and
+file count for each and nothing chosen for you. Saying "add my Obsidian vault"
+opens the same window; the folders you pick come back as one card you accept
+on screen.
+
 Friday can also propose adding a path, but only through an approval card that
 you accept. A model cannot add a path by itself.
 

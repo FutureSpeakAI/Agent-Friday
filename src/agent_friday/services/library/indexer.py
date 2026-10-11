@@ -19,6 +19,7 @@ from agent_friday.services.library import extract as _ext
 from agent_friday.services.library import procrun, structure, vectors, withhold
 from agent_friday.services.library.store import INDEX_VERSION, Store, store_for, OWNER
 from agent_friday.services.library.textclean import safe_title
+from agent_friday.services.visible_jobs import visible_job
 
 # Never indexed whatever the scope says: dependency trees, VCS, caches.
 SKIP_DIRS = {"node_modules", ".git", ".hg", ".svn", "__pycache__", ".venv", "venv", ".cache", "$RECYCLE.BIN",
@@ -323,8 +324,13 @@ class Indexer:
                     return
             self.current = scope
             try:
-                sweep_scope(store_for(self.principal), scope, classify=self.classify, allowed=self.allowed,
-                            gate=self.gate, on_gone=self._remove_gone, **kw)
+                # Reading a folder into the Library is a background job the owner can see in
+                # the Activity lane. It reads on this PC and calls no model seat, so it is not
+                # queued behind one; the name carries no path.
+                with visible_job("Reading a folder into your Library", kind="library_index",
+                                 workspace="library", queued=False):
+                    sweep_scope(store_for(self.principal), scope, classify=self.classify, allowed=self.allowed,
+                                gate=self.gate, on_gone=self._remove_gone, **kw)
             except Exception:  # noqa: BLE001 - one scope's failure must not stop the queue
                 pass
             finally:

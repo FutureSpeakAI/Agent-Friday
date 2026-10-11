@@ -72,6 +72,18 @@ def files3d_show(inp: dict) -> str:
     return "FILES3D_OK: showing %s." % words
 
 
+def open_knowledge_panel() -> None:
+    """Show Settings > Privacy & Data > Your knowledge on the owner's screen (the
+    voice "add my Obsidian vault" opens it beside the folder window). Navigation the
+    owner asked for; the panel is a bonus, so a failure here never stops the pick."""
+    from agent_friday.services import desktop_bus
+    try:
+        desktop_bus.send([{"type": "navigate", "workspace": "settings", "tab": "privacy",
+                           "section": "Your knowledge"}])
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def show(inp: dict) -> str:
     from agent_friday.services import desktop_bus
     principal = pr.current()
