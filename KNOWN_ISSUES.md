@@ -112,6 +112,8 @@ you hit something that is not here, please open an issue.
   senders per conversation. While the setting is on, the model path still runs
   star, read and label with no card when a model asks, and a spoken yes that
   names the card's action approves it even if you did not hear its line.
+  On the page, a Laya card is approved with its Approve button; a typed yes does
+  not approve it.
 
 ## 2a. Open in 1.0.2: local voice calls and the Local AI queue
 

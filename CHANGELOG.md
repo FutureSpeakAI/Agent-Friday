@@ -19,15 +19,17 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   Safe writes). Laya can put the approval card up for a change you can undo to
   the mail rows you pointed at: archive, mark read or unread, star, unstar,
   label, and move to a label that already exists. You approve every card; she
-  never trashes, reports spam, sends or deletes. The card lists each listed
-  message's sender (with the address, on screen only), covers only the messages it
-  lists, leaves out a message that arrived after your screen last showed the
+  never trashes, reports spam, sends or deletes. The card lists the senders of
+  the messages it lists (up to three per conversation, with the address, on
+  screen only), covers only the messages it lists, leaves out a message that arrived after your screen last showed the
   list and says so, and Undo puts back the labels Friday changed. A conversation
   Friday cannot read message by message is refused. Only your own click on the
   Settings page turns it on (a signed record on this PC, anchored in the system
   keychain); a hand edit, a restored backup, the command line or a file write
   reads as off. By voice a bare yes counts only after the card's fixed line was
-  played whole; in typed chat only as your very next message. Setting:
+  played whole; on the page a Laya card is approved with its Approve button, not
+  by typing yes. Turning the setting down expires the cards still waiting. The
+  saved conversation never holds a title or a sender name from a card. Setting:
   `laya_safe_writes` (`off`, `shadow`, `on`).
 - **A plain "yes" runs the action Friday is waiting on** (`reflex_approval_replies`,
   on by default). A whole, unconditional yes typed on Friday's own page to a

@@ -79,9 +79,11 @@ Nothing is chosen for you, and no chat or voice command can turn it on. Your
 click there leaves a signed record on this PC, and the setting counts only as
 far as that record goes: a value put in `settings.json` by hand, by a restored
 backup, by the command line or by an approved file write reads as **off** until
-you click again, and turning it down any way turns the record down too (a
-hand edit is noticed the next time Friday reads the setting, and if the record
-cannot be turned down it is removed and the setting reads as off):
+you click again, and turning it down any way turns the record down too: Friday
+checks the file against your record when she starts and again the first time she
+reads the setting after that, and if the record cannot be turned down it is
+removed and the setting reads as off. Turning the setting down also expires every
+card Laya raised that was still waiting:
 
 - **Off** does nothing. A change goes to the model, as it always has.
 - **Watch only** records what she would have proposed, as counts and hashes (no
@@ -98,24 +100,31 @@ plain pointers (these, the first three, the ones from Mara).
 
 The card on your screen lists the sender's address as well as the name (the
 name is the sender's to choose), for the messages it lists rather than the first
-one (up to three senders per conversation). What she says aloud, the chat line, the chat history and the
-notification use the name alone. The card covers only the messages it lists. A
+one (up to three senders per conversation). The chat line, the notification and
+the saved conversation, typed or spoken, name no sender and no subject: the
+saved line only says that a card was raised or a question asked, and the card on
+your screen has the details. The card covers only the messages it lists. A
 message that arrived after your screen last showed the list is left out and the
 card says so ("1 newer message not included"); a reply that arrives after the
 card is raised is not changed either. Undo puts back, message by message, the
 labels Friday changed; a label that a Gmail filter or you changed in between is
 not restored. If Friday cannot read a conversation message by message she
 refuses it: no card is raised for it and nothing is handed to the model, because
-she will not make a change she could not put back exactly. By voice, a card is read out in
-a fixed line, and a plain "yes" or "no" answers it only if that line was played
-whole and nothing else was asked since; "yes, but only the first one" becomes a
-changed card. A "yes" that names what the card does ("yes, archive them") also
-answers a waiting card even if you did not hear the line, as for every card
-Friday raises, so say no or decline it on screen if you did not mean it. In
-typed chat a "yes" approves a card she raised only if that card was the last
-thing asked, as your very next message from Friday's own page; any other message
-in between, or a second yes, leaves the card waiting for you to answer it on the
-card.
+she will not make a change she could not put back exactly.
+
+**How you approve it.** On the page, a card Laya raised is approved with its
+**Approve** button; a typed "yes", "ok" or "fine" does not approve it (typing
+"no" can decline it). By voice, the card is read out in a fixed line, and a plain
+"yes" or "no" answers it only if that line was played whole and nothing else was
+asked since; "yes, but only the first one" becomes a changed card. A "yes" that
+names what the card does ("yes, archive them") also answers a waiting card by
+voice even if you did not hear the line, as for every card Friday raises, so say
+no or decline it on screen if you did not mean it.
+
+When Friday has put her own numbers on rows, "the second one" could mean the
+second row of the list or the row she numbered 2, so Laya asks which instead of
+guessing. With no numbers on screen she counts from the top of your list and the
+card says so.
 
 ## Privacy
 
