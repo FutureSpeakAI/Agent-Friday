@@ -527,7 +527,11 @@ def is_referential(p: Optional["Parsed"]) -> bool:
         return False
     if p.kind in ("deictic", "all", "ordinals", "clear"):
         return True
-    return p.kind == "facets" and bool(_DEMONSTRATIVE.search(p.obj))
+    if p.kind != "facets":
+        return False
+    # "the ones from X", "those", "that", or a COUNT of rows ("the two from Mara", "the five unread"): the owner is
+    # counting what is on screen. "the email from Sarah" counts nothing and names a message to look up.
+    return bool(_DEMONSTRATIVE.search(p.obj)) or bool((p.data or {}).get("count"))
 
 
 def looks_like(text: Any) -> bool:

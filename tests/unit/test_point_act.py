@@ -361,6 +361,7 @@ def test_the_voice_plan_passes_trust_and_hands_the_deeper_mind_the_rows(monkeypa
         seen.update(kw)
         return lr.Route("defer", args={"intent": "archive", "refs": [ref(1), ref(2), "mail:x:bad id", "x" * 300],
                                        "workspace": "messages", "say_count": True}, layer="point_act")
+    monkeypatch.setattr(rv, "_deeper_mind_is_local", lambda session=None: True)
     plan = rv._voice_route_plan("archive these", ["delegate_to_friday"], route_fn=fake, owner_voice=True, quiet=True,
                                 conversation_id="c1")
     assert seen["trusted"] is True and seen["quiet"] is True
@@ -403,7 +404,8 @@ class _ChatRig:
         monkeypatch.setattr(rc, "_record_plan", lambda *a, **k: None)
 
     def turn(self, text, data=None, settings=None, local=True):
-        return self.rc.open_turn(text, data or {}, session_id="s", conversation_id="c", turn_id=None,
+        return self.rc.open_turn(text, {"source": "app_page"} if data is None else data, session_id="s",
+                                 conversation_id="c", turn_id=None,
                                  settings={"reflex_open_enabled": True} if settings is None else settings,
                                  local=local)
 

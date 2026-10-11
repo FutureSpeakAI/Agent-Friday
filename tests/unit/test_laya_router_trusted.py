@@ -200,3 +200,8 @@ def test_a_resolver_command_for_a_tool_the_router_does_not_hold_is_no_route(monk
     monkeypatch.setattr(laya_resolver, "resolve", lambda text: res)
     r = lr.route("open the lease document", log=False, budget_ms=50, trusted=True, stage=None, pointed=None)
     assert r.layer != "resolver" and r.handoff != "compose_text"
+
+
+@pytest.mark.parametrize("text", ["select the five from Mara", "show me the two from Mara", "tick the three unread"])
+def test_a_count_of_rows_is_referential(text):
+    assert pa.is_referential(pa.parse(text)), text
