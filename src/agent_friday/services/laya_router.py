@@ -86,10 +86,44 @@ def _no_args(_text: str, _m=None) -> dict:
     return {}
 
 
+def _today():
+    import datetime
+    return datetime.date.today()
+
+
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def spoken_day(text: str):
+    """The date the words ask about ("tomorrow", "the day after tomorrow",
+    "tonight", "on Friday"), or None when they name none. A weekday is its next
+    occurrence, today's included. Never invents a day the words do not name."""
+    import datetime
+    t = str(text or "").lower()
+    today = _today()
+    if re.search(r"\bday after tomorrow\b", t):
+        return today + datetime.timedelta(days=2)
+    if re.search(r"\btomorrow\b", t):
+        return today + datetime.timedelta(days=1)
+    if re.search(r"\b(?:today|tonight|this (?:morning|afternoon|evening))\b", t):
+        return today
+    m = re.search(r"\b(" + "|".join(_WEEKDAYS) + r")\b", t)
+    if m:
+        ahead = (_WEEKDAYS.index(m.group(1)) - today.weekday()) % 7
+        return today + datetime.timedelta(days=ahead)
+    return None
+
+
 def _calendar_args(text: str, _m=None) -> dict:
-    """Finished events are read only when the owner asks about the past."""
+    """Finished events are read only when the owner asks about the past; the
+    day the words name is passed as an ISO date, so "what about tomorrow" asks
+    for tomorrow rather than for everything."""
     from agent_friday.services.voice_spoken import PAST_ASK
-    return {"include_past": True} if PAST_ASK.search(text or "") else {}
+    args = {"include_past": True} if PAST_ASK.search(text or "") else {}
+    day = spoken_day(text)
+    if day is not None:
+        args["day"] = day.isoformat()
+    return args
 
 
 def _query(text: str, m=None) -> dict:

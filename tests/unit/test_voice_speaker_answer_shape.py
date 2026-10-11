@@ -871,8 +871,11 @@ def test_a_past_question_reads_the_finished_events(monkeypatch):
     data = json.loads(shape)
     assert data["count"] == 15 and len(data["events"]) == 12 and data["finished"] == 0
     r = lr.route("What was on my calendar this morning?", log=False)
-    assert r.tool == "query_calendar" and r.args == {"include_past": True}
-    assert lr.route("What's on my calendar today?", log=False).args == {}
+    # The words name a day, so the router passes it: a question about this
+    # morning asks for today's events, finished ones included.
+    today = lr._today().isoformat()
+    assert r.tool == "query_calendar" and r.args == {"include_past": True, "day": today}
+    assert lr.route("What's on my calendar today?", log=False).args == {"day": today}
 
 
 @pytest.mark.parametrize("text,past", [

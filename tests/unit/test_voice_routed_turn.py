@@ -46,7 +46,7 @@ def _seat(answer="You have the dentist at 3:40."):
 def test_a_tool_turn_speaks_the_ack_runs_the_governed_tool_and_answers_from_its_result():
     seat, sent = _seat()
     spoken, ran = [], []
-    r = lr.route("What's on my calendar this afternoon?", log=False)
+    r = lr.route("What's on my calendar?", log=False)
     ack = lr.acknowledgement(r)
     out = seat.routed_turn("SYS", [{"role": "user", "content": "What's on my calendar?"}],
                            tool=r.tool, args=r.args, ack=ack,

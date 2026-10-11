@@ -182,6 +182,29 @@ CALENDAR_FETCH_LIMIT = 50
 CALENDAR_LIST_LIMIT = 12
 
 
+def _calendar_day(value):
+    """A date from an ISO string, or None."""
+    try:
+        return date.fromisoformat(str(value)[:10]) if value else None
+    except ValueError:
+        return None
+
+
+def _event_on(ev, day) -> bool:
+    """Does the event touch `day`? An all-day event ends the day before its
+    end date (the calendar's end is exclusive)."""
+    from agent_friday.services.voice_spoken import _parse
+    s, all_day = _parse(ev.get("start_time"))
+    if s is None:
+        return False
+    e, _ = _parse(ev.get("end_time"))
+    if all_day:
+        last = (e.date() - timedelta(days=1)) if e is not None else s.date()
+        return s.date() <= day <= max(last, s.date())
+    return s.date() == day or (e is not None and s.date() <= day <= e.date()
+                               and e.time() != datetime.min.time())
+
+
 def _tool_query_calendar(_inp):
     """Voice tool: today's + tomorrow's calendar as a spoken-ready JSON string.
 
@@ -203,6 +226,17 @@ def _tool_query_calendar(_inp):
     now = datetime.now()
     keep = events if inp.get("include_past") else [
         ev for ev in events if not event_finished(ev.get("start_time"), ev.get("end_time"), now)]
+    day = _calendar_day(inp.get("day"))
+    if day is not None:
+        # The fetch is today and tomorrow. A day outside it is not read, and
+        # the result says so: an empty list there would read as a free day.
+        if not (now.date() <= day <= now.date() + timedelta(days=1)):
+            return json.dumps({
+                "connected": True, "day": day.isoformat(), "count": 0, "events": [],
+                "outside_window": True,
+                "note": "I can only read today's and tomorrow's calendar from here, "
+                        "so I can't say what is on %s." % day.isoformat()}, default=str)
+        keep = [ev for ev in keep if _event_on(ev, day)]
     out = []
     for ev in keep[:CALENDAR_LIST_LIMIT]:
         out.append({

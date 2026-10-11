@@ -45,7 +45,7 @@ def test_a_remark_a_negation_or_a_question_about_friday_runs_nothing(text):
 @pytest.mark.parametrize("text,tool,args", [
     ("Search the web for the Louvre's opening hours.", "search_web", {"query": "Louvre's opening hours"}),
     ("Any urgent emails?", "check_email", {"urgent_only": True}),
-    ("What's on my calendar this afternoon?", "query_calendar", {}),
+    ("What's on my calendar?", "query_calendar", {}),
     ("Search my email for the invoice from Acme.", "search_email", {"query": "invoice from Acme"}),
     ("what's in the news today", "search_news", {}),
 ])
