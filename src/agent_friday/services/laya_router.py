@@ -47,6 +47,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from agent_friday.services import workspace_registry as _ws_registry
+
 _log = logging.getLogger("friday.laya_router")
 
 ACT_THRESHOLD = 0.55
@@ -143,13 +145,16 @@ def _news_args(text: str, m=None) -> dict:
     return out
 
 
-_WORKSPACE_WORDS = {"inbox": "email", "mail": "email", "notes": "wiki", "podcasts": "media",
-                    "podcast": "media"}
+#: What the router asks navigate_to to open is a workspace ID, from the registry. A spoken word that
+#: the registry does not know as an alias maps here.
+_WORKSPACE_WORDS = {"podcasts": "media", "podcast": "media"}
 
 
 def _nav_args(text: str, m=None) -> dict:
-    q = (m.group("q") if m is not None else "").strip().lower()
-    return {"kind": "workspace", "query": _WORKSPACE_WORDS.get(q, q)} if q else {}
+    q = re.sub(r"\s+", " ", (m.group("q") if m is not None else "").strip().lower()).replace("e-mail", "email")
+    if not q:
+        return {}
+    return {"kind": "workspace", "query": _WORKSPACE_WORDS.get(q) or _ws_registry.resolve(q) or q}
 
 
 _PLAYER = {"pause": "pause", "hold": "pause", "resume": "resume", "continue": "resume",
@@ -281,9 +286,31 @@ _REQUEST_FORM = re.compile(
 _Q = r"(?P<q>.+?)"
 _END = r"\s*[?.!]*\s*$"
 
-_WORKSPACES = (r"calendar|news|e-?mail|inbox|mail|settings|library|files|wiki|notes|media|"
-               r"podcasts?|home|chat|projects?|activity|workflows|crew|people|health|finance|"
-               r"career|code|studio|knowledge|trust|system")
+#: Words people say for a workspace beyond its id and its name ("inbox" for Messages). Each resolves through
+#: the registry (or _WORKSPACE_WORDS); tests/test_laya_workspace_contracts.py holds that, and holds each
+#: manifest's spoken_words to this list.
+_SPOKEN_SHORTCUTS = ("email", "e-mail", "inbox", "mail", "wiki", "notes", "studio", "podcast", "podcasts")
+#: Used only when the registry file cannot be read.
+_FALLBACK_WORKSPACES = ("calendar", "news", "messages", "settings", "library", "media", "workflows", "crew",
+                        "people", "health", "finance", "career", "code", "knowledge", "trust", "system",
+                        "family", "sites", "marketplace")
+
+
+def _workspace_words() -> List[str]:
+    """Every word the navigate rule accepts: each registry workspace's id and name, plus the shortcuts."""
+    words = set(_SPOKEN_SHORTCUTS)
+    try:
+        for w in _ws_registry.all_workspaces():
+            words.add(str(w["id"]).lower())
+            words.add(str(w["label"]).lower())
+    except Exception:       # a missing registry file must not stop the router loading
+        pass
+    if len(words) == len(_SPOKEN_SHORTCUTS):
+        words.update(_FALLBACK_WORKSPACES)
+    return sorted(words, key=lambda x: (-len(x), x))
+
+
+_WORKSPACES = "|".join(re.escape(w) for w in _workspace_words())
 
 #: Friday's own screen, player and background work. Checked FIRST and
 #: anchored at the start, so "don't play music" or "stop checking" never

@@ -3808,7 +3808,7 @@ def _mail_select_all(match: dict):
 
 
 #: The lists that can show Friday's ticks.
-_TICKABLE = ("messages", "media", "library", "files", "calendar", "chat")
+_TICKABLE = ("messages", "media", "library", "files", "calendar", "chat", "news")
 
 #: The keys of a request that name what to match, flat (voice) or nested in `match` (chat).
 _MATCH_KEYS = ("when", "stage", "level", "scheduled", "pinned", "archived", "category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic",
@@ -3981,7 +3981,7 @@ def _tool_screen_select(inp):
     if op == "fill":
         return _screen_fill(ws, inp)
     if ws not in _TICKABLE:
-        return "SELECT_FAIL: I can show ticks in the Message Center, Media, the Library, Files, the Calendar and the chat list so far."
+        return "SELECT_FAIL: I can show ticks in the Message Center, News, Media, the Library, Files, the Calendar and the chat list so far."
     if ws != "messages" and scope == "all":
         return "SELECT_FAIL: only the Message Center can search the whole list; use scope screen here."
     if op not in ("select", "add", "remove", "clear") or scope not in ("screen", "all"):

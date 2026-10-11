@@ -147,14 +147,14 @@ def test_a_single_partial_match_is_asked_about(monkeypatch):
     assert r.status == "ask" and r.question == "Did you mean Pipeline?"
 
 
-def test_a_news_story_opens_its_stored_url(monkeypatch):
+def test_a_news_story_opens_by_its_id_with_navigate_to(monkeypatch):
     _with(monkeypatch, _Laya(kind="news", pick={"A": 0.9}))
     r = laya_resolver.resolve("open that story about the school board", sources={
         "news": lambda t: [Candidate("news", "ab12", "School board votes", "", 0.9,
                                      {"url": "https://example.org/a"}),
                            Candidate("news", "cd34", "Board game cafe", "", 0.4,
                                      {"url": "https://example.org/b"})]})
-    assert r.command == {"tool": "open_url", "input": {"url": "https://example.org/a"}}
+    assert r.command == {"tool": "navigate_to", "input": {"kind": "news_article", "id": "ab12"}}
 
 
 def test_nothing_found_says_so(monkeypatch):

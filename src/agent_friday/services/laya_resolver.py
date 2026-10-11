@@ -32,8 +32,8 @@ THE PIPELINE (resolve)
      Laya answer is "brain", not a default.
 
 THE COMMAND is `navigate_to {kind, id}` (services/desktop_targets), which
-opens the exact item and asks the desktop to confirm it, or `open_url` for a
-news story until the desktop has a news-item target. Opening and reading are
+opens the exact item and asks the desktop to confirm it (a news story is
+`navigate_to news_article`, the same target point-and-act uses). Opening and reading are
 internal; anything that changes an outside service goes through the gate as
 it always does. This module decides; it does not run the command.
 
@@ -111,7 +111,7 @@ class Resolution:
 def command_for(c: Candidate) -> dict:
     """The one command that opens exactly this candidate."""
     if c.kind == "news":
-        return {"tool": "open_url", "input": {"url": c.extra["url"]}}
+        return {"tool": "navigate_to", "input": {"kind": "news_article", "id": c.id}}
     if c.kind == "workspace":
         # A workspace that folded into another (Studio into Media) keeps its old
         # name as an alias: the command opens the workspace that exists today.

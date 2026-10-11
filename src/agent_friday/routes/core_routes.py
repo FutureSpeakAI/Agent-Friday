@@ -337,9 +337,10 @@ def laya_pilot_status():
 def reflex_resolve():
     """Resolve one request to one item: {text} -> services/laya_resolver.Resolution.
 
-    Decides only. The command it returns (navigate_to {kind, id}, or open_url
-    for a news story) is run by the caller through the ordinary governed tool
-    path, so governance and receipts are exactly those of the tool itself.
+    Decides only. The command it returns (navigate_to {kind, id}, or
+    library_show for a Library document) is run by the caller through the
+    ordinary governed tool path, so governance and receipts are exactly those
+    of the tool itself.
     """
     data = request.get_json(silent=True) or {}
     text = str(data.get("text") or "").strip()[:500]

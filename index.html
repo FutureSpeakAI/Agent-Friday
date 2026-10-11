@@ -35566,6 +35566,9 @@ function NewsWS() {
   const stageFS = window.fridayStage;
   const fridayNewsFilters = useRef({});
   const newsStageCfg = useRef(null);
+  // The ticked stories (Friday's "select these", the owner's own): refs "news:<id>" in the shared reducer.
+  const [newsSel, setNewsSel] = useState(() => stageFS ? stageFS.emptySelection() : { refs: [], id: '', label: '', source: '', rev: 0, held: {} });
+  const newsSelRef = useRef(newsSel);
   const newsBy = (key, val) => String(fridayNewsFilters.current[key]) === String(val) ? 'friday' : 'owner';
   const newsFilters = () => {
     const f = [];
@@ -35575,6 +35578,8 @@ function NewsWS() {
   };
   newsStageCfg.current = {
     filters: newsFilters,
+    getSel: () => newsSelRef.current,
+    setSel: next => { newsSelRef.current = next; setNewsSel(next); },
     loaded: () => feed.length,
     total: () => feedTotal,
     items: () => tab !== 'feed' ? [] : feed.slice(0, 120).map((it, i) => ({
@@ -37054,6 +37059,7 @@ function NewsWS() {
   }, streamItems.map((it, i) => /*#__PURE__*/React.createElement("div", {
     key: it.id || i,
     'data-fr-ref': 'news:' + (it.id || i),
+    'data-fr-sel': newsSel.refs.indexOf('news:' + (it.id || i)) >= 0 ? 'on' : undefined,
     className: 'news-card cat-' + (it.color || 'tech') + (i === 0 ? ' feature' : '')
   }, /*#__PURE__*/React.createElement("div", {
     className: "news-cardtop"
