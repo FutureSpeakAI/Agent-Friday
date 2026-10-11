@@ -265,7 +265,10 @@
     "label": "hide / show the Home cards (Simple desktop)",
     "audit_status": "new"
    },
-   {"id": "settings.connectors", "group": "settings", "label": "connectors / accounts / keys", "audit_status": "N"}
+   {"id": "settings.connectors", "group": "settings", "label": "connectors / accounts / keys", "audit_status": "N"},
+   {"id": "settings.local_voice_measure", "group": "settings", "label": "local voice: Measure now", "audit_status": "new"},
+   {"id": "settings.local_voice_status", "group": "settings", "label": "local voice: can it run here, and why cloud voice", "audit_status": "new"},
+   {"id": "settings.local_voice_switch_offer", "group": "settings", "label": "local voice: switch offer (switch / stay)", "audit_status": "new"}
   ]
  }
 }

@@ -770,15 +770,15 @@ def test_the_tool_is_registered_internal_and_loaded_on_demand():
 
 # ── 7. the settings manifest and the UI ──────────────────────────────────────
 
-def test_the_settings_manifest_is_owed_to_the_workspace_contract_track():
-    """This tree has no Laya workspace manifests yet (track WS-1). The three UI actions the
-    manifest will carry are named here so the gap is a failing reminder, not a silent one."""
+def test_the_settings_manifest_carries_the_three_local_voice_actions():
+    """The three UI actions are verbs in the settings manifest and rows in the UI-action fixture."""
     manifests = ROOT / "src" / "agent_friday" / "resources" / "laya_manifests"
-    if manifests.exists():            # once WS-1 lands, the verbs must be in settings.json
-        text = (manifests / "settings.json").read_text(encoding="utf-8")
-        for vid in ("settings.local_voice_measure", "settings.local_voice_status",
-                    "settings.local_voice_switch_offer"):
-            assert vid in text, vid
+    text = (manifests / "settings.json").read_text(encoding="utf-8")
+    fixture = (ROOT / "tests" / "fixtures" / "laya_ws_ui_actions.json").read_text(encoding="utf-8")
+    for vid in ("settings.local_voice_measure", "settings.local_voice_status",
+                "settings.local_voice_switch_offer"):
+        assert vid in text, vid
+        assert vid in fixture, vid
 
 
 def _component(html: str) -> str:
