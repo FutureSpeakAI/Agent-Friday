@@ -38849,7 +38849,7 @@ function calFmtTime(iso) {
   });
 }
 fridayDeclareNav('calendar', {
-  keys: ['date', 'view', 'meeting_id', 'event'],
+  keys: ['date', 'view', 'meeting_id', 'event', 'start'],
   sections: [{
     id: 'meetings',
     label: 'Meetings',
@@ -39238,7 +39238,10 @@ function CalendarWS() {
 // Record a meeting from the Calendar, transcribe it on this machine, take notes
 // on a local model. Starting shows the consent statement every time; while a
 // recording runs, MeetingRecIndicator shows a red dot and the elapsed time on
-// every screen, with a one-click stop.
+// every screen, with a one-click stop. The indicator has no dismiss control and
+// a style that no layout can override: while Friday records, it is on screen.
+// Nothing here starts a recording by itself: only the start card's own button
+// does, and it sends the owner's confirmation with it.
 function meetingsChanged() {
   try {
     window.dispatchEvent(new Event('friday-meetings'));
@@ -39278,6 +39281,8 @@ function MeetingRecIndicator() {
   const [stopping, setStopping] = useState(false);
   if (!st || !st.recording) return null;
   const live = st.capturing;
+  const sa = st.system_audio || {};
+  const what = sa.captured ? 'microphone and the other side of the call' : 'microphone only';
   const stop = async () => {
     setStopping(true);
     try {
@@ -39290,6 +39295,7 @@ function MeetingRecIndicator() {
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "friday-meeting-indicator",
+    "data-testid": "meeting-rec-indicator",
     role: "status",
     "aria-live": "polite",
     style: {
@@ -39310,7 +39316,7 @@ function MeetingRecIndicator() {
       fontSize: 12,
       color: '#fecaca'
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("style", null, '.friday-meeting-indicator{display:flex !important;visibility:visible !important;opacity:1 !important}'), /*#__PURE__*/React.createElement("span", {
     "aria-hidden": "true",
     style: {
       width: 10,
@@ -39329,8 +39335,8 @@ function MeetingRecIndicator() {
     style: {
       cursor: 'pointer'
     },
-    title: 'Recording “' + (st.title || 'meeting') + '” — microphone only. Open Meetings.'
-  }, live ? 'REC' : 'Starting microphone…', " ", meetingClock(elapsed)), /*#__PURE__*/React.createElement("button", {
+    title: 'Recording “' + (st.title || 'meeting') + '” — ' + what + '. Open Meetings.'
+  }, live ? 'REC' : 'Starting microphone…', " ", meetingClock(elapsed), sa.captured ? ' · both sides' : ''), /*#__PURE__*/React.createElement("button", {
     onClick: stop,
     disabled: stopping,
     "aria-label": "Stop recording",
@@ -39370,6 +39376,21 @@ function MeetingsPanel() {
   const [showTx, setShowTx] = useState(false);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sysAudio, setSysAudio] = useState(false);
+  const [speak, setSpeak] = useState(false);
+  const [consent, setConsent] = useState(null);
+  const [line, setLine] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [ret, setRet] = useState(null);
+  const [sugg, setSugg] = useState(null);
+  const [suggOff, setSuggOff] = useState(false);
+  const [liveTx, setLiveTx] = useState({});
+  const loadConsent = () => fetch('/api/meetings/consent').then(r => r.json()).then(d => {
+    setConsent(d);
+    setLine(d.line || '');
+    setSpeak(!!d.speak);
+  }).catch(() => {});
+  const loadRet = () => fetch('/api/meetings/retention').then(r => r.json()).then(setRet).catch(() => {});
   const loadList = () => fetch('/api/meetings').then(r => r.json()).then(d => setList(d.meetings || [])).catch(() => {});
   const openMeeting = id => fetch('/api/meetings/' + id).then(r => r.json()).then(d => {
     if (d.meeting) {
@@ -39386,6 +39407,7 @@ function MeetingsPanel() {
         setOpen(true);
         loadList();
         if (t.meeting_id) openMeeting(t.meeting_id);
+        if (t.start === 'confirm') ask();
       }
     };
     apply(window.__fridayNavTarget);
@@ -39395,16 +39417,108 @@ function MeetingsPanel() {
   }, []);
   useEffect(() => {
     loadList();
+    loadConsent();
+    loadRet();
   }, []);
+  // A "take notes?" card for the event that is starting: the server offers it at most once per event and stops after two declines.
+  useEffect(() => {
+    fetch('/api/meetings/suggestion').then(r => r.json()).then(d => {
+      setSugg(d.suggestion || null);
+      setSuggOff(!!(d.state && d.state.off_after_declines));
+    }).catch(() => {});
+  }, []);
+  // Live words while recording (shown, never stored).
+  useEffect(() => {
+    if (!(st && st.recording)) {
+      setLiveTx({});
+      return undefined;
+    }
+    const t = setInterval(() => fetch('/api/meetings/live').then(r => r.json()).then(d => setLiveTx(d.partials || {})).catch(() => {}), 2000);
+    return () => clearInterval(t);
+  }, [st && st.recording]);
   const finishing = st && st.finishing || [];
   useEffect(() => {
     loadList();
     if (sel && !finishing.includes(sel.id)) openMeeting(sel.id);
   }, [finishing.join(','), st && st.recording]);
-  const ask = async () => {
+  const answerSugg = async a => {
+    const c = sugg;
+    setSugg(null);
+    try {
+      const d = await (await fetch('/api/meetings/suggestion', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action: a
+        })
+      })).json();
+      setSuggOff(!!d.off_after_declines);
+    } catch (e) {}
+    if (a === 'accept' && c) {
+      ask(c.event && c.event.title);
+    }
+  };
+  const suggBack = async () => {
+    try {
+      await fetch('/api/meetings/suggestion/reset', {
+        method: 'POST'
+      });
+    } catch (e) {}
+    setSuggOff(false);
+  };
+  const copyLine = async () => {
+    try {
+      await navigator.clipboard.writeText(line);
+      setCopied(true);
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = line;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true);
+      } catch (_) {
+        setMsg('Select the line and copy it yourself.');
+      }
+      document.body.removeChild(ta);
+    }
+  };
+  const saveLine = async () => {
+    const d = await (await fetch('/api/meetings/consent', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        line
+      })
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') {
+      setConsent(d);
+      setLine(d.line);
+      setMsg('Consent line saved.');
+    } else setMsg(d.error || 'Could not save the line.');
+  };
+  const setRetention = async b => {
+    const d = await (await fetch('/api/meetings/retention', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(b)
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') setRet(d);else setMsg(d.error || 'Could not save that choice.');
+  };
+  const ask = async t0 => {
     setMsg('');
     setAsking(true);
-    setTitle('');
+    setCopied(false);
+    loadConsent();
+    setTitle(typeof t0 === 'string' ? t0 : '');
+    if (typeof t0 === 'string' && t0) return;
     try {
       const d = await (await fetch('/api/meetings/suggest')).json();
       if (d.event && d.event.title) setTitle(d.event.title);
@@ -39421,9 +39535,12 @@ function MeetingsPanel() {
         },
         body: JSON.stringify({
           consent_ack: true,
+          confirm: true,
           consent_version: st && st.consent_version,
           title,
           keep_audio: keepAudio,
+          system_audio: sysAudio,
+          speak_consent: speak,
           max_duration_s: maxH * 3600
         })
       });
@@ -39447,6 +39564,16 @@ function MeetingsPanel() {
     setBusy(false);
     meetingsChanged();
     loadList();
+  };
+  const delAudio = async m => {
+    if (!window.confirm('Delete the audio of “' + (m.title || 'this meeting') + '”? The transcript and notes stay. The audio is removed from this computer and cannot be brought back.')) return;
+    const d = await (await fetch('/api/meetings/' + m.id + '/audio', {
+      method: 'DELETE'
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') {
+      setMsg('Audio deleted. The transcript and notes are untouched.');
+      openMeeting(m.id);
+    } else setMsg(d.error || 'Could not delete the audio.');
   };
   const del = async m => {
     if (!window.confirm('Delete “' + (m.title || 'this meeting') + '”? The transcript, notes and any kept audio are removed from this computer.')) return;
@@ -39576,7 +39703,65 @@ function MeetingsPanel() {
       ...small,
       marginTop: 6
     }
-  }, "Finishing the transcript and notes\u2026"), asking && !rec && /*#__PURE__*/React.createElement("div", {
+  }, "Finishing the transcript and notes\u2026"), rec && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...small,
+      marginTop: 6
+    }
+  }, st.system_audio && st.system_audio.reason || '', st.vad ? ' Speech detection: ' + (st.vad === 'silero' ? 'Silero.' : 'volume gate.') : ''), rec && Object.keys(liveTx).length > 0 && /*#__PURE__*/React.createElement("div", {
+    "aria-live": "off",
+    style: {
+      marginTop: 6,
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, Object.keys(liveTx).map(k => /*#__PURE__*/React.createElement("div", {
+    key: k
+  }, /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, k ? k + ': ' : ''), liveTx[k]))), sugg && !rec && !asking && /*#__PURE__*/React.createElement("div", {
+    role: "region",
+    "aria-label": "Take notes?",
+    style: {
+      ...box,
+      marginTop: 8,
+      borderColor: 'rgba(0,212,255,0.4)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: '#eef1f6',
+      marginBottom: 6
+    }
+  }, sugg.text), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn active",
+    onClick: () => answerSugg('accept')
+  }, "Open the start card"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => answerSugg('decline')
+  }, "Not now"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      ...small,
+      flex: 1
+    }
+  }, "I'll ask once for this event. Nothing records until you start it."))), suggOff && !rec && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...small,
+      marginTop: 6
+    }
+  }, "Suggestions are off after two \u201Cnot now\u201D answers. ", /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: suggBack,
+    style: {
+      marginLeft: 4
+    }
+  }, "Turn them back on")), asking && !rec && /*#__PURE__*/React.createElement("div", {
     role: "dialog",
     "aria-label": "Start recording",
     style: {
@@ -39596,7 +39781,54 @@ function MeetingsPanel() {
       ...small,
       marginBottom: 8
     }
-  }, st && st.system_audio ? st.system_audio.reason : '', " Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks."), /*#__PURE__*/React.createElement("input", {
+  }, consent ? consent.jurisdiction_note : '', " Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: small
+  }, "What to tell everyone (edit it, then copy it into the call chat; I don't post into other apps):"), /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    rows: 2,
+    "aria-label": "Consent line",
+    style: {
+      width: '100%',
+      marginTop: 2
+    },
+    value: line,
+    onChange: e => {
+      setLine(e.target.value);
+      setCopied(false);
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      marginTop: 2
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: copyLine
+  }, copied ? 'Copied' : 'Copy the line'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: saveLine,
+    disabled: !consent || line === consent.line
+  }, "Save my wording"), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: speak,
+    onChange: e => setSpeak(e.target.checked)
+  }), " Say it aloud when recording starts"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...small,
+      marginBottom: 6
+    }
+  }, st && st.system_audio ? st.system_audio.reason : ''), /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       width: '100%',
@@ -39618,7 +39850,14 @@ function MeetingsPanel() {
     type: "checkbox",
     checked: keepAudio,
     onChange: e => setKeepAudio(e.target.checked)
-  }), " Keep the audio (encrypted)"), /*#__PURE__*/React.createElement("label", null, "Stop after ", /*#__PURE__*/React.createElement("select", {
+  }), " Keep the audio (encrypted)"), /*#__PURE__*/React.createElement("label", {
+    title: st && st.system_audio && !st.system_audio.available ? st.system_audio.reason : ''
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: sysAudio,
+    disabled: !!(st && st.system_audio && !st.system_audio.available),
+    onChange: e => setSysAudio(e.target.checked)
+  }), " Also record the other side of the call (kept separate: You / Them)"), /*#__PURE__*/React.createElement("label", null, "Stop after ", /*#__PURE__*/React.createElement("select", {
     value: maxH,
     onChange: e => setMaxH(Number(e.target.value))
   }, [1, 2, 3, 4].map(h => /*#__PURE__*/React.createElement("option", {
@@ -39635,13 +39874,90 @@ function MeetingsPanel() {
     className: "btn active",
     onClick: start,
     disabled: busy
-  }, "I've told everyone \u2014 start recording"))), msg && /*#__PURE__*/React.createElement("div", {
+  }, consent && consent.mode === 'owner_decides' ? "I've checked what applies — start recording" : "I've told everyone — start recording"))), msg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#00d4ff',
       marginTop: 6
     }
-  }, msg), open && /*#__PURE__*/React.createElement("div", {
+  }, msg), open && ret && /*#__PURE__*/React.createElement("div", {
+    role: "group",
+    "aria-label": "Keeping and deleting",
+    style: {
+      ...box,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#eef1f6',
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "Keeping and deleting"), /*#__PURE__*/React.createElement("div", {
+    style: small
+  }, "Nothing is chosen for you. Until you choose, nothing is deleted on a timer."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#cfd6e4',
+      marginTop: 6
+    }
+  }, "Audio"), ret.audio.options.map(o => /*#__PURE__*/React.createElement("label", {
+    key: o.value,
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "radio",
+    name: "mtg-audio-ret",
+    checked: ret.audio.selected === o.value,
+    onChange: () => setRetention({
+      audio: o.value
+    })
+  }), " ", o.label, o.recommended ? ' (Recommended)' : '', " ", /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, o.hint))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#cfd6e4',
+      marginTop: 6
+    }
+  }, "Transcripts and notes"), ret.text.options.map(o => /*#__PURE__*/React.createElement("label", {
+    key: o.value,
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "radio",
+    name: "mtg-text-ret",
+    checked: ret.text.selected === o.value,
+    onChange: () => setRetention({
+      text: o.value
+    })
+  }), " ", o.label, " ", /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, o.hint))), ret.text.selected === 'days' && /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, "After ", /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "1",
+    max: "3650",
+    style: {
+      width: 70
+    },
+    defaultValue: ret.text.days,
+    onBlur: e => setRetention({
+      days: Number(e.target.value)
+    })
+  }), " days")), open && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8
     }
@@ -39694,15 +40010,21 @@ function MeetingsPanel() {
   }, sel.title), sel.has_audio && /*#__PURE__*/React.createElement("a", {
     className: "btn",
     href: '/api/meetings/' + sel.id + '/audio'
-  }, "Audio"), /*#__PURE__*/React.createElement("button", {
+  }, "Audio"), sel.has_audio && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => delAudio(sel),
+    style: {
+      color: '#fca5a5'
+    }
+  }, "Delete audio only"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     onClick: () => del(sel),
     style: {
       color: '#fca5a5'
     }
-  }, "Delete")), /*#__PURE__*/React.createElement("div", {
+  }, "Delete meeting")), /*#__PURE__*/React.createElement("div", {
     style: small
-  }, (sel.started_at || '').replace('T', ' ').slice(0, 16), " \xB7 ", meetingClock(sel.duration_s), " \xB7 microphone only", sel.stop_reason && sel.stop_reason !== 'owner' ? ' · stopped: ' + sel.stop_reason.replace('_', ' ') : ''), s.status === 'done' ? /*#__PURE__*/React.createElement("div", {
+  }, (sel.started_at || '').replace('T', ' ').slice(0, 16), " \xB7 ", meetingClock(sel.duration_s), " \xB7 ", sel.system_audio ? 'microphone and system audio' : 'microphone only', sel.stop_reason && sel.stop_reason !== 'owner' ? ' · stopped: ' + sel.stop_reason.replace('_', ' ') : ''), s.status === 'done' ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8,
       fontSize: 12,
@@ -39861,7 +40183,7 @@ function MeetingsPanel() {
       fontSize: 10,
       color: '#8a93a6'
     }
-  }, meetingClock(g.t), " "), g.text)))));
+  }, meetingClock(g.t), " "), g.speaker ? /*#__PURE__*/React.createElement("b", null, g.speaker, ": ") : null, g.text)))));
 }
 
 // ═══ DRAFT PREVIEW HELPERS ═══
