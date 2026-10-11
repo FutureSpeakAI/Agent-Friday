@@ -279,3 +279,11 @@ def test_an_undo_in_a_tainted_turn_is_not_a_correction(world):
     assert _undo(tainted=lambda: True, settings=ON) is False
     assert not world.path.exists()
     assert _undo(tainted=lambda: False, settings=ON) is True
+
+
+def test_an_ask_answered_with_a_write_tool_is_never_a_label(world):
+    """An 'ask' correction can only be labelled with a tool the router can choose (a read), never a write."""
+    _route("what's the latest", _routed("ask", "search_news"), settings=ON)
+    world.clock.t += 20
+    assert _executed("organize_email", {"action": "star"}, ok=True, settings=ON) is False
+    assert world.rows() == []

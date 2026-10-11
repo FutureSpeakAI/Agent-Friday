@@ -38,7 +38,7 @@ from agent_friday.services import item_actions as ia
 from agent_friday.services import laya_router as lr
 from agent_friday.services import laya_safe_writes as sw
 from agent_friday.services import off_record, point_act as pa, voice_delivery
-from tests.screen_fixtures import Page, report
+from tests.screen_fixtures import Page, ref, report
 from tests.unit.test_laya_safe_writes import (  # noqa: F401  (fixtures are used by name)
     CONV, ON_CASES, _cards, _go, _mode, _pending, _route, _stage, chat, gmail, settings_file)
 from tests.unit.test_voice_card_readback import CALL, _Call
@@ -1055,3 +1055,283 @@ def test_l6_the_voice_follow_up_memory_does_not_keep_the_ticket(safe_call):
     c = safe_call()
     c.say("archive these")
     assert "laya_write" not in str(c.tool_session.get("last_route")) and "ticket" not in str(c.tool_session)
+
+
+# ══ Fresh-critic pass (6e50a52a4): MJ-1, MJ-2, MD-1, MD-3, mn-1, mn-3, mn-4, mn-6 ══
+
+# ── MJ-1: rows Friday highlighted are never the owner's pointer ──────────────────────────────────
+
+def _friday_pointed(monkeypatch):
+    from agent_friday.services import desktop_bus
+    desktop_bus.set_pointed("messages", [ref(4), ref(5), ref(6)])          # a model's screen_select
+
+
+def test_mj1_rows_friday_pointed_at_are_not_what_these_means(gmail, monkeypatch):
+    """Fails on 6e50a52a4: with nothing ticked, 'archive these' resolved to the rows Friday had highlighted
+    and the card said 'the ones I just pointed at'."""
+    stage = _stage(selected=())
+    report(stage)
+    _friday_pointed(monkeypatch)
+    r = lr.route("archive these", trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+    assert r.decision != "tool", (r.decision, r.layer)
+    assert not (set(r.args.get("refs") or []) & {ref(4), ref(5), ref(6)}), "no Friday-pointed row rides along"
+    assert not sw._TICKETS and not _cards()
+
+
+def test_mj1_the_first_two_count_over_the_screen_not_over_what_friday_pointed_at(gmail, monkeypatch):
+    stage = _stage(selected=())
+    report(stage)
+    Page(monkeypatch)
+    _friday_pointed(monkeypatch)
+    r = lr.route("archive the first two", trusted=True, stage=stage, log=False, conversation_id=CONV,
+                 rung_budget_ms=5000)
+    assert r.layer == "safe_write" and r.decision == "tool"
+    assert agent._tool_organize_email(dict(r.args)).startswith("CARD_RAISED")
+    pay = _pending()[0]["payload"]
+    assert pay["refs"] == [ref(1), ref(2)], "the owner's own numbering of the screen, not Friday's highlighted set"
+    assert pay["laya_rule"] == "the rows you numbered"
+
+
+def test_mj1_a_proposal_resolved_from_pointed_rows_is_refused_and_never_worded_as_the_owners(gmail):
+    args = {"intent": "archive", "refs": [ref(1)], "workspace": "messages", "rule": "deictic:pointed"}
+    p, why = sw.build(pa.PointAct("defer", "archive", [ref(1)], "messages", args=args))
+    assert p is None and "model's" in why
+    assert "deictic:pointed" not in sw._RULE_WORDS
+    assert sw.rule_words("ordinals:ordinals") == "the rows you numbered"
+
+
+# ── MJ-2: the history keeps no title and no sender name ──────────────────────────────────────────
+
+def test_mj2_the_typed_card_reply_is_shown_live_but_the_history_line_is_neutral(chat, gmail, monkeypatch):
+    """Fails on 6e50a52a4: the reply with “subject” from sender was the line persisted into the chat history."""
+    from agent_friday.services import reflex_chat as rc
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
+                               turn_id="t-1", authenticated=True, local=True)
+    assert "Subject t1" in out["reply"] and "Sender" in out["reply"], "the live reply shows the sample"
+    h = out["history_text"]
+    assert "Subject" not in h and "Sender" not in h and "@" not in h and "archive 2 conversations" in h
+    assert "Subject" not in str(out["tool_trace"]) and "Sender" not in str(out["tool_trace"])
+
+
+def test_mj2_which_sender_is_asked_live_and_kept_neutral(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    stage = _stage(selected=(1, 2))
+    stage["cursor"] = {"ref": ref(4), "state": "locked", "age_s": 1.0}
+    report(stage)
+    out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
+                               turn_id="t-1", authenticated=True, local=True)
+    assert out["outcome"] == "ask" and out["history_text"] == rc.NEUTRAL_ASK
+
+
+def test_mj2_the_route_persists_the_neutral_line_not_the_live_reply(chat, gmail, monkeypatch):
+    import json
+    from flask import Flask
+    from agent_friday.routes import chat as chat_routes
+    from agent_friday.services import reflex_chat as rc
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
+                               turn_id="t-1", authenticated=True, local=True)
+    saved = []
+    monkeypatch.setattr(chat_routes, "_persist_turn", lambda cid, u, f: saved.append(f))
+    monkeypatch.setattr(chat_routes, "_save_chat_history", lambda h: None)
+    with Flask(__name__).app_context():
+        resp = chat_routes._instant_response("archive these", out, CONV)
+    body = json.loads(resp.get_data(as_text=True))
+    assert "Subject t1" in body["response"], "the owner sees the sample"
+    assert saved and saved[0]["text"] == out["history_text"] and "Subject" not in saved[0]["text"]
+
+
+# ── MD-1: a file turned down narrows the record ──────────────────────────────────────────────────
+
+def _wait_record(core, want="off"):
+    import time
+    for _ in range(150):
+        if gs.owner_choice("laya_safe_writes", block=True) == want:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_md1_a_hand_edit_down_turns_the_record_down_so_a_later_write_of_on_does_not_re_arm(settings_file, owner_record):
+    """Fails on 6e50a52a4: only a save through core narrowed the record; an edit of the file left it at 'on'."""
+    core = settings_file
+    _click(core, "on")
+    assert sw.mode() == "on"
+    _hand_edit(core, "off")                                         # Friday stopped, the file edited down
+    assert sw.mode() == "off"                                       # this read notices and narrows the record
+    assert _wait_record(core)
+    _hand_edit(core, "on")                                          # weeks later an approved file write says on
+    assert sw.mode() == "off" and gs.owner_choice("laya_safe_writes", block=True) == "off"
+
+
+def test_md1_a_file_turned_to_shadow_narrows_to_shadow(settings_file, owner_record):
+    core = settings_file
+    _click(core, "on")
+    _hand_edit(core, "shadow")
+    assert sw.mode() == "shadow" and _wait_record(core, "shadow")
+    _hand_edit(core, "on")
+    assert sw.mode() == "shadow"
+
+
+def test_md1_if_the_record_cannot_be_turned_down_it_is_removed_and_reads_off(settings_file, owner_record, monkeypatch):
+    core = settings_file
+    _click(core, "on")
+
+    def boom(n):
+        raise OSError("not writable")
+    monkeypatch.setattr(gs, "_store_nonce", boom)
+    _hand_edit(core, "off")
+    assert sw.mode() == "off"
+    import time
+    for _ in range(150):
+        if not gs._record_path().exists():
+            break
+        time.sleep(0.02)
+    assert not gs._record_path().exists()
+    _hand_edit(core, "on")
+    assert sw.mode() == "off"
+
+
+# ── MD-3: a typed yes can reach the armed card, and only the very next one ───────────────────────
+
+def _open(text, conv=CONV, settings=None, **kw):
+    from agent_friday.services import reflex_chat as rc
+    return rc.open_turn(text, {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=conv, turn_id="t-1",
+                        settings=settings if settings is not None else {}, authenticated=True, local=True, **kw)
+
+
+def test_md3_the_very_next_whole_yes_answers_the_armed_card_with_no_model(chat, gmail, monkeypatch):
+    """Fails on 6e50a52a4: nothing handed the model the card id, so the typed yes reached no card."""
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    rc.note_user_turn(CONV, "yes", True)
+    out = _open("yes")
+    assert out and out["outcome"] == "card_answered" and out["reply"].startswith("Approved and done")
+    assert ia.wait_for(cid, 10)["status"] == "complete"
+
+
+def test_md3_a_whole_no_declines_it(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    rc.note_user_turn(CONV, "no", True)
+    out = _open("no")
+    assert out and out["outcome"] == "card_answered" and "declined" in out["reply"].lower()
+    assert ap.get_approval(cid)["status"] == "denied" and gmail.changes() == []
+
+
+def test_md3_a_yes_after_anything_else_answers_nothing(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    rc.note_user_turn(CONV, "what is on my calendar", True)
+    rc.note_user_turn(CONV, "yes", True)
+    assert _open("yes") is None and ap.get_approval(cid)["status"] == "pending" and gmail.changes() == []
+
+
+def test_md3_a_palette_request_with_no_conversation_arms_nothing(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    rc._LAYA_ASKED.clear()
+    out = _open("archive these", arm=False)
+    assert out and out["outcome"] == "card" and not rc._LAYA_ASKED
+
+
+def test_md3_a_palette_request_in_the_conversation_ages_the_armed_card(chat, gmail, monkeypatch):
+    import json
+    from flask import Flask
+    from agent_friday.routes import core_routes as cr
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    monkeypatch.setattr(cr, "_load_settings", lambda: {"reflex_open_enabled": True})
+    monkeypatch.setattr(rc, "trusted_surface", lambda data, text, **kw: True)
+    monkeypatch.setattr(rc, "open_turn", lambda *a, **k: {"outcome": "card", "reply": "waiting on your card"})
+    body = {"text": "open the budget", "source": "app_page", "conversation_id": CONV}
+    with Flask(__name__).test_request_context("/api/reflex/open", method="POST", json=body):
+        resp = cr.reflex_open()
+    assert json.loads(resp.get_data(as_text=True))["status"] == "card", "a card is reported as raised, not done"
+    assert rc.take_armed_card(CONV) is None, "the palette was another turn: the armed card is no longer the last question"
+    assert ap.get_approval(cid)["status"] == "pending"
+
+
+def test_md3_a_spoken_turn_in_the_conversation_disarms_a_typed_card(safe_call):
+    from agent_friday.services import reflex_chat as rc
+    c = safe_call()
+    rc.arm_laya_card(CALL, "card_id=apr_typed")
+    assert CALL in rc._LAYA_ASKED
+    c.say("what's on my calendar")
+    assert CALL not in rc._LAYA_ASKED
+
+
+# ── mn-1: a display name that is itself an address ───────────────────────────────────────────────
+
+def test_mn1_a_display_name_that_is_an_address_shows_its_local_part_only(real_mail, monkeypatch):
+    stage = _stage(selected=(1,))
+    report(stage)
+    Page(monkeypatch)
+    MAIL["m1"]["from"] = '"bob@evil.example" <bob@evil.example>'
+    r, out = _go("archive these", stage)
+    pay = _pending()[0]["payload"]
+    assert "@" not in str(pay["preview"]) and "@" not in out
+    assert "bob <bob@evil.example>" in pay["lines"][0], "the card on screen still shows the address"
+
+
+# ── mn-3: no shadow rows off the record; the text hash is keyed ──────────────────────────────────
+
+def test_mn3_no_safe_write_shadow_row_is_written_off_the_record(gmail, monkeypatch, tmp_path):
+    from agent_friday.services import off_record
+    _mode(monkeypatch, "shadow")
+    monkeypatch.setattr(off_record, "active", lambda settings=None: True)
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    _route("archive these", stage)
+    assert not (tmp_path / "runtime" / "laya_safe_writes").exists()
+
+
+def test_mn3_the_head_shadow_row_hash_is_keyed_and_off_the_record_writes_nothing(gmail, monkeypatch, tmp_path):
+    import hashlib
+    from agent_friday.services import laya_router_head as lh
+    from agent_friday.services import off_record
+    final = lr.Route("no_tool")
+    row = lh.shadow_row("star these", None, final, None, "voice", 0.9)
+    assert row["text_sha"] != hashlib.sha256(b"star these").hexdigest()[:16]
+    assert row["text_sha"] == sw.keyed_hash("star these", 16)
+    monkeypatch.setattr(lh, "available", lambda profile=lh.DEFAULT_PROFILE: True)
+    monkeypatch.setattr(off_record, "active", lambda settings=None: True)
+    assert lh.shadow("star these", final, None, "voice", sync=True) is False
+
+
+def test_mn3_the_learning_hash_is_keyed(gmail):
+    import hashlib
+    from agent_friday.services import laya_router_learn as ll
+    h = ll._sha("archive these")
+    assert len(h) == 64 and h != hashlib.sha256(b"archive these").hexdigest() and h == ll._sha("archive these")
+
+
+# ── mn-4: a safe-write turn read the screen ──────────────────────────────────────────────────────
+
+def test_mn4_safe_write_is_a_screen_layer_for_learning_and_chat_routing():
+    from agent_friday.services import chat_tool_routing as ctr
+    from agent_friday.services import laya_personal as lp
+    assert "safe_write" in lp.SCREEN_LAYERS and "safe_write" in ctr._SCREEN_LAYERS
+
+
+# ── MD-4: the docs say what the code does ───────────────────────────────────────────────────────
+
+def test_md4_the_docs_match_the_code():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    flat = lambda name: " ".join((root / name).read_text(encoding="utf-8").split())
+    mail, known, log = flat("docs/user-guide/mail.md"), flat("KNOWN_ISSUES.md"), flat("CHANGELOG.md")
+    assert "left to the model's path" not in mail and "left to the model's path" not in known
+    assert "she refuses it" in mail and "is refused" in known
+    assert "Undo puts each message back exactly as it was" not in mail and "Gmail filter" in mail
+    assert "up to three senders" in mail
+    for needle in ("Laya's safe writes", "reflex_approval_replies", "reflex_open_enabled", "chat_tool_routing",
+                   "laya_tool_head", "Voice point-and-act"):
+        assert needle in log, needle

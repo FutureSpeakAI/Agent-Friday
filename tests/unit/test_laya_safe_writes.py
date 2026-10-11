@@ -87,6 +87,7 @@ def test_the_setting_is_off_by_default_and_read_strictly(monkeypatch):
     import agent_friday.core as core
     from agent_friday.services import guarded_settings as gs
     monkeypatch.setattr(gs, "owner_choice", lambda key, block=False: "on")   # the owner's click is recorded: only the word is under test
+    monkeypatch.setattr(gs, "follow_file", lambda *a, **k: None)             # (and no record is touched by this read)
     assert core.DEFAULT_SETTINGS["laya_safe_writes"] == "off"
     assert sw.mode({}) == "off" and sw.mode({"laya_safe_writes": "off"}) == "off"
     assert sw.mode({"laya_safe_writes": "shadow"}) == "shadow" and sw.mode({"laya_safe_writes": "on"}) == "on"

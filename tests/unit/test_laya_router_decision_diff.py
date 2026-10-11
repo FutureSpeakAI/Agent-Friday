@@ -107,3 +107,61 @@ def test_the_description_probes_are_in_the_case_set_and_the_oracle_budget_is_wid
               "show me all the emails", "show me the emails from this morning", "open the email about that meeting"):
         assert t in cases, t
     assert dd.ORACLE_RUNG_BUDGET_MS > 1000
+
+
+# ── MJ-3: the oracle is a sound gate for both settings ───────────────────────────────────────────
+
+def test_a_hand_off_named_on_a_request_the_base_already_deferred_is_the_allowed_class(tmp_path):
+    """Fails before: 'text my wife that I am late' (base: defer; new: defer, handoff compose_text) was NOT ALLOWED."""
+    a = _row("text my wife that I'm late", _both(_r("defer", None, reason=dd.WRITE_REASON)))
+    b = _row("text my wife that I'm late", _both(_r("defer", None, reason=dd.WRITE_REASON, handoff="compose_text")))
+    assert _cmp(tmp_path, a, b) == 0
+
+
+def test_a_hand_off_that_changes_or_disappears_still_fails(tmp_path):
+    a = _row("x", _both(_r("defer", None, handoff="compose_text")))
+    b = _row("x", _both(_r("defer", None, handoff="")))
+    assert _cmp(tmp_path, a, b) == 1
+    a = _row("x", _both(_r("tool", "query_calendar")))
+    b = _row("x", _both(_r("tool", "query_calendar", handoff="compose_text")))
+    assert _cmp(tmp_path, a, b) == 1, "a tool route that gains a hand-off is not the deferred class"
+
+
+def _on_cmp(tmp_path, a, b, on=True):
+    _dump(tmp_path / "a.json", [a])
+    _dump(tmp_path / "b.json", [b])
+    return dd.compare(tmp_path / "a.json", tmp_path / "b.json", on=on)
+
+
+def test_the_on_pass_allows_a_write_to_pointed_rows_to_become_a_safe_write_route_and_nothing_else(tmp_path):
+    a = _row("archive these", _both(_r("defer", None, layer="point_act", reason="x")))
+    b = _row("archive these", _both(_r("defer", None, layer="point_act", reason="x"),
+                                    _r("tool", "organize_email", layer="safe_write")), )
+    b["write_referential"] = True
+    assert _on_cmp(tmp_path, a, b, on=True) == 0
+    assert _on_cmp(tmp_path, a, b, on=False) == 1, "OFF must not show the safe-write layer at all"
+    # a read, a select or an open taken by the safe-write layer is a regression even with the setting on
+    a = _row("show me everything on my calendar today", _both(_r("tool", "query_calendar")))
+    b = _row("show me everything on my calendar today", _both(_r("tool", "query_calendar"),
+                                                              _r("defer", None, layer="safe_write")))
+    b["write_referential"] = False
+    assert _on_cmp(tmp_path, a, b, on=True) == 1
+
+
+def test_the_compare_command_takes_an_on_flag(tmp_path):
+    a = _row("archive these", _both(_r("defer", None, layer="point_act", reason="x")))
+    b = _row("archive these", _both(_r("defer", None, layer="point_act", reason="x"),
+                                    _r("ask", None, layer="safe_write", question="Which ones?")))
+    b["write_referential"] = True
+    _dump(tmp_path / "a.json", [a])
+    _dump(tmp_path / "b.json", [b])
+    assert dd.main(["compare", str(tmp_path / "a.json"), str(tmp_path / "b.json"), "--on"]) == 0
+    assert dd.main(["compare", str(tmp_path / "a.json"), str(tmp_path / "b.json")]) == 1
+
+
+def test_dump_takes_a_safe_writes_option():
+    import argparse
+    import inspect
+    assert "safe_writes" in inspect.signature(dd.dump).parameters
+    src = TOOL.read_text(encoding="utf-8")
+    assert '"--safe-writes"' in src and "oracle-conversation" in src and "write_referential" in src
