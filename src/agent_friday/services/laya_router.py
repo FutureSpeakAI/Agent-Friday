@@ -754,9 +754,46 @@ _OPEN_LEAD = re.compile(_POLITE + r"(?:open|pull up|bring up|show me|take me to|
 #: The resolver is asked for these commands only: both are screen moves the action
 #: gate classes INTERNAL. (A news story's open_url is the model's to run.)
 _RESOLVER_TOOLS = frozenset({"navigate_to", "library_show"})
-#: A resolver call may take its own Laya question and an index lookup.
-RESOLVER_BUDGET_MS = 3500
-_res_exec: Optional[ThreadPoolExecutor] = None
+#: How long each trusted rung may take on a turn. Over budget, the rung answers None and the sealed-rule
+#: decision stands: a screen read or an index search never holds a voice turn. A rung still running from
+#: an earlier turn is not queued behind: the next turn skips it until it ends.
+POINT_BUDGET_MS = 200
+RESOLVER_BUDGET_MS = 300
+_rung_pool: Optional[ThreadPoolExecutor] = None
+_rung_busy: set = set()
+
+
+def _bounded(name: str, fn: Callable, text: str, budget_ms: float):
+    """``fn(text)`` on a worker thread within ``budget_ms``; None when it overruns, raises, or the same
+    rung is still busy from an earlier turn. Never blocks past the budget, never queues."""
+    global _rung_pool
+    with _pool_lock:
+        if name in _rung_busy:
+            return None
+        _rung_busy.add(name)
+        if _rung_pool is None:
+            _rung_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="laya-rung")
+        pool = _rung_pool
+
+    def run():
+        try:
+            return fn(text)
+        finally:
+            with _pool_lock:
+                _rung_busy.discard(name)
+    try:
+        fut = pool.submit(run)
+    except RuntimeError:
+        with _pool_lock:
+            _rung_busy.discard(name)
+        return None
+    try:
+        return fut.result(timeout=max(0.0, budget_ms) / 1000.0)
+    except _FutureTimeout:
+        return None
+    except Exception as e:  # noqa: BLE001
+        _log.debug("%s rung unavailable: %s", name, e)
+        return None
 
 
 def point_act_route(text: str, *, stage, pointed, quiet: bool) -> Optional[Route]:
@@ -801,19 +838,8 @@ def _resolver_route(text: str) -> Optional[Route]:
     laya_resolver) names one item or asks which. Only on a trusted surface."""
     if not _OPEN_LEAD.search(text):
         return None
-    global _res_exec
     from agent_friday.services import laya_resolver
-    with _pool_lock:
-        if _res_exec is None:
-            _res_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="laya-resolver")
-        ex = _res_exec
-    try:
-        res = ex.submit(laya_resolver.resolve, text).result(timeout=RESOLVER_BUDGET_MS / 1000.0)
-    except _FutureTimeout:
-        return None                  # over budget: the next tier answers
-    except Exception as e:  # noqa: BLE001
-        _log.debug("resolver unavailable: %s", e)
-        return None
+    res = laya_resolver.resolve(text)       # route() bounds this call (_bounded): it may search the index
     if res.status == "ask":
         return Route("ask", confidence=res.confidence or 0.5, layer="resolver",
                      question=str(res.question or res.text), reason="the resolver asks which one")
@@ -1301,9 +1327,11 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
     text = " ".join(str(text or "").split())
     held = set(tools) if tools is not None else None
     r = _sealed_rules(text, pending_card, last_route,
-                      point=(lambda t: point_act_route(t, stage=stage, pointed=pointed, quiet=quiet))
+                      point=(lambda t: _bounded("point", lambda x: point_act_route(
+                          x, stage=stage, pointed=pointed, quiet=quiet), t, POINT_BUDGET_MS))
                       if trusted else None,
-                      resolver=_resolver_route if trusted else None)
+                      resolver=(lambda t: _bounded("resolver", _resolver_route, t, RESOLVER_BUDGET_MS))
+                      if trusted else None)
     mode = _head_mode(head_mode) if text else "off"
     decided_by_rule = r is not None
     if r is None:

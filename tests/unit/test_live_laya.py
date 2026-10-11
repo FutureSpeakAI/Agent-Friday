@@ -632,7 +632,7 @@ def test_live_laya_never_routes_trusted_even_for_the_owners_authenticated_local_
         return real(text, **kw)
 
     def boom(*a, **k):
-        raise AssertionError("a Gemini Live turn reached a screen rung")
+        raise _ScreenRead("a Gemini Live turn reached a screen rung")
     monkeypatch.setattr(laya_router, "route", spy)
     monkeypatch.setattr(laya_router, "point_act_route", boom)
     monkeypatch.setattr(laya_router, "_resolver_route", boom)
@@ -641,3 +641,7 @@ def test_live_laya_never_routes_trusted_even_for_the_owners_authenticated_local_
         ll._route(text)
     assert seen["trusted"] is False and seen["surface"] == live_laya.SURFACE
     ll.shutdown()
+
+
+class _ScreenRead(BaseException):
+    """Not an Exception: the router swallows those, which would hide a red test."""

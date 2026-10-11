@@ -16,6 +16,10 @@ from agent_friday.services import screen_stage as ss
 NOW = time.time()
 
 
+class ScreenRead(BaseException):
+    """Not an Exception: a rung that swallows `except Exception` cannot hide it from the test."""
+
+
 def _stage():
     return ss.bound_stage({"workspace": "messages", "rev": 1, "items": [
         {"ref": "mail:a@x:t1", "n": 1, "title": "Invoice from Sarah", "facets": {"from": "Sarah"}},
@@ -38,7 +42,7 @@ READS = [
 def test_a_read_phrase_decides_the_same_on_the_trusted_path_with_a_list_on_screen(text, tool, monkeypatch):
     base = lr.route(text, log=False, budget_ms=50, trusted=False)
     assert base.tool == tool, (text, base)
-    monkeypatch.setattr(pa, "plan", lambda *a, **k: (_ for _ in ()).throw(AssertionError("read the screen")))
+    monkeypatch.setattr(pa, "plan", lambda *a, **k: (_ for _ in ()).throw(ScreenRead("read the screen")))
     got = lr.route(text, log=False, budget_ms=50, trusted=True, stage=_stage(), pointed=None)
     assert _decision(got) == _decision(base)
 
@@ -113,3 +117,50 @@ def test_rows_for_a_carded_change_go_only_to_a_local_deeper_mind():
     import agent_friday.routes.voice as rv
     assert "mail:owner@example.test:t1" in rv._deferred_request("archive these", _defer("archive"), local=True)
     assert rv._deferred_request("archive these", _defer("archive"), local=False) == "archive these"
+
+
+# ── the trusted rungs are bounded and never queue ─────────────────────────────────────
+
+def test_a_rung_over_budget_answers_none_and_the_next_turn_skips_it_instead_of_queueing():
+    import threading
+    go, calls = threading.Event(), []
+
+    def slow(text):
+        calls.append(text)
+        go.wait(5)
+        return "late"
+    t0 = time.perf_counter()
+    assert lr._bounded("t_slow", slow, "a", 50) is None
+    assert time.perf_counter() - t0 < 1.0
+    assert lr._bounded("t_slow", slow, "b", 50) is None          # still busy: skipped at once, not run
+    assert calls == ["a"]
+    go.set()
+    end = time.time() + 3
+    while "t_slow" in lr._rung_busy and time.time() < end:
+        time.sleep(0.01)
+    assert lr._bounded("t_slow", lambda t: t.upper(), "c", 500) == "C"
+
+
+def test_a_hanging_stage_read_never_holds_the_turn_and_the_sealed_decision_stands(monkeypatch):
+    import threading
+    go = threading.Event()
+    monkeypatch.setattr(lr, "POINT_BUDGET_MS", 50)
+    monkeypatch.setattr(lr, "point_act_route", lambda *a, **k: (go.wait(5), None)[1])
+    base = lr.route("check my email", log=False, budget_ms=50)
+    t0 = time.perf_counter()
+    got = lr.route("check my email", log=False, budget_ms=50, trusted=True)
+    took = time.perf_counter() - t0
+    go.set()
+    assert took < 1.5 and _decision(got) == _decision(base)
+
+
+def test_a_hanging_resolver_never_holds_the_turn(monkeypatch):
+    import threading
+    from agent_friday.services import laya_resolver
+    go = threading.Event()
+    monkeypatch.setattr(lr, "RESOLVER_BUDGET_MS", 50)
+    monkeypatch.setattr(laya_resolver, "resolve", lambda text: (go.wait(5), None)[1])
+    t0 = time.perf_counter()
+    lr.route("open the budget spreadsheet", log=False, budget_ms=50, trusted=True, stage=None, pointed=None)
+    assert time.perf_counter() - t0 < 1.5
+    go.set()

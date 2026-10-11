@@ -109,7 +109,7 @@ def test_a_single_clause_action_rule_is_kept_whatever_the_guard_would_say():
 
 def test_an_untrusted_caller_never_reaches_the_screen_rungs(monkeypatch):
     def boom(*a, **k):
-        raise AssertionError("an untrusted turn read the owner's screen")
+        raise _ScreenRead("an untrusted turn read the owner's screen")
     monkeypatch.setattr(lr, "point_act_route", boom)
     monkeypatch.setattr(lr, "_resolver_route", boom)
     for text in ("archive these", "open the second one", "open the budget spreadsheet"):
@@ -130,3 +130,7 @@ def test_a_trusted_change_carries_its_rows_on_a_defer_and_never_a_tool(monkeypat
     monkeypatch.setattr(lr, "point_act_route", lambda *a, **k: lr.Route("tool", tool="screen_select", layer="point_act"))
     r = lr.route("archive these", trusted=True, log=False, budget_ms=50)
     assert r.decision == "defer" and not r.tool and "refs" not in r.args
+
+
+class _ScreenRead(BaseException):
+    """Not an Exception: the router swallows those, which would hide a red test."""

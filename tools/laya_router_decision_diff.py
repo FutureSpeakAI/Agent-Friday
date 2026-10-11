@@ -1,35 +1,52 @@
 """Decision diff for services/laya_router: the chain's voice route before and after the router generation.
 
-The invariant: for every phrase the chain already handled, the voice route (``route()`` as the local voice
-front calls it, ``trusted`` False; ``laya.route_turn``; and the degraded ``rules_route``) makes exactly the same
-decision, tool and arguments after the port as before. The one class of difference the port is allowed to make
-is NARROWER: a phrase that holds a change anywhere in the turn becomes a ``defer`` (reason "an imperative that
-changes something"), never the other way round, and never a different tool. That class is reported on its own,
-split into the full route and the degraded (rules_route) path, so each can be read by hand.
+The invariant: for every phrase the chain already handled, the voice route makes exactly the same decision,
+tool, arguments, question, LAYER and handoff after the port as before. Surfaces compared, each over the same
+cases:
 
-    python tools/laya_router_decision_diff.py run  --base <chain tip worktree> --new <this worktree> --scratch <dir>
+  route / route_turn      untrusted, at the generous budget (1000 ms) and the live one (50 ms)
+  route / route_turn      trusted (the owner's voice and the verified page) with a fixture stage
+  route (held filter)     a short held-tools list
+  rules_route             the degraded path
+
+The only difference the port may make is NARROWER: a phrase that holds a change anywhere in the turn becomes
+a ``defer`` that names no tool (reason "an imperative that changes something", or a point-and-act defer for
+a change). That class is reported on its own per surface. On the trusted surfaces, the listed FEATURE probes
+(words that point at the screen) may change to a point-and-act or resolver decision; they are listed too.
+Anything else, including a change of layer alone, is NOT ALLOWED and exits 1.
+
+The oracle refuses to run unless the reading model is loaded in BOTH processes (tier 1 would otherwise be a
+silent ``degraded`` on both sides and the diff would compare tier 0 only): ``dump`` exits 3 when the encoder
+files are absent or an embedding fails. Point it at the real encoder directory, read-only, while FRIDAY_HOME,
+HOME and USERPROFILE stay on a scratch directory.
+
+    python tools/laya_router_decision_diff.py run  --base <chain tip worktree> --new <this worktree> \
+        --scratch <dir> --encoder-dir <~/.friday/models/laya2-encoder> [--hf-home <HF_HOME>]
     python tools/laya_router_decision_diff.py dump --src <worktree> --cases <cases.json> --out <out.json>
     python tools/laya_router_decision_diff.py compare <base.json> <new.json>
 
-``run`` builds the case list once (the router eval sets, every router_rule / router_seed phrasing in the
-manifests, and probes for a waiting card, follow-ups and the owner-mark phrase), dumps it from both trees in
-separate processes with FRIDAY_HOME, HOME and USERPROFILE on the scratch directory and CUDA_VISIBLE_DEVICES=-1,
-and compares. Exit 0 only when every difference is in the allowed class. CPU only; nothing is sent anywhere.
+CPU only (CUDA_VISIBLE_DEVICES=-1); nothing is sent anywhere; no real home is written.
 """
 from __future__ import annotations
 
 import argparse
+import inspect
+import itertools
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EVAL_SETS = ("laya_router_eval.json", "laya_router_holdout2.json", "laya_router_holdout3.json")
+WRITE_REASON = "an imperative that changes something"
+HELD = ["query_calendar", "check_email", "search_email", "answer_card"]
+BUDGETS = (1000, 50)
 
-#: Probes the eval sets do not carry: (text, kwargs). A waiting card, a follow-up that needs the previous
-#: look-up, the voice owner-mark phrase, and the compounds the write guard exists for.
+#: Probes the eval sets do not carry: (text, kwargs). A waiting card, follow-ups, the owner-mark phrase and the
+#: compounds the write guard exists for.
 PROBES = [
     ("yes", {"pending_card": "ap_probe"}), ("no", {"pending_card": "ap_probe"}),
     ("yes please", {"pending_card": "ap_probe"}), ("sure go ahead", {"pending_card": "ap_probe"}),
@@ -41,18 +58,57 @@ PROBES = [
     ("play some jazz and delete my old mail", {}),
     ("look up the dentist's hours and put them on my calendar", {}),
     ("email my sister that the party moved", {}),
-    ("archive these", {}), ("open the second one", {}), ("open the budget spreadsheet", {}),
+    # a read that point-and-act used to take on the trusted path (must keep its read rule)
+    ("show me the email from Sarah", {}), ("pull up the email about the invoice", {}),
+    ("show me my unread emails", {}), ("show me the news about Ukraine", {}), ("pick up where we left off", {}),
 ]
+
+#: Words that point AT the screen: on the trusted surfaces these may take the new point-and-act / resolver
+#: decision. They are the feature, listed on their own, never counted as a regression.
+FEATURE_PROBES = [
+    "open the second one", "open the first one", "select these", "tick the first three", "all of them",
+    "archive these", "archive all of them", "trash all of them", "star all of them", "mark all of them as read",
+    "open the budget spreadsheet", "open the go-live checklist", "show me the first one", "clear the selection",
+]
+
+#: Every regex the port changed gets cases generated from it.
+OPENERS = ["also", "just", "then", "now", "kindly", "quickly", "i want to", "i need to", "i have to", "i'd like to",
+           "i would like to", "i gotta"]
+RULE_BASES = ["be quiet until morning", "quiet until morning", "go quiet until morning", "undo that", "pause the podcast",
+              "stop the task", "cancel the background task", "play some jazz", "open the calendar",
+              "turn the volume up", "skip this episode", "what's on my calendar tomorrow", "check my email"]
+TEXT_RULE = ["text messages from Mom", "show me my text messages", "read my text messages", "any text messages today",
+             "text messages about the party", "text my wife that I'm late", "text me when it's done", "texting is hard"]
+NEW_ACT_VERBS = ["email", "e-mail", "tell", "let", "notify", "ping", "dm", "label", "snooze", "flag", "tag", "pin", "unpin",
+                 "mute", "unmute", "block", "dismiss", "reserve", "rsvp", "sign up"]
+READS = ["what's on my calendar", "check my email", "what's the news", "search my files for the lease"]
+WRITES = ["put it on my calendar", "reply to the landlord", "email Sam that I'm late", "delete my old mail",
+          "tell my brother I'm on my way", "label them as taxes"]
+JOINERS = [" and ", ", then ", " and then ", ", also ", " after that ", "; "]
+
+
+def regex_probes() -> list:
+    out = []
+    for o, b in itertools.product(OPENERS, RULE_BASES):
+        out.append("%s %s" % (o, b))
+    out.extend(TEXT_RULE)
+    for v in NEW_ACT_VERBS:
+        out.append("%s the team about the outage" % v)
+        out.append("%s this" % v)
+        out.append("%s my brother that the party moved" % v)
+    for r, j, w in itertools.product(READS, JOINERS, WRITES):
+        out.append(r + j + w)
+    return out
 
 
 def build_cases(root: Path) -> list:
     cases, seen = [], set()
 
-    def add(text, kw=None):
+    def add(text, kw=None, feature=False):
         key = (text, json.dumps(kw or {}, sort_keys=True))
         if text and key not in seen:
             seen.add(key)
-            cases.append({"text": text, "kw": kw or {}})
+            cases.append({"text": text, "kw": kw or {}, "feature": feature})
     for name in EVAL_SETS:
         p = root / "tests" / "fixtures" / name
         if p.is_file():
@@ -65,80 +121,142 @@ def build_cases(root: Path) -> list:
                     add(ph)
     for text, kw in PROBES:
         add(text, kw)
+    for text in regex_probes():
+        add(text)
+    for text in FEATURE_PROBES:
+        add(text, feature=True)
     return cases
 
 
 def _row(r) -> dict:
     return {"decision": r.decision, "tool": r.tool, "args": r.args, "layer": r.layer, "reason": r.reason,
-            "question": r.question}
+            "question": r.question, "handoff": getattr(r, "handoff", ""), "chosen": getattr(r, "chosen", {})}
+
+
+def _stage():
+    from agent_friday.services import screen_stage as ss
+    return ss.bound_stage({"workspace": "messages", "rev": 1, "items": [
+        {"ref": "mail:a@x:t1", "n": 1, "title": "Invoice from Sarah", "facets": {"from": "Sarah"}},
+        {"ref": "mail:a@x:t2", "n": 2, "title": "Re: the invoice", "facets": {"from": "Mara"}},
+        {"ref": "mail:a@x:t3", "n": 3, "title": "Weekly newsletter", "facets": {"from": "News"}}]}, now=time.time())
 
 
 def dump(src: Path, cases_path: Path, out: Path) -> int:
     sys.path.insert(0, str(src / "src"))
-    from agent_friday.services import laya, laya_router as lr
+    from agent_friday.services import laya, laya2_encoder, laya_router as lr
+    if not laya2_encoder.is_available():
+        print("REFUSED: the Laya reading model is not on disk (%s); tier 1 would be a silent 'degraded' on both "
+              "sides. Pass --encoder-dir." % laya2_encoder.artifacts_dir(), file=sys.stderr)
+        return 3
+    try:
+        vec = laya2_encoder.embed(["probe"])
+        lr._prototypes()
+        if not vec or len(vec[0]) != laya2_encoder.EMBED_DIM:
+            raise RuntimeError("bad embedding")
+    except Exception as e:      # noqa: BLE001
+        print("REFUSED: the reading model did not load: %s" % e, file=sys.stderr)
+        return 3
+    takes_trust = "trusted" in inspect.signature(lr.route).parameters
+    stage = _stage() if takes_trust else None
     cases = json.loads(cases_path.read_text(encoding="utf-8"))
-    rows = []
+    rows, tier1 = [], 0
     for c in cases:
         t, kw = c["text"], dict(c["kw"])
-        row = {"text": t, "kw": kw}
-        r = lr.route(t, budget_ms=1000, log=False, **kw)
-        row["route"] = _row(r)
-        r = laya.route_turn(t, caller="eval.diff", budget_ms=1000, log=False, **kw)
-        row["route_turn"] = _row(r)
-        r = lr.rules_route(t, pending_card=kw.get("pending_card"), last_route=kw.get("last_route"))
-        row["rules_route"] = _row(r)
+        row = {"text": t, "kw": kw, "feature": c.get("feature", False), "trust_supported": takes_trust}
+        for b in BUDGETS:
+            row["route@%d" % b] = _row(lr.route(t, budget_ms=b, log=False, **kw))
+            row["route_turn@%d" % b] = _row(laya.route_turn(t, caller="eval.diff", budget_ms=b, log=False, **kw))
+            if takes_trust:
+                tk = dict(kw, trusted=True, quiet=False, stage=stage, pointed=None)
+                row["route_trusted@%d" % b] = _row(lr.route(t, budget_ms=b, log=False, **tk))
+                row["route_turn_trusted@%d" % b] = _row(laya.route_turn(t, caller="eval.diff", budget_ms=b, log=False, **tk))
+            else:           # this tree has no trusted rungs: the trusted voice route IS the plain route
+                row["route_trusted@%d" % b] = row["route@%d" % b]
+                row["route_turn_trusted@%d" % b] = row["route_turn@%d" % b]
+        row["route_held"] = _row(lr.route(t, budget_ms=1000, log=False, tools=HELD, **kw))
+        row["rules_route"] = _row(lr.rules_route(t, pending_card=kw.get("pending_card"), last_route=kw.get("last_route")))
+        tier1 += row["route@1000"]["layer"] == "laya2"
         rows.append(row)
-    out.write_text(json.dumps({"src": str(src), "rows": rows}, indent=1), encoding="utf-8")
-    print("dumped %d cases from %s" % (len(rows), src))
+    if tier1 == 0:
+        print("REFUSED: no case was decided by tier 1: the reading model is not in the loop.", file=sys.stderr)
+        return 3
+    out.write_text(json.dumps({"src": str(src), "tier1_decided": tier1, "rows": rows}, indent=1), encoding="utf-8")
+    print("dumped %d cases from %s (%d decided by tier 1)" % (len(rows), src, tier1))
     return 0
 
 
-WRITE_REASON = "an imperative that changes something"
-
-
 def _same(a: dict, b: dict) -> bool:
-    return (a["decision"], a["tool"], a["args"], a["question"]) == (b["decision"], b["tool"], b["args"], b["question"])
+    keys = ("decision", "tool", "args", "question", "layer", "handoff", "chosen")
+    return all(a.get(k) == b.get(k) for k in keys)
+
+
+def _narrower(a: dict, b: dict) -> bool:
+    return (b["decision"] == "defer" and not b["tool"] and a["decision"] != "defer"
+            and (WRITE_REASON in (b["reason"] or "") or b["layer"] == "point_act"))
+
+
+def _feature(row: dict, surface: str, b: dict) -> bool:
+    return bool(row.get("feature")) and "trusted" in surface and b["layer"] in ("point_act", "resolver")
 
 
 def compare(base: Path, new: Path) -> int:
-    A = {(r["text"], json.dumps(r["kw"], sort_keys=True)): r for r in json.loads(base.read_text(encoding="utf-8"))["rows"]}
-    B = {(r["text"], json.dumps(r["kw"], sort_keys=True)): r for r in json.loads(new.read_text(encoding="utf-8"))["rows"]}
-    assert A.keys() == B.keys(), "the two dumps are not over the same cases"
-    allowed = {"route": [], "route_turn": [], "rules_route": []}
-    bad = []
-    same = 0
-    for k in sorted(A):
-        for surface in ("route", "route_turn", "rules_route"):
-            a, b = A[k][surface], B[k][surface]
+    A = json.loads(base.read_text(encoding="utf-8"))
+    B = json.loads(new.read_text(encoding="utf-8"))
+    ra = {(r["text"], json.dumps(r["kw"], sort_keys=True)): r for r in A["rows"]}
+    rb = {(r["text"], json.dumps(r["kw"], sort_keys=True)): r for r in B["rows"]}
+    if ra.keys() != rb.keys():
+        print("the two dumps are not over the same cases", file=sys.stderr)
+        return 2
+    surfaces = [k for k in next(iter(rb.values())) if k.startswith(("route", "rules_route"))]
+    allowed = {s: [] for s in surfaces}
+    feature = {s: [] for s in surfaces}
+    bad, same = [], 0
+    for k in sorted(ra):
+        for s in surfaces:
+            a, b = ra[k][s], rb[k][s]
             if _same(a, b):
                 same += 1
-                continue
-            narrowed = (b["decision"] == "defer" and b["tool"] is None and WRITE_REASON in (b["reason"] or "")
-                        and a["decision"] != "defer")
-            (allowed[surface] if narrowed else bad).append((surface, k[0], k[1], a, b))
-    print("compared %d cases x 3 surfaces: %d identical" % (len(A), same))
-    for surface, rows in allowed.items():
-        print("\nALLOWED (narrower: a change anywhere in the turn is a defer) on %s: %d" % (surface, len(rows)))
-        for _, text, kw, a, b in rows:
-            print("   %-64s %s %s  ->  defer" % (text[:64], a["decision"], a["tool"] or ""))
+            elif _feature(rb[k], s, b):
+                feature[s].append((k[0], a, b))
+            elif _narrower(a, b):
+                allowed[s].append((k[0], a, b))
+            else:
+                bad.append((s, k[0], a, b))
+    print("compared %d cases x %d surfaces: %d identical (tier-1 decided: base %s, new %s)" % (
+        len(ra), len(surfaces), same, A.get("tier1_decided"), B.get("tier1_decided")))
+    for title, bucket in (("ALLOWED (narrower: a change anywhere in the turn is a defer)", allowed),
+                          ("FEATURE (words that point at the screen, trusted surfaces only)", feature)):
+        for s, rows in bucket.items():
+            if rows:
+                print("\n%s on %s: %d" % (title, s, len(rows)))
+                for text, a, b in rows[:60]:
+                    print("   %-62s %s %s -> %s %s" % (text[:62], a["decision"], a["tool"] or "", b["decision"], b["tool"] or ""))
     print("\nNOT ALLOWED: %d" % len(bad))
-    for surface, text, kw, a, b in bad:
-        print("   [%s] %-60s %s | %s %s %s  ->  %s %s %s" % (surface, text[:60], kw, a["decision"], a["tool"], a["args"],
-                                                         b["decision"], b["tool"], b["args"]))
+    for s, text, a, b in bad:
+        print("   [%s] %-58s %s %s %s %s  ->  %s %s %s %s" % (s, text[:58], a["decision"], a["tool"], a["layer"], a["args"],
+                                                         b["decision"], b["tool"], b["layer"], b["args"]))
     return 1 if bad else 0
 
 
-def run(base: Path, new: Path, scratch: Path) -> int:
+def run(base: Path, new: Path, scratch: Path, encoder_dir: Path, hf_home: str) -> int:
+    if not encoder_dir.is_dir():
+        print("REFUSED: --encoder-dir %s is not a directory" % encoder_dir, file=sys.stderr)
+        return 3
     scratch.mkdir(parents=True, exist_ok=True)
     cases = scratch / "cases.json"
     cases.write_text(json.dumps(build_cases(new), indent=1), encoding="utf-8")
     env = dict(os.environ, FRIDAY_HOME=str(scratch), HOME=str(scratch), USERPROFILE=str(scratch),
-               CUDA_VISIBLE_DEVICES="-1", PYTHONDONTWRITEBYTECODE="1")
+               CUDA_VISIBLE_DEVICES="-1", PYTHONDONTWRITEBYTECODE="1", FRIDAY_ENCODER_DIR=str(encoder_dir),
+               HF_HUB_OFFLINE="1")
+    if hf_home:
+        env["HF_HOME"] = hf_home
     outs = []
     for name, tree in (("base", base), ("new", new)):
         out = scratch / ("decisions_%s.json" % name)
-        subprocess.run([sys.executable, str(Path(__file__).resolve()), "dump", "--src", str(tree),
-                        "--cases", str(cases), "--out", str(out)], check=True, env=env)
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve()), "dump", "--src", str(tree),
+                            "--cases", str(cases), "--out", str(out)], env=env)
+        if r.returncode:
+            return r.returncode
         outs.append(out)
     return compare(outs[0], outs[1])
 
@@ -150,6 +268,8 @@ def main(argv=None) -> int:
     r.add_argument("--base", required=True)
     r.add_argument("--new", required=True)
     r.add_argument("--scratch", required=True)
+    r.add_argument("--encoder-dir", required=True)
+    r.add_argument("--hf-home", default="")
     d = sub.add_parser("dump")
     d.add_argument("--src", required=True)
     d.add_argument("--cases", required=True)
@@ -159,7 +279,7 @@ def main(argv=None) -> int:
     c.add_argument("new")
     a = ap.parse_args(argv)
     if a.cmd == "run":
-        return run(Path(a.base), Path(a.new), Path(a.scratch))
+        return run(Path(a.base), Path(a.new), Path(a.scratch), Path(a.encoder_dir), a.hf_home)
     if a.cmd == "dump":
         return dump(Path(a.src), Path(a.cases), Path(a.out))
     return compare(Path(a.base), Path(a.new))
