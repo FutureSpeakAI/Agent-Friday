@@ -111,9 +111,12 @@ def clamp_file(restored: Any, current: Any = None) -> bool:
 #     record can never be re-armed by a file edit. A narrowing whose record write fails
 #     removes the record and, failing that, reads as off in this process: it fails closed.
 #   * Replay: the signature covers a monotonic counter and an install-unique nonce that is
-#     rotated on EVERY record change and kept in a protected secret (credential_store: the
-#     vault key or DPAPI) beside the record. An old copy of the record carries an old nonce
-#     and verifies as nothing. The folder is on the file tools' deny list.
+#     rotated on EVERY record change. The record, its nonce file and the signature are one
+#     pair that could be copied back together, so the latest counter is ANCHORED OUTSIDE the
+#     pair: in the OS keychain (or, where no keychain backend exists, a vault secret). A record
+#     verifies only when its counter equals the anchor; an old pair carries an old counter and
+#     reads as off. An anchor that cannot be read or written fails closed. The anchor is read
+#     only when a record is verified, never on a turn. The folder is on the file tools' deny list.
 #   * Speed: the turn path never reads the keychain. ``effective`` compares the two files'
 #     stat stamps with a verified in-memory value, so a read is O(1) (two stat calls); a stamp
 #     that does not match reads as off at once and is verified on a background thread.
@@ -142,6 +145,58 @@ def _record_path() -> Path:
 
 def _nonce_path() -> Path:
     return _dir() / NONCE_NAME
+
+
+ANCHOR_SERVICE = "agent-friday"
+
+
+def _anchor_account(key: str) -> str:
+    return "guarded-settings:" + key
+
+
+def _anchor_vault_path(key: str) -> Path:
+    from agent_friday.paths import friday_home
+    return Path(friday_home()) / "vault" / (".guarded-anchor-" + key)
+
+
+def _anchor_get(key: str) -> Optional[int]:
+    """The latest counter the owner's click was given, or None if none was ever stored. Raises when the
+    anchor exists but cannot be read (the caller then fails closed)."""
+    try:
+        import keyring
+        from keyring.errors import NoKeyringError
+    except ImportError:
+        keyring, NoKeyringError = None, ()
+    if keyring is not None:
+        try:
+            got = keyring.get_password(ANCHOR_SERVICE, _anchor_account(key))
+            if got is not None:
+                return int(got)
+        except NoKeyringError:
+            pass                                    # no keychain backend on this machine: the vault holds it
+    path = _anchor_vault_path(key)
+    if path.exists():
+        from agent_friday.services import credential_store
+        return int(credential_store.read_secret(path).decode("ascii").strip())
+    return None
+
+
+def _anchor_set(key: str, counter: int) -> None:
+    try:
+        import keyring
+        from keyring.errors import NoKeyringError
+    except ImportError:
+        keyring, NoKeyringError = None, ()
+    if keyring is not None:
+        try:
+            keyring.set_password(ANCHOR_SERVICE, _anchor_account(key), str(int(counter)))
+            return
+        except NoKeyringError:
+            pass
+    from agent_friday.services import credential_store
+    path = _anchor_vault_path(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    credential_store.write_secret(path, str(int(counter)).encode("ascii"))
 
 
 def _load_nonce() -> Optional[bytes]:
@@ -196,6 +251,9 @@ def _verify(key: str) -> str:
         nonce = _load_nonce()
         if not isinstance(rec, dict) or nonce is None:
             return GUARDED[key][0]
+        anchor = _anchor_get(key)               # raises when unreadable: that is off, below
+        if anchor is None or rec.get("counter") != anchor:
+            return GUARDED[key][0]              # an old pair of files carries an old counter
         value, at, counter, mac = rec.get("value"), rec.get("at"), rec.get("counter"), rec.get("mac")
         if (not isinstance(value, str) or value not in GUARDED[key]
                 or not isinstance(at, (int, float)) or not isinstance(counter, int)
@@ -248,11 +306,13 @@ def record_owner_choice(key: str, value: Any) -> bool:
         import secrets
         import time
         prev = _read_records().get(key)
-        counter = (int(prev.get("counter") or 0) if isinstance(prev, dict) else 0) + 1
+        anchored = _anchor_get(key)             # raises when unreadable: the write fails closed
+        counter = max(anchored or 0, int(prev.get("counter") or 0) if isinstance(prev, dict) else 0) + 1
         nonce = secrets.token_bytes(16)
         at = time.time()
         mac = _mac(key, value, at, counter, nonce)
-        _store_nonce(nonce)                 # the old record no longer verifies from here on
+        _anchor_set(key, counter)           # the old record no longer verifies from here on (an old counter)
+        _store_nonce(nonce)
         records = _read_records()
         records[key] = {"value": value, "at": at, "counter": counter, "mac": mac}
         path = _record_path()

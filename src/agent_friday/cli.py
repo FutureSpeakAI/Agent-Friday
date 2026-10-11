@@ -173,7 +173,15 @@ def _save_config(config: dict):
     # The command line is not the owner's click on the Settings page: a guarded setting
     # (Laya's safe writes) is written no wider than settings.json holds it now.
     from agent_friday.services import guarded_settings
+    _cur = guarded_settings.read(SETTINGS_FILE) or {}
+    _lost = [k for k in guarded_settings.GUARDED
+             if k not in config and guarded_settings.rank(k, _cur.get(k)) > 0]
     config = guarded_settings.clamp_for_write(config, SETTINGS_FILE)
+    for _k in _lost:
+        # config.yaml does not carry the key, so this write cannot keep it: it is turned off, plainly.
+        console.print(f"  [yellow]{_k} is turned OFF by this write: config.yaml does not have the key, and "
+                      "this command cannot turn it on. Turn it back on in Friday's Settings (Privacy & Data, "
+                      "Safe writes).[/yellow]")
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     # YAML (primary, human-editable)
     try:
