@@ -207,6 +207,24 @@ def _kokoro_files_are_cached(monkeypatch, request):
     if "real_synthesis" in request.node.name:
         return
     monkeypatch.setattr(kv, "_cached_file", lambda name: "cached/" + name)
+    # These tests exercise load logic with fakes; whether spaCy's English model
+    # is installed on the machine running them is not their business (CI has none).
+    monkeypatch.setattr(kv, "english_g2p_model_installed", lambda: True)
+
+
+def test_load_refuses_when_the_english_pronunciation_model_is_absent(monkeypatch):
+    tts = kv.KokoroTTS()
+    monkeypatch.setattr(tts, "_resolve_device", lambda: "cpu")
+    monkeypatch.setattr(kv, "ensure_espeak_fallback",
+                        lambda: {"wired": True, "library": "x", "data": "y", "detail": ""})
+    monkeypatch.setattr(kv, "english_g2p_model_installed", lambda: False)
+    monkeypatch.setitem(sys.modules, "kokoro", _fake_kokoro_module(object()))
+    with pytest.raises(kv.KokoroUnavailable) as ei:
+        tts.load()
+    assert ei.value.code == "local_voice_kokoro_missing"
+    assert "en_core_web_sm" in ei.value.message and "never downloads" in ei.value.message
+    assert "Settings > Voice" in ei.value.message
+    assert tts._pipeline is None
 
 def _fake_kokoro_module(fallback):
     """A stand-in `kokoro` module whose KPipeline yields a given g2p fallback."""

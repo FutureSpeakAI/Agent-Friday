@@ -123,6 +123,24 @@ ARTIFACTS = {
         # The package's own metadata (misaki 0.7.4) says Apache 2.0.
         "licence": "Apache-2.0",
         "source": "PyPI",
+        # misaki's English G2P needs spaCy's small English model and, left to
+        # itself, downloads it silently on first use. Installing misaki here
+        # installs the model too: a declared, consented download, never at load.
+        "requires": ["spacy-en-core-web-sm"],
+    },
+    "spacy-en-core-web-sm": {
+        "label": "spaCy small English model (for Kokoro pronunciation)",
+        "kind": "pip",
+        "package": "en-core-web-sm",
+        # The model line matches spaCy 3.8 (the model requires spacy>=3.8,<3.9).
+        "version": "3.8.0",
+        # Not on PyPI: explosion's release asset for exactly this version.
+        "pip_url": ("https://github.com/explosion/spacy-models/releases/download/"
+                    "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"),
+        "sha256": None,
+        "size_mb": 13,
+        "licence": "MIT",
+        "source": "GitHub (explosion/spacy-models)",
     },
     # OPTIONAL, GPL-3.0: espeak-ng pronunciations for names misaki does not
     # know. Installed only by the owner's choice, and run as its own helper
@@ -178,6 +196,7 @@ PURPOSE = {
     "voice-front-4b": "Fast reply model: a larger Qwen3 alternative (pauses the main model while you talk).",
     "voice-front-1.7b": "Fast reply model: the Qwen3-1.7B alternative.",
     "misaki": "Voice helper: tells the Kokoro voice how to pronounce words.",
+    "spacy-en-core-web-sm": "Voice helper: the small English language model the pronouncer reads sentences with.",
     "espeak-ng-helper": "Voice helper (optional): pronounces unusual names.",
     "espeakng-loader": "Voice helper (optional): the library the name pronouncer needs.",
     "voice-ear-turbo": "Ear (optional): a larger, more accurate listener.",
@@ -212,6 +231,11 @@ def url_for(artifact_id: str) -> str:
 
 def pip_spec(artifact_id: str) -> str:
     a = ARTIFACTS[artifact_id]
+    if a.get("pip_url"):
+        # A package that is not on PyPI: a direct reference to the exact
+        # release asset, with its hash when one is pinned.
+        return "%s @ %s%s" % (a["package"], a["pip_url"],
+                               ("#sha256=" + a["sha256"]) if a.get("sha256") else "")
     return "%s==%s" % (a["package"], a["version"])
 
 

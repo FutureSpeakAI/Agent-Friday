@@ -144,6 +144,9 @@ class CpuKokoro:
         if p is None:
             from kokoro import KPipeline
             from agent_friday.services import kokoro_voice as kv
+            if lang in ("a", "b") and not kv.english_g2p_model_installed():
+                # misaki would download it silently; an episode never does.
+                raise RenderError("voice_model_missing", kv.G2P_MODEL_MISSING)
             p = KPipeline(lang_code=lang, model=self._model)
             fb = kv.attach_espeak_fallback(p)
             if not fb.get("fallback"):
