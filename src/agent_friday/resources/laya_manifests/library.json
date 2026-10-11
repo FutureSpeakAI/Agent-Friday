@@ -178,6 +178,15 @@
    "task_kind": "library_index",
    "activity_label": "Reading a folder into your Library",
    "entry": "agent_friday.services.library.indexer:Indexer._loop"
+  },
+  {
+   "id": "library.work_order",
+   "trigger": "idle",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "work_order",
+   "activity_label": "Work order",
+   "entry": "agent_friday.services.work_orders:_worker"
   }
  ],
  "not_for_laya": [
@@ -187,6 +196,16 @@
    "reason": "Removing or forgetting a document is the owner's own click on the Library page."
   },
   {"action": "library.shelf", "kind": "by_design", "reason": "Shelving is the owner's own click on the Library page."},
+  {
+   "action": "library.submit_work_order",
+   "kind": "by_design",
+   "reason": "submit_work_order is cloud-only: a cloud model hands this PC a plan by opaque handles. Laya runs locally and never submits one."
+  },
+  {
+   "action": "library.work_order_status",
+   "kind": "by_design",
+   "reason": "work_order_status is cloud-only: it tells the cloud model how its own order is doing. The owner sees orders in Activity."
+  },
   {
    "action": "library.tracked_reindex",
    "kind": "gap",
