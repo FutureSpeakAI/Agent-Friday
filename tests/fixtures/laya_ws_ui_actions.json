@@ -189,6 +189,7 @@
    {"id": "library.open_document", "group": "navigate", "label": "open document", "audit_status": "M"},
    {"id": "library.select_documents", "group": "select", "label": "tick documents", "audit_status": "M"},
    {"id": "library.add", "group": "create", "label": "add folder / file", "audit_status": "M"},
+   {"id": "library.add_knowledge", "group": "create", "label": "Your knowledge: pick folders, or 'add my Obsidian vault'", "audit_status": "new"},
    {"id": "library.remove_forget", "group": "organize", "label": "remove / forget", "audit_status": "N"},
    {"id": "library.shelf", "group": "organize", "label": "shelf", "audit_status": "N"},
    {"id": "library.show_3d", "group": "read", "label": "show in 3D", "audit_status": "M"},

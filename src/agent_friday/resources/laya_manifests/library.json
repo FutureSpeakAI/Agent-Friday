@@ -110,6 +110,22 @@
    "eval": []
   },
   {
+   "id": "library.add_knowledge",
+   "action": "library.add_knowledge",
+   "group": "create",
+   "ui": {"control": "Your knowledge: pick folders, or 'add my Obsidian vault'"},
+   "tool": "add_knowledge",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["add my Obsidian vault", "add my notes"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
    "id": "library.show_3d",
    "action": "library.show_3d",
    "group": "read",
@@ -153,6 +169,15 @@
    "task_kind": "research",
    "activity_label": "Deep research",
    "entry": "agent_friday.services.research:run"
+  },
+  {
+   "id": "library.index_folder",
+   "trigger": "button",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "library_index",
+   "activity_label": "Reading a folder into your Library",
+   "entry": "agent_friday.services.library.indexer:Indexer._loop"
   }
  ],
  "not_for_laya": [
