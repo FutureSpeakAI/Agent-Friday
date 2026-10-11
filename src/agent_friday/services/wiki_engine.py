@@ -254,7 +254,7 @@ def _save_pending_wiki(items):
     WIKI_PENDING_FILE.write_text(json.dumps(items, indent=2, default=str), encoding='utf-8')
 
 
-def _propose_wiki_update(file, section, new_value, reason, old_value="", cloud_note=""):
+def _propose_wiki_update(file, section, new_value, reason, old_value=""):
     """Stash a proposed update for user approval. Returns the new id."""
     items = _load_pending_wiki()
     item = {
@@ -267,11 +267,21 @@ def _propose_wiki_update(file, section, new_value, reason, old_value="", cloud_n
         "created": datetime.utcnow().isoformat() + "Z",
         "status": "pending",
     }
-    if cloud_note:      # a cloud model's words, labelled and fenced by the caller; never the reason
-        item["cloud_note"] = str(cloud_note)
     items.append(item)
     _save_pending_wiki(items)
     return item["id"]
+
+
+def _attach_cloud_note(proposal_id, cloud_note):
+    """Internal, for the work-order executor only (not a tool): attach a cloud model's
+    labelled, fenced note to a pending proposal, apart from its reason. False if not found."""
+    items = _load_pending_wiki()
+    for it in items:
+        if it.get("id") == proposal_id and it.get("status") == "pending":
+            it["cloud_note"] = str(cloud_note)[:600]
+            _save_pending_wiki(items)
+            return True
+    return False
 
 
 def _apply_wiki_proposal(item):

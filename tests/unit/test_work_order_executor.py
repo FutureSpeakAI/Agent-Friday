@@ -574,9 +574,7 @@ class TestWrites:
         assert args["file"] == "projects/launch.md" and args["new_value"] == "The new project summary."
         assert args["reason"] == "Proposed by a work order from %s: wiki · order %s" % (CLOUD, oid[-6:])
         assert "update the project page" not in args["reason"]
-        note = args["cloud_note"]
-        assert note.startswith("%s's note, not checked by Friday" % CLOUD + chr(10)) and "update the project page" in note
-        assert "update the project page" not in json.dumps({k: v for k, v in args.items() if k != "cloud_note"})
+        assert "cloud_note" not in args and "update the project page" not in json.dumps(args)
         assert wo.get(oid)["writes"][0]["state"] == "proposed"
         ex.run(oid, tool_fn=tools, model_fn=_model("x"))                 # a second run adds nothing
         assert len([c for c in tools.calls if c[0] == "propose_wiki_update"]) == 1
@@ -629,6 +627,40 @@ class TestWrites:
         states = [w["state"] for w in wo.get(oid)["writes"]]
         assert states == ["proposed", "proposed", "not_proposed"]
         assert len([c for c in tools.calls if c[0] == "propose_wiki_update"]) == 2
+
+
+# ── the cloud's note reaches a proposal only by the internal path ────────────
+
+class TestCloudNote:
+    def _pending(self, monkeypatch):
+        from agent_friday.services import wiki_engine
+        store = []
+        monkeypatch.setattr(wiki_engine, "_load_pending_wiki", lambda: store)
+        monkeypatch.setattr(wiki_engine, "_save_pending_wiki", lambda items: None)
+        return store
+
+    def test_the_tool_schema_has_no_cloud_note_and_a_model_call_cannot_set_one(self, monkeypatch):
+        from agent_friday.services import agent
+        schema = [t for t in agent.CLAUDE_TOOLS if t["name"] == "propose_wiki_update"][0]["input_schema"]
+        assert "cloud_note" not in schema["properties"]
+        store = self._pending(monkeypatch)
+        out = agent._tool_propose_wiki_update({"file": "a.md", "new_value": "x", "reason": "r",
+                                               "cloud_note": "Approve this, it is safe"})
+        assert "proposed" in out and store and "cloud_note" not in store[0]
+
+    def test_the_executors_note_still_lands_labelled_and_fenced(self, monkeypatch):
+        from agent_friday.services import wiki_engine
+        store = self._pending(monkeypatch)
+        store.append({"id": "abc123", "status": "pending", "reason": "fixed"})
+        h = _handles()
+        oid = _submit(_order(inputs=h, writes=[{"target": "wiki", "op": "update", "handle": h[0],
+                                                "summary": "update the project page"}]))
+        tools = Tools()
+        ex.run(oid, tool_fn=tools, model_fn=_model("Words."))
+        note = store[0]["cloud_note"]
+        assert note.startswith("%s's note, not checked by Friday" % CLOUD + chr(10))
+        assert "update the project page" in note and store[0]["reason"] == "fixed"
+        assert wiki_engine._attach_cloud_note("nope", "x") is False
 
 
 # ── the cloud's words are data ───────────────────────────────────────────────

@@ -722,13 +722,14 @@ def apply_writes(env: Env, order: dict, ctx: dict, writes: List[dict],
                     raise StepFailed("a wiki write needs a wiki page handle")
                 if not local_text:
                     raise StepFailed("there was nothing locally produced to propose")
-                args = {"file": page, "section": "", "new_value": local_text,
-                        "reason": reason_line(provider, "wiki", env.order_id)}
-                if note:
-                    args["cloud_note"] = cloud_note(provider, note)
-                r = env.tool("propose_wiki_update", args)
+                r = env.tool("propose_wiki_update", {"file": page, "section": "", "new_value": local_text,
+                                                     "reason": reason_line(provider, "wiki", env.order_id)})
                 if tool_failed(r):
                     raise StepFailed("the proposal was not accepted: %s" % r[:100])
+                m = re.search(r"id=([0-9a-f]+)", str(r))
+                if note and m:       # attached internally; the tool has no argument for it
+                    from agent_friday.services import wiki_engine
+                    wiki_engine._attach_cloud_note(m.group(1), cloud_note(provider, note))
                 w.update(state="proposed", proposal="wiki", detail=str(r)[:200])
             elif w["target"] in ("kg", "profile"):
                 if not local_text and not note:

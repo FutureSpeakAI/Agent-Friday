@@ -7472,8 +7472,7 @@ def _tool_propose_wiki_update(inp):
     reason = (inp.get("reason") or "Agent-proposed update.").strip()
     if _safe_wiki_path(file) is None:
         return f"propose_wiki_update error: invalid wiki path {file!r} (must stay inside ~/wiki/)."
-    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason,
-                               cloud_note=str(inp.get("cloud_note") or "")[:600])
+    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason)
     return f"Wiki update proposed (id={pid}) — awaiting your approval in Knowledge, on its Pages view."
 
 
@@ -7538,7 +7537,6 @@ CLAUDE_TOOLS.append({
             "section": {"type": "string", "description": "Optional section name within the file (e.g., 'birthplace'). Used to append under a header if no existing text is matched."},
             "new_value": {"type": "string", "description": "The new content to add or replace with."},
             "reason": {"type": "string", "description": "Why this update is being proposed (e.g., 'User correction during chat')."},
-            "cloud_note": {"type": "string", "description": "Set only by the work-order executor: a cloud model's labelled, fenced note shown apart from the reason."},
         },
         "required": ["file", "new_value", "reason"],
     },
