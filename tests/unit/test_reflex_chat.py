@@ -445,3 +445,19 @@ def test_a_palette_ask_with_no_conversation_named_leaves_the_pending_set_alone(m
                        settings=OPEN_ON, local=True, disarm=False,
                        resolve=lambda t: _Res("ask", question="Did you mean the one from Mara?"))
     assert out["outcome"] == "ask" and _armed()
+
+
+def test_a_palette_ask_disarms_only_the_conversation_it_names(monkeypatch):
+    """Router N2: a palette 'open X' ask that names conversation B leaves conversation A's pending question
+    armed; one that names A disarms A (the owner moved on in that conversation)."""
+    _handler(monkeypatch)
+    _ask()                                                                        # arms CONV
+    assert _armed()
+    out = rc.open_turn("open the email from Mara", dict(PAGE), session_id=SID, conversation_id="conv-other",
+                       turn_id=None, settings=OPEN_ON, local=True, disarm=True,
+                       resolve=lambda t: _Res("ask", question="Did you mean the one from Mara?"))
+    assert out["outcome"] == "ask" and _armed(), "another conversation's question is not this ask's to disarm"
+    out = rc.open_turn("open the email from Mara", dict(PAGE), session_id=SID, conversation_id=CONV,
+                       turn_id=None, settings=OPEN_ON, local=True, disarm=True,
+                       resolve=lambda t: _Res("ask", question="Did you mean the one from Mara?"))
+    assert out["outcome"] == "ask" and not _armed()

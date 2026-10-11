@@ -79,11 +79,14 @@ class FakeGmail:
         self.labels = {"acct_work": [{"id": "Label_7", "name": "Receipts"}]}
         self.calls = []
         self.messages = {}            # thread id -> message ids (default: two per conversation)
+        self.senders = {}             # message id -> From header (default: Sender <sender@example.test>)
+        self.ts = {}                  # message id -> arrival time in ms (default: long ago)
         self.last_kw = {}
 
     def snapshot_messages(self, acct, tids):
         self.calls.append(("snapshot", acct, tuple(tids)))
-        return {t: list(self.messages.get(t) or ["m_%s_1" % t, "m_%s_2" % t]) for t in tids}
+        return {t: [{"id": m, "from": self.senders.get(m, "Sender <sender@example.test>"), "ts": self.ts.get(m, 1000)}
+                    for m in (self.messages.get(t) or ["m_%s_1" % t, "m_%s_2" % t])] for t in tids}
 
     def search(self, acct, q, limit):
         self.calls.append(("search", acct, q))

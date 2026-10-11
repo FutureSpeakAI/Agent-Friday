@@ -75,13 +75,15 @@ class _Svc:
         svc = self
 
         class T:
-            def get(self, userId=None, id=None, format=None):               # noqa: A002,N803
+            def get(self, userId=None, id=None, format=None, metadataHeaders=None):   # noqa: A002,N803
                 def run():
                     CALLS.append(("get", id))
                     if id in FAIL_GET:
                         raise RuntimeError("Gmail would not answer")
-                    return {"id": id, "messages": [{"id": k, "threadId": id, "labelIds": sorted(v["labels"])}
-                                                   for k, v in MAIL.items() if v["thread"] == id]}
+                    return {"id": id, "messages": [
+                        {"id": k, "threadId": id, "labelIds": sorted(v["labels"]), "internalDate": str(v.get("ts", 1000)),
+                         "payload": {"headers": [{"name": "From", "value": v.get("from", "Sender <sender@example.test>")}]}}
+                        for k, v in MAIL.items() if v["thread"] == id]}
                 return _Req(run)
 
             def modify(self, userId=None, id=None, body=None):              # noqa: A002,N803
@@ -113,8 +115,8 @@ class _Svc:
         return M()
 
 
-def _put(mid, thread, *labels):
-    MAIL[mid] = {"thread": thread, "labels": set(labels)}
+def _put(mid, thread, *labels, frm="Sender <sender@example.test>", ts=1000):
+    MAIL[mid] = {"thread": thread, "labels": set(labels), "from": frm, "ts": ts}
 
 
 @pytest.fixture
@@ -271,14 +273,14 @@ def test_n4_the_mailbox_changes_only_the_messages_it_was_given(real_mail):
 def test_n5_a_card_names_the_senders_address_not_only_the_display_name(gmail, monkeypatch):
     """A display name is the sender's to choose: 'Mara' on a phishing mail looks like Mara. The card the
     owner reads on screen (its lines) shows the address; nothing else does (L1)."""
-    monkeypatch.setattr(ia, "_thread_heads", lambda acct, tids: {
-        t: {"subject": "Invoice", "sender": "Mara", "address": "billing@phish.example", "date": ""} for t in tids})
+    for mid in ("m_t1_1", "m_t1_2", "m_t2_1", "m_t2_2"):
+        gmail.senders[mid] = "Mara <billing@phish.example>"
     stage = _stage(selected=(1, 2))
     report(stage)
     Page(monkeypatch)
     r, out = _go("archive these", stage)
     pay = _pending()[0]["payload"]
-    assert all("<billing@phish.example>" in line for line in pay["lines"][:2]), pay["lines"]
+    assert all("Mara <billing@phish.example>" in line for line in pay["lines"][:2]), pay["lines"]
     assert "phish.example" not in str(pay["preview"]), "the stored preview carries names only"
     assert "phish.example" not in out and "@" not in out, "the tool result (what a chat history keeps) has no address"
 
@@ -424,6 +426,9 @@ def test_n3_the_safe_write_rung_is_bounded_and_falls_back_to_none(gmail, monkeyp
 
 # ── N2: the owner-enable record ──────────────────────────────────────────────────────────────────
 
+_ANCHOR: dict = {}           # the keychain anchor, in memory
+
+
 @pytest.fixture
 def owner_record(tmp_path, monkeypatch):
     from agent_friday.governance import proof_of_integrity as poi
@@ -431,6 +436,9 @@ def owner_record(tmp_path, monkeypatch):
     monkeypatch.setattr(gs, "_dir", lambda: tmp_path / "runtime" / "guarded_settings")
     monkeypatch.setattr(gs, "_load_nonce", lambda: nonce.get("n"))
     monkeypatch.setattr(gs, "_store_nonce", lambda n: nonce.__setitem__("n", n))
+    _ANCHOR.clear()
+    monkeypatch.setattr(gs, "_anchor_get", lambda key: _ANCHOR.get(key))
+    monkeypatch.setattr(gs, "_anchor_set", lambda key, n: _ANCHOR.__setitem__(key, n))
     monkeypatch.setattr(poi, "get_governance_key", lambda: b"k" * 32)
     gs.invalidate()
     gs._FORCE_OFF.clear()
@@ -793,3 +801,257 @@ def test_l3_the_panel_reads_the_effective_value(page):
     from tests.unit.test_laya_safe_writes import _panel
     _text, panel = _panel(page)
     assert ".effective" in panel and "only your own click here counts" in panel
+
+
+# ══ Third pass (the fresh-critic conditions): R1 anchor, R2 notice, CLI note, L4 newer messages, L5 typed yes, L6 ticket ══
+
+# ── R1: the counter is anchored outside the file pair ────────────────────────────────────────────
+
+def test_r1_copying_back_an_old_record_and_its_nonce_file_reads_as_off(settings_file, owner_record):
+    """Fails on f927387bc: record and nonce were one pair, so putting both back replayed the old 'on'."""
+    core = settings_file
+    _click(core, "on")
+    old_record = gs._record_path().read_text(encoding="utf-8")
+    old_nonce = gs._load_nonce()
+    _click(core, "off")
+    gs._record_path().write_text(old_record, encoding="utf-8")        # the whole pair, as it was
+    gs._store_nonce(old_nonce)
+    _hand_edit(core, "on")
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+    assert sw.mode() == "off"
+
+
+def test_r1_an_unreadable_anchor_fails_closed(settings_file, owner_record, monkeypatch):
+    core = settings_file
+    _click(core, "on")
+    assert sw.mode() == "on"
+
+    def unreadable(key):
+        raise OSError("the keychain did not answer")
+    monkeypatch.setattr(gs, "_anchor_get", unreadable)
+    gs.invalidate()
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+    assert _click(core, "on")["laya_safe_writes"] == "on"              # the file says on...
+    assert sw.mode() == "off", "...and with no anchor to count against the click is not recorded"
+
+
+def test_r1_the_anchor_is_read_only_when_a_record_is_verified_never_on_a_turn(settings_file, owner_record, monkeypatch):
+    core = settings_file
+    _click(core, "on")
+    reads = []
+    real = gs._anchor_get
+    monkeypatch.setattr(gs, "_anchor_get", lambda key: reads.append(key) or real(key))
+    _hand_edit(core, "on")
+    for _ in range(200):
+        assert sw.mode() == "on"
+    assert reads == []
+
+
+def test_r1_each_click_raises_the_anchor(settings_file, owner_record):
+    core = settings_file
+    _click(core, "on")
+    a = _ANCHOR["laya_safe_writes"]
+    _click(core, "shadow")
+    assert _ANCHOR["laya_safe_writes"] == a + 1
+
+
+def test_r1_the_anchor_file_is_denied_to_the_file_tools(settings_file, owner_record):
+    from agent_friday.services import credential_paths as cred
+    assert cred.check(gs._anchor_vault_path("laya_safe_writes").parent / ".guarded-anchor-laya_safe_writes", sniff=False)
+
+
+# ── R2: the notice carries names only ────────────────────────────────────────────────────────────
+
+def test_r2_the_tray_notice_for_a_laya_card_carries_names_only(gmail, monkeypatch):
+    """Fails on f927387bc: the notice body was the card's description, whose lines name each address."""
+    import agent_friday.notifications_engine as ne
+    pushed = []
+    monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw))
+    gmail.senders.update({"m_t1_1": "Mara <billing@phish.example>", "m_t1_2": "Mara <billing@phish.example>"})
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    _go("archive these", stage)
+    card = _pending()[0]
+    assert "billing@phish.example" in card["description"], "the card on screen does show the address"
+    ap._notify_pending(card)
+    assert pushed, "the notice was pushed"
+    body = pushed[-1]["body"]
+    assert "@" not in body and "<" not in body and "Subject t1" in body and "Mara" in body, body
+
+
+def test_r2_a_card_a_model_raised_is_notified_as_before(monkeypatch):
+    import agent_friday.notifications_engine as ne
+    pushed = []
+    monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw))
+    ap._notify_pending({"approval_id": "apr_x", "title": "T", "description": "Subject — Name <a@b.example>",
+                        "payload": {"handler": ia.HANDLER, "origin": ""}})
+    assert pushed[-1]["body"] == "Subject — Name <a@b.example>"
+
+
+# ── CLI: a write that cannot keep the key says so ────────────────────────────────────────────────
+
+def test_cli_a_config_write_without_the_key_says_safe_writes_are_turned_off(settings_file, owner_record, monkeypatch,
+                                                                              tmp_path, capsys):
+    import json
+    from agent_friday import cli
+    core = settings_file
+    monkeypatch.setattr(cli, "SETTINGS_FILE", core.SETTINGS_FILE)
+    monkeypatch.setattr(cli, "CONFIG_YAML", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli, "FRIDAY_DIR", tmp_path)
+    _click(core, "on")
+    cli._save_config({"unrelated": 1})                              # config.yaml does not carry the key
+    out = capsys.readouterr().out
+    assert "laya_safe_writes" in out and "turned OFF" in out and "Settings" in out, out
+    assert json.loads(core.SETTINGS_FILE.read_text(encoding="utf-8"))["laya_safe_writes"] == "off"
+    cli._save_config({"unrelated": 2, "laya_safe_writes": "off"})
+    assert "turned OFF" not in capsys.readouterr().out, "no note when the key was already off"
+
+
+# ── L4: a message newer than the owner's screen is left out and named; each listed sender is shown ──
+
+def test_l4_a_newer_message_is_left_out_and_the_card_says_so(real_mail, monkeypatch):
+    """Fails on f927387bc: the snapshot took every message, including one that arrived after the screen."""
+    import time
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    _put("m_new", "t1", "INBOX", "UNREAD", frm="Eve <eve@late.example>", ts=int(time.time() * 1000) + 60_000)
+    r, out = _go("archive these", stage)
+    card = _pending()[0]
+    assert "1 newer message not included" in out, out
+    assert "m_new" not in card["payload"]["messages"]["acct_work"]["t1"]
+    assert card["payload"]["newer_not_included"] == 1
+    assert "newer message" in card["description"] and "left out" in card["description"]
+    assert not any("eve@late.example" in line for line in card["payload"]["lines"]), "the left-out sender is not shown"
+    ap.decide(card["approval_id"], "approve")
+    ia.wait_for(card["approval_id"], 10)
+    assert MAIL["m_new"]["labels"] == {"INBOX", "UNREAD"}, "the newer message was never touched"
+    assert "INBOX" not in MAIL["m1"]["labels"]
+
+
+def test_l4_a_conversation_that_is_all_newer_is_left_out_whole(real_mail, monkeypatch):
+    import time
+    stage = _stage(selected=(1, 4))
+    report(stage)
+    Page(monkeypatch)
+    MAIL["x_t4"]["ts"] = int(time.time() * 1000) + 60_000
+    r, out = _go("archive these", stage)
+    pay = _pending()[0]["payload"]
+    assert pay["accounts"] == {"acct_work": ["t1"]} and pay["count"] == 1
+    assert "1 newer message not included" in out
+
+
+def test_l4_the_card_shows_the_sender_of_each_listed_message_not_the_first(real_mail, monkeypatch):
+    stage = _stage(selected=(1,))
+    report(stage)
+    Page(monkeypatch)
+    MAIL["m1"]["from"] = "Alice <alice@a.example>"
+    MAIL["m2"]["from"] = "Me <me@work.example>"
+    MAIL["m3"]["from"] = "Bob <bob@b.example>"
+    r, out = _go("archive these", stage)
+    pay = _pending()[0]["payload"]
+    line = pay["lines"][0]
+    assert "Alice <alice@a.example>" in line and "Bob <bob@b.example>" in line and "Me <me@work.example>" in line, line
+    assert "@" not in out and "@" not in str(pay["preview"]), "names only everywhere but the card's own lines"
+
+
+# ── L5: a typed yes counts only if the card was the last question ────────────────────────────────
+
+def _arm(chat_fixture_gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
+                               turn_id="t-1", authenticated=True, local=True)
+    assert out["outcome"] == "card"
+    return _pending()[0]["approval_id"]
+
+
+def _typed_yes(cid, words="yes"):
+    toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_CONVERSATION.set(CONV),
+            agent._CURRENT_OWNER_TEXT.set(words)]
+    try:
+        return agent._tool_answer_card({"card_id": cid, "decision": "approve"})
+    finally:
+        agent._CURRENT_OWNER_TEXT.reset(toks[2])
+        agent._CURRENT_CONVERSATION.reset(toks[1])
+        agent._CURRENT_SURFACE.reset(toks[0])
+
+
+def test_l5_the_very_next_whole_typed_yes_approves_the_card(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    rc.note_user_turn(CONV, "yes", True)
+    assert "NOT RECORDED" not in _typed_yes(cid)
+    assert ia.wait_for(cid, 10)["status"] == "complete"
+
+
+def test_l5_a_yes_after_another_turn_approves_nothing(chat, gmail, monkeypatch):
+    """Fails on f927387bc: a later yes (meant for a question a model asked since) approved the Laya card."""
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    rc.note_user_turn(CONV, "what is on my calendar", True)          # the conversation moved on
+    rc.note_user_turn(CONV, "yes", True)
+    res = _typed_yes(cid)
+    assert res.startswith("NOT RECORDED") and "last question" in res
+    assert ap.get_approval(cid)["status"] == "pending" and gmail.changes() == []
+
+
+def test_l5_a_second_yes_and_an_untrusted_yes_approve_nothing(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    rc.note_user_turn(CONV, "yes", True)                              # the first yes is consumed by a model that asked on
+    rc.note_user_turn(CONV, "yes", True)
+    assert _typed_yes(cid).startswith("NOT RECORDED")
+    assert gmail.changes() == []
+
+
+def test_l5_a_yes_that_is_not_the_owners_own_page_approves_nothing(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    rc.note_user_turn(CONV, "yes", False)                             # a tunnel, a channel, a script
+    assert _typed_yes(cid).startswith("NOT RECORDED") and gmail.changes() == []
+
+
+def test_l5_another_conversations_yes_approves_nothing(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    cid = _arm(gmail, monkeypatch)
+    rc.note_user_turn("conv-other", "yes", True)
+    toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_CONVERSATION.set("conv-other"),
+            agent._CURRENT_OWNER_TEXT.set("yes")]
+    try:
+        res = agent._tool_answer_card({"card_id": cid, "decision": "approve"})
+    finally:
+        agent._CURRENT_OWNER_TEXT.reset(toks[2]); agent._CURRENT_CONVERSATION.reset(toks[1]); agent._CURRENT_SURFACE.reset(toks[0])
+    assert res.startswith("NOT RECORDED") and ap.get_approval(cid)["status"] == "pending"
+
+
+def test_l5_a_card_a_model_raised_keeps_its_old_typed_yes_rule(chat, gmail, monkeypatch):
+    stage = _stage()
+    report(stage)
+    Page(monkeypatch)
+    out = agent._tool_organize_email({"action": "archive", "selection": "screen"})
+    assert out.startswith("CARD_RAISED")
+    cid = _pending()[0]["approval_id"]
+    assert "last question" not in _typed_yes(cid, "yes")
+
+
+# ── L6: the spent ticket is stored nowhere ───────────────────────────────────────────────────────
+
+def test_l6_the_chat_trace_does_not_keep_the_ticket(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
+                               turn_id="t-1", authenticated=True, local=True)
+    assert out["tool_trace"][0]["input"] == {"action": "archive"}
+    assert "laya_write" not in str(out["tool_trace"]) and "ticket" not in str(out["tool_trace"])
+
+
+def test_l6_the_voice_follow_up_memory_does_not_keep_the_ticket(safe_call):
+    c = safe_call()
+    c.say("archive these")
+    assert "laya_write" not in str(c.tool_session.get("last_route")) and "ticket" not in str(c.tool_session)

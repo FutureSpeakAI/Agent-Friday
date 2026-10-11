@@ -446,3 +446,38 @@ def test_importing_the_training_package_leaves_sys_path_alone(monkeypatch, tmp_p
             sys.modules.pop(k, None)
     assert sys.path == before
     assert "sys.path.insert" not in __import__("inspect").getsource(lh)
+
+
+def test_shadow_runs_in_one_visible_job_per_burst_not_one_card_per_turn(tmp_path, monkeypatch):
+    """Router N4: every shadow-mode routed turn used to open its own 'Laya tool head' card. A burst of turns is
+    now drained inside ONE visible job, and the next idle window opens a new one."""
+    import threading
+    import time
+    from agent_friday.services import visible_jobs as vj
+    tops = []
+
+    class Counting(vj.visible_job):
+        def __enter__(self):
+            if vj.CURRENT.get() is None:
+                tops.append(self._kw["name"])
+            return super().__enter__()
+    monkeypatch.setattr(vj, "visible_job", Counting)
+    monkeypatch.setattr(lh, "SHADOW_IDLE_WINDOW_S", 0.3)
+    gate = threading.Event()
+    head = FakeHead(lambda case: (gate.wait(5), {"operation": "none", "args": None, "score": 0.9})[1])
+    _certify(tmp_path, monkeypatch, head)
+    final = lr.Route("no_tool")
+    assert all(lh.shadow("turn %d" % i, final, None, "voice") for i in range(lh.MAX_SHADOW_BACKLOG))
+    gate.set()
+    for _ in range(200):
+        if lh._shadow_pending == 0 and not lh._shadow_runner:
+            break
+        time.sleep(0.05)
+    assert len(tops) == 1, "one card for the burst: %r" % tops
+    assert len(head.cases) == lh.MAX_SHADOW_BACKLOG
+    assert lh.shadow("later", final, None, "voice") is True                      # the next window: a new card
+    for _ in range(200):
+        if lh._shadow_pending == 0 and not lh._shadow_runner:
+            break
+        time.sleep(0.05)
+    assert len(tops) == 2

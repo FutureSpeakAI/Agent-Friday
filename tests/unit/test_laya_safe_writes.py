@@ -106,6 +106,9 @@ def settings_file(tmp_path, monkeypatch):
     monkeypatch.setattr(gs, "_dir", lambda: tmp_path / "runtime" / "guarded_settings")
     monkeypatch.setattr(gs, "_load_nonce", lambda: nonce.get("n"))
     monkeypatch.setattr(gs, "_store_nonce", lambda n: nonce.__setitem__("n", n))
+    anchor = {}
+    monkeypatch.setattr(gs, "_anchor_get", lambda key: anchor.get(key))
+    monkeypatch.setattr(gs, "_anchor_set", lambda key, n: anchor.__setitem__(key, n))
     monkeypatch.setattr(poi, "get_governance_key", lambda: b"k" * 32)
     gs.invalidate()
     gs._FORCE_OFF.clear()
