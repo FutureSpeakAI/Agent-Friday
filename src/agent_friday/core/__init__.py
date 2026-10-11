@@ -3707,10 +3707,15 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     _invalidate_settings_cache()
     # The owner's own click on a guarded setting leaves a signed record; a value in settings.json
     # with no matching record is only a claim (services/guarded_settings.effective).
-    if owner_safe_writes_change and data and "laya_safe_writes" in data:
+    if data and "laya_safe_writes" in data:
         try:
             from agent_friday.services import guarded_settings as _gs
-            _gs.record_owner_choice("laya_safe_writes", merged.get("laya_safe_writes"))
+            if owner_safe_writes_change:
+                _gs.record_owner_choice("laya_safe_writes", merged.get("laya_safe_writes"))
+            else:
+                # Any other write that carries the key can only have narrowed it (core dropped a widening):
+                # the record follows, so a stale "on" can never be re-armed by a later file edit.
+                _gs.narrow_record("laya_safe_writes", merged.get("laya_safe_writes"))
         except Exception:
             pass
     # Switching off the record off drops what the session kept in memory.

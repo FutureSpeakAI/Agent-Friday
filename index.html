@@ -58221,9 +58221,14 @@ function LayaSafeWritesPanel() {
   const E = React.createElement;
   const [mode, setMode] = useState(null);
   const [note, setNote] = useState('');
+  const [fileMode, setFileMode] = useState(null);
   const load = useCallback(() => {
     apiFetch('/api/settings').then(r => r.json())
-      .then(d => setMode((((d || {}).settings || {}).laya_safe_writes) || 'off'))
+      .then(d => {
+        // The value in effect, not the file's word: only the owner's own click counts.
+        setMode((((d || {}).effective || {}).laya_safe_writes) || 'off');
+        setFileMode((((d || {}).settings || {}).laya_safe_writes) || 'off');
+      })
       .catch(() => setMode('off'));
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -58233,8 +58238,9 @@ function LayaSafeWritesPanel() {
       body: JSON.stringify({owner_action:'laya_safe_writes', settings:{laya_safe_writes:value}})})
       .then(r => r.json())
       .then(d => {
-        const got = (((d || {}).settings || {}).laya_safe_writes);
+        const got = (((d || {}).effective || {}).laya_safe_writes);
         setMode(got || 'off');
+        setFileMode((((d || {}).settings || {}).laya_safe_writes) || 'off');
         if (got !== value) setNote('That did not save. It stays ' + (got || 'off') + '.');
         try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {}
       })
@@ -58256,7 +58262,7 @@ function LayaSafeWritesPanel() {
     pick('off', 'Off',
       'A change goes to the model, as it always has.'),
     E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
-      mode === null ? 'Checking.' : (mode === 'on' ? 'On. She raises the card; you approve it.' : mode === 'shadow' ? 'Watching only. Nothing is proposed.' : 'Off. This stays off until you choose.')),
+      mode === null ? 'Checking.' : (fileMode && fileMode !== mode ? ('Your settings file says ' + fileMode + ', but only your own click here counts, so it is ' + mode + '. Choose one to set it.') : mode === 'on' ? 'On. She raises the card; you approve it.' : mode === 'shadow' ? 'Watching only. Nothing is proposed.' : 'Off. This stays off until you choose.')),
     note ? E('div', {role:'status', style:{fontSize:11,marginTop:4}}, note) : null);
 }
 // End safe writes panel

@@ -66,6 +66,7 @@ def _deny_dirs() -> list[tuple[Path, str]]:
         (h / ".kube", "your Kubernetes credentials folder"),
         (f / "backups", "my backup folder, which holds copies of my vault and keys"),
         (f / "security", "my keystore folder"),
+        (f / "runtime" / "guarded_settings", "the record that your own Settings click turned a guarded setting on"),
         (f / "providers" / "keys", "your provider API keys folder"),
         (f / "google_accounts" / "tokens", "your Google account tokens folder"),
         (f / "mcp_oauth", "your connector sign-in tokens folder"),

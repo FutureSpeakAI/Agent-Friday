@@ -152,7 +152,8 @@ def mode(settings: Optional[dict] = None) -> str:
     try:
         # A value in settings.json is only a claim: it counts as far as the owner's own Settings
         # click recorded it (signed with the governance key). A hand edit or a restored or
-        # approved file write that says "on" with no matching record reads as off.
+        # approved file write that says "on" with no matching record reads as off. The read is
+        # O(1) and never touches the keychain: the verified value is cached in memory.
         from agent_friday.services import guarded_settings
         return guarded_settings.effective(SETTING, v)
     except Exception:

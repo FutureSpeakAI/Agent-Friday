@@ -65,7 +65,9 @@ def read(path: Any) -> Optional[dict]:
 def clamp_for_write(config: dict, settings_file: Any) -> dict:
     """``config`` as it may be written over ``settings_file``: guarded keys never wider than
     what the file holds now."""
-    return clamp(config, read(settings_file))
+    out = clamp(config, read(settings_file))
+    narrow_all(out)
+    return out
 
 
 def clamp_file(restored: Any, current: Any = None) -> bool:
@@ -77,6 +79,7 @@ def clamp_file(restored: Any, current: Any = None) -> bool:
     if data is None:
         return False
     want = clamp(data, read(current) if current is not None else None)
+    narrow_all(want)                    # a restore is not the owner's click: the record follows the narrower value
     if want == data:
         return False
     fd, tmp = tempfile.mkstemp(dir=str(restored.parent), prefix=".settings-", suffix=".tmp")
@@ -102,20 +105,77 @@ def clamp_file(restored: Any, current: Any = None) -> bool:
 # changes the key (owner_action, after screen_session), signed with the governance key,
 # which no tool, model or settings write can read or mint. ``effective`` is the narrower of
 # the file's value and the record's, and no valid record means the default, off.
+#
+#   * Every narrowing, from anywhere (the page, the CLI, the wizard, the boot guard's
+#     rollback, a generic save), narrows the record too (``narrow_record``): a stale "on"
+#     record can never be re-armed by a file edit. A narrowing whose record write fails
+#     removes the record and, failing that, reads as off in this process: it fails closed.
+#   * Replay: the signature covers a monotonic counter and an install-unique nonce that is
+#     rotated on EVERY record change and kept in a protected secret (credential_store: the
+#     vault key or DPAPI) beside the record. An old copy of the record carries an old nonce
+#     and verifies as nothing. The folder is on the file tools' deny list.
+#   * Speed: the turn path never reads the keychain. ``effective`` compares the two files'
+#     stat stamps with a verified in-memory value, so a read is O(1) (two stat calls); a stamp
+#     that does not match reads as off at once and is verified on a background thread.
 
 RECORD_NAME = "owner_enable.json"
+NONCE_NAME = "owner_enable.nonce"
+
+import logging as _logging
+import threading as _threading
+
+_log = _logging.getLogger("friday.guarded_settings")
+_LOCK = _threading.Lock()
+_CACHE: dict = {}          # key -> (stamp, verified value)
+_FORCE_OFF: set = set()    # keys whose record could not be kept honest in this process
+_PENDING: set = set()      # keys being verified on the background thread
+
+
+def _dir() -> Path:
+    from agent_friday.paths import friday_home
+    return Path(friday_home()) / "runtime" / "guarded_settings"
 
 
 def _record_path() -> Path:
-    from agent_friday.paths import friday_home
-    return Path(friday_home()) / "runtime" / "guarded_settings" / RECORD_NAME
+    return _dir() / RECORD_NAME
 
 
-def _mac(key: str, value: str, at: float) -> str:
+def _nonce_path() -> Path:
+    return _dir() / NONCE_NAME
+
+
+def _load_nonce() -> Optional[bytes]:
+    try:
+        from agent_friday.services import credential_store
+        raw = credential_store.read_secret(_nonce_path())
+        return raw if raw and len(raw) >= 8 else None
+    except Exception:       # noqa: BLE001 - no nonce, no verification
+        return None
+
+
+def _store_nonce(nonce: bytes) -> None:
+    from agent_friday.services import credential_store
+    _dir().mkdir(parents=True, exist_ok=True)
+    credential_store.write_secret(_nonce_path(), nonce)
+
+
+def _stamp() -> tuple:
+    out = []
+    for p in (_record_path(), _nonce_path()):
+        try:
+            st = os.stat(p)
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def _mac(key: str, value: str, at: float, counter: int, nonce: bytes) -> str:
     import hashlib
     import hmac
     from agent_friday.governance.proof_of_integrity import get_governance_key
-    msg = json.dumps(["guarded_settings", key, value, round(float(at), 3)], separators=(",", ":"))
+    msg = json.dumps(["guarded_settings", key, value, round(float(at), 3), int(counter), nonce.hex()],
+                     separators=(",", ":"))
     return hmac.new(get_governance_key(), msg.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
@@ -127,17 +187,74 @@ def _read_records() -> dict:
         return {}
 
 
-def record_owner_choice(key: str, value: Any) -> bool:
-    """Record that the owner's own Settings click set ``key`` to ``value``. False (and no record
-    changes) when the value is not one of the key's words or the record cannot be signed or
-    written; the setting then reads as off until the owner clicks again."""
+def _verify(key: str) -> str:
+    """The recorded value if the record verifies against the current nonce and governance key, else
+    the narrowest. Reads the keychain: never on a turn."""
+    import hmac
     try:
-        if key not in GUARDED or not isinstance(value, str) or value not in GUARDED[key]:
-            return False
+        rec = _read_records().get(key)
+        nonce = _load_nonce()
+        if not isinstance(rec, dict) or nonce is None:
+            return GUARDED[key][0]
+        value, at, counter, mac = rec.get("value"), rec.get("at"), rec.get("counter"), rec.get("mac")
+        if (not isinstance(value, str) or value not in GUARDED[key]
+                or not isinstance(at, (int, float)) or not isinstance(counter, int)
+                or not isinstance(mac, str)
+                or not hmac.compare_digest(mac, _mac(key, value, at, counter, nonce))):
+            return GUARDED[key][0]
+        return value
+    except Exception:       # noqa: BLE001
+        return GUARDED[key][0]
+
+
+def refresh(key: str) -> str:
+    """Verify the record now (keychain and all) and cache the answer under the files' stamp."""
+    stamp = _stamp()
+    value = GUARDED[key][0] if stamp[0] is None else _verify(key)
+    with _LOCK:
+        _CACHE[key] = (stamp, value)
+    return value
+
+
+def _refresh_in_background(key: str) -> None:
+    with _LOCK:
+        if key in _PENDING:
+            return
+        _PENDING.add(key)
+
+    def run():
+        try:
+            refresh(key)
+        except Exception:       # noqa: BLE001
+            pass
+        finally:
+            with _LOCK:
+                _PENDING.discard(key)
+    _threading.Thread(target=run, name="guarded-settings-verify", daemon=True).start()
+
+
+def invalidate() -> None:
+    with _LOCK:
+        _CACHE.clear()
+
+
+def record_owner_choice(key: str, value: Any) -> bool:
+    """Record ``value`` as the owner's choice for ``key`` (a rotated nonce, a higher counter, a new
+    signature). False when the value is not one of the key's words or it cannot be signed or written;
+    then the record is removed and the key reads as off (fail closed)."""
+    if key not in GUARDED or not isinstance(value, str) or value not in GUARDED[key]:
+        return False
+    try:
+        import secrets
         import time
+        prev = _read_records().get(key)
+        counter = (int(prev.get("counter") or 0) if isinstance(prev, dict) else 0) + 1
+        nonce = secrets.token_bytes(16)
         at = time.time()
+        mac = _mac(key, value, at, counter, nonce)
+        _store_nonce(nonce)                 # the old record no longer verifies from here on
         records = _read_records()
-        records[key] = {"value": value, "at": at, "mac": _mac(key, value, at)}
+        records[key] = {"value": value, "at": at, "counter": counter, "mac": mac}
         path = _record_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".owner-", suffix=".tmp")
@@ -151,31 +268,70 @@ def record_owner_choice(key: str, value: Any) -> bool:
             except OSError:
                 pass
             raise
+        with _LOCK:
+            _FORCE_OFF.discard(key)
+            _CACHE[key] = (_stamp(), value)
         return True
-    except Exception:       # noqa: BLE001
+    except Exception as e:       # noqa: BLE001
+        _log.error("guarded setting %s: the owner-enable record could not be written (%s); it reads as off "
+                   "until the owner clicks again", key, type(e).__name__)
+        with _LOCK:
+            _FORCE_OFF.add(key)
+            _CACHE.pop(key, None)
+        try:
+            _record_path().unlink()
+        except OSError:
+            pass
         return False
 
 
-def owner_choice(key: str) -> str:
-    """What the owner's click last recorded for ``key``: a value of the key, or the narrowest
-    when there is no record, it does not verify, or the governance key cannot be read."""
-    import hmac
+def owner_choice(key: str, block: bool = False) -> str:
+    """What the owner's click last recorded for ``key``, or the narrowest. ``block=False`` (the turn
+    path) never touches the keychain: an unverified stamp reads as the narrowest and is verified in
+    the background."""
+    narrowest = GUARDED[key][0]
+    if key in _FORCE_OFF:
+        return narrowest
+    stamp = _stamp()
+    if stamp[0] is None:
+        return narrowest                    # no record: nothing to verify, nothing to read
+    with _LOCK:
+        hit = _CACHE.get(key)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    if block:
+        return refresh(key)
+    _refresh_in_background(key)
+    return narrowest
+
+
+def narrow_record(key: str, value: Any) -> bool:
+    """Bring the record down to ``value`` if it holds anything wider. Narrowing is always safe, so any
+    caller may do it. True when the record is now no wider than ``value``."""
     try:
-        rec = _read_records().get(key)
-        if not isinstance(rec, dict):
-            return GUARDED[key][0]
-        value, at, mac = rec.get("value"), rec.get("at"), rec.get("mac")
-        if (not isinstance(value, str) or value not in GUARDED[key]
-                or not isinstance(at, (int, float)) or not isinstance(mac, str)
-                or not hmac.compare_digest(mac, _mac(key, value, at))):
-            return GUARDED[key][0]
-        return value
+        want = value if isinstance(value, str) and value in GUARDED[key] else GUARDED[key][0]
+        if rank(key, want) >= rank(key, owner_choice(key, block=True)):
+            return True
+        return record_owner_choice(key, want)
     except Exception:       # noqa: BLE001
-        return GUARDED[key][0]
+        with _LOCK:
+            _FORCE_OFF.add(key)
+        try:
+            _record_path().unlink()
+        except OSError:
+            pass
+        return False
 
 
-def effective(key: str, settings_value: Any) -> str:
+def narrow_all(config: dict) -> None:
+    """Narrow every guarded key's record to what ``config`` will hold (an absent key is the default)."""
+    for key in GUARDED:
+        v = config.get(key) if isinstance(config, dict) else None
+        narrow_record(key, v if v is not None else GUARDED[key][0])
+
+
+def effective(key: str, settings_value: Any, block: bool = False) -> str:
     """The value a reader may act on: the narrower of what settings.json holds and what the
     owner's click recorded. A file edited to a wider value, with no matching record, is the
-    recorded value (off when there is none)."""
-    return narrower(key, settings_value, owner_choice(key))
+    recorded value (off when there is none). ``block=True`` is for the Settings page, never a turn."""
+    return narrower(key, settings_value, owner_choice(key, block))

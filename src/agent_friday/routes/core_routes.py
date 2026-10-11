@@ -1758,15 +1758,27 @@ def api_setting_change_undo(change_id):
     return jsonify({"status": "ok" if res["ok"] else "refused", **res}), (200 if res["ok"] else 409)
 
 
+def _effective_guarded(settings):
+    """What each guarded setting is IN EFFECT (the narrower of settings.json and the owner's recorded
+    click), for the Settings page to show instead of the file's bare word. Never raises."""
+    try:
+        from agent_friday.services import guarded_settings as _gs
+        return {k: _gs.effective(k, (settings or {}).get(k), block=True) for k in _gs.GUARDED}
+    except Exception:
+        return {}
+
+
 @core_bp.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     """GET: return current agent settings + personality.
     POST: merge new values into ~/.friday/settings.json and (optionally) save personality.
     """
     if request.method == 'GET':
+        _cur = _load_settings()
         return jsonify({
             "status": "ok",
-            "settings": _load_settings(),
+            "settings": _cur,
+            "effective": _effective_guarded(_cur),
             "personality": _load_agent_personality(),
             "default_personality": DEFAULT_AGENT_PERSONALITY,
         })
@@ -1886,6 +1898,7 @@ def api_settings():
         return jsonify({
             "status": "ok",
             "settings": merged,
+            "effective": _effective_guarded(merged),
             "personality": _load_agent_personality(),
         })
     except Exception as e:
