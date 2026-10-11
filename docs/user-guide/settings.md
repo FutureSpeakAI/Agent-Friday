@@ -40,6 +40,7 @@ permissions are paused, and sends you to **Privacy & Data, File access**.
   [Setup chat](setup-chat.md)). A key pasted here is refused, with a pointer to
   Connections. **Research on you** is optional, runs only on what you type, and
   shows findings for line-by-line review before anything is kept.
+- **Interruptions.** How often something may interrupt you (6 an hour is the recommended choice), quiet hours (off until you turn them on; 22:00 to 07:00 is offered), and whether to follow Windows Focus Assist. See [Notifications](notifications.md).
 - **Muted notifications.** The kinds of notice you have muted.
 
 ## Voice

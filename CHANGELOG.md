@@ -30,6 +30,37 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   keeps swaps, free memory, waits and finished jobs in a file on this PC and
   sends none of it anywhere (`GET /api/work/local/metrics`).
 
+- **Four places, one rule each.** The top-bar chip now opens **Needs you**
+  (only what waits for your decision, with a badge), **Activity** (every task,
+  whoever started it: model, status, a link to its reasoning trace, place in
+  line, and Stop only where the job can be stopped), **Updates** (a digest you
+  pull; a quiet dot, never a popup) and **Receipts & traces** (pulled from an
+  item's **Why?**, never pushed). Page: [Notifications](docs/user-guide/notifications.md).
+- **An interruption limit.** At most 6 things an hour may pop up, speak or text
+  (`interruption_budget_per_hour`; 6 is the recommended choice, 3, 12 and no
+  limit are offered). Over the limit they wait in the badge, which says how
+  many. Spend halts, credential problems, budget alerts, seat changes and cLaw
+  blocks are exempt.
+- **Quiet hours and Focus Assist.** Quiet hours are off until you turn them on
+  (22:00 to 07:00 is offered as the recommended window). In them only
+  safety-critical items interrupt, and background jobs that would raise
+  approvals wait until quiet hours end, then run once, labelled late; a
+  one-time job asks first. Following Windows Focus Assist is off until you
+  choose it. By voice: "quiet until morning".
+- **Batch approval cards.** Approvals of one kind and source show as one card
+  that lists every action in full. Approving the batch approves exactly those
+  actions, one approval each through the same checkpoint; a batch that changed
+  while you looked is refused. Only the media-diet and career-tracker changes
+  batch for now; actions that use outside content, money, connector actions and
+  click-only approvals never do.
+- **A burst becomes one card.** Repeated "ran" and "waiting" lines of a
+  schedule within five minutes are one card with a count; a notice about one task,
+  run or message keeps its own card. Editing a schedule forgets a run that was
+  waiting for quiet hours to end, and says so.
+- A held approval keeps its own expiry and never gains one; after a limit on how
+  long a hold may last it joins **Needs you** quietly. A card that expires
+  without having popped says so in Needs you.
+
 ### Fixed
 
 - **Undoing a mailbox change is now exact for every message in a conversation.**

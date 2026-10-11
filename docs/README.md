@@ -25,6 +25,7 @@ document it is.
 | [Media](user-guide/media.md) | The media workspace: search, previews, transcripts, tidy-up. |
 | [Podcasts](user-guide/podcasts.md) | Episodes written by your local model and spoken on your PC. |
 | [Workflows](user-guide/workflows.md) | Project context, checked results, reusable procedures, and shared desktop, chat and voice controls. |
+| [Notifications, activity and updates](user-guide/notifications.md) | The four places (Needs you, Activity, Updates, Receipts and traces), batch approvals, the hourly limit, quiet hours and Focus Assist. |
 | [Approvals and receipts](user-guide/approvals-and-receipts.md) | What Friday asks before it acts, cards, grants for scheduled jobs, and the signed receipts. |
 | [Privacy: local and cloud](user-guide/privacy.md) | What stays on your PC, what can leave, and the egress gate's limits. |
 | [Mail](user-guide/mail.md) | Messages and Gmail: connecting, what Friday can do, how sending is approved. |

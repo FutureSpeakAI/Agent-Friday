@@ -157,6 +157,11 @@ Laya plans, picks tools, runs quick actions (open, select, play, timers, reads) 
 | `news_priorities` | `["AI/Tech", "Politics", "Media", "Local", "Business"]` | News topics Friday prioritises in conversation. Does not control the news feeds. |
 | `news_edition_window_hours` | front page 36, briefing 36 | How many hours a story stays eligible for each routine's edition. |
 | `notification_mutes` | `[]` | Notification kinds you muted, as `kind\|source`. Muted notifications go to the activity log. Approvals can never be muted. |
+| `interruption_budget_per_hour` | `6` | How many things that need you may interrupt (pop up, speak or text) in an hour, 0 to 60; 0 means no limit. Settings offers 3, 6 (Recommended), 12 and no limit. Over the limit, items wait in the Needs-you badge, which says how many. Safety-critical items (spend halt, credential problem, budget alert, seat change, a cLaw block) are exempt and do not use the limit. See [Notifications](notifications.md). |
+| `quiet_hours_enabled` | off | Turn quiet hours on. Off by default; Settings offers 22:00 to 07:00 as the recommended window. In quiet hours only safety-critical items interrupt, and background jobs that would raise approvals wait until they end. |
+| `quiet_hours_start`, `quiet_hours_end` | `22:00`, `07:00` | The quiet window, as `HH:MM` in your local time. It may cross midnight. Read only when `quiet_hours_enabled` is on. |
+| `quiet_until_ts` | `0` | "Quiet until morning": an epoch time. Set by saying "quiet until morning" or from the Needs-you tab; 0 means not set. It ends by itself at the time; nothing resets it. |
+| `honour_focus_assist` | off | Follow Windows Focus Assist (Do Not Disturb). Off until you choose it. When on and Windows reports it is on, only safety-critical items interrupt. |
 | `news_local_area` | `""` | The place the Local news beat covers, as free text (a city or region). Friday searches Google News for it. Set it in News → Customize Briefing → Local beat. |
 | `news_local_sources` | `[]` | Outlet domains for the Local beat, for example `["springfield-local.example"]`. Each is fetched as a Local feed and trusted like the built-in high-trust outlets. With this and `news_local_area` both empty there is no Local beat; nothing ships with a city. |
 | `memory_recall_enabled` | `true` | Recall from past conversations. |
