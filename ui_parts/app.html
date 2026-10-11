@@ -12226,9 +12226,19 @@ function MeetingsPanel(){
   useEffect(()=>{fetch('/api/meetings/suggestion').then(r=>r.json()).then(d=>{setSugg(d.suggestion||null);setSuggOff(!!(d.state&&d.state.off_after_declines));}).catch(()=>{});},[]);
   // Live words while recording (shown, never stored).
   useEffect(()=>{if(!(st&&st.recording)){setLiveTx({});return undefined;}const t=setInterval(()=>fetch('/api/meetings/live').then(r=>r.json()).then(d=>setLiveTx(d.partials||{})).catch(()=>{}),2000);return()=>clearInterval(t);},[st&&st.recording]);
+  // The offer is spent when the card is actually on screen, not when it loads.
+  useEffect(()=>{
+    if(!sugg||(st&&st.recording)||asking||typeof IntersectionObserver!=='function')return undefined;
+    const el=document.getElementById('meeting-suggestion-card');
+    if(!el)return undefined;
+    let done=false;
+    const io=new IntersectionObserver(es=>{if(!done&&!document.hidden&&es.some(e=>e.isIntersecting&&e.intersectionRatio>=0.5)){done=true;fetch('/api/meetings/suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'shown',key:sugg.key})}).catch(()=>{});}},{threshold:[0.5]});
+    io.observe(el);
+    return()=>io.disconnect();
+  },[sugg&&sugg.key,st&&st.recording,asking]);
   const finishing=(st&&st.finishing)||[];
   useEffect(()=>{loadList();if(sel&&!finishing.includes(sel.id))openMeeting(sel.id);},[finishing.join(','),st&&st.recording]);
-  const answerSugg=async a=>{const c=sugg;setSugg(null);try{const d=await (await fetch('/api/meetings/suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})})).json();setSuggOff(!!d.off_after_declines);}catch(e){}if(a==='accept'&&c){ask(c.event&&c.event.title);}};
+  const answerSugg=async a=>{const c=sugg;setSugg(null);try{const d=await (await fetch('/api/meetings/suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a,key:c&&c.key})})).json();setSuggOff(!!d.off_after_declines);}catch(e){}if(a==='accept'&&c){ask(c.event&&c.event.title);}};
   const suggBack=async()=>{try{await fetch('/api/meetings/suggestion/reset',{method:'POST'});}catch(e){}setSuggOff(false);};
   const copyLine=async()=>{try{await navigator.clipboard.writeText(line);setCopied(true);}catch(e){const ta=document.createElement('textarea');ta.value=line;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');setCopied(true);}catch(_){setMsg('Select the line and copy it yourself.');}document.body.removeChild(ta);}};
   const saveLine=async()=>{const d=await (await fetch('/api/meetings/consent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({line})})).json().catch(()=>({}));if(d.status==='ok'){setConsent(d);setLine(d.line);setMsg('Consent line saved.');}else setMsg(d.error||'Could not save the line.');};
@@ -12260,7 +12270,7 @@ function MeetingsPanel(){
     {finishing.length>0&&<div style={{...small,marginTop:6}}>Finishing the transcript and notes…</div>}
     {rec&&<div style={{...small,marginTop:6}}>{(st.system_audio&&st.system_audio.reason)||''}{st.vad?' Speech detection: '+(st.vad==='silero'?'Silero.':'volume gate.'):''}</div>}
     {rec&&Object.keys(liveTx).length>0&&<div aria-live="off" style={{marginTop:6,fontSize:12,color:'#cfd6e4'}}>{Object.keys(liveTx).map(k=><div key={k}><span style={small}>{k?k+': ':''}</span>{liveTx[k]}</div>)}</div>}
-    {sugg&&!rec&&!asking&&<div role="region" aria-label="Take notes?" style={{...box,marginTop:8,borderColor:'rgba(0,212,255,0.4)'}}>
+    {sugg&&!rec&&!asking&&<div id="meeting-suggestion-card" role="region" aria-label="Take notes?" style={{...box,marginTop:8,borderColor:'rgba(0,212,255,0.4)'}}>
       <div style={{fontSize:13,color:'#eef1f6',marginBottom:6}}>{sugg.text}</div>
       <div style={{display:'flex',gap:8,alignItems:'center'}}>
         <button className="btn active" onClick={()=>answerSugg('accept')}>Open the start card</button>
@@ -19076,6 +19086,24 @@ function SettingsTabPrivacy({s,save}){
       </StRow>
       <StToggle label="Read documents while on battery" value={!!s.library_index_on_battery} onChange={()=>save({library_index_on_battery:!s.library_index_on_battery})} desc="Off, new and changed documents wait until the PC is plugged in."/>
       <StToggle label="Let the knowledge graph learn from Library documents" value={s.library_kg_learn==='on'} onChange={()=>save({library_kg_learn:s.library_kg_learn==='on'?'off':'on'})} desc="On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted. Forgetting a document removes what the graph learned only from it and clears the descriptions it contributed to; turning this off takes back everything learned from your documents."/>
+    </StSection>
+    <StSection title="Meeting recordings" desc="How long Friday keeps what she records in Meetings. Nothing is chosen for you; until you choose, nothing is deleted on a timer. Deleting audio never touches the transcript or notes.">
+      <StRow label="Audio" settingKey="meeting_audio_retention">
+        <StSelect ariaLabel="How long to keep meeting audio" value={s.meeting_audio_retention||''} onChange={e=>save({meeting_audio_retention:e.target.value})}>
+          <option value="" disabled>Choose…</option>
+          <option value="delete_after_notes">Delete it once the notes are made (Recommended)</option>
+          <option value="30_days">Delete it after 30 days</option>
+          <option value="keep">Keep it until I delete it</option>
+        </StSelect>
+      </StRow>
+      <StRow label="Transcripts and notes" settingKey="meeting_text_retention" desc="Deleting them removes the whole meeting, audio included.">
+        <StSelect ariaLabel="How long to keep meeting transcripts and notes" value={s.meeting_text_retention||''} onChange={e=>save({meeting_text_retention:e.target.value})}>
+          <option value="" disabled>Choose…</option>
+          <option value="keep">Keep them until I delete them</option>
+          <option value="days">Delete them after a number of days</option>
+        </StSelect>
+        {s.meeting_text_retention==='days'&&<label style={{fontSize:12,color:'var(--st-label)'}}>After <input className="input" type="number" min="1" max="3650" style={{width:80}} defaultValue={s.meeting_text_retention_days||90} onBlur={e=>save({meeting_text_retention_days:Math.max(1,Math.min(3650,Number(e.target.value)||90))})}/> days</label>}
+      </StRow>
     </StSection>
     <StSection title="File access" desc={"Which files and folders cloud models may read when " + fridayName() + " opens them."}>
       <FileAccessPanel/>

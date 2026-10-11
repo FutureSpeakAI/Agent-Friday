@@ -107,6 +107,10 @@ def test_retention_refuses_what_it_did_not_offer_in_plain_words(client, env, bod
 def test_a_suggestion_comes_once_per_event_and_two_declines_turn_it_off(client, env):
     first = client.get("/api/meetings/suggestion").get_json()
     assert first["suggestion"]["text"].startswith("Your “Design review” is starting")
+    again = client.get("/api/meetings/suggestion").get_json()["suggestion"]
+    assert again == first["suggestion"], "loading the card does not spend it"
+    r = client.post("/api/meetings/suggestion", json={"action": "shown", "key": again["key"]})
+    assert r.status_code == 200
     assert client.get("/api/meetings/suggestion").get_json()["suggestion"] is None
     client.post("/api/meetings/suggestion", json={"action": "decline"})
     st = client.post("/api/meetings/suggestion", json={"action": "decline"}).get_json()

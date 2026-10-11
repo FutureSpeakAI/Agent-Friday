@@ -16,6 +16,10 @@ Nothing here starts a recording. Starting is the owner's act on screen and goes
 only through routes/meetings.py (see tests/unit/test_meeting_start_guard.py).
 Nothing here sends anything anywhere: Friday does not post the consent line
 into other apps, she gives it to the owner to paste.
+
+TODO(MT-2): a cloud grant for one meeting's notes (cloud_intent + the egress
+gate, an explicit per-meeting choice). Until then meeting content has no way
+out and tests/unit/test_meeting_egress_canary.py holds that line.
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -347,9 +352,10 @@ def suggest(event: dict | None, *, recording: bool = False,
             today: str | None = None) -> dict | None:
     """The suggestion card for `event`, or None.
 
-    At most once per event: asking marks the event as offered whatever the
-    owner does with the card. Never when a recording is running, never when the
-    owner has switched suggestions off, never after two declines.
+    Asking spends nothing: the same card comes back until the page reports it
+    was actually on screen (`mark_shown`). At most once per event after that.
+    Never when a recording is running, never when the owner has switched
+    suggestions off, never after two declines.
     """
     if not event or not event.get("title") or recording:
         return None
@@ -358,24 +364,39 @@ def suggest(event: dict | None, *, recording: bool = False,
     today = today or datetime.now().strftime("%Y-%m-%d")
     key = _event_key(event, today)
     with _STATE_LOCK:
-        st = _load_state()
-        offered = list(st.get("offered") or [])
-        if key in offered:
+        if key in (_load_state().get("offered") or []):
             return None
-        offered.append(key)
-        st["offered"] = offered[-_OFFERED_KEEP:]
-        _write_state(st)
     return {"event": {"title": str(event.get("title"))[:200],
                       "event_id": str(event.get("event_id") or "")[:200]},
             "text": "Your “%s” is starting. Take notes?" % str(event.get("title"))[:120],
             "key": key}
 
 
-def answer_suggestion(action: str) -> dict:
+def mark_shown(key) -> dict:
+    """The card was visible to the owner: this event will not be offered again.
+    Called by the page when the card scrolls into view, not when it loads."""
+    key = str(key or "")
+    if not re.fullmatch(r"[0-9a-f]{16}", key):
+        raise ValueError("not a suggestion key")
+    with _STATE_LOCK:
+        st = _load_state()
+        offered = list(st.get("offered") or [])
+        if key not in offered:
+            offered.append(key)
+            st["offered"] = offered[-_OFFERED_KEEP:]
+            _write_state(st)
+    return suggestion_state()
+
+
+def answer_suggestion(action: str, key=None) -> dict:
     """The owner's answer. "decline" counts toward switching suggestions off;
     "accept" only means the owner opened the start card (it starts nothing)."""
-    if action not in ("accept", "decline"):
-        raise ValueError("action must be accept or decline")
+    if action not in ("accept", "decline", "shown"):
+        raise ValueError("action must be shown, accept or decline")
+    if action == "shown" or key:
+        mark_shown(key)
+    if action == "shown":
+        return suggestion_state()
     if action == "decline":
         with _STATE_LOCK:
             st = _load_state()

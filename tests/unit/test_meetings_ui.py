@@ -122,6 +122,28 @@ def test_a_suggestion_is_a_card_with_no_pestering_and_a_way_back():
         assert "Nothing records until you start it" in r
 
 
+def test_the_suggestion_is_spent_when_it_is_seen_not_when_it_loads():
+    for src in (INDEX, APP):
+        r = _meetings_region(src)
+        assert "IntersectionObserver" in r and "meeting-suggestion-card" in r
+        assert "shown" in r
+        # the load path only asks for the card; nothing posts "shown" outside the observer
+        assert r.count("'shown'") + r.count('"shown"') == 1
+
+
+def test_retention_has_a_settings_row_in_privacy_and_data_with_the_same_keys():
+    for src in (INDEX, APP):
+        a = src.index("Meeting recordings")
+        row = src[a:a + 4000]
+        for key in ("meeting_audio_retention", "meeting_text_retention", "meeting_text_retention_days"):
+            assert key in row, key
+        assert "(Recommended)" in row and "disabled" in row         # a label, and no preselected choice
+        assert "value=\"\"" in row or 'value: ""' in row
+    # inside Privacy & Data, ahead of File access
+    assert APP.index("Meeting recordings") < APP.index('<StSection title="File access"')
+    assert INDEX.index('title: "Meeting recordings"') < INDEX.index('title: "File access"')
+
+
 def test_the_transcript_shows_who_spoke():
     for src in (INDEX, APP):
         assert "g.speaker" in _meetings_region(src)

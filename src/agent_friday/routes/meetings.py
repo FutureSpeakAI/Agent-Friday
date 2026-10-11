@@ -144,7 +144,7 @@ def meetings_suggestion():
     if request.method == 'POST':
         d = request.get_json(silent=True) or {}
         try:
-            return jsonify({"status": "ok"} | mp.answer_suggestion(d.get("action")))
+            return jsonify({"status": "ok"} | mp.answer_suggestion(d.get("action"), d.get("key")))
         except (ValueError, TypeError):
             return jsonify(_BAD[0]), _BAD[1]
     m = mc.get_manager()
@@ -152,6 +152,7 @@ def meetings_suggestion():
         ev = m.event_lookup()
     except Exception:
         ev = None
+    # Asking does not use the card up: the page says "shown" once it is on screen.
     card = mp.suggest(ev, recording=bool(m.status().get("recording")))
     return jsonify({"status": "ok", "suggestion": card} | {"state": mp.suggestion_state()})
 

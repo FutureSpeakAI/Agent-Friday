@@ -136,6 +136,8 @@ all = [
     "pyautogui>=0.9; sys_platform == 'win32'",
     "pynput>=1.7; sys_platform == 'win32'",
     "pystray>=0.19; sys_platform == 'win32'",
+    # Meeting recorder: WASAPI loopback (system audio) through COM
+    "comtypes>=1.4.16,<1.5; sys_platform == 'win32'",
     # Tier-1 local voice is cheap + universal, so it rides [all]. The GPU voice
     # tier (NeMo) is not an extra at all; the Settings voice installer installs
     # it on its own.

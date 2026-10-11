@@ -45,3 +45,4 @@ pillow>=12.3.0
 
 # Global Ctrl+Shift+Q kill-switch for Computer Control.
 pynput>=1.7
+comtypes>=1.4.16,<1.5  # meeting recorder: WASAPI loopback (system audio)

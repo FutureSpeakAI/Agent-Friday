@@ -39436,6 +39436,32 @@ function MeetingsPanel() {
     const t = setInterval(() => fetch('/api/meetings/live').then(r => r.json()).then(d => setLiveTx(d.partials || {})).catch(() => {}), 2000);
     return () => clearInterval(t);
   }, [st && st.recording]);
+  // The offer is spent when the card is actually on screen, not when it loads.
+  useEffect(() => {
+    if (!sugg || st && st.recording || asking || typeof IntersectionObserver !== 'function') return undefined;
+    const el = document.getElementById('meeting-suggestion-card');
+    if (!el) return undefined;
+    let done = false;
+    const io = new IntersectionObserver(es => {
+      if (!done && !document.hidden && es.some(e => e.isIntersecting && e.intersectionRatio >= 0.5)) {
+        done = true;
+        fetch('/api/meetings/suggestion', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            action: 'shown',
+            key: sugg.key
+          })
+        }).catch(() => {});
+      }
+    }, {
+      threshold: [0.5]
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [sugg && sugg.key, st && st.recording, asking]);
   const finishing = st && st.finishing || [];
   useEffect(() => {
     loadList();
@@ -39451,7 +39477,8 @@ function MeetingsPanel() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          action: a
+          action: a,
+          key: c && c.key
         })
       })).json();
       setSuggOff(!!d.off_after_declines);
@@ -39720,6 +39747,7 @@ function MeetingsPanel() {
   }, /*#__PURE__*/React.createElement("span", {
     style: small
   }, k ? k + ': ' : ''), liveTx[k]))), sugg && !rec && !asking && /*#__PURE__*/React.createElement("div", {
+    id: "meeting-suggestion-card",
     role: "region",
     "aria-label": "Take notes?",
     style: {
@@ -57320,6 +57348,61 @@ function SettingsTabPrivacy({
     title: "Privacy check",
     desc: ("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")
   }, /*#__PURE__*/React.createElement(PrivacyCheckLayers, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Meeting recordings",
+    desc: "How long Friday keeps what she records in Meetings. Nothing is chosen for you; until you choose, nothing is deleted on a timer. Deleting audio never touches the transcript or notes."
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Audio",
+    settingKey: "meeting_audio_retention"
+  }, /*#__PURE__*/React.createElement(StSelect, {
+    ariaLabel: "How long to keep meeting audio",
+    value: s.meeting_audio_retention || '',
+    onChange: e => save({
+      meeting_audio_retention: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "",
+    disabled: true
+  }, "Choose\u2026"), /*#__PURE__*/React.createElement("option", {
+    value: "delete_after_notes"
+  }, "Delete it once the notes are made (Recommended)"), /*#__PURE__*/React.createElement("option", {
+    value: "30_days"
+  }, "Delete it after 30 days"), /*#__PURE__*/React.createElement("option", {
+    value: "keep"
+  }, "Keep it until I delete it"))), /*#__PURE__*/React.createElement(StRow, {
+    label: "Transcripts and notes",
+    settingKey: "meeting_text_retention",
+    desc: "Deleting them removes the whole meeting, audio included."
+  }, /*#__PURE__*/React.createElement(StSelect, {
+    ariaLabel: "How long to keep meeting transcripts and notes",
+    value: s.meeting_text_retention || '',
+    onChange: e => save({
+      meeting_text_retention: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "",
+    disabled: true
+  }, "Choose\u2026"), /*#__PURE__*/React.createElement("option", {
+    value: "keep"
+  }, "Keep them until I delete them"), /*#__PURE__*/React.createElement("option", {
+    value: "days"
+  }, "Delete them after a number of days")), s.meeting_text_retention === 'days' && /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-label)'
+    }
+  }, "After ", /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "1",
+    max: "3650",
+    style: {
+      width: 80
+    },
+    defaultValue: s.meeting_text_retention_days || 90,
+    onBlur: e => save({
+      meeting_text_retention_days: Math.max(1, Math.min(3650, Number(e.target.value) || 90))
+    })
+  }), " days"))), /*#__PURE__*/React.createElement(StSection, {
     title: "File access",
     desc: "Which files and folders cloud models may read when " + fridayName() + " opens them."
   }, /*#__PURE__*/React.createElement(FileAccessPanel, null)), /*#__PURE__*/React.createElement(StSection, {

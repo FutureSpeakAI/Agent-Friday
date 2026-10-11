@@ -40,6 +40,7 @@ piper-tts>=1.2                # Tier-1 LOCAL voice TTS (services/local_voice.py)
 onnxruntime>=1.17             # CPU inference backend for Piper TTS (+ optional Silero VAD endpointing). Pulled in by piper-tts; listed explicitly for the lite voice stack.
 pyttsx3>=2.90                 # last-resort offline TTS (Windows SAPI5) when both Gemini and Piper are unavailable — the bottom of the voice fallback chain
 pystray>=0.19                 # system tray icon (friday_tray.py) — the normal Windows launch path; without it the tray entry point dies on import
+comtypes>=1.4.16,<1.5; sys_platform == "win32"  # meeting recorder: WASAPI loopback (system audio) through COM
 pillow>=12.3.0                  # tray icon rendering (pystray dependency) + image handling
 
 # ── OPTIONAL: Layer 2 of the sensitivity classifier (Presidio NER) ────────────

@@ -427,23 +427,51 @@ def test_the_scheduler_tick_runs_the_retention_tick():
 EV = {"title": "Design review", "event_id": "ev-1"}
 
 
+def show(event, today="2026-10-12"):
+    """What the page does: ask for the card, and report it once it is on screen."""
+    card = mp.suggest(event, today=today)
+    if card:
+        mp.mark_shown(card["key"])
+    return card
+
+
 def test_a_suggestion_appears_once_per_event(store):
-    first = mp.suggest(EV, today="2026-10-12")
+    first = show(EV)
     assert first and "Design review" in first["text"] and first["text"].endswith("Take notes?")
     assert mp.suggest(EV, today="2026-10-12") is None
     assert mp.suggest(dict(EV, event_id="ev-2", title="Standup"), today="2026-10-12")
 
 
+def test_asking_for_the_card_does_not_spend_it_only_seeing_it_does(store):
+    a = mp.suggest(EV, today="2026-10-12")
+    b = mp.suggest(EV, today="2026-10-12")          # a page that loaded but was never looked at
+    assert a and a == b
+    assert mp.answer_suggestion("shown", a["key"])["enabled"] is True
+    assert mp.suggest(EV, today="2026-10-12") is None
+
+
+def test_only_a_real_suggestion_key_can_be_marked_shown(store):
+    for bad in (None, "", "ev-1", "zz" * 8, "0" * 15):
+        with pytest.raises(ValueError):
+            mp.mark_shown(bad)
+
+
+def test_declining_with_a_key_also_counts_the_card_as_seen(store):
+    card = mp.suggest(EV, today="2026-10-12")
+    mp.answer_suggestion("decline", card["key"])
+    assert mp.suggest(EV, today="2026-10-12") is None
+
+
 def test_an_event_without_an_id_is_keyed_by_title_and_day(store):
     e = {"title": "Lunch call", "event_id": ""}
-    assert mp.suggest(e, today="2026-10-12")
+    assert show(e)
     assert mp.suggest(e, today="2026-10-12") is None
     assert mp.suggest(e, today="2026-10-13")
 
 
 def test_no_suggestion_while_recording_and_the_event_is_not_used_up(store):
     assert mp.suggest(EV, recording=True) is None
-    assert mp.suggest(EV, today="2026-10-12")
+    assert show(EV)
 
 
 def test_two_declines_switch_suggestions_off(store):
@@ -477,7 +505,7 @@ def test_an_answer_that_is_not_one_is_refused(store):
 
 
 def test_the_suggestion_state_holds_hashes_not_event_names(store, tmp_path):
-    mp.suggest(EV, today="2026-10-12")
+    show(EV)
     raw = (tmp_path / "meetings" / "policy_state.json").read_text(encoding="utf-8")
     assert "Design review" not in raw and "ev-1" not in raw
     assert re.search(r'"offered": \["[0-9a-f]{16}"\]', raw)
