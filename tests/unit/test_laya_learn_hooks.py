@@ -129,3 +129,84 @@ def test_a_learned_defer_on_a_turn_the_base_would_ask_about_is_the_bases_ask(mon
     got = lr._no_new_action("open that", lr.Route("defer", layer="laya2", confidence=0.9), [1.0])
     assert got is base_ask
     assert lr._no_new_action("open that", lr.Route("defer", layer="laya2", confidence=0.9), None).decision == "ask"
+
+
+# ── the execute hook through agent._execute_tool, with the real on_executed ─────────
+
+import types
+
+
+@pytest.fixture
+def rig(monkeypatch):
+    """The real laya_personal.on_executed / on_delegated behind the real agent._execute_tool; only the
+    sealed store write (_capture) and the pre-hooks are replaced."""
+    from agent_friday.services import agent
+    kept, asked = [], []
+    monkeypatch.setattr(lp, "current_profile", lambda: "owner")
+    monkeypatch.setattr(lp, "_active", lambda p: True)
+    monkeypatch.setattr(lp, "_capture", lambda profile, kind, ent, **k: kept.append((kind, ent["text"], k.get("label"))))
+    monkeypatch.setattr(agent._hooks, "run_pre_hooks", lambda ctx: types.SimpleNamespace(action="allow", reason=""))
+    from agent_friday.services import slice_head
+    monkeypatch.setattr(slice_head, "is_tainted", lambda key: asked.append(key) or False)
+    with lp._lock:
+        lp._held.clear()
+        lp._held.append({"at": lp.now_fn(), "text": "sort out the thing with the lease", "decision": "defer",
+                         "tool": None, "confidence": 0.9, "layer": "rule", "cands": [], "surface": "voice",
+                         "conversation_id": "c1", "resolved": False})
+    yield types.SimpleNamespace(agent=agent, kept=kept, asked=asked)
+    with lp._lock:
+        lp._held.clear()
+
+
+def _run(agent, ctx, name="query_calendar"):
+    return agent._execute_tool(name, {}, session_ctx=ctx, handler=lambda inp: "ok")
+
+
+def test_a_voice_tool_in_the_conversation_does_not_resolve_a_deferred_turn(rig):
+    """The voice dispatcher sets the conversation outside _execute_tool; Laya's own routed tool on the next
+    turn, or a cloud voice tool, must not become the deeper mind's choice."""
+    tok = rig.agent._CURRENT_CONVERSATION.set("c1")
+    try:
+        _run(rig.agent, {"authenticated": True})
+        _run(rig.agent, {"authenticated": True, "conversation_id": "c1"})
+        _run(rig.agent, {"authenticated": True, "conversation_id": "c1", "chosen_by": "laya_router:rule"})
+    finally:
+        rig.agent._CURRENT_CONVERSATION.reset(tok)
+    assert rig.kept == []
+    # red on f943324a8: the first call is read with the outer conversation after the reset and makes a row
+
+
+def test_only_the_delegated_tasks_own_call_makes_the_shadow_row_and_reads_its_own_taint(rig):
+    from agent_friday.services import laya_router_learn as ll
+    from agent_friday.services import taint
+    ll.note_delegated("t1", conversation_id="c1")
+    other = {"authenticated": True, "is_background_task": True, "task_id": "t2", "conversation_id": "c1"}
+    mine = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
+    _run(rig.agent, other)
+    assert rig.kept == []
+    _run(rig.agent, mine, name="search_past_conversations")          # a lookup helper does not resolve it
+    assert rig.kept == []
+    _run(rig.agent, mine)
+    assert rig.kept == [("shadow", "sort out the thing with the lease", "query_calendar")]
+    assert taint.ledger_key(mine) in rig.asked and "default" not in rig.asked
+
+
+def test_a_tainted_task_call_and_a_crew_or_phone_call_make_no_row(rig, monkeypatch):
+    from agent_friday.services import laya_router_learn as ll
+    from agent_friday.services import slice_head
+    ll.note_delegated("t1", conversation_id="c1")
+    base = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
+    _run(rig.agent, dict(base, crew_agent_id="a1"))
+    _run(rig.agent, dict(base, origin="phone"))
+    monkeypatch.setattr(slice_head, "is_tainted", lambda key: True)
+    _run(rig.agent, base)
+    assert rig.kept == []
+    monkeypatch.setattr(slice_head, "is_tainted", lambda key: False)
+    _run(rig.agent, base)
+    assert len(rig.kept) == 1
+
+
+def test_a_deferral_with_no_delegated_task_never_makes_a_row(rig):
+    mine = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
+    _run(rig.agent, mine)
+    assert rig.kept == []

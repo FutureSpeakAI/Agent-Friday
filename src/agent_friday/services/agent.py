@@ -12183,6 +12183,20 @@ from agent_friday.services import live_laya as _live_laya
 
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
+def _learn_facts(session_ctx) -> dict:
+    """What the router's learning hooks need to know about one tool call, from the call's own session
+    context: its conversation, its taint ledger key, the background task that made it, whether Laya's own
+    router chose it (``routed``) and whether it comes from a context that is never the owner's (a crew
+    agent, a paired phone: ``unsafe``)."""
+    sc = session_ctx or {}
+    tid = sc.get("task_id")
+    return {"cid": (sc.get("conversation_id") or sc.get("conversation")) or None,
+            "key": _taint_mod.ledger_key(session_ctx),
+            "task_id": str(tid) if tid else None,
+            "routed": str(sc.get("chosen_by") or "").startswith("laya_router:"),
+            "unsafe": bool(sc.get("crew_agent_id") or sc.get("origin") == "phone")}
+
+
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -12316,6 +12330,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     except Exception:
         pass
 
+    _learn = None
     try:
         # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
         # tool that spawns background work had no way to say where that work
@@ -12330,6 +12345,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # handler raises (the email card is created inside draft_email).
         _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
         _ktok = _taint_mod.CURRENT_KEY.set(_taint_mod.ledger_key(session_ctx))
+        # What the router's learning hook needs to know about THIS call, read here because the context
+        # variables are reset when the handler returns (the caller's values would be read after that).
+        _learn = _learn_facts(session_ctx)
         # The owner's decision behind this call, as the hooks established it
         # (approved card, grant, or a chat yes to exactly this call). A handler
         # whose action needs one checks it again before acting.
@@ -12398,10 +12416,12 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh
-            _llearn.note_executed(
-                name, ctx.input, ok=True, actor="brain",
-                tainted=lambda: _sh.is_tainted(_taint_mod.CURRENT_KEY.get()),
-                conversation_id=_CURRENT_CONVERSATION.get())
+            if _learn is not None:
+                _lk = _learn["key"]
+                _llearn.note_executed(
+                    name, ctx.input, ok=True, actor="brain",
+                    tainted=True if _learn["unsafe"] else (lambda: _sh.is_tainted(_lk)),
+                    conversation_id=_learn["cid"], task_id=_learn["task_id"], routed=_learn["routed"])
         except Exception:
             pass
 

@@ -111,6 +111,22 @@ def _personal(name: str, *args, **kw) -> None:
         _log.debug("personal layer skipped %s: %s", name, type(e).__name__)
 
 
+def note_delegated(task_id: Optional[str], *, conversation_id: Optional[str] = None) -> None:
+    """The deferred turn just handed to the deeper mind became background task ``task_id``: tie the newest
+    waiting deferral of this conversation to it, here and in the personal layer, so that only that
+    task's own tool calls can resolve it. A missing id or conversation ties nothing."""
+    if not task_id or not conversation_id:
+        return
+    now = now_fn()
+    with _lock:
+        ent = next((e for e in reversed(_held)
+                    if not e["resolved"] and e["decision"] == "defer" and not e.get("task_id")
+                    and now - e["at"] <= DEFER_WINDOW_S and _same_conversation(e, conversation_id)), None)
+        if ent is not None:
+            ent["task_id"] = str(task_id)
+    _personal("on_delegated", str(task_id), conversation_id=conversation_id)
+
+
 def _same_conversation(ent: dict, conversation_id: Optional[str]) -> bool:
     a, b = ent.get("conversation_id"), conversation_id
     return bool(a) and bool(b) and str(a) == str(b)      # no id matches nothing
@@ -190,15 +206,19 @@ def note_undo(*, conversation_id: Optional[str] = None, tainted=False, settings:
 
 def note_executed(tool: str, args: Optional[dict] = None, *, ok: bool, tainted=False,
                   denied: bool = False, actor: str = "brain", conversation_id: Optional[str] = None,
+                  task_id: Optional[str] = None, routed: bool = False,
                   settings: Optional[dict] = None, root=None) -> bool:
     """A tool really ran. If exactly one routed ask or defer is waiting for
     its resolution, that resolution is the correction: an ask answered with
     a different tool (the owner's), a defer the brain resolved to a tool.
-    ``tainted`` is a bool or a callable evaluated only when a correction is
-    possible (it is read on every tool call otherwise). The personal layer is told first and applies
-    its own rules (a failed, denied or tainted call, a missing conversation id and the router's own
-    machinery record nothing there)."""
-    _personal("on_executed", tool, args, ok=ok, tainted=tainted, denied=denied, conversation_id=conversation_id)
+    ``conversation_id`` and ``tainted`` are the CALL's own (the caller reads them before its context
+    is reset); ``tainted`` is a bool or a callable evaluated only when a correction is possible.
+    A defer is resolved only by a call of the task that was delegated for it (``task_id``, see
+    ``note_delegated``), never by any call in the same conversation. ``routed`` marks a call Laya's own
+    router chose: it is not the deeper mind's choice and the personal layer ignores it."""
+    if not routed:
+        _personal("on_executed", tool, args, ok=ok, tainted=tainted, denied=denied,
+                  conversation_id=conversation_id, task_id=task_id)
     if not ok or denied or not tool or tool in _NOT_A_LABEL:
         return False
     if tainted is True:
@@ -208,7 +228,8 @@ def note_executed(tool: str, args: Optional[dict] = None, *, ok: bool, tainted=F
         waiting = [e for e in _held
                    if not e["resolved"] and _same_conversation(e, conversation_id)
                    and ((e["decision"] == "ask" and now - e["at"] <= ASK_WINDOW_S)
-                        or (e["decision"] == "defer" and now - e["at"] <= DEFER_WINDOW_S))]
+                        or (e["decision"] == "defer" and now - e["at"] <= DEFER_WINDOW_S
+                            and bool(task_id) and e.get("task_id") == task_id))]
         if len(waiting) != 1:
             return False
         ent = waiting[0]

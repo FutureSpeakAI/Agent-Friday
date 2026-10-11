@@ -1179,6 +1179,12 @@ def _tier1_head(text: str) -> Route:
         from agent_friday.services import laya_router_head as lh
         r = lh.decide(text)
         if r is not None:
+            # The head reads no profile, so a tightening the owner's corrections earned must still bind it: a
+            # tool the head would run below the raised act score goes back to the prototypes, whose own
+            # threshold and guards apply.
+            if (r.decision == "tool" and getattr(_PROFILE, "pid", None)
+                    and _act_threshold() > ACT_THRESHOLD and float(r.confidence or 0.0) < _act_threshold()):
+                return _tier1(text)
             return r
     except Exception as e:  # noqa: BLE001
         _log.warning("tool head tier failed: %s", type(e).__name__)

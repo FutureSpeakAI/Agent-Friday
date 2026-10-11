@@ -120,6 +120,10 @@ KIND_WEIGHT = {"correction": GOLD, "askback": GOLD, "confirmed": GOLD, "card": W
 OTHER = "other"          # "something else": none of Laya's routes
 #: Never a label (the router's own machinery).
 _NOT_A_LABEL = frozenset({"delegate_to_friday", "answer_card", "undo_action", "task_control"})
+#: Lookups and bookkeeping the deeper mind uses on the way to its real action: they do not resolve a deferral.
+_HELPER_TOOLS = frozenset({"search_past_conversations", "note_conversation_state", "request_context",
+                           "ask_local_for_context", "answer_share_request", "revise_share_request",
+                           "spawn_task"})
 
 NOTICE = ("Friday now learns from your corrections, on this PC only. When you correct her or answer a question "
           "she asks in a local voice call on this PC, or typed on Friday's own page when you have chosen Laya to "
@@ -1020,15 +1024,36 @@ def _source(surface: str) -> str:
     return "spoken" if str(surface).startswith("voice") else "typed"
 
 
-def on_executed(tool: str, args: Optional[dict] = None, *, ok: bool = True, tainted=False, denied: bool = False,
-                conversation_id: Optional[str] = None) -> None:
-    """A tool really ran (laya_router_learn.note_executed passes it on from the governed runner). The only
-    thing this resolves is a deferred turn: the deeper mind's choice becomes a SHADOW row, which measures Laya and is never a
-    label until the owner confirms it (Decision 3). A call with no conversation id, from a tainted turn,
-    a background task or a crew agent (the caller passes tainted=True for those), a failed or denied
-    call and the router's own machinery never record anything."""
+def on_delegated(task_id: str, *, conversation_id: Optional[str] = None) -> None:
+    """The deferred turn just handed to the deeper mind is background task ``task_id`` (the voice hand-over,
+    laya_router_learn.note_delegated): the newest waiting deferral of this conversation is tied to it, and
+    only that task's own tool calls can become its shadow row. No id or no conversation ties nothing."""
     try:
-        if not ok or denied or not tool or tool in _NOT_A_LABEL or tainted is True or not conversation_id:
+        if not task_id or not conversation_id or not _active(current_profile()):
+            return
+        now = now_fn()
+        with _lock:
+            ent = next((e for e in reversed(_held) if not e["resolved"] and e["decision"] == "defer"
+                        and not e.get("task_id") and now - e["at"] <= DEFER_WINDOW_S
+                        and _same_conv(e, conversation_id)), None)
+            if ent is not None:
+                ent["task_id"] = str(task_id)
+    except Exception as e:  # noqa: BLE001
+        _log.debug("on_delegated skipped: %s", type(e).__name__)
+
+
+def on_executed(tool: str, args: Optional[dict] = None, *, ok: bool = True, tainted=False, denied: bool = False,
+                conversation_id: Optional[str] = None, task_id: Optional[str] = None) -> None:
+    """A tool really ran (laya_router_learn.note_executed passes it on from the governed runner, with the
+    CALL's own conversation, task and taint). The only thing this resolves is a deferred turn that was handed
+    to the deeper mind as ``task_id`` (on_delegated): that task's first call that is not the router's own
+    machinery or a lookup helper becomes a SHADOW row, which measures Laya and is never a label until the
+    owner confirms it (Decision 3). A call with no task id (an agent loop, typed chat, a voice tool, Laya's
+    own routed tool, a cloud voice call), no conversation id, from a tainted turn, a crew agent or a paired
+    phone (the caller passes tainted=True for those), a failed or denied call never records anything."""
+    try:
+        if (not ok or denied or not tool or tool in _NOT_A_LABEL or tool in _HELPER_TOOLS or tainted is True
+                or not conversation_id or not task_id):
             return
         profile = current_profile()
         if not _active(profile):
@@ -1036,7 +1061,8 @@ def on_executed(tool: str, args: Optional[dict] = None, *, ok: bool = True, tain
         now = now_fn()
         with _lock:
             waiting = [e for e in _held if not e["resolved"] and _same_conv(e, conversation_id)
-                       and e["decision"] == "defer" and now - e["at"] <= DEFER_WINDOW_S]
+                       and e["decision"] == "defer" and now - e["at"] <= DEFER_WINDOW_S
+                       and e.get("task_id") == str(task_id)]
         if len(waiting) != 1:
             return
         ent = waiting[0]
