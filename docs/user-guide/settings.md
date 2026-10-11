@@ -105,6 +105,11 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
   which shows which privacy layers are running now.
 - **File access.** Which files and folders cloud models may read. See
   [File grants](file-grants.md).
+- **Your knowledge.** Start Friday on notes and documents you already have: pick
+  folders in the Windows folder window or choose from places she found, with a
+  size and file count for each. Reading a folder on this PC and letting cloud
+  models read it are two separate choices, and the cloud one is off unless you
+  turn it on. See [The setup chat](setup-chat.md) and [Library](library.md).
 - **Library.** Library search, cloud answers (off by default) with a character
   cap, reading on battery, and whether the knowledge graph learns from your
   documents. See [Library](library.md).

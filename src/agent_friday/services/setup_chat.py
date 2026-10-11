@@ -159,6 +159,8 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
             in_use = _key_in_use()
             _say(transcript, copy.CONNECT_ONE_KEY_HAVE.format(label=_KEY_LABELS[in_use])
                  if in_use else copy.CONNECT_ONE_KEY, stage, one_key=True)
+    elif stage == "knowledge":
+        _say(transcript, copy.KNOWLEDGE, stage)
     elif stage == "reader":
         text, _ = _reader_offer(st)
         _say(transcript, text, stage)
@@ -214,6 +216,8 @@ def _prompt(st: dict) -> dict:
         p.update(card="basics")
     elif stage == "connect":
         p.update(card="connections", chips=_chips((("done", copy.CONNECT_DONE),)))
+    elif stage == "knowledge":
+        p.update(card="knowledge", chips=_chips((("skip", copy.KNOWLEDGE_SKIP),)))
     elif stage == "reader":
         _, chips = _reader_offer(st)
         p.update(chips=chips)
@@ -395,6 +399,38 @@ def _on_connect(st, transcript, value, text):
         " (connected: %s)" % ", ".join(labels[:8]) if labels else ""), "connect")
     if _needs_a_cloud_key(st) and not _key_in_use():
         _say(transcript, copy.NO_KEY_YET, "connect", one_key=True)
+    _enter(st, transcript, "knowledge")
+
+
+def _count(value, key) -> int:
+    try:
+        return max(0, min(int(value.get(key) or 0), 99))
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def _on_knowledge(st, transcript, value, text):
+    """The panel records what the owner chose, one press at a time, through the Library and
+    file-grant routes; this stage only moves on and says what was saved. It sends counts,
+    never paths, and writes no consent itself."""
+    local, cloud = _count(value, "local"), _count(value, "cloud")
+    if local or cloud:
+        _heard(transcript, copy.KNOWLEDGE_DONE, "knowledge")
+        def folders(n):
+            return "%d folder%s" % (n, "" if n == 1 else "s")
+        lines = []
+        if local:
+            lines.append(copy.KNOWLEDGE_SAVED_LOCAL.format(n=folders(local)))
+        if cloud:
+            lines.append(copy.KNOWLEDGE_SAVED_CLOUD.format(n=folders(cloud)))
+        lines.append(copy.KNOWLEDGE_SAVED_TAIL)
+        _say(transcript, " ".join(lines), "knowledge")
+    elif isinstance(value, dict) and value.get("action") == "done":
+        _heard(transcript, copy.KNOWLEDGE_DONE, "knowledge")
+        _say(transcript, copy.KNOWLEDGE_SAVED_NOTHING, "knowledge")
+    else:
+        _heard(transcript, copy.KNOWLEDGE_SKIP, "knowledge")
+        _say(transcript, copy.KNOWLEDGE_SKIPPED, "knowledge")
     _enter(st, transcript, "reader")
 
 
@@ -781,7 +817,7 @@ def _on_finish(st, transcript, value, text):
 
 _HANDLERS = {
     "welcome": _on_welcome, "agent_name": _on_agent_name, "basics": _on_basics,
-    "connect": _on_connect, "reader": _on_reader, "research_ask": _on_research_ask,
+    "connect": _on_connect, "knowledge": _on_knowledge, "reader": _on_reader, "research_ask": _on_research_ask,
     "research_seeds": _on_research_seeds, "questions": _on_questions,
     "style": _on_style, "research_review": _on_research_review,
     "scheduled_cloud": _on_scheduled_cloud,

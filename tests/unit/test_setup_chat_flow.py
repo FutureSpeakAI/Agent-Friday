@@ -48,7 +48,7 @@ def _walk_to(stage, **kw):
     sc.begin(kw.get("routing", "local_only"), "")
     steps = [("welcome", None, "Sam"), ("agent_name", "Friday", ""),
              ("basics", {"minor_mode": False, "distribution": "default"}, ""),
-             ("connect", "done", ""), ("reader", "ok", "")]
+             ("connect", "done", ""), ("knowledge", "skip", ""), ("reader", "ok", "")]
     for s, v, t in steps:
         if sc.load_state()["stage"] == stage:
             return
@@ -242,7 +242,7 @@ def test_a_cloud_reader_needs_the_cloud_mode_and_an_explicit_yes(home, monkeypat
     # cloud mode offers it, but "keep it here" means rules.
     sc.begin("cloud_only", "")
     for s, v, t in [("welcome", "skip", ""), ("agent_name", "Friday", ""),
-                    ("basics", {}, ""), ("connect", "done", "")]:
+                    ("basics", {}, ""), ("connect", "done", ""), ("knowledge", "skip", "")]:
         sc.answer(s, v, t)
     chips = [c["value"] for c in sc.view()["prompt"]["chips"]]
     assert chips == ["cloud", "rules"]
@@ -303,3 +303,92 @@ def test_only_the_recommended_answer_turns_quiet_hours_on(home, answer, expect_o
     assert bool(on) is expect_on
     if on:
         assert (on[0]["quiet_hours_start"], on[0]["quiet_hours_end"]) == ("22:00", "07:00")
+
+
+# ── the "knowledge" stage: start with your own notes (KW-1) ──────────────────
+
+def _texts():
+    return [e["text"] for e in profile.load_transcript()]
+
+
+def test_knowledge_comes_after_connect_and_before_the_reader():
+    assert copy.STAGES.index("connect") + 1 == copy.STAGES.index("knowledge")
+    assert copy.STAGES.index("knowledge") + 1 == copy.STAGES.index("reader")
+    assert any(s == "knowledge" for _g, _l, stages in copy.STAGE_GROUPS for s in stages)
+
+
+def test_leaving_connect_opens_the_knowledge_stage_with_a_panel_and_no_chosen_folder(home):
+    _walk_to("knowledge")
+    v = sc.view()
+    assert v["stage"] == "knowledge" and v["prompt"]["card"] == "knowledge"
+    assert [(c["value"], c["label"]) for c in v["prompt"]["chips"]] == [("skip", "Not now")]
+    assert copy.KNOWLEDGE in _texts()
+    assert [g["label"] for g in v["groups"]][1:3] == ["Connect", "Your files"]
+
+
+def test_the_stage_says_the_two_kinds_of_access_apart_and_that_not_now_skips():
+    k = copy.KNOWLEDGE
+    assert "read and index a folder on this PC" in k and "nothing leaves it" in k
+    assert "a cloud model read it for 30 days" in k and "off unless you turn it on" in k
+    assert "never suggest it for a vault or a private folder" in k
+    assert "\"Not now\" skips" in k and "Settings > Privacy & Data > Your knowledge" in k
+
+
+def test_not_now_skips_and_records_no_consent(home, monkeypatch):
+    from agent_friday.services import file_grants
+    from agent_friday.services.library import grants
+    wrote = []
+    monkeypatch.setattr(grants, "add_scope", lambda *a, **k: wrote.append("scope"))
+    monkeypatch.setattr(file_grants, "create_scope_grant", lambda *a, **k: wrote.append("grant"))
+    monkeypatch.setattr(file_grants, "create_file_grant", lambda *a, **k: wrote.append("grant"))
+    _walk_to("knowledge")
+    sc.answer("knowledge", "skip", "")
+    assert sc.load_state()["stage"] == "reader"
+    assert copy.KNOWLEDGE_SKIP in _texts() and copy.KNOWLEDGE_SKIPPED in _texts()
+    assert wrote == []
+
+
+def test_typing_not_now_is_the_same_as_the_chip(home):
+    _walk_to("knowledge")
+    sc.answer("knowledge", None, "Not now")
+    assert sc.load_state()["stage"] == "reader" and copy.KNOWLEDGE_SKIPPED in _texts()
+
+
+def test_saved_choices_are_summarised_by_count_and_never_by_path(home, monkeypatch):
+    from agent_friday.services.library import grants
+    wrote = []
+    monkeypatch.setattr(grants, "add_scope", lambda *a, **k: wrote.append("scope"))
+    _walk_to("knowledge")
+    sc.answer("knowledge", {"action": "done", "local": 2, "cloud": 1,
+                            "paths": [r"C:\Users\someoneZzqfolder"]}, "")
+    said = " ".join(_texts())
+    assert "I'll read 2 folders here on this PC; nothing leaves it." in said
+    assert "Cloud models may read 1 folder for the next 30 days." in said
+    assert "someone" not in said and "Zzqfolder" not in said and wrote == []     # the stage records nothing itself
+    assert sc.load_state()["stage"] == "reader"
+
+
+def test_a_cloud_choice_is_never_reported_as_a_local_one(home):
+    _walk_to("knowledge")
+    sc.answer("knowledge", {"action": "done", "local": 0, "cloud": 1}, "")
+    said = " ".join(_texts())
+    assert "Cloud models may read 1 folder" in said and "here on this PC" not in said.split("Saved my choices")[-1]
+
+
+def test_a_done_with_nothing_chosen_changes_nothing(home):
+    _walk_to("knowledge")
+    sc.answer("knowledge", {"action": "done", "local": 0, "cloud": 0}, "")
+    assert copy.KNOWLEDGE_SAVED_NOTHING in _texts() and sc.load_state()["stage"] == "reader"
+
+
+def test_absurd_counts_are_clamped(home):
+    _walk_to("knowledge")
+    sc.answer("knowledge", {"action": "done", "local": 10 ** 9, "cloud": "x"}, "")
+    assert "99 folders" in " ".join(_texts())
+
+
+def test_an_answer_for_another_stage_cannot_skip_the_knowledge_stage(home):
+    _walk_to("knowledge")
+    with pytest.raises(sc.Conflict):
+        sc.answer("reader", "ok", "")
+    assert sc.load_state()["stage"] == "knowledge"

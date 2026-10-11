@@ -45,7 +45,7 @@ def _through_style(routing="cloud_only"):
     sc.begin(routing, "")
     for s, v, t in [("welcome", None, "Sam"), ("agent_name", "Friday", ""),
                     ("basics", {"minor_mode": False, "distribution": "default"}, ""),
-                    ("connect", "done", ""), ("reader", "ok", "")]:
+                    ("connect", "done", ""), ("knowledge", "skip", ""), ("reader", "ok", "")]:
         sc.answer(s, v, t)
     if sc.load_state()["stage"] == "research_ask":       # a model can read
         sc.answer("research_ask", "no", "")

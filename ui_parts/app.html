@@ -17119,6 +17119,8 @@ function SetupChat({ onDone }) {
     cardEl = <SetupStyleCard style={st.style} sliders={st.sliders} floor={st.pushback_floor} examplePrompt={st.example_prompt}
       onSave={sl => answer(sl ? { action: 'save', sliders: sl } : { action: 'save' }, '')}
       onSkip={() => answer({ action: 'skip' }, '')} />;
+  } else if (card === 'knowledge') {
+    cardEl = <div className="sc-card"><h2 tabIndex={-1} data-sc-focus="">Start with your knowledge</h2><KnowledgePanel mode="setup" busy={busy} onSaved={s => answer({ action: 'done', local: s.local, cloud: s.cloud }, '')} onSkip={() => answer('skip', '')} /></div>;
   } else if (card === 'finish') {
     cardEl = <SetupFinishCard state={st} busy={busy} onFinish={() => answer('finish', '')} />;
   }
@@ -19118,6 +19120,9 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="File access" desc={"Which files and folders cloud models may read when " + fridayName() + " opens them."}>
       <FileAccessPanel/>
     </StSection>
+    <StSection title="Your knowledge" desc={"Notes and documents you want " + fridayName() + " to start with. Each folder has two separate choices: read it on this PC, and, only if you turn it on, let cloud models read it."}>
+      <KnowledgePanel mode="settings"/>
+    </StSection>
     <StSection title="What needs your sign-off">
       <ApprovalScannerPanel s={s} save={save}/>
     </StSection>
@@ -19181,6 +19186,134 @@ function SettingsTabPrivacy({s,save}){
 // "still loading" or "the download is missing". A switch reading ON while the
 // gate is in fact keyword-only would be the same class of lie the approval log
 // exists to stop.
+// Your knowledge (setup chat "knowledge" stage and Settings > Privacy & Data): start Friday on the
+// notes and documents you already have. The same component in both places. Two separate choices
+// per folder, in plain words: read and index it on this PC (a Library scope, via /api/library/add)
+// and, only if you turn it on, let cloud models read it for 30 days (a file grant, via
+// /api/privacy/file-grants). Nothing is preselected: the folders Friday found start unticked, a
+// folder you pick yourself starts ticked for reading here only, and the cloud choice always starts
+// off and is not offered for a vault or a private folder. Every folder was checked by the server
+// (services/knowledge_folders.py) before it is shown. The words come from the server (one source,
+// {agent} filled in here).
+function KnowledgePanel({ mode, busy, onSaved, onSkip }) {
+  const E = React.createElement;
+  const setup = mode === 'setup';
+  const [copy, setCopy] = useState({});
+  const [rows, setRows] = useState(null);
+  const [local, setLocal] = useState({});
+  const [cloud, setCloud] = useState({});
+  const [typed, setTyped] = useState('');
+  const [notes, setNotes] = useState([]);
+  const [picking, setPicking] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [result, setResult] = useState(null);
+  const T = k => String(copy[k] || '').split('{agent}').join(fridayName());
+  const post = (url, body) => apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(r => r.json().then(d => ({ ok: r.ok, d: d || {} })).catch(() => ({ ok: r.ok, d: {} })));
+  const load = useCallback(() => apiFetch('/api/files/knowledge-suggestions').then(r => r.json()).then(d => {
+    if (d && d.status === 'ok') { setCopy(d.copy || {}); setRows(d.suggestions || []); } else setRows([]);
+  }).catch(() => setRows([])), []);
+  useEffect(() => {
+    apiFetch('/api/files/knowledge-suggestions?copy=only').then(r => r.json()).then(d => { if (d && d.copy) setCopy(d.copy); }).catch(() => {});
+    load();
+  }, [load]);
+  const merge = (list, ticked) => {
+    setRows(cur => {
+      const have = new Set((cur || []).map(r => String(r.path).toLowerCase()));
+      return (cur || []).concat(list.filter(r => !have.has(String(r.path).toLowerCase())));
+    });
+    if (ticked) setLocal(cur => Object.assign({}, cur, ...list.filter(r => r.can_add && !r.added).map(r => ({ [r.path]: true }))));
+  };
+  const pick = () => {
+    setPicking(true);
+    setNotes([]);
+    post('/api/files/pick-folders').then(({ d }) => {
+      if (d && d.status === 'ok') {
+        merge(d.folders || [], true);
+        const out = (d.refused || []).map(x => (x.path || 'That folder') + ': ' + x.error);
+        if (!(d.folders || []).length && !out.length) out.push('Nothing was chosen.');
+        setNotes(out);
+      } else setNotes([(d && d.error) || 'The folder window did not open. Type the folder’s path below instead.']);
+    }).catch(() => setNotes(['The folder window did not open. Type the folder’s path below instead.'])).finally(() => setPicking(false));
+  };
+  const check = e => {
+    if (e) e.preventDefault();
+    const p = typed.trim();
+    if (!p) { setNotes(['Type the path of a folder.']); return; }
+    setNotes([]);
+    post('/api/files/describe-folder', { path: p }).then(({ ok, d }) => {
+      if (ok && d.status === 'ok' && d.folder) { merge([d.folder], true); setTyped(''); }
+      else setNotes([d.error || 'That folder can’t be used.']);
+    }).catch(() => setNotes(['Couldn’t check that folder.']));
+  };
+  const save = async () => {
+    const wantL = (rows || []).filter(r => local[r.path] && r.can_add && !r.added);
+    const wantC = (rows || []).filter(r => cloud[r.path] && r.cloud_offer);
+    if (!wantL.length && !wantC.length) { setNotes([T('nothing_picked')]); return; }
+    setWorking(true);
+    setNotes([]);
+    const lines = [];
+    let nl = 0, nc = 0, failed = 0;
+    for (const r of wantL) {
+      const { ok, d } = await post('/api/library/add', { path: r.path, recursive: true }).catch(() => ({ ok: false, d: {} }));
+      if (ok && d.status === 'ok') { nl++; lines.push({ ok: true, text: 'Reading on this PC: ' + r.name }); }
+      else { failed++; lines.push({ ok: false, text: r.name + ': ' + (d.error || 'it was not added') }); }
+    }
+    for (const r of wantC) {
+      const { ok, d } = await post('/api/privacy/file-grants', { path: r.path, scope: 'folder', expiry_days: 30 }).catch(() => ({ ok: false, d: {} }));
+      if (ok && d.status === 'ok') { nc++; lines.push({ ok: true, text: 'Cloud models may read for 30 days: ' + r.name }); }
+      else { failed++; lines.push({ ok: false, text: r.name + ': ' + (d.error || d.message || 'the cloud permission was not created') }); }
+    }
+    setWorking(false);
+    setResult({ lines, nl, nc, failed });
+    setLocal({});
+    setCloud({});
+    if (!setup) load();
+    if (setup && !failed && onSaved) onSaved({ local: nl, cloud: nc });
+  };
+  const muted = { fontSize: 11.5, color: 'var(--st-dim, rgba(255,255,255,0.55))', lineHeight: 1.6 };
+  const q = r => (r.approximate ? 'about ' : '') + r.size_label + ' in ' + (r.approximate ? 'about ' : '') + Number(r.file_count || 0).toLocaleString() + (r.file_count === 1 ? ' file' : ' files');
+  const btn = setup ? 'sc-btn' : 'settings-btn';
+  const off = busy || working || picking;
+  const list = rows || [];
+  return E('div', { 'data-testid': 'knowledge-panel', 'data-mode': mode },
+    E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, T('intro')),
+    E('div', { className: 'card', style: { padding: 10, marginBottom: 10 } },
+      E('div', { style: { fontSize: 12.5 } }, E('b', null, T('local_title'))),
+      E('div', { style: muted }, T('local_body')),
+      E('div', { style: { fontSize: 12.5, marginTop: 8 } }, E('b', null, T('cloud_title'))),
+      E('div', { style: muted }, T('cloud_body'))),
+    E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 } },
+      E('button', { type: 'button', className: btn, disabled: off, onClick: pick, 'data-testid': 'knowledge-pick' }, picking ? T('pick_busy') : T('pick'))),
+    rows === null ? E('div', { style: muted, role: 'status' }, 'Looking around this PC…')
+      : list.length === 0 ? E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, T('none_found'))
+        : E('div', null,
+          E('div', { style: { fontSize: 12, marginBottom: 6 } }, T('detected')),
+          E('ul', { style: { margin: 0, padding: 0 }, 'data-testid': 'knowledge-rows' }, list.map(r => E('li', { key: r.path, className: 'card', 'data-testid': 'knowledge-row', 'data-kind': r.kind, style: { padding: 10, marginBottom: 8, listStyle: 'none' } },
+            E('div', { style: { fontSize: 13, overflowWrap: 'anywhere' } }, E('b', null, r.label), r.kind !== 'documents' && r.name ? ' · ' + r.name : '',
+              r.recommended ? E('span', { style: { marginLeft: 8, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#00d4ff' } }, T('recommended')) : null),
+            E('div', { style: muted }, q(r) + ' · ' + r.why),
+            E('div', { style: Object.assign({}, muted, { fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, overflowWrap: 'anywhere' }) }, r.path),
+            r.added ? E('div', { style: Object.assign({}, muted, { color: '#00ff80' }) }, T('added')) : null,
+            r.note ? E('div', { style: muted }, r.note) : null,
+            r.can_add && !r.added ? E('label', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 8, fontSize: 12.5 } },
+              E('input', { type: 'checkbox', checked: !!local[r.path], disabled: off, onChange: e => setLocal(c => Object.assign({}, c, { [r.path]: e.target.checked })) }),
+              E('span', null, T('local_title'))) : null,
+            r.cloud_offer && r.can_add ? E('label', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 6, fontSize: 12.5 } },
+              E('input', { type: 'checkbox', checked: !!cloud[r.path], disabled: off, onChange: e => setCloud(c => Object.assign({}, c, { [r.path]: e.target.checked })) }),
+              E('span', null, T('cloud_title') + ' (30 days)')) : null,
+            !r.cloud_offer ? E('div', { style: muted }, 'Cloud reading isn’t offered for this one.') : null)))),
+    E('form', { onSubmit: check, style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 } },
+      E('input', { className: 'input', 'aria-label': T('typed'), placeholder: T('typed'), value: typed, disabled: off, onChange: e => setTyped(e.target.value), style: { flex: 1, minWidth: 200 } }),
+      E('button', { type: 'submit', className: btn, disabled: off || !typed.trim() }, T('typed_add'))),
+    notes.length ? E('div', { role: 'status', style: Object.assign({}, muted, { marginTop: 8, color: 'rgba(255,210,140,0.95)' }) }, notes.map((n, i) => E('div', { key: i }, n))) : null,
+    result ? E('div', { role: 'status', 'data-testid': 'knowledge-result', style: { marginTop: 8, fontSize: 12 } }, result.lines.map((l, i) => E('div', { key: i, style: { color: l.ok ? '#00ff80' : '#ff8080', overflowWrap: 'anywhere' } }, l.text))) : null,
+    E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 } },
+      result && setup && result.failed ? E('button', { type: 'button', className: btn, disabled: off, onClick: () => onSaved && onSaved({ local: result.nl, cloud: result.nc }) }, 'Continue') : null,
+      E('button', { type: 'button', className: btn, disabled: off, onClick: save, 'data-testid': 'knowledge-save' }, working ? 'Saving…' : T('save')),
+      setup ? E('button', { type: 'button', className: btn, disabled: off, onClick: () => onSkip && onSkip(), 'data-testid': 'knowledge-skip' }, T('skip')) : null),
+    setup ? E('div', { style: Object.assign({}, muted, { marginTop: 8 }) }, T('later')) : null);
+}
 // Settings › Privacy › File access: which files and folders cloud models may
 // read when Friday opens them. Lists every grant with its status, adds one
 // (the Add click is the owner's approval) and removes one, all through
