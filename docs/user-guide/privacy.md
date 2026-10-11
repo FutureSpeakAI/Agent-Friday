@@ -110,18 +110,23 @@ report card and controls you can reach by screen or by voice. Turn it off any
 time in **Settings > Privacy & Data > What Laya learns about you**
 (`laya_personal_learning`).
 
-**What teaches her.** Words spoken in a local voice call on this PC. She goes by
-the voice connection, not by who is speaking: if other people or a TV are heard
-in the call, they can be heard as you, so turn on room mode for those calls
-(nothing is learned in room mode). Nothing said on a paired phone, through a
-relay or tunnel, in a cloud voice call, by another agent or in a delegated task
-ever teaches her, and nothing you type is learned.
+**What teaches her.** Words spoken in a local voice call on this PC, and words you
+type on Friday's own page when you have chosen Laya to pick the tool for typed
+chat (Settings, `chat_tool_routing`) and the chat model runs on this PC. For the
+voice call she goes by the voice connection, not by who is speaking: if other
+people or a TV are heard in the call, they can be heard as you, so turn on room
+mode for those calls (nothing is learned in room mode). Nothing said on a paired
+phone, through a relay or tunnel, in a cloud voice call, by another agent or in a
+delegated task ever teaches her, and nothing you type is learned while typed chat
+is left to the chat model or runs on a cloud model. A request she answers from
+what is on your screen ("open the second one") teaches her nothing either.
 
 | You do this | She treats it as |
 |---|---|
 | Correct her ("no, I meant my work calendar") | A firm label: you meant that. |
 | Answer a question she asks by choosing one of its options, or "something else" (every question offers it). A fresh request is not an answer. | A firm label. |
 | Approve or decline a card soon after a request she routed | A light signal: it tells her whether an action was wanted. |
+| Hand a request to the deeper mind, and it picks a tool and runs it | A choice **waiting for your OK**: it measures her, and it teaches her nothing unless you click **Yes, that was right** on the report card. **No, drop it** forgets it. |
 | Say nothing | Nothing. |
 
 **What she does with it.** A phrasing you confirmed becomes one more example for

@@ -17,11 +17,16 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 - **What Laya learns about you** (on by default; Settings > Privacy & Data).
   When you correct her, or answer a question she asks, in a local voice call on
-  this PC, she keeps those words, sealed in your vault on this PC, and learns your
-  phrasing. She goes by the voice connection on this PC, not by speaker (turn on room
-  mode when others or a TV are heard). Nothing said on a paired phone, through a
-  relay, in a cloud voice call or in a delegated task teaches her, and nothing
-  typed is learned. A new phrasing must pass a collision check
+  this PC, or typed on Friday's own page while Laya picks the tool for typed chat
+  (`chat_tool_routing`) on a local model, she keeps those words, sealed in your vault
+  on this PC, and learns your phrasing. In a call she goes by the voice connection on
+  this PC, not by speaker (turn on room mode when others or a TV are heard). Nothing
+  said on a paired phone, through a relay, in a cloud voice call or in a delegated
+  task teaches her, nothing typed teaches her while chat is left to the chat model or
+  runs on a cloud model, and a request she answers from what is on your screen
+  teaches her nothing. A choice the deeper mind made on a request she handed over
+  shows under "Waiting for your OK" on the report card and teaches her only after you
+  click "Yes, that was right". A new phrasing must pass a collision check
   and a re-score of her shipped test questions and of your own earlier answers
   before she uses it; if anything she got right would turn wrong, she turns it
   down and says why. Her confidence is retuned from your labels as a visible
