@@ -65,6 +65,9 @@ PROBES = [
     # a read that point-and-act used to take on the trusted path (must keep its read rule)
     ("show me the email from Sarah", {}), ("pull up the email about the invoice", {}),
     ("show me my unread emails", {}), ("show me the news about Ukraine", {}), ("pick up where we left off", {}),
+    # quantified reads and selects: Laya's safe-write scope check (setting laya_safe_writes) must never take them
+    ("show me everything on my calendar today", {}), ("show me only the unread emails", {}),
+    ("select all of them", {}),
 ]
 
 #: Words that point AT the screen: on the trusted surfaces these may take the new point-and-act / resolver

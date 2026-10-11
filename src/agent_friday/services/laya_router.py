@@ -880,6 +880,12 @@ def safe_write_route(text: str, *, stage=_UNSET, pointed=_UNSET, quiet: bool = F
         from agent_friday.services import point_act
         if not point_act.looks_like(text):
             return None
+        parsed = point_act.parse(text)
+        if parsed is None or parsed.verb not in point_act.WRITE_VERBS or not point_act.is_referential(parsed):
+            # Not a change to rows the owner pointed at: Friday's own read rules, the select and open rungs
+            # and the resolver keep every such turn ("show me everything on my calendar today", "select all
+            # of them"). The scope check below never sees them.
+            return None
         if sw.scope_unclear(text):
             # An exclusion or a quantifier ("not those", "everything", "the rest"): no rule
             # says which rows, and a ranking must not. Shadow notes it; on defers WITHOUT rows.
