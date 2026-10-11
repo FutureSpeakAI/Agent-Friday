@@ -97,6 +97,7 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | smart-open | 8.0.1 | installed by installer (recommended) | MIT | Copyright (c) 2015 Radim Rehurek |
 | soupsieve | 2.8.4 | installed by installer (core) | MIT | Copyright (c) 2018 - 2026 Isaac Muse <isaacmuse@gmail.com> |
 | spacy | 3.8.16 | installed by installer (recommended) | MIT | Copyright (C) 2016-2024 ExplosionAI GmbH, 2016 spaCy GmbH, 2015 Matthew Honnibal |
+| en_core_web_sm (spaCy small English model) | 3.8.0 | installed by the voice installer (Settings > Voice, with misaki; consented download, never at load) | MIT | Copyright (c) ExplosionAI GmbH |
 | spacy-legacy | 3.0.12 | installed by installer (recommended) | MIT | Copyright (c) 2021 ExplosionAI GmbH |
 | spacy-loggers | 1.0.5 | installed by installer (recommended) | MIT | Copyright (c) 2021 ExplosionAI GmbH |
 | srsly | 2.5.3 | installed by installer (recommended) | MIT | Copyright (C) 2018 ExplosionAI UG (haftungsbeschränkt) |
@@ -435,7 +436,7 @@ either by the installer or on first use, and are governed by their own terms.
 | hexgrad/Kokoro-82M + voices | runtime (optional engine=kokoro) | Apache-2.0 |
 | nvidia/nemotron-3.5-asr-streaming-0.6b | runtime (optional GPU voice tier) | OpenMDW-1.1 per docs - unverified |
 | nvidia/tts_en_fastpitch + nvidia/tts_hifigan | runtime (optional GPU voice tier) | NVIDIA NeMo model terms (CC-BY-4.0 on NGC cards) - unverified |
-| spaCy en_core_web_lg / en_core_web_sm (Presidio NER) | runtime (Presidio needs one; installer does not fetch it explicitly - confirm) | MIT |
+| spaCy en_core_web_lg (Presidio NER) | runtime (Presidio needs one; installer does not fetch it explicitly - confirm) | MIT |
 | Ternary-Bonsai-2-27B (PTQ1_0) + mmproj | no (operator-provisioned) | mmproj GGUF says apache-2.0; main GGUF has no license key (Qwen3.5 base) - unverified |
 | Ternary-Bonsai-4B (PQ2_0) | no (operator-provisioned) | Apache-2.0 (GGUF general.license) |
 | fridayweaver LoRA on gemma-4-E2B-it (gemma4:e2b-fridayweaver-1.0) | no (operator's fine-tune; not distributed) | Derivative of Gemma 4 - inherits base terms; unverified before any distribution |

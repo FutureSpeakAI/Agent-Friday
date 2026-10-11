@@ -409,6 +409,25 @@ def attach_espeak_fallback(pipeline) -> dict:
     return out
 
 
+G2P_MODEL = "en_core_web_sm"
+
+#: What every refusal for the missing English pronunciation model says.
+G2P_MODEL_MISSING = (
+    "Kokoro's English pronunciation model (en_core_web_sm) is not installed, and "
+    "loading never downloads it. Install it from Settings > Voice (Setup & install).")
+
+
+def english_g2p_model_installed() -> bool:
+    """Is spaCy's small English model installed? misaki's English G2P runs
+    ``spacy.cli.download`` (a network install) when it is not, so every path
+    that builds a Kokoro pipeline asks this first and refuses instead."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec(G2P_MODEL) is not None
+    except Exception:
+        return False
+
+
 def _cached_file(filename: str):
     """The local path of a Kokoro file in the Hugging Face cache, or None.
     Reads the cache only: it never asks the hub for anything."""
@@ -524,21 +543,10 @@ class KokoroTTS:
                 log.warning("espeak fallback not wired: %s",
                             esp.get("detail") or "unknown reason")
             if self.lang_code in ("a", "b"):
-                # misaki's English G2P runs `spacy.cli.download` (a network
-                # install) when the small English model is missing. A load
-                # never reaches the network: the model is installed or this
-                # refuses with the reason.
-                try:
-                    import importlib.util
-                    _have = importlib.util.find_spec("en_core_web_sm") is not None
-                except Exception:
-                    _have = False
-                if not _have:
-                    raise KokoroUnavailable(
-                        "local_voice_kokoro_missing",
-                        "Kokoro's English pronunciation model (en_core_web_sm) is not "
-                        "installed, and loading never downloads it. Reinstall the voice "
-                        "dependencies from Settings > Voice (Setup & install).")
+                # A load never reaches the network: the model is installed
+                # (the voice installer's consented step) or this refuses.
+                if not english_g2p_model_installed():
+                    raise KokoroUnavailable("local_voice_kokoro_missing", G2P_MODEL_MISSING)
             # The model, its config and the voice are read from the local cache
             # by path. Left to itself kokoro calls hf_hub_download for each, which
             # asks the hub for the latest revision on every load; a load never
