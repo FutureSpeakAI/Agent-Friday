@@ -116,6 +116,26 @@
    "task_kind": "channel_reply",
    "activity_label": "Channel reply",
    "entry": "agent_friday.services.channels.manager:handle_incoming"
+  },
+  {
+   "id": "settings.laya_personal_refit",
+   "trigger": "idle",
+   "also": ["schedule", "button"],
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "laya_personal_refit",
+   "activity_label": "Learning from your corrections",
+   "entry": "agent_friday.services.laya_personal_fit:run_scheduled",
+   "schedule_ref": "laya_personal_refit"
+  },
+  {
+   "id": "settings.laya_personal_rebuild",
+   "trigger": "voice",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "laya_personal_rebuild",
+   "activity_label": "Applying your correction",
+   "entry": "agent_friday.services.laya_personal:_safe_rebuild"
   }
  ],
  "not_for_laya": [
@@ -139,6 +159,41 @@
    "action": "settings.interruptions",
    "kind": "by_design",
    "reason": "The interruption limit, quiet-hour times and Focus Assist are the owner's to loosen; by voice Laya can only quiet things (quiet until morning)."
+  },
+  {
+   "action": "settings.laya_report",
+   "kind": "by_design",
+   "reason": "The report card shows the owner's own words and is served to the owner only; by voice, 'what have you learned?' is the laya_learning summary."
+  },
+  {
+   "action": "settings.laya_item",
+   "kind": "by_design",
+   "reason": "Undo or forget of one learned item is the owner's control over their own data; Laya never runs it, and the voice 'forget that' needs the owner's own words."
+  },
+  {
+   "action": "settings.laya_reset",
+   "kind": "by_design",
+   "reason": "Reset, roll back and wipe of what Laya learned are the owner's controls (voice: 'reset', 'go back to last week'); a wipe is a card only a screen click approves."
+  },
+  {
+   "action": "settings.laya_confirm",
+   "kind": "by_design",
+   "reason": "Only the owner can confirm a choice the deeper mind made; Laya never confirms her own teacher (decision 3)."
+  },
+  {
+   "action": "settings.laya_refit",
+   "kind": "by_design",
+   "reason": "Learn now starts a visible Local AI queue job the owner asked for; it also runs by itself when idle, on AC power, with the vault open."
+  },
+  {
+   "action": "settings.laya_loosen",
+   "kind": "by_design",
+   "reason": "Loosening a learned threshold is the owner's decision, per head, by a click on the screen card (decision 15); Laya can never loosen herself."
+  },
+  {
+   "action": "settings.laya_notice",
+   "kind": "by_design",
+   "reason": "Seeing the notice that Laya learns from corrections is the owner's own acknowledgement."
   }
  ],
  "notes": [

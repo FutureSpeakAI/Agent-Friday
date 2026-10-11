@@ -69,6 +69,10 @@ def _ensure_defaults() -> None:
     register_store("trust_log_people", _trust_log_find, _trust_log_purge)
     from agent_friday.services.library import forget as _library_forget
     _library_forget.register()
+    # What Laya kept from the owner's corrections names people too (services/laya_personal): the rows that
+    # name the person go, with every saved version built from them.
+    from agent_friday.services import laya_personal as _laya_personal
+    register_store("laya_personal", _laya_personal.people_find, _laya_personal.people_purge)
 
 
 def _norm(s: str) -> str:

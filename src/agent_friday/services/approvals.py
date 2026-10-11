@@ -109,6 +109,13 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "library_add_request": frozenset({"owner:ui"}),
     "library_remove_request": frozenset({"owner:ui"}),
     "library_forget_request": frozenset({"owner:ui"}),
+    # Loosening one of Laya's learned thresholds (services/laya_personal_fit, swot spec
+    # decision 15): only the owner, per head, by a click on the report card. A spoken "yes"
+    # can never be the owner token that lets learning act on less than the shipped value.
+    "laya_threshold": frozenset({"owner:ui"}),
+    # Wiping everything Laya learned (services/laya_personal_fit): irreversible, so a click on the
+    # screen only; the spoken phrase opens the report card, never the deletion.
+    "laya_wipe_request": frozenset({"owner:ui"}),
 }
 
 

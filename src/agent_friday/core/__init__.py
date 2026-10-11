@@ -2875,6 +2875,16 @@ DEFAULT_SETTINGS = {
     # fastest engine measured and checked on this PC, else laya's own fp32.
     # "torch-fp32" | "torch-int8" | "onnx-int8" pin one.
     "laya_runtime": "auto",
+    # Laya's personal learning (services/laya_personal). ON by default (owner decision,
+    # 2026-10-10), with a notice and a report card in Settings > Laya: when you correct
+    # her or answer a question she asks, she keeps those words sealed in your vault on this
+    # PC, checks them against her shipped test questions, and only then uses them as extra
+    # examples. Top-sensitivity turns are never kept; a minor profile learns nothing.
+    # Off keeps and reads nothing. Retention is in days; the shadow days are how long a
+    # refit of her confidence runs unseen before it takes over.
+    "laya_personal_learning": True,
+    "laya_personal_retention_days": 180,
+    "laya_personal_shadow_days": 3,
     # How hard a local reasoning seat thinks (services/reasoning_policy, read
     # by the model router's local payload). "auto" lets the turn's shape
     # decide; "medium" | "xhigh" | "none" pin one effort on every turn;

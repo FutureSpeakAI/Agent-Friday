@@ -2126,6 +2126,20 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] relationship_sync unavailable: {e}")
 
+    # laya-personal refit (swot spec d.2/d.4): rebuilds Laya's personal phrasings
+    # and calibration from the owner's own corrections. An idle-daily job in the
+    # Local AI queue (a visible job, kind laya_personal_refit); it runs only with
+    # the vault open, the owner present and the PC on AC power, and waits (never
+    # fails) otherwise. CPU only: no GPU, no model seat.
+    try:
+        from agent_friday.services.laya_personal_fit import run_scheduled as _laya_refit
+        register_builtin_task("laya_personal_refit", _laya_refit,
+                              label="Learning from your corrections",
+                              default_trigger="idle_daily",
+                              default_spec={"idle_after_s": 600}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] laya_personal_refit unavailable: {e}")
+
 
 @visible_job('Afternoon briefing', kind='briefing', workspace='news')
 def _afternoon_briefing_job():

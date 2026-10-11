@@ -254,6 +254,11 @@ _ALL = [
     # capable (services/local_voice_readiness). Declined means never again.
     _e("LV7", "services/local_voice_readiness.py:maybe_offer_switch", "local_voice_switch_offer",
        NEEDS_YOU, "local-voice-switch-offer", source="local-voice"),
+    # Laya's personal learning (services/laya_personal.notify): the one-time "Laya learns from your
+    # corrections" notice, and the confirmations of forget / reset / go back / wipe. Never carries the
+    # owner's words.
+    _e("LP1", "services/laya_personal.py:notify", "laya_learning", UPDATES,
+       "laya-learning:{what}", source="laya"),
     # ── live-only emitters (L01-L06), gained since the census ────────────────
     _e("L01", "services/visible_jobs.py:visible_job", "visible_job", ACTIVITY, "",
        route=AMBIENT, ledger=False),

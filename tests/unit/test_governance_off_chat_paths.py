@@ -387,6 +387,8 @@ REVIEWED_BUILTINS = {
     "content_insights": "summarises local post metrics",
     "relationship_sync": "reads the owner's mail and calendar headers, writes the "
                          "local timeline, and raises local notifications only",
+    "laya_personal_refit": "refits Laya's personal phrasings and calibration from the owner's "
+                           "own sealed corrections on this PC; only tightens, reaches no one",
     "avatar_growth_check": "asks the owner's chosen model for a look change (numbers "
                            "and enums only, through the spend guard and egress gate) "
                            "and writes a signed step locally; reaches no one",

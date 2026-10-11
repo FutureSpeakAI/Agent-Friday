@@ -279,7 +279,14 @@
    {"id": "settings.local_voice_measure", "group": "settings", "label": "local voice: Measure now", "audit_status": "new"},
    {"id": "settings.local_voice_status", "group": "settings", "label": "local voice: can it run here, and why cloud voice", "audit_status": "new"},
    {"id": "settings.local_voice_switch_offer", "group": "settings", "label": "local voice: switch offer (switch / stay)", "audit_status": "new"},
-   {"id": "settings.interruptions", "group": "settings", "label": "interruptions: hourly limit, quiet hours, Focus Assist", "audit_status": "new"}
+   {"id": "settings.interruptions", "group": "settings", "label": "interruptions: hourly limit, quiet hours, Focus Assist", "audit_status": "new"},
+   {"id": "settings.laya_report", "group": "read", "label": "what Laya learned: the report card (Settings > Laya)", "audit_status": "new"},
+   {"id": "settings.laya_item", "group": "settings", "label": "what Laya learned: undo or forget one item", "audit_status": "new"},
+   {"id": "settings.laya_reset", "group": "settings", "label": "what Laya learned: reset, roll back to a kept version, or wipe", "audit_status": "new"},
+   {"id": "settings.laya_confirm", "group": "settings", "label": "what Laya learned: confirm or drop a choice the deeper mind made", "audit_status": "new"},
+   {"id": "settings.laya_refit", "group": "settings", "label": "what Laya learned: Learn now (a visible Local AI queue job)", "audit_status": "new"},
+   {"id": "settings.laya_loosen", "group": "settings", "label": "what Laya learned: let her act on a lower score (a card; owner only)", "audit_status": "new"},
+   {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"}
   ]
  }
 }
