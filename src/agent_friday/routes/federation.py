@@ -613,17 +613,13 @@ def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str)
         safe_delta = {k: v for k, v in delta.items() if k in _SYNC_SAFE_KEYS}
         if safe_delta:
             try:
-                # F22: same reasoning as the send side above -- merge onto the
-                # real persisted settings (_load_settings_raw()), never onto
-                # _load_settings()'s transient offline-routing overlay. Using
-                # the overlaid dict here would let a peer's push permanently
-                # persist whatever the RECEIVING device's own overlay happened
-                # to be showing at that instant, on top of clobbering it with
-                # the sender's overlay values already excluded by the fix above.
-                from agent_friday.core import _load_settings_raw, _save_settings
-                current = _load_settings_raw()
-                current.update(safe_delta)
-                _save_settings(current)
+                # Save the peer's delta and nothing else; _save_settings
+                # merges it onto the file under its own lock. A local read
+                # spread into the write would persist whatever that read
+                # held: the transient offline-routing overlay, or the
+                # factory defaults of a read that met a concurrent save.
+                from agent_friday.core import _save_settings
+                _save_settings(dict(safe_delta))
                 _log.info("Settings sync: applied %d key(s) from peer %s",
                           len(safe_delta), sender_pubkey[:16])
                 return {"applied": list(safe_delta.keys()), "count": len(safe_delta)}

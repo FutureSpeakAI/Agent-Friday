@@ -2094,6 +2094,158 @@ def _invalidate_settings_cache() -> None:
         _SETTINGS_CACHE["ts"] = 0.0
         _SETTINGS_CACHE_GEN[0] += 1
 
+
+# ── Settings file I/O under concurrency ──────────────────────────────
+#
+# On Windows a read of settings.json that meets a concurrent save (the
+# os.replace of the temp file, an indexer or AV holding the handle) raises
+# PermissionError; a read that meets a non-atomic writer sees partial JSON.
+# Both are transient. A transient failure must never reach a caller as
+# factory defaults: a caller that edits the dict it was given and saves it
+# whole would persist those defaults over every setting the owner has.
+#
+# So: reads retry for a bounded time; a read that still fails serves the last
+# settings read or written successfully for that file, marked degraded; a
+# save refuses a degraded dict, and refuses any whole-dict write while a
+# degraded read is outstanding.
+
+#: Total time a settings read keeps retrying a transient failure.
+_SETTINGS_READ_RETRY_S: float = 1.0
+#: Total time a settings write keeps retrying a replace Windows denied.
+_SETTINGS_REPLACE_RETRY_S: float = 1.0
+#: The last settings read from or written to disk, per settings file path.
+_SETTINGS_LAST_GOOD: dict = {"path": None, "value": None}
+#: Path of a settings file whose last read failed and has not read since.
+_SETTINGS_DEGRADED: dict = {"path": None}
+_SETTINGS_LAST_GOOD_LOCK = threading.Lock()
+
+
+class _DegradedSettings(dict):
+    """Settings served after settings.json could not be read.
+
+    The values are the last good settings (or, with none, the factory
+    defaults). `_save_settings` refuses to persist one of these.
+    """
+    degraded = True
+
+
+def _settings_read_is_transient(e: BaseException) -> bool:
+    # PermissionError covers WinError 5 and the sharing violations (32, 33);
+    # a decode error is what a read of a half-written file looks like.
+    return isinstance(e, (PermissionError, FileNotFoundError, ValueError))
+
+
+def _read_settings_file(path=None, *, retry_s=None) -> dict:
+    """Parse settings.json, retrying transient failures for a bounded time.
+
+    Raises the last error when the file still cannot be read and parsed.
+    """
+    path = Path(path or SETTINGS_FILE)
+    deadline = _time.monotonic() + (
+        _SETTINGS_READ_RETRY_S if retry_s is None else retry_s)
+    delay = 0.01
+    while True:
+        try:
+            # utf-8-sig: a byte-order mark is not corruption (see the loader).
+            data = json.loads(path.read_text(encoding='utf-8-sig'))
+            if not isinstance(data, dict):
+                raise TypeError("settings.json does not hold an object")
+            return data
+        except Exception as e:  # noqa: BLE001
+            if (not _settings_read_is_transient(e)
+                    or _time.monotonic() + delay > deadline):
+                raise
+            _time.sleep(delay)
+            delay = min(delay * 2, 0.1)
+
+
+def _remember_good_settings(value: dict) -> None:
+    import copy as _copy
+    with _SETTINGS_LAST_GOOD_LOCK:
+        _SETTINGS_LAST_GOOD["path"] = str(SETTINGS_FILE)
+        _SETTINGS_LAST_GOOD["value"] = _copy.deepcopy(value)
+        if _SETTINGS_DEGRADED["path"] == str(SETTINGS_FILE):
+            _SETTINGS_DEGRADED["path"] = None
+
+
+def _degraded_settings() -> "_DegradedSettings":
+    """The last good settings for this file, else the defaults; marked degraded."""
+    import copy as _copy
+    with _SETTINGS_LAST_GOOD_LOCK:
+        _SETTINGS_DEGRADED["path"] = str(SETTINGS_FILE)
+        if (_SETTINGS_LAST_GOOD["value"] is not None
+                and _SETTINGS_LAST_GOOD["path"] == str(SETTINGS_FILE)):
+            return _DegradedSettings(_copy.deepcopy(_SETTINGS_LAST_GOOD["value"]))
+    return _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
+
+
+def _settings_read_degraded() -> bool:
+    with _SETTINGS_LAST_GOOD_LOCK:
+        return _SETTINGS_DEGRADED["path"] == str(SETTINGS_FILE)
+
+
+def _replace_settings_file(tmp: Path) -> None:
+    """os.replace `tmp` onto settings.json, retrying a denied replace briefly.
+
+    Windows denies the replace while another handle holds the target; the
+    temp file is complete and fsynced, so waiting is better than losing it.
+    """
+    deadline = _time.monotonic() + _SETTINGS_REPLACE_RETRY_S
+    delay = 0.01
+    while True:
+        try:
+            os.replace(str(tmp), str(SETTINGS_FILE))
+            return
+        except PermissionError:
+            if _time.monotonic() + delay > deadline:
+                raise
+            _time.sleep(delay)
+            delay = min(delay * 2, 0.1)
+
+
+def _write_settings_temp(obj) -> Path:
+    """A complete, fsynced sibling temp file holding `obj`; unique per write."""
+    fd, name = tempfile.mkstemp(
+        dir=str(SETTINGS_FILE.parent), prefix='.settings-', suffix='.tmp')
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(obj, indent=2))
+            f.flush()
+            os.fsync(f.fileno())
+    except Exception:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+        raise
+    return tmp
+
+
+def _settings_delta(before: dict, after: dict) -> dict:
+    """What `after` changed relative to `before`, as a save delta.
+
+    For the deep-merged blocks only the changed fields are carried, so a
+    caller that edited a dict it loaded saves its own edits and nothing else.
+    """
+    delta = {}
+    for k, v in (after or {}).items():
+        old = (before or {}).get(k, _MISSING_SETTING)
+        if old == v:
+            continue
+        if (k in _DEEP_MERGED_BLOCKS and isinstance(v, dict)
+                and isinstance(old, dict)):
+            sub = {ck: cv for ck, cv in v.items()
+                   if old.get(ck, _MISSING_SETTING) != cv}
+            if sub:
+                delta[k] = sub
+        else:
+            delta[k] = v
+    return delta
+
+
+_MISSING_SETTING = object()
+
 DEFAULT_AGENT_PERSONALITY = (
     "You are Friday — a calm, perceptive AI partner. "
     "You speak with quiet confidence and dry warmth; you favor signal over noise. "
@@ -3232,14 +3384,36 @@ def _load_settings_raw():
         # had ~/.friday before this version added the setting) keep the full set.
         seed["show_all_workspaces"] = not _FRESH_INSTALL
         _sync_capability_routing(seed)
+        # The seed is written whole or not at all, and never over a file:
+        # a hard link fails when the target exists, so a settings.json that
+        # appeared after the check above (another process, a save) is kept.
+        seeded = False
         try:
-            SETTINGS_FILE.write_text(json.dumps(seed, indent=2), encoding='utf-8')
+            _tmp = _write_settings_temp(seed)
+            try:
+                os.link(str(_tmp), str(SETTINGS_FILE))
+                seeded = True
+            except FileExistsError:
+                pass
+            except OSError:
+                # No hard links on this volume: a plain replace, still only
+                # when nothing has appeared in the meantime.
+                if not SETTINGS_FILE.exists():
+                    _replace_settings_file(_tmp)
+                    seeded = True
+            finally:
+                try:
+                    _tmp.unlink()
+                except Exception:
+                    pass
         except Exception:
             pass
-        with _SETTINGS_CACHE_LOCK:
-            _SETTINGS_CACHE["value"] = seed
-            _SETTINGS_CACHE["ts"] = _time.time()
-        return seed
+        if seeded or not SETTINGS_FILE.exists():
+            _remember_good_settings(seed)
+            with _SETTINGS_CACHE_LOCK:
+                _SETTINGS_CACHE["value"] = seed
+                _SETTINGS_CACHE["ts"] = _time.time()
+            return seed
     try:
         # utf-8-SIG, not utf-8. A leading U+FEFF is a JSONDecodeError, and the
         # except below turns that into a SILENT, TOTAL reversion to
@@ -3263,32 +3437,45 @@ def _load_settings_raw():
         # reason (services/role_consumers.py:_module_source names three BOM'd
         # source files). The settings loader is the one place where getting it
         # wrong costs every setting at once.
-        data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8-sig'))
+        #
+        # A read that meets a concurrent save is retried (_read_settings_file).
+        # Once a read has failed and none has succeeded since, one attempt is
+        # made: a file that stays unreadable must not cost every caller the
+        # whole retry window.
+        data = _read_settings_file(
+            retry_s=0.0 if _settings_read_degraded() else None)
         # Fill in any missing keys with defaults
         merged = dict(DEFAULT_SETTINGS)
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _sync_capability_routing(merged)
+        _remember_good_settings(merged)
         with _SETTINGS_CACHE_LOCK:
             if _SETTINGS_CACHE_GEN[0] == _gen:
                 _SETTINGS_CACHE["value"] = merged
                 _SETTINGS_CACHE["ts"] = _time.time()
         return merged
     except Exception as e:
-        # NEVER SILENT AGAIN. Reverting to defaults is a defensible last
-        # resort; doing it without a word is what made the BOM incident take
-        # an afternoon to see. The settings file existing and being unreadable
-        # is a different event from it not existing, and it must say so.
+        # NEVER SILENT, AND NEVER FACTORY DEFAULTS WHEN BETTER IS KNOWN.
+        # The file existing and being unreadable is a different event from it
+        # not existing, and it must say so. The caller gets the last settings
+        # this process read or wrote for this file, marked degraded so that a
+        # save refuses to persist them; only with none does it get defaults.
+        out = _degraded_settings()
         try:
             import logging as _lg
+            _have_last = out != DEFAULT_SETTINGS
             _lg.getLogger("friday.settings").error(
-                "settings.json exists but could not be parsed (%s: %s) — "
-                "RUNNING ON FACTORY DEFAULTS. Every seat, routing mode and "
-                "stored preference in that file is being ignored until it "
-                "parses. Check for a byte-order mark or truncation: %s",
-                type(e).__name__, e, SETTINGS_FILE)
+                "settings.json exists but could not be read (%s: %s) — %s. "
+                "Saves of a whole settings dict are refused until it reads. "
+                "Check for a sharing violation, a byte-order mark or "
+                "truncation: %s",
+                type(e).__name__, e,
+                "SERVING THE LAST GOOD SETTINGS (degraded)" if _have_last
+                else "RUNNING ON FACTORY DEFAULTS (degraded)",
+                SETTINGS_FILE)
         except Exception:
             pass
-        return dict(DEFAULT_SETTINGS)
+        return out
 
 
 def _load_settings():
@@ -3349,6 +3536,28 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     flag is guessed at, because the keyword is not part of any request body
     this process parses — it can only be set by Python code in this repo.
     """
+    # A SAVE NEVER PERSISTS WHAT A FAILED READ SERVED.
+    #
+    # A degraded dict (the loader could not read settings.json) is refused
+    # outright. A copy loses the mark, so while a failed read is outstanding
+    # any write carrying every settings key is refused as well: that is the
+    # shape of "load, edit one key, save it all", and its other keys may be
+    # factory defaults. A delta of the keys a caller changed is always safe.
+    _refuse = None
+    if isinstance(data, _DegradedSettings) or getattr(data, "degraded", False):
+        _refuse = "it was served by a settings read that failed"
+    elif (isinstance(data, dict) and set(DEFAULT_SETTINGS) <= set(data)
+            and _settings_read_degraded()):
+        _refuse = ("it carries every settings key while a settings read is "
+                   "failing, so its values may be factory defaults")
+    if _refuse:
+        _who = _routing_mode_caller()
+        import logging as _lg
+        _lg.getLogger("friday.settings").error(
+            "REFUSING to save settings from %s: %s. settings.json is left "
+            "untouched; save only the keys that changed.", _who, _refuse)
+        raise RuntimeError("refusing to save settings from %s: %s"
+                           % (_who, _refuse))
     if not _internal_cloud_consent_write:
         mr = (data or {}).get("model_routing")
         if isinstance(mr, dict) and "cloud_consent" in mr:
@@ -3394,19 +3603,23 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     # parse, REFUSE THE SAVE. A settings write that cannot see the current
     # settings is not a write, it is an erasure. Better to fail loudly and
     # leave the file alone than to persist a reset nobody asked for.
+    #
+    # A read that meets a concurrent writer or a Windows sharing violation is
+    # retried for a bounded time first (_read_settings_file); only a file that
+    # stays unreadable refuses the save.
     existing = {}
     if SETTINGS_FILE.exists():
         try:
-            existing = json.loads(SETTINGS_FILE.read_text(encoding='utf-8-sig'))
+            existing = _read_settings_file()
         except Exception as e:
             try:
                 import logging as _lg
                 _lg.getLogger("friday.settings").error(
-                    "REFUSING to save settings: %s exists but could not be "
-                    "parsed (%s: %s). Writing now would replace every stored "
-                    "preference with a factory default. The file has been "
-                    "left untouched; fix or remove it and retry.",
-                    SETTINGS_FILE, type(e).__name__, e)
+                    "REFUSING to save settings from %s: %s exists but could "
+                    "not be read (%s: %s). Writing now would replace every "
+                    "stored preference with a factory default. The file has "
+                    "been left untouched; fix or remove it and retry.",
+                    _routing_mode_caller(), SETTINGS_FILE, type(e).__name__, e)
             except Exception:
                 pass
             raise RuntimeError(
@@ -3473,26 +3686,13 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     # the OTHER writer was still filling, persisting a mixed settings.json.
     # That is the exact corruption the atomic write exists to prevent, and the
     # shared name reintroduced it under concurrency.
-    _fd, _tmp_name = tempfile.mkstemp(
-        dir=str(SETTINGS_FILE.parent), prefix='.settings-', suffix='.tmp')
-    _tmp = Path(_tmp_name)
+    _tmp = _write_settings_temp(merged)
     try:
-        with os.fdopen(_fd, 'w', encoding='utf-8') as _f:
-            _f.write(json.dumps(merged, indent=2))
-            _f.flush()
-            os.fsync(_f.fileno())
         # Windows denies a replace while any other handle holds the target
         # (a concurrent reader, an indexer, AV). That surfaced as WinError 5
-        # turning a settings save into a 500. Retry briefly rather than lose
-        # the write; the file is already complete and fsynced by here.
-        for _attempt in range(10):
-            try:
-                _tmp.replace(SETTINGS_FILE)
-                break
-            except PermissionError:
-                if _attempt == 9:
-                    raise
-                _time.sleep(0.02)
+        # turning a settings save into a 500. Retry for a bounded time rather
+        # than lose the write; the file is already complete and fsynced.
+        _replace_settings_file(_tmp)
     except Exception:
         try:
             _tmp.unlink()
@@ -3502,6 +3702,8 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     # The write is complete and on disk; clear again so nothing keeps a
     # snapshot taken mid-write.
     _invalidate_settings_cache()
+    _remember_good_settings(
+        {k: v for k, v in merged.items() if k in DEFAULT_SETTINGS})
     # Switching off the record off drops what the session kept in memory.
     try:
         from agent_friday.services import off_record as _off
@@ -3598,7 +3800,8 @@ def _apply_offline_routing_overlay(settings):
         if mr.get("mode") != "local_only" or mr.get("fallback_to_cloud") is not False:
             mr["mode"] = "local_only"
             mr["fallback_to_cloud"] = False
-            settings = dict(settings)
+            # type(): a degraded result keeps its mark through the overlay.
+            settings = type(settings)(settings)
             settings["model_routing"] = mr
     except Exception:
         pass
@@ -4262,7 +4465,7 @@ def _is_existing_install() -> bool:
     # settings.json exists with setup_complete flag
     if SETTINGS_FILE.exists():
         try:
-            data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+            data = _read_settings_file()
             if data.get('setup_complete'):
                 return True
         except Exception:

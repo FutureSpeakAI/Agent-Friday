@@ -122,5 +122,6 @@ def test_the_writer_sets_only_its_own_key(monkeypatch):
     monkeypatch.setattr(core, "_load_settings", lambda: {"unrelated": "keep me"})
     monkeypatch.setattr(core, "_save_settings", lambda d, **k: written.update(d))
     sc._set_keep_brain_warm(True)
-    assert written.get(ra.KEEP_WARM_SETTING) is True
-    assert written.get("unrelated") == "keep me"
+    # Only its key: _save_settings merges a delta onto the file, so the rest
+    # survives without the writer carrying (possibly stale) copies of it.
+    assert written == {ra.KEEP_WARM_SETTING: True}

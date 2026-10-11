@@ -169,13 +169,13 @@ def context_delete_range():
 
 @context_bp.route('/api/context/pause', methods=['POST'])
 def context_pause():
-    merged = _save_settings({**_load_settings(), "context_logging_enabled": False})
+    merged = _save_settings({"context_logging_enabled": False})
     return jsonify({"status": "ok", "enabled": merged.get('context_logging_enabled', False)})
 
 
 @context_bp.route('/api/context/resume', methods=['POST'])
 def context_resume():
-    merged = _save_settings({**_load_settings(), "context_logging_enabled": True})
+    merged = _save_settings({"context_logging_enabled": True})
     return jsonify({"status": "ok", "enabled": merged.get('context_logging_enabled', True)})
 
 

@@ -405,9 +405,14 @@ def _residency_boot():
         # a plan and a dispatcher that disagree.
         plan = arb.compute_plan(_sb.overrides_from_settings(settings))
         print("  Residency: %s" % _hwp.summary(profile))
+        import copy as _copy
+        before = _copy.deepcopy(settings)
         prop = _sb.apply(plan, settings)
         if prop.get("changes"):
-            _core._save_settings(settings)
+            # Only what the binding changed: the loaded dict may carry the
+            # offline overlay or a degraded read's values, and neither is the
+            # binding's to persist.
+            _core._save_settings(_core._settings_delta(before, settings))
         print("  Residency seats:\n%s" % _sb.describe(prop))
     except Exception as e:
         print(f"  Residency: planning/binding failed ({e})")
