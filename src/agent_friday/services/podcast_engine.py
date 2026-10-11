@@ -235,10 +235,41 @@ def her_name() -> str:
         return brand.her_name("")
 
 
+#: The length table saved installs carry from before Standard became the
+#: default: the first four shows' values, written verbatim from the defaults of
+#: the day. Matching it exactly means the owner never chose a length.
+_PRE_STANDARD_LENGTHS = {"front_page": "short", "briefing": "short",
+                         "weekly": "standard", "editorial": "standard"}
+#: Stamped into the saved podcasts block once the length migration has decided,
+#: so it runs once and an owner's later choice is never rewritten.
+LENGTH_MIGRATION_KEY = "length_migrated"
+
+
+def _migrate_length(own: dict) -> tuple[dict, bool]:
+    """(block, changed): a saved podcasts block whose length table is exactly
+    the pre-Standard default moves its Front Page and Briefing to the
+    recommended length, and any block is stamped so this runs once. A table
+    the owner changed in any way is left as it is."""
+    if not own or own.get(LENGTH_MIGRATION_KEY):
+        return own, False
+    out = copy.deepcopy(own)
+    if out.get("length") == _PRE_STANDARD_LENGTHS:
+        out["length"]["front_page"] = RECOMMENDED_LENGTH
+        out["length"]["briefing"] = RECOMMENDED_LENGTH
+    out[LENGTH_MIGRATION_KEY] = True
+    return out, True
+
+
 def settings() -> dict:
     try:
-        from agent_friday.core import _load_settings
+        from agent_friday.core import _load_settings, _save_settings
         own = (_load_settings() or {}).get("podcasts") or {}
+        own, changed = _migrate_length(own)
+        if changed:
+            try:
+                _save_settings({"podcasts": own})
+            except Exception:
+                log.warning("podcast length migration was not saved", exc_info=True)
         cfg = _merge(DEFAULTS, own)
     except Exception:
         own, cfg = {}, copy.deepcopy(DEFAULTS)
@@ -280,7 +311,7 @@ def _save_podcasts(change: dict) -> None:
     written whole: setting one show's format or length never resets the
     other shows, the hosts or the routines' switches."""
     from agent_friday.core import _load_settings, _save_settings
-    own = copy.deepcopy((_load_settings() or {}).get("podcasts") or {})
+    own, _ = _migrate_length(copy.deepcopy((_load_settings() or {}).get("podcasts") or {}))
     _merge_into(own, change)
     _save_settings({"podcasts": own})
 
@@ -567,12 +598,14 @@ def _refuse_cloud_voice(private: bool) -> None:
             "this computer. Ask me to switch cloud voices on if you want them.")
 
 
-def cancel(eid: str) -> dict | None:
+def cancel(eid: str, reason: str = "stopped by you") -> dict | None:
+    """Stop a pending episode. `reason` is what its card says; it is the
+    owner's stop unless something else (a newer run of the show) did it."""
     ep = load(eid)
     if ep is None:
         return None
     if ep.get("status") in PENDING:
-        ep = _update(eid, status="cancelled", stage_detail="stopped by you")
+        ep = _update(eid, status="cancelled", stage_detail=reason)
     return ep
 
 
@@ -883,11 +916,16 @@ def chapter_words(words: int, n_chapters: int) -> list[int]:
     return [body] * (n_chapters - 1) + [CLOSE_WORDS]
 
 
-def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
+def write_script(ep: dict, docs: list[dict], progress=None, stop=None) -> dict:
     """Outline, the full articles of the stories it chose (`deepen`), one
     chapter at a time, then the script-quality gate with the length's revision
     passes. Returns {title, chapters, lines, rejected, model, script_check,
-    depth}."""
+    depth}. `stop`, when given, is asked before every model call; a stopped
+    episode raises RenderError("cancelled") instead of writing on."""
+    def halt():
+        if stop is not None and stop():
+            raise render.RenderError("cancelled", "stopped while writing")
+    halt()
     length = ep["length"] if ep.get("length") in LENGTHS else RECOMMENDED_LENGTH
     words = LENGTH_WORDS[length]
     n_ch = LENGTH_CHAPTERS[length]
@@ -912,6 +950,7 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         chapters = [{"title": ep.get("title") or "The story", "sources": sorted(valid)}]
     title = (ep.get("title") or str(outline.get("title") or "").strip()[:160]
              or show_name(ep) or "A podcast")
+    halt()
     depth = deepen(ep, docs, chapters) if ep.get("depth") else []
     deep = {r["sid"] for r in depth}
     shares = chapter_words(words, len(chapters))
@@ -925,6 +964,7 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         return (("\nWords of your own you have already said twice; do not say them "
                  "again: %s." % ", ".join(words)) if words else "")
     for i, ch in enumerate(chapters):
+        halt()
         use = {s for s in (ch.get("sources") or []) if s in valid} or valid
         per = shares[i]
         # A story read in full is told from its article, to the depth rules.
@@ -996,6 +1036,7 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
     best, best_problems = lines, problems
     revisions = 0
     while problems and revisions < budget["revisions"]:
+        halt()
         revisions += 1
         revised, bad = _revise(ep, system, docs, lines, problems, len(chapters), solo,
                                max_tokens=budget["revise"])
@@ -1776,7 +1817,7 @@ def _write(eid: str, ep: dict, orb: str, stop) -> dict | None:
         ep = _update(eid, open=stamp_open(dict(ep))["open"])
     script = write_script(ep, docs, progress=lambda i, n: (
         _update(eid, progress={"stage": "writing", "done": i, "of": n}),
-        _orb(orb, "progress", ep, (i / n) * 0.4)))
+        _orb(orb, "progress", ep, (i / n) * 0.4)), stop=stop)
     if stop():
         return None
     hard = [p for p in script["script_check"]["problems"] if p["code"] in quality.HARD_CODES]
