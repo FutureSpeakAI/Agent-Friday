@@ -153,7 +153,7 @@ class ContextPruner:
             from agent_friday.services import embedder_cache
             if self.model_name == embedder_cache.MODEL:
                 embedder_cache.ensure_available("context trimming")
-            self._model = SentenceTransformer(self.model_name)
+            self._model = SentenceTransformer(self.model_name, device="cpu")
         return self._model
 
     def _embed(self, text):

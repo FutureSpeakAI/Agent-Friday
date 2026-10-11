@@ -287,7 +287,7 @@ def _load_embedder():
             # A missing model is fetched with a visible notice, never silently.
             from agent_friday.services import embedder_cache
             embedder_cache.ensure_available("the privacy classifier")
-            model = SentenceTransformer('all-MiniLM-L6-v2')
+            model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
             from agent_friday.services.inference_executor import run as _infer
             return model, _infer(model.encode, _SENSITIVE_EXEMPLARS,
                                  normalize_embeddings=True)

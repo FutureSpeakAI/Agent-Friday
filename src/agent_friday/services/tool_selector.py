@@ -137,7 +137,7 @@ def _ensure_index(tools) -> bool:
             if not _STATE.get("model"):
                 from agent_friday.services import embedder_cache
                 embedder_cache.ensure_available("tool selection")
-            model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2")
+            model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
             texts = _corpus(tools)
             emb = _infer(model.encode, texts, normalize_embeddings=True,
                          show_progress_bar=False)
@@ -239,7 +239,7 @@ def rank_texts(texts, query: str):
             if not _STATE.get("model"):
                 from agent_friday.services import embedder_cache
                 embedder_cache.ensure_available("context ranking")
-            model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2")
+            model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
             _STATE["model"] = model
         # Only the head of each block is embedded. A 40 KB wiki dump has its
         # subject in the first lines; the tail is detail that dilutes the
