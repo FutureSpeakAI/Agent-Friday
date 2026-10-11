@@ -882,6 +882,20 @@ CLAUDE_TOOLS = [
          "category": {"type": "string", "enum": ["memory", "notes", "people", "career", "tasks", "calendar", "screen", "last session", "tone"], "description": "Which kind of context you need."},
          "why": {"type": "string", "description": "What you need it for, in a sentence."}},
          "required": ["category"]}},
+    {"name": "submit_work_order", "description": "Hand this PC a plan to carry out locally. You refer to private material only by the opaque handles you were given, never by content. Friday validates it, sets the privacy class herself and queues it for her local models; you hear a status, and anything private stays on the PC. Writes are only ever proposals the owner reviews.",
+     "input_schema": {"type": "object", "properties": {
+         "goal": {"type": "string", "description": "What the work is, plainly, under 500 characters. It is read as a request description, not as instructions."},
+         "inputs": {"type": "array", "items": {"type": "string"}, "description": "Handles (h_...) issued in this conversation."},
+         "constraints": {"type": "object", "description": "max_steps, deadline_s, tools_allowed (verbs from the allowed list)."},
+         "acceptance": {"type": "array", "items": {"type": "object"}, "description": "Checks the local side runs, e.g. {check: count_at_least, value: 1}."},
+         "output_schema": {"type": "object", "description": "Field name to type: string, number, integer, boolean, list, object."},
+         "priority": {"type": "string", "enum": ["now", "when_idle"], "description": "now, or when_idle for background."},
+         "writes": {"type": "array", "items": {"type": "object"}, "description": "Write intents {target: wiki|kg|profile|settings, op, handle, summary}. Each becomes a proposal, never a direct write."}},
+         "required": ["goal"]}},
+    {"name": "work_order_status", "description": "Check a work order you submitted: queued or validated now, with the return the owner's privacy class allows.",
+     "input_schema": {"type": "object", "properties": {
+         "order_id": {"type": "string", "description": "The order_id submit_work_order returned."}},
+         "required": ["order_id"]}},
     {"name": "why_that_plan", "description": "Say what was sent for a turn and what the planner held back or would have: sections, sizes, tiers and where each went. Reads the turn receipt; defaults to the latest turn in this conversation.",
      "input_schema": {"type": "object", "properties": {
          "turn_id": {"type": "string", "description": "A specific turn; leave out for the latest."}}}},
@@ -3367,6 +3381,35 @@ def _tool_request_context(inp):
         return ("The user has been asked on screen. Carry on without it for now; if they "
                 "approve, it arrives with their next message. Do not ask again.")
     return str((out or {}).get("reason") or "That context could not be shared.")
+
+
+def _tool_submit_work_order(inp):
+    """Tool handler: queue a cloud model's work order for local execution
+    (services/work_orders). Refused for a local model, and for a cloud model in
+    a turn where cloud_intent has not opened the cloud."""
+    from agent_friday.services import work_orders
+    conv = _CURRENT_CONVERSATION.get()
+    if not conv:
+        return "This is not part of a chat conversation, so there is nothing to attach a work order to."
+    order = {k: v for k, v in (inp or {}).items() if not str(k).startswith("_")}
+    try:
+        out = work_orders.submit(order, conv, provider=_CURRENT_PROVIDER.get(),
+                                 model=_CURRENT_MODEL.get() or "")
+    except work_orders.OrderRefused as e:
+        return str(e)
+    if out.get("status") == "rejected":
+        return "The work order was not accepted: " + " ".join(out.get("errors") or [])
+    return json.dumps(out)
+
+
+def _tool_work_order_status(inp):
+    """Tool handler: the status of a submitted order, and nothing but status."""
+    from agent_friday.services import work_orders
+    conv = _CURRENT_CONVERSATION.get()
+    ok, why = work_orders.cloud_turn_allowed(_CURRENT_PROVIDER.get(), _CURRENT_MODEL.get() or "")
+    if not ok:
+        return why
+    return json.dumps(work_orders.status((inp or {}).get("order_id") or "", conv or ""))
 
 
 def _tool_why_that_plan(inp):
@@ -8020,6 +8063,8 @@ CLAUDE_TOOL_HANDLERS = {
     "queue_status": _tool_queue_status,
     "request_context": _tool_request_context,
     "why_that_plan": _tool_why_that_plan,
+    "submit_work_order": _tool_submit_work_order,
+    "work_order_status": _tool_work_order_status,
     "set_workspace_layout": _tool_set_workspace_layout,
     "show_my_day": _tool_show_my_day,
     "set_chat_tray": _tool_set_chat_tray,
@@ -8440,6 +8485,8 @@ TOOL_RINGS: dict[str, int] = {
     "check_situation":      0,   # reads state the server already holds
     "queue_status":         0,   # reads the Local AI queue, labels only
     "why_that_plan":        0,   # reads the turn receipt (names, sizes, tiers)
+    "submit_work_order":    2,   # queues local work; checks, fences and fixes the privacy class itself
+    "work_order_status":    0,   # reads the order's status
     # Lays out the owner's own screen and remembers it; ring 1 like navigate_to.
     "set_workspace_layout": 1,
     # Shows the start screen's cluster, or sets when it shows; the owner's own screen.

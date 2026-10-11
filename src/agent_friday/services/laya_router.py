@@ -75,6 +75,10 @@ class Route:
     candidates: list = field(default_factory=list)
     reason: str = ""
     elapsed_ms: float = 0.0
+    #: An intent flag only, never an action: "plan_cloud_execute_local" when the
+    #: owner said to have a cloud model plan it and do it here. The cloud turn and
+    #: its work order are still governed by cloud_intent and services/work_orders.
+    intent: str = ""
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -402,6 +406,23 @@ _SMALL_TALK = re.compile(
     r"^(?:hi|hello|hey|good (?:morning|afternoon|evening|night)|thanks?|thank you|cheers|bye|goodbye|"
     r"okay|ok|sure|great|cool|nice|never mind|no worries)\b[^?]*?(?:how are you(?: doing)?(?: today)?)?[\s,.!?]*$",
     re.I)
+
+
+_CLOUD_WHO = (r"(?:claude|chat\s?gpt|gpt|gemini|the cloud(?: model)?|a cloud model|the big model)")
+_HERE = r"(?:locally|on (?:this|my) (?:pc|computer|machine)|right here|here)"
+#: "have Claude plan it, do it locally" and the near phrasings.
+_PLAN_CLOUD_DO_LOCAL = re.compile(
+    r"\b(?:have|let|get|ask)\s+" + _CLOUD_WHO + r"\s+(?:plan|map out|work out|figure out|spec(?:ify)?)\b"
+    r".{0,60}?\b(?:do|run|carry|execute|have you do)\b.{0,30}?" + _HERE +
+    r"|\bplan\s+(?:it|this|that)\s+(?:with|using)\s+" + _CLOUD_WHO + r".{0,40}?\b(?:do|run|carry|execute)\b.{0,30}?" + _HERE,
+    re.I)
+
+PLAN_CLOUD_EXECUTE_LOCAL = "plan_cloud_execute_local"
+
+
+def work_order_intent(text: str) -> str:
+    """The intent flag for "have Claude plan it, do it locally", or ""."""
+    return PLAN_CLOUD_EXECUTE_LOCAL if _PLAN_CLOUD_DO_LOCAL.search(str(text or "")) else ""
 
 
 def _tier0(text: str) -> Optional[Route]:
@@ -755,6 +776,7 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
     if r.tool and held is not None and r.tool not in held:
         r = Route("defer", confidence=r.confidence, layer=r.layer, candidates=r.candidates,
                   reason="%s is not held by this session" % r.tool)
+    r.intent = work_order_intent(text)
     r.elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
     if log:
         _write(text, r, surface)

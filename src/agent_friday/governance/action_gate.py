@@ -260,6 +260,10 @@ INTERNAL_TOOLS = frozenset({
     "request_context",
     # Reads the turn receipt back; names, sizes and tiers, never content.
     "why_that_plan",
+    # A cloud model's plan, queued for local models. It validates and fences the
+    # order, fixes the privacy class itself and writes nothing: write intents
+    # become proposals later, each behind its own gate.
+    "submit_work_order", "work_order_status",
     # Reads the local conversation store; what a cloud call may hear of it is
     # decided by provenance (services/conversation_recall).
     "search_past_conversations",

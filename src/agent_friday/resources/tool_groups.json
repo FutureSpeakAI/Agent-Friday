@@ -541,6 +541,12 @@
   "search_email": [
    "mail"
   ],
+  "submit_work_order": [
+   "privacy"
+  ],
+  "work_order_status": [
+   "privacy"
+  ],
   "search_files": [
    "files"
   ],
@@ -670,6 +676,9 @@
    "openWorldHint": false
   },
   "ask_local_for_context": {
+   "openWorldHint": false
+  },
+  "submit_work_order": {
    "openWorldHint": false
   },
   "browse_web": {
