@@ -343,7 +343,7 @@ def test_on_approval_runs_exactly_the_rows_and_the_receipt_undoes_them(gmail, mo
     _go("archive these", stage)
     gmail.found["acct_work"].append("t99")                        # new mail lands before the answer
     card = _pending()[0]
-    ap.decide(card["approval_id"], "approve")
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete"
     assert [c for c in gmail.calls if c[0] == "apply"] == [("apply", "acct_work", ("t1", "t2"), "archive")]
@@ -376,7 +376,7 @@ def test_laya_cannot_approve_her_own_card(gmail, monkeypatch):
     assert ap.get_approval(card["approval_id"])["status"] == "pending" and gmail.changes() == []
     # a typed yes does not approve a card Laya raised either; the owner's click on its Approve button does
     assert ia.answer_card(card["approval_id"], "approve", "yes")["text"] == ia.LAYA_CARD_BUTTON
-    ap.decide(card["approval_id"], "approve")
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert ia.wait_for(card["approval_id"], 10)["status"] == "complete"
 
 
@@ -517,7 +517,7 @@ def test_a_label_that_vanishes_while_the_card_waits_is_not_made_at_run_time(gmai
     Page(monkeypatch)
     _go("label these as receipts", stage)
     gmail.labels["acct_work"] = []                              # deleted before the owner answered
-    ap.decide(_pending()[0]["approval_id"], "approve")
+    ap.decide(_pending()[0]["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(_pending_or_last_id(), 10)
     assert rec["status"] == "failed" and not [c for c in gmail.calls if c[0] == "create_label"]
     assert gmail.changes() == []
@@ -680,7 +680,7 @@ def test_end_to_end_the_card_the_run_and_the_receipt_name_the_same_rows(gmail, m
         text = rng.choice(["archive these", "star these", "mark these as read"])
         r, out = _go(text, stage)
         card = [c for c in _pending() if c["payload"]["refs"] == [ref(i) for i in rows]][-1]
-        ap.decide(card["approval_id"], "approve")
+        ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
         rec = ia.wait_for(card["approval_id"], 10)
         done = [c for c in gmail.calls if c[0] in ("apply", "modify")]
         tids = sorted(t for c in done for t in c[2])
@@ -752,14 +752,14 @@ def test_every_allowed_verb_round_trips_through_undo_exactly(mail, monkeypatch, 
     _go(text, stage)
     assert mail.labels == before, "nothing changes before the card is answered"
     card = _pending()[0]
-    ap.decide(card["approval_id"], "approve")
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete", rec
     assert all(mail.labels[k] == before[k] for k in mail.labels if k[1] in ("t4", "t5", "t6")), "only the three rows move"
     assert mail.labels != before, "the approved change really happened, so the round trip is not vacuous (%s)" % action
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)                     # Laya's "undo that": a card, as the change was
     assert out["status"] == "pending_approval"
-    ap.decide(out["approval_id"], "approve")
+    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     undone = ia.wait_for(out["approval_id"], 10)
     assert undone["status"] == "complete", undone
     assert mail.labels == before, "undo puts every label back exactly (%s)" % action
@@ -854,9 +854,9 @@ def test_chat_on_says_a_card_was_raised_in_sealed_words_and_nothing_changed(chat
     Page(monkeypatch)
     out = _chat("archive these")
     assert out["outcome"] == "card" and out["laya"]["template"] == "safe_write_card"
-    assert out["reply"].startswith("I put archive 3 conversations (") and out["reply"].endswith(
-        ") on an approval card. Nothing changes until you press Approve on it, and you can undo it afterwards (instant, no model).")
-    assert "\u201cSubject t1\u201d from Sender" in out["reply"] and "@" not in out["reply"], "a row sample, names only"
+    assert out["reply"] == ("I put archive 3 conversations on an approval card. Nothing changes until you press "
+                            "Approve on it, and you can undo it afterwards (instant, no model).")
+    assert "Subject" not in out["reply"] and "Sender" not in out["reply"] and "@" not in out["reply"], "no row named"
     assert out["tool_trace"][0]["name"] == "organize_email"
     assert len(_pending()) == 1 and gmail.changes() == []
 
@@ -1289,7 +1289,7 @@ def test_the_executed_batch_carries_a_laya_receipt(gmail, monkeypatch):
     _go("archive these", stage)
     card = _pending()[0]
     assert card["requested_by"] == "laya:safe_write"
-    ap.decide(card["approval_id"], "approve")
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete" and rec["origin"] == "laya_safe_write"
     assert rec["laya"]["by"] == "laya:safe_write" and rec["laya"]["rows_chosen"] == "the rows you ticked"

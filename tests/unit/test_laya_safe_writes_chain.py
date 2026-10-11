@@ -157,14 +157,14 @@ def test_b1_every_verb_round_trips_exactly_over_multi_message_conversations(real
     _go(text, stage)
     assert _snap() == before, "nothing changes before the card is answered"
     card = _pending()[0]
-    ap.decide(card["approval_id"], "approve")
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete", rec
     assert _snap() != before, "the approved change really happened, so the round trip is not vacuous (%s)" % action
     assert all(_snap()[k] == before[k] for k in before if k.startswith("x_")), "only the three rows move"
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)
     assert out["status"] == "pending_approval"
-    ap.decide(out["approval_id"], "approve")
+    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     undone = ia.wait_for(out["approval_id"], 10)
     assert undone["status"] == "complete", undone
     assert _snap() == before, "undo puts every MESSAGE back exactly (%s)" % action
@@ -176,11 +176,11 @@ def test_b1_a_sent_reply_never_gains_a_label_it_did_not_lose(real_mail, monkeypa
     Page(monkeypatch)
     _go("archive these", stage)
     cid = _pending()[0]["approval_id"]
-    ap.decide(cid, "approve")
+    ap.decide(cid, "approve", decided_by="owner:ui")
     rec = ia.wait_for(cid, 10)
     assert MAIL["m2"]["labels"] == {"SENT"} and MAIL["m1"]["labels"] == set() and MAIL["m3"]["labels"] == {"UNREAD", "STARRED"}
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)
-    ap.decide(out["approval_id"], "approve")
+    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(out["approval_id"], 10)
     assert MAIL["m2"]["labels"] == {"SENT"}, "undo never gives the owner's own reply an INBOX"
     assert MAIL["m1"]["labels"] == {"INBOX"} and MAIL["m3"]["labels"] == {"INBOX", "UNREAD", "STARRED"}
@@ -209,7 +209,7 @@ def test_n9_a_conversation_that_cannot_be_read_at_run_time_is_left_alone_not_cha
     before = _snap()
     FAIL_GET.add("t2")                                      # readable when proposed, not when approved
     card = _pending()[0]
-    ap.decide(card["approval_id"], "approve")
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "partial", rec
     by = {i["id"]: i for i in rec["items"]}
@@ -219,7 +219,7 @@ def test_n9_a_conversation_that_cannot_be_read_at_run_time_is_left_alone_not_cha
     assert not [c for c in CALLS if c == ("thread_modify", "t2")], "no thread-level fallback"
     FAIL_GET.clear()
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)
-    ap.decide(out["approval_id"], "approve")
+    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(out["approval_id"], 10)
     assert _snap() == before
 
@@ -248,14 +248,14 @@ def test_n4_a_reply_that_arrives_before_approval_is_not_changed(real_mail, monke
         "arrives before you approve is not changed" in card["action_description"]
     assert set(card["payload"]["messages"]["acct_work"]["t1"]) == {"m1", "m2", "m3"}
     _put("m_new", "t1", "INBOX", "UNREAD")                  # a reply lands after the card, before the yes
-    ap.decide(card["approval_id"], "approve")
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete"
     assert MAIL["m_new"]["labels"] == {"INBOX", "UNREAD"}, "the new reply was never on the card"
     assert "INBOX" not in MAIL["m1"]["labels"] and "INBOX" not in MAIL["m3"]["labels"]
     assert "m_new" not in rec["undo"]["email"]["acct_work"]["t1"]["messages"]
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)
-    ap.decide(out["approval_id"], "approve")
+    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(out["approval_id"], 10)
     assert MAIL["m1"]["labels"] == {"INBOX"} and MAIL["m2"]["labels"] == {"SENT"}
     assert MAIL["m3"]["labels"] == {"INBOX", "UNREAD", "STARRED"} and MAIL["m_new"]["labels"] == {"INBOX", "UNREAD"}
@@ -306,7 +306,7 @@ def test_n6_the_chat_sealed_line_carries_a_row_sample(chat, gmail, monkeypatch):
     out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
                                turn_id="t-1", authenticated=True, local=True)
     assert out["outcome"] == "card"
-    assert "“Subject t1” from Sender" in out["reply"] and "@" not in out["reply"]
+    assert "Subject" not in out["reply"] and "Sender" not in out["reply"] and "@" not in out["reply"]
     assert "archive 3 conversations" in out["reply"] and "Nothing changes until you press Approve on it" in out["reply"]
     assert "@" not in str(out["tool_trace"]), "what the chat history keeps (and a later cloud turn reads) has no address"
 
@@ -878,7 +878,8 @@ def test_r2_the_tray_notice_for_a_laya_card_carries_names_only(gmail, monkeypatc
     ap._notify_pending(card)
     assert pushed, "the notice was pushed"
     body = pushed[-1]["body"]
-    assert "@" not in body and "<" not in body and "Subject t1" in body and "Mara" in body, body
+    assert "@" not in body and "<" not in body and "Subject" not in body and "Mara" not in body, body
+    assert "Open Friday" in body
 
 
 def test_r2_a_card_a_model_raised_is_notified_as_before(monkeypatch):
@@ -925,7 +926,7 @@ def test_l4_a_newer_message_is_left_out_and_the_card_says_so(real_mail, monkeypa
     assert card["payload"]["newer_not_included"] == 1
     assert "newer message" in card["description"] and "left out" in card["description"]
     assert not any("eve@late.example" in line for line in card["payload"]["lines"]), "the left-out sender is not shown"
-    ap.decide(card["approval_id"], "approve")
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(card["approval_id"], 10)
     assert MAIL["m_new"]["labels"] == {"INBOX", "UNREAD"}, "the newer message was never touched"
     assert "INBOX" not in MAIL["m1"]["labels"]
@@ -1009,7 +1010,7 @@ def test_n_mj1_the_reflex_path_answers_no_card_from_a_typed_reply(chat, gmail, m
 
 def test_n_mj1_the_button_still_approves_and_a_typed_no_can_decline(chat, gmail, monkeypatch):
     cid = _arm(gmail, monkeypatch)
-    ap.decide(cid, "approve")                                         # the Approve button's route
+    ap.decide(cid, "approve", decided_by="owner:ui")                                         # the Approve button's route
     assert ia.wait_for(cid, 10)["status"] == "complete"
     gmail.calls.clear()
     stage = _stage(selected=(3, 4))
@@ -1127,6 +1128,7 @@ def test_mj1_with_fridays_numbers_on_screen_an_ordinal_is_asked_never_guessed(gm
         r = lr.route(text, trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
         assert (r.decision, r.layer) == ("ask", "safe_write"), (text, r.decision, r.layer, r.reason)
         assert r.question == sw.ORDINAL_QUESTION and not r.args and r.tool is None
+        assert "Say it again with a number" in r.question and "“" not in r.question, "it needs no special reply"
     assert not sw._TICKETS and not _cards()
 
 
@@ -1163,7 +1165,7 @@ def test_mj2_the_typed_card_reply_is_shown_live_but_the_history_line_is_neutral(
     Page(monkeypatch)
     out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
                                turn_id="t-1", authenticated=True, local=True)
-    assert "Subject t1" in out["reply"] and "Sender" in out["reply"], "the live reply shows the sample"
+    assert "Subject" not in out["reply"] and "Sender" not in out["reply"], "the notice names no row"
     h = out["history_text"]
     assert "Subject" not in h and "Sender" not in h and "@" not in h and "archive 2 conversations" in h
     assert "Subject" not in str(out["tool_trace"]) and "Sender" not in str(out["tool_trace"])
@@ -1195,7 +1197,7 @@ def test_mj2_the_route_persists_the_neutral_line_not_the_live_reply(chat, gmail,
     with Flask(__name__).app_context():
         resp = chat_routes._instant_response("archive these", out, CONV)
     body = json.loads(resp.get_data(as_text=True))
-    assert "Subject t1" in body["response"], "the owner sees the sample"
+    assert "Subject" not in body["response"] and "archive 2 conversations" in body["response"]
     assert saved and saved[0]["text"] == out["history_text"] and "Subject" not in saved[0]["text"]
 
 
@@ -1476,3 +1478,215 @@ def test_n1_no_key_means_no_hashed_row_and_no_throwaway_key(gmail, monkeypatch, 
     lh._write_shadow(lh.shadow_row("star these", None, final, None, "voice", 0.9))
     assert not (tmp_path / "head.jsonl").exists() and not wrote
     sw._KEY_RETRY_AT = 0.0
+
+
+# ══ Third review of three (da66aaa40) ══
+
+# ── F3-MD-4: the chat notice and the tray body name no subject and no sender ─────────────────────
+
+def test_f3_md4_the_chat_notice_and_its_history_line_name_no_subject_and_no_sender(chat, gmail, monkeypatch):
+    """Fails on da66aaa40: the live chat reply carried “subject” from name."""
+    from agent_friday.services import reflex_chat as rc
+    gmail.senders.update({"m_t1_1": "Mara Quinn <m@q.example>", "m_t1_2": "Mara Quinn <m@q.example>"})
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
+                               turn_id="t-1", authenticated=True, local=True)
+    for text in (out["reply"], out["history_text"], str(out["tool_trace"])):
+        assert "Subject" not in text and "Mara" not in text and "Sender" not in text and "@" not in text, text
+    assert "press Approve on it" in out["reply"] and out["reply"] == out["history_text"]
+
+
+# ── F3-MJ-1: a Laya card is approved only by the screen button or the owner's voice ──────────────
+
+@pytest.mark.parametrize("who", ["owner:sms", "owner", "owner:chat", "owner:voice", "friday", "system:schedule"])
+def test_f3_mj1_no_other_channel_approves_a_laya_card(chat, gmail, monkeypatch, who):
+    """Fails on da66aaa40: the screen-only rule was by kind, so any decided_by could approve a Laya card."""
+    cid = _arm(gmail, monkeypatch)
+    rec, won = ap.decide_with_outcome(cid, "approve", decided_by=who)
+    assert won is False and rec["status"] == "pending" and gmail.changes() == []
+
+
+@pytest.mark.parametrize("who", ["owner:ui", "owner:/voice/"])
+def test_f3_mj1_the_button_and_the_owners_voice_still_approve(chat, gmail, monkeypatch, who):
+    cid = _arm(gmail, monkeypatch)
+    rec, won = ap.decide_with_outcome(cid, "approve", decided_by=who)
+    assert won is True and ia.wait_for(cid, 10)["status"] == "complete"
+
+
+def test_f3_mj1_any_channel_can_decline(chat, gmail, monkeypatch):
+    cid = _arm(gmail, monkeypatch)
+    rec, won = ap.decide_with_outcome(cid, "deny", decided_by="owner:sms")
+    assert won is True and rec["status"] == "denied" and gmail.changes() == []
+
+
+# ── F3-MD-1: the end-of-call summary gets the neutral line ───────────────────────────────────────
+
+def test_f3_md1_the_call_summary_reads_the_neutral_line_not_the_spoken_card(safe_call, monkeypatch):
+    """Fails on da66aaa40: turn_log (the distil's transcript) held the spoken line with subjects and names."""
+    saved = []
+    monkeypatch.setattr(rv, "_persist_voice_turn", lambda u, a, conversation_id=None, provider=None:
+                        saved.append(a) or True)
+    c = safe_call(room=False)
+    c.session.hooks["persist"] = lambda u, a, cid: rv._persist_local_turn(c.tool_session, u, a, cid)
+    c.say("archive these")
+    assert "Sender" in " ".join(c.mouth.spoken), "the line is still said aloud with the names"
+    assert saved and saved[-1] == rv._CARD_LINE_FALLBACK
+    log = str(c.session.turn_log)
+    assert rv._CARD_LINE_FALLBACK in log and "Sender" not in log and "Subject" not in log
+
+
+def test_f3_md1_a_turn_with_nothing_to_hide_keeps_its_words_in_the_summary(safe_call, monkeypatch):
+    monkeypatch.setattr(rv, "_persist_voice_turn", lambda u, a, conversation_id=None, provider=None: True)
+    c = safe_call(room=False)
+    c.session.hooks["persist"] = lambda u, a, cid: rv._persist_local_turn(c.tool_session, u, a, cid)
+    c.say("what's on my calendar")
+    assert c.session.turn_log and "calendar" in c.session.turn_log[-1][0]
+
+
+# ── F3-MD-2: a deictic beside Friday's numbers is asked when it would pick something else ─────────
+
+def test_f3_md2_these_with_a_row_open_and_fridays_numbers_elsewhere_is_asked(gmail, monkeypatch):
+    """Fails on da66aaa40: 'archive these' became a card for the open email while Friday had numbered three others."""
+    stage = _stage(selected=())
+    stage["open"] = ref(4)
+    report(stage)
+    _friday_pointed(monkeypatch)
+    r = lr.route("archive these", trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+    assert (r.decision, r.layer) == ("ask", "safe_write") and r.question == sw.DEICTIC_QUESTION and not r.args
+    assert not sw._TICKETS and not _cards()
+
+
+def test_f3_md2_a_different_count_than_the_numbered_rows_is_asked(gmail, monkeypatch):
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    _friday_pointed(monkeypatch)                          # three rows numbered, two ticked
+    r = lr.route("archive these", trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+    assert (r.decision, r.layer) == ("ask", "safe_write") and not sw._TICKETS
+
+
+def test_f3_md2_a_plural_that_resolves_to_one_row_is_asked(gmail, monkeypatch):
+    from agent_friday.services import desktop_bus
+    stage = _stage(selected=(1,))
+    report(stage)
+    desktop_bus.set_pointed("messages", [ref(5)])         # one row numbered, one ticked: the count matches
+    r = lr.route("archive these", trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+    assert (r.decision, r.layer) == ("ask", "safe_write") and not sw._TICKETS
+
+
+def test_f3_md2_the_owners_own_ticks_in_the_same_number_still_make_a_card(gmail, monkeypatch):
+    stage = _stage(selected=(1, 2, 3))
+    report(stage)
+    Page(monkeypatch)
+    _friday_pointed(monkeypatch)                          # three numbered, three ticked: the owner's rows
+    r = lr.route("archive these", trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+    assert r.layer == "safe_write" and r.decision == "tool"
+
+
+def test_f3_md2_with_no_numbers_on_screen_the_open_row_is_still_what_these_means(gmail, monkeypatch):
+    stage = _stage(selected=())
+    stage["open"] = ref(4)
+    report(stage)
+    Page(monkeypatch)
+    r = lr.route("archive this", trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+    assert r.layer == "safe_write" and r.decision == "tool"
+
+
+# ── F3-MD-3: a record that cannot be verified is not narrow ──────────────────────────────────────
+
+def test_f3_md3_an_unverifiable_record_is_removed_when_narrowing_so_a_recovery_cannot_revive_it(
+        settings_file, owner_record, monkeypatch):
+    """Fails on da66aaa40: the unreadable record counted as 'already off', stayed on disk, and a keychain that
+    came back later verified the old 'on'."""
+    core = settings_file
+    _click(core, "on")
+    real = gs._anchor_get
+
+    def unreadable(key):
+        raise OSError("the keychain did not answer")
+    monkeypatch.setattr(gs, "_anchor_get", unreadable)
+    gs.invalidate()
+    assert gs.narrow_record("laya_safe_writes", "off") is True
+    assert not gs._record_path().exists()
+    monkeypatch.setattr(gs, "_anchor_get", real)           # the keychain recovers
+    gs.invalidate()
+    _hand_edit(core, "on")                                  # a later file write says on
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off" and sw.mode() == "off"
+
+
+def test_f3_md3_a_file_that_says_on_never_removes_a_record_on_a_transient_failure(settings_file, owner_record, monkeypatch):
+    core = settings_file
+    _click(core, "on")
+
+    def unreadable(key):
+        raise OSError("the keychain did not answer")
+    monkeypatch.setattr(gs, "_anchor_get", unreadable)
+    assert gs.narrow_record("laya_safe_writes", "on") is True
+    assert gs._record_path().exists(), "nothing to narrow when the file is as wide as it gets"
+
+
+# ── n3-2: a card being built while the setting goes off does not survive ─────────────────────────
+
+def test_n3_2_a_card_built_while_the_owner_turns_the_setting_off_is_not_raised(gmail, monkeypatch):
+    """Fails on da66aaa40: the mode was read at redeem, before the network snapshot, and the card was stored after."""
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    r = _route("archive these", stage)
+    assert r.layer == "safe_write"
+    real = gm.snapshot_messages
+
+    def snapshot_then_off(acct, tids):
+        out = real(acct, tids)
+        _mode(monkeypatch, "off")                          # the owner clicks Off during the Gmail round trip
+        return out
+    monkeypatch.setattr(gm, "snapshot_messages", snapshot_then_off)
+    out = agent._tool_organize_email(dict(r.args))
+    assert out.startswith("NOT DONE") and "turned off" in out
+    assert not _pending() and gmail.changes() == []
+
+
+# ── n3-3: the boot check cannot hold start-up ────────────────────────────────────────────────────
+
+def test_n3_3_a_hung_boot_keychain_read_times_out_and_fails_closed(settings_file, owner_record, monkeypatch):
+    import threading
+    core = settings_file
+    _click(core, "on")
+    release = threading.Event()
+    monkeypatch.setattr(gs, "narrow_record", lambda key, value: release.wait(5.0))
+    t0 = time.perf_counter()
+    try:
+        gs.boot_narrow({"laya_safe_writes": "off"}, timeout_s=0.1)
+        spent = time.perf_counter() - t0
+    finally:
+        release.set()
+    assert spent < 2.0, "start-up waited %.1fs on a hung keychain" % spent
+    assert gs.owner_choice("laya_safe_writes", block=False) == "off" and "laya_safe_writes" in gs._FORCE_OFF
+
+
+# ── n3-4: the card hooks run with no settings lock held ──────────────────────────────────────────
+
+def test_n3_4_card_hooks_do_not_run_under_the_write_lock(settings_file, owner_record, monkeypatch):
+    core = settings_file
+    _click(core, "on")
+    held = []
+    monkeypatch.setattr(gs, "_after_narrowing", lambda key, value: held.append(gs._WRITE_LOCK._is_owned()))
+    _hand_edit(core, "off")
+    gs.follow_file("laya_safe_writes", "off")
+    for _ in range(150):
+        if held:
+            break
+        time.sleep(0.02)
+    assert held == [False], held
+
+
+# ── n3-5 and the docs ────────────────────────────────────────────────────────────────────────────
+
+def test_f3_docs_say_how_a_laya_card_is_approved_and_what_is_named():
+    root = Path(__file__).resolve().parents[2]
+    flat = lambda name: " ".join((root / name).read_text(encoding="utf-8").split())
+    mail, phone, log = flat("docs/user-guide/mail.md"), flat("docs/user-guide/phone.md"), flat("CHANGELOG.md")
+    assert "A text message does not approve it either" in mail and "never addresses" in mail
+    assert "never texted" in phone and "Voice history keeps no card details" in log
+    assert "they say that a card was raised" in mail
