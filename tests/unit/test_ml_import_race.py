@@ -50,7 +50,7 @@ def fake_stack(tmp_path, monkeypatch):
         import {SLOW_PKG}
         import numpy as _np
         class SentenceTransformer:
-            def __init__(self, name):
+            def __init__(self, name, device=None):
                 self.name = name
             def encode(self, texts, normalize_embeddings=True):
                 v = _np.ones((len(texts), 4)) / 2.0
@@ -119,7 +119,7 @@ def test_a_failed_layer3_load_is_retried_not_cached_forever(monkeypatch):
             import numpy as np
             return np.ones((len(texts), 4)) / 2.0
 
-    def flaky(name):
+    def flaky(name, device=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise ImportError("cannot import name 'AlbertModel' from 'transformers'")
