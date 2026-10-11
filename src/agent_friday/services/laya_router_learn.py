@@ -111,20 +111,49 @@ def _personal(name: str, *args, **kw) -> None:
         _log.debug("personal layer skipped %s: %s", name, type(e).__name__)
 
 
-def note_delegated(task_id: Optional[str], *, conversation_id: Optional[str] = None) -> None:
-    """The deferred turn just handed to the deeper mind became background task ``task_id``: tie the newest
-    waiting deferral of this conversation to it, here and in the personal layer, so that only that
-    task's own tool calls can resolve it. A missing id or conversation ties nothing."""
-    if not task_id or not conversation_id:
+def _routable(tool: str) -> bool:
+    """A tool the router itself can choose: only such a tool can be the label of a deferral."""
+    try:
+        from agent_friday.services import laya_router
+        return tool in laya_router.TOOLS
+    except Exception:  # noqa: BLE001
+        return False
+
+
+#: Where the voice route's deferred request (voice._deferred_request) appends its screen-rows note to the
+#: owner's words.
+_ROWS_NOTE_MARK = "\n\n[Resolved on the owner's screen"
+
+
+def delegated_words(request: str) -> str:
+    """The owner's own words in a deferred request the voice route built (without its rows note), whitespace
+    normalised. This is the deferral's identity: the request is the text the route created for exactly
+    that deferred turn."""
+    s = str(request or "")
+    cut = s.find(_ROWS_NOTE_MARK)
+    return " ".join((s[:cut] if cut >= 0 else s).split())
+
+
+def note_delegated(task_id: Optional[str], *, conversation_id: Optional[str] = None,
+                   request: Optional[str] = None) -> None:
+    """The deferred turn just handed to the deeper mind became background task ``task_id``. ``request`` is
+    the request the voice route built for that turn; the waiting voice deferral of this conversation whose
+    words it carries is tied to the task, here and in the personal layer, so that only that task's own tool
+    calls can resolve it. An older deferral with other words (one queued for after the call, one the model
+    never delegated) is never tied. A missing id, conversation or request ties nothing."""
+    words = delegated_words(request)
+    if not task_id or not conversation_id or not words:
         return
+    want = {_sha(words), _sha(str(request).split(_ROWS_NOTE_MARK)[0])}
     now = now_fn()
     with _lock:
         ent = next((e for e in reversed(_held)
                     if not e["resolved"] and e["decision"] == "defer" and not e.get("task_id")
+                    and str(e.get("surface", "")).startswith("voice") and e["hash"] in want
                     and now - e["at"] <= DEFER_WINDOW_S and _same_conversation(e, conversation_id)), None)
         if ent is not None:
             ent["task_id"] = str(task_id)
-    _personal("on_delegated", str(task_id), conversation_id=conversation_id)
+    _personal("on_delegated", str(task_id), conversation_id=conversation_id, request=request)
 
 
 def _same_conversation(ent: dict, conversation_id: Optional[str]) -> bool:
@@ -229,7 +258,7 @@ def note_executed(tool: str, args: Optional[dict] = None, *, ok: bool, tainted=F
                    if not e["resolved"] and _same_conversation(e, conversation_id)
                    and ((e["decision"] == "ask" and now - e["at"] <= ASK_WINDOW_S)
                         or (e["decision"] == "defer" and now - e["at"] <= DEFER_WINDOW_S
-                            and bool(task_id) and e.get("task_id") == task_id))]
+                            and bool(task_id) and e.get("task_id") == task_id and _routable(tool)))]
         if len(waiting) != 1:
             return False
         ent = waiting[0]

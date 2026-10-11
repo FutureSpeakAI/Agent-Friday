@@ -24,11 +24,13 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   said on a paired phone, through a relay, in a cloud voice call or in a delegated
   task teaches her as a correction, nothing typed teaches her while chat is left to
   the chat model or runs on a cloud model, and a request she answers from what is on
-  your screen is not kept as a phrasing. When she hands a request you said in a local
-  voice call to the deeper mind, the first real action of the background task it
-  starts shows under "Waiting for your OK" on the report card (not a lookup, not
-  another request's tool, nothing from a task that read untrusted content) and
-  teaches her only after you click "Yes, that was right". A new phrasing must pass a collision check
+  your screen is not kept as a phrasing. When she hands a request you said in a
+  private (local-only) voice call to the deeper mind, the first tool of the
+  background task it starts that she could have chosen herself (a lookup such as
+  calendar, mail search or notes; never a write, never a tool run for another
+  request, nothing from a task that read untrusted content) shows under "Waiting
+  for your OK" on the report card and teaches her only after you click "Yes, that
+  was right". A new phrasing must pass a collision check
   and a re-score of her shipped test questions and of your own earlier answers
   before she uses it; if anything she got right would turn wrong, she turns it
   down and says why. Her confidence is retuned from your labels as a visible

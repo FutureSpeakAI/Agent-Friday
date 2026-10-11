@@ -179,12 +179,12 @@ def test_a_voice_tool_in_the_conversation_does_not_resolve_a_deferred_turn(rig):
 def test_only_the_delegated_tasks_own_call_makes_the_shadow_row_and_reads_its_own_taint(rig):
     from agent_friday.services import laya_router_learn as ll
     from agent_friday.services import taint
-    ll.note_delegated("t1", conversation_id="c1")
+    ll.note_delegated("t1", conversation_id="c1", request=LEASE)
     other = {"authenticated": True, "is_background_task": True, "task_id": "t2", "conversation_id": "c1"}
     mine = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
     _run(rig.agent, other)
     assert rig.kept == []
-    _run(rig.agent, mine, name="search_past_conversations")          # a lookup helper does not resolve it
+    _run(rig.agent, mine, name="set_chat_tray")          # a tool the router cannot choose does not label it
     assert rig.kept == []
     _run(rig.agent, mine)
     assert rig.kept == [("shadow", "sort out the thing with the lease", "query_calendar")]
@@ -194,7 +194,7 @@ def test_only_the_delegated_tasks_own_call_makes_the_shadow_row_and_reads_its_ow
 def test_a_tainted_task_call_and_a_crew_or_phone_call_make_no_row(rig, monkeypatch):
     from agent_friday.services import laya_router_learn as ll
     from agent_friday.services import slice_head
-    ll.note_delegated("t1", conversation_id="c1")
+    ll.note_delegated("t1", conversation_id="c1", request=LEASE)
     base = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
     _run(rig.agent, dict(base, crew_agent_id="a1"))
     _run(rig.agent, dict(base, origin="phone"))
@@ -210,3 +210,30 @@ def test_a_deferral_with_no_delegated_task_never_makes_a_row(rig):
     mine = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
     _run(rig.agent, mine)
     assert rig.kept == []
+
+
+LEASE = "sort out the thing with the lease"
+
+
+def test_a_hand_over_ties_the_deferral_whose_words_it_carries_never_a_newer_stale_one(rig):
+    from agent_friday.services import laya_router_learn as ll
+    with lp._lock:                                                       # a later deferral that was never delegated
+        lp._held.append({"at": lp.now_fn(), "text": "book the dentist", "decision": "defer", "tool": None,
+                         "confidence": 0.9, "layer": "rule", "cands": [], "surface": "voice",
+                         "conversation_id": "c1", "resolved": False})
+    ll.note_delegated("t9", conversation_id="c1", request="something the model made up")
+    ll.note_delegated("t9", conversation_id="c1",
+                      request=LEASE + "\n\n[Resolved on the owner's screen by rules, not by you: archive 2 row(s)]")
+    with lp._lock:
+        tied = {e["text"]: e.get("task_id") for e in lp._held}
+    assert tied == {LEASE: "t9", "book the dentist": None}
+    # red when: the newest untied deferral of the conversation is tied instead of the one that was handed over
+
+
+def test_a_typed_deferral_is_never_tied(rig):
+    from agent_friday.services import laya_router_learn as ll
+    with lp._lock:
+        lp._held[0]["surface"] = "chat"
+    ll.note_delegated("t9", conversation_id="c1", request=LEASE)
+    with lp._lock:
+        assert lp._held[0].get("task_id") is None

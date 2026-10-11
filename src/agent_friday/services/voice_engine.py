@@ -1636,7 +1636,7 @@ def _tool_delegate_to_friday(inp, session=None):
             orb_icon="🎙", pin_to_seat=True)
         try:   # ties the owner's deferred words to THIS task, so only its own tool calls can become a shadow row
             from agent_friday.services import laya_router_learn as _llearn
-            _llearn.note_delegated(task_id, conversation_id=session.get("conversation_id"))
+            _llearn.note_delegated(task_id, conversation_id=session.get("conversation_id"), request=request)
         except Exception:
             pass
         return (f"DELEGATED:{task_id} Friday's deeper mind is working on it on this "

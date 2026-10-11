@@ -120,10 +120,16 @@ KIND_WEIGHT = {"correction": GOLD, "askback": GOLD, "confirmed": GOLD, "card": W
 OTHER = "other"          # "something else": none of Laya's routes
 #: Never a label (the router's own machinery).
 _NOT_A_LABEL = frozenset({"delegate_to_friday", "answer_card", "undo_action", "task_control"})
-#: Lookups and bookkeeping the deeper mind uses on the way to its real action: they do not resolve a deferral.
-_HELPER_TOOLS = frozenset({"search_past_conversations", "note_conversation_state", "request_context",
-                           "ask_local_for_context", "answer_share_request", "revise_share_request",
-                           "spawn_task"})
+
+
+def _can_label(tool: str) -> bool:
+    """Only a tool the router itself can choose (services/laya_router.TOOLS) can be the deeper mind's choice for a
+    deferral. Anything else (a write, a lookup on the way, a layout or status call) makes no row."""
+    try:
+        from agent_friday.services import laya_router
+        return tool in laya_router.TOOLS and tool not in _NOT_A_LABEL
+    except Exception:  # noqa: BLE001
+        return False
 
 NOTICE = ("Friday now learns from your corrections, on this PC only. When you correct her or answer a question "
           "she asks in a local voice call on this PC, or typed on Friday's own page when you have chosen Laya to "
@@ -1024,17 +1030,23 @@ def _source(surface: str) -> str:
     return "spoken" if str(surface).startswith("voice") else "typed"
 
 
-def on_delegated(task_id: str, *, conversation_id: Optional[str] = None) -> None:
-    """The deferred turn just handed to the deeper mind is background task ``task_id`` (the voice hand-over,
-    laya_router_learn.note_delegated): the newest waiting deferral of this conversation is tied to it, and
-    only that task's own tool calls can become its shadow row. No id or no conversation ties nothing."""
+def on_delegated(task_id: str, *, conversation_id: Optional[str] = None, request: Optional[str] = None) -> None:
+    """The deferred turn just handed to the deeper mind is background task ``task_id`` (the private voice
+    hand-over, laya_router_learn.note_delegated). ``request`` is the request the voice route built for that
+    turn: only the waiting voice deferral of this conversation whose words it carries is tied to the task, and
+    only that task's own tool calls can become its shadow row. A deferral with other words, a typed one, and a
+    call with no id, conversation or request tie nothing."""
     try:
-        if not task_id or not conversation_id or not _active(current_profile()):
+        from agent_friday.services import laya_router_learn as _ll
+        words = _ll.delegated_words(request)
+        if not task_id or not conversation_id or not words or not _active(current_profile()):
             return
         now = now_fn()
         with _lock:
             ent = next((e for e in reversed(_held) if not e["resolved"] and e["decision"] == "defer"
                         and not e.get("task_id") and now - e["at"] <= DEFER_WINDOW_S
+                        and str(e.get("surface", "")).startswith("voice")
+                        and " ".join(str(e.get("text") or "").split())[:3000] == words[:3000]
                         and _same_conv(e, conversation_id)), None)
             if ent is not None:
                 ent["task_id"] = str(task_id)
@@ -1046,13 +1058,13 @@ def on_executed(tool: str, args: Optional[dict] = None, *, ok: bool = True, tain
                 conversation_id: Optional[str] = None, task_id: Optional[str] = None) -> None:
     """A tool really ran (laya_router_learn.note_executed passes it on from the governed runner, with the
     CALL's own conversation, task and taint). The only thing this resolves is a deferred turn that was handed
-    to the deeper mind as ``task_id`` (on_delegated): that task's first call that is not the router's own
-    machinery or a lookup helper becomes a SHADOW row, which measures Laya and is never a label until the
+    to the deeper mind as ``task_id`` (on_delegated): that task's first call of a tool the router itself
+    can choose (_can_label; a write, a layout or status call or the router's own machinery is not one) becomes a SHADOW row, which measures Laya and is never a label until the
     owner confirms it (Decision 3). A call with no task id (an agent loop, typed chat, a voice tool, Laya's
     own routed tool, a cloud voice call), no conversation id, from a tainted turn, a crew agent or a paired
     phone (the caller passes tainted=True for those), a failed or denied call never records anything."""
     try:
-        if (not ok or denied or not tool or tool in _NOT_A_LABEL or tool in _HELPER_TOOLS or tainted is True
+        if (not ok or denied or not tool or not _can_label(tool) or tainted is True
                 or not conversation_id or not task_id):
             return
         profile = current_profile()

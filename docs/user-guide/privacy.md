@@ -130,7 +130,7 @@ answer to that question.
 | Correct her ("no, I meant my work calendar") | A firm label: you meant that. |
 | Answer a question she asks by choosing one of its options, or "something else" (every question offers it). A fresh request is not an answer. | A firm label. |
 | Approve or decline a card soon after a request she routed | A light signal: it tells her whether an action was wanted. |
-| Say something in a local voice call that she hands to the deeper mind, and the background task it starts runs a tool | A choice **waiting for your OK**, from the first real action of that task (not from a lookup, not from a tool run for another request, not when the task has read untrusted content). It measures her, and it teaches her nothing unless you click **Yes, that was right** on the report card. **No, drop it** forgets it. A typed request, or a hand-over that waits for the end of the call, makes no such choice. |
+| Say something in a private (local-only) voice call that she hands to the deeper mind, and the background task it starts runs one of the lookup tools she can choose herself (calendar, mail search, notes, news and the like) | A choice **waiting for your OK**, from the first such tool that task runs (a write, a layout or status call, a tool run for another request, or any tool after the task read untrusted content makes none; neither does a request she handed over that you did not say in that call). It measures her, and it teaches her nothing unless you click **Yes, that was right** on the report card. **No, drop it** forgets it. A typed request, or a hand-over that waits for the end of the call, makes no such choice. |
 | Say nothing | Nothing. |
 
 **What she does with it.** A phrasing you confirmed becomes one more example for
