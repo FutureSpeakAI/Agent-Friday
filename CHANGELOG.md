@@ -31,6 +31,12 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   by typing yes. Turning the setting down expires the cards still waiting. The
   saved conversation never holds a title or a sender name from a card. Setting:
   `laya_safe_writes` (`off`, `shadow`, `on`).
+- **Card-free mail changes are recorded and pinned.** Star, unstar, label, take a
+  label off, mark read and mark unread still run with no card when a model asks
+  (your rule). Each now appears in the turn receipt by tool, action, count and
+  message ids (no subjects), can be undone exactly, and a test pins the list.
+  A spoken "yes" approves a card Laya raised only if Friday read that card's line
+  aloud in this conversation.
 - **Voice history keeps no card details.** When a local voice call reads an
   approval card aloud (any card, with safe writes on or off), or asks a question
   built from your screen ("which sender?"), the saved conversation and the

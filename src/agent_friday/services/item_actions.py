@@ -631,7 +631,7 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
         requested_by = "laya:safe_write"        # the approval and the signed gate receipt say who asked
     _verb, doing = _email_words(action, label, n)
     if action in EMAIL_NO_CARD and not laya_card:
-        rec = run_email(detail)
+        rec = run_email(detail, card_free=True)
         _tell_held(detail, "done", receipt_id=rec.get("receipt_id") or "")
         _tell_pages("email", rec.get("receipt_id") or "")
         return {"status": rec.get("status") or "complete", "count": n, "receipt_id": rec.get("receipt_id"),
@@ -683,8 +683,10 @@ def _label_id(account_id: str, name: str, create: bool) -> tuple[str | None, boo
     return gm.create_label(account_id, name)["id"], True
 
 
-def run_email(detail: dict, approval_id: str | None = None) -> dict:
-    """Carry out an approved mail batch: exactly the conversations it lists."""
+def run_email(detail: dict, approval_id: str | None = None, card_free: bool = False) -> dict:
+    """Carry out an approved mail batch: exactly the conversations it lists. ``card_free`` marks a change the
+    owner's rule lets run with no card (EMAIL_NO_CARD): its receipt says so and carries the turn id, the
+    count and the message ids (never a subject), which the turn receipt then lists."""
     from agent_friday.services import gmail_mailbox as gm
     action = detail["action"]
     gm_action, _ask, past = EMAIL_ACTIONS[action]
@@ -733,11 +735,25 @@ def run_email(detail: dict, approval_id: str | None = None) -> dict:
                          ("; %d could not be changed" % (n - ok)) if ok < n else "")
     if created:
         summary += "; made the label \u201c%s\u201d" % created[0]
+    extra = {"query": detail.get("query") or "", "said": said, **_laya_receipt(detail)}
+    if card_free:
+        extra["card_free"] = True
+        extra["turn_id"] = _current_turn_id()
+        extra["count"] = ok
+        extra["message_ids"] = {acct: {tid: sorted((ch.get("messages") or {}).keys())
+                                       for tid, ch in per.items()} for acct, per in changed_all.items()}
     return journal.record("organize_email", action, "email", items=items, summary=summary + ".",
                           status=status, undo={"email": changed_all} if changed_all else {},
                           approval_id=approval_id, conversation_id=detail.get("conversation_id"),
-                          extra={"query": detail.get("query") or "", "said": said,
-                                 **_laya_receipt(detail)})
+                          extra=extra)
+
+
+def _current_turn_id():
+    try:
+        from agent_friday.services import turn_plan
+        return turn_plan.current_turn_id()
+    except Exception:
+        return None
 
 
 def _laya_receipt(detail: dict) -> dict:
@@ -2250,6 +2266,17 @@ def card_action_words(card_id: str) -> set:
     return {w for w in words if w}
 
 
+def card_in_conversation(card_id: str, conversation_id) -> bool:
+    """True when the card was raised in ``conversation_id`` (and it names one)."""
+    try:
+        from agent_friday.services import approvals as ap
+        rec = ap.get_approval(str(card_id or "").strip()) or {}
+        mine = str((rec.get("payload") or {}).get("conversation_id") or "").strip()
+        return bool(mine) and mine == str(conversation_id or "").strip()
+    except Exception:
+        return False
+
+
 def unvoiced_card_approval_blocked(card_id: str, owner_words: str, room_mode: bool = False) -> bool:
     """True when the owner's spoken words would APPROVE ``card_id`` (however
     they are worded: "yes, Friday", "yeah sure", "uh, yes") but the card's
@@ -2263,6 +2290,8 @@ def unvoiced_card_approval_blocked(card_id: str, owner_words: str, room_mode: bo
         return True
     if verdict in (None, "deny"):
         return False
+    if is_laya_card(card_id):
+        return True         # a card Laya raised: only a delivered line counts; naming its action is no substitute
     said = set(re.findall(r"[a-z]+", str(owner_words or "").lower()))
     return not (said & card_action_words(card_id))
 

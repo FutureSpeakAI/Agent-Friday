@@ -121,16 +121,29 @@ she will not make a change she could not put back exactly.
 Approve by text on: Laya's cards are not texted to you, and a reply of YES with a
 code is refused (a NO still declines). By voice, the card is read out in a fixed line, and a plain
 "yes" or "no" answers it only if that line was played whole and nothing else was
-asked since; "yes, but only the first one" becomes a changed card. A "yes" that
-names what the card does ("yes, archive them") also answers a waiting card by
-voice even if you did not hear the line, as for every card Friday raises, so say
-no or decline it on screen if you did not mean it.
+asked since; "yes, but only the first one" becomes a changed card. For a card
+Laya raised, nothing else substitutes: a "yes" that names the action ("yes,
+archive them") approves it only if Friday actually read that card's line aloud in
+this conversation, and a line read in another conversation, or cut off, does not
+count. (For the cards a model raises, naming the action still answers an unheard
+card, as before.)
 
 When Friday has put her own numbers on rows, "the second one", and "these" when it
 would mean the row you have open or a different number of rows than she
 numbered, could mean either, so Laya asks you to say it again with a number
 counted from the top of your list, or to tick the rows, instead of guessing. With
 no numbers on screen she counts from the top of your list and the card says so.
+
+## Changes Friday makes without a card (a rule you set)
+
+When a model asks, star, unstar, label (and take a label off), mark read and
+mark unread run at once with no card. That is your rule for changes that are
+instantly undoable and take nothing out of your inbox; archive, move to a label,
+Trash, Spam and restore always raise one card per batch. Each card-free change is
+still recorded: the receipt lists the tool, the action, the count and the message
+ids (never a subject) for that turn, and the change appears under Undo, which puts
+back exactly the labels it changed, message by message. A test pins that list so
+no other change can join it without being noticed.
 
 ## Privacy
 

@@ -134,6 +134,20 @@ def _decisions(turn_id: str) -> List[dict]:
     return out
 
 
+def _card_free_changes(turn_id: str) -> List[dict]:
+    """Mail changes this turn made with no card (the owner's rule for star, unstar, label, mark read and
+    unread): the tool, the action, the count and the message ids, each with its receipt id so the existing
+    Undo finds it. Never a subject or a sender."""
+    from agent_friday.services import action_journal as _aj
+    out = []
+    for r in _aj.recent(200):
+        if r.get("card_free") and r.get("turn_id") == turn_id:
+            out.append({"receipt_id": r.get("receipt_id"), "tool": r.get("tool"), "action": r.get("action"),
+                        "count": r.get("count"), "message_ids": r.get("message_ids") or {},
+                        "status": r.get("status"), "undoable": bool(r.get("undo"))})
+    return out
+
+
 def build(turn_id: str) -> Dict[str, Any]:
     """The receipt for one turn. Never raises; a missing log is an empty list."""
     turn_id = str(turn_id or "")
@@ -168,7 +182,13 @@ def build(turn_id: str) -> Dict[str, Any]:
             receipt["work_orders"] = section
     except Exception:
         pass
+    try:
+        changes = _card_free_changes(turn_id)
+        if changes:
+            receipt["card_free_changes"] = changes
+    except Exception:
+        pass
     receipt["found"] = bool(receipt["plan"] or receipt["sections"] or receipt["models"]
                             or receipt["decisions"] or receipt["egress"]
-                            or receipt.get("work_orders"))
+                            or receipt.get("work_orders") or receipt.get("card_free_changes"))
     return receipt

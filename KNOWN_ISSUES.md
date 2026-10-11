@@ -109,10 +109,9 @@ you hit something that is not here, please open an issue.
   be read when you approve is left unchanged and reported as not changed.
   Undo reverses the labels Friday changed, message by message; a label a Gmail
   filter or you changed in between is not restored. The card names up to three
-  senders per conversation. While the setting is on, the model path still runs
-  star, read and label with no card when a model asks, and a spoken yes that
-  names the card's action approves it even if you did not hear its line.
-  On the page, a Laya card is approved with its Approve button; a typed yes does
+  senders per conversation. A spoken "yes" approves a Laya card only if Friday
+  read that card's line aloud in this conversation (naming the action is no
+  substitute). On the page, a Laya card is approved with its Approve button; a typed yes does
   not approve it.
 
 ## 2a. Open in 1.0.2: local voice calls and the Local AI queue
@@ -140,6 +139,13 @@ you hit something that is not here, please open an issue.
   may refer to a story the script check left out.
 
 ## 3. Deliberate behaviour that can surprise
+
+- **Star, unstar, label, mark read and mark unread run with no card when a model
+  asks.** This is your rule (2026-10), not a defect: they are instantly
+  undoable and take nothing out of the inbox. Each one is recorded in the turn
+  receipt (tool, action, count and message ids, no subject) and can be undone
+  exactly from Undo; a test pins the list. Archive, move, Trash, Spam and restore
+  always raise a card.
 
 - **`local_only` refuses rather than falls back.** With no local model
   serving, a chat turn is refused with an offer to answer in the cloud.

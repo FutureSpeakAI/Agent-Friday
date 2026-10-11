@@ -4199,6 +4199,9 @@ def _tool_answer_card(inp):
         if cid not in voiced and _ia.unvoiced_card_approval_blocked(
                 cid, _CURRENT_OWNER_TEXT.get(), _voice_room()):
             return _ia.UNVOICED_CARD
+        if cid in voiced and _ia.is_laya_card(cid) and not _ia.card_in_conversation(
+                cid, _CURRENT_CONVERSATION.get()):
+            return _ia.UNVOICED_CARD        # a line read in another conversation does not count here
     tok = _ia.QUIET.set(_cloud_voice())
     try:
         res = _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),

@@ -804,7 +804,8 @@ async def _live_card_tool(fname, fargs, send, session, runner=None):
     if fname == "answer_card":
         said = str((session or {}).get("owner_text") or "").strip()
         card = str((fargs or {}).get("card_id") or "")
-        if watch.verified(card):
+        if watch.verified(card) and (not _item_actions.is_laya_card(card)
+                                     or _item_actions.card_in_conversation(card, cid)):
             if session is not None:
                 session["voiced_cards"] = [card]       # the one rule, applied in agent
         elif _item_actions.unvoiced_card_approval_blocked(card, said, _live_room_mode()):
