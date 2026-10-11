@@ -85,18 +85,38 @@ class TestLocalOnly:
             " and these ladders never got the same rule"
         )
 
-    def test_the_primary_leg_survives_even_if_it_is_cloud(self):
-        out = mr._mode_filtered_attempts(CLOUD_LADDER, {"mode": "local_only"})
+    def test_the_primary_leg_survives_when_the_owner_confirmed_the_cloud(self):
+        from agent_friday.services import cloud_intent
+        with cloud_intent.intent_scope("user_explicit", source="route_mode", confirmed=True):
+            out = mr._mode_filtered_attempts(CLOUD_LADDER, {"mode": "local_only"})
         assert _names(out)[0] == "cloud"
+
+    def test_a_cloud_head_with_no_intent_is_dropped(self):
+        out = mr._mode_filtered_attempts(CLOUD_LADDER, {"mode": "local_only"})
+        assert _names(out) == ["local"]
 
 
 class TestPermissiveModes:
-    @pytest.mark.parametrize("mode", ["smart", "local_preferred", "", None])
+    @pytest.mark.parametrize("mode", ["", None])
     def test_the_ladder_is_untouched(self, mode):
         assert _names(mr._mode_filtered_attempts(
             CLOUD_LADDER, {"mode": mode})) == ["cloud", "openai", "local"]
         assert _names(mr._mode_filtered_attempts(
             LOCAL_LADDER, {"mode": mode})) == ["local", "cloud", "openai"]
+
+    @pytest.mark.parametrize("mode", ["smart", "local_preferred"])
+    def test_the_ladder_is_untouched_only_with_a_recorded_intent(self, mode):
+        from agent_friday.services import cloud_intent
+        with cloud_intent.intent_scope("user_explicit", source="chat_seat"):
+            assert _names(mr._mode_filtered_attempts(
+                CLOUD_LADDER, {"mode": mode})) == ["cloud", "openai", "local"]
+            assert _names(mr._mode_filtered_attempts(
+                LOCAL_LADDER, {"mode": mode})) == ["local", "cloud", "openai"]
+
+    @pytest.mark.parametrize("mode", ["smart", "local_preferred"])
+    def test_with_no_intent_the_ladder_has_no_cloud_leg(self, mode):
+        assert _names(mr._mode_filtered_attempts(CLOUD_LADDER, {"mode": mode})) == ["local"]
+        assert _names(mr._mode_filtered_attempts(LOCAL_LADDER, {"mode": mode})) == ["local"]
 
     def test_a_missing_config_is_permissive(self):
         assert len(mr._mode_filtered_attempts(CLOUD_LADDER, None)) == 3
@@ -174,8 +194,15 @@ def test_a_cloud_only_agentic_turn_never_reaches_ollama(agentic):
     )
 
 
-def test_a_permissive_mode_still_falls_back_to_ollama(agentic):
-    """The ladder exists for a reason. Scope it, do not remove it."""
+def test_a_permissive_mode_still_falls_back_to_ollama(agentic, monkeypatch):
+    """The ladder exists for a reason. Scope it, do not remove it. In a local
+    mode the local leg is the ladder: with a local seat available the turn runs
+    there (and never on a cloud leg without an intent)."""
+    from agent_friday.routing.model_router import ModelRouter
+    monkeypatch.setattr(ModelRouter, "_local_candidates",
+                        lambda self: [{"name": "gemma3:4b", "size_gb": 2.5}])
+    monkeypatch.setattr(ModelRouter, "_pick_local_model",
+                        lambda self, models, tt, m, preferred=None: models[0]["name"])
     agent_mod, local = agentic("smart")
     try:
         agent_mod._generate_agent(MSG, system="be brief")

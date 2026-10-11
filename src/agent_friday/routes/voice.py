@@ -2961,6 +2961,14 @@ def _sealed_card_line(result, conversation_id):
     return [str(c["approval_id"]) for c in cards], " ".join(lines)
 
 
+def _voice_cloud_model(settings):
+    """The cloud model a spoken "ask Claude" runs on: the routing setting's cloud
+    default, never an id from the local seat."""
+    from agent_friday.core import ANTHROPIC_MODEL_DEFAULT
+    return ((settings.get("model_routing") or {}).get("default_cloud_model")
+            or ANTHROPIC_MODEL_DEFAULT)
+
+
 def _pending_voice_card(spoken_ids, conversation_id):
     """The card a bare spoken yes or no may answer, or None.
 
@@ -4128,7 +4136,7 @@ if sock is not None:
                 finally:
                     _vol["text"] = None        # the next utterance gets a fresh clock
 
-            def _generate(user_text, on_delta, cancel):
+            def _generate_turn(user_text, on_delta, cancel, cloud_once=False):
                 # A spoken turn is the owner in conversation: cards that are
                 # not decisions wait until it ends (notification_policy).
                 from agent_friday.services import notification_policy as _pol_v
@@ -4143,10 +4151,22 @@ if sock is not None:
                 _ctok = TURN_CANCEL.set(cancel)
                 # A local voice turn is Friday's own: her presence label.
                 from agent_friday.services import presence as _presence
-                if _front:
+                if _front and not cloud_once:
                     try:
                         with _presence.acting_as(_presence.FRIDAY):
                             return _front_turn(user_text, on_delta)
+                    except Exception as _fe:
+                        # The local front seat failed: say so as a typed local
+                        # failure, which the caller speaks as an offer.
+                        if cancel.is_set():
+                            raise
+                        from agent_friday.services.cloud_intent import LocalUnavailable as _LU
+                        if isinstance(_fe, _LU):
+                            raise
+                        raise _LU(str(_fe)[:200], purpose="voice",
+                                  model=str(_front.get("model") or ""),
+                                  mode=str((settings.get("model_routing") or {}).get("mode") or ""),
+                                  cause=_fe) from _fe
                     finally:
                         TURN_CANCEL.reset(_ctok)
                         TIMINGS_SINK.reset(_tok)
@@ -4170,7 +4190,9 @@ if sock is not None:
                             _local_voice_messages(_tool_session.get("conversation_id"),
                                                   user_text, settings),
                             system=system_prompt,
-                            model=_brain,
+                            model=(None if cloud_once else _brain),
+                            conversation_seat=(
+                                {"model": _voice_cloud_model(settings)} if cloud_once else None),
                             max_tokens=_voice_reply_cap(settings, user_text),
                             temperature=settings.get("temperature"),
                             # The owner's own words for this turn, and that they were
@@ -4185,7 +4207,7 @@ if sock is not None:
                                          "owner_text": str(user_text or "")[:4000],
                                          # The local mind or an honest failure,
                                          # never a cloud leg answering for it.
-                                         "pin_to_seat": True,
+                                         "pin_to_seat": not cloud_once,
                                          "turn_shape": _turn_shape},
                             workspace=settings.get("active_workspace") or "",
                             on_text_delta=on_delta,
@@ -4194,6 +4216,36 @@ if sock is not None:
                     TURN_CANCEL.reset(_ctok)
                     TIMINGS_SINK.reset(_tok)
                 return reply
+
+            def _generate(user_text, on_delta, cancel):
+                # A local failure is an OFFER, spoken, never a cloud call. A bare
+                # yes answers it only under the voice card rules: this call's
+                # offer, voiced in the previous turn, exactly one pending
+                # (services/local_offer, the twin of _pending_voice_card).
+                from agent_friday.services import cloud_intent as _ci
+                from agent_friday.services import local_offer as _lo
+                _cid = _tool_session.get("conversation_id")
+                _spoken = _tool_session.pop("spoken_offers", None) or []
+                _choice, _orig = _lo.take_reply(_cid, user_text, _spoken)
+                if _choice == "decline":
+                    return "Okay. I'll leave it."
+                if _choice in ("retry_local", "send_claude") and _orig:
+                    user_text = _orig
+                with _ci.owner_turn():
+                    try:
+                        if _choice == "send_claude":
+                            with _ci.intent_scope("user_explicit", source="voice_offer",
+                                                  confirmed=True):
+                                return _generate_turn(user_text, on_delta, cancel,
+                                                      cloud_once=True)
+                        return _generate_turn(user_text, on_delta, cancel)
+                    except _ci.LocalUnavailable as _lu:
+                        if cancel.is_set():
+                            raise
+                        offer = _lo.build(_lu, model=_lu.model, mode=_lu.mode)
+                        _lo.remember(_cid, offer, user_text)
+                        _tool_session["spoken_offers"] = [offer["id"]]
+                        return offer["spoken"]
 
             def _receipt():
                 try:
@@ -4939,6 +4991,8 @@ if sock is not None:
             _clients = {}
             def _client_for(api_version):
                 if api_version not in _clients:
+                    from agent_friday.services import cloud_intent as _voice_ci
+                    _voice_ci.record_owner_engine("google-gemini", "Gemini Live voice call")
                     if api_version:
                         _clients[api_version] = genai.Client(
                             api_key=core.GEMINI_API_KEY, http_options={"api_version": api_version})  # pragma: allowlist secret

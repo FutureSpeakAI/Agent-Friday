@@ -173,23 +173,33 @@ class TestLocalOnlyRoutesOrdinaryInteractiveChatLocally:
                 "background/scheduled work"
             )
 
-    def test_local_preferred_and_smart_still_fall_back_to_cloud_with_no_local_seat(
+    def test_local_preferred_and_smart_offer_instead_of_going_to_the_cloud_with_no_local_seat(
             self, monkeypatch):
-        """No-op-shaped sanity check: unlike local_only (an absolute
-        promise, refuse-then-offer when unmet), local_preferred/smart's
-        own names promise "cloud ONLY AS FALLBACK" -- when no local seat
-        exists at all, cloud remains the correct, silent fallback for
-        these two modes. This distinction is deliberate, not an
-        oversight."""
+        """Routing-modes addendum 2.1: the local modes call the cloud only with a
+        recorded intent. With no local seat at all the router refuses WITH an
+        offer (try again locally / a shorter version / send it to Claude); it does
+        not route to the cloud by itself, and the offer is the same one the chat
+        route renders."""
         _patch_no_friday_seats(monkeypatch)
         _patch_ollama(monkeypatch, available=False)
         for mode in ("local_preferred", "smart"):
             r = ModelRouter(config={"mode": mode})
             result = r.route(_msgs("what should I have for dinner tonight?"),
                              task_context={"has_tools": True})
-            assert result["provider"] == "cloud", (
-                f"mode={mode} with no local seat available should still "
-                "fall back to cloud, matching its own 'cloud only as "
-                "fallback' promise -- only local_only refuses outright"
-            )
-            assert result["refuse"] is False
+            assert result["provider"] != "cloud", (
+                f"mode={mode} with no local seat routed to the cloud with no "
+                "recorded intent")
+            assert result["refuse"] is True and result["local_unavailable"] is True
+            assert result["warning"], "an offer needs words"
+
+    def test_local_preferred_reaches_the_cloud_when_the_owner_asked_for_it(
+            self, monkeypatch):
+        from agent_friday.services import cloud_intent
+        _patch_no_friday_seats(monkeypatch)
+        _patch_ollama(monkeypatch, available=False)
+        r = ModelRouter(config={"mode": "local_preferred"})
+        with cloud_intent.intent_scope("user_explicit", source="route_mode"):
+            result = r.route(_msgs("what should I have for dinner tonight?"),
+                             task_context={"has_tools": True})
+        assert result["provider"] == "cloud"
+        assert result["refuse"] is False

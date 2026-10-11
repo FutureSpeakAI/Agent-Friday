@@ -89,6 +89,12 @@ def _endpoints_file() -> dict:
         return {}
 
 
+def published_models() -> list:
+    """Model ids the Arbiter's endpoints file lists. A hint: confirm each one
+    with `seat_endpoint`, which asks the server."""
+    return list(_endpoints_file())
+
+
 def seat_endpoint(model: str) -> str | None:
     """A seat the Arbiter runs as an owned process is NOT in the daemon.
 

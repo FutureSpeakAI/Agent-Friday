@@ -106,11 +106,11 @@ A capability that is not in the defaults is removed on the next save.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mode` | `"cloud_only"` | `cloud_only`, `smart`, `local_preferred` or `local_only`. First-run setup asks. In `local_only`, a turn with no local model running is refused with an offer to answer it in the cloud. |
+| `mode` | `"cloud_only"` | `cloud_only`, `local_preferred` or `local_only`. First-run setup asks. `smart`, an older fourth mode, was the same as `local_preferred`; a settings file that still says `smart` is renamed to `local_preferred` the first time it is read. In both local modes the cloud is reached only when you ask for it: background tasks use the local model unless a task or a scheduled job is pinned to a cloud model, and a turn the local model cannot take is refused with an offer to answer it in the cloud, never sent on its own. In `local_only`, asking for the cloud for one turn needs a confirm that names the mode. |
 | `default_cloud_model` | `"claude-sonnet-5"` | The router's default cloud model. |
 | `local_model` | `"gemma4:e2b"` | The default local model. |
 | `ollama_url` | `"http://localhost:11434"` | Ollama endpoint. |
-| `fallback_to_cloud` | `true` | Use the cloud when no local model is available. |
+| `fallback_to_cloud` | `true` | When no local model can take a turn in a local mode, offer to answer that turn in the cloud. `false` makes no offer. It never sends anything by itself. |
 | `task_overrides` | `{}` | Per-task routing: keys `simple`, `tool_use`, `code`, `research`, `voice`, `vault_access`; values `{"provider": "local"\|"cloud", "model"}`. |
 | `vault_local_only` | `true` | Private and sensitive vault content goes only to local models. |
 | `vault_cloud_fallback` | `"redact"` | When a vault request cannot run locally: `redact` (the cloud gets a placeholder), `deny`, or `warn` (refuse and say why). |
@@ -140,7 +140,6 @@ A capability that is not in the defaults is removed on the next save.
 | `include_sources` | `true` | Ask the model to include sources. |
 | `cite_sources` | `false` | Inline citation on every factual claim. |
 | `news_priorities` | `["AI/Tech", "Politics", "Media", "Local", "Business"]` | News topics Friday prioritises in conversation. Does not control the news feeds. |
-| `news_local_only` | `true` | The News routines (front pages and briefings) run on a model on this PC and wait for it. They never use a cloud model. |
 | `news_edition_window_hours` | front page 36, briefing 36 | How many hours a story stays eligible for each routine's edition. |
 | `notification_mutes` | `[]` | Notification kinds you muted, as `kind\|source`. Muted notifications go to the activity log. Approvals can never be muted. |
 | `news_local_area` | `""` | The place the Local news beat covers, as free text (a city or region). Friday searches Google News for it. Set it in News → Customize Briefing → Local beat. |

@@ -346,7 +346,7 @@ Re-read the stored key from the credential store (or env) and reinitialize the p
 Force model discovery for one provider immediately (the ⟳ Refresh list button).
 
 ### `GET /api/providers/health`
-Per-provider reachability/auth status. Shallow by default (offline-safe); pass `?deep=1` for a light endpoint probe.
+Per-provider reachability/auth status. Shallow by default (offline-safe); pass `?deep=1` to ask for the real check, which is an explicit request: it runs one small generation per paid provider and the answer is kept for 15 minutes. `GET /api/health` never generates on a paid provider; it reports a key check (a model list, nothing generated) in a cloud mode and only that a key is present in a local mode.
 
 ### `GET /api/providers/templates`
 Provider templates for the Add Provider form.

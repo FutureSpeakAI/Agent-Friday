@@ -26,6 +26,7 @@ _tls = threading.local()
 def reset():
     _tls.generation = None
     _tls.chain = []
+    _tls.cloud_intents = []
 
 
 def note_fallback(step: str):
@@ -47,6 +48,24 @@ def record_generation(model, provider=None, seat=None):
                        turn=_presence.current_turn())
     except Exception:
         pass
+
+
+def note_cloud_intent(token: dict):
+    """A cloud call went out under this intent (services/cloud_intent.require).
+
+    The chat routes put the last one on the turn's receipt, so who answered and
+    why the cloud was allowed are both on the page.
+    """
+    rows = getattr(_tls, "cloud_intents", None)
+    if rows is None:
+        rows = []
+        _tls.cloud_intents = rows
+    rows.append(dict(token))
+    del rows[:-20]
+
+
+def cloud_intents():
+    return list(getattr(_tls, "cloud_intents", []) or [])
 
 
 def last_generation():

@@ -812,7 +812,8 @@ def _health_payload():
     # failure: a revoked key, a stopped Ollama daemon or an out-of-credit
     # account all read as healthy. It is now derived from a real one-token
     # generation (cached ~60s inside provider_health, because the tray
-    # watchdog polls this endpoint).
+    # watchdog polls this endpoint). Only a local seat or an owner-requested
+    # probe generates; a paid provider's light shows a key check by default.
     #
     # The HTTP status stays 200 even when status == "down": the tray treats a
     # non-2xx as "server is dead" and would restart a server that is in fact
@@ -821,6 +822,10 @@ def _health_payload():
     _inference = {"status": "unknown", "providers": []}
     try:
         from agent_friday.services.provider_health import inference_health
+        # Computed off the request thread and polled by the tray: paid
+        # providers get a free key check here. The real probe belongs to the
+        # Providers panel (/api/providers/health?deep=1), which is the owner
+        # asking.
         _inference = inference_health()
     except Exception as _e:
         _inference = {"status": "unknown", "providers": [],
@@ -1961,10 +1966,13 @@ ANALYZE_TEXT_EXT = ('txt', 'md', 'py', 'js', 'html', 'css', 'json', 'ts',
 
 def _analyze_mode() -> str:
     try:
-        return str(((_load_settings() or {}).get('model_routing') or {})
-                   .get('mode') or 'smart').lower()
+        from agent_friday.services.cloud_mode_policy import normalize_mode
+        return normalize_mode(((_load_settings() or {}).get('model_routing') or {})
+                              .get('mode'))
     except Exception:
-        return 'smart'
+        # Fails closed, like routing_mode(): the cloud is reached only on an
+        # affirmative read.
+        return 'local_only'
 
 
 def _analyze_record(provider, action, reason, nbytes):
@@ -2051,6 +2059,8 @@ def analyze_file():
             # A workspace job's card names the model about to read the file.
             from agent_friday.services import visible_jobs as _vj
             _vj.note_inference('gemini-2.5-flash', local=False)
+            from agent_friday.services import cloud_intent as _cloud_intent
+            _cloud_intent.require("google-gemini", "analyze_file", "gemini-2.5-flash")
             if not _client_box:
                 _client_box.append(
                     genai.Client(api_key=core.GEMINI_API_KEY))  # pragma: allowlist secret

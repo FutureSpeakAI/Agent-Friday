@@ -2182,7 +2182,6 @@ DEFAULT_SETTINGS = {
     # feeds and trusted like the built-in high-trust outlets
     # (source_trust_graph.local_beat_sources). Both empty means no Local beat.
     # The four News routines write on the local model (news_engine.local_news_run).
-    "news_local_only": True,
     # Notification kinds the owner muted ("kind|source"); muted kinds go to the
     # activity log. Approvals can never be muted (notification_policy).
     "notification_mutes": [],
@@ -3239,6 +3238,41 @@ def _sync_capability_routing(settings, changed=None):
             pass
 
 
+_SMART_MIGRATION_TRIED = [False]
+
+
+def _migrate_smart_routing_mode(settings: dict) -> bool:
+    """`smart` was local_preferred under another name; read it as such.
+
+    Changes `settings` in place and returns True when it found the old value.
+    The router, the media tools, chat vision and the setup reader all treat
+    `smart` as `local_preferred` now, so the stored value is renamed once and
+    every later read sees the current mode.
+    """
+    mr = settings.get("model_routing")
+    if isinstance(mr, dict) and str(mr.get("mode") or "").lower() == "smart":
+        settings["model_routing"] = dict(mr, mode="local_preferred")
+        return True
+    return False
+
+
+def _persist_smart_routing_migration():
+    """Write the one-time `smart` -> `local_preferred` rename to settings.json.
+
+    Tried once per process. The rename keeps the behaviour the owner already
+    had, so it passes as the owner's own routing change; a failed write is
+    harmless because every read normalises the old value anyway.
+    """
+    if _SMART_MIGRATION_TRIED[0]:
+        return
+    _SMART_MIGRATION_TRIED[0] = True
+    try:
+        _save_settings({"model_routing": {"mode": "local_preferred"}},
+                       owner_routing_change=True)
+    except Exception:
+        pass
+
+
 def _load_settings_raw():
     """Load agent settings exactly as persisted (no offline overlay).
 
@@ -3294,11 +3328,14 @@ def _load_settings_raw():
         # Fill in any missing keys with defaults
         merged = dict(DEFAULT_SETTINGS)
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+        _smart_found = _migrate_smart_routing_mode(merged)
         _sync_capability_routing(merged)
         with _SETTINGS_CACHE_LOCK:
             if _SETTINGS_CACHE_GEN[0] == _gen:
                 _SETTINGS_CACHE["value"] = merged
                 _SETTINGS_CACHE["ts"] = _time.time()
+        if _smart_found:
+            _persist_smart_routing_migration()
         return merged
     except Exception as e:
         # NEVER SILENT AGAIN. Reverting to defaults is a defensible last

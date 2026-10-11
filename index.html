@@ -15605,6 +15605,18 @@ function ChatSurface(props) {
     voiceStatus
   } = props;
   const trayMenu = useSnapMenuOpener();
+  /* A local failure is an offer, never a cloud call: the three choices re-send
+     the owner's own message. Nothing is sent until one is clicked, nothing is
+     preselected, and the card is single-use. */
+  const chooseLocalFallback = (msg, id) => {
+    const src = msg.source_text || '';
+    if (!src) return;
+    setChatMsgs(p => p.map(x => x === msg ? { ...x, local_fallback: null } : x));
+    if (id === 'send_claude') sendChat(src, { skipForecast: true, alreadyShown: true, routeMode: 'cloud', confirmLocalOnly: true });
+    else if (msg.local_fallback && msg.local_fallback.kind === 'local_only_confirm') return;
+    else if (id === 'shorter') sendChat(src + '\n\n(Keep the answer short.)', { skipForecast: true, alreadyShown: true });
+    else sendChat(src, { skipForecast: true, alreadyShown: true });
+  };
   const newChatRequest = React.useRef(null);
   const newChatOwner = React.useRef({alive:true, id:convId, revision:0});
   const [newChatState, setNewChatState] = React.useState({pending:false, error:'', revision:0});
@@ -15981,7 +15993,24 @@ function ChatSurface(props) {
       text: '⚙ Could not switch modes — try Settings → Models directly.',
       time: new Date().toLocaleTimeString()
     }]))
-  }, "Switch to Cloud-Only Mode")), /*#__PURE__*/React.createElement("div", {
+  }, "Switch to Cloud-Only Mode"), m.role === 'friday' && m.local_fallback && m.local_fallback.offer && /*#__PURE__*/React.createElement("div", {
+    role: "group",
+    "aria-label": "What next",
+    style: {
+      marginTop: 6,
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, (m.local_fallback.choices || []).map(c => /*#__PURE__*/React.createElement("button", {
+    key: c.id,
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    title: c.recommended ? 'Recommended' : undefined,
+    onClick: () => chooseLocalFallback(m, c.id)
+  }, c.label, c.recommended ? ' (recommended)' : '')))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#888',
@@ -16938,6 +16967,7 @@ function ConversationWindow({
       turn_id: 'turn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
     };
     if (opts.routeMode) body.route_mode = opts.routeMode;
+    if (opts.confirmCloudOnce) body.confirm_cloud_once = true;
     if (opts.privacyOverride) body.privacy_layer3_override = true;
     setMsgs(p => [...p, { role: 'friday', text: '', streaming: true, time: stamp() }]);
     try {
@@ -52061,7 +52091,7 @@ function PrivacyHoldCard({
         e.preventDefault();
         onCancel && onCancel();
       }
-      if (e.key === 'Enter' && !waiting) {
+      if (e.key === 'Enter' && !waiting && ((hold && hold.options) || []).some(o => o.id === 'wait')) {
         e.preventDefault();
         setWaiting(true);
       }
@@ -52112,13 +52142,13 @@ function PrivacyHoldCard({
       fontSize: 12,
       color: '#f59e0b'
     }
-  }, "Held for privacy"), /*#__PURE__*/React.createElement("span", {
+  }, hold && hold.title || "Held for privacy"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 9,
       color: 'rgba(255,255,255,0.35)',
       fontFamily: 'JetBrains Mono'
     }
-  }, "full check starting")), /*#__PURE__*/React.createElement("div", {
+  }, hold && hold.badge || "full check starting")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'rgba(255,255,255,0.72)',
@@ -52176,7 +52206,7 @@ function PrivacyHoldCard({
       color: '#f59e0b',
       marginTop: 8
     }
-  }, waiting ? '⏳ Waiting for the full privacy check — it sends by itself when ready.' : '⏸ Nothing has been sent yet.'), /*#__PURE__*/React.createElement("button", {
+  }, waiting ? '⏳ Waiting for the full privacy check — it sends by itself when ready.' : '⏸ ' + (hold && hold.status || 'Nothing has been sent yet.')), /*#__PURE__*/React.createElement("button", {
     onClick: onCancel,
     style: {
       marginTop: 7,
@@ -57183,7 +57213,7 @@ function LayaPilotPanel({s, save}) {
     return () => { if (pending.current) pending.current.abort(); };
   }, [load, s.laya_pilot_enabled, s.off_record]);
   const groups = (st && st.groups) || [];
-  const modeName = value => ({local_only:'Local only',local_preferred:'Local preferred',cloud_only:'Cloud only',smart:'Smart'})[value] || 'Other';
+  const modeName = value => ({local_only:'Local only',local_preferred:'Local preferred',cloud_only:'Cloud only',smart:'Local preferred'})[value] || 'Other';
   const seconds = value => typeof value === 'number' ? (value / 1000).toFixed(1) + 's' : '—';
   const cell = {padding:'5px 8px',textAlign:'left',borderBottom:'1px solid rgba(255,255,255,0.07)',whiteSpace:'nowrap'};
   const enabled = !!s.laya_pilot_enabled;
@@ -67438,6 +67468,7 @@ function App() {
         turn_id: inFlightTurn.current
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
+      if (opts.confirmLocalOnly) body.confirm_local_only = true;
       if (opts.privacyOverride) body.privacy_layer3_override = true;
       if (focusWin) body.workspace = focusWin;
       const frame = cameraOn ? cameraFrameRef.current?.primary : null;
@@ -67523,6 +67554,10 @@ function App() {
         // choice to switch instead of a dead-end error: fail, then ask the
         // user whether it may go into cloud-only mode.
         offer_cloud_switch: !!d.offer_cloud_switch,
+        // The local model could not finish: the offer (try again locally / a
+        // shorter version / send to Claude), and the words it re-sends.
+        local_fallback: d.local_fallback || null,
+        source_text: m,
         time: new Date().toLocaleTimeString()
       }]);
       // Execute any structured actions Friday returned (navigate, open_path…).

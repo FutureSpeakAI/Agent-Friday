@@ -438,8 +438,15 @@ def _bump_attempts(task_id) -> None:
 
 
 def resume(task_id, *, confirm_pending: bool = False,
-           session_ctx: Optional[dict] = None) -> Tuple[Optional[str], list]:
+           session_ctx: Optional[dict] = None,
+           allow_cloud: bool = False) -> Tuple[Optional[str], list]:
     """Re-enter the agent loop from the checkpoint.
+
+    A transcript checkpoint resumes on the loop that wrote it, which is a cloud
+    one. In a local routing mode that needs the owner's say (`allow_cloud`,
+    honoured under Local preferred only) or a scheduled_cloud pin; without
+    either, a task with a ledger continues from the ledger on the local seat
+    and any other is refused with an offer. Nothing is sent on its own.
 
     Raises ``ResumeRefused`` when the checkpoint says no - including when a
     non-replay-safe tool was in flight and ``confirm_pending`` was not passed.
@@ -461,6 +468,20 @@ def resume(task_id, *, confirm_pending: bool = False,
         return _resume_from_ledger(task_id, verdict)
 
     blob = read(task_id) or {}
+    from agent_friday.services import cloud_mode_policy as _cmp
+    _pinned = bool((session_ctx or {}).get("cloud_pin")
+                   or (blob.get("run_context") or {}).get("cloud_pin"))
+    if not (_pinned or _cmp.cloud_allowed("task resume", explicit=allow_cloud)):
+        ledger_verdict = _ledger_resumability(task_id, int(verdict.get("attempts") or 0))
+        if ledger_verdict.get("resumable"):
+            return _resume_from_ledger(task_id, ledger_verdict)
+        mode = _cmp.current_mode().replace("_", " ")
+        raise ResumeRefused(
+            "This task was running on a cloud model, and you are in %s mode, "
+            "so I will not send it back there on my own. Tell me to resume it "
+            "in the cloud and I will%s, or start it again locally."
+            % (mode, "" if _cmp.current_mode() == "local_preferred"
+               else " (Local only has to be switched off first)"))
     # A resume is a new request under the system prompt and tool set of the
     # resumed run, not the ones the saved thinking was produced against, so
     # the saved turns are replayed without their thinking blocks.

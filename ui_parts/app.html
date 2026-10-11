@@ -2104,7 +2104,7 @@ function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
   useEffect(()=>{
     const h=e=>{
       if(e.key==='Escape'){e.preventDefault();onCancel&&onCancel();}
-      if(e.key==='Enter'&&!waiting){e.preventDefault();setWaiting(true);}
+      if(e.key==='Enter'&&!waiting&&((hold&&hold.options)||[]).some(o=>o.id==='wait')){e.preventDefault();setWaiting(true);}
     };
     document.addEventListener('keydown',h);
     return()=>document.removeEventListener('keydown',h);
@@ -2124,8 +2124,8 @@ function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
   return <div style={{margin:'10px 0',border:'1px solid #f59e0b55',borderRadius:9,padding:12,background:'#111726'}}>
     <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
       <span style={{fontSize:13}}>{'\u{1F6E1}'}</span>
-      <span style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#f59e0b'}}>Held for privacy</span>
-      <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>full check starting</span>
+      <span style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#f59e0b'}}>{(hold&&hold.title)||'Held for privacy'}</span>
+      <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>{(hold&&hold.badge)||'full check starting'}</span>
     </div>
     <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',lineHeight:1.5,marginBottom:4}}>{hold&&hold.text}</div>
     {msg&&<div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontStyle:'italic',margin:'6px 0'}}>Holding: {'“'}{msg.slice(0,90)}{msg.length>90?'…':''}{'”'}</div>}
@@ -2145,7 +2145,7 @@ function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
       })}
     </div>
     <div style={{fontSize:10,fontFamily:'JetBrains Mono',color:'#f59e0b',marginTop:8}}>
-      {waiting?'⏳ Waiting for the full privacy check — it sends by itself when ready.':'⏸ Nothing has been sent yet.'}
+      {waiting?'⏳ Waiting for the full privacy check — it sends by itself when ready.':'⏸ '+((hold&&hold.status)||'Nothing has been sent yet.')}
     </div>
     <button onClick={onCancel} style={{marginTop:7,background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:10}}>put it back in the box</button>
   </div>;
@@ -2162,6 +2162,18 @@ function FridayChatShell(props){
 }
 function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySide,trayFrac,onTrayPlace,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
   const trayMenu=useSnapMenuOpener();
+  /* A local failure is an offer, never a cloud call: the three choices re-send
+     the owner's own message. Nothing is sent until one is clicked, nothing is
+     preselected, and the card is single-use. */
+  const chooseLocalFallback=(msg,id)=>{
+    const src=msg.source_text||'';
+    if(!src)return;
+    setChatMsgs(p=>p.map(x=>x===msg?{...x,local_fallback:null}:x));
+    if(id==='send_claude')sendChat(src,{skipForecast:true,alreadyShown:true,routeMode:'cloud',confirmLocalOnly:true});
+    else if(msg.local_fallback&&msg.local_fallback.kind==='local_only_confirm')return;
+    else if(id==='shorter')sendChat(src+'\n\n(Keep the answer short.)',{skipForecast:true,alreadyShown:true});
+    else sendChat(src,{skipForecast:true,alreadyShown:true});
+  };
   const newChatRequest = React.useRef(null);
   const newChatOwner = React.useRef({alive:true, id:convId, revision:0});
   const [newChatState, setNewChatState] = React.useState({pending:false, error:'', revision:0});
@@ -2268,6 +2280,11 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
              to switch instead of a dead end. */}
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
             onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner_action:'routing_mode',settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
+          {/* The local model could not finish: an offer, nothing preselected. */}
+          {m.role==='friday'&&m.local_fallback&&m.local_fallback.offer&&<div role="group" aria-label="What next" style={{marginTop:6,display:'flex',gap:6,flexWrap:'wrap'}}>
+            {(m.local_fallback.choices||[]).map(c=><button key={c.id} className="btn" style={{fontSize:10}} title={c.recommended?'Recommended':undefined}
+              onClick={()=>chooseLocalFallback(m,c.id)}>{c.label}{c.recommended?' (recommended)':''}</button>)}
+          </div>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {['crew_result','crew_speech','crew_dialogue'].includes(m.meta?.kind)&&window.FridayCrewByline?React.createElement(window.FridayCrewByline,{meta:m.meta}):(m.role==='user'?'You':fridayName())} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
@@ -19061,7 +19078,7 @@ function LayaPilotPanel({s, save}) {
     return () => { if (pending.current) pending.current.abort(); };
   }, [load, s.laya_pilot_enabled, s.off_record]);
   const groups = (st && st.groups) || [];
-  const modeName = value => ({local_only:'Local only',local_preferred:'Local preferred',cloud_only:'Cloud only',smart:'Smart'})[value] || 'Other';
+  const modeName = value => ({local_only:'Local only',local_preferred:'Local preferred',cloud_only:'Cloud only',smart:'Local preferred'})[value] || 'Other';
   const seconds = value => typeof value === 'number' ? (value / 1000).toFixed(1) + 's' : '—';
   const cell = {padding:'5px 8px',textAlign:'left',borderBottom:'1px solid rgba(255,255,255,0.07)',whiteSpace:'nowrap'};
   const enabled = !!s.laya_pilot_enabled;
@@ -24026,7 +24043,7 @@ function App(){
   // ── Ollama / Model Routing state ──
   const[ollamaStatus,setOllamaStatus]=useState({available:false,models:[],model_count:0});
   const[routingStats,setRoutingStats]=useState({local_requests:0,cloud_requests:0,estimated_savings:0,mode:'cloud_only'});
-  const routingMode=(agentSettings.model_routing||{}).mode||'cloud_only';
+  const routingMode=(agentSettings.model_routing||{}).mode==='smart'?'local_preferred':((agentSettings.model_routing||{}).mode||'cloud_only');
   useEffect(()=>{
     const poll=()=>{
       fetch('/api/ollama/status').then(r=>r.json()).then(setOllamaStatus).catch(()=>{});
@@ -25841,6 +25858,7 @@ function App(){
     try{
       const body={message:m,conversation_id:turnConversation||undefined,voice_mode:voiceOn,cite_sources:!!agentSettings.cite_sources};
       if(opts.routeMode)body.route_mode=opts.routeMode;
+      if(opts.confirmLocalOnly)body.confirm_local_only=true;
       if(opts.privacyOverride)body.privacy_layer3_override=true;
       if(focusWin)body.workspace=focusWin;
       const frame=cameraOn?cameraFrameRef.current?.primary:null;
@@ -25856,7 +25874,7 @@ function App(){
         setTurnPause({kind:'privacy_hold',message:m,hold:d.privacy_hold});if(!d.response)return;}
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
-      setTurnMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,time:new Date().toLocaleTimeString()}]);
+      setTurnMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,local_fallback:d.local_fallback||null,source_text:m,time:new Date().toLocaleTimeString()}]);
       // Execute any structured actions Friday returned (navigate, open_path…).
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);
@@ -26382,9 +26400,9 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
               const capr=((agentSettings.capability_routing||{}).reasoning)||{};
               const seatProv=routingMode==='local_only'?'ollama-local':(capr.provider||'anthropic');
               const h=seatHealth[seatProv];
-              const st=h?(h.proved_inference?'live':'down'):'unknown';
-              const col=st==='live'?'#00ff80':st==='down'?'#ff4d6d':'#f59e0b';
-              const lbl=st==='live'?'live — proved a real generation':st==='down'?'DOWN or still loading — replies are falling back to another seat':'not probed yet';
+              const st=h?(h.proved_inference?'live':(h.status==='ok'?'keyed':'down')):'unknown';
+              const col=st==='live'?'#00ff80':st==='keyed'?'#7dd3a8':st==='down'?'#ff4d6d':'#f59e0b';
+              const lbl=st==='live'?'live — proved a real generation':st==='keyed'?'key accepted — Friday does not spend tokens to test the model; run the check in Settings > Providers to prove it':st==='down'?'DOWN or still loading — replies are falling back to another seat':'not probed yet';
               return <span aria-label={'Seat health: '+st} title={'Seat provider '+seatProv+': '+lbl+(h&&h.detail?' · '+String(h.detail).slice(0,120):'')}
                 style={{display:'inline-block',width:7,height:7,borderRadius:4,background:col,boxShadow:st==='live'?'0 0 6px '+col:'none',flexShrink:0}}/>;
             })()}
@@ -26535,7 +26553,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
             {/* ── 3 · Routing Mode ── */}
             <div className="model-selector-tier" style={{borderTop:'1px solid rgba(255,255,255,0.06)',marginTop:4,paddingTop:8}}>Routing Mode</div>
             <div style={{padding:'2px 12px 6px',display:'flex',gap:4}}>
-              {[{id:'cloud_only',label:'Cloud Only'},{id:'smart',label:'Smart'},{id:'local_preferred',label:'Local Pref.'},{id:'local_only',label:'Local Only'}].map(rm=>(
+              {[{id:'cloud_only',label:'Cloud Only'},{id:'local_preferred',label:'Local Pref.'},{id:'local_only',label:'Local Only'}].map(rm=>(
                 <button key={rm.id} onClick={()=>setRoutingMode(rm.id)} title={rm.id==='local_preferred'?'Local Preferred':rm.label}
                   style={{background:routingMode===rm.id?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(routingMode===rm.id?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.1)'),borderRadius:5,padding:'3px 6px',cursor:'pointer',color:routingMode===rm.id?'#00d4ff':'rgba(255,255,255,0.65)',fontSize:9,fontFamily:'JetBrains Mono',transition:'all .15s',flex:1,whiteSpace:'nowrap'}}>
                   {rm.label}
@@ -26549,8 +26567,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
             {(()=>{
               const MODE_MEANING={
                 cloud_only:'All conversation goes to the cloud orchestrator seat.',
-                smart:'The router picks the seat per turn — vault-touching turns go local when Vault Local-Only is on.',
-                local_preferred:'Local seat answers first; cloud orchestrator only as fallback.',
+                local_preferred:'Local seat answers first. Friday asks before anything goes to the cloud.',
                 local_only:'ALL conversation goes to the local seat. The cloud orchestrator is NOT consulted.'};
               const localM=(agentSettings.model_routing||{}).local_model||'gemma4:latest';
               // #7: a local-classification provider (llama.cpp brain at

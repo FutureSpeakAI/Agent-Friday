@@ -33,7 +33,7 @@ _LOCK = threading.Lock()
 _NEXT = 0
 _ROWS = deque(maxlen=MAX_RECORDS)
 _COUNTERS = ("model_rounds", "loader_calls", "tool_calls", "added_tools", "context_blocks")
-_MODES = {"local_only", "local_preferred", "cloud_only", "smart"}
+_MODES = {"local_only", "local_preferred", "cloud_only"}
 
 
 def _settings():
@@ -178,6 +178,7 @@ def start(message, settings=None):
         if not text:
             return None
         mode = (cfg.get("model_routing") or {}).get("mode")
+        mode = "local_preferred" if mode == "smart" else mode
         mode = mode if mode in _MODES else "unknown"
         with _LOCK:
             arm = "control" if _NEXT % 2 == 0 else "assisted"

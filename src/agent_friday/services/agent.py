@@ -152,6 +152,9 @@ def _pilot_outcome(session_ctx, outcome):
 
 
 
+from agent_friday.services import cloud_intent as _cloud_intent
+
+
 def _generate_crew_agent(messages, *, system, max_tokens, temperature,
                          session_ctx, pii_lookup, orb_label, orb_category,
                          orb_icon, tools, on_route):
@@ -189,17 +192,21 @@ def _generate_crew_agent(messages, *, system, max_tokens, temperature,
                   "reason": "Crew agent's explicit binding"})
     if session_ctx.get("crew_chat_only"):
         _crew_model_checkpoint(messages, session_ctx)
-    if adapter == "anthropic":
-        if provider != "anthropic":
-            raise RuntimeError("Crew's native Anthropic adapter requires the Anthropic provider binding.")
-        return _call_claude_agent(messages, system=system, model=model,
-            max_tokens=max_tokens, temperature=temperature, pii_lookup=pii_lookup,
-            session_ctx=session_ctx, orb_label=orb_label, orb_category=orb_category,
-            orb_icon=orb_icon, workspace="crew", tools=schemas)
-    return _call_openai(messages, system=system, model=model, max_tokens=max_tokens,
-        temperature=temperature, pii_lookup=pii_lookup, session_ctx=session_ctx,
-        orb_label=orb_label, orb_icon=orb_icon, tools=schemas, provider=provider,
-        fallback_models=None)
+    # The owner bound this Crew agent to this cloud model (local_only refused
+    # above); that binding is the recorded intent for this one dispatch.
+    with _cloud_intent.intent_scope("user_explicit", source="crew_binding",
+                                    confirmed=True):
+        if adapter == "anthropic":
+            if provider != "anthropic":
+                raise RuntimeError("Crew's native Anthropic adapter requires the Anthropic provider binding.")
+            return _call_claude_agent(messages, system=system, model=model,
+                max_tokens=max_tokens, temperature=temperature, pii_lookup=pii_lookup,
+                session_ctx=session_ctx, orb_label=orb_label, orb_category=orb_category,
+                orb_icon=orb_icon, workspace="crew", tools=schemas)
+        return _call_openai(messages, system=system, model=model, max_tokens=max_tokens,
+            temperature=temperature, pii_lookup=pii_lookup, session_ctx=session_ctx,
+            orb_label=orb_label, orb_icon=orb_icon, tools=schemas, provider=provider,
+            fallback_models=None)
 
 
 def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384,
@@ -338,7 +345,15 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         routed_model = route.get('model') or model
         routed_provider_name = route.get('provider_name')
     except Exception as _re:
-        print(f"  [AGENT] routing failed, defaulting to cloud: {_re}")
+        _rmode = str(routing_cfg.get('mode') or '').lower()
+        if _cloud_intent.is_local_mode(_rmode) and not _cloud_intent.opens_cloud(_rmode):
+            # Fail closed: a router that cannot answer is not an intent to go
+            # to the cloud. The ladder below is local-only and a local failure
+            # becomes a LocalUnavailable the caller offers on.
+            print(f"  [AGENT] routing failed, staying local: {_re}")
+            provider, routed_model = 'local', None
+        else:
+            print(f"  [AGENT] routing failed, defaulting to cloud: {_re}")
     if on_route:
         # Report the ACTUAL decision to whoever wants to narrate it. Never let
         # a logging callback break a turn.
@@ -360,6 +375,13 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     # Honor the router's verdicts BEFORE any provider sees the request.
     # refuse=True means vault access was required and the configured fallback
     # is deny/warn — no model call is permitted at all.
+    if route.get('implied_intent') and not _cloud_intent.current():
+        _cloud_intent.set_intent(route['implied_intent'], source='task_override')
+    if route.get('local_unavailable'):
+        _pilot_outcome(session_ctx, "refused")
+        raise _cloud_intent.LocalUnavailable(
+            "no local model is serving", purpose="agent",
+            mode=str(routing_cfg.get('mode') or ''))
     if route.get('refuse'):
         _pilot_outcome(session_ctx, "refused")
         return (route.get('warning')
@@ -519,6 +541,8 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         from agent_friday.services.model_router import _mode_filtered_attempts
         attempts = _mode_filtered_attempts(attempts, routing_cfg,
                                            vault_access=vault_access)
+    except _cloud_intent.LocalUnavailable:
+        raise
     except Exception:
         pass
     try:
@@ -576,8 +600,11 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             pass
     if _pinned:
         _pilot_outcome(session_ctx, "error")
-        raise RuntimeError("the local seat %s could not answer (%s); nothing else was "
-                           "tried" % (model, "; ".join(errors[-1:]) or "no reply"))
+        raise _cloud_intent.LocalUnavailable(
+            "the local seat %s could not answer (%s); nothing else was tried"
+            % (model, "; ".join(str(e) for e in errors[-1:]) or "no reply"),
+            purpose="agent", model=str(model or ""),
+            mode=str(routing_cfg.get('mode') or ''))
     if vault_access:
         _pilot_outcome(session_ctx, "error")
         # Refuse rather than raise: the caller surfaces this as the reply, and
@@ -602,6 +629,12 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
                 "was NOT sent to any cloud provider. This is a local-model "
                 "problem, not a permissions one: check that the local seat is "
                 "up, then retry."), []
+    _mode_now = str(routing_cfg.get('mode') or '').lower()
+    if _cloud_intent.is_local_mode(_mode_now) and not _cloud_intent.opens_cloud(_mode_now):
+        _pilot_outcome(session_ctx, "error")
+        raise _cloud_intent.LocalUnavailable(
+            "; ".join(str(e) for e in errors[-2:]) or "no reply",
+            purpose="agent", model=str(routed_model or ''), mode=_mode_now)
     raise RuntimeError(
         "No model provider could run the agent (tried "
         + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "
@@ -636,7 +669,7 @@ def _generate_agent(*args, **kwargs):
     """
     from agent_friday.services import reasoning_trace as _rt_scope
     _label = kwargs.get("orb_label") or kwargs.get("workspace") or "Background model call"
-    with _rt_scope.scope("background", str(_label)):
+    with _cloud_intent.preserve_scope(), _rt_scope.scope("background", str(_label)):
         return _generate_agent_untraced(*args, **kwargs)
 
 
@@ -4839,6 +4872,31 @@ def _evidence_verdict(tool_trace):
     return verified, summary, ('complete' if verified else 'completed_unverified')
 
 
+def _background_model_binding(explicit_model, default_model):
+    """The model a background task hands the router as its binding.
+
+    Cloud modes keep today's behaviour: the per-task pick, else the subagent
+    seat. In the local modes the subagent seat is not a binding: an unpinned
+    task returns None so the router picks the local seat, and a cloud model
+    is bound only by a recorded intent (a scheduled_cloud pin, or a per-task
+    model under local_preferred). A local model id is always safe to bind.
+    """
+    from agent_friday.services import cloud_mode_policy as _cmp
+    if not _cmp.is_local_mode():
+        return default_model
+    if _cmp.cloud_allowed("background task", explicit=bool(explicit_model)):
+        return default_model
+    try:
+        from agent_friday.routing.model_router import provider_family
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        if (provider_family(default_model) == "local"
+                and not is_cloud_model_tag(default_model)):
+            return default_model
+    except Exception:
+        pass
+    return None
+
+
 def _ledger_view_chars_for(model):
     """The pinned-ledger size for whichever seat a task's next leg will land
     on: the local seat when routing prefers local, else the task's model."""
@@ -4977,6 +5035,11 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         subagent_model = (model
                           or _load_settings().get("subagent_model")
                           or ANTHROPIC_MODEL_DEFAULT)
+        # In the local modes the global subagent seat is a default, not a
+        # choice: handed on as the model it becomes a cloud binding that
+        # outranks the local preference. Only a per-task pick (`model`) or a
+        # scheduled_cloud pin reaches the cloud.
+        _bind_model = _background_model_binding(model, subagent_model)
         _bg_label = (name or prompt or 'Task')[:24]
         # Route through the provider-agnostic agent dispatcher so a background
         # task (distill-to-wiki, deep research) never hard-fails with
@@ -5004,10 +5067,18 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         _task_ledger.save(task_id, _ledger)
 
         def _leg(leg_messages):
-            with _tbud.unattended():
+            import contextlib as _ctxl
+            # A per-task model the owner picked is a recorded user_explicit intent
+            # (local_preferred only: local_only never honours it unconfirmed, and
+            # an unpinned task is bound to nothing and stays local).
+            _task_scope = (
+                _cloud_intent.intent_scope("user_explicit", source="task_model")
+                if (model and _bind_model == model and _cloud_intent.current() is None)
+                else _ctxl.nullcontext())
+            with _task_scope, _tbud.unattended():
                 return _generate_agent(
                     leg_messages, system=system, system_builder=_sys_for,
-                    max_tokens=16384, model=subagent_model,
+                    max_tokens=16384, model=_bind_model,
                     session_ctx={"authenticated": True, "is_background_task": True,
                                  "task_id": task_id,
                                  **_task_run_context(task_id),
@@ -5112,7 +5183,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                 steer_reply, steer_trace = _generate_agent(
                     [{"role": "user", "content": steer_msg}],
                     system=system, system_builder=_sys_for,
-                    max_tokens=16384, model=subagent_model,
+                    max_tokens=16384, model=_bind_model,
                     session_ctx={"authenticated": True, "is_background_task": True,
                          "task_id": task_id,
                          **_task_run_context(task_id),
@@ -7530,6 +7601,7 @@ CLAUDE_TOOLS.append({
 })
 
 
+@_cloud_intent.owner_request("creative_image")
 def _tool_generate_image(inp):
     """Generate an image via Gemini (Nano Banana) and save it to creations."""
     from agent_friday.services.creative_engine import generate_image
@@ -7552,6 +7624,7 @@ def _tool_generate_image(inp):
     return _creative_result_summary(res, "image")
 
 
+@_cloud_intent.owner_request("creative_video")
 def _tool_generate_video(inp):
     """Generate a video via Google Veo and save it to creations."""
     from agent_friday.services.creative_engine import generate_video
@@ -7569,6 +7642,7 @@ def _tool_generate_video(inp):
     return _creative_result_summary(res, "video")
 
 
+@_cloud_intent.owner_request("creative_music")
 def _tool_generate_music(inp):
     """Generate music via Lyria 3 and save it to creations."""
     from agent_friday.services import music_engine
@@ -13985,6 +14059,8 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     # for it (services/local_only_guard.cloud_pinned).
     from agent_friday.services.local_only_guard import apply_pin, refuse_if_active
     refuse_if_active("anthropic", str(model or ""))
+    # The choke point: a local mode reaches Claude only with a recorded intent.
+    _cloud_intent.require("anthropic", "agent loop (Claude)", str(model or ""))
     model = apply_pin("anthropic", model)
     _crew = (session_ctx or {}).get("crew_binding")
     if _crew and (_crew.get("provider") != "anthropic" or _crew.get("model") != model):

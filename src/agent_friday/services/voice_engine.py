@@ -2348,6 +2348,8 @@ def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
     """The Gemini-TTS synthesis path (cloud). Raises on any failure."""
     from agent_friday.services import local_only_guard as _log_guard
     _log_guard.refuse_if_active("google-gemini", "gemini-tts")
+    from agent_friday.services import cloud_intent as _voice_ci
+    _voice_ci.record_owner_engine("google-gemini", "speech synthesis", "gemini-tts")
     from agent_friday import brand
     text = brand.spoken(text)
     import wave

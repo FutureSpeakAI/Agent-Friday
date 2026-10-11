@@ -33,8 +33,8 @@ Models**, where you can also pick the model for each job.
 | Choice | What happens |
 |---|---|
 | **Cloud** (`cloud_only`) | Friday thinks at the cloud provider you chose. Your messages go there over an encrypted connection, after the egress gate. |
-| **On this computer only** (`local_only`) | A model on this PC answers. If no local model is running, Friday refuses the turn and offers to answer it in the cloud; nothing is sent until you choose. |
-| **Both** (`local_preferred`) | This PC by default; the cloud when it would clearly help. |
+| **On this computer only** (`local_only`) | A model on this PC answers. If no local model is running, Friday refuses the turn and offers to answer it in the cloud; nothing is sent until you choose, and the cloud choice covers that one turn after a confirm that names the mode. |
+| **Both** (`local_preferred`) | This PC by default. The cloud only when you ask for it: a chat you bound to a cloud model, or "Send to Claude" on one turn. When the local model cannot answer, Friday says so and offers the choice; nothing is sent until you pick. |
 
 Every reply says which model answered it.
 

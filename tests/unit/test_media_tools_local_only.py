@@ -120,7 +120,7 @@ def test_local_preferred_falls_back_to_the_cloud_when_the_seat_cannot(
     assert "a red square (cloud)" in out
 
 
-@pytest.mark.parametrize("mode", ["smart", "cloud_only"])
+@pytest.mark.parametrize("mode", ["cloud_only"])
 def test_cloud_allowed_modes_keep_the_gemini_path(
         monkeypatch, image, cloud_calls, seat, mode):
     _mode(monkeypatch, mode)
@@ -187,7 +187,7 @@ def test_local_only_video_frames_without_a_seat_refuse(
 
 def test_cloud_allowed_video_frames_still_go_to_gemini(
         monkeypatch, video, cloud_calls):
-    _mode(monkeypatch, "smart")
+    _mode(monkeypatch, "cloud_only")
     out = mt._tool_inspect_image({"path": str(video)})
     assert len(cloud_calls) == 1
     assert "a red square (cloud)" in out
@@ -227,7 +227,7 @@ def test_local_only_audio_keeps_the_transcript_and_skips_the_listen_check(
 
 def test_cloud_allowed_audio_still_gets_the_listen_check(
         monkeypatch, audio, cloud_calls):
-    _mode(monkeypatch, "smart")
+    _mode(monkeypatch, "cloud_only")
     out = mt._tool_inspect_audio({"path": str(audio), "question": "is it calm?"})
     assert len(cloud_calls) == 1
     assert "listen check: a red square (cloud)" in out

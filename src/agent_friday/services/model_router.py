@@ -102,6 +102,9 @@ def is_refusal(text) -> bool:
     return isinstance(text, RoutedRefusal)
 
 
+from agent_friday.services import cloud_intent as _cloud_intent
+
+
 def _seal_or_block(payload, provider, model=""):
     """Egress-gate wrapper shared by EVERY cloud provider call site (R3).
 
@@ -218,6 +221,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
         refuse_if_active("anthropic", str(model or ""))
     except ImportError:
         pass
+    # The choke point: a local mode reaches the cloud only with a recorded intent.
+    _cloud_intent.require("anthropic", "model call (Claude)", str(model or ""))
     # A scheduled job allowed onto the cloud runs on the model the owner chose
     # for it, whatever the caller or a fallback leg asked for.
     from agent_friday.services.local_only_guard import apply_pin
@@ -414,6 +419,15 @@ def _mode_filtered_attempts(attempts, routing_cfg, *, vault_access=False):
     except ImportError:
         pass
     mode = str(((routing_cfg or {}).get("mode") or "")).lower()
+    if _cloud_intent.is_local_mode(mode) and not _cloud_intent.opens_cloud(mode):
+        # A local mode with no cloud intent: the ladder has no cloud legs at all,
+        # the head included. A local failure is a LocalUnavailable the caller
+        # turns into an offer or a retry, never a quiet walk to the cloud.
+        local = [a for a in attempts if a[0] in _LOCAL_LEGS]
+        if not local:
+            raise _cloud_intent.LocalUnavailable(
+                "no local model was lined up for this call", mode=mode)
+        return local[:1]
     if mode == "cloud_only":
         banned = _LOCAL_LEGS
     elif mode == "local_only":
@@ -424,8 +438,12 @@ def _mode_filtered_attempts(attempts, routing_cfg, *, vault_access=False):
     return head + [a for a in tail if a[0] not in banned]
 
 
-def _health_order(attempts, routed_provider_name=None):
+def _health_order(attempts, routed_provider_name=None, mode=None):
     """Stable-sort a provider-attempt ladder so 'down' providers go last.
+
+    In a local mode the demotion stays inside a leg's own class: an open local
+    breaker never puts a cloud leg ahead of a local one. The answer to a down
+    local seat is a local retry or an offer, not the cloud first.
 
     `attempts` is [(name, fn, model), …] where name ∈ {cloud, openai, local}.
     Health is measured per REGISTRY provider (provider_health.record from every
@@ -445,6 +463,14 @@ def _health_order(attempts, routed_provider_name=None):
                 return 1 if _ph.availability(reg_name) == 'down' else 0
             except Exception:
                 return 0
+        if mode is None:
+            mode = _cloud_intent.routing_mode()
+        if _cloud_intent.is_local_mode(mode):
+            local = [a for a in attempts if a[0] in _LOCAL_LEGS]
+            cloud = [a for a in attempts if a[0] not in _LOCAL_LEGS]
+            if attempts and attempts[0][0] in _LOCAL_LEGS:
+                return sorted(local, key=_down) + sorted(cloud, key=_down)
+            return sorted(cloud, key=_down) + sorted(local, key=_down)
         return sorted(attempts, key=_down)  # stable: preserves order within tiers
     except Exception:
         return attempts
@@ -478,6 +504,31 @@ def _schema_refused(exc) -> bool:
     text = str(exc).lower()
     return any(k in text for k in ("output_config", "response_format", "json_schema",
                                    "schema", "format", "400", "422"))
+
+
+def _no_route_must_stay_local(messages, routing_cfg) -> bool:
+    """When the router raised, is the request still bound to this machine?
+
+    A router that cannot answer must not become a way around local_only or the
+    vault. local_only mode keeps its promise outright. With vault gating on, the
+    request is classified here; if even that cannot be done, fail closed, as
+    privacy.vault_policy does for every failure path.
+    """
+    if str((routing_cfg or {}).get("mode") or "").lower() == "local_only":
+        return True
+    _mode = str((routing_cfg or {}).get("mode") or "").lower()
+    if _cloud_intent.is_local_mode(_mode) and not _cloud_intent.opens_cloud(_mode):
+        return True
+    try:
+        if not _vault_local_only():
+            return False
+    except Exception:
+        return True
+    try:
+        from agent_friday.routing.model_router import get_router
+        return bool(get_router(routing_cfg).needs_vault_access(messages, {}))
+    except Exception:
+        return True
 
 
 def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
@@ -569,6 +620,12 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # legs below, silently defeating vault_cloud_fallback's "deny"/"warn"
     # contract for every one of this function's many callers (briefings,
     # digests, KG summarization, calendar/message drafting, wiki bootstrap).
+    if route.get('implied_intent') and not _cloud_intent.current():
+        _cloud_intent.set_intent(route['implied_intent'], source='task_override')
+    if route.get('local_unavailable'):
+        raise _cloud_intent.LocalUnavailable(
+            "no local model is serving", purpose="text",
+            mode=str(routing_cfg.get('mode') or ''))
     if route.get('refuse'):
         return RoutedRefusal(
             route.get('warning')
@@ -698,6 +755,13 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
         _rt_ex.set_reason(_exhausted)
     except Exception:
         pass
+    # A local mode with no cloud intent: the failure is typed, and the caller
+    # turns it into an offer or a retry. Nothing was sent to a cloud model.
+    _mode_now = str(routing_cfg.get('mode') or '').lower()
+    if _cloud_intent.is_local_mode(_mode_now) and not _cloud_intent.opens_cloud(_mode_now):
+        raise _cloud_intent.LocalUnavailable(
+            "; ".join(str(e) for e in errors[-2:]) or "no reply",
+            purpose="text", model=str(routed_model or ''), mode=_mode_now)
     raise RuntimeError(_exhausted)
 
 # Keeps its own name and docstring; __wrapped__ carries the real signature.
@@ -712,7 +776,7 @@ def _generate_text(*args, **kwargs):
     """
     from agent_friday.services import reasoning_trace as _rt_scope
     _label = kwargs.get("orb_label") or kwargs.get("workspace") or "Background model call"
-    with _rt_scope.scope("background", str(_label)):
+    with _cloud_intent.preserve_scope(), _rt_scope.scope("background", str(_label)):
         return _generate_text_untraced(*args, **kwargs)
 
 
@@ -1607,6 +1671,10 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
         refuse_if_active(provider if provider else "openai", str(model or ""))
     except ImportError:
         pass
+    # The choke point. A local provider returns an intent-free token, so the
+    # local seat legs of this transport are unaffected.
+    _cloud_intent.require(provider if provider else "openai",
+                          "model call (OpenAI-compatible)", str(model or ""))
     # The pinned model of a scheduled cloud run (see _call_claude). The legacy
     # single slot pointed at OpenRouter is OpenRouter for this purpose.
     from agent_friday.services.local_only_guard import apply_pin, pinned_model

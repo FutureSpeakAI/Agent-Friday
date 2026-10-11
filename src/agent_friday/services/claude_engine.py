@@ -103,6 +103,12 @@ def run_task(cid: str, task: str, *, key_profile: str = "mine", timeout_s: int =
         return {"status": "refused", "blocker": "missing_dependency",
                 "say": "Claude's agent is not installed on this PC (no `claude` command). Install Claude Code, or keep Friday as this codebase's engine."}
     key_profile = key_profile or rec.get("key_profile") or "mine"
+    # Running this engine is a step the owner approved on the card: that approval
+    # is the recorded intent, and it is named in the receipt.
+    from agent_friday.services import cloud_intent as _cloud_intent
+    with _cloud_intent.intent_scope("user_explicit", source="codebase_engine_approval",
+                                    confirmed=True):
+        _cloud_intent.require("anthropic", "Claude Code engine (codebase step)", "")
     proxy = KeyProxy(upstream=UPSTREAM, key_provider=_key_provider(cid, key_profile))
     proxy.start()
     repo = cb.repo_path(cid)

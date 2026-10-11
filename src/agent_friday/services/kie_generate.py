@@ -195,6 +195,8 @@ def _request(method: str, url: str, *, json_body: dict | None = None,
     """One HTTP call, rate-limited and parsed. Raises on transport/HTTP/vendor
     error; callers convert that into a status, never a crash. Monkeypatch
     this in tests — nothing else here touches the wire directly."""
+    from agent_friday.services import cloud_intent as _cloud_intent
+    _cloud_intent.require("kie", "media generation (kie.ai)", "")
     import requests
     _LIMITER.acquire()
     resp = requests.request(method, url, headers=_headers(), json=json_body,
