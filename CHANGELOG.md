@@ -60,6 +60,22 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 - A held approval keeps its own expiry and never gains one; after a limit on how
   long a hold may last it joins **Needs you** quietly. A card that expires
   without having popped says so in Needs you.
+- **A folder you add is read as one job on the Local AI queue.** Only while the
+  PC is idle, one folder at a time, paused when you come back, in a meeting or
+  when memory is low, and picked up where it stopped after a restart. Every pass
+  is a task in Activity that names the reading model, with its status, log,
+  trace and place in line, and the top-bar chip reads "Indexing your Obsidian
+  vault · 1,240 of 3,100 · paused while you're here" with Run now, Pause, Resume
+  and Cancel. "How's the indexing going?" and "pause the indexing" work by voice.
+  The Library reads text first, so the first cited answer comes as soon as the
+  first files are in. Page: [Your knowledge](docs/user-guide/your-knowledge.md).
+- **Friday notes each document.** On the processor she notes its type, how
+  sensitive it is and whether it is a copy (a near copy needs the words to agree,
+  not just the topic). A local model drafts summaries and facts into a staging
+  folder, each with the sentence it came from, for your review. Nothing is
+  published without you.
+- **New and changed files are found while the PC is idle** and read as one job
+  per folder, never at the moment of a change.
 
 ### Fixed
 

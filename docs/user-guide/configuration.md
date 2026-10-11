@@ -76,7 +76,7 @@ hand.
 | `turn_queue_enabled` | on | Every call to a local model waits its turn, in the order voice, chat, Local API, jobs you asked for, background. Off, calls go straight to the model as before. |
 | `turn_queue_tool_release_s` | `60` | A turn that has been in one slow tool this long lets the next person in line have the local brain, then goes back to the front of its line. |
 | `turn_queue_seat_slots` | none | How many turns a local model seat runs at once, by seat name. Empty means Friday reads the seat's own `-np`, and one when it says nothing. |
-| `local_scheduler_ram_floor_gb` | `4` | No model load starts if it would leave less free memory than this. The job waits, and the queue says so. |
+| `local_scheduler_ram_floor_gb` | `4` | No model load starts if it would leave less free memory than this. The job waits, and the queue says so. The Library reading your folders loads no model but keeps the same floor. |
 | `local_scheduler_lease_wait_s` | `120` | A GPU job (image, heavy model) that finds the card in use waits this long for its turn instead of being refused. A voice call waits 20 seconds. |
 | `local_scheduler_admit_timeout_s` | `900` | A local model call stuck behind other work this long goes ahead without its place, and the numbers count it. |
 | `local_scheduler_resident_s` | `300` | A model the scheduler ran this recently counts as still loaded, so its jobs go together. |

@@ -152,6 +152,17 @@ Listed separately from "broken". These are not claims that things work.
   12 GB card.
 - **The KV-cache estimate** the seat planner rests on is inferred from two
   anchors on two backends.
+- **Reading your folders, the document-type notes and the drafts were measured on
+  synthetic files only.** The first answer from a folder, the seven document
+  types (note, contract, invoice, paper, receipt, CV, letter) and the copy
+  finder were run on invented documents, not on a real notes folder, and the type
+  heads are a first reading: a document that fits none of them is marked "other".
+- **Drafts from your documents have no review screen yet.** When a local model
+  is installed, Friday drafts summaries and facts into `.friday\wiki\_staging`
+  with the sentence each came from. You can see how many are waiting by asking
+  "how's the indexing going?". The screen for accepting or rejecting them, and
+  the step that writes an accepted draft into the wiki, are not built. Nothing is
+  published until they are.
 
 ## 5. Things that leave your machine
 

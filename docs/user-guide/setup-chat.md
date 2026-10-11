@@ -136,13 +136,13 @@ you can say "add my Obsidian vault" and she opens the same choices.
   project folders. Each shows a size and file count. **Nothing is chosen for
   you.** Documents is labelled Recommended only when it holds a real amount.
 - Two separate choices for each folder. **Let Friday read and index it on this
-  PC** keeps your files here: she can search them, answer from them with
-  citations and organise them when you say so. **Also let cloud models read
-  it** is off unless you turn it on, folder by folder, and ends after 30 days.
+  PC** keeps your files here: she can search them and answer from them with
+  citations. **Also let cloud models read it** is off unless you turn it on, folder by folder, and ends after 30 days.
   It is never offered for a vault or a private-looking folder.
 - Reading here adds the folder to the Library, exactly as **Add to Library**
-  does, and the Library reads it when the PC is free. The cloud choice is a
-  separate file permission (see [File grants](file-grants.md)).
+  does, and the Library reads it as one job on the Local AI queue once the PC
+  has been idle for a while (see [Your knowledge](your-knowledge.md)). The cloud
+  choice is a separate file permission (see [File grants](file-grants.md)).
 
 ### Who reads your answers
 
