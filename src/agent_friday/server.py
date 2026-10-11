@@ -408,10 +408,14 @@ def _residency_boot():
         import copy as _copy
         before = _copy.deepcopy(settings)
         prop = _sb.apply(plan, settings)
-        if prop.get("changes"):
+        if prop.get("changes") and _core._is_degraded_settings(before):
+            # Seats bound over a failed read's values (perhaps the factory
+            # defaults) are not the owner's; the next boot binds again.
+            print("  Residency: settings.json could not be read; "
+                  "the binding is not saved")
+        elif prop.get("changes"):
             # Only what the binding changed: the loaded dict may carry the
-            # offline overlay or a degraded read's values, and neither is the
-            # binding's to persist.
+            # offline overlay, and that is not the binding's to persist.
             _core._save_settings(_core._settings_delta(before, settings))
         print("  Residency seats:\n%s" % _sb.describe(prop))
     except Exception as e:

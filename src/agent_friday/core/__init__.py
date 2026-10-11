@@ -2105,9 +2105,14 @@ def _invalidate_settings_cache() -> None:
 # whole would persist those defaults over every setting the owner has.
 #
 # So: reads retry for a bounded time; a read that still fails serves the last
-# settings read or written successfully for that file, marked degraded; a
-# save refuses a degraded dict, and refuses any whole-dict write while a
-# degraded read is outstanding.
+# settings read or written successfully for that file, stamped degraded; a
+# save refuses anything that carries the stamp.
+#
+# The stamp is PROVENANCE ON THE DATA, a key in the dict itself: it survives
+# dict() and {**s} copies and _settings_delta, so a dict derived from a failed
+# read is refused however it travels, while another thread's good read or
+# valid save is neither blocked by it nor clears it. A good read never carries
+# it, and the loader drops it from disk (it is not a DEFAULT_SETTINGS key).
 
 #: Total time a settings read keeps retrying a transient failure.
 _SETTINGS_READ_RETRY_S: float = 1.0
@@ -2116,7 +2121,12 @@ _SETTINGS_REPLACE_RETRY_S: float = 1.0
 #: The last settings read from or written to disk, per settings file path.
 _SETTINGS_LAST_GOOD: dict = {"path": None, "value": None}
 #: Path of a settings file whose last read failed and has not read since.
+#: A speed hint only (the next read makes one attempt); never a save guard.
 _SETTINGS_DEGRADED: dict = {"path": None}
+#: The provenance stamp a degraded read carries; its value is the read's
+#: generation, so two failed reads are distinguishable in the log.
+DEGRADED_READ_KEY = "_degraded_settings_read"
+_SETTINGS_DEGRADED_GEN = [0]
 _SETTINGS_LAST_GOOD_LOCK = threading.Lock()
 
 
@@ -2127,6 +2137,12 @@ class _DegradedSettings(dict):
     defaults). `_save_settings` refuses to persist one of these.
     """
     degraded = True
+
+
+def _is_degraded_settings(data) -> bool:
+    """True when `data` derives from a settings read that failed."""
+    return (isinstance(data, _DegradedSettings)
+            or (isinstance(data, dict) and DEGRADED_READ_KEY in data))
 
 
 def _settings_read_is_transient(e: BaseException) -> bool:
@@ -2173,10 +2189,15 @@ def _degraded_settings() -> "_DegradedSettings":
     import copy as _copy
     with _SETTINGS_LAST_GOOD_LOCK:
         _SETTINGS_DEGRADED["path"] = str(SETTINGS_FILE)
+        _SETTINGS_DEGRADED_GEN[0] += 1
+        gen = _SETTINGS_DEGRADED_GEN[0]
         if (_SETTINGS_LAST_GOOD["value"] is not None
                 and _SETTINGS_LAST_GOOD["path"] == str(SETTINGS_FILE)):
-            return _DegradedSettings(_copy.deepcopy(_SETTINGS_LAST_GOOD["value"]))
-    return _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
+            out = _DegradedSettings(_copy.deepcopy(_SETTINGS_LAST_GOOD["value"]))
+        else:
+            out = _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
+    out[DEGRADED_READ_KEY] = gen
+    return out
 
 
 def _settings_read_degraded() -> bool:
@@ -2227,9 +2248,15 @@ def _settings_delta(before: dict, after: dict) -> dict:
 
     For the deep-merged blocks only the changed fields are carried, so a
     caller that edited a dict it loaded saves its own edits and nothing else.
+    A delta of a degraded read keeps the degraded stamp, so a save refuses it.
     """
     delta = {}
+    for src in (before, after):
+        if _is_degraded_settings(src):
+            delta[DEGRADED_READ_KEY] = (src or {}).get(DEGRADED_READ_KEY, 0)
     for k, v in (after or {}).items():
+        if k == DEGRADED_READ_KEY:
+            continue
         old = (before or {}).get(k, _MISSING_SETTING)
         if old == v:
             continue
@@ -3463,10 +3490,11 @@ def _load_settings_raw():
         out = _degraded_settings()
         try:
             import logging as _lg
-            _have_last = out != DEFAULT_SETTINGS
+            _have_last = ({k: v for k, v in out.items()
+                           if k != DEGRADED_READ_KEY} != DEFAULT_SETTINGS)
             _lg.getLogger("friday.settings").error(
                 "settings.json exists but could not be read (%s: %s) — %s. "
-                "Saves of a whole settings dict are refused until it reads. "
+                "A save of anything derived from this read is refused. "
                 "Check for a sharing violation, a byte-order mark or "
                 "truncation: %s",
                 type(e).__name__, e,
@@ -3538,20 +3566,15 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     """
     # A SAVE NEVER PERSISTS WHAT A FAILED READ SERVED.
     #
-    # A degraded dict (the loader could not read settings.json) is refused
-    # outright. A copy loses the mark, so while a failed read is outstanding
-    # any write carrying every settings key is refused as well: that is the
-    # shape of "load, edit one key, save it all", and its other keys may be
-    # factory defaults. A delta of the keys a caller changed is always safe.
-    _refuse = None
-    if isinstance(data, _DegradedSettings) or getattr(data, "degraded", False):
-        _refuse = "it was served by a settings read that failed"
-    elif (isinstance(data, dict) and set(DEFAULT_SETTINGS) <= set(data)
-            and _settings_read_degraded()):
-        _refuse = ("it carries every settings key while a settings read is "
-                   "failing, so its values may be factory defaults")
-    if _refuse:
+    # Anything derived from a degraded read (the loader could not read
+    # settings.json) carries the DEGRADED_READ_KEY stamp, through copies and
+    # _settings_delta alike, and is refused here whatever thread or caller
+    # brings it. The decision rests on the data, not on a process-wide flag,
+    # so another thread's read neither clears it nor blocks a valid save.
+    if _is_degraded_settings(data):
         _who = _routing_mode_caller()
+        _refuse = ("it derives from settings read %s, which failed"
+                   % ((data or {}).get(DEGRADED_READ_KEY, "?"),))
         import logging as _lg
         _lg.getLogger("friday.settings").error(
             "REFUSING to save settings from %s: %s. settings.json is left "

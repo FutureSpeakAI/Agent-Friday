@@ -38,6 +38,16 @@ def _sharing_violation():
             "another process")
 
 
+@pytest.fixture(autouse=True)
+def _no_settings_memory_across_tests(monkeypatch):
+    """The last-good settings and the degraded hint are process state: each
+    test here starts without them, and none leaves them to a later file."""
+    monkeypatch.setattr(core, "_SETTINGS_LAST_GOOD",
+                        {"path": None, "value": None}, raising=False)
+    monkeypatch.setattr(core, "_SETTINGS_DEGRADED", {"path": None}, raising=False)
+    yield
+
+
 @pytest.fixture
 def owned(friday_dir, monkeypatch):
     """settings.json holds an owner's choice; nothing is cached in memory."""
@@ -263,3 +273,124 @@ def test_a_replace_that_never_lands_leaves_the_file_and_no_temp(owned, monkeypat
         core._save_settings({"show_all_workspaces": False})
     assert core.SETTINGS_FILE.read_bytes() == before_bytes
     assert _temps() == before
+
+
+# ── provenance travels with the data, not with a process-wide flag ───
+
+def test_a_good_read_elsewhere_does_not_launder_a_failed_one(owned, monkeypatch):
+    """Thread A reads while the file is unreadable and copies the result;
+    thread B then reads successfully; A's whole-dict save must still fail."""
+    a = dict(_load_while_unreadable(monkeypatch))     # A: failed read, copied
+    assert core._load_settings_raw()["agent_name"] == OWNER_NAME   # B: good read
+    a["show_all_workspaces"] = False
+    try:
+        core._save_settings(a)
+    except RuntimeError:
+        pass
+    assert _on_disk()["agent_name"] == OWNER_NAME, (
+        "a save derived from a failed read landed after another read succeeded")
+
+
+def test_a_failed_read_elsewhere_does_not_block_a_valid_save(owned, monkeypatch):
+    """Thread B holds a whole dict from a good read; thread A's read then
+    fails; B's save is still B's to make."""
+    b = dict(core._load_settings_raw())                # B: good read
+    _load_while_unreadable(monkeypatch)                # A: failed read
+    b["show_all_workspaces"] = False
+    core._save_settings(b)
+    disk = _on_disk()
+    assert disk["show_all_workspaces"] is False and disk["agent_name"] == OWNER_NAME
+
+
+def test_a_delta_of_a_failed_read_is_refused(owned, monkeypatch):
+    before = _load_while_unreadable(monkeypatch)
+    after = dict(before)
+    after["orchestrator_model"] = "bound-from-defaults"
+    with pytest.raises(RuntimeError):
+        core._save_settings(core._settings_delta(before, after))
+    assert "orchestrator_model" not in _on_disk() or (
+        _on_disk()["orchestrator_model"] != "bound-from-defaults")
+
+
+def test_boot_seat_binding_over_a_failed_read_writes_nothing(owned, monkeypatch):
+    from agent_friday import server
+    from agent_friday.services import hardware_profile as hwp
+    from agent_friday.services import residency_catalog as rc
+    from agent_friday.services import residency_arbiter as ra
+    from agent_friday.services import seat_binding as sb
+
+    flag = {"on": True}
+    _fail_reads(monkeypatch, while_flag=flag)
+    core._invalidate_settings_cache()
+
+    class Arb:
+        def __init__(self, **k):
+            pass
+
+        def compute_plan(self, overrides):
+            return {}
+
+    def apply(plan, settings):
+        settings["orchestrator_model"] = "bound-from-defaults"
+        flag["on"] = False              # the file is readable again for the save
+        return {"changes": {"reasoning": {"provider": "x",
+                                          "model": "bound-from-defaults"}}}
+
+    monkeypatch.setattr(hwp, "get", lambda: {})
+    monkeypatch.setattr(hwp, "summary", lambda p: "test")
+    monkeypatch.setattr(rc, "installed_entries", lambda p: [])
+    monkeypatch.setattr(ra, "Arbiter", Arb)
+    monkeypatch.setattr(sb, "overrides_from_settings", lambda s: {})
+    monkeypatch.setattr(sb, "apply", apply)
+    monkeypatch.setattr(sb, "describe", lambda p: "")
+    before = core.SETTINGS_FILE.read_bytes()
+    server._residency_boot()
+    assert not flag["on"], "the binding was not exercised"
+    assert core.SETTINGS_FILE.read_bytes() == before, (
+        "boot seat binding saved seats bound over a failed settings read")
+
+
+# ── the converted routes ─────────────────────────────────────────────
+
+@pytest.mark.parametrize("route", ["context_pause", "context_resume"])
+def test_context_pause_and_resume_save_only_their_key(owned, monkeypatch, route):
+    from agent_friday import server
+    from agent_friday.routes import context as ctx
+    monkeypatch.setattr(ctx, "_load_settings",
+                        lambda: dict(core.DEFAULT_SETTINGS), raising=False)
+    with server.app.test_request_context():
+        resp = getattr(ctx, route)()
+    assert resp.get_json()["status"] == "ok"
+    assert _on_disk()["agent_name"] == OWNER_NAME, (
+        "%s wrote the settings it read back over settings.json" % route)
+    assert _on_disk()["context_logging_enabled"] is (route == "context_resume")
+
+
+# ── first-run seed and the install check ─────────────────────────────
+
+def test_the_seed_never_overwrites_a_file_that_appeared(owned, monkeypatch):
+    """settings.json appears between the existence check and the seed."""
+    real_exists = core.Path.exists
+    first = {"done": False}
+
+    def exists(self, *a, **k):
+        if self == core.SETTINGS_FILE and not first["done"]:
+            first["done"] = True
+            return False
+        return real_exists(self, *a, **k)
+
+    monkeypatch.setattr(core.Path, "exists", exists)
+    got = core._load_settings_raw()
+    assert first["done"], "the seed path was not exercised"
+    assert _on_disk()["agent_name"] == OWNER_NAME, "the seed overwrote settings.json"
+    assert got["agent_name"] == OWNER_NAME
+
+
+def test_an_install_with_a_bom_settings_file_is_recognised(tmp_path, monkeypatch):
+    settings = tmp_path / "settings.json"
+    settings.write_bytes(b"\xef\xbb\xbf" + json.dumps({"setup_complete": True}).encode())
+    monkeypatch.setattr(core, "SETTINGS_FILE", settings)
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(core, "_SETUP_MARKER", tmp_path / ".setup_complete")
+    assert core._is_existing_install() is True, (
+        "a byte-order mark made a finished install look like a first run")
