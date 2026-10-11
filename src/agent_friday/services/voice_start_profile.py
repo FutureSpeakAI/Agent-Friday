@@ -107,6 +107,27 @@ def line(rec: dict) -> str:
                                          ", ".join(parts) or "no timings", where)
 
 
+def path_of(rec: dict) -> str:
+    """Which way a stage was started: ``cold``, ``prepared`` (spawned and
+    prepared during the park), ``warm`` (took a pre-imported worker) or
+    ``prepared+warm``."""
+    prepared = rec.get("prepared_s") is not None
+    warm = rec.get("preimported_s") is not None
+    return "prepared+warm" if prepared and warm else "prepared" if prepared else         "warm" if warm else "cold"
+
+
+def recent_totals(stage: str, path: str, *, n: int = 5, file: Path | None = None) -> list:
+    """The last `n` measured totals (seconds) of `stage` started the `path` way."""
+    try:
+        data = json.loads((file or timing_path()).read_text(encoding="utf-8"))
+        rows = [r for r in (data.get("stages") or [])
+                if isinstance(r, dict) and r.get("stage") == stage and path_of(r) == path
+                and isinstance(r.get("total_s"), (int, float))]
+        return [float(r["total_s"]) for r in rows[-n:]]
+    except Exception:
+        return []
+
+
 def update(path: Path, **fields) -> None:
     """Merge `fields` into the timing file (read-modify-write, never raises)."""
     try:

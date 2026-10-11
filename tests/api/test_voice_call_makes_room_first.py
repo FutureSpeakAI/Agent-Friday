@@ -260,7 +260,8 @@ def test_the_call_parks_the_brain_before_it_admits_the_ear_and_the_mouth(call):
     assert served["mouth"] == "kokoro@cuda" and served["ear"].endswith("@cuda"), served
     assert served["brain"] == "parked (voice call)" and not served["degraded"]
     status = [f.get("text") for f in frames if f.get("type") == "status"]
-    assert status.index("making room for the voice") < status.index("Warming up the voice")
+    warming = [i for i, t in enumerate(status) if str(t).startswith("Warming up the voice")]
+    assert warming and status.index("making room for the voice") < warming[0]
 
 
 def test_the_park_is_given_back_when_the_call_ends(call):
@@ -314,7 +315,10 @@ def test_the_cpu_kokoro_fallback_never_loads_onto_cuda(monkeypatch):
     assert kokoro_voice.KokoroTTS("af_heart", allow_cpu=True,
                                   cpu_only=True)._resolve_device() == "cpu"
     from agent_friday.services import voice_workers as vw
-    assert vw.KokoroCpuMouth("af_heart")._tts.cpu_only is True
+    # The CPU Kokoro is its own process with no lease and no VRAM: nothing for
+    # this process to put on the card, and nothing left in it afterwards.
+    w = vw.KokoroCpuMouth("af_heart")._worker
+    assert w.engine == "kokoro-cpu" and w._want_lease is False
 
 
 def test_the_call_waits_for_the_parked_brain_to_free_the_card(call):
