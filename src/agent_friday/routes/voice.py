@@ -3094,7 +3094,8 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
                              last_route=_prev, owner_voice=bool(owner_voice),
                              quiet=_voice_room_now() if owner_voice else False,
                              conversation_id=_cid, session=tool_session)
-    if plan.get("tool") and plan["tool"] != "delegate_to_friday" and plan.get("args") is not None:
+    if (plan.get("tool") and plan["tool"] != "delegate_to_friday" and plan.get("args") is not None
+            and plan["receipt"].get("layer") != "safe_write"):     # a safe write's single-use ticket is not kept
         tool_session["last_route"] = {"tool": plan["tool"], "args": dict(plan["args"]), "age": 0}
     send({"type": "route", **plan["receipt"]})
     _carried = {"ids": [], "line": ""}

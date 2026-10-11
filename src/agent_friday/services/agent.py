@@ -3729,16 +3729,17 @@ def _tool_organize_email(inp):
         # owner pointed at. The rows, the verb and the label come from the ticket alone; whatever
         # else the call carries is ignored, and the change waits for ONE card, always.
         from agent_friday.services import laya_safe_writes as _lsw
+        _stage = _fresh_screen_stage(_lsw.WORKSPACE)
         try:
-            call = _lsw.redeem(inp.get("laya_write"), action=inp.get("action"),
-                               stage=_fresh_screen_stage(_lsw.WORKSPACE),
+            call = _lsw.redeem(inp.get("laya_write"), action=inp.get("action"), stage=_stage,
                                conversation_id=_CURRENT_CONVERSATION.get())
         except _lsw.Refusal as e:
             return "NOT DONE: " + str(e)
         return _organize_call(_ia.propose_email, call.action, query="", thread_ids=call.thread_ids,
                               account="", label=call.label, why=call.why, replaces="",
                               room_mode=_voice_room(), laya_card=True, refs=call.refs,
-                              selection_id="", stage_rev=call.stage_rev, rule=call.rule)
+                              selection_id="", stage_rev=call.stage_rev, rule=call.rule,
+                              viewed_at=float((_stage or {}).get("at") or 0) or None)
     if str(inp.get("selection") or "").strip().lower() == "screen":
         refs, st, rule, err = _screen_target("messages")
         if err:
@@ -4198,6 +4199,16 @@ def _tool_answer_card(inp):
         if cid not in voiced and _ia.unvoiced_card_approval_blocked(
                 cid, _CURRENT_OWNER_TEXT.get(), _voice_room()):
             return _ia.UNVOICED_CARD
+    else:
+        # The typed twin of that rule, for a card Laya raised herself: a typed yes counts only if that card
+        # was the last thing asked in this conversation (the very next turn, a whole yes or no, from the
+        # owner's own page). A model that asked something else since cannot use a later yes on it.
+        cid = str(inp.get("card_id") or "")
+        if _ia.is_laya_card(cid):
+            from agent_friday.services import reflex_chat as _rc
+            if not _rc.laya_card_is_last_question(_CURRENT_CONVERSATION.get(), cid):
+                return ("NOT RECORDED: that card is not the last question asked in this conversation, so a "
+                        "typed yes does not approve it. Answer it on the card, or ask for the change again.")
     tok = _ia.QUIET.set(_cloud_voice())
     try:
         res = _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),

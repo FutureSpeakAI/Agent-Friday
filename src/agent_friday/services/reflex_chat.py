@@ -454,6 +454,56 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
 _POINT_OK = ("NAV_OK", "SELECT_OK", "SELECT_PARTIAL")
 
 
+# A typed "yes" approves a card Laya raised only if that card was the last thing Friday asked in this
+# conversation: the very next typed turn, a whole yes or no, from the owner's own page. Any other turn
+# (or a second one) disarms it. The voice rule, for the page.
+_LAYA_ASKED: Dict[str, dict] = {}
+_LAYA_ASKED_MAX = 64
+
+
+def arm_laya_card(conversation_id, result: str) -> None:
+    """Friday's reply raised the card in ``result``: it is the question this conversation is now on."""
+    cid = str(conversation_id or "").strip()
+    m = re.search(r"card_id=([\w-]+)", result or "")
+    if not cid or not m:
+        return
+    with _lock:
+        if len(_LAYA_ASKED) >= _LAYA_ASKED_MAX:
+            _LAYA_ASKED.pop(next(iter(_LAYA_ASKED)), None)
+        _LAYA_ASKED[cid] = {"card_id": m.group(1), "age": 0}
+
+
+def note_user_turn(conversation_id, message: str, trusted: bool) -> None:
+    """Every typed turn passes here before anything answers it. The armed card survives only the very next
+    turn, and only when it is a whole yes or no from the owner's own page; anything else clears it."""
+    cid = str(conversation_id or "").strip()
+    with _lock:
+        rec = _LAYA_ASKED.get(cid)
+        if rec is None:
+            return
+        rec["age"] += 1
+        whole = False
+        if trusted:
+            try:
+                from agent_friday.services import item_actions as _ia
+                whole = _ia.typed_decision(message) is not None
+            except Exception:
+                whole = False
+        if rec["age"] > 1 or not whole:
+            _LAYA_ASKED.pop(cid, None)
+
+
+def laya_card_is_last_question(conversation_id, card_id) -> bool:
+    """True once, for the card armed by the previous reply in this conversation."""
+    cid = str(conversation_id or "").strip()
+    with _lock:
+        rec = _LAYA_ASKED.get(cid)
+        if rec is None or rec["age"] != 1 or rec["card_id"] != str(card_id or ""):
+            return False
+        _LAYA_ASKED.pop(cid, None)
+        return True
+
+
 def _card_sample(result: str) -> str:
     """A row sample of the card a result raised (“subject” from sender), from the card itself, for
     the sealed chat line. '' when it cannot be read: the line then gives the count alone."""
@@ -480,8 +530,10 @@ def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authen
     ctx = agent.prepare_confirmation_ctx(session_id, message, ctx)
     result = str(agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx) or "")
     status = agent._tool_call_status(result)
-    entry = {"name": r.tool, "input": dict(r.args), "result": result}
+    # The single-use ticket is spent by now; it is not kept in the trace either.
+    entry = {"name": r.tool, "input": {"action": r.args.get("action")}, "result": result}
     if result.startswith("CARD_RAISED"):
+        arm_laya_card(conversation_id, result)
         sample = _card_sample(result)
         outcome, reply = "card", _lt.line("safe_write_card", what=(what + (" (" + sample + ")" if sample else "")))
     elif result.startswith("NOT DONE") or status in ("deny", "error"):

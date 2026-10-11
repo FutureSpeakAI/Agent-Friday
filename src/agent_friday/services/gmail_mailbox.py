@@ -127,10 +127,27 @@ def _apply_groups(svc, groups: dict) -> dict:
 
 
 def snapshot_messages(account_id: str, thread_ids) -> dict:
-    """{thread id: [message ids]} for these conversations right now, in order. Raises when any
-    conversation cannot be read: a caller that binds a card to messages cannot guess."""
+    """{thread id: [{"id", "from", "ts"}]} for these conversations right now, in order: each message's id,
+    its From header and its arrival time (ms since the epoch, or None). Raises when any conversation
+    cannot be read: a caller that binds a card to messages cannot guess."""
     svc = _svc(account_id)
-    return {tid: list(_thread_messages(svc, tid)) for tid in dict.fromkeys(t for t in thread_ids if t)}
+    out = {}
+    for tid in dict.fromkeys(t for t in thread_ids if t):
+        t = gmail_api.execute(svc.users().threads().get(userId="me", id=tid, format="metadata",
+                                                         metadataHeaders=["From"]))
+        msgs = []
+        for m in t.get("messages") or []:
+            if not m.get("id"):
+                raise ValueError("a message came back without an id")
+            hdr = {h.get("name", "").lower(): h.get("value", "")
+                   for h in (m.get("payload") or {}).get("headers") or []}
+            try:
+                ts = int(m.get("internalDate"))
+            except (TypeError, ValueError):
+                ts = None
+            msgs.append({"id": m["id"], "from": hdr.get("from", ""), "ts": ts})
+        out[tid] = msgs
+    return out
 
 
 def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=(),

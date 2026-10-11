@@ -307,6 +307,27 @@ def _search_threads(account_id: str, query: str, limit: int) -> tuple[list[str],
             return out, False
 
 
+def _senders_of(msgs: list, cap: int = 3) -> tuple:
+    """(names, lines) for the sender of each listed message: the distinct senders in order, up to ``cap``.
+    ``names`` is what a readback, a spoken line or a chat history may carry; ``lines`` adds each address,
+    for the card the owner reads on screen only (a display name is the sender's to choose)."""
+    from email.utils import parseaddr
+    seen, names, shown = set(), [], []
+    for m in msgs:
+        name, addr = parseaddr(str((m or {}).get("from") or ""))
+        addr = _address(str((m or {}).get("from") or ""))
+        who = _clean_row(name, 40) or _clean_row(addr.split("@")[0], 40) or "someone"
+        key = addr or who.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(who)
+        shown.append("%s <%s>" % (who, addr) if addr else "%s <address not shown>" % who)
+        if len(names) >= cap:
+            break
+    return ", ".join(names), ", ".join(shown)
+
+
 def _address(from_header: str) -> str:
     """The address in a From header, lower-cased, or '' when there is none that looks like one."""
     from email.utils import parseaddr
@@ -331,7 +352,6 @@ def _thread_heads(account_id: str, tids: list[str]) -> dict:
              for x in (first.get("payload") or {}).get("headers") or []}
         out[tid] = {"subject": (h.get("subject") or "(no subject)")[:140],
                     "sender": re.sub(r"\s*<[^>]*>\s*$", "", h.get("from") or "")[:80] or "someone",
-                    "address": _address(h.get("from") or ""),
                     "date": (h.get("date") or "")[:40], "messages": len(msgs)}
     return out
 
@@ -388,7 +408,7 @@ def _clean_row(value, limit: int) -> str:
 
 
 def select_email(query: str = "", thread_ids=None, account: str = "",
-                 limit: int = MAX_ITEMS, addresses: bool = False) -> dict:
+                 limit: int = MAX_ITEMS) -> dict:
     """The conversations a request names, per account, with the first few
     described. Accounts that cannot be changed are named, not included."""
     query = str(query or "").strip()
@@ -434,15 +454,9 @@ def select_email(query: str = "", thread_ids=None, account: str = "",
             heads = {}
         for tid in want:
             h = heads.get(tid) or {}
-            entry = {"id": tid, "account_id": acct, "account": names.get(acct, acct),
-                     "subject": _clean_row(h.get("subject"), 200) or "(conversation %s)" % tid,
-                     "sender": _clean_row(h.get("sender"), 80), "date": h.get("date") or ""}
-            if addresses:
-                # A display name is the sender's to choose: the card the owner reads on screen shows the
-                # address too. It stays in this field and the card's own lines; every readback, spoken
-                # line, tool result and chat history uses the name alone.
-                entry["address"] = _clean_row(h.get("address"), 120)
-            preview.append(entry)
+            preview.append({"id": tid, "account_id": acct, "account": names.get(acct, acct),
+                            "subject": _clean_row(h.get("subject"), 200) or "(conversation %s)" % tid,
+                            "sender": _clean_row(h.get("sender"), 80), "date": h.get("date") or ""})
     return {"accounts": per, "count": total, "preview": preview, "blocked": blocked,
             "errors": errors, "truncated": truncated, "query": query}
 
@@ -509,7 +523,8 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
                   label: str = "", why: str = "", conversation_id: str | None = None,
                   owner_words: str = "", requested_by: str = "friday", room_mode: bool = False,
                   replaces: str = "", refs=None, selection_id: str = "",
-                  stage_rev: int = 0, rule: str = "", laya_card: bool = False) -> dict:
+                  stage_rev: int = 0, rule: str = "", laya_card: bool = False,
+                  viewed_at: float | None = None) -> dict:
     """Find the mail a request names and raise ONE card to change all of it.
 
     `refs` (with `selection_id` and `stage_rev`) bind the batch to what the owner saw ticked:
@@ -533,28 +548,50 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
         except _lsw.Refusal as e:
             raise Refused(str(e))
         query = ""
-    sel = select_email(query, thread_ids, account, addresses=laya_card)
+    sel = select_email(query, thread_ids, account)
     if laya_card and action in _LABEL_ACTIONS:
         for acct in sel["accounts"]:
             if _label_id(acct, label, create=False)[0] is None:
                 raise Refused("there is no label called \u201c%s\u201d in that mailbox; Laya does not make labels"
                               % label)
-    messages = {}
+    messages, who_lines, newer_n = {}, {}, 0
     if laya_card:
-        # The card is bound to the MESSAGES shown now, not the conversations: a reply that arrives
-        # before the owner approves is not changed, and undo has an exact record to reverse.
+        # The card is bound to the MESSAGES the owner could have seen, not the conversations: a reply
+        # that arrives before the owner approves is not changed, a message that arrived after their
+        # screen last showed the list is left out (and the card says so), and undo has an exact record.
         from agent_friday.services import gmail_mailbox as _gm
+        since_ms = int(float(viewed_at) * 1000) if viewed_at else None
+        keep = {}
         try:
             for acct, tids in sel["accounts"].items():
-                messages[acct] = _gm.snapshot_messages(acct, tids)
+                snap = _gm.snapshot_messages(acct, tids)
+                for tid in tids:
+                    msgs = snap.get(tid) or []
+                    old = [m for m in msgs if not (since_ms and m.get("ts") and m["ts"] > since_ms)]
+                    newer_n += len(msgs) - len(old)
+                    if not old:
+                        continue                    # nothing in it was on the owner's screen: left out whole
+                    messages.setdefault(acct, {})[tid] = [m["id"] for m in old]
+                    who_lines[(acct, tid)] = _senders_of(old)
+                    keep.setdefault(acct, []).append(tid)
         except Exception as e:
             raise Refused("Laya could not read those conversations message by message, so she did not "
                           "put a change on a card (%s)" % exception_text(e))
-        if sum(len(m) for per in messages.values() for m in per.values()) > MAX_LAYA_MESSAGES:
+        if not keep:
+            raise Refused("everything in those conversations arrived after your screen last showed them, "
+                          "so Laya left them out; point at them again")
+        if sum(len(v) for per in messages.values() for v in per.values()) > MAX_LAYA_MESSAGES:
             raise Refused("those conversations hold too many messages for Laya to put on one card; "
                           "the model path can take it")
+        sel["accounts"] = keep
+        sel["count"] = sum(len(t) for t in keep.values())
+        sel["preview"] = [dict(p, sender=who_lines[(p["account_id"], p["id"])][0])
+                          for p in sel["preview"] if (p["account_id"], p["id"]) in who_lines]
     n = sel["count"]
     notes = []
+    if newer_n:
+        notes.append("%s not included: %s arrived after your screen last showed the list"
+                     % (_plural(newer_n, "newer message"), "it" if newer_n == 1 else "they"))
     for b in sel["blocked"]:
         notes.append("%s in %s left alone: that account has not allowed Friday to change "
                      "its mailbox (Settings \u2192 Connections: reconnect with sending)"
@@ -570,24 +607,23 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
                     (" " + sel["query"]) if sel["query"] else "")
                 + ("" if not notes else " " + "; ".join(notes) + ".")}
     def _who(p):
-        who = p.get("sender") or ""
-        if laya_card:       # the card on screen names the address too; nothing spoken or stored in a chat does
-            who = ("%s <%s>" % (who or "someone", p["address"])) if p.get("address") else \
-                ("%s <address not shown>" % (who or "someone"))
-        return who
+        if laya_card:       # the card on screen names each listed message's sender with the address; nothing
+            return who_lines[(p["account_id"], p["id"])][1]     # spoken or stored in a chat does
+        return p.get("sender") or ""
     lines = ["%s%s" % (p["subject"], (" \u2014 " + _who(p)) if _who(p) else "")
              for p in sel["preview"][:PREVIEW]]
     if n > len(lines):
         lines.append("\u2026and %d more" % (n - len(lines)))
     detail = {"handler": HANDLER, "domain": "email", "action": action, "label": label,
               "query": sel["query"], "accounts": sel["accounts"], "count": n,
-              "preview": [{k: v for k, v in p.items() if k != "address"} for p in sel["preview"]], "lines": lines, "conversation_id": conversation_id or "",
+              "preview": sel["preview"], "lines": lines, "conversation_id": conversation_id or "",
               "asked_with": words_hash(owner_words), "why": str(why or "").strip()[:300]}
     if refs:
         detail.update(refs=[str(r) for r in refs][:MAX_ITEMS], selection_id=str(selection_id or "")[:40],
                       stage_rev=int(stage_rev or 0))
     if laya_card:
         detail["messages"] = messages
+        detail["newer_not_included"] = newer_n
         detail["origin"] = "laya_safe_write"
         detail["laya_rule"] = str(rule or "")[:80]
         requested_by = "laya:safe_write"        # the approval and the signed gate receipt say who asked
@@ -610,6 +646,9 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
         said.append("This covers the %d messages in these conversations as they are now; a reply that "
                     "arrives before you approve is not changed." % sum(
                         len(m) for per in messages.values() for m in per.values()))
+    if laya_card and newer_n:
+        said.append("%s that arrived after your screen last showed this list %s left out."
+                    % (_plural(newer_n, "newer message"), "is" if newer_n == 1 else "are"))
     if detail["why"]:
         said.append("Why (Friday's words): " + detail["why"])
     card = _raise_card("email", action, detail, title=title, body=" ".join(said),
@@ -2154,6 +2193,16 @@ def wait_for(approval_id: str, timeout: float) -> dict | None:
 
 
 # ── Answering a card in words ──────────────────────────────────────────────
+
+def is_laya_card(card_id: str) -> bool:
+    """True for an organize card Laya raised herself (laya_safe_writes)."""
+    try:
+        from agent_friday.services import approvals as ap
+        rec = ap.get_approval(str(card_id or "").strip())
+        return bool(rec and (rec.get("payload") or {}).get("origin") == "laya_safe_write")
+    except Exception:
+        return False
+
 
 def typed_decision(words: str) -> str | None:
     """'approve', 'deny' or None from the owner's typed words, by the chat

@@ -1134,6 +1134,7 @@ def chat():
         try:
             from agent_friday.services import reflex_chat as _reflex_chat
             _reflex_auth = bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD)
+            _reflex_chat.note_user_turn(_conversation_id, message, _reflex_chat.trusted_surface(data, message))
             _instant_ctx = _reflex_chat.approval_turn(
                 message, data, session_id=session_id, conversation_id=_conversation_id,
                 turn_id=_turn_id, settings=settings_early, authenticated=_reflex_auth)

@@ -95,17 +95,23 @@ leaves some out ("not those", "the rest") goes to the model: she only acts on
 plain pointers (these, the first three, the ones from Mara).
 
 The card on your screen lists the sender's address as well as the name (the
-name is the sender's to choose). What she says aloud, the chat line and the chat
-history use the name alone. The card covers only the
-messages it lists (a reply that arrives before you approve is not changed), and
-Undo puts each message back exactly as it was. If Friday cannot read a
+name is the sender's to choose), for each message it lists rather than the
+first one. What she says aloud, the chat line, the chat history and the
+notification use the name alone. The card covers only the messages it lists. A
+message that arrived after your screen last showed the list is left out and the
+card says so ("1 newer message not included"); a reply that arrives after the
+card is raised is not changed either. Undo puts each message back exactly as it was. If Friday cannot read a
 conversation message by message, she leaves it to the model's path rather than
 make a change she could not put back exactly. By voice, a card is read out in
 a fixed line, and a plain "yes" or "no" answers it only if that line was played
 whole and nothing else was asked since; "yes, but only the first one" becomes a
 changed card. A "yes" that names what the card does ("yes, archive them") also
 answers a waiting card even if you did not hear the line, as for every card
-Friday raises, so say no or decline it on screen if you did not mean it.
+Friday raises, so say no or decline it on screen if you did not mean it. In
+typed chat a "yes" approves a card she raised only if that card was the last
+thing asked, as your very next message from Friday's own page; any other message
+in between, or a second yes, leaves the card waiting for you to answer it on the
+card.
 
 ## Privacy
 
