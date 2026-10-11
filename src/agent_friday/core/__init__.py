@@ -2742,6 +2742,23 @@ DEFAULT_SETTINGS = {
     # holds the scene, parks the brain seat - and comes back when the call
     # ends. "automatic" (recommended), "ask" (a chip, once per call), "off".
     "call_mode": "automatic",
+    # Meeting recording (services/meeting_policy). Recording other people is
+    # the owner's decision every time; these are the choices around it.
+    # meeting_consent_line: "" means the default sentence; an edited line is the
+    # one the start card offers to copy for the call chat. meeting_consent_mode:
+    # "ask_everyone" (default) or "owner_decides". meeting_speak_consent: say the
+    # line aloud when recording starts (off). meeting_suggestions: the "take
+    # notes?" card, at most once per event, off by itself after two declines.
+    # Retention is offered with nothing preselected: "" means nothing is
+    # deleted on a timer. Audio: delete_after_notes (the Recommended label),
+    # 30_days or keep. Transcripts and notes: keep, or days (+ _days).
+    "meeting_consent_line": "",
+    "meeting_consent_mode": "ask_everyone",
+    "meeting_speak_consent": False,
+    "meeting_suggestions": True,
+    "meeting_audio_retention": "",
+    "meeting_text_retention": "",
+    "meeting_text_retention_days": 90,
     "tracking": {
         "parallax_strength": 1.0,
         "depth_strength": 1.0,

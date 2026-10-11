@@ -1,6 +1,8 @@
 """The meetings API: consent before capture, one-click stop, local only."""
 from __future__ import annotations
 
+import types
+
 import pytest
 
 from agent_friday.services import meeting_capture as mc
@@ -37,7 +39,10 @@ def mgr(tmp_path, monkeypatch):
                           asr_check=lambda: "", lock_detector=lambda: None,
                           event_lookup=lambda: {"title": "Design review",
                                                 "event_id": "ev1"},
-                          notifier=lambda *a: None, tick_s=0.05)
+                          notifier=lambda *a: None, tick_s=0.05,
+                          scheduler=lambda mid: types.SimpleNamespace(release=lambda: None),
+                          partials_factory=lambda: None, ledger=lambda *a, **k: None,
+                          retention=lambda: "")
     m.sources = sources
     monkeypatch.setattr(mc, "_manager", m)
     yield m
@@ -59,8 +64,14 @@ def test_start_needs_consent_then_records_and_stops(client, mgr):
     assert st["consent_text"] == mc.CONSENT_TEXT
     assert st["system_audio"]["captured"] is False
 
+    # consent alone is not a start: the owner's explicit confirm is part of it
     r = client.post("/api/meetings/start", json={
         "consent_ack": True, "consent_version": mc.CONSENT_VERSION})
+    assert r.status_code == 400 and r.get_json()["code"] == "confirm_required"
+    assert mgr.sources == []
+
+    r = client.post("/api/meetings/start", json={
+        "consent_ack": True, "confirm": True, "consent_version": mc.CONSENT_VERSION})
     assert r.status_code == 200, r.get_json()
     mid = r.get_json()["id"]
     assert client.get("/api/meetings/status").get_json()["recording"] is True

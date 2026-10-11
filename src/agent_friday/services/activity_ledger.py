@@ -53,6 +53,9 @@ _ALLOWED_FIELDS = {
     # of the four places it lives in, and whether it reached the owner or was
     # held. Counts only: no title, body, id or path.
     "notice": {"notice_kind", "place", "outcome", "safety", "emitter"},
+    # A meeting's recording, transcript or notes were deleted for real
+    # (services/meeting_policy). Counts only: no title, id, path or text.
+    "meeting_deletion": {"scope", "reason", "audio_files", "meetings"},
     "reasoning_trace": {
         "trace_id", "parent_id", "task_id", "model", "seat", "trace_kind", "source",
         "tokens_in", "tokens_out", "reasoning_chars", "tool_calls", "duration_ms",

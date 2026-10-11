@@ -62,6 +62,41 @@ The defaults are weekdays from 09:00 to 17:00, a 12-hour notice period and a
 15-minute buffer, in this computer's time zone. They live in the `scheduling`
 block of `settings.json`; see [Configuration](configuration.md).
 
+## Recording a meeting
+
+Meetings in Calendar records, transcribes and takes notes on this computer.
+Nothing is recorded unless you press start on screen and confirm; Friday never
+starts a recording by herself. If you say "start recording", she opens the same
+start card and waits for you.
+
+- **Both sides of a call.** The microphone is always recorded ("You"). Tick
+  "Also record the other side of the call" to record what your speakers play
+  ("Them") from any call app. The two stay separate in the transcript. Friday
+  tells you what is really being captured, in the top bar, the tray tooltip and
+  the Meetings view; the red indicator is always shown while she records and
+  can't be hidden.
+- **Ask everyone.** Some places require everyone's consent to record. Friday
+  can't decide the law for you, so the start card says so and the default is to
+  ask everyone. The consent line is yours to edit; Copy puts it on the
+  clipboard to paste into the call chat. Friday doesn't post into other apps.
+  You can also have her say it aloud when recording starts (off by default).
+- **"Your call is starting. Take notes?"** shows at most once per event and
+  switches itself off after you decline twice. Accepting only opens the start
+  card.
+- **While you record,** Friday keeps background work out of the way and
+  transcribes with the local voice (the GPU when it is free, the CPU
+  otherwise). Live words appear as you talk when the streaming ear is
+  installed.
+- **Keeping and deleting.** Nothing is chosen for you. For audio: delete it once
+  the notes are made (Recommended), after 30 days, or keep it. For transcripts
+  and notes: keep them, or delete after a number of days. Audio can be deleted
+  without touching the notes; deleting a meeting removes everything. Both are
+  real deletions, and the activity ledger records only a count. The settings
+  are `meeting_*` in [Configuration](configuration.md).
+- **Meeting content stays on this computer.** Notes are written by a local model
+  only, and a follow-up email is only ever an approval card. Friday sends
+  nothing from a meeting to a cloud service.
+
 ## Dates and times
 
 Every date in a result Friday reads carries its weekday computed by Friday,

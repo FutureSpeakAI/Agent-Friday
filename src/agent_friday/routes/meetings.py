@@ -2,12 +2,23 @@
 
     GET    /api/meetings/status            recording state for the indicator
     GET    /api/meetings/suggest           a title from the calendar event now
-    POST   /api/meetings/start             {consent_ack, consent_version, title,
-                                            event_id, keep_audio, max_duration_s}
+    POST   /api/meetings/start             {consent_ack, confirm, consent_version,
+                                            title, event_id, keep_audio,
+                                            max_duration_s, system_audio,
+                                            speak_consent}
     POST   /api/meetings/stop
+    GET    /api/meetings/live              live partial text while recording
+    GET    /api/meetings/consent           the editable consent line and note
+    POST   /api/meetings/consent           {line, mode, speak}
+    GET    /api/meetings/retention         the choices, nothing preselected
+    POST   /api/meetings/retention         {audio, text, days}
+    GET    /api/meetings/suggestion        a "take notes?" card, at most once per event
+    POST   /api/meetings/suggestion        {action: accept|decline}
+    POST   /api/meetings/suggestion/reset  turn suggestions back on
     GET    /api/meetings                   past meetings (no transcript)
     GET    /api/meetings/<id>              one meeting: transcript and notes
     DELETE /api/meetings/<id>              removes transcript, notes and audio
+    DELETE /api/meetings/<id>/audio        removes the audio only
     POST   /api/meetings/<id>/notes        write the notes again (local model)
     POST   /api/meetings/<id>/tasks        {items: [index, ...]}
     GET    /api/meetings/<id>/follow-up    ?kind=thank_you|follow_up -> a draft
@@ -17,11 +28,18 @@
 LOCAL ONLY. Starting a recording turns on this machine's microphone, and a
 transcript holds what other people said. Both stay with the person sitting at
 this machine: a remote session or an observer credential is refused.
+
+NEVER AUTO-STARTED. `meetings_start` is the only caller of
+MeetingManager.start. It forwards `consent_ack` and `confirm` exactly as the
+page's start card sent them, and the manager refuses anything but True for
+both. The suggestion routes only ever offer a card; accepting one opens the
+start card and starts nothing.
 """
 
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.services import meeting_capture as mc
+from agent_friday.services import meeting_policy as mp
 from agent_friday.routes._errors import api_error, public_result
 
 meetings_bp = Blueprint('meetings', __name__)
@@ -70,7 +88,10 @@ def meetings_start():
             title=d.get("title") or "",
             event_id=d.get("event_id") or "",
             keep_audio=bool(d.get("keep_audio")),
-            max_duration_s=d.get("max_duration_s"))
+            max_duration_s=d.get("max_duration_s"),
+            system_audio=d.get("system_audio") is True,
+            speak_consent=d.get("speak_consent") is True,
+            confirm=d.get("confirm") is True)
     except mc.MeetingError as e:
         return _fail(e)
     return jsonify({"status": "ok"} | st)
@@ -85,6 +106,61 @@ def meetings_stop():
     return jsonify({"status": "ok", "meeting": row})
 
 
+@meetings_bp.route('/api/meetings/live')
+def meetings_live():
+    return jsonify({"status": "ok"} | mc.get_manager().live())
+
+
+_BAD = ({"status": "error", "code": "bad_request",
+         "error": "That choice was not understood."}, 400)
+
+
+@meetings_bp.route('/api/meetings/consent', methods=['GET', 'POST'])
+def meetings_consent():
+    if request.method == 'GET':
+        return jsonify({"status": "ok"} | mp.consent())
+    d = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"status": "ok"} | mp.set_consent(
+            line=d.get("line"), mode=d.get("mode"), speak=d.get("speak")))
+    except (ValueError, TypeError):
+        return jsonify(_BAD[0]), _BAD[1]
+
+
+@meetings_bp.route('/api/meetings/retention', methods=['GET', 'POST'])
+def meetings_retention():
+    if request.method == 'GET':
+        return jsonify({"status": "ok"} | mp.retention())
+    d = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"status": "ok"} | mp.set_retention(
+            audio=d.get("audio"), text=d.get("text"), days=d.get("days")))
+    except (ValueError, TypeError):
+        return jsonify(_BAD[0]), _BAD[1]
+
+
+@meetings_bp.route('/api/meetings/suggestion', methods=['GET', 'POST'])
+def meetings_suggestion():
+    if request.method == 'POST':
+        d = request.get_json(silent=True) or {}
+        try:
+            return jsonify({"status": "ok"} | mp.answer_suggestion(d.get("action")))
+        except (ValueError, TypeError):
+            return jsonify(_BAD[0]), _BAD[1]
+    m = mc.get_manager()
+    try:
+        ev = m.event_lookup()
+    except Exception:
+        ev = None
+    card = mp.suggest(ev, recording=bool(m.status().get("recording")))
+    return jsonify({"status": "ok", "suggestion": card} | {"state": mp.suggestion_state()})
+
+
+@meetings_bp.route('/api/meetings/suggestion/reset', methods=['POST'])
+def meetings_suggestion_reset():
+    return jsonify({"status": "ok"} | mp.reset_suggestions())
+
+
 @meetings_bp.route('/api/meetings')
 def meetings_list():
     return jsonify(public_result({"status": "ok", "meetings": mc.get_manager().list()}, "Couldn't list the meetings"))
@@ -97,6 +173,14 @@ def meetings_one(mid):
         if request.method == 'DELETE':
             return jsonify({"status": "ok"} | m.delete(mid))
         return jsonify({"status": "ok", "meeting": m.get(mid)})
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/audio', methods=['DELETE'])
+def meetings_audio_delete(mid):
+    try:
+        return jsonify({"status": "ok"} | mc.get_manager().delete_audio(mid))
     except mc.MeetingError as e:
         return _fail(e)
 

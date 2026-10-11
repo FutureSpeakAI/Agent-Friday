@@ -10,6 +10,7 @@ import array
 import json
 import math
 import time
+import types
 
 import pytest
 
@@ -91,6 +92,11 @@ class Harness:
                     notifier=lambda m, reason, msg: self.notices.append(reason),
                     todo_writer=lambda t: self.todos.append(t) or t,
                     email_requester=lambda **k: self.emails.append(k) or {"approval_id": "ap1"},
+                    # the scheduler, the streaming ear, the ledger and the retention
+                    # setting are the real thing's business (test_meeting_capture_mt1.py)
+                    scheduler=lambda mid: types.SimpleNamespace(release=lambda: None),
+                    partials_factory=lambda: None, ledger=lambda *a, **k: None,
+                    retention=lambda: "",
                     clock=lambda: self.T[0], tick_s=0.01, chunk_s=1.0)
         opts.update(kw)
         self.m = mc.MeetingManager(**opts)
@@ -101,6 +107,7 @@ class Harness:
 
     def start(self, **kw):
         kw.setdefault("consent_ack", True)
+        kw.setdefault("confirm", True)
         return self.m.start(**kw)
 
     def files(self):

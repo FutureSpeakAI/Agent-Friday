@@ -271,6 +271,13 @@ Workflows workspace. See [scheduled jobs](scheduled-jobs.md).
 | `voice_first_token_filler_s` | `0` | On the local voice, seconds without a first word before Friday says "Hang on." 0 is off. |
 | `keep_brain_warm_between_sessions` | `false` | Keep the main local model loaded after you quit Friday. Off releases its memory. |
 | `call_mode` | `"automatic"` | When another app takes the camera or microphone: `automatic` (Friday steps back and returns when the call ends), `ask` (a chip asks once per call) or `off`. |
+| `meeting_consent_line` | `""` | The sentence the Meetings start card offers to copy for a call's chat. Empty means Friday's default wording; edit it to make it yours. Friday never posts it into another app. |
+| `meeting_consent_mode` | `"ask_everyone"` | `ask_everyone` or `owner_decides`. Some places require everyone's consent to record; the default is to ask everyone. Either way, recording starts only when you press start and confirm. |
+| `meeting_speak_consent` | `false` | Say the consent line aloud, through the local voice, when recording starts. |
+| `meeting_suggestions` | `true` | Offer "Your call is starting. Take notes?" at most once per calendar event. It switches itself off after two declines; you can turn it back on from Meetings. |
+| `meeting_audio_retention` | `""` | Nothing is chosen until you choose. `delete_after_notes` (the Recommended choice), `30_days` or `keep`. Deleting audio never touches the transcript or notes. Empty deletes nothing on a timer. |
+| `meeting_text_retention` | `""` | Transcripts and notes: `keep`, or `days` (deletes the whole meeting after `meeting_text_retention_days`). Empty deletes nothing on a timer. |
+| `meeting_text_retention_days` | `90` | Used only when `meeting_text_retention` is `days`. |
 | `voice_interruption_mode` | `"auto"` | What talking over Friday does on the local voice. `auto`: she stops once you are clearly louder than her own voice coming back through the mic. `no-barge`: Esc only. Esc stops her in every mode. Gemini Live reads it too (below). |
 | `voice_local_barge_sustain_ms` | `170` | How long you must talk over her before she stops (two of the local voice's ~85 ms mic frames). |
 | `voice_ear_gpu`, `voice_mouth_gpu` | `"if_free"` | GPU use for listening and speaking: `never`, `if_free` or `required`. |

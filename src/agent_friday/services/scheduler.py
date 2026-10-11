@@ -2051,6 +2051,17 @@ def _tick():
             _log.warning("tick error [%s]: %s", rec.get('id'), e)
     _reclaim_expired_lease()
     _away_drain_tick()
+    _meeting_retention_tick()
+
+
+def _meeting_retention_tick() -> None:
+    """The owner's meeting retention choices, applied through the work queue
+    (services/meeting_policy). Does nothing until a choice has been made."""
+    try:
+        from agent_friday.services import meeting_policy
+        meeting_policy.retention_tick()
+    except Exception as e:
+        _log.debug("meeting retention tick skipped: %s", e)
 
 
 # ── P5: the away-drain, OFF by default ────────────────────────────────────────

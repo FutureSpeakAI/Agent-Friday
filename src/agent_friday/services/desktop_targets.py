@@ -577,6 +577,11 @@ def resolve_calendar(query: str = "", id: str = "") -> dict:
         if d is not None:
             target["date"] = d.isoformat()
         return _ok(target, "that event", verify=("event", eid))
+    if re.search(r"\b(record(ing)?|take notes|start notes)\b", (id or query or "").lower()):
+        # "Start recording" only ever opens the start card: nothing records
+        # until the owner presses start and confirms on screen.
+        return _ok({"workspace": "calendar", "view": "meetings", "start": "confirm"},
+                   "the recording start card; nothing is recorded until you confirm it on screen")
     if id and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", id.strip()):
         return _ok({"workspace": "calendar", "view": "meetings", "meeting_id": id},
                    "the meeting %s" % id)
