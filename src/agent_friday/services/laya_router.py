@@ -349,6 +349,11 @@ _RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
      r"\b(?:what(?:'s| is)? (?:in|on) (?:your|the) (?:local )?(?:ai )?(?:work )?queue|"
      r"what(?:'s| is| are)? (?:you )?(?:doing|working on|running) in the background|"
      r"what(?:'s| is| are) (?:you )?(?:currently |all )?(?:running|queued)(?: right now| at the moment)?)\b"),
+    # "How's the indexing going?", "are you done indexing my folders?"
+    ("queue_status",
+     r"\b(?:how(?:'s| is| are)\b.{0,30}\b(?:indexing|index|reading my (?:folders|files|notes))\b.{0,20}(?:going|coming along|doing)|"
+     r"(?:is|are)\b.{0,20}\b(?:indexing|reading my (?:folders|files|notes))\b.{0,20}\b(?:done|finished|complete)|"
+     r"are you (?:done|finished) (?:indexing|reading (?:my )?(?:folders|files|notes)))"),
     ("search_past_conversations",
      r"\b(?:what did (?:i|we|you) (?:say|tell (?:me|you)|talk about|discuss|mention)|"
      r"(?:what )?(?:did|have) we (?:talk|discuss|speak)|remind me what we (?:said|talked about|discussed)|"

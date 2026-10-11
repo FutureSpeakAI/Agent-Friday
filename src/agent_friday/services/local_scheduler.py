@@ -537,12 +537,18 @@ def _gate_core(t: _tq.Ticket) -> str:
             why = idle_block()
             if why:
                 return why
-    if is_resident(model):
+    # CPU work (the Library reading a folder, seat "cpu/...") loads no model: there is no swap to
+    # avoid and no model whose jobs to take together, so only a meeting or a person's turn, the idle
+    # window and the memory floor decide when it goes.
+    cpu_work = str(t.seat or "").startswith("cpu/")
+    if is_resident(model) and not cpu_work:
         return ""                      # no swap: the seat's own queue orders it
     # An unloaded model: a swap. Everything below is about not forcing one at
     # a bad moment, and about taking each model's jobs together.
     if people:
         return "waiting for your chat to finish"
+    if cpu_work:
+        return memory_block(0.0)
     mine = Job(t.id, t.cls, model, t.enqueued_at)
     # Jobs of its own class or a higher one decide its place; a lower class never does.
     queued = [j for j in _jobs_from(waiting) if _PRIORITY[j.cls] <= _PRIORITY[t.cls]] + [mine]
@@ -1354,10 +1360,25 @@ def _cancel_capability(job_id: str) -> bool:
     return bool(m is not None and m._cancel_listed(job_id))
 
 
+def _library_index_jobs() -> List[dict]:
+    """Folders the Library will read but has not started, or has paused (yours, battery, off the record).
+    A folder being read is the queue's own row."""
+    import sys
+    m = sys.modules.get("agent_friday.services.library.index_job")
+    return m.listed_jobs() if m is not None else []
+
+
+def _cancel_library_index(job_id: str) -> bool:
+    import sys
+    m = sys.modules.get("agent_friday.services.library.index_job")
+    return bool(m is not None and m.cancel_listed(job_id))
+
+
 def _default_sources() -> Dict[str, Tuple[Callable, Callable]]:
     return {"task": (_task_jobs, _cancel_task), "podcast": (_podcast_jobs, _cancel_podcast),
             "lease": (_lease_jobs, _cancel_lease),
-            "local_capability": (_capability_jobs, _cancel_capability)}
+            "local_capability": (_capability_jobs, _cancel_capability),
+            "library_index": (_library_index_jobs, _cancel_library_index)}
 
 
 def _active_sources() -> Dict[str, Tuple[Callable, Callable]]:
@@ -1494,6 +1515,10 @@ def queue_snapshot() -> dict:
         (queued if row["state"] == "queued" else running).append(row)
     snap = {"running": running, "queued": queued, "count": len(queued),
             "jobs": running + queued}
+    import sys
+    ij = sys.modules.get("agent_friday.services.library.index_job")
+    if ij is not None:
+        snap["library"] = {"paused": bool(ij.any_paused())}      # the chip's Pause / Resume
     try:
         from agent_friday.services import background_gate as _bg
         st = _bg.idle_state()

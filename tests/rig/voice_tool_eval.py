@@ -54,6 +54,8 @@ CASES = [
     ("Open the conversation about the move.", "navigate_to", ("kind",)),
     ("How's the system doing right now?", "check_situation", ()),
     ("What's in your queue for the local model?", "queue_status", ()),
+    ("How's the indexing going?", "queue_status", ()),
+    ("Are you done reading my folders yet?", "queue_status", ()),
     ("Hide the chat tray.", "set_chat_tray", ()),
     ("Put the chat on the left side.", "set_chat_tray", ()),
     ("Show my day.", "show_my_day", ()),

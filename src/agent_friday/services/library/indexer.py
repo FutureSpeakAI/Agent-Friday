@@ -385,7 +385,8 @@ class Indexer:
         only = kw.pop("paths", None)                 # the change sweep's list; None reads the whole folder
         store = store_for(self.principal)
         job = self.job_factory(scope, dict(kw, paths=only)) if self.job_factory else None
-        title = job.title if job is not None else "Reading a folder into your Library"
+        title = job.title if job is not None else (
+            "Reading a folder into your Library" if Path(scope).is_dir() else "Reading a file into your Library")
         try:
             if only is None:
                 with visible_job(title, kind="library_index", workspace="library", queued=False, deferrable=True,

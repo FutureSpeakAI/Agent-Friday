@@ -19,8 +19,8 @@ import agent_friday.core as core
 from agent_friday.core import login_required
 from agent_friday.routes._errors import api_error
 from agent_friday.services import screen_click, studio_files as sf
-from agent_friday.services.library import (answer, api, forget, grants, pages, principal as pr, procrun,
-                                           runtime, search)
+from agent_friday.services.library import (answer, api, forget, grants, index_job, pages, principal as pr, procrun,
+                                           runtime, search, staging)
 from agent_friday.services.library.store import store_for
 from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services.visible_jobs import visible_job
@@ -418,3 +418,44 @@ def lib_reindex():
     if bad:
         return bad
     return jsonify({"status": "ok", "scopes": runtime.resweep(p)})
+
+
+# ── reading the owner's folders: progress, and the drafts waiting for review ──
+
+@library_bp.route("/api/library/index")
+@login_required
+def lib_index_state():
+    """Where the folders stand: each folder's state and counts, whether reading is paused, how long the
+    first file took, and the drafts waiting in staging. Counts and labels only."""
+    p, bad = _principal()
+    if bad:
+        return bad
+    folders = index_job.folders(p)
+    return jsonify({"status": "ok", "paused": index_job.progress_for(p).paused,
+                    "folders": [dict(v, path_id=i) for i, v in enumerate(folders.values())],
+                    "report": index_job.first_answer_report(p), "drafts": staging.counts()})
+
+
+@library_bp.route("/api/library/staging")
+@login_required
+def lib_staging_list():
+    p, bad = _principal()
+    if bad:
+        return bad
+    status = request.args.get("status") or "proposed"
+    return jsonify({"status": "ok", "counts": staging.counts(), "items": staging.list_items(status)[:200]})
+
+
+@library_bp.route("/api/library/staging/review", methods=["POST"])
+@login_required
+def lib_staging_review():
+    """Accept, reject or defer one draft. Publishing a draft into the wiki is not done here."""
+    bad = _same_origin_json()
+    if bad:
+        return bad
+    p, bad = _principal()
+    if bad:
+        return bad
+    b = request.get_json(silent=True) or {}
+    out = staging.review(str(b.get("id") or ""), str(b.get("decision") or ""))
+    return jsonify({"status": "ok" if out.get("ok") else "error", **out}), (200 if out.get("ok") else 400)

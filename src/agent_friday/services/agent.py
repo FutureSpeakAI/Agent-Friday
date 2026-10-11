@@ -3317,10 +3317,20 @@ def _current_conversation_id():
         return (core._TURNS.get(tid) or {}).get('conversation_id')
 
 
+def _library_status_line() -> str:
+    """The Library's folder reading and the drafts waiting for review, in counts and reasons only
+    (library/index_job.status_line): "how's the indexing going?"."""
+    try:
+        from agent_friday.services.library import index_job as _ij
+        return _ij.status_line()
+    except Exception:
+        return ""
+
+
 def _tool_queue_status(inp):
     """Tool handler: the Local AI queue in a sentence or two (services/
-    seat_supervisor.spoken_summary). Labels and reasons only, never a job's
-    content."""
+    seat_supervisor.spoken_summary), with the Library's folder reading. Labels,
+    counts and reasons only, never a job's content."""
     from agent_friday.services import seat_supervisor as _ss
     from agent_friday.services import slice_head as _sh
     names = _sh.is_local(_CURRENT_PROVIDER.get())
@@ -3332,10 +3342,13 @@ def _tool_queue_status(inp):
         lane = _al.spoken_running(names=names)
         local = _ss.spoken_summary(local_queue_snapshot())
         if lane.startswith("Nothing is running"):
-            return local
-        return lane + " " + local if names else lane
+            text = local
+        else:
+            text = lane + " " + local if names else lane
     except Exception:
-        return _ss.spoken_summary(local_queue_snapshot())
+        text = _ss.spoken_summary(local_queue_snapshot())
+    extra = _library_status_line()
+    return (text + " " + extra) if extra else text
 
 
 def _tool_request_context(inp):

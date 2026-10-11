@@ -147,6 +147,21 @@ def local_queue_cancel(job_id):
     return jsonify({"ok": ok, "queue": _local_queue_snapshot()}), (200 if ok else 404)
 
 
+@work_plan_bp.route("/api/local-queue/library-index/<what>", methods=["POST"])
+@login_required
+def local_queue_library_index(what):
+    """Pause or resume the Library reading your folders. Pausing holds it before the next file; resuming
+    takes up where it stopped. Neither touches a document."""
+    from agent_friday.services.library import index_job, principal as _pr
+    if what not in ("pause", "resume"):
+        return jsonify({"ok": False, "error": "pause or resume"}), 404
+    p = _pr.current()
+    if p is None:
+        return jsonify({"ok": False, "error": "the Library is not available to this account"}), 403
+    out = index_job.pause(p) if what == "pause" else index_job.resume(p)
+    return jsonify({"ok": True, "queue": _local_queue_snapshot(), **out})
+
+
 @work_plan_bp.route("/api/work/queue/<item_id>", methods=["DELETE"])
 @login_required
 def cancel_item(item_id):

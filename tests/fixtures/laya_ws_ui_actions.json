@@ -195,6 +195,8 @@
    {"id": "library.remove_forget", "group": "organize", "label": "remove / forget", "audit_status": "N"},
    {"id": "library.shelf", "group": "organize", "label": "shelf", "audit_status": "N"},
    {"id": "library.show_3d", "group": "read", "label": "show in 3D", "audit_status": "M"},
+   {"id": "library.index_status", "group": "read", "label": "indexing progress", "audit_status": "new"},
+   {"id": "library.index_pause_resume", "group": "settings", "label": "pause / resume reading", "audit_status": "new"},
    {"id": "library.tracked_reindex", "group": "settings", "label": "tracked / reindex", "audit_status": "N"}
   ],
   "knowledge": [

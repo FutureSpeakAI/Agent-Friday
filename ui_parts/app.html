@@ -23018,11 +23018,51 @@ const LOCAL_AI_KIND_WORDS = {
   podcast: 'podcast',
   background_call: 'background AI work',
   model_call: 'model call',
-  gpu_lease: 'GPU turn'
+  gpu_lease: 'GPU turn',
+  library_index: 'indexing'
 };
+// The Library reading the folders you added is one job per folder on this queue.
+// Its words: "Indexing your Obsidian vault · 1,240 of 3,100 · paused while you're here".
+function localAiWhyWords(j) {
+  const w = String(j && j.why || '');
+  const idle = /^(waits for idle|waits for your chat to finish|waiting for you to be idle|waiting for your chat to finish)$/.test(w);
+  if (idle) return j.state === 'paused' ? "paused while you're here" : "waits until you've stepped away";
+  return w;
+}
+// The Library reading a folder is a task of its own (Activity names the reading model, its status and its
+// trace); its queue row has the same id and carries the counts and why it is held.
+function laneLibraryRow(t, q) {
+  if (!t || t.kind !== 'library_index' && t.kind !== 'library_reindex') return null;
+  return (q && q.jobs || []).find(j => j.id === t.id) || null;
+}
+function laneRowLabel(t, q) {
+  const r = laneLibraryRow(t, q);
+  return r && r.label || t.label;
+}
+function laneWhy(t, q) {
+  const r = laneLibraryRow(t, q);
+  if (r || t.kind === 'library_index') {
+    const w = localAiWhyWords({ why: r && r.why || t.why || '', state: r && r.state || t.status });
+    return w ? [w] : [];
+  }
+  return t.why ? [t.why] : [];
+}
+function laneLibraryRunNow(t, q) {
+  const r = laneLibraryRow(t, q);
+  return !!(r && r.state === 'queued' && r.deferrable && !r.run_now);
+}
+function laneIsLibrary(t) {
+  return !!t && (t.kind === 'library_index' || t.kind === 'library_reindex') && (t.status === 'running' || t.status === 'queued' || t.status === 'paused');
+}
 function localAiChipText(q) {
   const n = q && q.count || 0;
   const run = q && q.running && q.running[0];
+  const lead = run || q && q.queued && q.queued[0];
+  if (lead && lead.kind === 'library_index') {
+    const more = (q.running ? q.running.length : 0) + (q.queued ? q.queued.length : 0) - 1;
+    const why = lead.state === 'running' ? '' : localAiWhyWords(lead);
+    return lead.label + (why ? ' · ' + why : '') + (more > 0 ? ' · +' + more + ' more' : '');
+  }
   const parts = [];
   if (n) parts.push(n + ' queued');
   if (run) parts.push((run.state === 'paused' ? 'paused: ' : 'running: ') + run.label);
@@ -23173,11 +23213,13 @@ function LaneActivity({ q, onLocal, busy, onChanged }) {
     (q && q.jobs && q.jobs.length) ? h('div', { className: 'local-ai-list-note' }, 'One job at a time on your local model. Your chats and voice always go first.') : null,
     !d.tasks.length ? h('div', { className: 'place-empty' }, 'Nothing is running and nothing is waiting.') : d.tasks.map(t => h('div', { key: t.id, className: 'local-ai-row', 'data-state': t.status === 'running' ? 'running' : t.status, 'data-testid': 'lane-task', 'data-task-id': t.id, 'data-kind': t.kind },
       h('div', { className: 'local-ai-row-text' },
-        h('div', { className: 'local-ai-row-label' }, t.label),
+        h('div', { className: 'local-ai-row-label' }, laneRowLabel(t, q)),
         h('div', { className: 'local-ai-row-meta', 'data-testid': 'lane-task-meta' },
-          [t.model || (t.status === 'queued' ? 'model chosen when it starts' : 'model not named'), laneStatusWords(t)].concat(t.why ? [t.why] : []).concat(t.source === 'local_queue' && LOCAL_AI_KIND_WORDS[t.kind] ? [LOCAL_AI_KIND_WORDS[t.kind]] : []).join(' · '))),
+          [t.model || (t.status === 'queued' ? 'model chosen when it starts' : 'model not named'), laneStatusWords(t)].concat(laneWhy(t, q)).concat(t.source === 'local_queue' && LOCAL_AI_KIND_WORDS[t.kind] ? [LOCAL_AI_KIND_WORDS[t.kind]] : []).join(' · '))),
       t.trace_id ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-trace', title: 'How it is thinking, step by step. Pulled, never pushed.', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Trace') : null,
       t.run_now ? h('button', { type: 'button', className: 'ws-tab-link', disabled: !!busy, onClick: () => onLocal(t.id, 'run-now'), title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.' }, 'Run now') : null,
+      !t.run_now && laneLibraryRunNow(t, q) ? h('button', { type: 'button', className: 'ws-tab-link', disabled: !!busy, onClick: () => onLocal(t.id, 'run-now'), title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.' }, 'Run now') : null,
+      laneIsLibrary(t) ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'local-ai-library-pause', disabled: !!busy, onClick: () => onLocal('library-index', q && q.library && q.library.paused ? 'resume' : 'pause'), title: q && q.library && q.library.paused ? 'Carry on reading your folders where it stopped' : 'Stop reading your folders before the next file. Nothing already read is lost.' }, q && q.library && q.library.paused ? 'Resume' : 'Pause') : null,
       t.stoppable && t.stop ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-stop', disabled: !!busy || stopping === t.id, onClick: () => t.source === 'local_queue' ? onLocal(t.id, 'cancel') : stop(t), title: t.status === 'queued' ? 'Remove from the line' : 'Stop it after its current step. The record is kept.' }, t.source === 'local_queue' || t.status === 'queued' ? 'Cancel' : 'Stop') : null)));
 }
 function LaneUpdates() {

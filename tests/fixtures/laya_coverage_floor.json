@@ -13,7 +13,7 @@
   "code": {"laya": 0, "pct": 0.0},
   "futurespeak": {"laya": 0, "pct": 0.0},
   "media": {"laya": 1, "pct": 7.7},
-  "library": {"laya": 0, "pct": 0.0},
+  "library": {"laya": 1, "pct": 11.1},
   "knowledge": {"laya": 1, "pct": 12.5},
   "trust": {"laya": 0, "pct": 0.0},
   "marketplace": {"laya": 0, "pct": 0.0},
@@ -21,5 +21,5 @@
   "system": {"laya": 6, "pct": 60.0},
   "settings": {"laya": 2, "pct": 40.0}
  },
- "overall": {"laya": 18, "pct": 13.4}
+ "overall": {"laya": 19, "pct": 14.0}
 }

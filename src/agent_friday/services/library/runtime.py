@@ -1,11 +1,14 @@
 """Wires the Library's pieces to the running app: consent, shelves, the
 background indexer and the machine's other work.
 
-Indexing is background work that gives way to everything else: it waits while
-off the record, while the machine is on battery (unless the owner allows it)
-and whenever the resource arbiter cannot spare a core and some memory. Each
-file is read under its own short lease, so a chat turn that needs the CPU is
-never queued behind a whole folder.
+Indexing is background work that gives way to everything else: a folder is ONE
+job on the Local AI queue (see index_job), so it starts when the PC has been
+idle, pauses when the owner comes back, and waits while off the record, while
+the machine is on battery (unless the owner allows it) and whenever the
+resource arbiter cannot spare a core and some memory. Each file is read under
+its own short lease, so a chat turn that needs the CPU is never queued behind a
+whole folder. New and changed files are found by the idle sweep (see changes)
+and read the same way, one job per folder.
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import threading
 import time
 from pathlib import Path
 
-from agent_friday.services.library import grants, shelf
+from agent_friday.services.library import changes, grants, index_job, shelf
 from agent_friday.services.library.indexer import Indexer
 from agent_friday.services.library.store import OWNER, store_for
 
@@ -22,6 +25,10 @@ HOLDER = "library-indexer"
 LEASE_RAM_MIB = 1536
 _LEASE_TTL_S = 300
 CPU_PATIENCE_S = 20
+#: After one file was read without a core lease (the PC's cores were all spoken for), the next files do not
+#: wait for one again for this long: a folder of thousands would otherwise spend CPU_PATIENCE_S on each.
+CPU_COOLDOWN_S = 120
+_cpu_skip_until = 0.0
 
 _lock = threading.Lock()
 _indexers: dict[str, Indexer] = {}
@@ -66,6 +73,7 @@ def gate(stop=lambda: False):
     PC can hold every core for a long time, so after CPU_PATIENCE_S the file is
     read without a core lease: the child runs at below-normal priority, so the
     foreground still wins."""
+    global _cpu_skip_until
     from agent_friday.services import arbiter
     lease_ids: list[str] = []
     t0 = time.monotonic()
@@ -76,11 +84,16 @@ def gate(stop=lambda: False):
                                   ttl_s=_LEASE_TTL_S)
             if ram.get("granted"):
                 got = [ram.get("lease_id")]
+                if time.monotonic() < _cpu_skip_until:
+                    lease_ids = got
+                    break
                 cpu = arbiter.acquire("cpu_cores", 1, HOLDER, purpose="reading a document into the Library",
                                       ttl_s=_LEASE_TTL_S)
                 if cpu.get("granted"):
                     got.append(cpu.get("lease_id"))
                 if cpu.get("granted") or time.monotonic() - t0 >= CPU_PATIENCE_S:
+                    if not cpu.get("granted"):
+                        _cpu_skip_until = time.monotonic() + CPU_COOLDOWN_S
                     lease_ids = got
                     break
                 arbiter.release(ram.get("lease_id"))
@@ -103,7 +116,7 @@ def indexer_for(principal: str = OWNER) -> Indexer:
         if ix is None:
             ix = Indexer(principal, classify=shelf.chooser(principal),
                          allowed=lambda p, pr=principal: grants.allowed(pr, p),
-                         gate=lambda: gate(lambda: ix._stop))
+                         gate=lambda: gate(lambda: ix._stop), job_factory=index_job.factory(principal))
             _indexers[principal] = ix
         return ix
 
@@ -123,14 +136,17 @@ def index_scope(principal: str, add_event: dict) -> None:
                 index_scope(principal, s)
         return
     prepare(principal)
+    if Path(add_event["path"]).is_dir():
+        index_job.note_queued(principal, add_event["path"])
     indexer_for(principal).enqueue(add_event["path"], recursive=bool(add_event.get("recursive", True)),
                                    glob=add_event.get("glob"),
                                    kinds=set(add_event["kinds"]) if add_event.get("kinds") else None)
 
 
 def resweep(principal: str = OWNER) -> int:
-    """Re-read every active consent for new, changed and deleted files, and
-    purge documents no consent covers any more. Returns the scopes queued."""
+    """Look at every active consent for new, changed and deleted files (a stat of each file, no reading),
+    queue ONE job per folder that has any, and purge documents no consent covers any more. Returns the
+    folders queued."""
     if grants.suspended():
         return 0          # an unverifiable ledger trusts no consent, and purging would delete a whole index
     st = prepare(principal)
@@ -141,9 +157,28 @@ def resweep(principal: str = OWNER) -> int:
             from agent_friday.services.library import forget
             forget.remove_document(principal, row["id"])
     n = 0
+    ix = indexer_for(principal)
     for a in grants.active_scopes(principal):
-        index_scope(principal, a)
-        n += 1
+        if a.get("type") == grants.TRACKED:
+            continue
+        n += changes.queue(principal, ix, a, st, allowed=lambda p, pr=principal: grants.allowed(pr, p))
+    return n
+
+
+def resume_unfinished(principal: str = OWNER) -> int:
+    """After a restart, take up the folders that were being read or were waiting: the Library's rows say
+    which files are already in, so the pass skips them. Folders the owner stopped stay stopped."""
+    if grants.suspended():
+        return 0
+    live = {k for k, r in index_job.folders(principal).items() if r.get("state") in index_job.LIVE}
+    if not live:
+        return 0
+    n = 0
+    ix = indexer_for(principal)
+    for a in grants.active_scopes(principal):
+        if a.get("path") in live and not ix.has(a["path"]):      # one still under way here needs no second pass
+            index_scope(principal, a)
+            n += 1
     return n
 
 
@@ -165,8 +200,30 @@ def purge_uncovered(principal: str = OWNER) -> int:
 
 
 _sweeper: threading.Thread | None = None
+_resumed = False
 PURGE_EVERY_S = 60
 RESWEEP_EVERY_S = 900
+
+
+def _owner_idle() -> bool:
+    try:
+        from agent_friday.services import background_gate as bg
+        return bool(bg.idle_state()["idle"])
+    except Exception:  # noqa: BLE001 - an unreadable idle clock is not idle
+        return False
+
+
+def _sweep_once(last: float) -> float:
+    """One pass of the sweeper. Returns when the change sweep last ran."""
+    for p in list(_indexers) or [OWNER]:
+        purge_uncovered(p)
+    # The change sweep is part of the idle sweep: it looks only while the PC is idle.
+    if time.time() - last >= RESWEEP_EVERY_S and _owner_idle():
+        last = time.time()
+        for p in list(_indexers) or [OWNER]:
+            if grants.active_scopes(p):
+                resweep(p)
+    return last
 
 
 def _sweep_loop() -> None:
@@ -174,24 +231,21 @@ def _sweep_loop() -> None:
     while True:
         time.sleep(PURGE_EVERY_S)
         try:
-            for p in list(_indexers) or [OWNER]:
-                purge_uncovered(p)
-            if time.time() - last >= RESWEEP_EVERY_S:
-                last = time.time()
-                for p in list(_indexers) or [OWNER]:
-                    if grants.active_scopes(p):
-                        resweep(p)
+            last = _sweep_once(last)
         except Exception:  # noqa: BLE001 - the sweeper must outlive one bad pass
             pass
 
 
 def start_background() -> None:
     """Start the periodic purge and re-read. Idempotent."""
-    global _sweeper
+    global _sweeper, _resumed
     with _lock:
         if _sweeper is None or not _sweeper.is_alive():
             _sweeper = threading.Thread(target=_sweep_loop, name="library-sweeper", daemon=True)
             _sweeper.start()
+        if not _resumed:
+            _resumed = True
+            threading.Thread(target=lambda: resume_unfinished(OWNER), name="library-resume", daemon=True).start()
 
 
 def on_settings_change(before: dict, after: dict) -> None:

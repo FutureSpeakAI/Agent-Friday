@@ -140,6 +140,41 @@
    "voice": {"live": false, "shared": true},
    "quiet_result": null,
    "eval": []
+  },
+  {
+   "id": "library.index_status",
+   "action": "library.index_status",
+   "group": "read",
+   "ui": {"control": "top-bar queue chip: indexing progress"},
+   "tool": "queue_status",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["how's the indexing going"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_library_index_job.py::test_how_is_the_indexing_going_reaches_the_queue_read_out",
+    "tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"
+   ]
+  },
+  {
+   "id": "library.index_pause_resume",
+   "action": "library.index_pause_resume",
+   "group": "settings",
+   "ui": {"control": "top-bar queue chip: Pause / Resume reading"},
+   "tool": "local_work",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["pause the indexing", "resume the indexing"],
+   "deictic": [],
+   "undo": {"fn": "local_work", "via": "self"},
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_library_index_job.py::test_the_voice_can_pause_and_resume_the_reading_and_ask_how_it_is_going"]
   }
  ],
  "jobs": [

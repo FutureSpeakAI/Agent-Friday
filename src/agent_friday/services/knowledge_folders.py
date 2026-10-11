@@ -92,7 +92,8 @@ COPY = {
               "them for you. You choose every folder. Nothing is chosen for you."),
     "local_title": "Let {agent} read and index it on this PC.",
     "local_body": ("Your files stay here. {agent} can search them and answer from them with "
-                   "citations. Nothing leaves this PC."),
+                   "citations. She reads them when the PC has been idle for a while, and the top bar "
+                   "shows how far she has got. Nothing leaves this PC."),
     "cloud_title": "Also let cloud models read it.",
     "cloud_body": ("Only if you turn this on, folder by folder, and it ends after 30 days. It is a "
                    "separate permission from reading it here. It is off unless you turn it on, and "

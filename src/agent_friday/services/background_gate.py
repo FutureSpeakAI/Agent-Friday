@@ -12,7 +12,9 @@ the signals that queue consults:
 * how long the computer has been idle (Windows last-input time, combined with
   Friday's own activity in ``work_queue``);
 * the one rule both admission and the cooperative wait apply,
-  ``block_reason(record)``: why this job may not take the seat now, or "".
+  ``block_reason(record)``: why this job may not take the seat now, or "". A record marked
+  ``memory_floor`` (CPU work such as the Library reading folders) also waits while free RAM is
+  under the scheduler's floor (``local_scheduler_ram_floor_gb``, the one a model load keeps).
 
 and the choke point every local model request passes,
 ``before_local_model_call()``. A request made inside a background job waits
@@ -282,6 +284,14 @@ def block_reason(record: Dict[str, Any]) -> str:
         # An open call is not idle, even when nobody has touched a key.
         if KIND_VOICE_CALL in kinds or not idle_state()["idle"]:
             return REASON_IDLE
+    if record.get("memory_floor"):
+        # CPU work that holds memory while it runs (the Library reading folders) keeps the same
+        # free-RAM floor a model load keeps, and pauses, not fails, when the PC runs short.
+        try:
+            from agent_friday.services import local_scheduler as _ls
+            return _ls.memory_block(0.0)
+        except Exception:
+            return ""
     return ""
 
 

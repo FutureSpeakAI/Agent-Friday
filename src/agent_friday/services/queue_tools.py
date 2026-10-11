@@ -25,18 +25,24 @@ def handle_local_work(inp=None) -> str:
     action = str(inp.get("action") or "status").strip().lower()
     if action == "cancel":
         return _ls.cancel_by_words(inp.get("job") or "")["message"]
+    if action in ("pause", "resume"):
+        from agent_friday.services.library import index_job as _ij
+        if action == "pause":
+            _ij.pause()
+            return "Paused. The Library stops reading your folders before its next file. Say resume to carry on."
+        _ij.resume()
+        return "Carrying on. The Library picks up your folders where it stopped, when the PC is idle."
     return _ls.status()["speech"]
 
 
 TOOLS = [
     {"name": "local_work",
      "description": (
-         "What the local models are working on and what waits for them (the podcast, "
-         "knowledge-graph learning, a long job), each with the reason it is waiting. "
-         "action=status (default) says it; action=cancel with job (part of its name, "
-         "like podcast) takes a waiting job out before it starts. A running job is not stopped."),
+         "The local models' work and what waits, with reasons. action=status (default) says it; "
+         "cancel with job (part of its name) removes a waiting job before it starts, a running one is "
+         "not stopped; pause or resume holds or continues the Library reading folders."),
      "input_schema": {"type": "object", "properties": {
-         "action": {"type": "string", "enum": ["status", "cancel"]},
+         "action": {"type": "string", "enum": ["status", "cancel", "pause", "resume"]},
          "job": {"type": "string", "description": "Part of the waiting job's name, for cancel."}}}},
 ]
 RINGS = {"local_work": 1}

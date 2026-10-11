@@ -139,6 +139,7 @@ KIND_LABELS = {
     "runner": "a background job",
     "task": "a background task",
     "podcast": "a podcast episode",
+    "library_index": "reading your folders into the Library",
 }
 
 
@@ -457,6 +458,24 @@ class SeatSupervisor:
                 self.pump()
             self._sleep(self.poll_seconds)
 
+    def annotate(self, task_id: str, **fields: Any) -> bool:
+        """Set display fields on a live job (its label with progress, a reason it is paused). A ``None``
+        value removes a field. Returns False when the job is gone or was cancelled, so the caller stops."""
+        with self._lock:
+            record = self._records.get(task_id)
+            if record is None or record.get("cancel_requested") or _is_terminal(record.get("status")):
+                return False
+            for k, v in fields.items():
+                if v is None:
+                    record.pop(k, None)
+                else:
+                    record[k] = v
+            if "paused_reason" in fields and fields["paused_reason"] is not None:
+                record.setdefault("paused_at", time.time())
+            elif "paused_reason" in fields:
+                record.pop("paused_at", None)
+        return True
+
     def run_now(self, task_id: str) -> bool:
         """Skip the idle wait for this job. It still runs one at a time and
         still yields to interactive turns."""
@@ -509,15 +528,18 @@ class SeatSupervisor:
             elif rec.get("paused_reason"):
                 why = rec["paused_reason"]
                 state = "paused"
-            return {"id": tid, "label": str(label)[:80], "kind": kind,
-                    "state": state, "why": why, "seat": rec.get("seat"),
-                    "deferrable": bool(rec.get("deferrable")),
-                    "run_now": bool(rec.get("run_now")),
-                    "queued_at": rec.get("queued_at"),
-                    "merged": int(rec.get("merged") or 0),
-                    # Work a person is waiting on (services/visible_jobs): the
-                    # local work scheduler lists it as a job you asked for.
-                    "foreground": bool(rec.get("foreground"))}
+            row = {"id": tid, "label": str(label)[:80], "kind": kind,
+                   "state": state, "why": why, "seat": rec.get("seat"),
+                   "deferrable": bool(rec.get("deferrable")),
+                   "run_now": bool(rec.get("run_now")),
+                   "queued_at": rec.get("queued_at"),
+                   "merged": int(rec.get("merged") or 0),
+                   # Work a person is waiting on (services/visible_jobs): the
+                   # local work scheduler lists it as a job you asked for.
+                   "foreground": bool(rec.get("foreground"))}
+            if isinstance(rec.get("progress"), dict):
+                row["progress"] = dict(rec["progress"])      # counts only: "1,240 of 3,100"
+            return row
         with self._lock:
             running = []
             for tid, rec in self._records.items():
@@ -719,15 +741,33 @@ def spoken_summary(snap: Dict[str, Any]) -> str:
     parts = []
     if running:
         r = running[0]
-        if r.get("state") == "paused":
+        if _is_library_row(r):
+            parts.append(_library_say(r) + ".")
+        elif r.get("state") == "paused":
             parts.append("Running %s, paused: it %s." % (r["label"], r.get("why") or "waits"))
         else:
             parts.append("Running %s." % r["label"])
     if queued:
         q = queued[0]
-        parts.append("%s. Next: %s, which %s." % (_count_words(len(queued)).capitalize(),
-                                                  q["label"], q.get("why") or "waits"))
+        if _is_library_row(q):
+            parts.append("%s. Next: %s." % (_count_words(len(queued)).capitalize(), _library_say(q)))
+        else:
+            parts.append("%s. Next: %s, which %s." % (_count_words(len(queued)).capitalize(),
+                                                      q["label"], q.get("why") or "waits"))
     return " ".join(parts)
+
+
+def _is_library_row(row: Dict[str, Any]) -> bool:
+    return row.get("kind") == "library_index"
+
+
+def _library_say(row: Dict[str, Any]) -> str:
+    """The Library reading a folder, in the words the chip uses (counts and a reason, never a document)."""
+    try:
+        from agent_friday.services.library import index_job
+        return index_job.say_row(row)
+    except Exception:
+        return str(row.get("label") or "Indexing a folder")
 
 
 def tray_tooltip(snap: Optional[Dict[str, Any]], limit: int = 127) -> Optional[str]:
