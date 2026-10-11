@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS cited_in(
   stamp TEXT, receipt_id TEXT);
 CREATE INDEX IF NOT EXISTS cited_doc ON cited_in(doc_id);
 CREATE TABLE IF NOT EXISTS tombstones(sha256 TEXT, path TEXT, ts REAL, PRIMARY KEY(sha256, path));
+CREATE TABLE IF NOT EXISTS doc_meta(
+  doc_id INTEGER PRIMARY KEY, doc_type TEXT, type_score REAL, sensitivity INTEGER, dup_of INTEGER, dup_kind TEXT,
+  dup_score REAL, degraded INTEGER DEFAULT 0, versions TEXT, triage_version INTEGER, triaged_at REAL);
+CREATE INDEX IF NOT EXISTS doc_meta_type ON doc_meta(doc_type);
 """
 
 
@@ -444,6 +448,8 @@ class Store:
         """Delete everything stored for a document except the document row."""
         self.x("DELETE FROM fts WHERE rowid IN (SELECT id FROM passages WHERE doc_id=?)", (doc_id,))
         self.x("DELETE FROM vectors WHERE doc_id=?", (doc_id,))
+        self.x("DELETE FROM doc_meta WHERE doc_id=?", (doc_id,))
+        self.x("UPDATE doc_meta SET dup_of=NULL, dup_kind=NULL, dup_score=NULL WHERE dup_of=?", (doc_id,))
         self.x("DELETE FROM profiles WHERE (node_kind='document' AND node_id=?) OR "
                "(node_kind='section' AND node_id IN (SELECT id FROM sections WHERE doc_id=?))", (doc_id, doc_id))
         self.x("DELETE FROM passages WHERE doc_id=?", (doc_id,))
@@ -500,6 +506,35 @@ class Store:
             except Exception:
                 self.x("ROLLBACK")
                 raise
+
+    # -- triage metadata (library/triage.py): what Laya noted about a document ----
+
+    def set_doc_meta(self, doc_id: int, *, doc_type: str | None, type_score: float | None, sensitivity: int | None,
+                     dup_of: int | None, dup_kind: str | None, dup_score: float | None, degraded: bool,
+                     versions: dict) -> None:
+        self.x("INSERT OR REPLACE INTO doc_meta(doc_id, doc_type, type_score, sensitivity, dup_of, dup_kind, "
+               "dup_score, degraded, versions, triage_version, triaged_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+               (doc_id, doc_type, type_score, sensitivity, dup_of, dup_kind, dup_score, 1 if degraded else 0,
+                json.dumps(versions, sort_keys=True), versions.get("triage"), time.time()))
+
+    def note_tier(self, doc_id: int, tier: int) -> None:
+        """The classifier's tier, recorded at index time (the row is completed by triage)."""
+        self.x("INSERT INTO doc_meta(doc_id, sensitivity) VALUES(?,?) "
+               "ON CONFLICT(doc_id) DO UPDATE SET sensitivity=excluded.sensitivity", (doc_id, int(tier)))
+
+    def get_doc_meta(self, doc_id: int):
+        return self.one("SELECT * FROM doc_meta WHERE doc_id=?", (doc_id,))
+
+    def untriaged(self, scope: str | None = None) -> list[int]:
+        """Indexed documents with no triage row (or one made by an older triage), oldest first."""
+        from agent_friday.services.library import triage
+        sql = ("SELECT d.id FROM documents d LEFT JOIN doc_meta m ON m.doc_id=d.id WHERE d.state='indexed' "
+               "AND (m.doc_id IS NULL OR m.triage_version IS NOT ?)")
+        args: list = [triage.VERSION]
+        if scope is not None:
+            sql += " AND d.scope=?"
+            args.append(scope)
+        return [r["id"] for r in self.q(sql + " ORDER BY d.id", args)]
 
     # -- receipts and citations (nothing is written off the record) -----------
 

@@ -176,8 +176,18 @@
    "model_class": "encoder",
    "helper": "visible_job",
    "task_kind": "library_index",
+   "also": ["voice"],
    "activity_label": "Reading a folder into your Library",
-   "entry": "agent_friday.services.library.indexer:Indexer._loop"
+   "entry": "agent_friday.services.library.indexer:Indexer._run"
+  },
+  {
+   "id": "library.reindex_changes",
+   "trigger": "idle",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "library_reindex",
+   "activity_label": "Reading changes in a folder",
+   "entry": "agent_friday.services.library.indexer:Indexer._run"
   },
   {
    "id": "library.work_order",

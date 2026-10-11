@@ -13,7 +13,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterable, Iterator
 
 from agent_friday.services.library import extract as _ext
 from agent_friday.services.library import procrun, structure, vectors, withhold
@@ -207,9 +207,11 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
                 passages.append(pa)
             profiles[s["id"]] = structure.section_profile(s, kids.get(s["id"], []))
         doc_profile = structure.document_profile(title, sections)
-        stored = store.replace_content(doc_id, title=title, pages=res.get("pages"), shelf=chosen, blocks=blocks,
+        stored = store.replace_content(doc_id, title=title, pages=res.get("pages"), shelf=str(chosen), blocks=blocks,
                                        sections=sections, passages=passages, doc_profile=doc_profile,
                                        section_profiles=profiles, ocr_pages=res.get("ocr_pages") or 0, sha256=sha)
+        if getattr(chosen, "tier", None) is not None:
+            store.note_tier(doc_id, chosen.tier)      # the classifier already ran: Laya's triage reuses it
         try:
             vectors.index_document_vectors(store, doc_id, sections=sections, passages=passages,
                                            doc_profile=doc_profile, section_profiles=profiles,
@@ -225,32 +227,57 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
 def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob: str | None = None,
                 kinds: set[str] | None = None, classify: Classify | None = None,
                 allowed: Callable[[Path], bool] | None = None, gate=None, force: bool = False,
-                on_gone: Callable[[int], None] | None = None) -> dict:
+                on_gone: Callable[[int], None] | None = None, hooks=None,
+                only: Iterable[str | Path] | None = None) -> dict:
     """Index new and changed files under `scope`; purge rows of files that are
     gone. `allowed` is the consent check: a path it refuses is not read.
     `on_gone(doc_id)` removes a document whose file is gone the way a removal does (graph,
-    caches, remembered searches); without it only the index rows go."""
+    caches, remembered searches); without it only the index rows go.
+
+    `only` limits the pass to those files (the idle change sweep's list); a file of it that is gone
+    is purged, and nothing else under the scope is touched. `hooks` is the queue job reading this
+    pass: `total(n)` once the files are counted, `before(path)` ahead of each file (its pause and
+    cancel point) and `done(path, result)` after each (its checkpoint)."""
     out = {"indexed": 0, "unchanged": 0, "failed": 0, "skipped": 0, "purged": 0}
     seen: set[str] = set()
-    for p in scan_scope(scope, recursive=recursive, glob=glob, kinds=kinds):
-        if allowed and not allowed(p):
-            continue
+    if only is not None:
+        files = []
+        for x in only:
+            p = Path(x)
+            if p.exists():
+                files.append(p)
+    else:
+        files = list(scan_scope(scope, recursive=recursive, glob=glob, kinds=kinds))
+    files = [p for p in files if not allowed or allowed(p)]
+    if hooks is not None:
+        hooks.total(len(files))
+    for p in files:
         try:
             seen.add(str(p.resolve()))
         except OSError:
             continue
+        if hooks is not None:
+            hooks.before(p)
         if gate is not None:
             with gate():
                 r = index_file(store, p, scope, classify=classify, force=force)
         else:
             r = index_file(store, p, scope, classify=classify, force=force)
         out[r["state"] if r["state"] in out else "failed"] += 1
+        if hooks is not None:
+            hooks.done(p, r)
     root = Path(scope)
     try:
         base = str(root.resolve() if root.is_dir() else root.resolve().parent)
     except OSError:
         base = str(root)
-    for row in store.q("SELECT id, path FROM documents WHERE scope=?", (base,)):
+    if only is not None:
+        wanted = {os.path.normcase(str(Path(x))) for x in only}
+        rows = [r for r in store.q("SELECT id, path FROM documents WHERE scope=?", (base,))
+                if os.path.normcase(r["path"]) in wanted]
+    else:
+        rows = store.q("SELECT id, path FROM documents WHERE scope=?", (base,))
+    for row in rows:
         if row["path"] not in seen and not Path(row["path"]).exists():
             (on_gone or store.purge_document)(row["id"])
             out["purged"] += 1
@@ -267,8 +294,10 @@ class Indexer:
 
     def __init__(self, principal: str = OWNER, *, can_run: Callable[[], bool] | None = None,
                  classify: Classify | None = None, allowed: Callable[[Path], bool] | None = None,
-                 gate=None):
+                 gate=None, job_factory=None):
         self.principal = principal
+        #: (scope, kw) -> the Local AI queue job that reads that folder (library/index_job), or None.
+        self.job_factory = job_factory
         self.can_run = can_run or (lambda: True)
         self.classify = classify
         self.allowed = allowed
@@ -280,9 +309,21 @@ class Indexer:
         self.current: str | None = None
 
     def enqueue(self, scope: str | Path, **kw) -> None:
+        """Queue a folder. A folder already waiting is not queued twice: a burst of changes becomes
+        one job (the union of the changed files, or the whole folder when either asks for it)."""
         with self._cv:
-            self._q.append((str(scope), kw))
-            self._cv.notify()
+            for i, (s0, kw0) in enumerate(self._q):
+                same = {k: v for k, v in kw0.items() if k != "paths"} == {k: v for k, v in kw.items() if k != "paths"}
+                if s0 == str(scope) and same:
+                    p0, p1 = kw0.get("paths"), kw.get("paths")
+                    merged = None if (p0 is None or p1 is None) else sorted({str(x) for x in p0} | {str(x) for x in p1})
+                    self._q[i] = (s0, dict(kw0, paths=merged) if merged is not None else
+                                  {k: v for k, v in kw0.items() if k != "paths"})
+                    self._cv.notify()
+                    break
+            else:
+                self._q.append((str(scope), kw))
+                self._cv.notify()
         self.start()
 
     def start(self) -> None:
@@ -297,6 +338,11 @@ class Indexer:
         with self._cv:
             self._stop = True
             self._cv.notify_all()
+
+    def has(self, scope: str | Path) -> bool:
+        """Is this folder being read, or waiting its turn, in this indexer?"""
+        with self._cv:
+            return self.current == str(scope) or any(s == str(scope) for s, _kw in self._q)
 
     def pending(self) -> int:
         with self._cv:
@@ -324,14 +370,41 @@ class Indexer:
                     return
             self.current = scope
             try:
-                # Reading a folder into the Library is a background job the owner can see in
-                # the Activity lane. It reads on this PC and calls no model seat, so it is not
-                # queued behind one; the name carries no path.
-                with visible_job("Reading a folder into your Library", kind="library_index",
-                                 workspace="library", queued=False):
-                    sweep_scope(store_for(self.principal), scope, classify=self.classify, allowed=self.allowed,
-                                gate=self.gate, on_gone=self._remove_gone, **kw)
+                self._run(scope, kw)
             except Exception:  # noqa: BLE001 - one scope's failure must not stop the queue
                 pass
             finally:
                 self.current = None
+
+    def _run(self, scope: str, kw: dict) -> None:
+        """One pass over one folder: ONE visible job in Activity, whatever reads it. The name carries no
+        path. A folder added to the Library is also a job of the Local AI queue (`job_factory`, see
+        library/index_job), which takes its place in line inside this visible job and shares its card."""
+        from agent_friday.services.background_gate import JobCancelled
+        kw = dict(kw)
+        only = kw.pop("paths", None)                 # the change sweep's list; None reads the whole folder
+        store = store_for(self.principal)
+        job = self.job_factory(scope, dict(kw, paths=only)) if self.job_factory else None
+        title = job.title if job is not None else "Reading a folder into your Library"
+        try:
+            if only is None:
+                with visible_job(title, kind="library_index", workspace="library", queued=False, deferrable=True,
+                                 description="The Library reads a folder on this PC into its index.") as vj:
+                    self._pass(store, scope, kw, only, job, vj)
+            else:
+                with visible_job(title, kind="library_reindex", workspace="library", queued=False,
+                                 deferrable=True, description="The Library reads the files that changed.") as vj:
+                    self._pass(store, scope, kw, only, job, vj)
+        except JobCancelled:
+            pass                                      # stopped from the queue or the card: this folder ends quietly
+
+    def _pass(self, store, scope: str, kw: dict, only, job, vj) -> None:
+        if job is None:
+            sweep_scope(store, scope, classify=self.classify, allowed=self.allowed, gate=self.gate,
+                        on_gone=self._remove_gone, only=only, **kw)
+            return
+        job.attach(vj)
+        with job as j:                               # admitted through the Local AI queue; may be cancelled
+            out = sweep_scope(store, scope, classify=self.classify, allowed=self.allowed, gate=self.gate,
+                              on_gone=self._remove_gone, hooks=j, only=only, **kw)
+            j.finish(store, out)

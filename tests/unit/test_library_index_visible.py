@@ -32,3 +32,23 @@ def test_the_indexer_reads_a_folder_under_a_visible_job(tmp_path, monkeypatch):
         w.stop()
     assert seen["kind"] == "library_index" and seen["workspace"] == "library"
     assert str(tmp_path) not in seen["name"]
+
+
+def test_a_change_pass_is_one_visible_job_of_its_own_kind(tmp_path, monkeypatch):
+    seen, done = [], threading.Event()
+
+    def fake_sweep(store, scope, **kw):
+        job = visible_jobs.current()
+        seen.append((getattr(job, "kind", None), kw.get("only")))
+        done.set()
+        return {}
+
+    monkeypatch.setattr(ix, "sweep_scope", fake_sweep)
+    monkeypatch.setattr(ix, "store_for", lambda principal: object())
+    w = ix.Indexer("owner")
+    try:
+        w.enqueue(tmp_path, paths=[str(tmp_path / "a.txt")])
+        assert done.wait(10), "the indexer never ran the change pass"
+    finally:
+        w.stop()
+    assert seen == [("library_reindex", [str(tmp_path / "a.txt")])]
