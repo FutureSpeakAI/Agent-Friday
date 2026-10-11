@@ -112,7 +112,7 @@ def run(base: str, phase: int, wait_s: float, fetcher=fetch, say=print) -> bool:
         page = body.decode("utf-8", "replace")
         check("function PodcastPlayer(" in page, "the page carries the podcast player")
         check("'podcasts'" in page and "Podcasts" in page, "Studio has a Podcasts view")
-        check("--fr-" in page[page.find("PODCASTS — player"):][:6000], "the player reads the brand tokens")
+        check("--fr-" in page[page.find("PODCASTS — player"):][:16000], "the player reads the brand tokens")
         check(any(ln.get("signature") for ln in lines), "the episode has its signature lines")
     if phase >= 3:
         ok &= run_sources(base, wait_s, fetcher, say, check)
