@@ -190,6 +190,15 @@
    "entry": "agent_friday.services.library.indexer:Indexer._run"
   },
   {
+   "id": "library.stage_drafts",
+   "trigger": "idle",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "library_stage",
+   "activity_label": "Drafting notes from a folder",
+   "entry": "agent_friday.services.library.staging:Stager._one"
+  },
+  {
    "id": "library.work_order",
    "trigger": "idle",
    "model_class": "brain",

@@ -107,10 +107,20 @@ def _clear_cache(principal: str, doc_id: int, doc=None) -> None:
         pass
 
 
+def _purge_staging(doc_id: int) -> None:
+    """Drafts the local model made from this document (wiki/_staging) go with it."""
+    try:
+        from agent_friday.services.library import staging
+        staging.purge_document(doc_id)
+    except Exception:  # noqa: BLE001 - nothing staged is nothing to purge
+        pass
+
+
 def _purge_graph(principal: str, doc_id: int) -> None:
     """Facts the knowledge graph learned from this document go with it."""
     if principal != lstore.OWNER:
         return
+    _purge_staging(doc_id)
     try:
         from agent_friday.services.knowledge_graph import indexer as kg
         kg.purge_library_document(doc_id)
