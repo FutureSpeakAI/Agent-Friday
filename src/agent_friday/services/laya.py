@@ -274,6 +274,10 @@ def _calibrated_route(ctx: Ctx, r) -> Optional[dict]:
         if r.layer != "laya2":
             return None
         from agent_friday.services import laya_calibration, laya_router
+        if not laya_calibration.is_warm():
+            # The reading is shadow and changes nothing; it never spends the
+            # decision's deadline on a first-use file read. warm() loads it.
+            return None
         if laya_calibration.head_entry("router") is None:
             return None
         ranked = laya_router._score(ctx.text)
@@ -606,11 +610,14 @@ def _route_kw() -> frozenset:
     (the head, trust and on-screen-row arguments arrive with their own tracks)."""
     import inspect
     from agent_friday.services import laya_router
+    base = frozenset({"tools", "budget_ms", "surface", "log", "pending_card", "last_route"})
     try:
-        return frozenset(n for n, p in inspect.signature(laya_router.route).parameters.items()
-                         if p.kind is inspect.Parameter.KEYWORD_ONLY)
+        params = inspect.signature(laya_router.route).parameters.values()
     except (TypeError, ValueError):
-        return frozenset({"tools", "budget_ms", "surface", "log", "pending_card"})
+        return base
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):      # a wrapper: the signature says nothing
+        return base
+    return frozenset(p.name for p in params if p.kind is inspect.Parameter.KEYWORD_ONLY)
 
 
 def route_turn(text: str, *, caller: Optional[str] = None, mode: Optional[str] = None, **kw):
@@ -665,6 +672,20 @@ def triage_read(head: str, texts: List[str], *, allowed=None, block: bool = Fals
               {name: {"type": "choice", "preset": name}}, caller or name,
               budget_ms=TRIAGE_WORKER_BUDGET_MS if block else TRIAGE_REQUEST_BUDGET_MS)
     return res["native"].get(name)
+
+
+def warm() -> None:
+    """Pay the first-use costs once, off the request path, in a daemon thread:
+    the version ids, the calibration table and the router module. CPU imports
+    only; no model is loaded (laya_router.warm does that, separately)."""
+    def run():
+        try:
+            from agent_friday.services import laya_calibration, laya_router  # noqa: F401
+            laya_calibration.load_table()
+            versions()
+        except Exception as e:  # noqa: BLE001
+            _log.debug("laya warm skipped: %s", e)
+    threading.Thread(target=run, name="laya-warm", daemon=True).start()
 
 
 def reset() -> None:

@@ -2042,8 +2042,10 @@ def _arm_voice_front(settings, progress=None, holder="session", room=None):
             prompt = _build_front_speaker_prompt(settings, label)
             seat.prefill(prompt, {"tools": []})
             try:
+                from agent_friday.services import laya as _laya_warm
                 from agent_friday.services import laya_router as _lr
                 _lr.warm()
+                _laya_warm.warm()       # versions, calibration table: first-use cost off the turn
             except Exception:
                 pass
         else:

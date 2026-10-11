@@ -503,3 +503,31 @@ def test_the_worker_carries_every_thread_local_a_rung_could_read():
     src = inspect.getsource(laya._carry_snapshot) + inspect.getsource(laya._carry_apply)
     for needle in ("local_only_guard", "_TURN_LOCAL", "reasoning_trace", "turn_budget"):
         assert needle in src
+
+
+# --- a cold first ask never changes the router's decision ------------------------------
+
+def test_a_cold_first_route_turn_still_returns_the_routers_tool_decision(monkeypatch):
+    """The first spoken turn after start finds the calibration table and the
+    version ids cold. Their first-use cost is shadow bookkeeping and must not
+    spend the decision's deadline: "pause the music" is still the router's
+    tool, not a degraded no_tool the model would answer."""
+    from agent_friday.services import laya_calibration as lc
+    lc.set_table(None)                                   # cold: nothing loaded yet
+    monkeypatch.setattr(lc, "load_table", lambda: (time.sleep(1.0), {"version": "x", "heads": {}})[1])
+    monkeypatch.setattr(laya, "RULE_ALLOWANCE_MS", 0)
+    monkeypatch.setattr(lr, "route", lambda text, **k: lr.Route("tool", tool="check_email", layer="laya2",
+                                                                confidence=0.9))
+    r = laya.route_turn("check my email", budget_ms=150, log=False)
+    assert r.decision == "tool" and r.tool == "check_email" and r.layer == "laya2"   # not a degraded no_tool
+
+
+def test_warm_loads_the_table_and_versions_off_the_request_path():
+    from agent_friday.services import laya_calibration as lc
+    lc.set_table(None)
+    assert not lc.is_warm()
+    laya.warm()
+    deadline = time.time() + 5
+    while time.time() < deadline and not lc.is_warm():
+        time.sleep(0.02)
+    assert lc.is_warm()

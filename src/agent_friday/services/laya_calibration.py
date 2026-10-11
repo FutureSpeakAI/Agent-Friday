@@ -164,6 +164,11 @@ def load_table() -> dict:
         return _table
 
 
+def is_warm() -> bool:
+    """True once the table is in memory, so reading it costs no file access."""
+    return _table is not None or _table_override is not None
+
+
 def set_table(table: Optional[dict]) -> None:
     """Tests, and a refit that has been certified: use ``table`` instead of the
     shipped file (None goes back to the file)."""
