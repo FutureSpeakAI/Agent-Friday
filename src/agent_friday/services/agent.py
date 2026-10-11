@@ -13634,9 +13634,18 @@ def _ledger_model_invocation(model, provider, seat, duration_ms, tokens_in,
             orb_id=orb_id,
             task_id=(session_ctx or {}).get("task_id"),
             workspace=(session_ctx or {}).get("workspace"),
+            turn_id=_current_turn_id(),
         )
     except Exception:
         pass
+
+
+def _current_turn_id():
+    try:
+        from agent_friday.services import turn_plan as _tp
+        return _tp.current_turn_id()
+    except Exception:
+        return None
 
 
 def _no_empty_text(messages):

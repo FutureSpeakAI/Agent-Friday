@@ -565,6 +565,13 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
         "action": action,
         "reason": reason,
     }
+    try:
+        from agent_friday.services import turn_plan as _tp
+        _turn = _tp.current_turn_id()
+        if _turn:
+            entry["turn_id"] = _turn
+    except Exception:
+        pass
     verdict = "ALLOW" if action == "allow" else "BLOCK"
     # Structured log (survives pythonw / no-console launches). INFO for allow,
     # WARNING for a block so a withheld leak is visible even at a raised log level.

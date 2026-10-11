@@ -99,6 +99,15 @@ def derive_section_name(text: str, index: int) -> str:
 
 
 def new_turn_id() -> str:
+    """The id of the turn this thread is running (services/turn_plan), so the
+    turn receipt can find these rows; a fresh id when no turn is running."""
+    try:
+        from agent_friday.services import turn_plan as _tp
+        current = _tp.current_turn_id()
+        if current:
+            return current
+    except Exception:
+        pass
     return uuid.uuid4().hex[:12]
 
 

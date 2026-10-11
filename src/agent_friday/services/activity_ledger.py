@@ -31,6 +31,7 @@ _ALLOWED_FIELDS = {
     "model_invocation": {
         "model", "provider", "seat", "duration_ms",
         "tokens_in", "tokens_out", "orb_id", "task_id", "workspace",
+        "turn_id",
     },
     # `status` and `reason` exist because ok=False on its own cannot be
     # diagnosed: 24 calls failed in one 2026-09-25 conversation and every

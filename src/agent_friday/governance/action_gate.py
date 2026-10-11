@@ -987,7 +987,8 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
 #: the time and the ids that link it to a card, grant or task. No reason text,
 #: target, or hash of the arguments (a hash of a short message can be guessed).
 _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
-                            "grant", "task_id", "tainted")
+                            "grant", "task_id", "tainted", "chosen_by",
+                            "plan_version")
 
 
 def _receipt(entry: dict) -> None:
@@ -1097,13 +1098,53 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "grant": (v.grant or {}).get("grant_id"),
                   # Which background task took the action, so the morning
                   # receipt can link a decision to the work it belonged to.
-                  "task_id": ctx.get("task_id")})
+                  "task_id": ctx.get("task_id"),
+                  # Which layer chose the action, and under which plan.
+                  "chosen_by": _chosen_by(ctx),
+                  "plan_version": _plan_version(),
+                  "turn_id": _turn_id()})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":
             return Verdict("deny", v.klass, f"the signed receipt could not be written ({e}); "
                                             f"outward actions are held")
     return v
+
+
+def _chosen_by(ctx: dict) -> str:
+    """Which layer proposed the action: an explicit `chosen_by` in the session
+    context, else the model that is running (`brain:` local, `cloud:` remote),
+    else "unknown". Informational; no verdict reads it."""
+    try:
+        named = str(ctx.get("chosen_by") or "").strip()
+        if named:
+            return named[:80]
+        model = str(ctx.get("model") or "").strip()
+        if model:
+            provider = str(ctx.get("provider") or "").strip()
+            if provider:
+                from agent_friday.services.egress_gate import is_local_provider
+                return ("brain:" if is_local_provider(provider) else "cloud:") + model[:60]
+            return "brain:" + model[:60]
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _plan_version():
+    try:
+        from agent_friday.services import turn_plan
+        return turn_plan.current_plan_version()
+    except Exception:
+        return None
+
+
+def _turn_id():
+    try:
+        from agent_friday.services import turn_plan
+        return turn_plan.current_turn_id()
+    except Exception:
+        return None
 
 
 def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:

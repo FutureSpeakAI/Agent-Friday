@@ -1342,6 +1342,16 @@ def chat():
             _turn_shape = _reflex.shadow(message, _conversation_id)
         except Exception:
             _turn_shape = None
+        # The same verdict, recorded as this turn's TurnPlan (shadow only:
+        # nothing reads it for the prompt, the tools or the route). Off the
+        # record the turn gets no id and no plan.
+        try:
+            from agent_friday.services import turn_plan as _tplan
+            _tplan.begin_turn(_turn_id)
+            if _turn_shape is not None and _tplan.current_turn_id():
+                _tplan.shadow_plan(_turn_shape, _turn_id)
+        except Exception:
+            pass
 
         # ── Model Routing: decide local vs cloud BEFORE building the prompt. ──
         # The routing decision drives the whole privacy posture downstream:
@@ -1804,6 +1814,8 @@ def chat():
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "provider": _provider,
+            # The routed model, read by the governance receipt's `chosen_by`.
+            "model": str(_route_info.get('model') or ''),
             # Laya 2's tier-1 verdict for this turn (or None): read only by
             # the local payload's reasoning-effort choice.
             "turn_shape": _turn_shape,
@@ -2677,6 +2689,13 @@ def chat_turn_liveness(turn_id):
     except Exception:
         out["hang"] = {"armed": False, "stalled": False}
     return jsonify(out)
+
+
+@chat_bp.route('/api/turns/<turn_id>/receipt', methods=['GET'])
+def turn_receipt_get(turn_id):
+    """What was sent for one turn: names, sizes, tiers, salted hashes. Read-only."""
+    from agent_friday.services import turn_receipt as _tr
+    return jsonify(_tr.build(turn_id))
 
 
 @chat_bp.route('/api/chat/turn/<turn_id>/stop', methods=['POST'])
