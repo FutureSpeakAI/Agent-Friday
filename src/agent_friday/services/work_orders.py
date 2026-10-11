@@ -160,14 +160,26 @@ def switch_blocks() -> bool:
     return bool(ENFORCE_SWITCH[0]) and not enabled()
 
 
-def notify_owner(title: str, body: str, *, key: str, bad: bool = False) -> None:
+def notify_owner(title: str, body: str, *, key: str, emitter: str, bad: bool = False) -> None:
     """Tell the owner something about the work orders on this PC. Local text only: a cloud
-    model's words are never in a notice. Never raises."""
+    model's words are never in a notice. ``emitter`` is one of the registered WO1-WO4
+    (services/notice_registry); each has its own literal push so the routing guard can bind it.
+    Never raises."""
     try:
         from agent_friday import notifications_engine
-        notifications_engine.push(title=title, body=body, priority="high" if bad else "medium",
-                                  source="work_orders", kind="warning" if bad else "work_order",
-                                  dedupe_key=key)
+        prio = "high" if bad else "medium"
+        if emitter == "WO1":
+            notifications_engine.push(title=title, body=body, priority=prio, source="work_orders",
+                                      kind="warning", emitter="WO1", dedupe_key=key)
+        elif emitter == "WO2":
+            notifications_engine.push(title=title, body=body, priority=prio, source="work_orders",
+                                      kind="work_order", emitter="WO2", dedupe_key=key)
+        elif emitter == "WO3":
+            notifications_engine.push(title=title, body=body, priority=prio, source="work_orders",
+                                      kind="warning", emitter="WO3", dedupe_key=key)
+        elif emitter == "WO4":
+            notifications_engine.push(title=title, body=body, priority=prio, source="work_orders",
+                                      kind="warning", emitter="WO4", dedupe_key=key)
     except Exception:
         _log.debug("work-order notice could not be posted", exc_info=True)
 
@@ -193,7 +205,7 @@ def enforce_switch(*, load: bool = False) -> int:
         persist()
         notify_owner("Work orders were switched off",
                      "%d work order%s cancelled because the switch is off." % (n, " was" if n == 1 else "s were"),
-                     key="work_orders:switch_off")
+                     key="work_orders:switch_off", emitter="WO1", bad=True)
     return n
 
 
@@ -822,7 +834,7 @@ def _worker(order_id: str) -> None:
             with local_scheduler.work("work order", cls=rec["sched_class"], needs="a local model"):
                 notify_owner("A work order is running on this PC",
                              "%s. You can cancel it in Activity." % _label(rec).capitalize(),
-                             key="work_orders:start:%s" % order_id)
+                             key="work_orders:start:%s" % order_id, emitter="WO2")
                 work_order_executor.run(order_id)
             work_order_returns.after_run(rec)
         _report_end(rec)
@@ -843,10 +855,10 @@ def _report_end(rec: dict) -> None:
     if st in ("failed", "failed_acceptance"):
         notify_owner("A work order did not finish",
                      "%s stopped before it finished; nothing was sent back to the cloud model beyond that it did "
-                     "not complete." % _label(rec).capitalize(), key="work_orders:failed:%s" % rec["order_id"], bad=True)
+                     "not complete." % _label(rec).capitalize(), key="work_orders:failed:%s" % rec["order_id"], emitter="WO3", bad=True)
     elif st == "cancelled" and rec.get("cancel_reason") == "switch_off":
         notify_owner("A work order was cancelled", "%s was stopped because work orders are switched off."
-                     % _label(rec).capitalize(), key="work_orders:cancelled:%s" % rec["order_id"], bad=True)
+                     % _label(rec).capitalize(), key="work_orders:cancelled:%s" % rec["order_id"], emitter="WO4", bad=True)
 
 
 def resume(order_id: str) -> bool:

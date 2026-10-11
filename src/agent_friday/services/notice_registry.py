@@ -277,6 +277,15 @@ _ALL = [
     # A scheduled run that was due in quiet hours and waits for them to end.
     _e("NQ2", "services/scheduler.py:_defer_for_quiet", "scheduled_deferred", UPDATES,
        "sched-deferred:{schedule_id}:{day}", source="scheduler"),
+    # ── cloud work orders (services/work_orders): local text only ────────────
+    _e("WO1", "services/work_orders.py:enforce_switch", "work_order_switched_off", NEEDS_YOU,
+       "work_orders:switch_off", source="work_orders", pk="warning"),
+    _e("WO2", "services/work_orders.py:_worker", "work_order_started", ACTIVITY,
+       "work_orders:start:{order_id}", source="work_orders", pk="work_order"),
+    _e("WO3", "services/work_orders.py:_report_end:failed", "work_order_failed", NEEDS_YOU,
+       "work_orders:failed:{order_id}", source="work_orders", pk="warning"),
+    _e("WO4", "services/work_orders.py:_report_end:cancelled", "work_order_cancelled", NEEDS_YOU,
+       "work_orders:cancelled:{order_id}", source="work_orders", pk="warning"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),
