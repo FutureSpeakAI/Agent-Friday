@@ -267,6 +267,62 @@ def lib_add():
     return jsonify({"status": "ok", "scope": api._scope_row(store_for(p), ev)})
 
 
+@library_bp.route("/api/files/pick-folders", methods=["POST"])
+@login_required
+def files_pick_folders():
+    """Open the Windows folder window on the owner's screen and return the folders chosen.
+    The owner's own click on the page only (the page's session token on a same-origin
+    request): no bare call, key or other site opens a dialog. Every path has passed
+    unsafe_path_reason and too_broad_folder_reason before it is returned. It adds nothing:
+    recording a folder is /api/library/add, and a cloud model reading it is a separate
+    file grant, both pressed in the panel."""
+    bad = _same_origin_json()
+    if bad:
+        return bad
+    p, bad = _principal()
+    if bad:
+        return bad
+    from agent_friday.services import knowledge_folders as kf
+    res = kf.pick_folders(principal=p)
+    if not res.get("ok"):
+        return jsonify({"status": "unavailable", "error": res.get("error"), "fallback": res.get("fallback")}), 200
+    return jsonify({"status": "ok", "cancelled": res["cancelled"], "folders": res["folders"],
+                    "refused": res["refused"]})
+
+
+@library_bp.route("/api/files/knowledge-suggestions")
+@login_required
+def files_knowledge_suggestions():
+    """Places that usually hold someone's notes, found by a bounded read-only look (depth 3,
+    two seconds each), with a size and file-count estimate. Nothing is preselected."""
+    p, bad = _principal()
+    if bad:
+        return bad
+    from agent_friday.services import knowledge_folders as kf
+    if request.args.get("copy") == "only":                 # the words first, before the look around
+        return jsonify({"status": "ok", "copy": kf.COPY})
+    return jsonify({"status": "ok", "suggestions": kf.suggestions(p), "copy": kf.COPY})
+
+
+@library_bp.route("/api/files/describe-folder", methods=["POST"])
+@login_required
+def files_describe_folder():
+    """The typed-path fallback: the same checks the picker's folders pass, for one path."""
+    bad = _same_origin_json()
+    if bad:
+        return bad
+    p, bad = _principal()
+    if bad:
+        return bad
+    from agent_friday.services import knowledge_folders as kf
+    b = request.get_json(silent=True) or {}
+    d = kf.describe_folder(str(b.get("path") or ""), scopes=grants.active_scopes(p))
+    if not d.get("ok"):
+        return jsonify({"status": "denied", "error": d.get("error")}), 400
+    d.pop("ok", None)
+    return jsonify({"status": "ok", "folder": d})
+
+
 @library_bp.route("/api/library/tracked", methods=["GET", "POST"])
 @login_required
 def lib_tracked():
