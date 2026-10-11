@@ -103,9 +103,15 @@ you hit something that is not here, please open an issue.
   unchanged. Its spoken-card behaviour on a live local voice call and the
   Settings control on screen have been checked in tests only, not on a call or
   in a rendered window. The card is bound to the messages it listed, so a
-  reply that arrives before you approve is not changed; a conversation Friday
-  cannot read message by message is left to the model's path, never changed
-  inexactly.
+  reply that arrives before you approve is not changed. A conversation Friday
+  cannot read message by message is refused: no card is raised for the batch and
+  the turn ends "NOT DONE" (the model path does not take it), and one that cannot
+  be read when you approve is left unchanged and reported as not changed.
+  Undo reverses the labels Friday changed, message by message; a label a Gmail
+  filter or you changed in between is not restored. The card names up to three
+  senders per conversation. While the setting is on, the model path still runs
+  star, read and label with no card when a model asks, and a spoken yes that
+  names the card's action approves it even if you did not hear its line.
 
 ## 2a. Open in 1.0.2: local voice calls and the Local AI queue
 

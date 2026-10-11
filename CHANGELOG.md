@@ -15,6 +15,46 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ### Added
 
+- **Laya's safe writes** (off until you turn them on; Settings > Privacy & Data >
+  Safe writes). Laya can put the approval card up for a change you can undo to
+  the mail rows you pointed at: archive, mark read or unread, star, unstar,
+  label, and move to a label that already exists. You approve every card; she
+  never trashes, reports spam, sends or deletes. The card lists each listed
+  message's sender (with the address, on screen only), covers only the messages it
+  lists, leaves out a message that arrived after your screen last showed the
+  list and says so, and Undo puts back the labels Friday changed. A conversation
+  Friday cannot read message by message is refused. Only your own click on the
+  Settings page turns it on (a signed record on this PC, anchored in the system
+  keychain); a hand edit, a restored backup, the command line or a file write
+  reads as off. By voice a bare yes counts only after the card's fixed line was
+  played whole; in typed chat only as your very next message. Setting:
+  `laya_safe_writes` (`off`, `shadow`, `on`).
+- **A plain "yes" runs the action Friday is waiting on** (`reflex_approval_replies`,
+  on by default). A whole, unconditional yes typed on Friday's own page to a
+  question she is waiting on runs the stored action straight away, with the same
+  approval and receipt as an ordinary turn. "Yes, but ..." goes to the model.
+  Never from a tunnel, a channel, a call or the Local API. Set it to `false` to
+  send every reply through the ordinary turn.
+- **"Open the X" without a model** (`reflex_open_enabled`, off until you choose).
+  "Open the go-live email from Dana" is resolved and opened by rules; the same
+  switch lets you point at rows on your screen ("open the second one", "select
+  these"). Archive, move, label, star and mark are never run this way.
+- **Laya picks the tool for a typed lookup** (`chat_tool_routing`, unchosen by
+  default). With `laya`, a small model on this PC reads your line first; for a
+  lookup it is sure of it runs the tool through the same approvals and receipts,
+  and your chat model answers from the result. Anything it is unsure of, or any
+  change to your data, goes to the chat model, and a cloud model keeps its whole
+  toolbox.
+- **A tool chooser beside Laya's routing** (`laya_tool_head`, `shadow` by
+  default). Once a tested chooser is in your profile it records, as hashes and
+  numbers only, what it would have chosen next to what Laya chose, in one task
+  card per burst of turns; it changes nothing until you set `on`, and then only
+  when it is sure at a level it was tested to.
+- **Voice point-and-act.** In a local voice call, "open the second one", "select
+  these" and "star the ones from Dana" are settled against the rows on your
+  screen by rules. When it cannot tell which rows you mean it asks one short
+  question (you answer it by saying what you want again; a spoken "yes" does not
+  answer it). Changes still go to the model and its approval card.
 - **What Laya learns about you** (on by default; Settings > Privacy & Data).
   When you correct her, or answer a question she asks, in a local voice call on
   this PC, or typed on Friday's own page while Laya picks the tool for typed chat

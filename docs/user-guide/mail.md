@@ -79,7 +79,9 @@ Nothing is chosen for you, and no chat or voice command can turn it on. Your
 click there leaves a signed record on this PC, and the setting counts only as
 far as that record goes: a value put in `settings.json` by hand, by a restored
 backup, by the command line or by an approved file write reads as **off** until
-you click again, and turning it down any way turns the record down too:
+you click again, and turning it down any way turns the record down too (a
+hand edit is noticed the next time Friday reads the setting, and if the record
+cannot be turned down it is removed and the setting reads as off):
 
 - **Off** does nothing. A change goes to the model, as it always has.
 - **Watch only** records what she would have proposed, as counts and hashes (no
@@ -95,14 +97,16 @@ leaves some out ("not those", "the rest") goes to the model: she only acts on
 plain pointers (these, the first three, the ones from Mara).
 
 The card on your screen lists the sender's address as well as the name (the
-name is the sender's to choose), for each message it lists rather than the
-first one. What she says aloud, the chat line, the chat history and the
+name is the sender's to choose), for the messages it lists rather than the first
+one (up to three senders per conversation). What she says aloud, the chat line, the chat history and the
 notification use the name alone. The card covers only the messages it lists. A
 message that arrived after your screen last showed the list is left out and the
 card says so ("1 newer message not included"); a reply that arrives after the
-card is raised is not changed either. Undo puts each message back exactly as it was. If Friday cannot read a
-conversation message by message, she leaves it to the model's path rather than
-make a change she could not put back exactly. By voice, a card is read out in
+card is raised is not changed either. Undo puts back, message by message, the
+labels Friday changed; a label that a Gmail filter or you changed in between is
+not restored. If Friday cannot read a conversation message by message she
+refuses it: no card is raised for it and nothing is handed to the model, because
+she will not make a change she could not put back exactly. By voice, a card is read out in
 a fixed line, and a plain "yes" or "no" answers it only if that line was played
 whole and nothing else was asked since; "yes, but only the first one" becomes a
 changed card. A "yes" that names what the card does ("yes, archive them") also
