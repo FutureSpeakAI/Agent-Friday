@@ -827,8 +827,9 @@ def describe_receipt(receipt: dict, *, names: bool) -> str:
     if not receipt or receipt.get("off_record"):
         return "That turn was off the record, so there is nothing to read back."
     sections = receipt.get("sections") or []
+    orders = _describe_work_orders(receipt.get("work_orders"))
     if not sections:
-        return "I have no record of what was sent for that turn."
+        return orders or "I have no record of what was sent for that turn."
     sent = [s for s in sections if s.get("sent", True)]
     held = [s for s in sections if not s.get("sent", True)]
     cloud = [s for s in sent if s.get("destination_class") not in (None, "local")]
@@ -847,4 +848,23 @@ def describe_receipt(receipt: dict, *, names: bool) -> str:
                      f"{len(shadow)}, but trimming is off, so they were sent.")
     elif not any(s.get("planner") for s in sections):
         parts.append("The planner had no reading for that turn.")
+    if orders:
+        parts.append(orders)
     return " ".join(parts)
+
+
+def _describe_work_orders(section) -> str:
+    """The work-order part of a receipt in words: how many handles the cloud
+    model was shown and what was returned to it, by kind, size and class. Never
+    content, so a cloud model may hear all of it."""
+    if not section:
+        return ""
+    seen, rows = section.get("handles_seen") or [], section.get("returns") or []
+    bits = [f"The cloud model was shown {len(seen)} handle"
+            + ("" if len(seen) == 1 else "s") + " for work orders."]
+    if rows:
+        bits.append("It was sent back: " + "; ".join(
+            f"{r.get('kind')} of {r.get('size')} characters ({r.get('class')})" for r in rows) + ".")
+    else:
+        bits.append("Nothing was sent back from a work order.")
+    return " ".join(bits)

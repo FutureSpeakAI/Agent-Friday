@@ -3403,7 +3403,14 @@ def _tool_work_order_status(inp):
     ok, why = work_orders.cloud_turn_allowed(_CURRENT_PROVIDER.get(), _CURRENT_MODEL.get() or "")
     if not ok:
         return why
-    return json.dumps(work_orders.status((inp or {}).get("order_id") or "", conv or ""))
+    try:
+        from agent_friday.services.local_only_guard import provider_name_of
+        pname = provider_name_of(_CURRENT_PROVIDER.get()) or "cloud"
+    except Exception:
+        pname = "cloud"
+    from agent_friday.services import turn_plan as _tp
+    return json.dumps(work_orders.status((inp or {}).get("order_id") or "", conv or "",
+                                         provider=pname, turn_id=_tp.current_turn_id() or ""))
 
 
 def _tool_why_that_plan(inp):
@@ -8006,9 +8013,9 @@ def _hub_chat(conversation_id=None) -> bool:
 _CLOUD_ONLY_TOOLS = frozenset({"submit_work_order", "work_order_status"})
 
 
-#: Cloud work orders (CS-1). Declared to a model only while `work_orders_enabled` is on:
-#: nothing carries a queued order out yet (CS-2), so a model must not be offered a promise
-#: the PC cannot keep. The handlers and the gate entries stay registered (and refuse while off).
+#: Cloud work orders. Declared to a model only while `work_orders_enabled` is on (default off),
+#: only to a cloud model, and only when a turn names its provider. The handlers and the gate
+#: entries stay registered (and refuse while off).
 WORK_ORDER_TOOLS = [
     {"name": "submit_work_order", "description": "Hand this PC a plan to carry out locally. You refer to private material only by the opaque handles you were given, never by content. Friday validates it, sets the privacy class herself and queues it for her local models; you hear a status, and anything private stays on the PC. Writes are only ever proposals the owner reviews.",
      "input_schema": {"type": "object", "properties": {
@@ -8020,7 +8027,7 @@ WORK_ORDER_TOOLS = [
          "priority": {"type": "string", "enum": ["now", "when_idle"], "description": "now, or when_idle for background."},
          "writes": {"type": "array", "items": {"type": "object"}, "description": "Write intents {target: wiki|kg|profile|settings, op, handle, summary}. Each becomes a proposal, never a direct write."}},
          "required": ["goal"]}},
-    {"name": "work_order_status", "description": "Check a work order you submitted: queued or validated now, with the return the owner's privacy class allows.",
+    {"name": "work_order_status", "description": "Check a work order you submitted: queued, running, done or failed, with only the return the owner's privacy class allows (counts, a PII-free summary the owner approved, or just a handle to a result that stays on the PC).",
      "input_schema": {"type": "object", "properties": {
          "order_id": {"type": "string", "description": "The order_id submit_work_order returned."}},
          "required": ["order_id"]}}
@@ -8056,6 +8063,10 @@ def tools_for_workspace(workspace=None, base=None, conversation_id=None):
     if prov is not None:
         from agent_friday.services import slice_head
         out = _without_cloud_only(out, local=slice_head.is_local(prov))
+    else:
+        # No provider known (a path that never set one): the cloud-only tools stay
+        # hidden. A turn that names a cloud provider is the only one offered them.
+        out = _without_cloud_only(out, local=True)
     return out
 
 

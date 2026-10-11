@@ -2,7 +2,9 @@
 
 A cloud model's order is untrusted input. These tests hold the line on: handles
 that reveal nothing, validation, fencing, a privacy class the cloud cannot
-raise or lower, refusal in a local mode, and "queued, not executed".
+raise or lower, refusal in a local mode, and "queued, not executed". The
+executor is switched off here (``AUTOSTART``) so an order stays queued;
+``test_work_order_executor.py`` covers running it.
 """
 import json
 import os
@@ -24,15 +26,23 @@ FAKE_PATH = "C:/Users/example/notes/project-x/plan.md"
 
 
 @pytest.fixture(autouse=True)
-def _clean():
+def _clean(monkeypatch):
+    # Every return to a cloud model now passes the egress gate; a test that is not about the gate
+    # lets it through unchanged (the real gate loads the privacy classifier).
+    from agent_friday.services import egress_gate
+    monkeypatch.setattr(egress_gate, "gate_text", lambda t, p, f="prompt", log_path=None: t)
     H.clear()
     wo.clear()
     ci.clear()
     ci.forget_recent()
+    wo.AUTOSTART[0] = False
     yield
+    from agent_friday.services import work_order_store
+    work_order_store.reset_for_tests()              # cancels a pending debounced save
     H.clear()
     wo.clear()
     ci.clear()
+    wo.AUTOSTART[0] = True
 
 
 @pytest.fixture
@@ -253,7 +263,8 @@ class TestFencing:
         out = wo.submit(_order(goal=self.INJECT), CONV, provider=CLOUD, model="m")
         assert out["status"] == "queued"
         assert wo.get(out["order_id"])["order"]["writes"] == []
-        assert not [p for p in home.rglob("*") if p.is_file()]
+        # (the encrypted order store is the one file an order may cause, and only later, debounced)
+        assert not [p for p in home.rglob("*") if p.is_file() and not p.name.startswith("work_orders.enc")]
 
     def test_write_summaries_are_fenced_too(self):
         o = wo.validate(_order(writes=[{"target": "wiki", "op": "update", "handle": _doc(),
@@ -358,7 +369,7 @@ class TestQueue:
         assert out["status"] == "rejected" and "order_id" not in out
         assert wo._ORDERS == {}
 
-    def test_status_reports_queued_and_nothing_executes(self, mode):
+    def test_status_reports_queued_until_something_runs_it(self, mode):
         mode("cloud_only")
         out = wo.submit(_order(), CONV, provider=CLOUD, model="m")
         st = wo.status(out["order_id"], CONV)
@@ -402,7 +413,11 @@ class TestTools:
     def test_tools_are_registered_gated_and_grouped(self, agent):
         from agent_friday.governance import action_gate
         from agent_friday.services import tool_catalogue as tc
-        names = {t["name"] for t in agent.tools_for_workspace("chat")}
+        tok = agent._CURRENT_PROVIDER.set(CLOUD)
+        try:
+            names = {t["name"] for t in agent.tools_for_workspace("chat")}
+        finally:
+            agent._CURRENT_PROVIDER.reset(tok)
         for n in ("submit_work_order", "work_order_status"):
             assert n in names and n in agent.CLAUDE_TOOL_HANDLERS
             assert n in agent.TOOL_RINGS and action_gate.known(n)
@@ -410,7 +425,7 @@ class TestTools:
         assert agent.TOOL_RINGS["work_order_status"] == 0
 
     def test_the_tools_are_dark_while_work_orders_are_off(self, agent, mode, monkeypatch):
-        """CS-2 (execution) is not built: no model is offered the tools unless `work_orders_enabled` is on."""
+        """No model is offered the tools unless `work_orders_enabled` is on (default off)."""
         from agent_friday.core import DEFAULT_SETTINGS
         assert DEFAULT_SETTINGS["work_orders_enabled"] is False
         pair = {"submit_work_order", "work_order_status"}
@@ -422,7 +437,18 @@ class TestTools:
             assert "switched off" in self._run(agent, n, _order() if n == "submit_work_order" else {"order_id": "wo_x"})
         assert wo._ORDERS == {}
         monkeypatch.setattr(agent, "_work_orders_enabled", lambda: True)
-        assert pair <= {t["name"] for t in agent.tools_for_workspace("chat")}
+        tok = agent._CURRENT_PROVIDER.set(CLOUD)
+        try:
+            assert pair <= {t["name"] for t in agent.tools_for_workspace("chat")}
+        finally:
+            agent._CURRENT_PROVIDER.reset(tok)
+
+    def test_the_tools_stay_hidden_when_no_provider_is_set(self, agent):
+        """A path that never names its provider is not offered the cloud-only tools (the fail-open note)."""
+        pair = {"submit_work_order", "work_order_status"}
+        assert agent._CURRENT_PROVIDER.get() is None
+        assert not pair & {t["name"] for t in agent.tools_for_workspace("chat")}
+        assert not pair & {t["name"] for t in agent.tools_for_workspace()}
 
     def test_the_setting_is_read_from_the_settings_file(self, agent, monkeypatch):
         monkeypatch.undo()                                    # the fixture's stub off, the real reader on
@@ -494,8 +520,9 @@ class TestRouterPhrase:
 
 
 class TestLocalCatalogue:
-    def test_the_local_model_catalogue_omits_the_work_order_tools(self):
+    def test_the_local_model_catalogue_omits_the_work_order_tools(self, monkeypatch):
         from agent_friday.services import agent
+        monkeypatch.setattr(agent, "_work_orders_enabled", lambda: True)    # the tools are declared only while on
         names = {"submit_work_order", "work_order_status"}
         tok = agent._CURRENT_PROVIDER.set("ollama")
         try:

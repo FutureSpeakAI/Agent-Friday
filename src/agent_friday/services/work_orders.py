@@ -2,8 +2,11 @@
 
 A cloud model, when the owner is using one, can hand Friday a typed WORK ORDER
 that refers to private material only by opaque handles (``services/handles``).
-This module validates the order, fixes what the cloud may not choose, and
-queues it for local execution. Executing it is CS-2's job and is not here.
+This module validates the order, fixes what the cloud may not choose, queues it
+for local execution and keeps its record. The work itself is
+``services/work_order_executor``; what a cloud model may hear back is
+``services/work_order_returns``; the encrypted copy that survives a restart is
+``services/work_order_store``.
 
 The order is UNTRUSTED INPUT, always:
 
@@ -18,11 +21,14 @@ The order is UNTRUSTED INPUT, always:
   ignored: the class is the lowest the inputs allow, P1 by default, and P3 as
   soon as any input is vault or private-tier.
 * ``specified_by`` and ``order_id`` are set here, never read from the order.
-* ``writes`` are recorded as INTENTS. Nothing here writes anything; CS-3 turns
-  each intent into a governed proposal. SOUL is not a writable target.
+* ``writes`` are recorded as INTENTS. Nothing here writes anything; once an
+  order passes its acceptance checks the executor turns each intent into a
+  pending proposal through the existing governed path. SOUL is not a writable
+  target.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import secrets
@@ -82,10 +88,21 @@ class OrderRefused(RuntimeError):
     """The turn may not submit work orders (a local model, or no cloud intent)."""
 
 
-# TODO(CS-2): orders and handles are in memory only; both must survive a restart.
+#: Orders live here and are saved, encrypted, by ``work_order_store`` (a change
+#: calls ``persist``); a restart brings them back and ``resume_pending`` carries
+#: on any that were mid-run.
 _LOCK = threading.RLock()
 _ORDERS: Dict[str, dict] = {}
 MAX_ORDERS = 500
+#: Start the executor on submit. Tests that only exercise validation turn it off.
+AUTOSTART: List[bool] = [True]
+_BOOTED = [False]
+_ACTIVE: set = set()
+IDLE_POLL_S = 5.0
+#: A parked order is tried again no sooner than this.
+PARK_RETRY_S = 30.0
+#: Statuses in which an order has not reached an end.
+OPEN_STATES = ("queued", "running", "waiting_for_model", "waiting_for_idle")
 
 
 # ── who may submit ───────────────────────────────────────────────────────────
@@ -139,15 +156,29 @@ def _int_in(value, lo: int, hi: int, default: int) -> int:
     return max(lo, min(hi, n))
 
 
+def owner_class() -> str:
+    """The owner's own choice of how much may go back to a cloud model, from the
+    ``work_order_privacy_class`` setting: "" (not chosen), P1, P2 or P3. P0 is
+    never a setting: it follows from the inputs being public."""
+    try:
+        from agent_friday.core import _load_settings
+        v = str((_load_settings() or {}).get("work_order_privacy_class") or "")
+    except Exception:
+        return ""
+    return v if v in ("P1_aggregate", "P2_summary", "P3_local_only") else ""
+
+
 def privacy_class_for(handle_ids, conversation_id: str) -> str:
     """The class Friday sets: P3 when any input is vault or private-tier, P0 when
-    every input is public, else the default (P1). Never read from the order."""
+    every input is public, else the owner's choice (P1 if they have not chosen).
+    Never read from the order."""
     ids = list(handle_ids or [])
-    if _handles.any_private(ids, conversation_id):
+    owner = owner_class()
+    if _handles.any_private(ids, conversation_id) or owner == "P3_local_only":
         return "P3_local_only"
     if ids and all((_handles.lookup(h, conversation_id) or _NO).tier == "public" for h in ids):
         return "P0_public"
-    return DEFAULT_CLASS
+    return owner or DEFAULT_CLASS
 
 
 class _NoRec:
@@ -272,6 +303,10 @@ def validate(order, conversation_id: str, *, provider: str = "", model: str = ""
             writes.append({
                 "target": target, "op": w.get("op"), "handle": h,
                 "summary": _fence(summary, SUMMARY_MAX) if summary else "",
+                # The cloud's words, kept for local use only (the proposal's
+                # reason line, a settings path). Never sent anywhere, never
+                # read as an instruction.
+                "summary_plain": summary,
                 # An intent is a note about a wish, not an action. CS-3 raises the
                 # proposal; until then it stays an intent.
                 "state": "intent"})
@@ -287,6 +322,9 @@ def validate(order, conversation_id: str, *, provider: str = "", model: str = ""
         "conversation_id": conv,
         # Fenced: data for the executor to read as a request description.
         "goal": _fence(goal, GOAL_MAX),
+        # The same words unfenced, for the executor's keyword steps only. The
+        # local model is shown the fenced form; nothing treats this as an instruction.
+        "goal_text": goal,
         "inputs": inputs,
         "constraints": cons,
         "acceptance": acceptance,
@@ -296,6 +334,80 @@ def validate(order, conversation_id: str, *, provider: str = "", model: str = ""
         "writes": writes,
         "handles": sorted(set(all_handles)),
     }}
+
+
+# ── the record: live, saved, restored ───────────────────────────────────────
+
+def _boot() -> None:
+    """Bring saved orders back, once. Never raises."""
+    if _BOOTED[0]:
+        return
+    _BOOTED[0] = True
+    try:
+        from agent_friday.services import work_order_store
+        work_order_store.load()
+    except Exception:
+        _log.debug("saved work orders could not be loaded", exc_info=True)
+
+
+def persist() -> None:
+    """Ask the store to save soon (debounced)."""
+    try:
+        from agent_friday.services import work_order_store
+        work_order_store.schedule_save()
+    except Exception:
+        _log.debug("work order store unavailable", exc_info=True)
+
+
+def persist_now() -> None:
+    """Save now: a checkpoint or an end state must not wait for a timer."""
+    try:
+        from agent_friday.services import work_order_store
+        work_order_store.save_now()
+    except Exception:
+        _log.debug("work order store unavailable", exc_info=True)
+
+
+def live(order_id: str) -> Optional[dict]:
+    """The record itself (not a copy), for the executor. Local code only."""
+    _boot()
+    with _LOCK:
+        return _ORDERS.get(str(order_id or ""))
+
+
+def update(order_id: str, **fields) -> None:
+    """Change a record's fields and save it. The executor's only writer."""
+    with _LOCK:
+        rec = _ORDERS.get(str(order_id or ""))
+        if rec is None:
+            return
+        rec.update(fields)
+        rec["updated"] = time.time()
+    persist()
+
+
+def snapshot() -> dict:
+    with _LOCK:
+        return {"orders": [json.loads(json.dumps(r, default=str)) for r in _ORDERS.values()]}
+
+
+def restore(snap: dict) -> int:
+    """Load saved orders. One that was mid-run is queued again, with its
+    checkpoint, to resume where it stopped. Nothing starts here."""
+    n = 0
+    with _LOCK:
+        for r in (snap or {}).get("orders") or []:
+            try:
+                oid = str(r["order_id"])
+                if oid in _ORDERS or not isinstance(r.get("order"), dict):
+                    continue
+                if r.get("status") in ("running", "waiting_for_idle"):
+                    r["status"], r["restored"] = "queued", True
+                _ORDERS[oid] = r
+                n += 1
+            except Exception:
+                continue
+    return n
 
 
 # ── submit and status ────────────────────────────────────────────────────────
@@ -308,15 +420,21 @@ def _label(rec: dict) -> str:
     return "work order from %s" % (rec["order"]["specified_by"].get("provider") or "a cloud model")
 
 
+_STATE_WORDS = {"queued": "waiting its turn", "waiting_for_model": "waiting for a local model to be up",
+                "waiting_for_idle": "waiting until you are away", "running": ""}
+
+
 def _jobs() -> List[dict]:
+    _boot()
     out = []
     with _LOCK:
-        recs = [dict(r) for r in _ORDERS.values() if r["status"] == "queued"]
+        recs = [dict(r) for r in _ORDERS.values() if r["status"] in OPEN_STATES]
     for r in recs:
+        running = r["status"] == "running"
         out.append({"id": "work_order:%s" % r["order_id"], "source": "work_order",
-                    "state": "waiting", "class": r["sched_class"], "interactive": False,
-                    "label": _label(r), "kind": "work_order", "model": "",
-                    "needs": "a local model", "reason": "waiting its turn",
+                    "state": "running" if running else "waiting", "class": r["sched_class"],
+                    "interactive": False, "label": _label(r), "kind": "work_order", "model": "",
+                    "needs": "a local model", "reason": _STATE_WORDS.get(r["status"], ""),
                     "waited_s": round(max(0.0, time.time() - r["queued_at"]), 1),
                     "cancellable": True})
     return out
@@ -328,10 +446,14 @@ def _cancel(job_id: str) -> bool:
     oid = job_id.split(":", 1)[1]
     with _LOCK:
         rec = _ORDERS.get(oid)
-        if not rec or rec["status"] != "queued":
+        if not rec or rec["status"] not in OPEN_STATES:
             return False
+        if rec["status"] == "running":
+            rec["cancel"] = True             # the executor stops before its next step
+            return True
         rec["status"] = "cancelled"
         rec["ended"] = time.time()
+    persist()
     return True
 
 
@@ -346,10 +468,12 @@ def _register_with_scheduler() -> None:
 def submit(order, conversation_id: str, *, provider, model: str = "") -> dict:
     """Validate and queue. Returns ``{order_id, status, ...}``; ``status`` is
     ``queued`` or ``rejected``. Raises ``OrderRefused`` when the turn may not
-    submit at all. Executing the order is CS-2."""
+    submit at all. The executor starts on its own unless ``AUTOSTART`` is off."""
     ok, why = cloud_turn_allowed(provider, model)
     if not ok:
         raise OrderRefused(why)
+    _boot()
+    resume_pending()
     try:
         from agent_friday.services.local_only_guard import provider_name_of
         pname = provider_name_of(provider) or "cloud"
@@ -363,7 +487,9 @@ def submit(order, conversation_id: str, *, provider, model: str = "") -> dict:
     now = time.time()
     rec = {"order_id": oid, "status": "validated", "order": o,
            "sched_class": _sched_class(o["priority"]), "created": now,
-           "queued_at": now, "notes": res.get("notes", [])}
+           "queued_at": now, "notes": res.get("notes", []), "mode": _routing_mode(),
+           "checkpoints": [], "plan": None, "cp": None, "attempts": 0, "returns": [],
+           "active_s": 0.0, "cancel": False}
     with _LOCK:
         if len(_ORDERS) >= MAX_ORDERS:
             for k in sorted(_ORDERS, key=lambda k: _ORDERS[k]["created"])[:50]:
@@ -371,32 +497,197 @@ def submit(order, conversation_id: str, *, provider, model: str = "") -> dict:
         _ORDERS[oid] = rec
         rec["status"] = "queued"
     _register_with_scheduler()
-    return {"order_id": oid, "status": "queued", "privacy_class": o["privacy_class"],
-            "priority": o["priority"], "class": rec["sched_class"],
-            "eta": "when the local models are free" if o["priority"] == "now"
-                   else "when this PC is idle"}
+    persist()
+    out = {"order_id": oid, "status": "queued", "privacy_class": o["privacy_class"],
+           "priority": o["priority"], "class": rec["sched_class"],
+           "eta": "when the local models are free" if o["priority"] == "now"
+                  else "when this PC is idle"}
+    from agent_friday.services import work_order_returns
+    gated = not work_order_returns._gate(out, pname)
+    if gated:                                  # the egress gate runs on every return
+        out = {"order_id": oid, "status": "queued"}
+    work_order_returns.record(rec, kind="status", size=len(json.dumps(out)),
+                              cls=o["privacy_class"], turn_id=_current_turn(), gated=gated)
+    if AUTOSTART[0]:
+        start(oid)
+    return out
 
 
-def status(order_id: str, conversation_id: str) -> dict:
-    """The status of one order and the payload the cloud may see for it. In this
-    package that is the status alone; the class decides what a result may carry
-    once CS-2 produces one (P3: ids and status only)."""
+def _routing_mode() -> str:
+    try:
+        from agent_friday.services import cloud_intent
+        return str(cloud_intent.routing_mode())
+    except Exception:
+        return ""
+
+
+def _current_turn() -> str:
+    try:
+        from agent_friday.services import turn_plan
+        return str(turn_plan.current_turn_id() or "")
+    except Exception:
+        return ""
+
+
+def status(order_id: str, conversation_id: str, *, provider: str = "", turn_id: str = "") -> dict:
+    """The status of one order and what the cloud may hear for it, by the
+    order's privacy class (``work_order_returns``). Every return is checked by
+    the egress gate and listed on the turn receipt."""
+    _boot()
+    resume_pending()
     with _LOCK:
         rec = _ORDERS.get(str(order_id or ""))
         if rec is None or rec["order"]["conversation_id"] != str(conversation_id or ""):
             return {"order_id": str(order_id or "")[:40], "status": "unknown"}
-        return {"order_id": rec["order_id"], "status": rec["status"],
-                "privacy_class": rec["order"]["privacy_class"],
-                "priority": rec["order"]["priority"], "result": None}
+    from agent_friday.services import work_order_returns
+    payload, slices = work_order_returns.for_cloud(rec, provider=provider or _provider_name(rec))
+    for s in slices:
+        work_order_returns.record(rec, turn_id=turn_id or _current_turn(), **s)
+    return payload
+
+
+def _provider_name(rec: dict) -> str:
+    return str(rec["order"]["specified_by"].get("provider") or "cloud")
 
 
 def get(order_id: str) -> Optional[dict]:
-    """The full record, for local code (the CS-2 executor, the Activity view)."""
+    """The full record, for local code (the executor, the Activity view)."""
+    _boot()
     with _LOCK:
         rec = _ORDERS.get(str(order_id or ""))
         return dict(rec) if rec else None
 
 
+def public_view(rec: dict) -> dict:
+    """The owner's view of an order: status, progress, why it stopped. LOCAL
+    only; a cloud model never sees this."""
+    plan = rec.get("plan") or []
+    cp = rec.get("cp") or {}
+    return {"order_id": rec["order_id"], "status": rec["status"],
+            "privacy_class": rec["order"]["privacy_class"], "step": int(cp.get("next") or 0),
+            "of": len(plan), "failed_step": rec.get("failed_step"), "attempts": rec.get("attempts", 0),
+            "error": rec.get("error") or "", "failed_checks": list(rec.get("failed_checks") or [])}
+
+
+def result_text(order_id: str, conversation_id: str) -> str:
+    """The local result of a finished order, as text, for a later order that
+    names its result handle. Local code only."""
+    with _LOCK:
+        rec = _ORDERS.get(str(order_id or ""))
+        if rec is None or rec["order"]["conversation_id"] != str(conversation_id or "") \
+                or rec["status"] != "done":
+            return ""
+        parts = [str(rec.get("summary") or ""), json.dumps(rec.get("result") or {}, default=str)]
+    return "\n".join(p for p in parts if p)
+
+
+# ── running ──────────────────────────────────────────────────────────────────
+
+def start(order_id: str) -> bool:
+    """Run (or resume) an open order on a worker thread, inside the local
+    scheduler's class for it. False when it is already running or finished."""
+    with _LOCK:
+        rec = _ORDERS.get(str(order_id or ""))
+        if rec is None or order_id in _ACTIVE or rec["status"] not in OPEN_STATES:
+            return False
+        _ACTIVE.add(order_id)
+    t = threading.Thread(target=_worker, args=(order_id,), name="work-order-" + order_id[-6:],
+                         daemon=True)
+    t.start()
+    return True
+
+
+def _wait_for_idle(rec: dict) -> None:
+    """A when_idle order does not start until the owner has been away long
+    enough (the scheduler's own window). Cancel ends the wait."""
+    try:
+        from agent_friday.services import local_scheduler as ls
+    except Exception:
+        return
+    while not rec.get("cancel"):
+        try:
+            if ls.owner_idle_s() >= ls.idle_window_s():
+                return
+        except Exception:
+            return
+        update(rec["order_id"], status="waiting_for_idle")
+        time.sleep(IDLE_POLL_S)
+
+
+def _worker(order_id: str) -> None:
+    try:
+        rec = live(order_id)
+        if rec is None:
+            return
+        if rec["order"]["priority"] == "when_idle":
+            _wait_for_idle(rec)
+        from agent_friday.services import local_scheduler, work_order_executor, work_order_returns
+        from agent_friday.services.visible_jobs import visible_job
+        # One visible task per order (local_scheduler is lane/b11-f3: until it lands the
+        # import above raises and the order fails closed, nothing runs unadmitted).
+        with visible_job("Work order", kind="work_order", workspace="library", eager=False), \
+                local_scheduler.work("work order", cls=rec["sched_class"], needs="a local model"):
+            work_order_executor.run(order_id)
+        work_order_returns.after_run(rec)
+    except BaseException:                                      # noqa: BLE001 - a worker must not die loudly
+        _log.warning("work order %s worker stopped", order_id, exc_info=True)
+        update(order_id, status="failed", error="the worker stopped unexpectedly", ended=time.time())
+    finally:
+        with _LOCK:
+            _ACTIVE.discard(order_id)
+        persist_now()
+
+
+def resume(order_id: str) -> bool:
+    """Run a failed or parked order again from the step it stopped at."""
+    with _LOCK:
+        rec = _ORDERS.get(str(order_id or ""))
+        if rec is None or rec["status"] in ("done", "cancelled", "failed_acceptance") or order_id in _ACTIVE:
+            return False
+        if rec["status"] == "failed":
+            rec["status"], rec["error"] = "queued", ""
+    return start(order_id)
+
+
+def resume_pending() -> int:
+    """Start every order that was queued, parked or interrupted. Called on
+    submit and status, so a restart picks up where it left off."""
+    _boot()
+    now = time.time()
+    with _LOCK:
+        ids = [k for k, r in _ORDERS.items() if k not in _ACTIVE and (
+            r["status"] == "queued" or
+            (r["status"] == "waiting_for_model" and now - float(r.get("updated") or 0) > PARK_RETRY_S))]
+    if not AUTOSTART[0]:
+        return 0
+    return sum(1 for k in ids if start(k))
+
+
+# ── the turn receipt ─────────────────────────────────────────────────────────
+
+def receipt_section(turn_id: str) -> dict:
+    """The ``work_orders`` section of a turn receipt: the handles a cloud model
+    was shown in this turn, and every slice returned to it, as kind, size and
+    class. Never content."""
+    _boot()
+    tid = str(turn_id or "")
+    returns = []
+    with _LOCK:
+        for rec in _ORDERS.values():
+            for r in rec.get("returns") or []:
+                if r.get("turn_id") == tid:
+                    returns.append({"order_id": rec["order_id"], "kind": r["kind"],
+                                    "size": r["size"], "class": r["class"]})
+    return {"handles_seen": _handles.seen_by_cloud(turn_id=tid), "returns": returns}
+
+
 def clear() -> None:
+    _BOOTED[0] = True
+    try:
+        from agent_friday.services import work_order_store
+        work_order_store._LOADED[0] = True
+    except Exception:
+        pass
     with _LOCK:
         _ORDERS.clear()
+        _ACTIVE.clear()

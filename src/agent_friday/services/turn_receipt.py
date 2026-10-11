@@ -12,6 +12,8 @@ document. It writes nothing.
                        per-install governance key, so a short text cannot be
                        recovered by guessing and two installs disagree about
                        the same text.
+  WORK ORDERS          Handles a cloud model was shown and each slice returned to
+                       it, as kind, size and class. Never content.
   OFF THE RECORD       No plan and no tagged rows exist for such a turn; its
                        receipt holds the turn id and the off-record marker.
 """
@@ -156,6 +158,17 @@ def build(turn_id: str) -> Dict[str, Any]:
         receipt["egress"] = _egress(turn_id)
     except Exception:
         receipt["egress"] = {}
+    # Work orders (cloud specifies, this PC executes): the handles a cloud model
+    # was shown in this turn and every slice returned to it, as kind, size and
+    # class. Absent when the turn touched no work order.
+    try:
+        from agent_friday.services import work_orders as _wo
+        section = _wo.receipt_section(turn_id)
+        if section["handles_seen"] or section["returns"]:
+            receipt["work_orders"] = section
+    except Exception:
+        pass
     receipt["found"] = bool(receipt["plan"] or receipt["sections"] or receipt["models"]
-                            or receipt["decisions"] or receipt["egress"])
+                            or receipt["decisions"] or receipt["egress"]
+                            or receipt.get("work_orders"))
     return receipt

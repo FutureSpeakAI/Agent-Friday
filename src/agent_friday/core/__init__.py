@@ -2343,10 +2343,18 @@ DEFAULT_SETTINGS = {
     # accepted are final; nothing ever switches the engine without the owner.
     "local_voice_switch_offer": "",
     # Cloud work orders (services/work_orders): a cloud model hands this PC a plan,
-    # and the PC checks and queues it. Nothing carries an order out yet (CS-2), so
-    # the two tools that take one stay out of every model's tool list while this
-    # is off. Default off; there is no Settings control for it in 1.1.
+    # and this PC carries it out locally (services/work_order_executor), returning
+    # only what the privacy class below allows. The two tools that take an order
+    # stay out of every model's tool list while this is off. Default off; there is
+    # no Settings control for it in 1.1.
     "work_orders_enabled": False,
+    # How much of a finished work order may go back to the cloud model. "" means you
+    # have not chosen: counts and statuses only (P1). "P1_aggregate" is the same,
+    # chosen; "P2_summary" lets a PII-free summary go back, on a card or a grant you
+    # decide, in Local-preferred and Cloud-only; "P3_local_only" sends back nothing
+    # but a handle. Material in the vault or marked private is always P3. Nothing is
+    # preselected.
+    "work_order_privacy_class": "",
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".

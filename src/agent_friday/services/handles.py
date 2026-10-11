@@ -12,7 +12,9 @@ which only local code calls.
 
 What a cloud model may see about a handle is ``metadata()``: kind, a coarse
 date bucket, a size class, and a title ONLY when the title passes the egress
-gate. Handles live in memory and expire after 24 hours by default.
+gate. Handles expire after 24 hours by default. They live in memory and are
+saved, encrypted, by ``services/work_order_store`` so an order and the handles
+it names survive a restart (``snapshot`` / ``restore`` / ``set_change_hook``).
 """
 from __future__ import annotations
 
@@ -74,6 +76,80 @@ _LOCK = threading.RLock()
 _STORE: Dict[str, HandleRecord] = {}
 #: conversation_id -> {handle: when} a cloud model was shown (for the receipt).
 _SEEN: Dict[str, Dict[str, float]] = {}
+#: turn_id -> {handle: when} shown to a cloud model in that turn (turn receipt).
+_SEEN_TURNS: Dict[str, Dict[str, float]] = {}
+MAX_SEEN_TURNS = 300
+#: Called (no arguments) after any change worth saving; the store debounces it.
+_CHANGE_HOOK: List = [None]
+#: The loader runs once, on first use, so a restart brings handles back.
+_BOOTED = [False]
+
+
+def set_change_hook(fn) -> None:
+    _CHANGE_HOOK[0] = fn
+
+
+def _changed() -> None:
+    fn = _CHANGE_HOOK[0]
+    if fn is not None:
+        try:
+            fn()
+        except Exception:
+            _log.debug("handle change hook failed", exc_info=True)
+
+
+def _boot() -> None:
+    """Bring saved handles back, once. Never raises; no store, no handles."""
+    if _BOOTED[0]:
+        return
+    _BOOTED[0] = True
+    try:
+        from agent_friday.services import work_order_store
+        work_order_store.load()
+    except Exception:
+        _log.debug("saved handles could not be loaded", exc_info=True)
+
+
+def snapshot() -> dict:
+    """Everything worth saving, as plain data. The local refs are in it: the
+    store encrypts it, and it goes nowhere else."""
+    with _LOCK:
+        return {
+            "handles": [{"handle": r.handle, "kind": r.kind, "conversation_id": r.conversation_id,
+                         "ref": r.ref, "tier": r.tier, "scope": r.scope, "created": r.created,
+                         "expires": r.expires, "dated": r.dated, "size": r.size, "title": r.title}
+                        for r in _STORE.values()],
+            "seen": {c: dict(m) for c, m in _SEEN.items()},
+            "seen_turns": {t: dict(m) for t, m in _SEEN_TURNS.items()},
+        }
+
+
+def restore(snap: dict) -> int:
+    """Load a snapshot, dropping what has expired. Returns how many handles came back."""
+    now = time.time()
+    n = 0
+    with _LOCK:
+        for d in (snap or {}).get("handles") or []:
+            try:
+                if not looks_like_handle(d.get("handle")) or float(d.get("expires") or 0) <= now:
+                    continue
+                if d.get("kind") not in KINDS or d.get("tier") not in TIERS:
+                    continue
+                if d["handle"] in _STORE:
+                    continue
+                _STORE[d["handle"]] = HandleRecord(
+                    handle=d["handle"], kind=d["kind"], conversation_id=str(d.get("conversation_id") or ""),
+                    ref=d.get("ref"), tier=d["tier"], scope=str(d.get("scope") or ""),
+                    created=float(d.get("created") or now), expires=float(d["expires"]),
+                    dated=d.get("dated"), size=int(d.get("size") or 0), title=str(d.get("title") or ""))
+                n += 1
+            except Exception:
+                continue
+        for c, m in ((snap or {}).get("seen") or {}).items():
+            _SEEN.setdefault(str(c), {}).update({h: t for h, t in (m or {}).items() if h in _STORE})
+        for t, m in ((snap or {}).get("seen_turns") or {}).items():
+            _SEEN_TURNS.setdefault(str(t), {}).update(dict(m or {}))
+    return n
 
 
 def _new_body() -> str:
@@ -107,6 +183,7 @@ def issue(kind: str, ref, conversation_id: str, *, tier: str = "normal",
     if ref is None or ref == "":
         raise HandleError("a handle needs something to point at")
     ttl = DEFAULT_TTL_S if ttl_s is None else max(1.0, min(float(ttl_s), MAX_TTL_S))
+    _boot()
     now = time.time()
     with _LOCK:
         _sweep(now)
@@ -120,6 +197,7 @@ def issue(kind: str, ref, conversation_id: str, *, tier: str = "normal",
             handle=h, kind=kind, conversation_id=conv, ref=ref, tier=tier,
             scope=str(scope or ""), created=now, expires=now + ttl,
             dated=dated, size=max(0, int(size or 0)), title=str(title or ""))
+    _changed()
     return h
 
 
@@ -131,6 +209,7 @@ def lookup(handle, conversation_id: str) -> Optional[HandleRecord]:
     conv = str(conversation_id or "").strip()
     if not conv:
         return None
+    _boot()
     now = time.time()
     with _LOCK:
         rec = _STORE.get(handle)
@@ -153,7 +232,10 @@ def resolve(handle, conversation_id: str):
 
 def revoke(handle: str) -> bool:
     with _LOCK:
-        return _STORE.pop(handle, None) is not None
+        gone = _STORE.pop(handle, None) is not None
+    if gone:
+        _changed()
+    return gone
 
 
 def revoke_conversation(conversation_id: str) -> int:
@@ -163,13 +245,17 @@ def revoke_conversation(conversation_id: str) -> int:
         for h in gone:
             _STORE.pop(h, None)
         _SEEN.pop(conv, None)
+    if gone:
+        _changed()
     return len(gone)
 
 
 def clear() -> None:
+    _BOOTED[0] = True        # a cleared registry is not refilled from disk
     with _LOCK:
         _STORE.clear()
         _SEEN.clear()
+        _SEEN_TURNS.clear()
 
 
 # ── what a cloud model may see ───────────────────────────────────────────────
@@ -218,7 +304,7 @@ def _title_if_clear(title: str, provider: str) -> str:
 
 
 def metadata(handle, conversation_id: str, *, provider: str = "",
-             include_title: bool = True) -> Optional[dict]:
+             include_title: bool = True, turn_id: str = "") -> Optional[dict]:
     """What a cloud model is told about a handle: kind, date bucket, size class,
     and the title only when it passes the egress gate. Never a path or a ref.
     None for a handle this conversation does not hold."""
@@ -232,15 +318,24 @@ def metadata(handle, conversation_id: str, *, provider: str = "",
         if title:
             out["title"] = title
     if provider:
+        now = time.time()
         with _LOCK:
-            _SEEN.setdefault(rec.conversation_id, {})[rec.handle] = time.time()
+            _SEEN.setdefault(rec.conversation_id, {})[rec.handle] = now
+            if turn_id:
+                _SEEN_TURNS.setdefault(str(turn_id), {})[rec.handle] = now
+                while len(_SEEN_TURNS) > MAX_SEEN_TURNS:
+                    _SEEN_TURNS.pop(next(iter(_SEEN_TURNS)), None)
+        _changed()
     return out
 
 
-def seen_by_cloud(conversation_id: str) -> List[str]:
-    """Every handle whose metadata a cloud model was shown in this conversation,
-    for the turn receipt."""
+def seen_by_cloud(conversation_id: str = "", turn_id: str = "") -> List[str]:
+    """Every handle whose metadata a cloud model was shown, for the turn receipt:
+    in one turn when ``turn_id`` is given, else in the whole conversation."""
+    _boot()
     with _LOCK:
+        if turn_id:
+            return sorted(_SEEN_TURNS.get(str(turn_id)) or {})
         return sorted((_SEEN.get(str(conversation_id or "")) or {}))
 
 
