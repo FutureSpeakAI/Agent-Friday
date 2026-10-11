@@ -62,6 +62,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import atexit
 import logging
 import queue
 import threading
@@ -178,6 +179,37 @@ def _drain() -> None:
             _writes.task_done()
 
 
+_dropped = 0
+SHUTDOWN_FLUSH_S = 2.0
+
+
+def status() -> dict:
+    """Write-side health: rows dropped (queue full or no writer thread) since
+    start, and rows waiting now. A hard kill can lose the waiting ones."""
+    with _lock:
+        return {"dropped_writes": _dropped, "queued_writes": _writes.unfinished_tasks}
+
+
+def _enqueue_counted(fn: Callable[[], None]) -> bool:
+    """enqueue_write, counting a refusal so a dropped row is visible: the count
+    rides in the next persisted receipt and in status()."""
+    global _dropped
+    ok = enqueue_write(fn)
+    if not ok:
+        with _lock:
+            _dropped += 1
+    return ok
+
+
+def _flush_at_exit() -> None:
+    # Graceful shutdown only: a process terminated hard (the tray's stop on
+    # Windows, a kill) runs no atexit handler and loses whatever is queued.
+    flush(SHUTDOWN_FLUSH_S)
+
+
+atexit.register(_flush_at_exit)
+
+
 def enqueue_write(fn: Callable[[], None]) -> bool:
     """Run ``fn`` on the writer thread. False when the queue is full (dropped)."""
     global _writer
@@ -221,7 +253,8 @@ def _store(rec: dict, persist: bool) -> None:
             p = log_path()              # the path is fixed now, on the turn; only the write is deferred
         except Exception:  # noqa: BLE001
             return
-        enqueue_write(lambda: _append(rec, p))
+        rec["dropped_writes"] = _dropped          # rows lost before this one (see status())
+        _enqueue_counted(lambda: _append(rec, p))
 
 
 def receipt(receipt_id: str) -> Optional[dict]:
@@ -365,7 +398,8 @@ def _preset_route(ctx: Ctx, spec: dict) -> dict:
            "why": r.reason or r.layer, "tool": r.tool}
     if want_log:
         surface = str(kw.get("surface", "voice"))
-        out["commit"] = lambda: laya_router._write(ctx.text, r, surface)
+        at = time.strftime("%Y-%m-%dT%H:%M:%S")            # the decision's time, taken on the worker at decision
+        out["commit"] = lambda: laya_router._write(ctx.text, r, surface, at=at)
     return out
 
 
@@ -640,7 +674,7 @@ def ask(state: dict, questions: Dict[str, dict], caller: str, budget_ms: float,
         answers[name] = ans
         native[name] = res.get("native")
         if callable(res.get("commit")):             # the rung's own log row, only for an answer that was used
-            enqueue_write(res["commit"])
+            _enqueue_counted(res["commit"])
         layer = res.get("layer") if res.get("layer") in LAYERS else "t1"
         layers.append(layer)
         if verdict is None and res.get("verdict") in VERDICTS:
@@ -719,7 +753,8 @@ def route_turn(text: str, *, caller: Optional[str] = None, mode: Optional[str] =
         r = laya_router.rules_route(text, tools=kw.get("tools"), pending_card=kw.get("pending_card"),
                                     last_route=kw.get("last_route"), reason="Laya over budget or unavailable")
         if kw.get("log", True):
-            enqueue_write(lambda: laya_router._write(" ".join(str(text or "").split()), r, surface))
+            at = time.strftime("%Y-%m-%dT%H:%M:%S")        # stamped now, on the turn, not when the writer gets to it
+            _enqueue_counted(lambda: laya_router._write(" ".join(str(text or "").split()), r, surface, at=at))
     r.laya_receipt_id = res["receipt_id"]       # not a Route field: as_dict() is unchanged
     return r
 
@@ -768,7 +803,8 @@ def warm() -> None:
 
 def reset() -> None:
     """Forget receipts and stuck-thread accounting (tests)."""
-    global _stuck
+    global _stuck, _dropped
+    _dropped = 0
     with _lock:
         _ring.clear()
         _stuck = 0

@@ -785,9 +785,12 @@ def log_path() -> Path:
     return FRIDAY_DIR / "runtime" / LOG_DIRNAME / LOG_NAME
 
 
-def _write(text: str, r: Route, surface: str) -> None:
+def _write(text: str, r: Route, surface: str, at: Optional[str] = None) -> None:
+    """Append one decision row. ``at`` is the time the decision was taken; a
+    caller that writes later (services/laya's writer thread) passes it so the
+    row is not stamped with the time the disk got to it."""
     try:
-        row = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "surface": surface,
+        row = {"at": at or time.strftime("%Y-%m-%dT%H:%M:%S"), "surface": surface,
                "text_sha": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
                **receipt(r), "args_keys": sorted(r.args)}
         p = log_path()

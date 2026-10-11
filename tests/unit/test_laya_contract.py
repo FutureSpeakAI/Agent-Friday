@@ -620,7 +620,7 @@ def test_an_abandoned_worker_writes_no_router_log_row(monkeypatch, tmp_path):
     gate = threading.Event()
     rows = []
     monkeypatch.setattr(laya, "RULE_ALLOWANCE_MS", 0)
-    monkeypatch.setattr(lr, "_write", lambda text, r, surface: rows.append((r.decision, r.layer)))
+    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None: rows.append((r.decision, r.layer)))
 
     def slow(text, **k):
         gate.wait(5)
@@ -638,7 +638,7 @@ def test_an_abandoned_worker_writes_no_router_log_row(monkeypatch, tmp_path):
 
 def test_a_used_answer_writes_the_router_log_row_once(monkeypatch):
     rows = []
-    monkeypatch.setattr(lr, "_write", lambda text, r, surface: rows.append(r.tool))
+    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None: rows.append(r.tool))
     monkeypatch.setattr(lr, "route", lambda text, **k: lr.Route("tool", tool="check_email", layer="rule"))
     laya.route_turn("check my email")
     assert laya.flush() and rows == ["check_email"]
@@ -678,3 +678,54 @@ def test_the_voice_receipt_names_the_laya_receipt(monkeypatch):
     r.laya_receipt_id = "lr_abc"
     plan = rv._voice_route_plan("good morning", {"check_email"}, route_fn=lambda *a, **k: r)
     assert plan["receipt"]["laya_receipt"] == "lr_abc"
+
+
+# --- dropped writes are counted, the queue is flushed at exit, rows keep decision time ------
+
+def test_a_dropped_write_is_counted_and_shows_in_status_and_the_next_receipt(preset, monkeypatch, tmp_path):
+    monkeypatch.setattr(laya, "enqueue_write", lambda fn: False)            # the queue refuses everything
+    ok = preset("okd", lambda ctx, spec: {"answer": {"value": "x"}, "layer": "rule"})
+    _ask({"q": ok})
+    _ask({"q": ok})
+    assert laya.status()["dropped_writes"] == 2
+    monkeypatch.undo()
+    monkeypatch.setattr(laya, "log_path", lambda: tmp_path / "ask.jsonl")
+    r = _ask({"q": ok})
+    assert laya.flush()
+    last = json.loads((tmp_path / "ask.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert last["receipt_id"] == r["receipt_id"] and last["dropped_writes"] == 2
+
+
+def test_a_full_queue_drops_and_counts_every_call_site(monkeypatch):
+    import queue as q
+    monkeypatch.setattr(laya, "_writes", q.Queue(maxsize=1))
+    gate = threading.Event()
+    assert laya.enqueue_write(lambda: gate.wait(2)) is True
+    time.sleep(0.05)
+    laya.enqueue_write(lambda: None)                                          # fills the single slot
+    assert laya._enqueue_counted(lambda: None) is False
+    assert laya.status()["dropped_writes"] == 1
+    gate.set()
+
+
+def test_the_writer_queue_is_flushed_at_graceful_exit(monkeypatch):
+    done = []
+    gate = threading.Event()
+    laya.enqueue_write(lambda: (gate.wait(1), done.append(1)))
+    t = threading.Timer(0.1, gate.set)
+    t.start()
+    laya._flush_at_exit()
+    assert done == [1]
+    assert 0 < laya.SHUTDOWN_FLUSH_S <= 3
+
+
+def test_the_router_row_keeps_the_time_the_decision_was_taken(monkeypatch, tmp_path):
+    rows = []
+    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None: rows.append(at))
+    monkeypatch.setattr(lr, "route", lambda text, **k: lr.Route("tool", tool="check_email", layer="rule"))
+    real = laya.time.strftime
+    stamps = iter(["2026-10-11T10:00:00"] + ["2026-10-11T10:59:59"] * 20)
+    monkeypatch.setattr(laya.time, "strftime", lambda fmt, *a: next(stamps) if "%H" in fmt else real(fmt, *a))
+    laya.route_turn("check my email")
+    time.sleep(0.2)
+    assert laya.flush() and rows and rows[0] == "2026-10-11T10:00:00"       # not a later writer-side stamp
