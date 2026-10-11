@@ -595,7 +595,7 @@ class VoiceWorker:
             now = time.perf_counter()
             prof = dict(reply.get("profile") or {})
             load_s = (reply.get("load_ms") or 0) / 1000.0
-            if self._prepare_ok:
+            if getattr(self, "_prepare_ok", False):
                 # Spawned and prepared before the card was cleared: what is left
                 # after the park is the commit alone.
                 prof["prepared_s"] = round(self._prepare_s or 0.0, 3)
@@ -1170,25 +1170,51 @@ def release_prepared(reason: str = "released") -> int:
     return len(items)
 
 
+#: RAM a stage's prepare holds, MEASURED: the whisper worker is 52 MiB resident
+#: plus its 464 MiB checkpoint in the file cache; the kokoro worker is 1,831 MiB
+#: resident with the model built. A stage is prepared only while free RAM stays
+#: above WARM_MIN_FREE_RAM_MB (the floor the warm worker keeps for the OS: 2,560
+#: MiB) PLUS the working sets of the stages already prepared and this one.
+#: Otherwise it takes today's path (load after the park) and the log says why.
+PREPARE_WORKING_SET_MB = {"whisper-cuda": 520, "kokoro-cuda": 1831}
+
+
+def _may_prepare(engine: str, stage: str, reserved_mb: int) -> bool:
+    free = _free_ram_mb()
+    need = WARM_MIN_FREE_RAM_MB + reserved_mb + PREPARE_WORKING_SET_MB.get(engine, 0)
+    if free is None or free >= need:
+        return True
+    log.info("voice %s not prepared during the park: %d MiB RAM free, %d needed "
+             "(floor %d + working set %d%s); it loads after the park as before",
+             stage, free, need, WARM_MIN_FREE_RAM_MB, PREPARE_WORKING_SET_MB.get(engine, 0),
+             (" + %d already prepared" % reserved_mb) if reserved_mb else "")
+    return False
+
+
 def prepare_for_selection(selection: dict) -> list:
     """Begin preparing the GPU workers this session's selection may use, before
-    the card is cleared. Returns the stages begun. Never raises."""
+    the card is cleared, each only while free RAM allows (see
+    ``PREPARE_WORKING_SET_MB``). Returns the stages begun. Never raises."""
     began = []
+    reserved = 0
     try:
         from agent_friday.services.local_voice import resolve_whisper_model
         sel = selection or {}
         ear = sel.get("ear") or {}
         if (str(ear.get("device_policy") or "if_free") != "never"
-                and not isinstance(held("ear"), WorkerEar)):
+                and not isinstance(held("ear"), WorkerEar)
+                and _may_prepare("whisper-cuda", "ear", reserved)):
             prepare_stage("ear", "whisper-cuda",
                           {"model": resolve_whisper_model(str(ear.get("model") or "auto"), "cuda")})
             began.append("ear")
+            reserved += PREPARE_WORKING_SET_MB["whisper-cuda"]
         mouth = sel.get("mouth") or {}
         if (str(mouth.get("engine") or "") == "kokoro"
                 and str(mouth.get("device_policy") or "preferred") != "never"):
             voice = str(mouth.get("voice") or "af_heart")
             cur = held("mouth")
-            if not (isinstance(cur, WorkerMouth) and getattr(cur, "voice", None) == voice):
+            if (not (isinstance(cur, WorkerMouth) and getattr(cur, "voice", None) == voice)
+                    and _may_prepare("kokoro-cuda", "mouth", reserved)):
                 prepare_stage("mouth", "kokoro-cuda", {"voice": voice})
                 began.append("mouth")
     except Exception as e:  # noqa: BLE001

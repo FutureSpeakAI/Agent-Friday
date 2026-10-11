@@ -31,7 +31,13 @@ def _free_mib():
         return None
 
 
-def read_into_cache(paths, *, stop=None, max_share=MAX_SHARE_OF_FREE) -> dict:
+#: Bounds on one call's read: bytes and wall time. The front's gguf is 441 MiB.
+DEFAULT_MAX_BYTES = 1024 * 1024 * 1024
+DEFAULT_MAX_SECONDS = 20.0
+
+
+def read_into_cache(paths, *, stop=None, max_share=MAX_SHARE_OF_FREE,
+                    max_bytes=DEFAULT_MAX_BYTES, max_seconds=DEFAULT_MAX_SECONDS) -> dict:
     """Sequentially read each file (or each file under a directory) and drop the
     bytes. Returns ``{"files", "bytes", "seconds", "mib_s", "skipped"}``. Never
     raises. ``stop`` (a threading.Event) ends the read early."""
@@ -51,6 +57,9 @@ def read_into_cache(paths, *, stop=None, max_share=MAX_SHARE_OF_FREE) -> dict:
         total = sum(f.stat().st_size for f in files)
     except Exception:
         pass
+    if total > max_bytes:
+        return {"files": 0, "bytes": 0, "seconds": 0.0, "mib_s": None,
+                "skipped": "more than %d MiB to read" % (max_bytes // 2**20)}
     free = _free_mib()
     if free is not None and total > free * 1024 * 1024 * max_share:
         log.info("prefetch skipped: %d MiB to read against %d MiB free", total // 2**20, free)
@@ -61,6 +70,8 @@ def read_into_cache(paths, *, stop=None, max_share=MAX_SHARE_OF_FREE) -> dict:
         try:
             with open(f, "rb", buffering=0) as fh:
                 while not (stop is not None and stop.is_set()):
+                    if time.perf_counter() - t0 > max_seconds:
+                        break
                     b = fh.read(CHUNK)
                     if not b:
                         break

@@ -21,6 +21,11 @@ def timing(monkeypatch):
     monkeypatch.setenv("FRIDAY_VOICE_FAKE_PREPARE_MS", "700")
     monkeypatch.setenv("FRIDAY_VOICE_FAKE_LOAD_MS", "300")
     monkeypatch.setattr(vw, "_PREPARED", {})
+    # The worker subprocess must run THIS tree's worker (it has the prepare op),
+    # not whichever copy of the package the venv points at.
+    import pathlib
+    import agent_friday
+    monkeypatch.setenv("PYTHONPATH", str(pathlib.Path(agent_friday.__file__).resolve().parents[1]))
     events = []
     t0 = time.monotonic()
 
@@ -151,6 +156,7 @@ def test_the_selection_decides_which_stages_are_prepared(monkeypatch):
     monkeypatch.setattr(vw, "prepare_stage", lambda stage, engine, args=None:
                         began.append((stage, engine, dict(args or {}))))
     monkeypatch.setattr(vw, "held", lambda stage: None)
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: 99999)
     vw.prepare_for_selection({"ear": {"device_policy": "if_free", "model": "small"},
                               "mouth": {"engine": "kokoro", "device_policy": "preferred",
                                         "voice": "af_heart"}})
@@ -269,3 +275,90 @@ def test_begin_prepare_spawns_nothing_under_test():
     assert os.environ.get("FRIDAY_TESTING")
     rv._begin_prepare({}, {"ear": {"device_policy": "if_free"}})
     assert vw._PREPARED == {} or True
+
+
+# ── the free-RAM guard ──────────────────────────────────────────────────────
+
+SEL = {"ear": {"device_policy": "if_free", "model": "small"},
+       "mouth": {"engine": "kokoro", "device_policy": "preferred", "voice": "af_heart"}}
+
+
+@pytest.fixture()
+def began(monkeypatch):
+    out = []
+    monkeypatch.setattr(vw, "prepare_stage", lambda stage, engine, args=None: out.append(stage))
+    monkeypatch.setattr(vw, "held", lambda stage: None)
+    return out
+
+
+def test_with_free_ram_low_no_stage_is_prepared_and_each_skip_is_logged(began, monkeypatch, caplog):
+    import logging
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: 1200)
+    with caplog.at_level(logging.INFO, logger="friday.voice_workers"):
+        assert vw.prepare_for_selection(SEL) == []
+    assert began == []
+    skips = [r.getMessage() for r in caplog.records if "not prepared during the park" in r.getMessage()]
+    assert len(skips) == 2 and all("1200 MiB RAM free" in m for m in skips), skips
+
+
+def test_with_free_ram_high_both_stages_are_prepared(began, monkeypatch):
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: 8000)
+    assert vw.prepare_for_selection(SEL) == ["ear", "mouth"] and began == ["ear", "mouth"]
+
+
+def test_the_floor_is_the_warm_gate_plus_the_stage_working_set(began, monkeypatch):
+    need_ear = vw.WARM_MIN_FREE_RAM_MB + vw.PREPARE_WORKING_SET_MB["whisper-cuda"]
+    need_both = need_ear + vw.PREPARE_WORKING_SET_MB["kokoro-cuda"]
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: need_ear)          # room for the ear only
+    assert vw.prepare_for_selection(SEL) == ["ear"], "the mouth needs what the ear already took too"
+    began.clear()
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: need_both)
+    assert vw.prepare_for_selection(SEL) == ["ear", "mouth"]
+    began.clear()
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: need_both - 1)
+    assert vw.prepare_for_selection(SEL) == ["ear"]
+
+
+def test_when_free_ram_cannot_be_read_the_old_behaviour_is_kept_to_prepare(began, monkeypatch):
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: None)
+    assert vw.prepare_for_selection(SEL) == ["ear", "mouth"]
+
+
+def test_begin_prepare_with_ram_high_prepares_all_three_before_the_park(monkeypatch):
+    from agent_friday.routes import voice as rv
+    from agent_friday.services import voice_front as vf
+    monkeypatch.delenv("FRIDAY_TESTING", raising=False)
+    monkeypatch.delenv("FRIDAY_NO_PREWARM", raising=False)
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: 8000)
+    monkeypatch.setattr(vw, "held", lambda stage: None)
+    stages, read = [], threading.Event()
+    monkeypatch.setattr(vw, "prepare_stage", lambda stage, engine, args=None: stages.append(stage))
+    monkeypatch.setattr(vf, "resolve", lambda s: ("m", ""))
+    monkeypatch.setattr(vf, "model_path", lambda m: "front.gguf")
+    monkeypatch.setattr(pf, "read_into_cache", lambda paths, **k: read.set() or {})
+    rv._begin_prepare({}, SEL)
+    assert read.wait(5) and stages == ["ear", "mouth"]
+
+
+def test_begin_prepare_with_ram_low_prepares_no_stage_and_leaves_today_s_order(monkeypatch):
+    from agent_friday.routes import voice as rv
+    from agent_friday.services import voice_front as vf
+    monkeypatch.delenv("FRIDAY_TESTING", raising=False)
+    monkeypatch.delenv("FRIDAY_NO_PREWARM", raising=False)
+    monkeypatch.setattr(vw, "_free_ram_mb", lambda: 900)
+    monkeypatch.setattr(vw, "held", lambda stage: None)
+    stages = []
+    monkeypatch.setattr(vw, "prepare_stage", lambda stage, engine, args=None: stages.append(stage))
+    monkeypatch.setattr(vf, "resolve", lambda s: (None, ""))
+    rv._begin_prepare({}, SEL)
+    assert stages == [], "nothing was prepared: the ear and mouth load after the park, as before"
+    # and a stage that was never prepared is simply built the old way
+    assert vw.take_prepared("ear", "whisper-cuda", {"model": "small"}) is None
+
+
+def test_the_front_read_is_bounded_in_size_and_time(tmp_path):
+    (tmp_path / "big.bin").write_bytes(b"x" * 3_000_000)
+    r = pf.read_into_cache([tmp_path / "big.bin"], max_bytes=1_000_000)
+    assert r["bytes"] == 0 and "more than" in r["skipped"]
+    r = pf.read_into_cache([tmp_path / "big.bin"], max_seconds=-1.0)
+    assert r["bytes"] == 0, "a read past its time budget stops"

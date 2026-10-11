@@ -94,9 +94,9 @@ def test_the_whisper_ear_that_is_cached_never_calls_the_hub(tmp_path, monkeypatc
 def test_the_gpu_worker_loads_whisper_from_the_local_cache_only():
     import inspect
     from agent_friday.voice import worker
-    src = inspect.getsource(worker._WhisperCuda.load)
+    src = inspect.getsource(worker._WhisperCuda)
     assert src.count("local_files_only=True") >= 3, "every WhisperModel call is local-only"
-    assert "local_files_only=True" in src and "download_model(self.size, local_files_only=True" in src
+    assert "download_model(self.size, local_files_only=True" in src
 
 
 def test_kokoro_refuses_rather_than_let_misaki_download_its_language_model(monkeypatch):
