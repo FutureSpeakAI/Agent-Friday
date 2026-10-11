@@ -97,7 +97,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s01-01"]
+   "eval": []
   },
   {
    "id": "messages.filter_lanes",
@@ -129,7 +129,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s01-02"]
+   "eval": []
   },
   {
    "id": "messages.archive",
@@ -145,7 +145,7 @@
    "undo": {"fn": "item_actions.undo_email", "via": "undo_action"},
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s01-04"]
+   "eval": []
   },
   {
    "id": "messages.trash_restore",
@@ -161,7 +161,7 @@
    "undo": {"fn": "item_actions.undo_email", "via": "undo_action"},
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["tests/unit/test_point_act.py::test_every_change_is_a_defer_that_carries_the_rows_and_names_no_tool"]
+   "eval": []
   },
   {
    "id": "messages.mark_read",
@@ -177,7 +177,7 @@
    "undo": {"fn": "item_actions.undo_email", "via": "undo_action"},
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["tests/unit/test_point_act.py::test_a_change_s_intent_and_destination_come_from_the_owner_s_words"]
+   "eval": []
   },
   {
    "id": "messages.star",
@@ -193,7 +193,7 @@
    "undo": {"fn": "item_actions.undo_email", "via": "undo_action"},
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s01-09"]
+   "eval": []
   },
   {
    "id": "messages.label_move",
@@ -209,7 +209,7 @@
    "undo": {"fn": "item_actions.undo_email", "via": "undo_action"},
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["tests/unit/test_point_act.py::test_a_change_s_intent_and_destination_come_from_the_owner_s_words"]
+   "eval": []
   },
   {
    "id": "messages.undo_change",

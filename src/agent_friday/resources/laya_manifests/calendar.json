@@ -55,7 +55,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s57-01"]
+   "eval": []
   },
   {
    "id": "calendar.select_events",
@@ -71,7 +71,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s57-02"]
+   "eval": []
   },
   {
    "id": "calendar.quick_add",

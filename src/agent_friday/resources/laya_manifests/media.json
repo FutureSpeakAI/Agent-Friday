@@ -75,7 +75,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s41-01"]
+   "eval": []
   },
   {
    "id": "media.select_cards",
@@ -91,7 +91,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s41-02"]
+   "eval": []
   },
   {
    "id": "media.favourite",
@@ -107,7 +107,7 @@
    "undo": {"fn": "item_actions.undo_media", "via": "undo_action"},
    "voice": {"live": false, "shared": true},
    "quiet_result": null,
-   "eval": ["tests/unit/test_point_act.py::test_every_change_is_a_defer_that_carries_the_rows_and_names_no_tool"]
+   "eval": []
   },
   {
    "id": "media.tag_move",
@@ -123,7 +123,7 @@
    "undo": {"fn": "item_actions.undo_media", "via": "undo_action"},
    "voice": {"live": false, "shared": true},
    "quiet_result": null,
-   "eval": ["tests/unit/test_point_act.py::test_a_change_s_intent_and_destination_come_from_the_owner_s_words"]
+   "eval": []
   },
   {
    "id": "media.new_card",

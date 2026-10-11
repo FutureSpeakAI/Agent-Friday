@@ -55,7 +55,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["tests/unit/test_point_act.py::test_open_and_select_become_tool_routes_with_the_exact_rows"]
+   "eval": []
   },
   {
    "id": "contacts.follow_up",

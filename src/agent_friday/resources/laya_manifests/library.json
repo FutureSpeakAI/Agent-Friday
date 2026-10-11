@@ -91,7 +91,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s53-01"]
+   "eval": []
   },
   {
    "id": "library.add",

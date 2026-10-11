@@ -94,7 +94,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s35-01"]
+   "eval": []
   },
   {
    "id": "news.switch_view",
@@ -126,7 +126,7 @@
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": ["point_act_eval.json#s35-02"]
+   "eval": []
   },
   {
    "id": "news.media_diet_rule",
