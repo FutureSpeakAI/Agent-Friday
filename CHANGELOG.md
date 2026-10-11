@@ -31,6 +31,13 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   by typing yes. Turning the setting down expires the cards still waiting. The
   saved conversation never holds a title or a sender name from a card. Setting:
   `laya_safe_writes` (`off`, `shadow`, `on`).
+- **Voice history keeps no card details.** When a local voice call reads an
+  approval card aloud (any card, with safe writes on or off), or asks a question
+  built from your screen ("which sender?"), the saved conversation and the
+  end-of-call summary keep a neutral line ("I have a change waiting for your OK;
+  the details are on your screen. Shall I go ahead?") instead of the subjects and
+  sender names. Friday still says the full line aloud; a later typed turn on a
+  cloud model no longer reads it.
 - **A plain "yes" runs the action Friday is waiting on** (`reflex_approval_replies`,
   on by default). A whole, unconditional yes typed on Friday's own page to a
   question she is waiting on runs the stored action straight away, with the same

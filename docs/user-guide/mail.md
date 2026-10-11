@@ -101,9 +101,12 @@ plain pointers (these, the first three, the ones from Mara).
 The card on your screen lists the sender's address as well as the name (the
 name is the sender's to choose), for the messages it lists rather than the first
 one (up to three senders per conversation). The chat line, the notification and
-the saved conversation, typed or spoken, name no sender and no subject: the
-saved line only says that a card was raised or a question asked, and the card on
-your screen has the details. The card covers only the messages it lists. A
+the saved conversation, typed or spoken, name no sender and no subject: they say
+that a card was raised and how many conversations it covers, and the card on
+your screen has the rest. The same neutral line goes into the end-of-call summary
+of a voice call. What Friday says aloud, outside a room, does name the subjects
+and the senders' names (never the addresses), because you are there to hear it;
+in a room she gives the count only. The card covers only the messages it lists. A
 message that arrived after your screen last showed the list is left out and the
 card says so ("1 newer message not included"); a reply that arrives after the
 card is raised is not changed either. Undo puts back, message by message, the
@@ -114,17 +117,20 @@ she will not make a change she could not put back exactly.
 
 **How you approve it.** On the page, a card Laya raised is approved with its
 **Approve** button; a typed "yes", "ok" or "fine" does not approve it (typing
-"no" can decline it). By voice, the card is read out in a fixed line, and a plain
+"no" can decline it). A text message does not approve it either, even with
+Approve by text on: Laya's cards are not texted to you, and a reply of YES with a
+code is refused (a NO still declines). By voice, the card is read out in a fixed line, and a plain
 "yes" or "no" answers it only if that line was played whole and nothing else was
 asked since; "yes, but only the first one" becomes a changed card. A "yes" that
 names what the card does ("yes, archive them") also answers a waiting card by
 voice even if you did not hear the line, as for every card Friday raises, so say
 no or decline it on screen if you did not mean it.
 
-When Friday has put her own numbers on rows, "the second one" could mean the
-second row of the list or the row she numbered 2, so Laya asks which instead of
-guessing. With no numbers on screen she counts from the top of your list and the
-card says so.
+When Friday has put her own numbers on rows, "the second one", and "these" when it
+would mean the row you have open or a different number of rows than she
+numbered, could mean either, so Laya asks you to say it again with a number
+counted from the top of your list, or to tick the rows, instead of guessing. With
+no numbers on screen she counts from the top of your list and the card says so.
 
 ## Privacy
 
