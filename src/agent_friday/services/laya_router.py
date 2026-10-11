@@ -291,7 +291,10 @@ _ACT = re.compile(
     # ...", "label this". "tell me" / "tell us" ask Friday for something.
     r"e-?mail(?!\s+(?:from|about|is|was|are|were|has|have|had|isn'?t|wasn'?t)\b)|"
     r"tell(?!\s+(?:me|us)\b)|let\s+\w+(?:\s+\w+)?\s+know|notify|ping|dm|"
-    r"label|snooze|flag|tag|pin|unpin|mute|unmute|block|dismiss|reserve|rsvp|sign up)\b"
+    r"label|snooze|flag|tag|pin|unpin|mute|unmute|block|dismiss|reserve|rsvp|sign up|"
+    # Point-and-act's own change verbs, so the router and the pointing rung agree on what a change is
+    # ("star these", "junk the ones from X"; a bare "star wars" or "spam folder" is not one).
+    r"(?:star|unstar|bin|junk|spam|favou?rite|categori[sz]e|undelete)(?=\s+(?:these|those|them|this|that|it|the|all)\b))\b"
     # A fragment or an idiom is not a request to change anything: "cancel
     # that", "move on", "make sense?", "set?" carry no object to act on.
     r"(?!\s*(?:that|it|this|them)?\s*[?.!]*$)(?!\s+(?:on|sense|up)\b\s*[?.!]*$)",
@@ -751,9 +754,10 @@ _UNSET = object()
 
 #: Opening verbs that hand "open X" to the item resolver when X is not on screen.
 _OPEN_LEAD = re.compile(_POLITE + r"(?:open|pull up|bring up|show me|take me to|go to|view)\b", re.I)
-#: The resolver is asked for these commands only: both are screen moves the action
-#: gate classes INTERNAL. (A news story's open_url is the model's to run.)
-_RESOLVER_TOOLS = frozenset({"navigate_to", "library_show"})
+#: The resolver is asked for this command only: a screen move the action gate classes INTERNAL, and a tool the
+#: router holds (_guard_composed turns any tool outside TOOLS into a defer). A news story's open_url and the
+#: library's library_show are the model's to run.
+_RESOLVER_TOOLS = frozenset({"navigate_to"})
 #: How long each trusted rung may take on a turn. Over budget, the rung answers None and the sealed-rule
 #: decision stands: a screen read or an index search never holds a voice turn. A rung still running from
 #: an earlier turn is not queued behind: the next turn skips it until it ends.

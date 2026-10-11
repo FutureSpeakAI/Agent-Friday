@@ -69,7 +69,7 @@
    "tool": "library_show",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 0, "card": "none"},
-   "laya_tier": "resolver",
+   "laya_tier": "model_only",
    "phrasings": ["open the lease document", "show me the tax guide"],
    "deictic": ["description"],
    "undo": null,

@@ -157,7 +157,7 @@ _VERBS: List[tuple] = [(v, re.compile(r"^(?:%s)\b\s*" % p)) for v, p in [
     ("archive", r"archive"),
     ("star", r"star|flag|favorite|favourite"),
     ("label", r"label|tag|categori[sz]e"),
-    ("move", r"move|file|put"),
+    ("move", r"move|put"),
     ("mark", r"mark"),
     ("trash", r"trash|delete|bin|remove|junk"),
     ("spam", r"spam|report as spam"),
@@ -179,6 +179,8 @@ def _intent(verb: str, dest: str) -> str:
             return "mark_read"
         if d in ("unread", "as unread"):
             return "mark_unread"
+        if d in ("spam", "as spam", "junk", "as junk"):
+            return "spam"
         if d in ("important", "starred", "a favorite", "favorite"):
             return "star"
         return "mark"

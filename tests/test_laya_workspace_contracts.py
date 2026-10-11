@@ -171,7 +171,7 @@ def test_a_verbs_tier_names_a_path_that_exists(ws, verb):
     elif tier == "router_seed":
         assert tool in lr.TOOLS and tool in lr.SEEDS
     elif tier == "resolver":
-        assert tool in lr._RESOLVER_TOOLS
+        assert tool in lr._RESOLVER_TOOLS and tool in lr.TOOLS      # a tool the router can actually run
     elif tier == "point_act_tool":
         assert tool in ("navigate_to", "screen_select") and verb["point_verb"] in ("open", "select")
     elif tier == "point_act_defer":
@@ -209,14 +209,17 @@ def test_router_phrasings_route_to_their_tool():
 
 
 def test_the_phrasings_of_a_point_and_act_verb_parse_to_its_verb():
+    """What the manifest says Laya runs is what point_act parses: its own verb exactly (a change verb), pointing
+    AT the screen (a description to look up is Friday's read rule or the resolver's)."""
     for ws, v in VERBS:
         if v["laya_tier"] not in ("point_act_tool", "point_act_defer"):
             continue
         for p in v["phrasings"]:
             parsed = pa.parse(p)
             assert parsed is not None, (v["id"], p)
+            assert pa.is_referential(parsed), (v["id"], p, "describes a row instead of pointing at one")
             if v["laya_tier"] == "point_act_defer":
-                assert parsed.verb in pa.WRITE_VERBS, (v["id"], p, parsed.verb)
+                assert parsed.verb == v["point_verb"], (v["id"], p, parsed.verb)
             else:
                 assert parsed.verb in (v["point_verb"], "show", "clear", "unselect"), (v["id"], p, parsed.verb)
 

@@ -164,3 +164,39 @@ def test_a_hanging_resolver_never_holds_the_turn(monkeypatch):
     lr.route("open the budget spreadsheet", log=False, budget_ms=50, trusted=True, stage=None, pointed=None)
     assert time.perf_counter() - t0 < 1.5
     go.set()
+
+
+# ── point-and-act and the router agree on what a change is ───────────────────────────
+
+CHANGE_WORDS = ["archive", "star", "unstar", "label", "tag", "categorize", "move", "put", "mark", "trash", "delete",
+                "remove", "bin", "junk", "spam", "favorite", "favourite", "restore", "undelete"]
+
+
+@pytest.mark.parametrize("word", CHANGE_WORDS)
+def test_every_change_verb_point_and_act_parses_is_a_write_intent_to_the_router(word):
+    text = "%s these" % word
+    p = pa.parse(text)
+    assert p is not None and p.verb in pa.WRITE_VERBS, (text, p)
+    assert lr._has_write_intent(text), text
+
+
+def test_file_is_not_a_change_verb_and_bare_nouns_are_not_writes():
+    p = pa.parse("file a bug report")
+    assert p is None or p.verb not in pa.WRITE_VERBS
+    for text in ("star wars is on tonight", "spam folder is full", "bin collection is tomorrow"):
+        assert not lr._has_write_intent(text), text
+
+
+def test_marking_as_spam_is_a_spam_change():
+    p = pa.parse("mark the second one as spam")
+    assert p.verb == "mark" and pa._intent(p.verb, p.dest) == "spam"
+    assert "spam" in pa.CARDED_INTENTS
+
+
+def test_a_resolver_command_for_a_tool_the_router_does_not_hold_is_no_route(monkeypatch):
+    from agent_friday.services import laya_resolver
+    res = laya_resolver.Resolution("command", "Opening.", kind="doc",
+                                   command={"tool": "library_show", "input": {"id": "d1"}})
+    monkeypatch.setattr(laya_resolver, "resolve", lambda text: res)
+    r = lr.route("open the lease document", log=False, budget_ms=50, trusted=True, stage=None, pointed=None)
+    assert r.layer != "resolver" and r.handoff != "compose_text"

@@ -50,7 +50,7 @@
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
    "laya_tier": "point_act_tool",
-   "phrasings": ["open the second event", "open that meeting"],
+   "phrasings": ["open the second event", "open that one"],
    "deictic": ["ordinal", "these", "description"],
    "undo": null,
    "voice": {"live": true, "shared": false},
