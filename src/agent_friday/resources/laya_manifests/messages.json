@@ -148,7 +148,8 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": ["point_act_eval.json#s01-04"],
-   "point_verb": "archive"
+   "point_verb": "archive",
+   "safe_write": {"setting": "laya_safe_writes", "default": "off", "actions": ["archive"], "intents": ["archive"], "card": "always", "needs_label": false, "undo": "item_actions.undo_email"}
   },
   {
    "id": "messages.trash_restore",
@@ -165,7 +166,8 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": ["tests/unit/test_point_act.py::test_every_change_is_a_defer_that_carries_the_rows_and_names_no_tool"],
-   "point_verb": "trash"
+   "point_verb": "trash",
+   "safe_write": null
   },
   {
    "id": "messages.mark_read",
@@ -182,7 +184,8 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": ["tests/unit/test_point_act.py::test_a_change_s_intent_and_destination_come_from_the_owner_s_words"],
-   "point_verb": "mark"
+   "point_verb": "mark",
+   "safe_write": {"setting": "laya_safe_writes", "default": "off", "actions": ["read", "unread"], "intents": ["mark_read", "mark_unread"], "card": "always", "needs_label": false, "undo": "item_actions.undo_email"}
   },
   {
    "id": "messages.star",
@@ -199,7 +202,8 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": ["point_act_eval.json#s01-09"],
-   "point_verb": "star"
+   "point_verb": "star",
+   "safe_write": {"setting": "laya_safe_writes", "default": "off", "actions": ["star", "unstar"], "intents": ["star", "unstar"], "card": "always", "needs_label": false, "undo": "item_actions.undo_email"}
   },
   {
    "id": "messages.label_move",
@@ -216,7 +220,8 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": ["tests/unit/test_point_act.py::test_a_change_s_intent_and_destination_come_from_the_owner_s_words"],
-   "point_verb": "label"
+   "point_verb": "label",
+   "safe_write": {"setting": "laya_safe_writes", "default": "off", "actions": ["label", "move"], "intents": ["label", "move"], "card": "always", "needs_label": true, "undo": "item_actions.undo_email"}
   },
   {
    "id": "messages.undo_change",

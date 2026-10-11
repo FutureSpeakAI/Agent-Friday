@@ -153,7 +153,8 @@
    "undo": {"fn": "item_actions.undo_calendar", "via": "undo_action"},
    "voice": {"live": false, "shared": true},
    "quiet_result": null,
-   "eval": []
+   "eval": [],
+   "safe_write": null
   }
  ],
  "jobs": [

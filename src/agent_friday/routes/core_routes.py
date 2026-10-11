@@ -1774,6 +1774,17 @@ def api_settings():
         data = request.get_json(silent=True) or {}
         new_settings = data.get('settings') or {}
 
+        # Laya's safe writes widen only on the owner's own click on this server's page: a
+        # same-origin browser request that carries the page's rotating token (the check the
+        # Library's pick-folders route uses). A body that merely says owner_action is refused.
+        _sw_owner = False
+        if data.get('owner_action') == 'laya_safe_writes':
+            from agent_friday.services import screen_click as _screen_click
+            if not _screen_click.screen_session(request):
+                return jsonify({"status": "denied",
+                                "error": "this setting changes only from the Settings page"}), 403
+            _sw_owner = True
+
         # FR-1 (toolcall-integrity-v5): a local model may only take Friday's
         # tool-using seat if it passes the structural conformance gate — see
         # services/model_seat_gate.py. Runs once per model (cached after);
@@ -1816,7 +1827,8 @@ def api_settings():
         # carries a mode keeps the current one (core._save_settings).
         merged = _save_settings(
             new_settings,
-            owner_routing_change=(data.get('owner_action') == 'routing_mode'))
+            owner_routing_change=(data.get('owner_action') == 'routing_mode'),
+            owner_safe_writes_change=_sw_owner)
 
         # A seat change must reach the PLAN, not just dispatch.
         #

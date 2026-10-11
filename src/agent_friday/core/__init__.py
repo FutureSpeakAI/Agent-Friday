@@ -2894,6 +2894,16 @@ DEFAULT_SETTINGS = {
     # is sure above its certified threshold. Fixed rules, the change guard
     # and the approval gates are not touched by it.
     "laya_tool_head": "shadow",
+    # Laya's safe writes (services/laya_safe_writes): "off" | "shadow" | "on".
+    # OFF by default. It is widened only by the owner's own Settings click
+    # (owner_action=laya_safe_writes, which records an owner-enable record in
+    # services/guarded_settings); any other write that would widen it is dropped in
+    # _save_settings_locked, and a value in settings.json with no matching record
+    # reads as off. "shadow" logs the card she WOULD raise (counts and hashes) and
+    # changes nothing. "on" lets her raise the existing batch card for a reversible
+    # mail change she resolved from your words; the card is always raised and only
+    # you approve it.
+    "laya_safe_writes": "off",
     # How Laya runs on the CPU (services/laya_runtime): "auto" takes the
     # fastest engine measured and checked on this PC, else laya's own fp32.
     # "torch-fp32" | "torch-int8" | "onnx-int8" pin one.
@@ -3495,16 +3505,19 @@ def _routing_mode_caller() -> str:
 
 
 def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
-                   owner_routing_change: bool = False):
+                   owner_routing_change: bool = False,
+                   owner_safe_writes_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
         return _save_settings_locked(data,
             _internal_cloud_consent_write=_internal_cloud_consent_write,
-            owner_routing_change=owner_routing_change)
+            owner_routing_change=owner_routing_change,
+            owner_safe_writes_change=owner_safe_writes_change)
 
 
 def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
-                   owner_routing_change: bool = False):
+                   owner_routing_change: bool = False,
+                   owner_safe_writes_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -3609,6 +3622,28 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                 _mr_in = dict(_mr_in)
                 _mr_in.pop("mode", None)
                 data["model_routing"] = _mr_in
+    # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
+    #
+    # `laya_safe_writes` lets Laya raise approval cards for changes to the
+    # owner's mail. Moving it from off toward on (off -> shadow -> on) takes the
+    # Settings control's own `owner_action`; any other write that carries a
+    # wider value (a whole settings dict read earlier, a script, a model's
+    # tool) has the key dropped and logged. Narrowing, and any value that is
+    # not one of the three words, is always safe: a bad value is dropped.
+    if data and "laya_safe_writes" in data:
+        _rank = {"off": 0, "shadow": 1, "on": 2}
+        _new_sw = data.get("laya_safe_writes")
+        _old_sw = existing.get("laya_safe_writes", "off")
+        _old_r = _rank.get(_old_sw, 0)
+        if _new_sw not in _rank or (_rank[_new_sw] > _old_r and not owner_safe_writes_change):
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "REFUSED a change of laya_safe_writes %r -> %r: %s (caller %s); the rest of the write is kept",
+                _old_sw, _new_sw,
+                "not one of off, shadow or on" if _new_sw not in _rank else "not an explicit owner action",
+                _routing_mode_caller())
+            data = dict(data)
+            data.pop("laya_safe_writes", None)
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():
@@ -3670,6 +3705,14 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     # The write is complete and on disk; clear again so nothing keeps a
     # snapshot taken mid-write.
     _invalidate_settings_cache()
+    # The owner's own click on a guarded setting leaves a signed record; a value in settings.json
+    # with no matching record is only a claim (services/guarded_settings.effective).
+    if owner_safe_writes_change and data and "laya_safe_writes" in data:
+        try:
+            from agent_friday.services import guarded_settings as _gs
+            _gs.record_owner_choice("laya_safe_writes", merged.get("laya_safe_writes"))
+        except Exception:
+            pass
     # Switching off the record off drops what the session kept in memory.
     try:
         from agent_friday.services import off_record as _off

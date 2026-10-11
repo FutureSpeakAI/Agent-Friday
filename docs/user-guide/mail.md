@@ -66,6 +66,39 @@ undo. A change Friday proposes waits on a card.
 
 See [Approvals and receipts](approvals-and-receipts.md).
 
+## Safe writes (off until you turn them on)
+
+Laya can put the approval card up for a change you can undo, to the mail rows
+you pointed at: "archive these three", "star the ones from Mara", "mark these as
+read", "label these as Receipts", "move this to Receipts". She works out which
+rows you mean on this PC, with no large model. **You approve every card.** She
+never approves her own card and never changes anything first.
+
+It is off until you choose, in **Settings > Privacy & Data > Safe writes**.
+Nothing is chosen for you, and no chat or voice command, file edit or restored
+backup can turn it on; only your click on that page does:
+
+- **Off** does nothing. A change goes to the model, as it always has.
+- **Watch only** records what she would have proposed, as counts and hashes (no
+  words, no subjects, no label names), and changes nothing.
+- **Raise the card** lets her put the card up. Even "mark as read", "star" and
+  "label", which run with no card when a model asks, wait for your yes here.
+
+She may propose archive, mark read, mark unread, star, unstar, label, and move
+to a label that already exists. She never makes a label, and she never trashes,
+reports spam, unsubscribes, sends, replies or deletes. A request for "all of
+them", for more than 25 conversations, with two jobs in one sentence, or that
+leaves some out ("not those", "the rest") goes to the model: she only acts on
+plain pointers (these, the first three, the ones from Mara).
+
+The card lists the sender's address as well as the name, covers only the
+messages it lists (a reply that arrives before you approve is not changed), and
+Undo puts each message back exactly as it was. If Friday cannot read a
+conversation message by message, she leaves it to the model's path rather than
+make a change she could not put back exactly. By voice, a card is read out in
+a fixed line, and only your next plain "yes" or "no" after hearing it answers
+it; "yes, but only the first one" becomes a changed card.
+
 ## Privacy
 
 Reading your mail happens on this PC. When a cloud model helps with a message,

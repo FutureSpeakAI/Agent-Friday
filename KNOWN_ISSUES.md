@@ -92,6 +92,21 @@ you hit something that is not here, please open an issue.
   so a second GPU seat or local image generation may fail to allocate. "I need
   my machine" in Settings > Models releases the GPU.
 
+## 2c. Open in Beta 1.1
+
+- **Laya's safe writes (`laya_safe_writes`) are off and await review.** The
+  feature lets Laya raise the approval card for a reversible mail change to rows
+  you pointed at, and it has not yet had its separate safety review or its
+  adversarial pass. It can be turned on only by the Settings control, by your
+  own click on this PC's page: a value written to `settings.json` any other way
+  counts as off until you click. Until it is enabled the model's own path is
+  unchanged. Its spoken-card behaviour on a live local voice call and the
+  Settings control on screen have been checked in tests only, not on a call or
+  in a rendered window. The card is bound to the messages it listed, so a
+  reply that arrives before you approve is not changed; a conversation Friday
+  cannot read message by message is left to the model's path, never changed
+  inexactly.
+
 ## 2a. Open in 1.0.2: local voice calls and the Local AI queue
 
 - **The first local voice call after a while takes about a minute to start.**

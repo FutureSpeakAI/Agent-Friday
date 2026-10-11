@@ -42,6 +42,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from agent_friday.paths import friday_home
+from agent_friday.services import guarded_settings as _guarded_settings
 
 _log = logging.getLogger("friday.boot_guard")
 
@@ -517,6 +518,16 @@ def restore_known_good() -> dict:
             p.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(staged), str(p))
             restored.append(target)
+            if p.name == "settings.json" and p.is_file():
+                # A rollback is not the owner's click: a guarded setting (Laya's safe
+                # writes) comes back no wider than the live file had it, and a live
+                # file that is gone counts as the default, off.
+                try:
+                    if _guarded_settings.clamp_file(p, (failed_dir / meta["slug"]) if target in kept else None):
+                        _log.warning("boot_guard: kept a guarded setting no wider than it was before the rollback")
+                except Exception as e:
+                    _log.error("boot_guard: could not narrow the guarded settings in %s: %s", target, e)
+                    problems.append({"path": target, "error": "guarded settings not narrowed: %s" % e})
         except Exception as e:
             _log.error("boot_guard: could not restore %s: %s", target, e)
             problems.append({"path": target, "error": str(e)})

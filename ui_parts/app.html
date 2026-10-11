@@ -19151,6 +19151,9 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Instant answers (no model)">
       <LayaReflexPanel s={s} save={save}/>
     </StSection>
+    <StSection title="Safe writes (off until you turn them on)">
+      <LayaSafeWritesPanel/>
+    </StSection>
     <StSection title="Scheduled jobs: what they may do on their own">
       <GovernanceGrantsPanel/>
     </StSection>
@@ -19665,6 +19668,53 @@ function LayaReflexPanel({s, save}) {
   );
 }
 // End instant answers panel
+
+function LayaSafeWritesPanel() {
+  // Laya's safe writes (services/laya_safe_writes): off until the owner chooses here. This control is the
+  // only way to widen it (owner_action); a card is always raised and only the owner approves it.
+  const E = React.createElement;
+  const [mode, setMode] = useState(null);
+  const [note, setNote] = useState('');
+  const load = useCallback(() => {
+    apiFetch('/api/settings').then(r => r.json())
+      .then(d => setMode((((d || {}).settings || {}).laya_safe_writes) || 'off'))
+      .catch(() => setMode('off'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const choose = (value) => {
+    setNote('');
+    apiFetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({owner_action:'laya_safe_writes', settings:{laya_safe_writes:value}})})
+      .then(r => r.json())
+      .then(d => {
+        const got = (((d || {}).settings || {}).laya_safe_writes);
+        setMode(got || 'off');
+        if (got !== value) setNote('That did not save. It stays ' + (got || 'off') + '.');
+        try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {}
+      })
+      .catch(() => setNote('That did not save. Nothing changed.'));
+  };
+  const pick = (value, label, desc) => E('button', {
+    type:'button', className:'settings-btn', 'aria-pressed': mode === value, disabled: mode === null,
+    onClick:() => choose(value),
+    style:{display:'block',textAlign:'left',width:'100%',marginBottom:6,fontSize:12,
+      borderColor: mode === value ? 'var(--st-accent, #00d4ff)' : undefined}},
+    E('span', {style:{display:'block',fontWeight:600}}, label),
+    E('span', {style:{display:'block',fontSize:11,color:'var(--st-dim)',marginTop:2}}, desc));
+  return E('div', {'data-st-key':'settings.laya.safe_writes'},
+    E('div', {style:{fontSize:12,margin:'0 0 8px'}}, 'When you point at mail ("archive these", "star the ones from Dana", "mark these as read", "move this to Receipts"), ' + fridayName() + ' can put the approval card up for you, without waking a model. Every change can be undone, and you approve every card.'),
+    pick('shadow', 'Watch only',
+      'Records what she would have proposed, as counts and hashes, and changes nothing.'),
+    pick('on', 'Raise the card',
+      'She puts the card up, even for changes that run with no card when a model asks. Nothing changes until you say yes. She never trashes, reports spam, sends, deletes or touches your calendar, files or money.'),
+    pick('off', 'Off',
+      'A change goes to the model, as it always has.'),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
+      mode === null ? 'Checking.' : (mode === 'on' ? 'On. She raises the card; you approve it.' : mode === 'shadow' ? 'Watching only. Nothing is proposed.' : 'Off. This stays off until you choose.')),
+    note ? E('div', {role:'status', style:{fontSize:11,marginTop:4}}, note) : null);
+}
+// End safe writes panel
+
 
 function LayaLabelQueue({st, reload}) {
   // The owner's answer key for the approval scanner: one yes/no question per

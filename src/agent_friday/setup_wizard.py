@@ -267,6 +267,10 @@ def _save_config(config: dict):
     # Secrets never reach these files: provider keys live in the credential
     # store and the vault passphrase in services/vault_passphrase.
     config = {k: v for k, v in config.items() if k not in _SECRET_CONFIG_KEYS}
+    # Not the owner's click on the Settings page: a guarded setting (Laya's safe writes) is
+    # written no wider than settings.json holds it now.
+    from agent_friday.services import guarded_settings
+    config = guarded_settings.clamp_for_write(config, SETTINGS_FILE)
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     try:
         import yaml
