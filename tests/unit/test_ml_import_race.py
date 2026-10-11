@@ -65,8 +65,10 @@ def fake_stack(tmp_path, monkeypatch):
              if k.split(".")[0] in ("sentence_transformers", "kokoro", SLOW_PKG)}
     monkeypatch.syspath_prepend(str(tmp_path))
     importlib.invalidate_caches()
-    from agent_friday.services import embedder_cache
+    from agent_friday.services import embedder_cache, laya2_encoder, minilm
     monkeypatch.setattr(embedder_cache, "ensure_available", lambda *a, **k: None)
+    monkeypatch.setattr(laya2_encoder, "load", lambda: False)   # no pinned ONNX copy: the torch path
+    monkeypatch.setattr(minilm, "_torch_model", None)
     yield tmp_path
     for k in [k for k in list(sys.modules)
               if k.split(".")[0] in ("sentence_transformers", "kokoro", SLOW_PKG)]:
@@ -129,8 +131,10 @@ def test_a_failed_layer3_load_is_retried_not_cached_forever(monkeypatch):
     fake_mod = _t.ModuleType("sentence_transformers")
     fake_mod.SentenceTransformer = flaky
     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_mod)
-    from agent_friday.services import embedder_cache
+    from agent_friday.services import embedder_cache, laya2_encoder, minilm
     monkeypatch.setattr(embedder_cache, "ensure_available", lambda *a, **k: None)
+    monkeypatch.setattr(laya2_encoder, "load", lambda: False)   # no pinned ONNX copy: the torch path
+    monkeypatch.setattr(minilm, "_torch_model", None)
     monkeypatch.setattr(sc, "_EMBEDDER", sc._UNTRIED)
     monkeypatch.setattr(sc, "_EXEMPLAR_EMBEDS", None)
     monkeypatch.setattr(sc, "_EMBEDDER_RETRY_S", 0.0, raising=False)

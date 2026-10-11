@@ -6,50 +6,41 @@ similarity to precomputed vectors, so a question costs one embedding (tens of
 milliseconds) rather than a language-model call per menu.
 
 Rules this module keeps:
-  * The artifact is the one already installed for Laya 2 (`models/laya2-encoder`
-    under Friday's home), pinned by sha256 and hashed once at load; a mismatch
+  * There is one encoder session in the process and this is not it. The
+    artifact is the one already installed for Laya 2 (`models/laya2-encoder`
+    under Friday's home), loaded, sha256-pinned and thread-capped by
+    `services/laya2_encoder`; this module only asks it for vectors. A mismatch
     reports "missing" exactly as an absent file does. Nothing is downloaded.
-  * No telemetry: onnxruntime's events are disabled, HF_HUB_OFFLINE is set, and
-    nothing here opens a socket.
-  * Bounded threads (the brain and voice share this CPU).
+  * No telemetry and no sockets (the shared session sets both up).
   * Optional: `available()` is False without the files, and the Library falls
     back to keyword search with a plain status line.
 """
 from __future__ import annotations
 
-import hashlib
 import os
-import threading
 from pathlib import Path
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
-from agent_friday import paths  # noqa: E402
+from agent_friday.services import laya2_encoder  # noqa: E402
 
-DIRNAME = "laya2-encoder"
-MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
-MODEL_SHA256 = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
-MODEL_NAME = "model.onnx"
-TOKENIZER_NAME = "tokenizer.json"
-DIM = 384
-MAX_LEN = 256
-MAX_THREADS = 4
-
-_lock = threading.Lock()
-_enc = None
-_status = {"state": "unloaded", "detail": ""}
+DIRNAME = laya2_encoder.ENCODER_DIRNAME
+MODEL_ID = laya2_encoder.MODEL_ID
+MODEL_SHA256 = laya2_encoder.MODEL_SHA256
+MODEL_NAME = laya2_encoder.MODEL_NAME
+TOKENIZER_NAME = laya2_encoder.TOKENIZER_NAME
+DIM = laya2_encoder.EMBED_DIM
+MAX_LEN = laya2_encoder.DEFAULT_MAX_LEN
 
 
 def artifacts_dir() -> Path:
     """Where the encoder files live; a rig may point FRIDAY_LIBRARY_ENCODER_DIR at
     an existing copy while it runs with a scratch Friday home."""
-    over = os.environ.get("FRIDAY_LIBRARY_ENCODER_DIR")
-    return Path(over) if over else paths.friday_home() / "models" / DIRNAME
+    return laya2_encoder.artifacts_dir()
 
 
 def files_present() -> bool:
-    d = artifacts_dir()
-    return (d / MODEL_NAME).is_file() and (d / TOKENIZER_NAME).is_file()
+    return laya2_encoder.is_available()
 
 
 def stamp_id() -> str:
@@ -58,85 +49,32 @@ def stamp_id() -> str:
 
 
 def status() -> dict:
-    return dict(_status)
-
-
-def _sha(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-class _Encoder:
-    def __init__(self, directory: Path):
-        import numpy as np
-        import onnxruntime as ort
-        from tokenizers import Tokenizer
-
-        if hasattr(ort, "disable_telemetry_events"):
-            ort.disable_telemetry_events()
-        self.np = np
-        so = ort.SessionOptions()
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        so.intra_op_num_threads = max(1, min(MAX_THREADS, (os.cpu_count() or 4) // 2))
-        so.inter_op_num_threads = 1
-        self.session = ort.InferenceSession(str(directory / MODEL_NAME), so, providers=["CPUExecutionProvider"])
-        self.inputs = {i.name for i in self.session.get_inputs()}
-        self.tok = Tokenizer.from_file(str(directory / TOKENIZER_NAME))
-        self.tok.enable_truncation(MAX_LEN)
-        self.tok.enable_padding(pad_id=self.tok.token_to_id("[PAD]") or 0, pad_token="[PAD]")
-
-    def embed(self, texts: list[str]):
-        np = self.np
-        enc = self.tok.encode_batch([str(t) for t in texts])
-        ids = np.array([e.ids for e in enc], dtype=np.int64)
-        mask = np.array([e.attention_mask for e in enc], dtype=np.int64)
-        feed = {"input_ids": ids, "attention_mask": mask}
-        if "token_type_ids" in self.inputs:
-            feed["token_type_ids"] = np.zeros_like(ids)
-        hidden = self.session.run(None, feed)[0]                      # (n, len, 384)
-        m = mask[..., None].astype(np.float32)
-        pooled = (hidden * m).sum(axis=1) / np.clip(m.sum(axis=1), 1e-9, None)
-        norm = np.linalg.norm(pooled, axis=1, keepdims=True)
-        return (pooled / np.clip(norm, 1e-9, None)).astype(np.float32)
-
-
-def _load():
-    global _enc
-    with _lock:
-        if _enc is not None:
-            return _enc
-        if not files_present():
-            _status.update(state="missing", detail="the encoder files are not installed")
-            return None
-        d = artifacts_dir()
-        try:
-            if _sha(d / MODEL_NAME) != MODEL_SHA256:
-                _status.update(state="missing", detail="the encoder file does not match the pinned hash")
-                return None
-            _enc = _Encoder(d)
-            _status.update(state="ready", detail="")
-        except Exception as e:  # noqa: BLE001 - reported as unavailable, never raised
-            _status.update(state="failed", detail=type(e).__name__)
-            _enc = None
-        return _enc
+    """{state, detail} in the Library's plain wording (no local paths)."""
+    s = laya2_encoder.status()
+    state = s.get("state", "unloaded")
+    if state == "missing":
+        pinned = "sha256" in (s.get("detail") or "")
+        return {"state": "missing",
+                "detail": ("the encoder file does not match the pinned hash" if pinned
+                           else "the encoder files are not installed")}
+    if state == "error":
+        return {"state": "failed", "detail": str(s.get("detail") or "").split(":")[0]}
+    return {"state": state, "detail": ""}
 
 
 def available() -> bool:
-    return _load() is not None
+    return laya2_encoder.load()
 
 
 def embed(texts: list[str], batch: int = 16):
     """(n, 384) float32 unit vectors, or None when the encoder is unavailable."""
-    enc = _load()
-    if enc is None:
+    if not laya2_encoder.load():
         return None
     import numpy as np
     out = []
     for i in range(0, len(texts), batch):
-        out.append(enc.embed(texts[i:i + batch]))
+        out.append(np.asarray(laya2_encoder.embed([str(t) for t in texts[i:i + batch]], MAX_LEN),
+                              dtype=np.float32))
     return np.vstack(out) if out else np.zeros((0, DIM), dtype=np.float32)
 
 

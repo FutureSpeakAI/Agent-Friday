@@ -3,7 +3,10 @@
 One small encoder (`sentence-transformers/all-MiniLM-L6-v2`, Apache-2.0,
 exported to ONNX) turns a line of text into a 384-dimensional unit vector.
 Every tier-1 head in `services/reflex_turn` is a nearest-prototype lookup over
-those vectors, so this module is the only place the model is touched.
+those vectors, so this module is the only place the model is touched. It is
+the one MiniLM session in the process: the Library's embedder
+(services/library/embed) and the sentence-transformers-style consumers
+(services/minilm) use this session and never load a second copy.
 
 The rules it keeps:
 
@@ -57,6 +60,12 @@ _status = {"state": "unloaded", "detail": ""}
 
 
 def artifacts_dir() -> Path:
+    """Where the encoder files live. A rig running with a scratch Friday home may
+    point FRIDAY_ENCODER_DIR (or the Library's older FRIDAY_LIBRARY_ENCODER_DIR)
+    at an existing copy; the sha256 pin still applies to whatever is there."""
+    over = os.environ.get("FRIDAY_ENCODER_DIR") or os.environ.get("FRIDAY_LIBRARY_ENCODER_DIR")
+    if over:
+        return Path(over)
     from agent_friday.core import FRIDAY_DIR
     return FRIDAY_DIR / "models" / ENCODER_DIRNAME
 
@@ -109,6 +118,20 @@ class _Encoder:
             self.tokenizer.enable_truncation(max_len)
             self.tokenizer.enable_padding(pad_id=self._pad_id, pad_token="[PAD]")
             self._max_len = max_len
+
+    def edge_text(self, text: str, edge: int) -> str:
+        """`text` cut to its first and last `edge` tokens when it is longer
+        than twice that; otherwise unchanged."""
+        self.tokenizer.no_truncation()
+        self.tokenizer.no_padding()
+        self._max_len = 0           # _prepare() switches both back on
+        enc = self.tokenizer.encode(text, add_special_tokens=False)
+        n = len(enc.ids)
+        if n <= 2 * edge:
+            return text
+        head_end = enc.offsets[edge - 1][1]
+        tail_start = enc.offsets[n - edge][0]
+        return text[:head_end] + " " + text[tail_start:]
 
     def embed(self, texts: List[str], max_len: int) -> List[List[float]]:
         np = self._np
@@ -176,6 +199,21 @@ def embed(texts: List[str], max_len: int = DEFAULT_MAX_LEN) -> List[List[float]]
         if enc is None:
             raise RuntimeError("laya2 encoder unavailable: %s" % (_status["detail"] or _status["state"]))
         return enc.embed(list(texts), int(max_len))
+
+
+def edge_text(text: str, edge: int = 128) -> str:
+    """The first and last `edge` tokens of a long text, so one long message
+    is embedded from its opening and its close. A text that cannot hold more
+    than 2 * edge tokens (a token is at least one character), or an encoder
+    that is not loaded, returns the text unchanged."""
+    text = str(text or "")
+    if len(text) <= 2 * edge:
+        return text
+    with _lock:
+        enc = _load_locked()
+        if enc is None:
+            return text
+        return enc.edge_text(text, int(edge))
 
 
 def status() -> dict:

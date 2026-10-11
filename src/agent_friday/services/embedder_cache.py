@@ -2,9 +2,10 @@
 
 Friday's embedders (the sensitivity classifier's semantic layer, conversation
 memory, the context pruner, the tool selector) all use this one model through
-sentence-transformers, which downloads it from Hugging Face the first time it
-is constructed if it is not cached. That download must never happen silently
-at startup:
+services/minilm: the pinned ONNX session when it is on disk, otherwise one
+shared sentence-transformers model, which downloads it from Hugging Face the
+first time it is constructed if it is not cached. That download must never
+happen silently at startup:
 
   * At boot, the model is loaded only when it is already cached (`is_cached`).
   * The first feature that needs it calls `ensure_available(feature)` before

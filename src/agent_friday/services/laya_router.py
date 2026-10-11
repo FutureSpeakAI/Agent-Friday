@@ -612,9 +612,13 @@ def _pool() -> ThreadPoolExecutor:
 def _score(text: str) -> List[Tuple[str, float, float]]:
     """(label, softmax confidence, raw cosine), best first."""
     import math
-    from agent_friday.services import laya2_encoder
+    from agent_friday.services import laya2_encoder, turn_vector
     labels, protos = _prototypes()
-    (vec,) = laya2_encoder.embed([text])
+    # The turn's one embedding of this message (services/turn_vector); the
+    # head reading is the first 256 tokens, which is what this always embedded.
+    vec = turn_vector.compute_head(text)
+    if vec is None:
+        (vec,) = laya2_encoder.embed([text])
     sims = [sum(a * b for a, b in zip(vec, p)) for p in protos]
     top = max(sims)
     exps = [math.exp((s - top) / TEMPERATURE) for s in sims]

@@ -2469,6 +2469,19 @@ def _current_session_id():
 
 
 def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
+    """The end of a chat or voice turn: index it, then let the turn's one
+    embedding of the message go (services/turn_vector)."""
+    try:
+        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library)
+    finally:
+        try:
+            from agent_friday.services import turn_vector as _tv
+            _tv.end_turn(text=message)
+        except Exception:
+            pass
+
+
+def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
@@ -2800,7 +2813,15 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         mem = _get_conversation_memory()
         if not mem.available():
             return live_block
-        hits = mem.search(message, n=n)
+        # The turn's one embedding of this message (services/turn_vector), when
+        # there is one; the store checks it is the same model and width.
+        try:
+            from agent_friday.services import turn_vector as _tv
+            _qvec = _tv.compute(message)
+        except Exception:
+            _qvec = None
+        hits = (mem.search(message, n=n, query_embedding=_qvec)
+                if _qvec is not None else mem.search(message, n=n))
         kept = []
         for h in hits:
             rel = h.get("relevance")
