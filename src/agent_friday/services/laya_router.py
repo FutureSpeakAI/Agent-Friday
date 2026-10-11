@@ -185,6 +185,12 @@ def _task_args(text: str, m=None) -> dict:
     return {"op": "stop", "target": q}
 
 
+def _quiet_args(_text: str, _m=None) -> dict:
+    """"Quiet until morning": the one notifications action the gate judges internal, because it can only
+    hold back interruptions (action_gate.classify). Ending quiet is not routed."""
+    return {"action": "quiet"}
+
+
 #: tool -> (spoken label, argument template, required argument or None).
 #: Every tool here is one the action gate classes INTERNAL, or one that
 #: raises its own card (SELF_GATED: undo_action); tests pin it against
@@ -209,6 +215,7 @@ TOOLS: Dict[str, Tuple[str, Callable, Optional[str]]] = {
     "search_wiki": ("checking your notes", _query, "query"),
     "search_past_conversations": ("looking back through our conversations", _query, "query"),
     "queue_status": ("checking the local AI queue", _no_args, None),
+    "notifications": ("holding things until morning", _quiet_args, None),
 }
 
 #: Tools that send the owner's words to an outside provider: tier 1 asks
@@ -286,6 +293,9 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
      _POLITE + r"(?:stop|cancel|halt|kill)\s+(?:the\s+|that\s+|my\s+)?(?:background\s+)?"
      r"(?:task|job|workflow|research|delegation)\b(?:\s+(?:called|named|about|for)\s+" + _Q + r")?" + _END),
     ("undo_action", _POLITE + r"undo(?:\s+(?:that|it|the last (?:change|thing)))?" + _END),
+    ("notifications",
+     _POLITE + r"(?:(?:be|go|stay|keep it|keep things)\s+quiet|quiet(?:\s+mode)?|do not disturb|don'?t disturb me)"
+     r"\s+until\s+(?:the\s+)?morning" + _END),
     ("podcast_play",
      _POLITE + r"(?P<act>pause|resume|continue|unpause|stop|play|skip|next|previous|back)\b"
      r"(?:\s+(?:the\s+|this\s+|my\s+)?(?:podcast|episode|playback|audio|chapter|it|that))+" + _END),

@@ -1900,16 +1900,26 @@ def _tool_revise_share_request(inp):
     return "NOT CHANGED: " + str(res.get("error")) + ". Tell them, and ask how to change it."
 
 
-def _voice_tool_run(name, args, send_client, session=None):
+def _voice_tool_run(name, args, send_client, session=None, owner_utterance=False):
     """Execute one Live tool call, emit any client-side side effect, and return a
     SHORT text/JSON result for the model to speak from. `send_client(obj)` pushes
     a WS frame to the browser (navigate action, citation chip). Never raises.
 
     `session` is the live call's own state (the voice bridge keeps one per
     connection): the stories offered so far and what Friday has said, so the
-    news tools do not recycle the same stories."""
+    news tools do not recycle the same stories.
+
+    `owner_utterance` is True only for the voice router's own rule-layer call on the owner's spoken
+    words. It is this call's alone: it rides in this call's governance context and is never written to
+    `session`, which every thread of the call shares, so a model's tool call can never read it."""
     name = (name or "").strip()
     args = dict(args or {})
+
+    def _ctx():
+        c = _voice_ctx(session)
+        if owner_utterance:
+            c["owner_utterance"] = True
+        return c
 
     # Every voice tool runs through agent._execute_tool, the one path to a
     # handler, so the governance check, provenance ledger, audit and PII hooks
@@ -1917,7 +1927,7 @@ def _voice_tool_run(name, args, send_client, session=None):
     from agent_friday.services.agent import _execute_tool
 
     def _governed(tool, fn, a):
-        return _execute_tool(tool, a, handler=fn, session_ctx=_voice_ctx(session))
+        return _execute_tool(tool, a, handler=fn, session_ctx=_ctx())
 
     try:
         from agent_friday.services import live_session_plan as _lsp
@@ -2209,7 +2219,7 @@ def _voice_tool_run(name, args, send_client, session=None):
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:
-                return _execute_tool(name, args, session_ctx=_voice_ctx(session))
+                return _execute_tool(name, args, session_ctx=_ctx())
             finally:
                 _ag._CURRENT_CONVERSATION.reset(_tok)
     except Exception as e:

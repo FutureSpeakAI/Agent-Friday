@@ -100,6 +100,13 @@ def test_a_spoken_yes_or_no_answers_the_one_waiting_card():
 def test_every_router_tool_is_internal_or_raises_its_own_card_by_the_gate():
     from agent_friday.governance import action_gate as g
     for t in lr.TOOLS:
+        if t == "notifications":
+            # Judged by action and by who asked: the router's own rule on the owner's words is internal,
+            # the same call from a model is not (tests/unit/test_notifications_gate.py).
+            assert t in g.BY_ARGUMENT and t not in g.OUTWARD_TOOLS
+            assert g.classify(t, {"action": "quiet"}, {"owner_utterance": True})[0] == g.INTERNAL
+            assert g.classify(t, {"action": "quiet"}, {})[0] == g.OUTWARD
+            continue
         assert t in g.INTERNAL_TOOLS or t in g.SELF_GATED, t
         assert t not in g.OUTWARD_TOOLS or t in g.SELF_GATED, t
 

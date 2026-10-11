@@ -545,6 +545,15 @@ def _finish_questions(st, transcript):
     _enter(st, transcript, "style")
 
 
+def _turn_on_quiet_hours():
+    """Only the Recommended chip turns them on; any other answer changes nothing (services/interruption_policy)."""
+    try:
+        from agent_friday.core import _save_settings
+        _save_settings({"quiet_hours_enabled": True, "quiet_hours_start": "22:00", "quiet_hours_end": "07:00"})
+    except Exception:
+        pass
+
+
 def _on_questions(st, transcript, value, text):
     i = min(int(st.get("q") or 0), len(copy.QUESTIONS) - 1)
     qid = copy.QUESTIONS[i][0]
@@ -561,6 +570,8 @@ def _on_questions(st, transcript, value, text):
     chosen = typed or (str(value) if value not in (None, "skip", "rather_not") else "")
     skipped = value in ("skip", "rather_not") or not chosen or _is_skip(chosen)
     profile.record_answer(qid, "" if skipped else chosen, skipped=skipped)
+    if qid == "quiet" and not skipped and chosen == copy.QUIET_RECOMMENDED:
+        _turn_on_quiet_hours()
     _heard(transcript, (copy.RATHER_NOT if value == "rather_not" else copy.SKIP)
            if skipped else chosen, "questions")
     if i + 1 < len(copy.QUESTIONS):

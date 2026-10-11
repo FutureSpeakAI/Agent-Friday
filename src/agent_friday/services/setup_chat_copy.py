@@ -241,6 +241,9 @@ MOTHER_LEAD_IN = (
 
 MOTHER_QUESTION = "What was the relationship with your mother like?"
 
+#: The recommended quiet-hours choice. It is offered, never preselected.
+QUIET_RECOMMENDED = "22:00 to 07:00 (Recommended)"
+
 #: The questions, in order. Each: (id, question, chips, placeholder).
 #: Every question also accepts free text and the Skip / Rather not say chips.
 QUESTIONS = (
@@ -270,6 +273,11 @@ QUESTIONS = (
      "interruptions?",
      ("Early mornings", "Normal office hours", "Late nights", "It varies"),
      "e.g. deep work before lunch, meetings after"),
+    ("quiet",
+     "Would you like quiet hours? In them only the urgent things interrupt me, and the rest waits "
+     "for the morning. You can change this any time in Settings.",
+     ("Not now", QUIET_RECOMMENDED),
+     "Or tell me when, and I'll point you to Settings"),
     ("values",
      "What matters most to you in your work?",
      ("Getting it right", "Moving fast", "Craft", "The people"),

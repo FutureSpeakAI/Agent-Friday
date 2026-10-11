@@ -124,7 +124,7 @@ OUTWARD_TOOLS = frozenset({
     # owner's cards, so a turn steered by something it read could silence an
     # alarm; local_model_status only reads, and its case for internal is its
     # author's to make with a review.
-    "notifications", "local_model_status",
+    "local_model_status",
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
     # Scheduling (services/scheduling.py). book_slot sends invitations to
     # other people. hold_slots writes only to the owner's own calendar and
@@ -377,6 +377,9 @@ INTERNAL_TOOLS = frozenset({
 #: career_run_script by whether the script rewrites the tracker, career_scan
 #: by whether it adds to the pipeline file.
 BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
+                         # By action: only turning quiet ON is internal (it can only hold back
+                         # interruptions); every other action keeps the outward class it had.
+                         "notifications",
                          "write_file", "fill_pdf_form", "run_sandboxed",
                          "career_run_script", "career_scan",
                          # Desktop control (ring 3), by the app it lands on:
@@ -689,6 +692,17 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
         # Before the generic connector rule below: a desktop connector tool
         # is judged by the app it lands on, like Friday's own `click`.
         return _dg.classify(tool_name, a)
+    if tool_name == "notifications":
+        # Narrowing only. "Quiet until morning" holds back interruptions and never hides, approves or
+        # drops anything (services/interruption_policy). Ending quiet, muting, clearing and every
+        # other action, and a call that names no action, are judged outward exactly as before.
+        # Only when the owner's own words did it: the router rule on their typed or spoken line sets
+        # ctx["owner_utterance"]; a model's tool call never carries it, so that call is a card.
+        if (str(a.get("action") or "").strip().lower() == "quiet"
+                and str(a.get("group") or a.get("kind") or "").strip().lower() not in ("off", "end", "stop")
+                and (ctx or {}).get("owner_utterance") is True):
+            return INTERNAL, "the owner asked for quiet until morning, which only holds back interruptions"
+        return OUTWARD, "it can clear, mute or change what reaches the owner"
     if tool_name == "office":
         # By argument, like run_command: the verb and the target decide.
         # Reading a document and building a new one inside Friday's own

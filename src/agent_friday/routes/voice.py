@@ -856,7 +856,7 @@ def _discard_voice_orb(orb_id):
 LOCAL_TOOL_RESULT_CHARS = 8000
 
 
-def _local_voice_tool(fname, fargs, send, session, cut=True):
+def _local_voice_tool(fname, fargs, send, session, cut=True, owner_call=False):
     """One tool call from the LOCAL voice front, with the cloud path's manners
     (local voice spec P3 parity): the owner's time limit, a process orb as the
     execution receipt, a slow-call warning, and the late-result label when
@@ -874,7 +874,12 @@ def _local_voice_tool(fname, fargs, send, session, cut=True):
         pass
     orb_id, t0 = _voice_orb_start(fname), _time.time()
     try:
-        result = _run_voice_tool_bounded(fname, fargs, send, session)
+        # `owner_call` (the router's rule call on the owner's words) rides in this one call's own
+        # context, through a runner made for it; it is never put on the shared session.
+        result = _run_voice_tool_bounded(
+            fname, fargs, send, session,
+            runner=(lambda f, a, s, sess: _voice_tool_run(f, a, s, sess, owner_utterance=True))
+            if owner_call else None)
     except Exception as e:  # noqa: BLE001
         refusal = _crew_admission_agent._host_action_denial(fname, session)
         if refusal:
@@ -3002,7 +3007,7 @@ def _pending_voice_card(spoken_ids, conversation_id):
 
 
 def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_turn,
-                           send, session):
+                           send, session, owner_voice=False):
     """One routed local voice turn: system one decides, the governed runner
     executes, the front speaks (laya_router_addendum_2026-10-09).
 
@@ -3051,10 +3056,17 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
             _carried.update(ids=ids, line=line)
         return line
 
+    # The router's own rule-layer call on the owner's voice, once, is their utterance; any other call in
+    # the turn is the model's and carries no such mark.
+    _owner_call = [bool(owner_voice) and plan["receipt"].get("layer") == "rule"]
+
     def _run_tool(n, a):
         # Whole: a list is spoken from its parsed records, and a cut JSON
         # would not parse (routed_turn cuts what the model reads).
-        return _local_voice_tool(n, a, send, tool_session, cut=False)
+        mine = _owner_call[0] and n == plan["tool"] and a == plan["args"]
+        if mine:
+            _owner_call[0] = False
+        return _local_voice_tool(n, a, send, tool_session, cut=False, owner_call=mine)
     _said = ""
     try:
         _said = seat_turn(user_text, on_delta, plan, _run_tool, _card_line)
@@ -3889,6 +3901,9 @@ if sock is not None:
         _ws_authenticated = _ws_auth_ok(_ui_tok_ok)
         from agent_friday.services import crew_runtime as _crew_host_runtime
         _crew_call_origin = _crew_host_runtime.capture_host_origin()
+        # The owner's own voice on this PC (a paired phone or a tunnel is not): only then may the
+        # router's rule-layer call carry the owner mark (notifications "quiet until morning").
+        _owner_voice = bool(_ws_authenticated) and bool(_is_local_request())
 
         done = threading.Event()
 
@@ -4180,7 +4195,7 @@ if sock is not None:
                 return _run_routed_front_turn(
                     user_text, on_delta, front=_front, tool_session=_tool_session,
                     seat_turn=_routed_front_seat_turn, send=_send,
-                    session=lambda: sess)
+                    session=lambda: sess, owner_voice=_owner_voice)
 
             def _routed_front_seat_turn(user_text, on_delta, plan, _run_tool, card_line=None):
                 return _front["seat"].routed_turn(

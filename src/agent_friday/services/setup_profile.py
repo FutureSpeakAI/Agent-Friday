@@ -392,8 +392,8 @@ def _answers_for_model(answers: dict) -> dict:
     qtext = {q[0]: q[1] for q in copy.QUESTIONS}
     out = {}
     for qid, a in (answers or {}).items():
-        if (a or {}).get("skipped") or not (a or {}).get("text"):
-            continue
+        if (a or {}).get("skipped") or not (a or {}).get("text") or qid == "quiet":
+            continue                          # quiet hours are a setting, not part of the style
         out[qtext.get(qid, qid)] = str(a["text"])[:600]
     return out
 

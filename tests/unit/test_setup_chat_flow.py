@@ -277,3 +277,29 @@ def test_accepting_research_runs_it_as_a_task_and_goes_on_to_questions(home, mon
     assert st["stage"] == "questions"
     assert st["research"]["state"] == "running" and st["research"]["task_id"] == "task-1"
     assert spawned == ["Looking you up on the public web"]
+
+
+def test_quiet_hours_are_one_skippable_question_with_nothing_chosen_for_the_owner(home):
+    ids = [q[0] for q in copy.QUESTIONS]
+    assert ids.index("quiet") == ids.index("rhythm") + 1 and ids[-1] == "mother"
+    chips = dict((q[0], q[2]) for q in copy.QUESTIONS)["quiet"]
+    assert copy.QUIET_RECOMMENDED in chips and "Recommended" in copy.QUIET_RECOMMENDED
+    _walk_to("questions")
+    for qid in ids[:ids.index("quiet")]:
+        sc.answer("questions", "skip", "")
+    assert sc.view()["prompt"]["question"] == "quiet"
+    sc.answer("questions", "skip", "")                            # skipping changes nothing
+    assert not [s for s in home["settings"] if "quiet_hours_enabled" in s]
+
+
+@pytest.mark.parametrize("answer,expect_on", [("RECOMMENDED", True), ("Not now", False)])
+def test_only_the_recommended_answer_turns_quiet_hours_on(home, answer, expect_on):
+    ids = [q[0] for q in copy.QUESTIONS]
+    _walk_to("questions")
+    for qid in ids[:ids.index("quiet")]:
+        sc.answer("questions", "skip", "")
+    sc.answer("questions", copy.QUIET_RECOMMENDED if answer == "RECOMMENDED" else answer, "")
+    on = [s for s in home["settings"] if s.get("quiet_hours_enabled")]
+    assert bool(on) is expect_on
+    if on:
+        assert (on[0]["quiet_hours_start"], on[0]["quiet_hours_end"]) == ("22:00", "07:00")

@@ -9,7 +9,7 @@ leaves its approvals waiting. Replies are written for the ear.
 """
 from __future__ import annotations
 
-ACTIONS = ("summary", "clear", "mute", "unmute", "groups", "read_group", "clear_group")
+ACTIONS = ("summary", "clear", "mute", "unmute", "groups", "read_group", "clear_group", "quiet")
 
 
 def _engine():
@@ -34,6 +34,31 @@ def _summary() -> str:
     if fyi:
         parts.append("%d for your information: %s." % (len(fyi), "; ".join(said(c) for c in fyi[:4])))
     return " ".join(parts)
+
+
+def _surface() -> str:
+    """Where the call came from, for the notice and the ledger: voice or chat."""
+    try:
+        from agent_friday.services import agent
+        return "voice" if (agent._CURRENT_SURFACE.get() or "").startswith("voice") else "chat"
+    except Exception:
+        return "chat"
+
+
+def _quiet(on: bool) -> str:
+    """"Quiet until morning" (group "off" ends it). While it is on only safety-critical items interrupt
+    (services/interruption_policy); everything else waits in the badge and in Updates. It only ever holds
+    back interruptions: nothing is approved, hidden or dropped. By voice or chat it lasts at most 12
+    hours, shows a notice saying who turned it on, and writes a ledger line."""
+    from agent_friday.core import _save_settings
+    from agent_friday.services import interruption_policy as ip
+    if not on:
+        _save_settings({"quiet_until_ts": 0})
+        return "Quiet is off. Things that need you can interrupt again."
+    until = ip.turn_on_quiet(_surface())["until"]
+    from datetime import datetime
+    return ("Quiet until %s. Only safety-critical things will interrupt you; everything else waits "
+            "in your badge and in Updates." % datetime.fromtimestamp(until).strftime("%H:%M"))
 
 
 def _said(c) -> str:
@@ -74,6 +99,8 @@ def handle(inp: dict) -> str:
     if action not in ACTIONS:
         return "notifications error: action must be one of " + ", ".join(ACTIONS)
     ne = _engine()
+    if action == "quiet":
+        return _quiet(str(inp.get("group") or inp.get("kind") or "").strip().lower() not in ("off", "end", "stop"))
     if action == "summary":
         return _summary()
     if action == "groups":
