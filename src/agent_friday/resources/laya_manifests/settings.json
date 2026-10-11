@@ -173,6 +173,11 @@
   {
    "id": "meeting_retention",
    "text": "Meeting retention (meeting_audio_retention, meeting_text_retention, meeting_text_retention_days) is the owner's own choice, set in Privacy & Data and the Meetings view; it is not a voice-settable key and has no verb."
+  },
+  {
+   "id": "voice_live_trim",
+   "text": "The Gemini Live options row 'Trim what each call carries' sets voice_live_trim (off, shadow, on). It is a settings-panel row, not one of the audited UI actions, so it has no verb here. Laya reaches it by voice through the call's own tools: 'use fewer tools' and 'give me everything' are in resources/voice_session_phrasings.json (more_tools, internal gate, ring 1). Changing the mode itself stays the owner's choice in the panel.",
+   "verbs": ["voice_session.fewer_tools", "voice_session.everything"]
   }
  ],
  "resolver_sources": [],
