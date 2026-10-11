@@ -181,7 +181,7 @@ _ALL = [
        "actions:{event}", source="actions"),
     _e("E50", "services/studio_files.py:_on_decision", "file_change_failed", NEEDS_YOU,
        "studio-file-failed", source="studio_files", pk="warning"),
-    _e("E51", "services/meeting_capture.py:_notify", "meeting_stopped", UPDATES,
+    _e("E51", "services/meeting_capture.py:_notify", "meeting_stopped", NEEDS_YOU,
        "meeting-stop:{meeting_id}", source="meetings", pk="meeting"),
     _e("E52", "services/memory_proposals.py:_notify_seat_refusal", "memory_seat_refusal", NEEDS_YOU,
        "memory_keeper_seat_refusal", source="memory_proposals", pk="warning"),

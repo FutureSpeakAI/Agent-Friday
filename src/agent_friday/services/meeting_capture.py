@@ -1393,7 +1393,7 @@ class MeetingManager:
                 return
             import agent_friday.notifications_engine as ne
             ne.push(title="Meeting recording stopped", body=msg,
-                    priority="high", source="meetings", kind="meeting",
+                    priority="high", source="meetings", kind="meeting", emitter="E51",
                     target={"workspace": "calendar", "view": "meetings",
                             "meeting_id": m["id"]},
                     dedupe_key="meeting-stop:" + m["id"])
