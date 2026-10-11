@@ -2895,28 +2895,69 @@ def _lr_follow_turns() -> int:
     return _lr.FOLLOW_UP_TURNS
 
 
+def _deferred_request(user_text, r, local=False) -> str:
+    """What the deeper mind is handed for a deferred turn: the owner's words,
+    and, when point-and-act already resolved the rows they named on screen AND
+    the deeper mind runs on this PC (``local``), which rows (ids and counts
+    only: the stage's text is never repeated). A deeper mind that may be a
+    cloud model gets the owner's words and nothing more: row ids carry the
+    mailbox account, and they leave this PC only with the owner's own words."""
+    text = str(user_text)[:3500]
+    refs = [x for x in (r.args.get("refs") or []) if re.fullmatch(r"[a-z]+:[A-Za-z0-9_.@:+=-]{1,120}", str(x))]
+    if not local or not r.args.get("intent") or not refs:
+        return text[:4000]
+    note = ("[Resolved on the owner's screen by rules, not by you: %s %d row(s) in %s%s. Row ids: %s. "
+            "Nothing has been changed yet; raise the one card for it.]"
+            % (r.args["intent"], len(refs), str(r.args.get("workspace") or "the list")[:24],
+               " (say the count back)" if r.args.get("say_count") else "", ", ".join(refs[:30])))
+    return (text + chr(10) * 2 + note)[:4000]
+
+
+def _deeper_mind_is_local(session=None) -> bool:
+    """True when work handed to the deeper mind stays on this PC (the same test
+    voice_engine._tool_delegate_to_friday applies before it spawns the task)."""
+    try:
+        from agent_friday.services import voice_engine as _ve
+        return bool(_ve._voice_local_only() or _ve._async_routing(session) == "local_only")
+    except Exception:
+        return False
+
+
+def _voice_room_now() -> bool:
+    """Room mode (or cannot tell): names stay out of the router's questions."""
+    try:
+        from agent_friday.services import agent as _agent_room
+        return bool(_agent_room._voice_room())
+    except Exception:
+        return True
+
+
 def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None,
-                      last_route=None, owner_voice=False, conversation_id=None) -> dict:
+                      last_route=None, owner_voice=False, quiet=False, conversation_id=None,
+                      session=None) -> dict:
     """What a routed voice turn does: services/laya_router's decision, with
     this surface's policy for "defer" (a change goes to delegate_to_friday,
     a governed background task whose own gates and cards decide it, exactly
     as in text mode). Returns {tool, args, ack, question, label, receipt}.
 
     ``owner_voice`` is the owner's own voice on this PC (authenticated and a local
-    request; a paired phone, a tunnel or a relay is not). Only then is the turn offered
-    to Laya's personal learning (services/laya_personal), under the call's conversation."""
+    request; a paired phone, a tunnel or a relay is not), in a conversation. Only then
+    is the turn trusted: the router points at on-screen rows or opens an item by name,
+    and the turn is offered to Laya's personal learning (services/laya_personal) under
+    the call's conversation. Any other caller passes the router nothing new."""
     from agent_friday.services import laya as _laya
     from agent_friday.services import laya_router as _lr
     kw = {"last_route": last_route} if last_route else {}
     if owner_voice and conversation_id:
-        kw.update(trusted=True, conversation_id=str(conversation_id))
+        kw.update(trusted=True, quiet=bool(quiet), conversation_id=str(conversation_id))
     r = (route_fn or _laya.route_turn)(user_text, tools=list(held), surface="voice",
                                 pending_card=pending_card, **kw)
     tool, args = (r.tool, dict(r.args)) if r.decision == "tool" else (None, None)
     ack, label = _lr.acknowledgement(r), r.label
     handed = None
     if r.decision == "defer" and "delegate_to_friday" in held:
-        tool, args = "delegate_to_friday", {"request": str(user_text)[:4000]}
+        tool, args = "delegate_to_friday", {"request": _deferred_request(
+            user_text, r, local=_deeper_mind_is_local(session))}
         ack, label, handed = DEFER_ACK, "handed to the deeper mind", "delegate_to_friday"
     receipt = dict(_lr.receipt(r), ran=tool, handed_to=handed,
                    laya_receipt=getattr(r, "laya_receipt_id", None))
@@ -3050,7 +3091,9 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
             _prev = None
     plan = _voice_route_plan(user_text, list(front["contract"].get("names") or []),
                              pending_card=_pending_voice_card(spoken, _cid),
-                             last_route=_prev, owner_voice=bool(owner_voice), conversation_id=_cid)
+                             last_route=_prev, owner_voice=bool(owner_voice),
+                             quiet=_voice_room_now() if owner_voice else False,
+                             conversation_id=_cid, session=tool_session)
     if plan.get("tool") and plan["tool"] != "delegate_to_friday" and plan.get("args") is not None:
         tool_session["last_route"] = {"tool": plan["tool"], "args": dict(plan["args"]), "age": 0}
     send({"type": "route", **plan["receipt"]})
