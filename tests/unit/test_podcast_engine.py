@@ -411,6 +411,10 @@ def test_kokoro_is_built_from_cached_paths_on_the_cpu(monkeypatch, tmp_path):
             yield text, "ph", np.zeros(240, dtype="float32")
 
     monkeypatch.setitem(sys.modules, "kokoro", types.SimpleNamespace(KModel=KModel, KPipeline=KPipeline))
+    # The pipeline is a fake, so the machine running the test need not have
+    # spaCy's English model; the refusal when it is missing is tested elsewhere.
+    from agent_friday.services import kokoro_voice as _kv
+    monkeypatch.setattr(_kv, "english_g2p_model_installed", lambda: True)
     # The parts of torch the speaker uses: thread counts and inference mode.
     import contextlib
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
