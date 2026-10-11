@@ -116,17 +116,21 @@ chat (Settings, `chat_tool_routing`) and the chat model runs on this PC. For the
 voice call she goes by the voice connection, not by who is speaking: if other
 people or a TV are heard in the call, they can be heard as you, so turn on room
 mode for those calls (nothing is learned in room mode). Nothing said on a paired
-phone, through a relay or tunnel, in a cloud voice call, by another agent or in a
-delegated task ever teaches her, and nothing you type is learned while typed chat
-is left to the chat model or runs on a cloud model. A request she answers from
-what is on your screen ("open the second one") teaches her nothing either.
+phone, through a relay or tunnel, or in a cloud voice call, and nothing another
+agent or a background task says or does, ever teaches her as a correction, and
+nothing you type is learned while typed chat is left to the chat model or runs on
+a cloud model. The one thing a background task can do is the deeper-mind choice
+below, which stays a suggestion until you click. A request she answers from what
+is on your screen ("open the second one") is not itself kept as a phrasing; if she
+asked you a question first, your choice from her options still counts as your
+answer to that question.
 
 | You do this | She treats it as |
 |---|---|
 | Correct her ("no, I meant my work calendar") | A firm label: you meant that. |
 | Answer a question she asks by choosing one of its options, or "something else" (every question offers it). A fresh request is not an answer. | A firm label. |
 | Approve or decline a card soon after a request she routed | A light signal: it tells her whether an action was wanted. |
-| Hand a request to the deeper mind, and it picks a tool and runs it | A choice **waiting for your OK**: it measures her, and it teaches her nothing unless you click **Yes, that was right** on the report card. **No, drop it** forgets it. |
+| Say something in a local voice call that she hands to the deeper mind, and the background task it starts runs a tool | A choice **waiting for your OK**, from the first real action of that task (not from a lookup, not from a tool run for another request, not when the task has read untrusted content). It measures her, and it teaches her nothing unless you click **Yes, that was right** on the report card. **No, drop it** forgets it. A typed request, or a hand-over that waits for the end of the call, makes no such choice. |
 | Say nothing | Nothing. |
 
 **What she does with it.** A phrasing you confirmed becomes one more example for
@@ -166,7 +170,10 @@ this**, **Reset** (sets everything aside) and **Wipe everything** (deletes it, a
 a second click; by voice it only raises a card that a click on the screen
 approves). In a local voice call or in typed chat on this PC (not in a cloud voice
 call), once, with your whole sentence: "what have you learned?", "forget that",
-"reset", "go back to how you were last week". Forgetting works even when learning
+"reset", "go back to how you were last week". Say it as the whole sentence: if the
+same sentence also asks for a change ("forget what you just learned and archive
+these"), she does the change as an ordinary request and does not run the control, so
+say the control on its own. Forgetting works even when learning
 is off. **Forget** on a person in Contacts deletes every correction that names them
 and the saved versions built from them; while the vault has no key the sealed ones
 are removed the next time it opens, and nothing from before is used until then.
