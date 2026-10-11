@@ -63,15 +63,22 @@ nothing is read while you are in a meeting.
   without a matching sentence is dropped. Nothing there is published until you
   review it. Vault-shelf and private documents, and copies, are skipped. With no
   local model the drafts wait; with learning from the Library turned off in
-  Settings there are none. Deleting a document from the Library deletes its
-  drafts.
+  Settings there are none. Removing or forgetting a document, forgetting a
+  person who is named in a draft, and changing the file's text all delete the
+  drafts made from it, and a draft that was still being written when you forgot
+  the document is thrown away. Rejecting a draft keeps only a note that you said
+  no, with none of its text.
 - **New and changed files are found while the PC is idle.** Every 15 minutes of
   idle time Friday compares each folder with what she read (size and modified
   time, no reading). If anything is new or changed she queues **one** job for
   that folder, and it runs the same idle-gated way, never at the moment you save
   a file. A file whose contents did not change is not read again. A folder you
-  paused or stopped is left alone until you resume it. Friday reads only the
-  folders you added; removing one takes effect at once.
+  paused or stopped is left alone until you resume it. Files you delete from
+  disk leave the Library every 15 minutes whether or not reading is paused or the
+  PC is idle (it only looks, it reads nothing). Friday checks your consent before
+  every file, so removing a folder stops its reading at the next file. **Resume**
+  undoes only **Pause**: a folder you cancelled stays cancelled until you add it
+  again.
 
 Everything in this section happens on this PC. The queue and Activity show
 counts and labels, never what is in a document.

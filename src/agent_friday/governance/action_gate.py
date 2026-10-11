@@ -197,7 +197,7 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
 #: gate already judges, and delegation (a spawned task's own actions come
 #: back through this checkpoint one by one).
 LIBRARY_SCREEN_ACTIONS = frozenset({"library_add", "library_remove", "library_forget", "library_shelf",
-                                    "library_reindex", "library_tracked"})
+                                    "library_reindex", "library_tracked", "library_draft_review"})
 
 INTERNAL_TOOLS = frozenset({
     # Reads the machine and the model catalogue; downloads nothing and

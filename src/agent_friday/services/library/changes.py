@@ -65,6 +65,22 @@ def detect(store: Store, scope: str | Path, *, recursive: bool = True, glob: str
     return out
 
 
+def purge_gone(principal: str, store: Store, scope_event: dict, *, allowed=None) -> int:
+    """Remove the documents of files that are gone from disk the way a removal does (graph, drafts, caches).
+    A stat and a delete, never a read: it runs whether or not reading is paused, stopped or waiting for idle."""
+    from agent_friday.services.library import forget
+    scope = scope_event["path"]
+    d = detect(store, scope, recursive=bool(scope_event.get("recursive", True)), glob=scope_event.get("glob"),
+               kinds=set(scope_event["kinds"]) if scope_event.get("kinds") else None, allowed=allowed)
+    n = 0
+    for path in d["gone"]:
+        row = store.find_document(path)
+        if row is not None:
+            forget.remove_document(principal, row["id"])
+            n += 1
+    return n
+
+
 def queue(principal: str, ix, scope_event: dict, store: Store, *, allowed=None) -> int:
     """Hand one folder's changes to its indexer as a single job. Returns 1 when a job was queued, else 0."""
     scope = scope_event["path"]
@@ -79,8 +95,8 @@ def queue(principal: str, ix, scope_event: dict, store: Store, *, allowed=None) 
     d = detect(store, scope, allowed=allowed, **kw)
     paths = d["changed"] + d["new"] + d["gone"]
     try:
-        root = index_job._scope_root(str(scope))
-        waiting = bool(store.untriaged(root))
+        # Laya's notes are made by a folder's job; a single file has none, so it is never "waiting" for them.
+        waiting = is_dir and bool(store.untriaged(index_job._scope_root(str(scope))))
     except Exception:  # noqa: BLE001
         waiting = False
     if not paths and not waiting:

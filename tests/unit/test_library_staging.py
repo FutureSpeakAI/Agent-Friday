@@ -29,6 +29,9 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setattr(shelf, "_vault_key", lambda: None)
     monkeypatch.setattr(shelf, "tier_of", lambda title, sample: 1)
     monkeypatch.setattr(staging, "_learning_off", lambda: False)
+    # These documents have no folder in the ledger; consent is its own test (test_library_kw2_review.py).
+    from agent_friday.services.library import grants
+    monkeypatch.setattr(grants, "allowed", lambda principal, path: True)
     triage.reset_heads()
     yield
     triage.reset_heads()
@@ -252,7 +255,10 @@ def test_review_accepts_defers_and_rejects_and_refuses_what_is_not_a_draft():
     assert staging.counts()["proposed"] == 2
     assert staging.review(ids[0], "accept") == {"ok": True, "status": "accepted"}
     assert staging.review(ids[1], "reject") == {"ok": True, "status": "rejected"}
-    assert staging.counts() == {"proposed": 0, "accepted": 1, "rejected": 0, "deferred": 0}
+    # a rejection keeps a tombstone with none of the draft's text, so the same draft is not proposed again
+    assert staging.counts() == {"proposed": 0, "accepted": 1, "rejected": 1, "deferred": 0}
+    kept = staging.list_items("rejected")[0]
+    assert "citations" not in kept and "subject" not in kept and kept["id"] == ids[1]
     assert staging.review(ids[0], "defer")["status"] == "deferred"
     for bad in ("../../etc/passwd", "lib-1-x-summary/../../y", "", "lib-9-zz-fact"):
         assert staging.review(bad, "accept")["ok"] is False

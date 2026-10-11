@@ -274,7 +274,7 @@ def Path_name(p):
     return Path(p).name
 
 
-def test_resume_also_takes_back_a_stopped_folder(tmp_path, _env):
+def test_resume_does_not_take_back_a_folder_the_owner_cancelled(tmp_path, _env):
     from agent_friday.services.library import grants, index_job
     from agent_friday.services.library.store import store_for
     root = _folder(tmp_path, 2)
@@ -282,9 +282,11 @@ def test_resume_also_takes_back_a_stopped_folder(tmp_path, _env):
     pr = index_job.progress_for("owner")
     pr.set(str(root), state=index_job.STOPPED, name="Notes")
     pr.save()
-    index_job.resume("owner")
-    assert _wait(_settled(root))
-    assert store_for("owner").counts()["indexed"] == 2
+    index_job.pause("owner")
+    assert index_job.resume("owner")["paused"] is False
+    time.sleep(0.3)
+    assert index_job.folders("owner")[str(root)]["state"] == "stopped"
+    assert store_for("owner").counts()["indexed"] == 0
 
 
 def test_the_memory_floor_pauses_a_job_that_asks_for_it_and_nobody_else(monkeypatch):
@@ -419,7 +421,7 @@ def test_a_change_pass_is_its_own_visible_kind_and_a_stopped_pass_is_cancelled(t
     assert _wait(_settled(root))
     assert [t["status"] for t in _library_tasks("library_index")] == ["cancelled"]
     _env.cancel_at = None
-    index_job.resume("owner")
+    runtime.index_scope("owner", ev)                  # adding the folder again is a choice; Resume is not
     assert _wait(_settled(root))
     (root / "extra.txt").write_text("A new file about the harbor and the tides for the change sweep to find.",
                                     encoding="utf-8")

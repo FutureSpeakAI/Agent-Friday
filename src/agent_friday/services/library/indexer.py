@@ -113,6 +113,16 @@ def scan_scope(root: str | Path, *, recursive: bool = True, glob: str | None = N
             break
 
 
+def _drop_stale_drafts(doc_id: int) -> None:
+    """Drafts a local model made from this document's earlier text or shelf (wiki/_staging) go; the document
+    itself stays and may be drafted from again."""
+    try:
+        from agent_friday.services.library import staging
+        staging.purge_drafts(doc_id)
+    except Exception:  # noqa: BLE001 - nothing staged is nothing to drop
+        pass
+
+
 def _failure_text(e: procrun.TaskFailed) -> str:
     return {"timeout": "took too long to read", "memory": "needs more memory than is allowed"}.get(e.kind, e.reason)
 
@@ -212,6 +222,8 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
                                        section_profiles=profiles, ocr_pages=res.get("ocr_pages") or 0, sha256=sha)
         if getattr(chosen, "tier", None) is not None:
             store.note_tier(doc_id, chosen.tier)      # the classifier already ran: Laya's triage reuses it
+        if prior and (prior["sha256"] != sha or str(prior["shelf"] or "open") != str(chosen)):
+            _drop_stale_drafts(doc_id)                # edited text, or moved between shelves: old drafts quote old text
         try:
             vectors.index_document_vectors(store, doc_id, sections=sections, passages=passages,
                                            doc_profile=doc_profile, section_profiles=profiles,
@@ -256,8 +268,21 @@ def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob
             seen.add(str(p.resolve()))
         except OSError:
             continue
+        # Consent is read live before every file, and again once the pause point has let it through (that
+        # wait can last hours): a removal, a never-send mark or an unverifiable ledger stops the pass here.
+        if allowed and not allowed(p):
+            if not allowed(Path(scope)):
+                break                                   # the folder itself is no longer covered: read nothing more
+            out["skipped"] += 1
+            continue
         if hooks is not None:
             hooks.before(p)
+            if allowed and not allowed(p):
+                if not allowed(Path(scope)):
+                    break
+                out["skipped"] += 1
+                hooks.done(p, {"state": "skipped"})
+                continue
         if gate is not None:
             with gate():
                 r = index_file(store, p, scope, classify=classify, force=force)

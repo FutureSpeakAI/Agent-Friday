@@ -41,7 +41,8 @@ from agent_friday.services.visible_jobs import visible_job
 
 EXTRACTOR = "library-stage-1"
 MAX_DOCS_PER_PASS = 300
-MAX_CHARS = 6000
+MAX_CHARS = 4000          # what the sensitivity classifier reads (shelf.tier_of): the model reads no more
+MAX_BLOCKS = 40
 MAX_FACTS = 12
 QUOTE_MIN, QUOTE_MAX = 12, 400
 FIELD_MAX = 200
@@ -76,6 +77,44 @@ def _read_index() -> dict:
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def _gone_ids(idx: dict | None = None) -> set:
+    """Documents that were removed or forgotten. Ids are never reused (AUTOINCREMENT), so a draft that is
+    finished after the forget is refused for good."""
+    idx = _read_index() if idx is None else idx
+    out = set()
+    for x in idx.get("_gone") or []:
+        try:
+            out.add(int(x))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def _still_ok(store, doc, principal: str) -> bool:
+    """Is this document still one a draft may be made from? The row exists with the same bytes, indexed on the
+    open shelf, the owner's consent still covers it (read live; an unverifiable ledger covers nothing), it is
+    not forgotten, and its tier and copy marks still say public and original."""
+    from agent_friday.services.library import grants
+    try:
+        if int(doc["id"]) in _gone_ids():
+            return False
+        row = store.get_document(doc["id"])
+        if row is None or row["state"] != "indexed" or row["shelf"] != "open":
+            return False
+        if (row["sha256"] or "") != (doc["sha256"] or ""):
+            return False
+        if grants.suspended() or not grants.allowed(principal, Path(row["path"])):
+            return False
+        if row["sha256"] and store.tombstoned(row["sha256"], row["path"]):
+            return False
+        meta = store.get_doc_meta(doc["id"])
+        if meta is None or meta["sensitivity"] is None or int(meta["sensitivity"]) > 1 or meta["dup_of"] is not None:
+            return False
+        return True
+    except Exception:  # noqa: BLE001 - a check that cannot run is not a pass
+        return False
 
 
 def _write_atomic(path: Path, obj) -> None:
@@ -150,6 +189,13 @@ def write_items(doc, meta, model: str, checked: dict) -> list[str]:
     prov = _provenance(doc, meta, model)
     base = staging_dir()
     with _lock:
+        if int(doc["id"]) in _gone_ids():
+            return []                                   # forgotten while the model was reading
+        if checked["summary"]:
+            text, spans = checked["summary"]
+            iid = _item_id(doc, "summary")
+            if _rejected(base / (iid + ".json")):
+                checked = dict(checked, summary=None)
         if checked["summary"]:
             text, spans = checked["summary"]
             iid = _item_id(doc, "summary")
@@ -159,6 +205,8 @@ def write_items(doc, meta, model: str, checked: dict) -> list[str]:
             ids.append(iid)
         for i, f in enumerate(checked["facts"], 1):
             iid = _item_id(doc, "fact", i)
+            if _rejected(base / (iid + ".json")):
+                continue                                # the owner said no to this one; it is not proposed again
             _write_atomic(base / (iid + ".json"), {
                 "schema": 1, "id": iid, "kind": "fact", "status": "proposed", "subject": f["subject"],
                 "predicate": f["predicate"], "object": f["object"],
@@ -169,6 +217,13 @@ def write_items(doc, meta, model: str, checked: dict) -> list[str]:
 
 
 # ── review ───────────────────────────────────────────────────────────────────
+
+def _rejected(path: Path) -> bool:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("status") == "rejected"
+    except (OSError, ValueError):
+        return False
+
 
 def _item_files():
     d = staging_dir()
@@ -199,7 +254,8 @@ def counts() -> dict:
 
 def review(item_id: str, decision: str) -> dict:
     """Accept, reject or defer one draft. Accepting marks it ready: it does not write a wiki page, and
-    nothing else in Friday publishes a draft. Rejecting removes the file."""
+    nothing else in Friday publishes a draft. Rejecting keeps a tombstone with none of the draft's text, so
+    the same draft is not proposed again."""
     decision = str(decision or "").lower()
     status = {"accept": "accepted", "reject": "rejected", "defer": "deferred"}.get(decision)
     if status is None or not re.fullmatch(r"lib-[0-9]+-[0-9a-z]+-(summary|fact)(-[0-9]+)?", str(item_id or "")):
@@ -211,7 +267,10 @@ def review(item_id: str, decision: str) -> dict:
         except (OSError, ValueError):
             return {"ok": False, "error": "that draft is not in staging any more"}
         if status == "rejected":
-            p.unlink()
+            prov = it.get("provenance") or {}
+            _write_atomic(p, {"schema": 1, "id": item_id, "kind": it.get("kind"), "status": "rejected",
+                              "reviewed_ts": time.time(),
+                              "provenance": {"doc_id": prov.get("doc_id"), "sha256": prov.get("sha256")}})
             return {"ok": True, "status": status}
         it["status"] = status
         it["reviewed_ts"] = time.time()
@@ -219,8 +278,48 @@ def review(item_id: str, decision: str) -> dict:
     return {"ok": True, "status": status}
 
 
-def purge_document(doc_id: int) -> int:
-    """Remove every draft made from a document (it was removed or forgotten), and its 'drafted' note."""
+def purge_drafts(doc_id: int) -> int:
+    """Remove the drafts made from a document's earlier text or shelf; the document may be drafted again."""
+    return purge_document(doc_id, gone=False)
+
+
+def naming(names) -> list:
+    """Staged items that name a person (a fact's subject or object, a summary, a quoted sentence)."""
+    needles = {str(n).strip().lower() for n in names if len(str(n).strip()) >= 3}
+    out = []
+    if not needles:
+        return out
+    for p in _item_files():
+        try:
+            it = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        parts = [it.get("subject"), it.get("predicate"), it.get("object"), it.get("text")]
+        for c in it.get("citations") or []:
+            parts += [c.get("quote"), c.get("title")]
+        blob = " ".join(str(x) for x in parts if x).lower()
+        if any(n in blob for n in needles):
+            out.append(p)
+    return out
+
+
+def purge_naming(names) -> int:
+    """Delete the staged items that name a person (forget-person). The 'drafted' note stays, so the
+    document is not drafted from again."""
+    n = 0
+    with _lock:
+        for p in naming(names):
+            try:
+                p.unlink()
+                n += 1
+            except OSError:
+                pass
+    return n
+
+
+def purge_document(doc_id: int, gone: bool = True) -> int:
+    """Remove every draft made from a document (it was removed or forgotten), and its 'drafted' note.
+    `gone` also tombstones the id, so a draft still being made when the document was forgotten is refused."""
     n = 0
     with _lock:
         for p in _item_files():
@@ -231,8 +330,11 @@ def purge_document(doc_id: int) -> int:
                 except OSError:
                     pass
         idx = _read_index()
-        if str(int(doc_id)) in idx:
-            idx.pop(str(int(doc_id)), None)
+        changed = idx.pop(str(int(doc_id)), None) is not None
+        if gone and int(doc_id) not in _gone_ids(idx):
+            idx["_gone"] = sorted(_gone_ids(idx) | {int(doc_id)})
+            changed = True
+        if changed:
             try:
                 _write_atomic(_index_path(), idx)
             except OSError:
@@ -272,7 +374,8 @@ def eligible(store, scope: str | None = None) -> list:
 
 
 def _blocks(store, doc) -> list[tuple[int, str]]:
-    return [(r["id"], r["text"]) for r in store.q("SELECT id, text FROM blocks WHERE doc_id=? ORDER BY ord", (doc["id"],))]
+    return [(r["id"], r["text"]) for r in store.q(
+        "SELECT id, text FROM blocks WHERE doc_id=? ORDER BY ord LIMIT %d" % MAX_BLOCKS, (doc["id"],))]
 
 
 def _prompt_text(blocks: list[tuple[int, str]]) -> str:
@@ -289,7 +392,7 @@ def _prompt_text(blocks: list[tuple[int, str]]) -> str:
     return "\n".join(out)
 
 
-def draft_document(store, doc, model: str, complete=None) -> list[str]:
+def draft_document(store, doc, model: str, complete=None, principal: str = lstore.OWNER) -> list[str]:
     """Ask the local model about one document; stage what survives the span check. `complete(system, user,
     model)` is the model call (local_call.call_json by default)."""
     if complete is None:
@@ -300,8 +403,12 @@ def draft_document(store, doc, model: str, complete=None) -> list[str]:
         return []
     raw = complete(SYSTEM, _prompt_text(blocks), model)
     checked = check_draft(raw, blocks) if raw else {"summary": None, "facts": []}
-    meta = store.get_doc_meta(doc["id"])
-    return write_items(doc, meta, model, checked)
+    with _lock:
+        # The model may have waited a long time for the owner to be away. Whatever happened meanwhile (a
+        # removal, a forget, an edit, a withdrawn consent, a new tier) decides whether anything is written.
+        if not _still_ok(store, doc, principal):
+            return []
+        return write_items(doc, store.get_doc_meta(doc["id"]), model, checked)
 
 
 def run_pass(principal: str, scope: str, *, complete=None, model: str | None = None, before=None, progress=None) -> dict:
@@ -317,7 +424,9 @@ def run_pass(principal: str, scope: str, *, complete=None, model: str | None = N
     for d in docs:
         if before is not None:
             before()
-        ids = draft_document(store, d, model, complete)
+        if not _still_ok(store, d, principal):
+            continue                                   # no consent now, forgotten, changed: the model never reads it
+        ids = draft_document(store, d, model, complete, principal)
         proposed += len(ids)
         done += 1
         with _lock:
@@ -327,6 +436,51 @@ def run_pass(principal: str, scope: str, *, complete=None, model: str | None = N
         if progress is not None:
             progress(done, len(docs), proposed)
     return {"state": "done", "done": done, "total": len(docs), "proposed": proposed}
+
+
+POLL_S = 2.0
+_sleep = time.sleep
+
+
+def holds(principal: str = lstore.OWNER) -> str:
+    """Why drafting must wait right now, in words, or "": the owner's Pause, a recording meeting, off the
+    record, or battery (the same holds that stop the Library reading a folder)."""
+    try:
+        from agent_friday.services.library import index_job
+        if index_job.progress_for(principal).paused:
+            return index_job.OWNER_HOLD
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from agent_friday.services import turn_queue as _tq
+        why = _tq.background_pause_reason()
+        if why:
+            return "paused: " + why[:1].lower() + why[1:]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from agent_friday.services.library import runtime
+        ok, why = runtime.machine_is_free()
+        if not ok:
+            return "paused: " + why
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def wait_for_holds(principal: str, vj=None) -> None:
+    """Block between two documents while a hold stands; a Stop from the card ends the wait."""
+    noted = False
+    while True:
+        why = holds(principal)
+        if not why:
+            return
+        if vj is not None:
+            if not noted:
+                noted = True
+                vj.log("Paused: " + why.replace("paused: ", ""))
+            vj.check_stop()
+        _sleep(POLL_S)
 
 
 class Stager:
@@ -390,6 +544,20 @@ class Stager:
         rec = {k: v for k, v in pr.data["folders"].items() if index_job._scope_root(k) == key}
         name = (next(iter(rec.values()), {}) or {}).get("name") or "your folder"
         out = {"state": "waiting_model", "done": 0, "total": 0, "proposed": 0}
+        # Nothing to draft (learning off, no local model, no eligible document) is not a job: no card.
+        if _learning_off():
+            out = {"state": "off", "done": 0, "total": 0, "proposed": 0}
+        elif not _local_model():
+            out = {"state": "waiting_model", "done": 0, "total": 0, "proposed": 0}
+        elif not eligible(lstore.store_for(self.principal), scope):
+            out = {"state": "done", "done": 0, "total": 0, "proposed": 0}
+        else:
+            out = None
+        if out is not None:
+            for k in rec:
+                pr.set(k, stage=out)
+            pr.save()
+            return
 
         with visible_job("Drafting notes from " + name, kind="library_stage", workspace="library",
                          deferrable=True, key="library_stage:" + key,
@@ -399,7 +567,10 @@ class Stager:
                 for k in rec:
                     pr.set(k, stage={"state": "running", "done": done, "total": total, "proposed": proposed})
                 vj.log("%d of %d documents drafted, %d proposed" % (done, total, proposed))
-            out = run_pass(self.principal, scope, progress=shown, before=vj.check_stop)
+            def between():
+                vj.check_stop()
+                wait_for_holds(self.principal, vj)
+            out = run_pass(self.principal, scope, progress=shown, before=between)
             vj.set_result("%d of %d documents drafted, %d proposed" % (out["done"], out["total"], out["proposed"])
                           if out["state"] == "done" else "Nothing drafted (%s)" % out["state"])
         for k in rec:

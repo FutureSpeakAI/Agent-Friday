@@ -3327,6 +3327,18 @@ def _library_status_line() -> str:
         return ""
 
 
+def _queue_counts_only() -> str:
+    """The Local AI queue as counts, for a model that is not on this computer: no label, so no folder name."""
+    try:
+        snap = local_queue_snapshot() or {}
+        r, q = len(snap.get("running") or []), len(snap.get("queued") or [])
+    except Exception:
+        return ""
+    if not r and not q:
+        return "Nothing is waiting for the local models."
+    return "The local models have %d running and %d waiting." % (r, q)
+
+
 def _tool_queue_status(inp):
     """Tool handler: the Local AI queue in a sentence or two (services/
     seat_supervisor.spoken_summary), with the Library's folder reading. Labels,
@@ -3342,11 +3354,11 @@ def _tool_queue_status(inp):
         lane = _al.spoken_running(names=names)
         local = _ss.spoken_summary(local_queue_snapshot())
         if lane.startswith("Nothing is running"):
-            text = local
+            text = local if names else _queue_counts_only()
         else:
             text = lane + " " + local if names else lane
     except Exception:
-        text = _ss.spoken_summary(local_queue_snapshot())
+        text = _ss.spoken_summary(local_queue_snapshot()) if names else _queue_counts_only()
     extra = _library_status_line()
     return (text + " " + extra) if extra else text
 

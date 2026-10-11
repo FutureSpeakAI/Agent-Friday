@@ -187,10 +187,7 @@ def pause(principal: str = lstore.OWNER) -> dict:
 def resume(principal: str = lstore.OWNER) -> dict:
     pr = progress_for(principal)
     with _lock:
-        pr.data["paused"] = False
-        for rec in pr.data["folders"].values():
-            if rec.get("state") == STOPPED:
-                rec["state"] = QUEUED      # "Resume" also takes back a folder you stopped
+        pr.data["paused"] = False          # exactly the inverse of Pause: a folder you cancelled stays cancelled
     pr.save()
     try:
         from agent_friday.services.library import runtime
@@ -240,7 +237,7 @@ def listed_jobs() -> list[dict]:
             reason = rec.get("hold") or (OWNER_HOLD if paused.get(principal) else "paused")
         else:
             reason = OWNER_HOLD if paused.get(principal) else "waits for the folder ahead of it"
-        out.append({"id": _row_id(principal, scope), "source": "library_index", "state": "waiting",
+        out.append({"id": rec.get("card_id") or _row_id(principal, scope), "source": "library_index", "state": "waiting",
                     "class": "background", "interactive": False, "label": label(rec), "kind": KIND,
                     "model": "", "needs": "the Library", "reason": reason, "waited_s": round(
                         max(0.0, time.time() - float(rec.get("queued_ts") or time.time())), 1),
@@ -250,11 +247,11 @@ def listed_jobs() -> list[dict]:
 
 
 def cancel_listed(job_id: str) -> bool:
-    if not str(job_id).startswith("libidx:"):
-        return False
+    job_id = str(job_id)
     with _lock:
-        hit = [(p, s) for p, pr in _progress.items() for s in pr.data["folders"]
-               if _row_id(p, s) == job_id]
+        hit = [(p, s) for p, pr in _progress.items() for s, r in pr.data["folders"].items()
+               if _row_id(p, s) == job_id or (r.get("card_id") and r.get("card_id") == job_id
+                                              and r.get("state") in (QUEUED, PAUSED))]
     return any(stop_folder(p, s) for p, s in hit)
 
 
@@ -305,6 +302,7 @@ class FolderJob:
     def attach(self, vj) -> "FolderJob":
         """The visible job (Activity card) this pass runs under."""
         self.vj = vj
+        self.progress.set(self.scope, card_id=vj.id)       # a held folder is listed under the card's own id
         return self
 
     def _log(self, line: str) -> None:
@@ -362,8 +360,10 @@ class FolderJob:
             self._log("Waiting for the PC to be idle and for its place in the Local AI queue.")
         try:
             self._admit()
-        except BaseException:
-            self.progress.set(self.scope, state=STOPPED)
+        except BaseException as e:
+            from agent_friday.services.background_gate import JobCancelled
+            # Only the owner's cancel is "stopped"; any other failure is a failure, not a choice.
+            self.progress.set(self.scope, state=STOPPED if isinstance(e, JobCancelled) else FAILED)
             self.progress.save()
             raise
         self.progress.set(self.scope, started_ts=time.time(), waited_s=round(time.time() - float(rec["queued_ts"]), 1))
@@ -411,6 +411,22 @@ class FolderJob:
         self.progress.save()
         return False                       # a cancel is for the visible job to record (the Indexer ends it quietly)
 
+    # -- consent ----------------------------------------------------------------
+
+    def _covered(self) -> bool:
+        """Does the owner's consent still cover this folder? Read live: a removal, a never-send mark or a
+        ledger that cannot be verified all say no."""
+        try:
+            from agent_friday.services.library import grants
+            return bool(grants.allowed(self.principal, Path(self.scope)))
+        except Exception:  # noqa: BLE001 - a check that cannot run is not consent
+            return False
+
+    def _check_covered(self) -> None:
+        if not self._covered():
+            from agent_friday.services.background_gate import JobCancelled
+            raise JobCancelled("The folder is no longer in your Library.")
+
     # -- holds ----------------------------------------------------------------
 
     def _own_hold(self) -> str:
@@ -446,6 +462,7 @@ class FolderJob:
                 raise JobCancelled()
             if self.vj is not None:
                 self.vj.check_stop()
+            self._check_covered()                             # removed while held: the folder ends, nothing more is read
             why = self._own_hold()
             if not why:
                 break
@@ -476,6 +493,7 @@ class FolderJob:
         from agent_friday.services.background_gate import JobCancelled
         if self._rec().pop("stop", None):
             raise JobCancelled()
+        self._check_covered()
         if self.vj is not None:
             self.vj.check_stop()                              # Stop from the card
         why = self._own_hold()
@@ -509,7 +527,7 @@ class FolderJob:
         scope_root = _scope_root(self.scope)
         self._step("Noting what each document is")
         try:
-            n = triage.triage_pending(store, scope_root, before=self.before)
+            n = triage.triage_pending(store, scope_root, before=self.before, allowed=self._doc_allowed)
             self.progress.set(self.scope, triaged=n)
             self._log("Noted the type, tier and copies of %s documents." % _n(n))
         except Exception as e:  # noqa: BLE001 - JobCancelled and a failed head both end the triage, never the index
@@ -518,10 +536,18 @@ class FolderJob:
                 raise
         self.progress.save()
         try:
-            from agent_friday.services.library import staging
-            staging.enqueue(self.principal, scope_root)
+            if self._covered():                               # a folder removed meanwhile is not drafted from
+                from agent_friday.services.library import staging
+                staging.enqueue(self.principal, scope_root)
         except Exception:  # noqa: BLE001 - drafting is optional
             pass
+
+    def _doc_allowed(self, path) -> bool:
+        try:
+            from agent_friday.services.library import grants
+            return bool(grants.allowed(self.principal, Path(path)))
+        except Exception:  # noqa: BLE001
+            return False
 
 
 def factory(principal: str):
@@ -533,6 +559,23 @@ def factory(principal: str):
     return make
 
 
+def drop_uncovered(principal: str, covered_paths) -> int:
+    """Forget the progress records of folders that are no longer in the Library (their consent was removed).
+    A folder being read or held ends itself at its next file; its record goes on a later pass."""
+    keep = {os.path.normcase(str(p)) for p in covered_paths}
+    pr = progress_for(principal)
+    n = 0
+    with _lock:
+        for key in list(pr.data["folders"]):
+            if os.path.normcase(key) in keep or pr.data["folders"][key].get("state") in (RUNNING, ADMITTING, PAUSED):
+                continue
+            pr.data["folders"].pop(key, None)
+            n += 1
+    if n:
+        pr.save()
+    return n
+
+
 def note_queued(principal: str, scope: str, only=None) -> None:
     """A folder was handed to the indexer: it shows as waiting until its turn."""
     pr = progress_for(principal)
@@ -540,7 +583,7 @@ def note_queued(principal: str, scope: str, only=None) -> None:
         rec = pr.folder(scope)
         if rec.get("state") in (RUNNING, ADMITTING, PAUSED):
             return                            # already being read; the indexer folds the new files in
-        rec.update(state=QUEUED, stop=None, only=bool(only is not None), queued_ts=time.time())
+        rec.update(state=QUEUED, stop=None, card_id=None, only=bool(only is not None), queued_ts=time.time())
     pr.save()
 
 

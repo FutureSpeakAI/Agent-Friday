@@ -457,5 +457,9 @@ def lib_staging_review():
     if bad:
         return bad
     b = request.get_json(silent=True) or {}
+    bad = _gated("library_draft_review", {"decision": str(b.get("decision") or "")[:12],
+                                          "draft_id": str(b.get("id") or "")[:80]})
+    if bad:
+        return bad
     out = staging.review(str(b.get("id") or ""), str(b.get("decision") or ""))
     return jsonify({"status": "ok" if out.get("ok") else "error", **out}), (200 if out.get("ok") else 400)

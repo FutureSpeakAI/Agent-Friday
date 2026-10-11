@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from pathlib import Path
 
 from agent_friday.services.library import embed
 from agent_friday.services.library.store import Store
@@ -307,9 +308,10 @@ def triage_document(store: Store, doc_id: int, sigs: Signatures | None = None) -
             "degraded": degraded}
 
 
-def triage_pending(store: Store, scope: str | None = None, *, before=None) -> int:
+def triage_pending(store: Store, scope: str | None = None, *, before=None, allowed=None) -> int:
     """Triage every indexed document of `scope` that has no current row. `before()` runs ahead of each
-    document (the job's pause and cancel point). Returns how many were done."""
+    document (the job's pause and cancel point). `allowed(path)` is the owner's consent, read live: a
+    document it refuses is left alone. Returns how many were done."""
     ids = store.untriaged(scope)
     if not ids:
         return 0
@@ -323,6 +325,10 @@ def triage_pending(store: Store, scope: str | None = None, *, before=None) -> in
     for doc_id in ids:
         if before is not None:
             before()
+        if allowed is not None:
+            row = store.get_document(doc_id)
+            if row is None or not allowed(Path(row["path"])):
+                continue
         if triage_document(store, doc_id, sigs).get("ok"):
             n += 1
     return n

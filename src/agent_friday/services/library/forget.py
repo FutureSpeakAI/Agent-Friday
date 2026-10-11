@@ -107,20 +107,21 @@ def _clear_cache(principal: str, doc_id: int, doc=None) -> None:
         pass
 
 
-def _purge_staging(doc_id: int) -> None:
-    """Drafts the local model made from this document (wiki/_staging) go with it."""
+def _purge_staging(doc_id: int, gone: bool = True) -> None:
+    """Drafts the local model made from this document (wiki/_staging) go with it. A removal or forget also
+    tombstones the id, so a draft still being made is refused when it finishes."""
     try:
         from agent_friday.services.library import staging
-        staging.purge_document(doc_id)
+        staging.purge_document(doc_id, gone=gone)
     except Exception:  # noqa: BLE001 - nothing staged is nothing to purge
         pass
 
 
-def _purge_graph(principal: str, doc_id: int) -> None:
+def _purge_graph(principal: str, doc_id: int, gone: bool = True) -> None:
     """Facts the knowledge graph learned from this document go with it."""
     if principal != lstore.OWNER:
         return
-    _purge_staging(doc_id)
+    _purge_staging(doc_id, gone)
     try:
         from agent_friday.services.knowledge_graph import indexer as kg
         kg.purge_library_document(doc_id)
@@ -132,7 +133,7 @@ def left_the_open_shelf(principal: str, doc_id: int) -> None:
     """A document moved to the vault: what the graph learned from its open copy, the page
     renders and the remembered last search all go; the index rewrites its own rows."""
     from agent_friday.services.library import search
-    _purge_graph(principal, doc_id)
+    _purge_graph(principal, doc_id, gone=False)      # the document stays, so it is not tombstoned
     search.forget_last(doc_id)
     doc = lstore.store_for(principal).get_document(doc_id)
     if doc:
@@ -241,11 +242,19 @@ def _name_hits(st: Store, names: set[str]) -> list[tuple[int, int, str]]:
     return list(hits.values())
 
 
+def _staged_naming(names, emails) -> list:
+    try:
+        from agent_friday.services.library import staging
+        return staging.naming(set(names) | set(emails))
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def people_find(names, emails) -> int:
     total = 0
     for principal in _principals():
         total += len(_name_hits(lstore.store_for(principal), set(names) | set(emails)))
-    return total
+    return total + len(_staged_naming(names, emails))       # drafts quote the sentences that name a person
 
 
 def people_purge(names, emails) -> int:
@@ -265,6 +274,11 @@ def people_purge(names, emails) -> int:
             st.x("DELETE FROM passages WHERE id=?", (pid,))
             total += 1
         st.compact()
+    try:
+        from agent_friday.services.library import staging
+        total += staging.purge_naming(set(names) | set(emails))
+    except Exception:  # noqa: BLE001
+        pass
     return total
 
 

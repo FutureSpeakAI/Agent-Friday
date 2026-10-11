@@ -163,6 +163,17 @@ Listed separately from "broken". These are not claims that things work.
   "how's the indexing going?". The screen for accepting or rejecting them, and
   the step that writes an accepted draft into the wiki, are not built. Nothing is
   published until they are.
+- **A copy's mark can be lost, and a changed encoder does not re-note old
+  documents.** Re-reading the original of a pair clears the copy mark on its
+  copy, which is not noted again and may then be drafted from. A change of
+  reading model or of the type heads does not make Friday note older documents
+  again; only a change of the notes' own version does.
+- **Reading folders waits for the same free memory a model load keeps (4 GB by
+  default).** On a PC with little free memory and a model loaded, indexing can
+  wait a long time. `local_scheduler_ram_floor_gb` sets the floor.
+- **Drafts are kept in one folder for the whole PC, not per account.** Friday has
+  one Library account today, so nothing is mixed; this must change before there
+  is a second.
 
 ## 5. Things that leave your machine
 

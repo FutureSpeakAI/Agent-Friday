@@ -628,6 +628,14 @@ if not _TESTING:
     except Exception as _mi_e:
         print(f"  Media: library indexer not started ({_mi_e})")
 
+    # The Library: purge what was deleted, find changes while idle and take up the folders that were being
+    # read when Friday last stopped (services/library/runtime.py).
+    try:
+        from agent_friday.services.library import runtime as _library_runtime
+        _library_runtime.start_background()
+    except Exception as _lib_e:
+        print(f"  Library: background reading not started ({_lib_e})")
+
     # Offline-first resilience: probe connectivity every 30s, auto-switch to
     # local inference when offline, flush the queue + refresh feeds when back.
     threading.Thread(target=_network_monitor_loop, daemon=True).start()

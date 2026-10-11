@@ -143,6 +143,20 @@ def index_scope(principal: str, add_event: dict) -> None:
                                    kinds=set(add_event["kinds"]) if add_event.get("kinds") else None)
 
 
+def purge_gone_files(principal: str = OWNER) -> int:
+    """Remove the documents of files deleted from disk, for every active consent. Stat-only, so it runs
+    even while reading is paused, stopped or waiting for the PC to be idle."""
+    if grants.suspended():
+        return 0
+    st = store_for(principal)
+    n = 0
+    for a in grants.active_scopes(principal):
+        if a.get("type") == grants.TRACKED:
+            continue
+        n += changes.purge_gone(principal, st, a, allowed=lambda p, pr=principal: grants.allowed(pr, p))
+    return n
+
+
 def resweep(principal: str = OWNER) -> int:
     """Look at every active consent for new, changed and deleted files (a stat of each file, no reading),
     queue ONE job per folder that has any, and purge documents no consent covers any more. Returns the
@@ -156,6 +170,7 @@ def resweep(principal: str = OWNER) -> int:
         if not grants.allowed(principal, Path(row["path"])):
             from agent_friday.services.library import forget
             forget.remove_document(principal, row["id"])
+    purge_gone_files(principal)
     n = 0
     ix = indexer_for(principal)
     for a in grants.active_scopes(principal):
@@ -196,6 +211,8 @@ def purge_uncovered(principal: str = OWNER) -> int:
         if not grants.allowed(principal, Path(row["path"])):
             forget.remove_document(principal, row["id"])
             n += 1
+    # A folder that is no longer in the Library has no progress record either.
+    index_job.drop_uncovered(principal, [a["path"] for a in grants.active_scopes(principal) if a.get("path")])
     return n
 
 
@@ -213,10 +230,20 @@ def _owner_idle() -> bool:
         return False
 
 
+_gone_at = 0.0
+
+
 def _sweep_once(last: float) -> float:
     """One pass of the sweeper. Returns when the change sweep last ran."""
+    global _gone_at
     for p in list(_indexers) or [OWNER]:
         purge_uncovered(p)
+    # Files deleted from disk leave the Library at the same pace as before, idle or not, paused or not.
+    if time.time() - _gone_at >= RESWEEP_EVERY_S:
+        _gone_at = time.time()
+        for p in list(_indexers) or [OWNER]:
+            if grants.active_scopes(p):
+                purge_gone_files(p)
     # The change sweep is part of the idle sweep: it looks only while the PC is idle.
     if time.time() - last >= RESWEEP_EVERY_S and _owner_idle():
         last = time.time()
