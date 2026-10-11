@@ -383,8 +383,9 @@ class TestQueue:
 
 class TestTools:
     @pytest.fixture
-    def agent(self):
+    def agent(self, monkeypatch):
         from agent_friday.services import agent
+        monkeypatch.setattr(agent, "_work_orders_enabled", lambda: True)   # the setting is exercised below
         return agent
 
     def _run(self, agent, name, args, provider=CLOUD, conv=CONV):
@@ -401,12 +402,34 @@ class TestTools:
     def test_tools_are_registered_gated_and_grouped(self, agent):
         from agent_friday.governance import action_gate
         from agent_friday.services import tool_catalogue as tc
-        names = {t["name"] for t in agent.CLAUDE_TOOLS}
+        names = {t["name"] for t in agent.tools_for_workspace("chat")}
         for n in ("submit_work_order", "work_order_status"):
             assert n in names and n in agent.CLAUDE_TOOL_HANDLERS
             assert n in agent.TOOL_RINGS and action_gate.known(n)
             assert "privacy" in tc.groups_of(n)
         assert agent.TOOL_RINGS["work_order_status"] == 0
+
+    def test_the_tools_are_dark_while_work_orders_are_off(self, agent, mode, monkeypatch):
+        """CS-2 (execution) is not built: no model is offered the tools unless `work_orders_enabled` is on."""
+        from agent_friday.core import DEFAULT_SETTINGS
+        assert DEFAULT_SETTINGS["work_orders_enabled"] is False
+        pair = {"submit_work_order", "work_order_status"}
+        monkeypatch.setattr(agent, "_work_orders_enabled", lambda: False)
+        assert not pair & {t["name"] for t in agent.CLAUDE_TOOLS}
+        assert not pair & {t["name"] for t in agent.tools_for_workspace("chat")}
+        mode("cloud_only")
+        for n in pair:
+            assert "switched off" in self._run(agent, n, _order() if n == "submit_work_order" else {"order_id": "wo_x"})
+        assert wo._ORDERS == {}
+        monkeypatch.setattr(agent, "_work_orders_enabled", lambda: True)
+        assert pair <= {t["name"] for t in agent.tools_for_workspace("chat")}
+
+    def test_the_setting_is_read_from_the_settings_file(self, agent, monkeypatch):
+        monkeypatch.undo()                                    # the fixture's stub off, the real reader on
+        monkeypatch.setattr(agent, "_load_settings", lambda: {"work_orders_enabled": True})
+        assert agent._work_orders_enabled() is True
+        monkeypatch.setattr(agent, "_load_settings", lambda: {})
+        assert agent._work_orders_enabled() is False
 
     def test_submit_through_the_tool(self, agent, mode):
         mode("cloud_only")

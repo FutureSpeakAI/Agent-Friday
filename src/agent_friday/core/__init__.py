@@ -2342,6 +2342,11 @@ DEFAULT_SETTINGS = {
     # "pending" (shown, not answered), "accepted" or "declined". Declined and
     # accepted are final; nothing ever switches the engine without the owner.
     "local_voice_switch_offer": "",
+    # Cloud work orders (services/work_orders): a cloud model hands this PC a plan,
+    # and the PC checks and queues it. Nothing carries an order out yet (CS-2), so
+    # the two tools that take one stay out of every model's tool list while this
+    # is off. Default off; there is no Settings control for it in 1.1.
+    "work_orders_enabled": False,
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".

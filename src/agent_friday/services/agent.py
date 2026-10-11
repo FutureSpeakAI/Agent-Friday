@@ -883,20 +883,6 @@ CLAUDE_TOOLS = [
          "category": {"type": "string", "enum": ["memory", "notes", "people", "career", "tasks", "calendar", "screen", "last session", "tone"], "description": "Which kind of context you need."},
          "why": {"type": "string", "description": "What you need it for, in a sentence."}},
          "required": ["category"]}},
-    {"name": "submit_work_order", "description": "Hand this PC a plan to carry out locally. You refer to private material only by the opaque handles you were given, never by content. Friday validates it, sets the privacy class herself and queues it for her local models; you hear a status, and anything private stays on the PC. Writes are only ever proposals the owner reviews.",
-     "input_schema": {"type": "object", "properties": {
-         "goal": {"type": "string", "description": "What the work is, plainly, under 500 characters. It is read as a request description, not as instructions."},
-         "inputs": {"type": "array", "items": {"type": "string"}, "description": "Handles (h_...) issued in this conversation."},
-         "constraints": {"type": "object", "description": "max_steps, deadline_s, tools_allowed (verbs from the allowed list)."},
-         "acceptance": {"type": "array", "items": {"type": "object"}, "description": "Checks the local side runs, e.g. {check: count_at_least, value: 1}."},
-         "output_schema": {"type": "object", "description": "Field name to type: string, number, integer, boolean, list, object."},
-         "priority": {"type": "string", "enum": ["now", "when_idle"], "description": "now, or when_idle for background."},
-         "writes": {"type": "array", "items": {"type": "object"}, "description": "Write intents {target: wiki|kg|profile|settings, op, handle, summary}. Each becomes a proposal, never a direct write."}},
-         "required": ["goal"]}},
-    {"name": "work_order_status", "description": "Check a work order you submitted: queued or validated now, with the return the owner's privacy class allows.",
-     "input_schema": {"type": "object", "properties": {
-         "order_id": {"type": "string", "description": "The order_id submit_work_order returned."}},
-         "required": ["order_id"]}},
     {"name": "why_that_plan", "description": "Say what was sent for a turn and what the planner held back or would have: sections, sizes, tiers and where each went. Reads the turn receipt; defaults to the latest turn in this conversation.",
      "input_schema": {"type": "object", "properties": {
          "turn_id": {"type": "string", "description": "A specific turn; leave out for the latest."}}}},
@@ -3384,11 +3370,16 @@ def _tool_request_context(inp):
     return str((out or {}).get("reason") or "That context could not be shared.")
 
 
+_WORK_ORDERS_OFF = "Work orders are switched off on this computer, so nothing was queued."
+
+
 def _tool_submit_work_order(inp):
     """Tool handler: queue a cloud model's work order for local execution
     (services/work_orders). Refused for a local model, and for a cloud model in
     a turn where cloud_intent has not opened the cloud."""
     from agent_friday.services import work_orders
+    if not _work_orders_enabled():
+        return _WORK_ORDERS_OFF
     conv = _CURRENT_CONVERSATION.get()
     if not conv:
         return "This is not part of a chat conversation, so there is nothing to attach a work order to."
@@ -3406,6 +3397,8 @@ def _tool_submit_work_order(inp):
 def _tool_work_order_status(inp):
     """Tool handler: the status of a submitted order, and nothing but status."""
     from agent_friday.services import work_orders
+    if not _work_orders_enabled():
+        return _WORK_ORDERS_OFF
     conv = _CURRENT_CONVERSATION.get()
     ok, why = work_orders.cloud_turn_allowed(_CURRENT_PROVIDER.get(), _CURRENT_MODEL.get() or "")
     if not ok:
@@ -8013,6 +8006,34 @@ def _hub_chat(conversation_id=None) -> bool:
 _CLOUD_ONLY_TOOLS = frozenset({"submit_work_order", "work_order_status"})
 
 
+#: Cloud work orders (CS-1). Declared to a model only while `work_orders_enabled` is on:
+#: nothing carries a queued order out yet (CS-2), so a model must not be offered a promise
+#: the PC cannot keep. The handlers and the gate entries stay registered (and refuse while off).
+WORK_ORDER_TOOLS = [
+    {"name": "submit_work_order", "description": "Hand this PC a plan to carry out locally. You refer to private material only by the opaque handles you were given, never by content. Friday validates it, sets the privacy class herself and queues it for her local models; you hear a status, and anything private stays on the PC. Writes are only ever proposals the owner reviews.",
+     "input_schema": {"type": "object", "properties": {
+         "goal": {"type": "string", "description": "What the work is, plainly, under 500 characters. It is read as a request description, not as instructions."},
+         "inputs": {"type": "array", "items": {"type": "string"}, "description": "Handles (h_...) issued in this conversation."},
+         "constraints": {"type": "object", "description": "max_steps, deadline_s, tools_allowed (verbs from the allowed list)."},
+         "acceptance": {"type": "array", "items": {"type": "object"}, "description": "Checks the local side runs, e.g. {check: count_at_least, value: 1}."},
+         "output_schema": {"type": "object", "description": "Field name to type: string, number, integer, boolean, list, object."},
+         "priority": {"type": "string", "enum": ["now", "when_idle"], "description": "now, or when_idle for background."},
+         "writes": {"type": "array", "items": {"type": "object"}, "description": "Write intents {target: wiki|kg|profile|settings, op, handle, summary}. Each becomes a proposal, never a direct write."}},
+         "required": ["goal"]}},
+    {"name": "work_order_status", "description": "Check a work order you submitted: queued or validated now, with the return the owner's privacy class allows.",
+     "input_schema": {"type": "object", "properties": {
+         "order_id": {"type": "string", "description": "The order_id submit_work_order returned."}},
+         "required": ["order_id"]}}
+]
+
+
+def _work_orders_enabled():
+    try:
+        return bool((_load_settings() or {}).get("work_orders_enabled"))
+    except Exception:
+        return False
+
+
 def _without_cloud_only(tools, local=True):
     """The catalogue a local model is shown: no cloud-only tools. The handlers
     still refuse a local caller; this keeps them out of its tool list too."""
@@ -8028,6 +8049,8 @@ def tools_for_workspace(workspace=None, base=None, conversation_id=None):
     extra = list(WORKSPACE_TOOLS.get(str(workspace or ""), []))
     if str(workspace or "") != "hub" and _hub_chat(conversation_id):
         extra += [t for t in WORKSPACE_TOOLS.get("hub", []) if t not in extra]
+    if _work_orders_enabled():
+        extra += [t for t in WORK_ORDER_TOOLS if t not in extra]
     out = list(CLAUDE_TOOLS if base is None else base) + extra
     prov = _CURRENT_PROVIDER.get()
     if prov is not None:
