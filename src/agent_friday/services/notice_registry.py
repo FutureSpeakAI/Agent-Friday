@@ -253,6 +253,19 @@ _ALL = [
     # capable (services/local_voice_readiness). Declined means never again.
     _e("LV7", "services/local_voice_readiness.py:maybe_offer_switch", "local_voice_switch_offer",
        NEEDS_YOU, "local-voice-switch-offer", source="local-voice"),
+    # ── live-only emitters (L01-L06), gained since the census ────────────────
+    _e("L01", "services/visible_jobs.py:visible_job", "visible_job", ACTIVITY, "",
+       route=AMBIENT, ledger=False),
+    _e("L02", "services/local_scheduler.py:status", "local_queue_status", ACTIVITY, "",
+       route=AMBIENT, ledger=False),
+    _e("L03", "services/cloud_spill.py:offer", "cloud_spill", NEEDS_YOU,
+       "cloud-spill:{task_id}", route=POPUP, source="cloud_spill"),
+    _e("L04", "routes/voice.py:_send(status)", "voice_status", ACTIVITY, "",
+       route=STREAM, ledger=False),
+    _e("L05", "routes/voice.py:_send(error)", "voice_error", ACTIVITY, "",
+       route=STREAM, ledger=False),
+    _e("L06", "routes/voice.py:_run_routed_front_turn", "router_receipt", RECEIPTS, "",
+       route=STREAM, ledger=False),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),
