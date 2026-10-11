@@ -86,7 +86,7 @@ def _go(text, stage, monkeypatch=None):
 def test_the_setting_is_off_by_default_and_read_strictly(monkeypatch):
     import agent_friday.core as core
     from agent_friday.services import guarded_settings as gs
-    monkeypatch.setattr(gs, "owner_choice", lambda key: "on")           # the owner's click is recorded: only the word is under test
+    monkeypatch.setattr(gs, "owner_choice", lambda key, block=False: "on")   # the owner's click is recorded: only the word is under test
     assert core.DEFAULT_SETTINGS["laya_safe_writes"] == "off"
     assert sw.mode({}) == "off" and sw.mode({"laya_safe_writes": "off"}) == "off"
     assert sw.mode({"laya_safe_writes": "shadow"}) == "shadow" and sw.mode({"laya_safe_writes": "on"}) == "on"
@@ -100,9 +100,20 @@ def settings_file(tmp_path, monkeypatch):
     import agent_friday.core as core
     monkeypatch.setattr(core, "SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    from agent_friday.governance import proof_of_integrity as poi
+    from agent_friday.services import guarded_settings as gs
+    nonce = {}
+    monkeypatch.setattr(gs, "_dir", lambda: tmp_path / "runtime" / "guarded_settings")
+    monkeypatch.setattr(gs, "_load_nonce", lambda: nonce.get("n"))
+    monkeypatch.setattr(gs, "_store_nonce", lambda n: nonce.__setitem__("n", n))
+    monkeypatch.setattr(poi, "get_governance_key", lambda: b"k" * 32)
+    gs.invalidate()
+    gs._FORCE_OFF.clear()
     core._invalidate_settings_cache()
     yield core
     core._invalidate_settings_cache()
+    gs.invalidate()
+    gs._FORCE_OFF.clear()
 
 
 def test_only_the_owners_own_action_can_widen_the_setting(settings_file):
@@ -834,7 +845,7 @@ def test_chat_on_says_a_card_was_raised_in_sealed_words_and_nothing_changed(chat
     assert out["outcome"] == "card" and out["laya"]["template"] == "safe_write_card"
     assert out["reply"].startswith("I put archive 3 conversations (") and out["reply"].endswith(
         ") on an approval card. Nothing changes until you approve it, and you can undo it afterwards (instant, no model).")
-    assert "\u201cSubject t1\u201d from Sender <sender@example.test>" in out["reply"], "a row sample, with the address"
+    assert "\u201cSubject t1\u201d from Sender" in out["reply"] and "@" not in out["reply"], "a row sample, names only"
     assert out["tool_trace"][0]["name"] == "organize_email"
     assert len(_pending()) == 1 and gmail.changes() == []
 

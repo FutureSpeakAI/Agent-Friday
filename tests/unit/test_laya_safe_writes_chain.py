@@ -17,6 +17,11 @@ Each test names the condition it closes and fails without that fix:
 * N8  typed-chat safe writes ride trusted_surface, not reflex_open_enabled.
 * N9  a Laya batch whose conversation could not be read first is refused (undo must be exact).
 
+Second review (CRITIC_LANE_0c8723e3): M1 the scope check never takes a read or a select; M3 every narrowing
+narrows the owner-enable record, a failed write fails closed, a replayed record verifies as nothing, and the
+record folder is denied to the file tools; M4 the turn path never reads the keychain; L1 no sender address in a
+readback, a spoken line, a tool result or chat history; L3 the Settings page shows the effective value.
+
 Everything is synthetic: no model, no network, no real mailbox.
 """
 from __future__ import annotations
@@ -264,16 +269,18 @@ def test_n4_the_mailbox_changes_only_the_messages_it_was_given(real_mail):
 # ── N5 / N6: the address is shown; the typed line has a row sample ───────────────────────────────
 
 def test_n5_a_card_names_the_senders_address_not_only_the_display_name(gmail, monkeypatch):
-    """A display name is the sender's to choose: 'Mara' on a phishing mail looks like Mara."""
+    """A display name is the sender's to choose: 'Mara' on a phishing mail looks like Mara. The card the
+    owner reads on screen (its lines) shows the address; nothing else does (L1)."""
     monkeypatch.setattr(ia, "_thread_heads", lambda acct, tids: {
         t: {"subject": "Invoice", "sender": "Mara", "address": "billing@phish.example", "date": ""} for t in tids})
     stage = _stage(selected=(1, 2))
     report(stage)
     Page(monkeypatch)
-    _go("archive these", stage)
+    r, out = _go("archive these", stage)
     pay = _pending()[0]["payload"]
     assert all("<billing@phish.example>" in line for line in pay["lines"][:2]), pay["lines"]
-    assert all("<billing@phish.example>" in p["sender"] for p in pay["preview"])
+    assert "phish.example" not in str(pay["preview"]), "the stored preview carries names only"
+    assert "phish.example" not in out and "@" not in out, "the tool result (what a chat history keeps) has no address"
 
 
 def test_n5_the_who_rule_card_shows_the_address_of_the_row_it_matched(gmail, monkeypatch):
@@ -285,6 +292,7 @@ def test_n5_the_who_rule_card_shows_the_address_of_the_row_it_matched(gmail, mon
     assert r.layer == "safe_write", (r.decision, r.layer, r.reason)
     assert agent._tool_organize_email(dict(r.args)).startswith("CARD_RAISED")
     assert "<sender@example.test>" in _pending()[0]["payload"]["lines"][0]
+    assert "sender@example.test" not in str(_pending()[0]["payload"]["preview"])
 
 
 def test_n6_the_chat_sealed_line_carries_a_row_sample(chat, gmail, monkeypatch):
@@ -295,8 +303,9 @@ def test_n6_the_chat_sealed_line_carries_a_row_sample(chat, gmail, monkeypatch):
     out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
                                turn_id="t-1", authenticated=True, local=True)
     assert out["outcome"] == "card"
-    assert "“Subject t1” from Sender <sender@example.test>" in out["reply"]
+    assert "“Subject t1” from Sender" in out["reply"] and "@" not in out["reply"]
     assert "archive 3 conversations" in out["reply"] and "Nothing changes until you approve it" in out["reply"]
+    assert "@" not in str(out["tool_trace"]), "what the chat history keeps (and a later cloud turn reads) has no address"
 
 
 # ── N7: a ticket with no conversation binds to nothing ───────────────────────────────────────────
@@ -418,9 +427,16 @@ def test_n3_the_safe_write_rung_is_bounded_and_falls_back_to_none(gmail, monkeyp
 @pytest.fixture
 def owner_record(tmp_path, monkeypatch):
     from agent_friday.governance import proof_of_integrity as poi
-    monkeypatch.setattr(gs, "_record_path", lambda: tmp_path / "guarded" / "owner_enable.json")
+    nonce = {}
+    monkeypatch.setattr(gs, "_dir", lambda: tmp_path / "runtime" / "guarded_settings")
+    monkeypatch.setattr(gs, "_load_nonce", lambda: nonce.get("n"))
+    monkeypatch.setattr(gs, "_store_nonce", lambda n: nonce.__setitem__("n", n))
     monkeypatch.setattr(poi, "get_governance_key", lambda: b"k" * 32)
-    return tmp_path
+    gs.invalidate()
+    gs._FORCE_OFF.clear()
+    yield tmp_path
+    gs.invalidate()
+    gs._FORCE_OFF.clear()
 
 
 def test_n2_only_the_owners_click_enables_it_and_a_hand_edit_does_not(settings_file, owner_record, monkeypatch):
@@ -452,13 +468,16 @@ def test_n2_a_forged_or_tampered_record_reads_as_off(settings_file, owner_record
     assert rec["laya_safe_writes"]["value"] == "on" and rec["laya_safe_writes"]["mac"]
     rec["laya_safe_writes"]["at"] += 1.0                                              # any change breaks the signature
     path.write_text(json.dumps(rec), encoding="utf-8")
-    assert sw.mode() == "off"
+    assert sw.mode() == "off", "an unverified stamp reads as off at once"
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
     path.write_text("not json", encoding="utf-8")
-    assert sw.mode() == "off"
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off" and sw.mode() == "off"
     from agent_friday.governance import proof_of_integrity as poi
     core._save_settings({"laya_safe_writes": "on"}, owner_safe_writes_change=True)
+    assert sw.mode() == "on"
     monkeypatch.setattr(poi, "get_governance_key", lambda: b"z" * 32)                 # another key signed it
-    assert sw.mode() == "off"
+    gs.invalidate()
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off" and sw.mode() == "off"
 
 
 def test_n2_a_redeem_after_the_record_goes_is_refused(settings_file, owner_record):
@@ -529,7 +548,8 @@ def test_b2_the_safe_write_card_is_voiced_as_the_fixed_line_and_a_delivered_yes_
     c = safe_call(speaker_says="Done, all tidied.")
     c.say("archive these")
     spoken = " ".join(c.mouth.spoken)
-    assert "Shall I archive 3 conversations?" in spoken and "<sender@example.test>" in spoken
+    assert "Shall I archive 3 conversations?" in spoken and "Sender" in spoken
+    assert "@" not in spoken, "names only are spoken, even outside room mode"
     assert "Done, all tidied." not in spoken and not c.model_calls, "the model's words never stand in for the question"
     card = _pending()[0]["approval_id"]
     c.say("yes")
@@ -570,3 +590,206 @@ def test_b2_room_mode_line_names_no_sender_and_no_address(safe_call):
     spoken = " ".join(c.mouth.spoken)
     assert "the list is on your screen" in spoken
     assert "sender@example.test" not in spoken and "Subject t1" not in spoken
+
+
+# ── M1: the scope check never takes a read or a select ───────────────────────────────────────────
+
+QUANTIFIED_READS = ["show me everything on my calendar today", "show me only the unread emails", "select all of them",
+                    "pull up just the one from Dana", "open the other one", "show me all the emails",
+                    "select everything", "show me everything from Dana"]
+
+
+@pytest.mark.parametrize("text", QUANTIFIED_READS)
+def test_m1_a_quantified_read_or_select_keeps_the_chains_decision_with_the_setting_on(gmail, monkeypatch, text):
+    """Fails on 0c8723e34: the scope check ran for every verb, so a quantifier in a read or a select became a
+    safe-write deferral (and the owner's words went to the deeper mind) instead of Friday's own rule."""
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    monkeypatch.setattr(pa, "_default_stage", lambda: stage)
+    _mode(monkeypatch, "on")
+    got = _route(text, stage)
+    want = _route(text, stage, safe_writes=False)
+    assert got.layer != "safe_write", (text, got.reason)
+    assert (got.decision, got.tool, got.layer, got.args, got.question, got.handoff) == (
+        want.decision, want.tool, want.layer, want.args, want.question, want.handoff), text
+    assert not sw._TICKETS and not _cards()
+
+
+def test_m1_the_diff_tool_carries_the_quantified_probes():
+    from tools import laya_router_decision_diff as dd
+    texts = [t for t, _kw in dd.PROBES]
+    for t in ("show me everything on my calendar today", "show me only the unread emails", "select all of them"):
+        assert t in texts
+
+
+@pytest.mark.parametrize("text", ["archive all of them", "archive these not those", "star the rest"])
+def test_m1_a_change_with_an_unclear_scope_is_still_a_row_less_defer(gmail, monkeypatch, text):
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    _mode(monkeypatch, "on")
+    r = _route(text, stage)
+    assert r.decision in ("defer", "ask") and r.tool is None and not r.args.get("refs"), (text, r.decision)
+    assert not sw._TICKETS and not _cards()
+
+
+# ── M3: every narrowing narrows the owner-enable record; a failed write fails closed; no replay ──
+
+def _click(core, value):
+    return core._save_settings({"laya_safe_writes": value}, owner_safe_writes_change=True)
+
+
+def _hand_edit(core, value):
+    import json
+    core.SETTINGS_FILE.write_text(json.dumps({"laya_safe_writes": value}), encoding="utf-8")
+    core._invalidate_settings_cache()
+
+
+def test_m3_a_generic_save_that_narrows_narrows_the_record_so_a_file_edit_cannot_re_arm_it(settings_file, owner_record):
+    """Fails on 0c8723e34: the record kept saying 'on' after a narrowing that was not the page's click."""
+    core = settings_file
+    _click(core, "on")
+    assert sw.mode() == "on"
+    core._save_settings({"laya_safe_writes": "off"})              # not the owner's click: narrowing only
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+    _hand_edit(core, "on")                                         # a hand edit, or an approved file write
+    assert sw.mode() == "off"
+
+
+def test_m3_the_command_line_and_the_wizard_narrow_the_record(settings_file, owner_record, monkeypatch, tmp_path):
+    import types
+    from agent_friday import cli
+    from agent_friday import setup_wizard as wz
+    core = settings_file
+    for mod in (cli, wz):
+        monkeypatch.setattr(mod, "SETTINGS_FILE", core.SETTINGS_FILE)
+        monkeypatch.setattr(mod, "CONFIG_YAML", tmp_path / "config.yaml")
+        monkeypatch.setattr(mod, "FRIDAY_DIR", tmp_path)
+    _click(core, "on")
+    cli.cmd_config(types.SimpleNamespace(config_cmd="set", key="laya_safe_writes", value=["off"]))
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+    _hand_edit(core, "on")
+    assert sw.mode() == "off"
+    _click(core, "on")
+    wz._save_config({"laya_safe_writes": "shadow"})
+    assert gs.owner_choice("laya_safe_writes", block=True) == "shadow"
+    _hand_edit(core, "on")
+    assert sw.mode() == "shadow"
+
+
+def test_m3_a_boot_guard_rollback_narrows_the_record(settings_file, owner_record, tmp_path):
+    import json
+    core = settings_file
+    _click(core, "on")
+    restored = tmp_path / "restored.json"
+    restored.write_text(json.dumps({"laya_safe_writes": "off", "x": 1}), encoding="utf-8")
+    gs.clamp_file(restored, core.SETTINGS_FILE)
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+    restored.write_text(json.dumps({"x": 1}), encoding="utf-8")        # a snapshot that does not carry the key: the default
+    _click(core, "on")
+    gs.clamp_file(restored, None)
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+
+
+def test_m3_a_failed_record_write_fails_closed(settings_file, owner_record, monkeypatch):
+    core = settings_file
+    _click(core, "on")
+    assert sw.mode() == "on"
+
+    def boom(n):
+        raise OSError("the protected store is not writable")
+    monkeypatch.setattr(gs, "_store_nonce", boom)
+    assert gs.narrow_record("laya_safe_writes", "shadow") is False       # could not keep the record honest...
+    assert not gs._record_path().exists() and gs.owner_choice("laya_safe_writes", block=True) == "off"
+    _hand_edit(core, "on")
+    assert sw.mode() == "off", "...so it reads as off, never as the stale 'on'"
+    assert _click(core, "on")["laya_safe_writes"] == "on"                # the file says on
+    assert sw.mode() == "off", "a click whose record cannot be written does not enable it"
+
+
+def test_m3_an_old_copy_of_the_record_is_not_a_record(settings_file, owner_record):
+    """Replay: the owner clicked on, a copy was taken, the owner clicked off; writing the old copy back
+    (an approved file write, a restored backup) must not bring the 'on' back."""
+    import json
+    core = settings_file
+    _click(core, "on")
+    old = gs._record_path().read_text(encoding="utf-8")
+    _click(core, "off")
+    gs._record_path().write_text(old, encoding="utf-8")
+    _hand_edit(core, "on")
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off" and sw.mode() == "off"
+    # each change rotates the nonce and raises the counter
+    _click(core, "on")
+    a = json.loads(gs._record_path().read_text(encoding="utf-8"))["laya_safe_writes"]["counter"]
+    _click(core, "shadow")
+    b = json.loads(gs._record_path().read_text(encoding="utf-8"))["laya_safe_writes"]["counter"]
+    assert b > a
+
+
+def test_m3_the_record_folder_is_denied_to_the_file_tools(settings_file, owner_record):
+    from agent_friday.services import credential_paths as cred
+    _click(settings_file, "on")
+    assert cred.check(gs._record_path(), sniff=False), "the record is key-like: the file tools may not read or write it"
+    assert cred.check(gs._dir() / "owner_enable.nonce", sniff=False)
+
+
+# ── M4: the turn path never reads the keychain and is O(1) ───────────────────────────────────────
+
+def test_m4_the_effective_setting_is_cached_and_the_turn_never_reads_the_keychain(settings_file, owner_record, monkeypatch):
+    """Fails on 0c8723e34: mode() read the record file and called get_governance_key() (a keychain read) on
+    every call, three or four times per voice turn."""
+    import threading
+    from agent_friday.governance import proof_of_integrity as poi
+    core = settings_file
+    _click(core, "on")
+    keys, nonces = [], []
+    real_key, real_nonce = poi.get_governance_key, gs._load_nonce
+    monkeypatch.setattr(poi, "get_governance_key", lambda: keys.append(threading.get_ident()) or real_key())
+    monkeypatch.setattr(gs, "_load_nonce", lambda: nonces.append(threading.get_ident()) or real_nonce())
+    _hand_edit(core, "on")
+    for _ in range(500):
+        assert sw.mode() == "on"
+        assert sw.is_card_route("organize_email", {"action": "archive", "laya_write": {"ticket": "x"}}) is False
+    assert keys == [] and nonces == [], "500 turns, no keychain and no nonce read"
+
+
+def test_m4_an_unverified_stamp_reads_off_at_once_and_is_verified_off_the_turn(settings_file, owner_record, monkeypatch):
+    import threading
+    import time
+    from agent_friday.governance import proof_of_integrity as poi
+    core = settings_file
+    _click(core, "on")
+    gs.invalidate()                                                    # e.g. a restart: nothing cached yet
+    me = threading.get_ident()
+    seen = []
+    real_key = poi.get_governance_key
+    monkeypatch.setattr(poi, "get_governance_key", lambda: seen.append(threading.get_ident()) or real_key())
+    assert sw.mode() == "off", "fail closed on the first turn, not a keychain read"
+    for _ in range(100):
+        if sw.mode() == "on":
+            break
+        time.sleep(0.02)
+    assert sw.mode() == "on" and seen and me not in seen, "verified on the background thread"
+
+
+# ── L3: the Settings page shows the effective value ──────────────────────────────────────────────
+
+def test_l3_the_settings_route_returns_the_effective_value_not_the_files_word(settings_file, owner_record):
+    import json
+    from flask import Flask
+    from agent_friday.routes import core_routes as cr
+    core = settings_file
+    _hand_edit(core, "on")
+    with Flask(__name__).test_request_context("/api/settings", method="GET"):
+        data = json.loads(cr.api_settings().get_data(as_text=True))
+    assert data["settings"]["laya_safe_writes"] == "on" and data["effective"]["laya_safe_writes"] == "off"
+    _click(core, "on")
+    with Flask(__name__).test_request_context("/api/settings", method="GET"):
+        data = json.loads(cr.api_settings().get_data(as_text=True))
+    assert data["effective"]["laya_safe_writes"] == "on"
+
+
+@pytest.mark.parametrize("page", ["index.html", "ui_parts/app.html"])
+def test_l3_the_panel_reads_the_effective_value(page):
+    from tests.unit.test_laya_safe_writes import _panel
+    _text, panel = _panel(page)
+    assert ".effective" in panel and "only your own click here counts" in panel

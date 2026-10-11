@@ -233,27 +233,35 @@ def test_a_change_s_intent_and_destination_come_from_the_owner_s_words():
     assert run("archive these", st).args["intent"] == "archive"
 
 
-def test_the_router_defers_a_change_with_the_rows_and_runs_nothing_when_safe_writes_are_on(monkeypatch):
-    """The rows ride on the write guard's defer only with laya_safe_writes "on" (the M1 rule). A change
-    that is not a safe write (trash) shows it; an allowed one becomes a safe-write card route instead."""
-    from agent_friday.services import laya_safe_writes as sw
-    monkeypatch.setattr(sw, "mode", lambda settings=None: "on")
+def test_the_router_defers_a_change_with_the_rows_and_runs_nothing():
+    """The chain's own behaviour, whatever laya_safe_writes says: a verb that always raises a card on the model
+    path (archive) is a point_act defer that carries the rows."""
     st = _deictic_stage(selected=[1, 2])
-    r = lr.route("trash these", trusted=True, stage=st, pointed=None, log=False)
+    r = lr.route("archive these", trusted=True, stage=st, pointed=None, log=False, rung_budget_ms=5000,
+                 safe_writes=False)
     assert r.decision == "defer" and r.tool is None and r.layer == "point_act"
-    assert r.args["refs"] == [ref(1), ref(2)] and r.args["intent"] == "trash"
+    assert r.args["refs"] == [ref(1), ref(2)] and r.args["intent"] == "archive"
     ran = []
     assert lr.execute(r, lambda n, a: ran.append(n)) is None and not ran
 
 
 @pytest.mark.parametrize("mode", ["off", "shadow"])
-def test_the_router_defers_a_change_without_rows_when_safe_writes_are_off(monkeypatch, mode):
-    """Off (and shadow) follows the M1 rule: exactly the guard's row-less defer as before DA-3."""
+@pytest.mark.parametrize("text", ["archive these", "star these", "trash these", "mark these as read"])
+def test_off_and_shadow_leave_the_chains_decision_for_a_change_untouched(monkeypatch, mode, text):
+    """Deterministic (rung budgets widened, no timeout relied on): with laya_safe_writes off or shadow the
+    router's answer for a change is exactly the one it gives with the feature switched out of the call."""
     from agent_friday.services import laya_safe_writes as sw
-    monkeypatch.setattr(sw, "mode", lambda settings=None: mode)
     st = _deictic_stage(selected=[1, 2])
-    r = lr.route("archive these", trusted=True, stage=st, pointed=None, log=False)
-    assert (r.decision, r.tool, r.layer) == ("defer", None, "rule") and not r.args
+    monkeypatch.setattr(sw, "mode", lambda settings=None: "off")
+    want = lr.route(text, trusted=True, stage=st, pointed=None, log=False, rung_budget_ms=5000, safe_writes=False)
+    monkeypatch.setattr(sw, "mode", lambda settings=None: mode)
+    got = lr.route(text, trusted=True, stage=st, pointed=None, log=False, rung_budget_ms=5000)
+    assert (got.decision, got.tool, got.layer, got.args, got.question) == (
+        want.decision, want.tool, want.layer, want.args, want.question)
+    if text.startswith(("star", "mark")):
+        assert not got.args.get("refs"), "star runs with no card on the model path: no rows go along"
+    else:
+        assert got.args.get("refs") == [ref(1), ref(2)]
 
 
 # --- the router -----------------------------------------------------------------
