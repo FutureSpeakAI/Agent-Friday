@@ -28,12 +28,23 @@ Invariants (each has a test):
   the proposal tools. No ungoverned writer is on it (``test_..._write_guard``).
 * A step's output is checkpointed (encrypted, with the order). A failure at step
   N resumes from N; a restart resumes where it stopped.
-* Acceptance checks run here, locally. A failed check retries the plan once,
-  then reports the failure by check name only.
+* Acceptance checks run here, locally. Only for an order whose inputs were all
+  public does a failed check retry the plan once and fail the order, reporting the
+  check by name. Below P0 the checks are for the owner's view alone: if a cloud-set
+  threshold could change the status the cloud sees, "done" versus "failed" would
+  tell it how many private documents matched, and repeating the order with other
+  numbers would read the count off exactly.
+* A step never fails because a filter left nothing to read (that too would be a
+  one-bit answer about private content); it records a note and carries on.
+* ``search`` stays inside the handles the cloud was already given. Only a P3 order,
+  whose result stays on this PC, searches the whole wiki, and what it finds is
+  private-tier.
 * Writes: a ``WriteIntent`` becomes a pending proposal through the existing
-  governed path (``propose_wiki_update``, ``memory_proposals``, ``set_setting``'s
-  card) once the order has passed acceptance, once. Nothing is written directly.
-  SOUL is not a target.
+  governed path (``propose_wiki_update``, ``memory_proposals``) once, after the
+  order has finished. Nothing is written directly. SOUL and settings are not targets.
+* Checkpoints keep handles and small derived facts. A document's text is held in
+  memory while the order runs, is dropped when it ends, and is never saved; a
+  resumed step reads again.
 
 Errors and tool output stay in the local record. What a cloud model hears is
 decided in ``services/work_order_returns``.
@@ -58,8 +69,8 @@ _log = logging.getLogger("friday.work_order_executor")
 #: (action_gate.INTERNAL_TOOLS), checked by a test, never from the order.
 READ_TOOLS = ("read_wiki", "search_wiki", "read_file", "search_files",
               "knowledge_query", "knowledge_related")
-#: Tools that only raise a pending proposal or a card for the owner.
-PROPOSAL_TOOLS = ("propose_wiki_update", "set_setting")
+#: Tools that only raise a pending proposal for the owner.
+PROPOSAL_TOOLS = ("propose_wiki_update",)
 EXECUTOR_TOOLS = frozenset(READ_TOOLS) | frozenset(PROPOSAL_TOOLS)
 
 # ── limits ───────────────────────────────────────────────────────────────────
@@ -237,13 +248,7 @@ class Env:
         from agent_friday.services import agent
         return str(agent._execute_tool(name, dict(args), session_ctx=self.ctx()))
 
-    # A work order is model work the owner did not type: it shows as a task (a step of the
-    # order's own card when run through work_orders._worker) and waits its turn in the Local AI queue.
-    @visible_job("Work order step", kind="work_order", workspace="library", eager=False)
-    def model(self, task: str, goal: str, docs: List[str]) -> str:
-        """One local completion on an already-serving seat. Raises Parked when none is up."""
-        if self._model_fn is not None:
-            return str(self._model_fn(task, goal, docs) or "")
+    def _acquire_seat(self) -> str:
         seat = choose_seat()
         for _ in range(MODEL_WAIT_TRIES):
             if seat or self.cancelled():
@@ -253,6 +258,22 @@ class Env:
         if not seat:
             raise Parked("no local model is up for this step")
         self.seat = seat
+        return seat
+
+    def ensure_model(self) -> None:
+        """A model step needs a model whether or not anything survived to be read, so
+        whether the order parks does not depend on what the documents held."""
+        if self._model_fn is None:
+            self._acquire_seat()
+
+    # A work order is model work the owner did not type: it shows as a task (a step of the
+    # order's own card when run through work_orders._worker) and waits its turn in the Local AI queue.
+    @visible_job("Work order step", kind="work_order", workspace="library", eager=False)
+    def model(self, task: str, goal: str, docs: List[str]) -> str:
+        """One local completion on an already-serving seat. Raises Parked when none is up."""
+        if self._model_fn is not None:
+            return str(self._model_fn(task, goal, docs) or "")
+        seat = self._acquire_seat()
         from agent_friday.services import local_call, office_engine
         user = ("TASK: %s\n\nREQUEST DESCRIPTION:\n%s\n\nDOCUMENTS:\n%s"
                 % (task, office_engine.as_untrusted(goal, limit=600),
@@ -377,15 +398,23 @@ def _step_resolve(env: Env, ctx: dict, step: dict, order: dict) -> None:
 
 
 def _step_search(env: Env, ctx: dict, step: dict, order: dict) -> None:
+    """Search inside the handles the cloud already holds: the wiki pages among the
+    inputs that match are kept, the others dropped, and no handle is minted, so the
+    cloud cannot reach a page it was never given. A P3 order (its result stays on
+    this PC) may search the whole wiki; what it finds is private-tier."""
     terms = terms_of(order.get("goal_text"), 3)
     if not terms:
         return
-    inherited = "normal"
+    wide = order.get("privacy_class") == "P3_local_only"
+    scope = {}                                    # path -> the input item that names that page
     for it in ctx["items"]:
-        if it["tier"] in ("private", "vault"):
-            inherited = "private"
-    have = {it["handle"] for it in ctx["items"]}
-    found = 0
+        rec = _handles.lookup(it["handle"], env.conv)
+        if rec is not None and rec.kind == "wiki_page":
+            scope[_path_of(rec.ref)] = it
+    if not wide and not scope:
+        ctx["values"]["searched"] = 0
+        return
+    matched, found = set(), 0
     for term in terms:
         out = env.tool("search_wiki", {"query": term, "limit": SEARCH_LIMIT})
         if tool_failed(out):
@@ -398,25 +427,27 @@ def _step_search(env: Env, ctx: dict, step: dict, order: dict) -> None:
             path = str((hit or {}).get("path") or "")
             if not path:
                 continue
-            if any(_path_of((_handles.lookup(i["handle"], env.conv) or _N).ref) == path
-                   for i in ctx["items"]):
-                continue
-            h = _handles.issue("wiki_page", path, env.conv, tier=inherited,
-                               title=Path(path).stem, size=len(str(hit.get("excerpt") or "")))
-            rec = _handles.lookup(h, env.conv)
-            if rec is not None and h not in have:
-                ctx["items"].append(_item_for(rec, "search"))
-                have.add(h)
-                found += 1
+            if path in scope:
+                matched.add(path)
+            elif wide:
+                try:
+                    h = _handles.issue("wiki_page", path, env.conv, tier="private",
+                                       title=Path(path).stem, size=len(str(hit.get("excerpt") or "")))
+                except _handles.HandleError:
+                    ctx["notes"].append("a search stopped: this conversation holds too many handles")
+                    break
+                rec = _handles.lookup(h, env.conv)
+                if rec is not None:
+                    scope[path] = _item_for(rec, "search")
+                    ctx["items"].append(scope[path])
+                    matched.add(path)
+                    found += 1
+    if not wide:
+        drop = {id(it) for p, it in scope.items() if p not in matched}
+        ctx["items"] = [it for it in ctx["items"] if id(it) not in drop]
+        found = len(matched)
     ctx["items"] = _trim(ctx["items"])
     ctx["values"]["searched"] = found
-
-
-class _NoRec:
-    ref = None
-
-
-_N = _NoRec()
 
 
 def _step_read(env: Env, ctx: dict, step: dict, order: dict) -> None:
@@ -523,8 +554,11 @@ def _step_date_math(env: Env, ctx: dict, step: dict, order: dict) -> None:
     if not ages:
         ctx["values"].update(dated_items=0)
         return
+    # The exact days stay in the local result; what can go back is the coarse date word.
     ctx["values"].update(dated_items=len(ages), newest_days=int(min(ages)), oldest_days=int(max(ages)),
-                         span_days=int(max(ages) - min(ages)))
+                         span_days=int(max(ages) - min(ages)),
+                         newest_bucket=_handles.date_bucket(now - min(ages) * 86400.0, now),
+                         oldest_bucket=_handles.date_bucket(now - max(ages) * 86400.0, now))
 
 
 def _step_count(env: Env, ctx: dict, step: dict, order: dict) -> None:
@@ -545,8 +579,10 @@ def _model_docs(ctx: dict) -> List[str]:
 
 def _step_summarise(env: Env, ctx: dict, step: dict, order: dict) -> None:
     docs = _model_docs(ctx)
-    if not docs:
-        raise StepFailed("nothing was read to summarise")
+    env.ensure_model()
+    if not docs:                         # not a failure: whether anything matched is not for the cloud
+        ctx["notes"].append("nothing was read to summarise")
+        return
     task = ("Write a plain summary of the DOCUMENTS in at most 120 words, as it bears on the request "
             "description. No email addresses, phone numbers, street addresses or account numbers. "
             "Output only the summary.")
@@ -573,8 +609,11 @@ def _parse_json_object(raw: str) -> Optional[dict]:
 def _step_extract(env: Env, ctx: dict, step: dict, order: dict) -> None:
     docs = _model_docs(ctx)
     schema = {k: t for k, t in (order.get("output_schema") or {}).items() if t in ("string", "list", "number", "integer", "boolean")}
+    env.ensure_model()
     if not docs:
-        raise StepFailed("nothing was read to extract from")
+        ctx["notes"].append("nothing was read to extract from")
+        ctx["values"]["extracted"] = {}
+        return
     if not schema:
         return
     task = ("Return one JSON object with exactly these keys and value types, taken from the DOCUMENTS: %s. "
@@ -647,6 +686,41 @@ def build_result(order: dict, ctx: dict) -> dict:
     return {n: _coerce(field_value(n, t, ctx), t) for n, t in schema.items()}
 
 
+#: Values deterministic code computes from handle sets. Only these (bucketed) can go
+#: back below P0; nothing a model read out of a document is among them.
+SAFE_COUNT_KEYS = ("count", "searched", "filtered_out", "duplicates_removed", "classified_out",
+                   "link_count", "dated_items", "common_terms", "distinct_terms")
+_SAFE_DATES = {"newest_days": "newest_bucket", "newest": "newest_bucket",
+               "oldest_days": "oldest_bucket", "oldest": "oldest_bucket"}
+
+
+def safe_value(name: str, ctx: dict):
+    """What one output field may send back below P0: a count bucket, a date word, or None."""
+    from agent_friday.services.work_order_returns import bucket
+    vals, low = ctx["values"], name.lower()
+    if low in _SAFE_DATES:
+        v = vals.get(_SAFE_DATES[low])
+        return v if isinstance(v, str) else None
+    if name in SAFE_COUNT_KEYS and isinstance(vals.get(name), int) and not isinstance(vals.get(name), bool):
+        return bucket(vals[name])
+    if low in _ALIASES["count"]:
+        return bucket(vals.get("count", len(ctx["items"])))
+    if low in _ALIASES["items"]:
+        return bucket(len(vals.get("items", [it["handle"] for it in ctx["items"]])))
+    if low == "links":
+        return bucket(len(vals.get("links") or []))
+    return None
+
+
+def build_safe(order: dict, ctx: dict) -> dict:
+    """The fields of the result that code computed from handle sets, bucketed. This is
+    all a P1 or P2 return carries; the typed local result stays here."""
+    schema = order.get("output_schema") or {}
+    if not schema:
+        return {"count": safe_value("count", ctx)}
+    return {n: v for n, v in ((n, safe_value(n, ctx)) for n in schema) if v is not None}
+
+
 def _step_schema_check(env: Env, ctx: dict, step: dict, order: dict) -> None:
     res = build_result(order, ctx)
     schema = order.get("output_schema") or {}
@@ -697,15 +771,12 @@ def check_acceptance(order: dict, ctx: dict, conv: str) -> List[str]:
 
 # ── writes become proposals ──────────────────────────────────────────────────
 
-_SETTING_RE = re.compile(r"^\s*(settings\.[A-Za-z0-9_.<>]{3,80})\s*[:=]\s*(.{1,80}?)\s*$")
-
-
 def apply_writes(env: Env, order: dict, ctx: dict, writes: List[dict],
                  save: Optional[Callable[[List[dict]], None]] = None) -> List[dict]:
     """Turn each WriteIntent into a PENDING proposal through its governed path,
     once. Returns the updated intents. Nothing is written directly: a wiki
-    proposal waits in Knowledge, a fact waits in the memory review queue, a
-    setting waits on its card. SOUL is never a target."""
+    proposal waits in Knowledge, a fact waits in the memory review queue. SOUL
+    and settings are never targets."""
     result = ctx.get("result") or {}
     local_text = str(ctx["values"].get("summary") or result.get("summary") or "").strip()
     provider = (order.get("specified_by") or {}).get("provider") or "a cloud model"
@@ -741,12 +812,6 @@ def apply_writes(env: Env, order: dict, ctx: dict, writes: List[dict],
                     time.strftime("%Y-%m-%d"), model="work-order:%s" % env.order_id)
                 w.update(state="proposed" if n else "skipped", proposal="memory_review",
                          detail="stored" if n else "already proposed")
-            elif w["target"] == "settings":
-                m = _SETTING_RE.match(note)
-                if not m:
-                    raise StepFailed("a settings write must name a settings path and a value")
-                r = env.tool("set_setting", {"path": m.group(1), "value": m.group(2)})
-                w.update(state="proposed", proposal="setting_card", detail=str(r)[:200])
             else:
                 raise StepFailed("that target is not writable from a work order")
         except StepFailed as e:
@@ -797,7 +862,9 @@ def run(order_id: str, *, tool_fn=None, model_fn=None, laya_fn=None) -> dict:
     cp = rec.get("cp") or {"next": 0, "ctx": fresh_ctx()}
     ctx = cp["ctx"]
     wo.update(order_id, status="running", started=rec.get("started") or time.time())
+    advisory: List[str] = []
     try:
+        _rehydrate(env, ctx, steps, int(cp["next"]))
         while True:
             for i in range(int(cp["next"]), len(steps)):
                 step = steps[i]
@@ -822,6 +889,9 @@ def run(order_id: str, *, tool_fn=None, model_fn=None, laya_fn=None) -> dict:
             failed = check_acceptance(order, ctx, order["conversation_id"])
             if not failed:
                 break
+            if _gating(rec) is False:          # below P0 the checks are the owner's view only
+                advisory = failed
+                break
             if rec.get("attempts", 0) >= MAX_RETRIES:
                 wo.update(order_id, status="failed_acceptance", failed_checks=failed, ended=time.time(),
                           error="acceptance failed after a retry: " + ", ".join(failed))
@@ -837,6 +907,7 @@ def run(order_id: str, *, tool_fn=None, model_fn=None, laya_fn=None) -> dict:
             writes = apply_writes(env, order, ctx, rec.get("writes") or order["writes"],
                                   save=lambda ws: wo.update(order_id, writes=ws))
         wo.update(order_id, status="done", ended=time.time(), result=ctx.get("result") or {},
+                  safe=build_safe(order, ctx), accept_local=advisory,
                   summary=str(ctx["values"].get("summary") or ""), failed_checks=[],
                   executed_by={"seat": env.seat or "", "steps": [s["executor"] for s in steps]},
                   decisions=ctx["decisions"], notes=ctx["notes"],
@@ -856,5 +927,40 @@ def run(order_id: str, *, tool_fn=None, model_fn=None, laya_fn=None) -> dict:
                       ended=time.time())
         else:
             raise
+    if rec.get("status") in ("done", "cancelled", "failed_acceptance"):
+        wo.strip_text(rec)                   # the order is over: the documents' text goes with it
     wo.persist_now()
     return wo.public_view(rec)
+
+
+def _gating(rec: dict) -> bool:
+    """True when this order's acceptance checks may decide its status: only when
+    every input is still public (P0). Anywhere else a count threshold is an oracle."""
+    try:
+        from agent_friday.services import work_order_returns
+        return work_order_returns.effective_class(rec) == "P0_public"
+    except Exception:
+        return False
+
+
+def _rehydrate(env: Env, ctx: dict, steps: List[dict], start: int) -> None:
+    """A resumed order whose documents' text was not kept reads them again, if a later
+    step needs it. An input that has since gone is dropped, not remembered."""
+    if start <= 0 or not any(s["verb"] in NEEDS_TEXT for s in steps[start:]):
+        return
+    keep = []
+    for it in ctx["items"]:
+        if it.get("read"):
+            keep.append(it)
+            continue
+        if _handles.lookup(it["handle"], env.conv) is None:
+            ctx["notes"].append("an input handle is no longer valid")
+            continue
+        keep.append(it)
+        try:
+            it["text"], it["read"], it["error"] = read_one(env, it)[:TEXT_CAP], True, ""
+        except StepFailed as e:
+            it["error"] = str(e)[:160]
+    ctx["items"] = keep
+    if keep and not any(i.get("read") for i in keep):
+        raise StepFailed("could not read any input again: %s" % (keep[0].get("error") or "unknown"))

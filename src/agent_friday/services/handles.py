@@ -37,6 +37,8 @@ HANDLE_RE = re.compile(r"^h_[A-Za-z0-9]{20}$")
 DEFAULT_TTL_S = 24 * 3600.0
 MAX_TTL_S = 7 * 24 * 3600.0
 MAX_HANDLES = 5000
+#: One conversation cannot fill the registry for everyone else.
+MAX_HANDLES_PER_CONV = 500
 
 #: What a handle can name. The local ref is kind-specific and stays local.
 KINDS = ("library_doc", "wiki_page", "kg_fact", "kg_entity", "file", "mail_thread",
@@ -189,6 +191,8 @@ def issue(kind: str, ref, conversation_id: str, *, tier: str = "normal",
         _sweep(now)
         if len(_STORE) >= MAX_HANDLES:
             raise HandleError("too many open handles")
+        if sum(1 for r in _STORE.values() if r.conversation_id == conv) >= MAX_HANDLES_PER_CONV:
+            raise HandleError("too many open handles in this conversation")
         while True:
             h = PREFIX + _new_body()
             if h not in _STORE:
@@ -288,15 +292,45 @@ def size_class(size: int) -> str:
     return "large"
 
 
-def _title_if_clear(title: str, provider: str) -> str:
+def is_cloud_destination(provider, model: str = "") -> bool:
+    """True when text for this (provider, model) leaves the PC. A cloud-relayed
+    model tag (an Ollama ``:cloud`` model) is cloud even though its provider
+    name says local. Unreadable means cloud."""
+    try:
+        from agent_friday.services import egress_gate
+        from agent_friday.services.local_only_guard import is_cloud_model_tag, provider_name_of
+        name = provider_name_of(provider)
+        return bool(is_cloud_model_tag(model)) or bool(egress_gate._is_cloud(name))
+    except Exception:
+        return True
+
+
+def gate_for(text: str, provider, model: str = "", field: str = "prompt") -> str:
+    """Run the egress gate for the destination the turn really has. The gate
+    judges the provider name; a cloud-relayed model tag behind a local provider
+    is gated under a cloud name so it is not waved through as local."""
+    import inspect
+    from agent_friday.services import egress_gate
+    from agent_friday.services.local_only_guard import provider_name_of
+    name = provider_name_of(provider) or ""
+    try:
+        if "model" in inspect.signature(egress_gate.gate_text).parameters:
+            return egress_gate.gate_text(text, name, field, model=model)
+    except (TypeError, ValueError):
+        pass
+    if is_cloud_destination(name, model) and not egress_gate._is_cloud(name):
+        name = "%s-cloud" % (name or "ollama")
+    return egress_gate.gate_text(text, name, field)
+
+
+def _title_if_clear(title: str, provider: str, model: str = "") -> str:
     """The title, only if the egress gate lets it through unchanged. Any change,
     any error, any hesitation: no title."""
     t = (title or "").strip()
     if not t or not provider:
         return ""
     try:
-        from agent_friday.services import egress_gate
-        out = egress_gate.gate_text(t, provider, "work_order_handle_title")
+        out = gate_for(t, provider, model, "work_order_handle_title")
     except Exception:
         _log.debug("handle title check failed; title withheld", exc_info=True)
         return ""
@@ -304,7 +338,7 @@ def _title_if_clear(title: str, provider: str) -> str:
 
 
 def metadata(handle, conversation_id: str, *, provider: str = "",
-             include_title: bool = True, turn_id: str = "") -> Optional[dict]:
+             include_title: bool = True, turn_id: str = "", model: str = "") -> Optional[dict]:
     """What a cloud model is told about a handle: kind, date bucket, size class,
     and the title only when it passes the egress gate. Never a path or a ref.
     None for a handle this conversation does not hold."""
@@ -314,19 +348,47 @@ def metadata(handle, conversation_id: str, *, provider: str = "",
     out = {"handle": rec.handle, "kind": rec.kind,
            "date": date_bucket(rec.dated), "size": size_class(rec.size)}
     if include_title:
-        title = _title_if_clear(rec.title, provider)
+        title = _title_if_clear(rec.title, provider, model)
         if title:
             out["title"] = title
     if provider:
-        now = time.time()
-        with _LOCK:
-            _SEEN.setdefault(rec.conversation_id, {})[rec.handle] = now
-            if turn_id:
-                _SEEN_TURNS.setdefault(str(turn_id), {})[rec.handle] = now
-                while len(_SEEN_TURNS) > MAX_SEEN_TURNS:
-                    _SEEN_TURNS.pop(next(iter(_SEEN_TURNS)), None)
-        _changed()
+        mark_seen([rec.handle], rec.conversation_id, turn_id)
     return out
+
+
+def mark_seen(handles, conversation_id: str, turn_id: str = "") -> int:
+    """Record that a cloud model was shown these handles (for the turn receipt).
+    Only handles this conversation holds are recorded. Returns how many."""
+    conv = str(conversation_id or "")
+    now = time.time()
+    n = 0
+    with _LOCK:
+        for h in handles or []:
+            rec = _STORE.get(h) if looks_like_handle(h) else None
+            if rec is None or rec.conversation_id != conv or rec.expires <= now:
+                continue
+            _SEEN.setdefault(conv, {})[h] = now
+            if turn_id:
+                _SEEN_TURNS.setdefault(str(turn_id), {})[h] = now
+            n += 1
+        while len(_SEEN_TURNS) > MAX_SEEN_TURNS:
+            _SEEN_TURNS.pop(next(iter(_SEEN_TURNS)), None)
+    if n:
+        _changed()
+    return n
+
+
+_HANDLE_IN_TEXT = re.compile(r"h_[A-Za-z0-9]{20}")
+
+
+def handles_in(payload) -> List[str]:
+    """Every handle-shaped string anywhere in a payload (keys and values)."""
+    import json
+    try:
+        text = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+    except (TypeError, ValueError):
+        text = str(payload)
+    return sorted(set(_HANDLE_IN_TEXT.findall(text)))
 
 
 def seen_by_cloud(conversation_id: str = "", turn_id: str = "") -> List[str]:

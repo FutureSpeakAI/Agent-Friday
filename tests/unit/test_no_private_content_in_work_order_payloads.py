@@ -168,7 +168,7 @@ class TestNoCanaryReachesTheCloud:
         everything = " ".join(CANARIES)
         oid, st = drive(cloud, h, model_text="It says %s" % everything)
         assert st["privacy_class"] == "P1_aggregate" and st["status"] == "done"
-        assert st["result"]["count"] == 4 and "summary" not in st
+        assert st["result"]["count"] == "1-4" and "summary" not in st
         assert_no_canary(cloud.blob())
         assert_no_path(cloud.blob())
 
@@ -181,7 +181,7 @@ class TestNoCanaryReachesTheCloud:
     def test_vault_material_is_never_read_and_a_failed_p3_order_says_only_that_it_failed(self, cloud):
         calls = []
         oid, st = drive(cloud, issue_all(tier="vault"), tools=lambda n, a, c: calls.append(n))
-        assert calls == [] and st == {"order_id": oid, "status": "failed"}
+        assert calls == [] and st == {"order_id": oid, "status": "did_not_complete"}
         assert_no_canary(cloud.blob())
         assert_no_path(cloud.blob())
 
@@ -237,21 +237,22 @@ class TestNoCanaryReachesTheCloud:
                   constraints={"tools_allowed": ["read", "extract"]})
         oid, st = drive(cloud, h, o=o, model_text=json.dumps(
             {"title": C_WIKI, "quote": C_LIB, "note": [C_KG, C_PROFILE], "count": 4}))
-        assert st["result"] == {"count": 4}
+        assert st["result"] == {"count": "1-4"}
         assert_no_canary(cloud.blob())
 
     def test_a_failure_does_not_carry_the_tool_text_or_path(self, cloud):
         h = issue_all()
         oid, st = drive(cloud, h, tools=lambda n, a, c: "Wiki file not found: %s %s %s" % (a.get("path"), C_WIKI, LIB_PATH))
-        assert st["status"] == "failed"
+        assert st["status"] == "did_not_complete" and "failed_step" not in st
         assert_no_canary(cloud.blob())
         assert_no_path(cloud.blob())
         assert C_WIKI in wo.get(oid)["error"] or "read failed" in wo.get(oid)["error"]     # kept locally
 
-    def test_a_failed_acceptance_names_the_check_only(self, cloud):
+    def test_a_threshold_below_p0_cannot_move_the_status_and_is_kept_for_the_owner(self, cloud):
         h = issue_all()
         oid, st = drive(cloud, h, o=order(h, acceptance=[{"check": "count_at_least", "value": 99}]))
-        assert st["status"] == "failed" and st["failed_checks"] == ["count_at_least"]
+        assert st["status"] == "done" and "failed_checks" not in st
+        assert wo.get(oid)["accept_local"] == ["count_at_least"]
         assert_no_canary(cloud.blob())
 
     def test_the_result_handle_resolves_only_here_and_only_in_this_conversation(self, cloud):

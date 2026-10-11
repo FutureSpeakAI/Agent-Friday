@@ -3,24 +3,30 @@
 The cloud model specified the work; this PC did it. What it may hear back is
 decided here, by the order's privacy class, and nothing else decides it:
 
-  P0_public     the result (every input was public)
-  P1_aggregate  numbers, booleans and fixed words only; no free text from
-                private sources, however the cloud named the field
+  P0_public     the result (every input was public, re-checked at return time)
+  P1_aggregate  counts the plan produced from handle sets (list sizes, matched
+                counts), bucketed 0 / 1-4 / 5-19 / 20+, and fixed words. Never a
+                value read out of a document, whatever type the cloud named the
+                field: numbers and booleans from ``extract`` stay on this PC
   P2_summary    a PII-free summary through the existing ``local_context``
-                pipeline (scrub, floor, then a card or a conversation grant),
-                plus the same aggregates. Not in local_only (no cloud model is in play there).
-  P3_local_only {order_id, status, result_handle}, nothing else (a failed P3
-                order says only that it failed)
+                pipeline (scrub, floor, then ALWAYS a card), plus the same
+                bucketed counts. Not in local_only (no cloud model is in play there).
+  P3_local_only {order_id, status, result_handle}, nothing else
 
 The class is Friday's: the lowest the inputs allow, and the owner's setting. A
 cloud model cannot raise it; a mode that does not allow P2 lowers it to P1.
 
-* The egress gate runs on EVERY return. If it changes the payload or cannot
-  run, the cloud hears only that the result was held back.
+* Below P0 the cloud cannot learn whether an order's result was empty or full
+  from its status: a failure is reported as "did_not_complete" with no step and
+  no check name, and acceptance checks never gate the status (the executor
+  runs them for the owner's view only).
+* The egress gate runs on EVERY return, for the destination the turn really has
+  (a cloud-relayed model tag is cloud). If it changes the payload or cannot run,
+  the cloud hears only that the result was held back.
 * Every slice returned is listed on the turn receipt as kind, size and class
-  (``work_orders.receipt_section``). Nothing about content.
-* A failure tells the cloud which step number and, for a failed check, the
-  check's name from a fixed list. The local error text stays local.
+  (``work_orders.receipt_section``), and every handle inside it is recorded as
+  seen. Nothing about content.
+* A result handle is minted once. After it expires the order is "expired".
 """
 from __future__ import annotations
 
@@ -45,9 +51,11 @@ CLOUD_STATE = {"queued": "queued", "validated": "queued", "waiting_for_idle": "q
 
 _DATE_WORDS = ("today", "this week", "this month", "this year", "older", "undated")
 _SIZE_WORDS = ("tiny", "small", "medium", "large")
-#: The only strings a P1 result may carry besides handles.
+#: How many, coarsely: exactly none, a few, some, many. A count below P0 is one of these.
+BUCKET_WORDS = ("0", "1-4", "5-19", "20+")
+#: The only strings a P1 result may carry besides handles this conversation was given.
 FIXED_WORDS = frozenset(_handles.KINDS) | frozenset(_DATE_WORDS) | frozenset(_SIZE_WORDS) | \
-    frozenset(CLOUD_STATE.values())
+    frozenset(BUCKET_WORDS) | frozenset(CLOUD_STATE.values())
 _FIELD = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
 MAX_LIST = 50
 MAX_DEPTH = 3
@@ -55,6 +63,29 @@ MAX_DEPTH = 3
 
 def stricter(a: str, b: str) -> str:
     return a if _STRICT.get(a, 2) >= _STRICT.get(b, 2) else b
+
+
+def bucket(n) -> str:
+    """A count as a coarse bucket: "0", "1-4", "5-19" or "20+"."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return BUCKET_WORDS[0]
+    if n <= 0:
+        return BUCKET_WORDS[0]
+    if n < 5:
+        return BUCKET_WORDS[1]
+    return BUCKET_WORDS[2] if n < 20 else BUCKET_WORDS[3]
+
+
+def _input_tiers(rec: dict) -> list:
+    """The tier each input handle has NOW (None when it is gone)."""
+    conv = rec["order"]["conversation_id"]
+    out = []
+    for h in rec["order"].get("inputs") or []:
+        r = _handles.lookup(h, conv)
+        out.append(None if r is None else r.tier)
+    return out
 
 
 def effective_class(rec: dict) -> str:
@@ -67,28 +98,40 @@ def effective_class(rec: dict) -> str:
         cls = stricter(cls, owner)
     if cls == "P2_summary" and not (rec.get("mode") in P2_MODES and wo._routing_mode() in P2_MODES):
         cls = "P1_aggregate"
+    # The tiers are read again here: a page that was made private since the order
+    # was validated tightens it, and P0 holds only while every input is still public.
+    tiers = _input_tiers(rec)
+    if any(t in _handles.PRIVATE_TIERS for t in tiers):
+        cls = stricter(cls, "P3_local_only")
+    if cls == "P0_public" and not all(t == "public" for t in tiers):
+        cls = stricter(cls, "P1_aggregate")
     return cls
 
 
-def aggregate_only(value: Any, depth: int = 0):
-    """Keep numbers, booleans, handles and fixed words; drop every other string.
-    Lists and objects are filtered the same way, to a shallow depth."""
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value
+def aggregate_only(value: Any, conv: str = "", before: float = 0.0, depth: int = 0):
+    """Keep fixed words and the handles this conversation was already given
+    (issued before the order ran); drop every other string and every raw number
+    or boolean: a count reaches this filter already bucketed by code. Lists and
+    objects are filtered the same way, to a shallow depth."""
     if isinstance(value, str):
-        return value if (_handles.looks_like_handle(value) or value in FIXED_WORDS) else None
-    if depth >= MAX_DEPTH:
+        if value in FIXED_WORDS:
+            return value
+        if conv and _handles.looks_like_handle(value):
+            rec = _handles.lookup(value, conv)
+            if rec is not None and (not before or rec.created < before):
+                return value
+        return None
+    if depth >= MAX_DEPTH or value is None or isinstance(value, (bool, int, float)):
         return None
     if isinstance(value, (list, tuple)):
-        kept = [v for v in (aggregate_only(x, depth + 1) for x in list(value)[:MAX_LIST]) if v is not None]
+        kept = [v for v in (aggregate_only(x, conv, before, depth + 1) for x in list(value)[:MAX_LIST])
+                if v is not None]
         return kept if (kept or not value) else None       # all free text: nothing left to say
     if isinstance(value, dict):
         out = {}
         for k, v in list(value.items())[:MAX_LIST]:
             if isinstance(k, str) and _FIELD.match(k):
-                kept = aggregate_only(v, depth + 1)
+                kept = aggregate_only(v, conv, before, depth + 1)
                 if kept is not None:
                     out[k] = kept
         return out if (out or not value) else None
@@ -108,27 +151,30 @@ def record(rec: dict, *, kind: str, size: int, cls: str, turn_id: str = "", gate
 
 def _result_handle(rec: dict) -> str:
     """The handle a cloud model can name this order's local result by. It points
-    at a record on this PC; naming it in a later order lets that order read it."""
+    at a record on this PC; naming it in a later order lets that order read it.
+    It is minted ONCE. After it expires this returns "" and nothing is re-minted,
+    so a result stays reachable for the handle's lifetime and no longer."""
     from agent_friday.services import work_orders as wo
-    h = rec.get("result_handle")
-    if h and _handles.lookup(h, rec["order"]["conversation_id"]) is not None:
-        return h
     conv = rec["order"]["conversation_id"]
-    cls = rec["order"]["privacy_class"]
-    h = _handles.issue("note", {"work_order": rec["order_id"]}, conv,
-                       tier="private" if cls == "P3_local_only" else "normal",
-                       size=len(json.dumps(rec.get("result") or {}, default=str)))
-    wo.update(rec["order_id"], result_handle=h)
+    with wo._LOCK:
+        h = rec.get("result_handle")
+        if h:
+            return h if _handles.lookup(h, conv) is not None else ""
+        cls = rec["order"]["privacy_class"]
+        h = _handles.issue("note", {"work_order": rec["order_id"]}, conv,
+                           tier="private" if cls == "P3_local_only" else "normal",
+                           size=0)             # a constant: the result's size is not for the cloud
+        wo.update(rec["order_id"], result_handle=h)
     return h
 
 
-def _gate(payload: dict, provider: str) -> bool:
-    """True when the egress gate lets the payload through unchanged. A gate that
-    errors, or changes anything, holds the result back."""
+def _gate(payload: dict, provider: str, model: str = "") -> bool:
+    """True when the egress gate lets the payload through unchanged, judged for the
+    destination the turn really has (a cloud-relayed model tag is cloud). A gate
+    that errors, or changes anything, holds the result back."""
     try:
-        from agent_friday.services import egress_gate
         text = json.dumps(payload, sort_keys=True, default=str)
-        return egress_gate.gate_text(text, provider, "work_order_return") == text
+        return _handles.gate_for(text, provider, model, "work_order_return") == text
     except Exception:
         _log.debug("egress gate unavailable for a work-order return; holding it", exc_info=True)
         return False
@@ -138,20 +184,28 @@ def _size(obj) -> int:
     return len(json.dumps(obj, sort_keys=True, default=str))
 
 
-def for_cloud(rec: dict, *, provider: str) -> Tuple[dict, List[dict]]:
+def for_cloud(rec: dict, *, provider: str, model: str = "") -> Tuple[dict, List[dict]]:
     """The payload a cloud model hears about this order now, and the slices it
     is made of (``kind``, ``size``, ``cls``). Pure of side effects except the
     result handle and the gate's own log."""
     cls = effective_class(rec)
+    p0 = cls == "P0_public"
+    conv = rec["order"]["conversation_id"]
     st = rec["status"]
     state = CLOUD_STATE.get(st, "unknown")
+    if state == "failed" and not p0:
+        # Below P0 a failure says only that it did not complete: which step, which
+        # check or why would each be a function of what the documents held.
+        state = "did_not_complete"
     payload: dict = {"order_id": rec["order_id"], "status": state}
+    if state == "done" and rec.get("result_handle") and not _result_handle(rec):
+        payload["status"] = state = "expired"       # the result is gone; it is not made again
     slices: List[dict] = [{"kind": "status", "size": _size(payload), "cls": cls}]
-    if cls != "P3_local_only":
+    if cls != "P3_local_only" and state != "expired":
         payload.update(privacy_class=cls, priority=rec["order"]["priority"])
-        if state != "done":
+        if state not in ("done", "did_not_complete"):
             payload["result"] = None
-    if state == "failed" and cls != "P3_local_only":
+    if state == "failed" and p0:
         if rec.get("failed_step") is not None:
             payload["failed_step"] = int(rec["failed_step"])
         from agent_friday.services.work_orders import ACCEPTANCE_CHECKS
@@ -164,11 +218,11 @@ def for_cloud(rec: dict, *, provider: str) -> Tuple[dict, List[dict]]:
         if cls == "P3_local_only":
             payload["result_handle"] = _result_handle(rec)
             slices.append({"kind": "result_handle", "size": len(payload["result_handle"]), "cls": cls})
-        elif cls == "P0_public":
+        elif p0:
             payload["result"] = result
             slices.append({"kind": "result", "size": _size(result), "cls": cls})
-        else:                                           # P1 and P2: aggregates
-            agg = aggregate_only(result)
+        else:                                           # P1 and P2: bucketed counts only
+            agg = aggregate_only(rec.get("safe") or {}, conv, float(rec.get("created") or 0.0))
             payload["result"] = agg
             slices.append({"kind": "aggregate", "size": _size(agg), "cls": cls})
             if cls == "P2_summary":
@@ -178,7 +232,7 @@ def for_cloud(rec: dict, *, provider: str) -> Tuple[dict, List[dict]]:
                 if p2.get("state") == "sent" and p2.get("text"):
                     held["summary"] = str(p2["text"])
                     slices.append({"kind": "p2_summary", "size": len(held["summary"]), "cls": cls})
-    if not _gate(payload, provider):
+    if not _gate(payload, provider, model):
         slim = {"order_id": rec["order_id"], "status": state,
                 "withheld": "The privacy gate held this result back on this PC."}
         return slim, [{"kind": "withheld", "size": _size(slim), "cls": cls, "gated": True}]
@@ -189,13 +243,9 @@ def for_cloud(rec: dict, *, provider: str) -> Tuple[dict, List[dict]]:
 
 
 def _digest(rec: dict) -> str:
-    """A summary made only of counts, for a P2 order whose steps produced no prose."""
-    r = rec.get("result") or {}
-    bits = []
-    for k, v in r.items():
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            bits.append("%s: %s" % (k, v))
-    return "; ".join(bits)[:400]
+    """A summary made only of bucketed counts, for a P2 order whose steps produced no prose."""
+    r = rec.get("safe") or {}
+    return "; ".join("%s: %s" % (k, v) for k, v in r.items() if isinstance(v, str))[:400]
 
 
 def after_run(rec: dict) -> None:
@@ -217,9 +267,12 @@ def after_run(rec: dict) -> None:
     else:
         try:
             from agent_friday.services import local_context
+            # A work order is cloud-authored and reads documents: it is always a tainted
+            # turn, so it always gets a card, never a conversation grant.
             r = local_context.offer(raw, conversation_id=rec["order"]["conversation_id"],
                                     cloud_model=cloud.strip(), local_model=seat,
                                     question="A work order's summary", channel="chat",
+                                    force_card=True,
                                     title="Share this work order's summary with %s?" % cloud.strip())
             p2 = {"state": r.get("status"), "approval_id": r.get("approval_id"),
                   "text": r.get("text") if r.get("status") == "sent" else None}

@@ -190,16 +190,19 @@ class TestRun:
             with pytest.raises(ex.StepFailed):
                 env.tool(bad, {})
 
-    def test_search_finds_pages_and_gives_them_handles(self):
-        oid = _submit(_order(inputs=[], constraints={"tools_allowed": ["search", "read", "count"]},
-                             goal="Count the pages about launch budgets"))
+    def test_search_narrows_the_handles_it_was_given_and_mints_none(self):
+        h = _handles()[:2]                                  # launch.md and budget.md
+        before = len(H._STORE)
+        oid = _submit(_order(inputs=h, constraints={"tools_allowed": ["search", "count"]},
+                             goal="Count the pages about budget plans"))
         tools = Tools()
         res = ex.run(oid, tool_fn=tools, model_fn=_model())
         assert res["status"] == "done" and "search_wiki" in tools.names
         rec = wo.get(oid)
-        assert rec["result"]["count"] >= 1
+        assert rec["result"]["count"] == 1                  # only budget.md says "budget"
+        assert len(H._STORE) == before                      # nothing new was issued
         for it in rec["cp"]["ctx"]["items"]:
-            assert H.lookup(it["handle"], CONV) is not None      # citable, scoped to this conversation
+            assert H.lookup(it["handle"], CONV) is not None and it["handle"] in h
 
     def test_a_vault_item_is_never_read(self):
         v = H.issue("vault_item", "vault://x", CONV, tier="vault")
@@ -216,7 +219,8 @@ class TestRun:
         res = ex.run(oid, tool_fn=Tools(docs), model_fn=lambda *a: pytest.fail("a model was used"))
         rec = wo.get(oid)
         assert res["status"] == "done" and rec["result"]["count"] == 3
-        assert rec["result"]["oldest_days"] >= 3
+        assert rec["result"]["oldest_days"] >= 3            # exact, and local
+        assert rec["safe"]["oldest_days"] in ("this week", "this month")     # coarse, and all the cloud gets
 
 
 # ── Laya heads: a choice, add-only, never blocking ───────────────────────────
@@ -330,9 +334,10 @@ class TestResume:
         assert store.load()
         rec = wo.get(oid)
         assert rec and rec["cp"]["next"] == rec["failed_step"] and rec["status"] == "failed"
+        assert all(it["text"] == "" for it in rec["cp"]["ctx"]["items"])      # no text was saved
         wo.update(oid, status="queued", error="")
         done = ex.run(oid, tool_fn=tools, model_fn=_model("Back after a restart."))
-        assert done["status"] == "done" and len(tools.calls) == n_reads
+        assert done["status"] == "done" and len(tools.calls) == n_reads + 2   # the 2 filtered survivors, read again
         assert wo.get(oid)["summary"] == "Back after a restart."
 
     def test_an_order_that_was_running_when_the_app_stopped_is_queued_again(self):
@@ -373,7 +378,7 @@ class TestResume:
 
 class TestAcceptance:
     def test_a_failed_check_retries_the_plan_once_then_reports(self):
-        oid = _submit(_order(acceptance=[{"check": "count_at_least", "value": 5}]))
+        oid = _submit(_order(inputs=_handles(tier="public"), acceptance=[{"check": "count_at_least", "value": 5}]))
         tools = Tools()
         res = ex.run(oid, tool_fn=tools, model_fn=_model())
         rec = wo.get(oid)
@@ -386,7 +391,7 @@ class TestAcceptance:
 
     def test_the_retry_can_pass(self):
         answers = iter(['{"a": 1}', '{"a": 1, "b": "x"}'])
-        oid = _submit(_order(constraints={"tools_allowed": ["read", "extract"]},
+        oid = _submit(_order(inputs=_handles(tier="public"), constraints={"tools_allowed": ["read", "extract"]},
                              output_schema={"a": "integer", "b": "string"},
                              acceptance=[{"check": "schema_valid"}]))
         model = _model(lambda: next(answers))
@@ -401,8 +406,19 @@ class TestAcceptance:
         assert ex.run(oid, tool_fn=Tools(), model_fn=_model())["status"] == "done"
 
     def test_count_at_most_fails_when_exceeded(self):
-        oid = _submit(_order(acceptance=[{"check": "count_at_most", "value": 1}]))
+        oid = _submit(_order(inputs=_handles(tier="public"), acceptance=[{"check": "count_at_most", "value": 1}]))
         assert ex.run(oid, tool_fn=Tools(), model_fn=_model())["status"] == "failed_acceptance"
+
+    def test_below_p0_a_threshold_cannot_change_the_status_the_cloud_sees(self):
+        passes = _submit(_order(acceptance=[{"check": "count_at_least", "value": 1}]))
+        fails = _submit(_order(goal="Count the launch pages and review them.",
+                               acceptance=[{"check": "count_at_least", "value": 99}]))
+        for oid in (passes, fails):
+            assert ex.run(oid, tool_fn=Tools(), model_fn=_model())["status"] == "done"
+        a, b = wo.status(passes, CONV, provider=CLOUD), wo.status(fails, CONV, provider=CLOUD)
+        assert a["status"] == b["status"] == "done" and "failed_checks" not in b
+        assert a["result"] == b["result"]
+        assert wo.get(fails)["accept_local"] == ["count_at_least"] and wo.get(passes)["accept_local"] == []
 
 
 # ── what goes back, by class ─────────────────────────────────────────────────
@@ -427,14 +443,21 @@ class TestReturnPolicy:
     def test_p1_returns_numbers_and_fixed_words_never_free_text(self):
         oid = _done(_order(output_schema={"count": "integer", "summary": "string", "kinds": "list"}))
         st = wo.status(oid, CONV, provider=CLOUD)
-        assert st["privacy_class"] == "P1_aggregate" and st["result"] == {"count": 2}
+        assert st["privacy_class"] == "P1_aggregate" and st["result"] == {"count": "1-4"}
         assert "summary" not in st and CANARY not in json.dumps(st)
 
     def test_p1_aggregate_filter_unit(self):
-        h = "h_" + "a" * 20
-        got = rt.aggregate_only({"n": 3, "ok": True, "kind": "wiki_page", "title": "Private plan", "ids": [h, "free text"],
-                                 "nested": {"x": 1.5, "t": "words here"}, "bad key!": 1})
-        assert got == {"n": 3, "ok": True, "kind": "wiki_page", "ids": [h], "nested": {"x": 1.5}}
+        mine, theirs = H.issue("wiki_page", "a.md", CONV), H.issue("wiki_page", "b.md", "elsewhere")
+        forged = "h_" + "a" * 20                              # handle-shaped, never issued
+        got = rt.aggregate_only({"n": 3, "ok": True, "kind": "wiki_page", "title": "Private plan",
+                                 "ids": [mine, theirs, forged, "free text"], "bucket": "1-4",
+                                 "nested": {"x": 1.5, "t": "words here"}, "bad key!": 1}, CONV)
+        assert got == {"kind": "wiki_page", "ids": [mine], "bucket": "1-4"}
+        assert rt.aggregate_only({"ids": [mine]}) is None            # no conversation: no handle passes
+
+    def test_buckets(self):
+        assert [rt.bucket(n) for n in (0, 1, 4, 5, 19, 20, 500, -3, "x")] == \
+            ["0", "1-4", "1-4", "5-19", "5-19", "20+", "20+", "0", "0"]
 
     def test_p0_returns_the_public_result(self):
         pub = {"web/page.md": "A public page about launches."}
@@ -512,15 +535,27 @@ class TestReturnPolicy:
         monkeypatch.setattr(egress_gate, "gate_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
         assert "withheld" in wo.status(oid, CONV, provider=CLOUD)
 
-    def test_a_failure_tells_the_cloud_the_step_and_nothing_else(self):
+    def test_a_failure_tells_the_cloud_only_that_it_did_not_complete(self):
         oid = _submit()
         res = ex.run(oid, tool_fn=Tools(fail=lambda n, a: True), model_fn=_model())
         assert res["status"] == "failed"
         st = wo.status(oid, CONV, provider=CLOUD)
         blob = json.dumps(st)
-        assert st["status"] == "failed" and isinstance(st["failed_step"], int)
+        assert st["status"] == "did_not_complete" and "failed_step" not in st and "failed_checks" not in st
         assert FAKE_PATH not in blob and "example" not in blob and "not found" not in blob.lower()
         assert "Wiki file not found" in wo.get(oid)["error"]            # the detail stays local
+
+    def test_p0_keeps_the_step_and_the_check_name(self):
+        oid = _submit(_order(inputs=_handles(tier="public")))
+        ex.run(oid, tool_fn=Tools(fail=lambda n, a: True), model_fn=_model())
+        st = wo.status(oid, CONV, provider=CLOUD)
+        assert st["status"] == "failed" and isinstance(st["failed_step"], int)
+
+    def test_a_filter_that_leaves_nothing_does_not_fail_the_order(self):
+        oid = _submit(_order(goal="Summarise the walrus migration", constraints={"tools_allowed": ["read", "filter", "summarise"]},
+                             output_schema={"count": "integer"}))
+        ex.run(oid, tool_fn=Tools(), model_fn=_model())
+        assert wo.status(oid, CONV, provider=CLOUD)["status"] == "done"
 
 
 # ── the receipt ──────────────────────────────────────────────────────────────
@@ -580,7 +615,7 @@ class TestWrites:
         assert len([c for c in tools.calls if c[0] == "propose_wiki_update"]) == 1
 
     def test_no_write_without_acceptance(self):
-        h = _handles()
+        h = _handles(tier="public")                       # P0: the checks decide
         oid, tools = _submit(dict(self._wiki_order(h), acceptance=[{"check": "count_at_least", "value": 9}])), Tools()
         assert ex.run(oid, tool_fn=tools, model_fn=_model())["status"] == "failed_acceptance"
         assert "propose_wiki_update" not in tools.names
@@ -599,19 +634,11 @@ class TestWrites:
         assert [w["state"] for w in wo.get(oid)["writes"]] == ["proposed", "proposed"]
         assert "propose_wiki_update" not in tools.names
 
-    def test_a_settings_intent_raises_the_settings_card_not_a_change(self):
-        oid = _submit(_order(writes=[{"target": "settings", "op": "update",
-                                      "summary": "settings.display.start_screen: home"}]))
-        tools = Tools()
-        ex.run(oid, tool_fn=tools, model_fn=_model("s"))
-        sent = [c for c in tools.calls if c[0] == "set_setting"]
-        assert sent == [("set_setting", {"path": "settings.display.start_screen", "value": "home"})]
-
-    def test_a_settings_intent_without_a_path_is_not_proposed(self):
-        oid = _submit(_order(writes=[{"target": "settings", "op": "update", "summary": "make it nicer"}]))
-        tools = Tools()
-        ex.run(oid, tool_fn=tools, model_fn=_model("s"))
-        assert "set_setting" not in tools.names and wo.get(oid)["writes"][0]["state"] == "not_proposed"
+    def test_settings_is_not_a_work_order_target(self):
+        res = wo.validate(_order(writes=[{"target": "settings", "op": "update",
+                                          "summary": "settings.display.start_screen: home"}]), CONV)
+        assert not res["ok"] and "settings" not in wo.WRITE_TARGETS
+        assert "set_setting" not in ex.EXECUTOR_TOOLS
 
     def test_soul_is_not_a_target(self):
         res = wo.validate(_order(writes=[{"target": "soul", "op": "update", "summary": "x"}]), CONV)
@@ -727,9 +754,10 @@ class TestWriteGuard:
                     used.add((node.module or "").split(".")[-1])
             assert not (used & FORBIDDEN_NAMES), (fname, used & FORBIDDEN_NAMES)
 
-    def test_the_only_non_tool_write_is_the_memory_review_queue(self):
+    def test_the_only_non_tool_writes_are_the_memory_queue_and_the_cloud_note(self):
         src = Path(ex.__file__).read_text(encoding="utf-8")
         assert src.count("memory_proposals.") == 1 and "propose_from_head" in src
+        assert src.count("_attach_cloud_note(") == 1          # the other internal write, to a pending proposal
 
 
 # ── the scheduler ────────────────────────────────────────────────────────────
@@ -813,6 +841,14 @@ class TestStore:
         assert store.load() is False
         assert store.path().read_bytes() == b"not an encrypted blob at all"
         assert store.status()["error"]
+
+    def test_the_saved_snapshot_holds_no_document_text_and_a_stale_record_is_dropped(self):
+        oid = _submit()
+        ex.run(oid, tool_fn=Tools(), model_fn=_model(""))                   # fails at summarise, text in memory
+        assert any(it["text"] for it in wo.get(oid)["cp"]["ctx"]["items"])
+        assert CANARY not in json.dumps(wo.snapshot())
+        wo.update(oid, ended=time.time() - wo.RECORD_TTL_S - 5)
+        assert wo.sweep() == 1 and wo.get(oid) is None
 
     def test_expired_handles_do_not_come_back(self):
         h = H.issue("wiki_page", "a.md", CONV)

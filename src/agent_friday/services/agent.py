@@ -3410,7 +3410,8 @@ def _tool_work_order_status(inp):
         pname = "cloud"
     from agent_friday.services import turn_plan as _tp
     return json.dumps(work_orders.status((inp or {}).get("order_id") or "", conv or "",
-                                         provider=pname, turn_id=_tp.current_turn_id() or ""))
+                                         provider=pname, turn_id=_tp.current_turn_id() or "",
+                                         model=_CURRENT_MODEL.get() or ""))
 
 
 def _tool_why_that_plan(inp):

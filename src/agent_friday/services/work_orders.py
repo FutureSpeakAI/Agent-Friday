@@ -20,6 +20,11 @@ The order is UNTRUSTED INPUT, always:
 * The privacy class is Friday's to set. The order's own ``privacy_class`` is
   ignored: the class is the lowest the inputs allow, P1 by default, and P3 as
   soon as any input is vault or private-tier.
+* A cloud model gets no private-count oracle: below P0 an acceptance check never
+  decides the status it can see, a failure carries no reason, and each
+  conversation has a cap on open orders, on orders per hour and on repeats of the
+  same request. Records expire (``RECORD_TTL_S``) and are saved without the
+  documents' text.
 * ``specified_by`` and ``order_id`` are set here, never read from the order.
 * ``writes`` are recorded as INTENTS. Nothing here writes anything; once an
   order passes its acceptance checks the executor turns each intent into a
@@ -73,8 +78,10 @@ OUTPUT_TYPES = frozenset({"string", "number", "integer", "boolean", "list", "obj
 _FIELD_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
 
 #: Where a write could one day land, and what it becomes (CS-3). SOUL is absent
-#: on purpose: it is not writable from a work order in 1.1.
-WRITE_TARGETS = frozenset({"wiki", "kg", "profile", "settings"})
+#: on purpose: it is not writable from a work order in 1.1. ``settings`` is absent
+#: too: a setting card raised from a cloud model's words would read as Friday's own
+#: wish, and no provenance line exists for it yet.
+WRITE_TARGETS = frozenset({"wiki", "kg", "profile"})
 WRITE_OPS = frozenset({"create", "update", "link", "append"})
 
 _TOP_KEYS = frozenset({
@@ -94,6 +101,14 @@ class OrderRefused(RuntimeError):
 _LOCK = threading.RLock()
 _ORDERS: Dict[str, dict] = {}
 MAX_ORDERS = 500
+#: A record (and what it holds) is dropped this long after it ended or was last touched.
+RECORD_TTL_S = 7 * 24 * 3600.0
+#: Per conversation: open orders at once, orders in the window, repeats of one request.
+MAX_OPEN_PER_CONV = 4
+MAX_PER_CONV_WINDOW = 30
+MAX_SAME_GOAL_WINDOW = 3
+RATE_WINDOW_S = 3600.0
+ENDED_STATES = ("done", "failed", "failed_acceptance", "cancelled")
 #: Start the executor on submit. Tests that only exercise validation turn it off.
 AUTOSTART: List[bool] = [True]
 _BOOTED = [False]
@@ -315,6 +330,8 @@ def validate(order, conversation_id: str, *, provider: str = "", model: str = ""
         return {"ok": False, "errors": errors, "order": None}
 
     cls = privacy_class_for(inputs, conv)
+    if cls != "P0_public" and any(c["check"] in ("count_at_least", "count_at_most") for c in acceptance):
+        notes.append("count thresholds are advisory below P0: they are checked for the owner only")
     all_handles = list(inputs) + [w["handle"] for w in writes if w.get("handle")]
     return {"ok": True, "errors": [], "notes": notes, "order": {
         "version": VERSION,
@@ -386,9 +403,38 @@ def update(order_id: str, **fields) -> None:
     persist()
 
 
-def snapshot() -> dict:
+def strip_text(rec: dict) -> None:
+    """Drop the documents' text from a record's working state. The handles and the
+    small derived facts stay; a resumed step reads again."""
+    ctx = (rec.get("cp") or {}).get("ctx") or {}
+    for it in ctx.get("items") or []:
+        if isinstance(it, dict):
+            it["text"], it["read"] = "", False
+
+
+def sweep(now: Optional[float] = None) -> int:
+    """Forget records that ended (or were last touched) more than ``RECORD_TTL_S`` ago."""
+    now = time.time() if now is None else now
     with _LOCK:
-        return {"orders": [json.loads(json.dumps(r, default=str)) for r in _ORDERS.values()]}
+        gone = [k for k, r in _ORDERS.items() if k not in _ACTIVE and
+                now - float(r.get("ended") or r.get("updated") or r.get("created") or now) > RECORD_TTL_S]
+        for k in gone:
+            _ORDERS.pop(k, None)
+    if gone:
+        persist()
+    return len(gone)
+
+
+def snapshot() -> dict:
+    """The saved copy never holds a document's text: only handles and derived facts."""
+    sweep()
+    out = []
+    with _LOCK:
+        for r in _ORDERS.values():
+            d = json.loads(json.dumps(r, default=str))
+            strip_text(d)
+            out.append(d)
+    return {"orders": out}
 
 
 def restore(snap: dict) -> int:
@@ -400,6 +446,8 @@ def restore(snap: dict) -> int:
             try:
                 oid = str(r["order_id"])
                 if oid in _ORDERS or not isinstance(r.get("order"), dict):
+                    continue
+                if time.time() - float(r.get("ended") or r.get("updated") or r.get("created") or 0) > RECORD_TTL_S:
                     continue
                 if r.get("status") in ("running", "waiting_for_idle"):
                     r["status"], r["restored"] = "queued", True
@@ -473,6 +521,7 @@ def submit(order, conversation_id: str, *, provider, model: str = "") -> dict:
     if not ok:
         raise OrderRefused(why)
     _boot()
+    sweep()
     resume_pending()
     try:
         from agent_friday.services.local_only_guard import provider_name_of
@@ -489,21 +538,30 @@ def submit(order, conversation_id: str, *, provider, model: str = "") -> dict:
            "sched_class": _sched_class(o["priority"]), "created": now,
            "queued_at": now, "notes": res.get("notes", []), "mode": _routing_mode(),
            "checkpoints": [], "plan": None, "cp": None, "attempts": 0, "returns": [],
-           "active_s": 0.0, "cancel": False}
+           "active_s": 0.0, "cancel": False, "goal_key": goal_key(o.get("goal_text"))}
     with _LOCK:
-        if len(_ORDERS) >= MAX_ORDERS:
-            for k in sorted(_ORDERS, key=lambda k: _ORDERS[k]["created"])[:50]:
+        why_not = _rate_refusal(o["conversation_id"], rec["goal_key"], now)
+        if not why_not and len(_ORDERS) >= MAX_ORDERS:
+            # Only orders that ended make room: an open order and the receipts it needs stay.
+            ended = sorted((k for k, r in _ORDERS.items() if r["status"] in ENDED_STATES),
+                           key=lambda k: _ORDERS[k]["created"])[:50]
+            for k in ended:
                 _ORDERS.pop(k, None)
+            if len(_ORDERS) >= MAX_ORDERS:
+                why_not = _TOO_MANY
+        if why_not:
+            return {"status": "rejected", "errors": [why_not]}
         _ORDERS[oid] = rec
         rec["status"] = "queued"
     _register_with_scheduler()
     persist()
-    out = {"order_id": oid, "status": "queued", "privacy_class": o["privacy_class"],
+    # No privacy_class here: one order per handle would show which handles are private.
+    out = {"order_id": oid, "status": "queued",
            "priority": o["priority"], "class": rec["sched_class"],
            "eta": "when the local models are free" if o["priority"] == "now"
                   else "when this PC is idle"}
     from agent_friday.services import work_order_returns
-    gated = not work_order_returns._gate(out, pname)
+    gated = not work_order_returns._gate(out, pname, model)
     if gated:                                  # the egress gate runs on every return
         out = {"order_id": oid, "status": "queued"}
     work_order_returns.record(rec, kind="status", size=len(json.dumps(out)),
@@ -511,6 +569,33 @@ def submit(order, conversation_id: str, *, provider, model: str = "") -> dict:
     if AUTOSTART[0]:
         start(oid)
     return out
+
+
+_TOO_MANY = ("This conversation has asked for too many work orders, or the same one too often. "
+             "Nothing was queued; try again later.")
+
+
+def goal_key(goal_text) -> str:
+    """The request's keywords, sorted: two goals with the same words are one request."""
+    try:
+        from agent_friday.services.work_order_executor import terms_of
+        return " ".join(sorted(terms_of(goal_text, 12)))
+    except Exception:
+        return ""
+
+
+def _rate_refusal(conv: str, key: str, now: float) -> str:
+    """"" when this conversation may add an order, else the reason (caller holds the lock).
+    The same words whatever the cause, so the refusal teaches nothing about private content."""
+    mine = [r for r in _ORDERS.values() if r["order"]["conversation_id"] == conv]
+    if sum(1 for r in mine if r["status"] in OPEN_STATES) >= MAX_OPEN_PER_CONV:
+        return _TOO_MANY
+    recent = [r for r in mine if now - float(r.get("created") or 0) < RATE_WINDOW_S]
+    if len(recent) >= MAX_PER_CONV_WINDOW:
+        return _TOO_MANY
+    if key and sum(1 for r in recent if r.get("goal_key") == key) >= MAX_SAME_GOAL_WINDOW:
+        return _TOO_MANY
+    return ""
 
 
 def _routing_mode() -> str:
@@ -529,20 +614,27 @@ def _current_turn() -> str:
         return ""
 
 
-def status(order_id: str, conversation_id: str, *, provider: str = "", turn_id: str = "") -> dict:
+def status(order_id: str, conversation_id: str, *, provider: str = "", turn_id: str = "",
+           model: str = "") -> dict:
     """The status of one order and what the cloud may hear for it, by the
     order's privacy class (``work_order_returns``). Every return is checked by
-    the egress gate and listed on the turn receipt."""
+    the egress gate and listed on the turn receipt, handles included."""
     _boot()
+    sweep()
     resume_pending()
     with _LOCK:
         rec = _ORDERS.get(str(order_id or ""))
         if rec is None or rec["order"]["conversation_id"] != str(conversation_id or ""):
             return {"order_id": str(order_id or "")[:40], "status": "unknown"}
     from agent_friday.services import work_order_returns
-    payload, slices = work_order_returns.for_cloud(rec, provider=provider or _provider_name(rec))
+    spec = rec["order"]["specified_by"]
+    payload, slices = work_order_returns.for_cloud(
+        rec, provider=provider or _provider_name(rec), model=model or str(spec.get("model") or ""))
+    tid = turn_id or _current_turn()
     for s in slices:
-        work_order_returns.record(rec, turn_id=turn_id or _current_turn(), **s)
+        work_order_returns.record(rec, turn_id=tid, **s)
+    # Every handle the payload carries was shown to the cloud: the receipt lists it.
+    _handles.mark_seen(_handles.handles_in(payload), rec["order"]["conversation_id"], tid)
     return payload
 
 
