@@ -2350,3 +2350,17 @@ def test_with_no_vault_key_and_nothing_ever_kept_forgetting_a_person_is_a_clean_
     w.key[0] = None
     store.clear_staging(lp.OWNER_PROFILE)
     assert lp.people_purge({"dana"}, set()) == 0
+
+
+def test_queued_rows_are_embedded_inside_one_visible_job_per_batch(w):
+    from agent_friday.services import visible_jobs
+    opened = []
+    real = visible_jobs.visible_job.__enter__
+    w.monkeypatch.setattr(visible_jobs.visible_job, "__enter__", lambda self: (opened.append(self._kw["kind"]), real(self))[1])
+    lp.capture_inline = False
+    for i in range(3):
+        w.correct("show my agenda", "query_calendar", routed=("tool", "conversation"), cid="b%d" % i)
+    assert lp.flush_capture(10.0)
+    assert opened and set(opened) == {"laya_personal_embed"} and len(opened) < 3      # batched, never a card per correction
+    assert len(w.rows()) >= 1
+    # red when: the writer embeds outside visible_job, or opens one job per row

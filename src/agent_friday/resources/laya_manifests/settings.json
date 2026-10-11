@@ -136,6 +136,15 @@
    "task_kind": "laya_personal_rebuild",
    "activity_label": "Applying your correction",
    "entry": "agent_friday.services.laya_personal:_safe_rebuild"
+  },
+  {
+   "id": "settings.laya_personal_embed",
+   "trigger": "voice",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "laya_personal_embed",
+   "activity_label": "Laya learning",
+   "entry": "agent_friday.services.laya_personal:_persist_batch"
   }
  ],
  "not_for_laya": [

@@ -1073,12 +1073,49 @@ def _write_loop() -> None:
                     _writer[0] = None
                     return
             continue
+        batch = [(profile, row)]
+        t_end = time.monotonic() + BATCH_WINDOW_S
+        while len(batch) < MAX_BATCH:               # rows said close together share one visible job
+            try:
+                batch.append(_capq.get(timeout=max(0.0, t_end - time.monotonic())))
+            except queue.Empty:
+                break
+        try:
+            _persist_batch(batch)
+        finally:
+            for _ in batch:
+                _capq.task_done()
+
+
+#: Rows queued within this window are embedded together, under one task card.
+BATCH_WINDOW_S = 0.5
+MAX_BATCH = 20
+
+
+def _persist_batch(batch) -> None:
+    """The writer's batch: the deep sensitivity pass and the embedding of every queued row run on the CPU
+    reading model inside ONE visible job (kind ``laya_personal_embed``), never one card per correction."""
+    try:
+        from agent_friday.services.visible_jobs import note_inference, visible_job
+    except Exception:  # noqa: BLE001 - the card is a courtesy; the learning does not depend on it
+        visible_job = None
+    try:
+        if visible_job is None:
+            _persist_rows(batch)
+        else:
+            with visible_job("Laya learning", kind="laya_personal_embed", workspace="settings", queued=False):
+                note_inference("laya-reading-model", local=True)
+                _persist_rows(batch)
+    except Exception as e:  # noqa: BLE001
+        _log.debug("a batch was not kept: %s", type(e).__name__)
+
+
+def _persist_rows(batch) -> None:
+    for profile, row in batch:
         try:
             _persist(profile, row)
         except Exception as e:  # noqa: BLE001
             _log.debug("a row was not kept: %s", type(e).__name__)
-        finally:
-            _capq.task_done()
 
 
 CONTROL_FLUSH_S = 10.0
