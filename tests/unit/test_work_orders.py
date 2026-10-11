@@ -31,11 +31,15 @@ def _clean(monkeypatch):
     # lets it through unchanged (the real gate loads the privacy classifier).
     from agent_friday.services import egress_gate
     monkeypatch.setattr(egress_gate, "gate_text", lambda t, p, f="prompt", log_path=None: t)
+    from agent_friday.services import work_order_returns as rt
     H.clear()
     wo.clear()
     ci.clear()
     ci.forget_recent()
     wo.AUTOSTART[0] = False
+    wo.ENFORCE_SWITCH[0] = False                    # the switch is exercised in test_work_order_switch
+    monkeypatch.setattr(wo, "notify_owner", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "REPORT_GRID_S", 0.0)
     yield
     from agent_friday.services import work_order_store
     work_order_store.reset_for_tests()              # cancels a pending debounced save
@@ -43,6 +47,7 @@ def _clean(monkeypatch):
     wo.clear()
     ci.clear()
     wo.AUTOSTART[0] = True
+    wo.ENFORCE_SWITCH[0] = True
 
 
 @pytest.fixture
@@ -280,9 +285,14 @@ class TestFencing:
 
 class TestWrites:
     def test_a_write_is_recorded_as_an_intent(self):
-        res = wo.validate(_order(writes=[{"target": "kg", "op": "link", "handle": _doc(), "summary": "x"}]), CONV)
+        res = wo.validate(_order(writes=[{"target": "wiki", "op": "link", "handle": _doc(), "summary": "x"}]), CONV)
         assert res["ok"]
         assert [w["state"] for w in res["order"]["writes"]] == ["intent"]
+
+    @pytest.mark.parametrize("target", ["kg", "profile", "settings"])
+    def test_only_the_wiki_is_a_target(self, target):
+        res = wo.validate(_order(writes=[{"target": target, "op": "update", "summary": "x"}]), CONV)
+        assert not res["ok"] and wo.WRITE_TARGETS == frozenset({"wiki"})
 
     def test_soul_is_not_writable(self):
         res = wo.validate(_order(writes=[{"target": "soul", "op": "update", "summary": "x"}]), CONV)
@@ -355,7 +365,8 @@ class TestQueue:
         assert wo.get(b["order_id"])["sched_class"] == "background"
 
     def test_queued_orders_show_in_the_local_scheduler(self, mode):
-        from agent_friday.services import local_scheduler as ls
+        ls = pytest.importorskip("agent_friday.services.local_scheduler",
+                                 reason="local_scheduler is lane b11-f3; the Activity rows need it")
         mode("cloud_only")
         out = wo.submit(_order(), CONV, provider=CLOUD, model="m")
         mine = [j for j in ls.jobs() if j.get("id") == "work_order:" + out["order_id"]]
@@ -486,37 +497,8 @@ class TestTools:
         assert msg.startswith("The work order was not accepted")
 
 
-# ── the spoken phrase sets an intent flag and nothing else ───────────────────
-
-class TestRouterPhrase:
-    @pytest.fixture(autouse=True)
-    def _no_encoder(self, monkeypatch):
-        from agent_friday.services import laya2_encoder
-        monkeypatch.setattr(laya2_encoder, "is_available", lambda: False)
-
-    @pytest.mark.parametrize("text", [
-        "have Claude plan it, do it locally",
-        "Friday, have Claude plan this and then do it locally.",
-        "let Claude work out the cleanup and carry it out on this PC",
-        "plan it with Claude and run it locally",
-    ])
-    def test_phrasings_set_the_flag(self, text):
-        from agent_friday.services import laya_router as lr
-        assert lr.work_order_intent(text) == "plan_cloud_execute_local"
-        assert lr.route(text, log=False, head_mode="off").intent == "plan_cloud_execute_local"
-
-    @pytest.mark.parametrize("text", [
-        "what is the weather", "have Claude plan my trip", "do it locally",
-        "I asked Claude about it yesterday"])
-    def test_other_text_does_not(self, text):
-        from agent_friday.services import laya_router as lr
-        assert lr.work_order_intent(text) == ""
-        assert lr.route(text, log=False, head_mode="off").intent == ""
-
-    def test_the_flag_does_not_pick_a_tool(self):
-        from agent_friday.services import laya_router as lr
-        r = lr.route("have Claude plan it, do it locally", log=False, head_mode="off")
-        assert r.tool not in ("submit_work_order", "work_order_status")
+# The spoken phrase ("have Claude plan it, do it locally") sets no flag in 1.1: the router
+# computed one that nothing read, so it was removed. Voice parity for work orders is owed.
 
 
 class TestLocalCatalogue:

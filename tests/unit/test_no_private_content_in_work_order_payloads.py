@@ -30,6 +30,8 @@ C_LIB = "CANARY-LIB-31b9f0"
 C_PROFILE = "CANARY-PROFILE-6d44e2"
 C_TITLE = "CANARY-TITLE-0f9a13"
 CANARIES = (C_KG, C_WIKI, C_LIB, C_PROFILE, C_TITLE)
+#: The fields a cloud model hears below P0, whatever the class and however the order ended.
+UNIFORM = {"order_id", "status", "priority", "result", "result_handle", "summary_state"}
 
 # Synthetic paths shaped like the owner's: they belong to nobody.
 WIKI_PATH = "projects/orchid-launch/plan.md"
@@ -93,12 +95,16 @@ def cloud(monkeypatch):
     ci.forget_recent()
     store.reset_for_tests()
     wo.AUTOSTART[0] = False
+    wo.ENFORCE_SWITCH[0] = False                    # the switch is exercised in test_work_order_switch
+    monkeypatch.setattr(wo, "notify_owner", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "REPORT_GRID_S", 0.0)
     yield c
     store.reset_for_tests()
     H.clear()
     wo.clear()
     ci.clear()
     wo.AUTOSTART[0] = True
+    wo.ENFORCE_SWITCH[0] = True
 
 
 def tool_fn(name, args, ctx):
@@ -167,21 +173,21 @@ class TestNoCanaryReachesTheCloud:
         h = issue_all()
         everything = " ".join(CANARIES)
         oid, st = drive(cloud, h, model_text="It says %s" % everything)
-        assert st["privacy_class"] == "P1_aggregate" and st["status"] == "done"
+        assert "privacy_class" not in st and st["status"] == "finished"
         assert st["result"]["count"] == "1-4" and "summary" not in st
         assert_no_canary(cloud.blob())
         assert_no_path(cloud.blob())
 
     def test_p3_for_private_material_returns_only_a_handle(self, cloud):
         oid, st = drive(cloud, issue_all(tier="private"), model_text="x " + C_WIKI)
-        assert set(st) == {"order_id", "status", "result_handle"} and st["status"] == "done"
+        assert set(st) == UNIFORM and st["status"] == "finished" and st["result"] == {}
         assert_no_canary(cloud.blob())
         assert_no_path(cloud.blob())
 
-    def test_vault_material_is_never_read_and_a_failed_p3_order_says_only_that_it_failed(self, cloud):
+    def test_vault_material_is_never_read_and_the_cloud_hears_a_finished_empty_handed_order(self, cloud):
         calls = []
         oid, st = drive(cloud, issue_all(tier="vault"), tools=lambda n, a, c: calls.append(n))
-        assert calls == [] and st == {"order_id": oid, "status": "did_not_complete"}
+        assert calls == [] and set(st) == UNIFORM and st["status"] == "finished" and st["result"] == {}
         assert_no_canary(cloud.blob())
         assert_no_path(cloud.blob())
 
@@ -205,7 +211,7 @@ class TestNoCanaryReachesTheCloud:
         monkeypatch.setattr(local_context, "offer", offer)
         h = issue_all()
         oid, st = drive(cloud, h, model_text="The launch ships in spring. Note: %s %s" % (C_WIKI, C_PROFILE))
-        assert st["privacy_class"] == "P2_summary" and st["summary_state"] == "sent"
+        assert st["summary_state"] == "sent"
         assert C_WIKI in st["summary"] and cards and st["summary"] == cards[0]
         assert_no_canary(cloud.blob(skip_summary=True))
         assert_no_path(cloud.blob())
@@ -229,7 +235,7 @@ class TestNoCanaryReachesTheCloud:
         cloud.see(wo.status(oid, CONV, provider=CLOUD, turn_id=TURN))
         assert_no_canary(cloud.blob(skip_summary=True), allowed=())
         later = wo.status(oid, CONV, provider=CLOUD)
-        assert later["privacy_class"] == "P1_aggregate" and "summary" not in later
+        assert later["summary_state"] == "none" and "summary" not in later
 
     def test_a_free_text_field_the_cloud_named_is_dropped_at_p1(self, cloud):
         h = issue_all()
@@ -243,15 +249,16 @@ class TestNoCanaryReachesTheCloud:
     def test_a_failure_does_not_carry_the_tool_text_or_path(self, cloud):
         h = issue_all()
         oid, st = drive(cloud, h, tools=lambda n, a, c: "Wiki file not found: %s %s %s" % (a.get("path"), C_WIKI, LIB_PATH))
-        assert st["status"] == "did_not_complete" and "failed_step" not in st
+        assert st["status"] == "finished" and "failed_step" not in st
         assert_no_canary(cloud.blob())
         assert_no_path(cloud.blob())
-        assert C_WIKI in wo.get(oid)["error"] or "read failed" in wo.get(oid)["error"]     # kept locally
+        errors = [it["error"] for it in wo.get(oid)["cp"]["ctx"]["items"]]
+        assert any("read failed" in e for e in errors)                                      # kept locally
 
     def test_a_threshold_below_p0_cannot_move_the_status_and_is_kept_for_the_owner(self, cloud):
         h = issue_all()
         oid, st = drive(cloud, h, o=order(h, acceptance=[{"check": "count_at_least", "value": 99}]))
-        assert st["status"] == "done" and "failed_checks" not in st
+        assert st["status"] == "finished" and "failed_checks" not in st
         assert wo.get(oid)["accept_local"] == ["count_at_least"]
         assert_no_canary(cloud.blob())
 
@@ -268,7 +275,7 @@ class TestNoCanaryReachesTheCloud:
         second = order([st["result_handle"]], constraints={"tools_allowed": ["read", "count"]},
                        output_schema={"count": "integer"})
         oid2, st2 = drive(cloud, [], o=second)
-        assert st2["status"] == "done" and set(st2) == {"order_id", "status", "result_handle"}
+        assert st2["status"] == "finished" and set(st2) == UNIFORM
         assert_no_canary(cloud.blob())
 
 

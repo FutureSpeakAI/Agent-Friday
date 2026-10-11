@@ -36,6 +36,8 @@ CLOUD = "anthropic"
 TURN = "turn-harden"
 
 CANARY = "ACME-INVOICE-48213"
+#: The fields a cloud model hears below P0, whatever the class and however the order ended.
+UNIFORM = {"order_id", "status", "priority", "result", "result_handle", "summary_state"}
 DOCS = {
     "money/invoice.md": "Invoice total for acme is 48213 dollars. Overdue by 41 days. %s" % CANARY,
     "money/notes.md": "Acme invoice notes. The total needs a review. %s" % CANARY,
@@ -62,12 +64,16 @@ def world(monkeypatch, tmp_path):
     ci.forget_recent()
     store.reset_for_tests()
     wo.AUTOSTART[0] = False
+    wo.ENFORCE_SWITCH[0] = False                    # the switch is exercised in test_work_order_switch
+    monkeypatch.setattr(wo, "notify_owner", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "REPORT_GRID_S", 0.0)    # "finished" at once; the schedule has its own tests
     yield
     store.reset_for_tests()
     H.clear()
     wo.clear()
     ci.clear()
     wo.AUTOSTART[0] = True
+    wo.ENFORCE_SWITCH[0] = True
 
 
 class Tools:
@@ -121,7 +127,7 @@ class TestP1CarriesOnlyBucketedCounts:
         oid = go(o, model=lambda t, g, d: json.dumps({"amount": 48213.5, "overdue": True, "age": 41}))
         assert wo.get(oid)["result"]["amount"] == 48213.5          # the owner's local result is whole
         st = status(oid)
-        assert st["status"] == "done" and st["result"] == {}
+        assert st["status"] == "finished" and st["result"] == {}
         blob = json.dumps(st["result"])
         assert "48213" not in blob and "41" not in blob and "true" not in blob.lower()
 
@@ -220,24 +226,41 @@ class TestSearchIsScoped:
         assert wo.get(oid)["result"]["count"] == 1          # only notes.md says "review"
         assert len(H._STORE) == before + 1
 
-    def test_a_p3_order_may_search_wide_and_what_it_finds_is_private(self, monkeypatch):
+    def test_the_owners_p3_setting_does_not_widen_the_search(self, monkeypatch):
         monkeypatch.setattr(wo, "owner_class", lambda: "P3_local_only")
-        oid = go(order(pages()[:1], goal="gardening", constraints={"tools_allowed": ["search", "count"]}))
+        h = pages()[:1]
+        before = len(H._STORE)
+        oid = go(order(h, goal="gardening", constraints={"tools_allowed": ["search", "count"]}))
+        items = wo.get(oid)["cp"]["ctx"]["items"]
+        assert not [i for i in items if i["src"] == "search"]
+        assert len(H._STORE) == before + 1                  # only the order's own result handle
+
+    def test_an_order_the_owner_granted_a_wider_search_may_and_what_it_finds_is_private(self):
+        h = pages()[:1]
+        out = wo.submit(order(h, goal="gardening", constraints={"tools_allowed": ["search", "count"]}),
+                        CONV, provider=CLOUD, model="claude-x")
+        oid = out["order_id"]
+        assert wo.grant_wide_search(oid)
+        ex.run(oid, tool_fn=Tools(), model_fn=lambda t, g, d: "x")
         items = wo.get(oid)["cp"]["ctx"]["items"]
         found = [i for i in items if i["src"] == "search"]
         assert found and all(i["tier"] == "private" for i in found)
         assert all(H.lookup(i["handle"], CONV).tier == "private" for i in found)
-        assert set(status(oid)) == {"order_id", "status", "result_handle"}
+
+    def test_the_cloud_cannot_grant_itself_a_wider_search(self):
+        res = wo.validate(dict(order(pages(), goal="gardening"), wide_search=True), CONV)
+        assert res["ok"] and res["order"]["wide_search"] is False
 
     def test_p0_holds_only_while_every_input_is_still_public(self):
         h = pages(tier="public")
         oid = go(order(h, constraints={"tools_allowed": ["read", "summarise"]}, output_schema={"summary": "string"}))
         assert status(oid)["privacy_class"] == "P0_public"
         H._STORE[h[0]].tier = "private"                     # the page was made private since
-        assert set(status(oid)) == {"order_id", "status", "result_handle"}
+        st = status(oid)
+        assert set(st) == UNIFORM and st["result"] == {}
         H._STORE[h[0]].tier = "public"
         H.revoke(h[1])                                      # or an input is gone: not provably public
-        assert status(oid)["privacy_class"] == "P1_aggregate"
+        assert "privacy_class" not in status(oid)
 
 
 # ── B3: status is not an oracle ─────────────────────────────────────────────
@@ -249,28 +272,28 @@ class TestStatusIsNotAnOracle:
         hit = go(order(h, goal="invoice acme", constraints=tools_allowed))
         miss = go(order(h, goal="walrus migration", constraints=tools_allowed))
         a, b = status(hit), status(miss)
-        assert a["status"] == b["status"] == "done"
-        assert set(a) == set(b) == {"order_id", "status", "result_handle"}
+        assert a["status"] == b["status"] == "finished"
+        assert set(a) == set(b) == UNIFORM
 
     def test_a_cloud_threshold_over_private_data_cannot_flip_the_status(self):
         h = pages(tier="private")
         low = go(order(h, acceptance=[{"check": "count_at_least", "value": 1}]))
         high = go(order(h, goal="invoice acme total", acceptance=[{"check": "count_at_least", "value": 99999}]))
-        assert status(low)["status"] == status(high)["status"] == "done"
+        assert status(low)["status"] == status(high)["status"] == "finished"
         # ...and the same for a P1 order, where the count itself is only a bucket.
         p1 = pages()
         a = go(order(p1, goal="acme invoice", acceptance=[{"check": "count_at_most", "value": 0}]))
-        assert status(a)["status"] == "done" and "failed_checks" not in status(a)
+        assert status(a)["status"] == "finished" and "failed_checks" not in status(a)
 
     def test_an_emptied_filter_does_not_fail_a_summary_order(self):
         o = order(pages(), goal="walrus migration", constraints={"tools_allowed": ["read", "filter", "summarise"]},
                   output_schema={"count": "integer"})
-        assert status(go(o))["status"] == "done"
+        assert status(go(o))["status"] == "finished"
 
-    def test_a_failure_carries_no_step_and_no_reason(self):
+    def test_a_failed_read_carries_no_step_and_no_reason_and_the_same_fields(self):
         oid = go(order(pages()), tools=lambda n, a, c: "Wiki file not found: " + a.get("path", ""))
         st = status(oid)
-        assert st["status"] == "did_not_complete"
+        assert st["status"] == "finished" and set(st) == UNIFORM
         assert not ({"failed_step", "failed_checks", "error"} & set(st))
         assert "money" not in json.dumps(st)
 
@@ -310,7 +333,7 @@ class TestGateUsesTheRealDestination:
     def test_an_ollama_cloud_model_is_gated_as_cloud(self, judged):
         oid = go(order(pages()), provider="ollama", mdl="glm-4.6:cloud")
         st = wo.status(oid, CONV, provider="ollama", model="glm-4.6:cloud")
-        assert st["status"] == "done" and any(f == "work_order_return" for _, f in judged)
+        assert st["status"] == "finished" and any(f == "work_order_return" for _, f in judged)
 
     def test_a_truly_local_model_is_not(self, judged, monkeypatch):
         monkeypatch.setattr(ci, "routing_mode", lambda: "cloud_only")
@@ -331,7 +354,7 @@ class TestGateUsesTheRealDestination:
             agent._CURRENT_MODEL.reset(t[2])
             agent._CURRENT_CONVERSATION.reset(t[1])
             agent._CURRENT_PROVIDER.reset(t[0])
-        assert out["status"] == "done" and any(f == "work_order_return" for _, f in judged)
+        assert out["status"] == "finished" and any(f == "work_order_return" for _, f in judged)
 
     def test_the_real_gate_lets_the_bucketed_payloads_through_unchanged(self):
         oid = go(order(pages(), output_schema={"count": "integer"}))
