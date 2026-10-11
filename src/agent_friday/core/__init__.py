@@ -2444,6 +2444,21 @@ DEFAULT_SETTINGS = {
         "cost_attribution": {"enabled": True},
         "audit_log": {"enabled": True},
         "pii_scrub": {"enabled": True},
+        "call_verifier": {"enabled": True},
+    },
+    # The pre-execution verifier (services/call_verifier). It checks every tool
+    # call a model proposes before the governance checkpoint and can only add
+    # friction: a fix-it message, the earlier result of a repeated read, or a
+    # reason to ask you. Each part can be switched off; "loop_limit" is how many
+    # identical failures in a row stop a call.
+    "call_verifier": {
+        "enabled": True,
+        "argument_sanity": True,
+        "repeat_cache": True,
+        "loop_breaker": True,
+        "loop_limit": 3,
+        "injection_flag": True,
+        "privacy_vote": True,
     },
     # Token-bucket caps for the rate_limiter hook (per ring, per minute). 0
     # disables limiting for that ring. Ring 0/1 (local reads/writes) are never

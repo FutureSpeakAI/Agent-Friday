@@ -34,6 +34,11 @@ FAILURE_SENTINELS = (
     "[EGRESS-GATE:",
     "Tool error (",
     "Unknown tool:",
+    "TOOL CALL FAILED",
+    "INVALID ARGUMENTS",
+    "[VERIFIER FIX]",
+    "[VERIFIER LOOP]",
+    "[VERIFIER HOLD]",
 )
 
 

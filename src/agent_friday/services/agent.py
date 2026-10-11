@@ -701,8 +701,8 @@ CLAUDE_TOOLS = [
       "required": ["query"]}},
     {"name": "create_calendar_event", "description": "Create a new event on the user's Google Calendar. Times are ISO 8601. If the token is read-only, say so plainly and offer to reconnect Google.",
      "input_schema": {"type": "object", "properties": {
-         "title": {"type": "string"}, "start": {"type": "string", "description": "ISO 8601 start, e.g. 2026-08-18T11:30:00-05:00"},
-         "end": {"type": "string", "description": "ISO 8601 end. Defaults to one hour after start."},
+         "title": {"type": "string"}, "start": {"type": "string", "format": "date-time", "description": "ISO 8601 start, e.g. 2026-08-18T11:30:00-05:00"},
+         "end": {"type": "string", "format": "date-time", "description": "ISO 8601 end. Defaults to one hour after start."},
          "location": {"type": "string"}, "description": {"type": "string"},
          "attendees": {"type": "array", "items": {"type": "string"}},
          "account_id": {"type": "string"}},
@@ -710,7 +710,8 @@ CLAUDE_TOOLS = [
     {"name": "update_calendar_event", "description": "Change one event by id: title, time, location or description. Use annotate_calendar_events for additions across events. Clearing requires specific user confirmation and allow_clearing=true; otherwise refused.",
      "input_schema": {"type": "object", "properties": {
          "event_id": {"type": "string"}, "title": {"type": "string"},
-         "start": {"type": "string"}, "end": {"type": "string"},
+         "start": {"type": "string", "format": "date-time"},
+         "end": {"type": "string", "format": "date-time"},
          "location": {"type": "string"}, "description": {"type": "string"},
          "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."},
          "account_id": {"type": "string"}},
@@ -721,8 +722,8 @@ CLAUDE_TOOLS = [
     {"name": "find_free_slots", "description": "Read-only: find slots free on EVERY connected calendar/account within working hours, time zone, notice and buffers. Offer returned slots; for email put their labels in draft_email (card approval before sending). Disclose unreadable calendars as unchecked.",
      "input_schema": {"type": "object", "properties": {
          "duration_minutes": {"type": "integer"},
-         "window_start": {"type": "string"},
-         "window_end": {"type": "string"},
+         "window_start": {"type": "string", "format": "date-time"},
+         "window_end": {"type": "string", "format": "date-time"},
          "count": {"type": "integer"},
          "min_notice_hours": {"type": "number"},
          "buffer_minutes": {"type": "integer"}}}},
@@ -738,7 +739,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "series_id": {"type": "string", "description": "The series_id hold_slots returned."},
          "hold_event_id": {"type": "string", "description": "The id of the hold to book. Or give start instead."},
-         "start": {"type": "string", "description": "Start time of the hold to book, ISO 8601, when hold_event_id is not known."},
+         "start": {"type": "string", "format": "date-time", "description": "Start time of the hold to book, ISO 8601, when hold_event_id is not known."},
          "title": {"type": "string"},
          "attendees": {"type": "array", "items": {"type": "string"}, "description": "Email addresses to invite."},
          "description": {"type": "string"}, "location": {"type": "string"},
@@ -775,7 +776,7 @@ CLAUDE_TOOLS = [
          "account_id": {"type": "string"},
          "tasklist_id": {"type": "string"},
          "notes": {"type": "string"},
-         "due": {"type": "string", "description": "RFC3339 timestamp, e.g. 2026-09-01T00:00:00Z"}},
+         "due": {"type": "string", "format": "date-time", "description": "RFC3339 timestamp, e.g. 2026-09-01T00:00:00Z"}},
       "required": ["title", "account_id"]}},
     {"name": "update_task", "description": "Update a Google Task's title/notes/due/status. Required account_id and tasklist_id must come from list_tasks, never guesses. Use complete_task just to mark done.",
      "input_schema": {"type": "object", "properties": {
@@ -784,7 +785,7 @@ CLAUDE_TOOLS = [
          "account_id": {"type": "string"},
          "title": {"type": "string"},
          "notes": {"type": "string"},
-         "due": {"type": "string"},
+         "due": {"type": "string", "format": "date-time"},
          "status": {"type": "string", "description": "'needsAction' or 'completed'."}},
       "required": ["task_id", "tasklist_id", "account_id"]}},
     {"name": "delete_task", "description": "Permanently delete a Google Task; cannot undo. Required account_id and tasklist_id must come from list_tasks, never guesses.",
@@ -952,7 +953,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id, e.g. 'studio', 'news', 'calendar'."},
          "mode": {"type": "string", "enum": ["undo", "as_of", "version", "reset"], "description": "Default 'undo'."},
-         "when": {"type": "string", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
+         "when": {"type": "string", "format": "date-time", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
          "version_id": {"type": "string", "description": "For mode 'version'."}},
       "required": ["workspace"]}},
     {"name": "list_workspace_history", "description": "Inspect workspace changes before an ambiguous revert. Entries give time, changed_label (keys changed) and keys (what restoring brings back). The customization content is omitted; use the entry to revert, without asking for it.",
@@ -9758,7 +9759,7 @@ CLAUDE_TOOLS.extend([
         "input_schema": {"type": "object", "properties": {
             "person": {"type": "string", "description": "Name or email address."},
             "note": {"type": "string", "description": "What to follow up about."},
-            "due": {"type": "string", "description": "YYYY-MM-DD or an ISO datetime."},
+            "due": {"type": "string", "format": "date-time", "description": "YYYY-MM-DD or an ISO datetime."},
             "in_days": {"type": "integer", "description": "Alternative to due; default 3."},
         }, "required": ["person"]},
     },
@@ -11636,6 +11637,7 @@ def _task_log_tool(session_ctx, name, args):
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import tool_args as _tool_args
+from agent_friday.services import call_verifier as _call_verifier
 from agent_friday.services import tool_output as _tool_output
 from agent_friday.services import setting_proposals as _setting_proposals  # registers the card hook  # noqa: F401
 
@@ -11868,8 +11870,22 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         name, tool_input if tool_input is not None else {}, _schema_for_tool(name))
     if _arg_error:
         _receipts.record(name, ok=False, denied=True, detail="invalid arguments")
+        _call_verifier.receipt(name, _checked, "verifier_fixit", "invalid arguments", session_ctx)
         return _arg_error
     tool_input = _restore_placeholders(_checked or {}, pii_lookup)
+    # The pre-execution verifier (services/call_verifier): a call that cannot
+    # work comes back as a fix-it message, a repeat of a read this turn comes
+    # back as the earlier result, and anything that should make the owner
+    # think twice rides on ctx.meta to _hook_call_verifier. It never approves.
+    _vout = _call_verifier.preflight(name, tool_input, schema=_schema_for_tool(name),
+                                     session_ctx=session_ctx)
+    if _vout.stops:
+        _call_verifier.receipt(name, tool_input, "verifier_" + _vout.kind,
+                               _vout.message.splitlines()[0] if _vout.message else _vout.kind,
+                               session_ctx)
+        if _vout.kind != "cached":
+            _receipts.record(name, ok=False, denied=True, detail=_vout.message)
+        return _vout.message
     # The gate and handler must act on the same codebase even if the chat is
     # rebound while its turn runs. Pin implicit scope before every pre-hook.
     if name in ("codebase_edit", "codebase_undo", "codebase_read", "codebase_understand") and not str(tool_input.get("codebase_id") or "").strip():
@@ -11903,6 +11919,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         ctx.admission = lambda: _host_action_denial(name,
             dict(ctx.session_ctx or {}, _crew_host_origin=_host_origin))
     ctx.meta["t_start"] = _time.time()
+    ctx.meta["verifier"] = _vout
 
     # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
     # A DENY short-circuits; the deny message is what the model sees as the result.
@@ -12121,6 +12138,8 @@ def _hook_confirmation_gate(ctx):
         _state = _record_pending_confirmation(_sid, name, ctx.input, turn=_turn)
         _asks = int((_state or {}).get("asks") or 1)
         _q = _confirmation_question(name, ctx.input)
+        if _meta.get("verifier_note"):
+            _q = f"{_q} ({_meta['verifier_note']})"
 
         if _asks == 1:
             return _hooks.DENY(
@@ -12142,6 +12161,99 @@ def _hook_confirmation_gate(ctx):
         return _hooks.DENY(_escalate_confirmation(
             _sid, name, ctx.input, _fp, _q, session_ctx=session_ctx))
     return _hooks.ALLOW
+
+
+def _hook_call_verifier(ctx):
+    """The verifier's reasons to ask, turned into a question or a card. Pre,
+    priority 5: after the governance checkpoint (1), before the confirmation
+    gate (10).
+
+    ESCALATE-ONLY. It runs only on a call governance let through, and it can do
+    exactly two things: mark the call for the confirmation gate (the ask-first
+    chat flow, which raises its own card on a second ask) or, when nobody is in
+    the chat, raise an approval card and hold. It never sets `owner_decided`,
+    never clears a flag another gate set, and steps aside for a call the owner
+    already decided on a card. A grant the owner made covers the action, not an
+    instruction a page slipped in, so only the injection reason survives one.
+    """
+    vout = (ctx.meta or {}).get("verifier")
+    reasons = list(getattr(vout, "escalate", None) or [])
+    if not reasons:
+        return _hooks.ALLOW
+    meta = ctx.meta
+    if meta.get("approved_card") or meta.get("taint_card_approved"):
+        return _hooks.ALLOW
+    if meta.get("owner_decided"):
+        reasons = [r for r in reasons if r[0] == "injection"]
+        if not reasons:
+            return _hooks.ALLOW
+    text = "; ".join(why for _code, why in reasons)
+    sc = ctx.session_ctx
+    if meta.get("gov_confirm"):
+        # The owner is being asked anyway; the reasons ride along in the question.
+        meta["verifier_note"] = text
+        _call_verifier.receipt(ctx.tool_name, ctx.input, "verifier_note", text, sc)
+        return _hooks.ALLOW
+    _sid = (sc or {}).get("confirmation_key") or (sc or {}).get("session_id")
+    if _sid and not _confirmation_bypassed(sc):
+        meta["gov_confirm"] = True
+        meta["verifier_note"] = text
+        _call_verifier.receipt(ctx.tool_name, ctx.input, "verifier_ask", text, sc)
+        return _hooks.ALLOW
+    return _verifier_card(ctx, text)
+
+
+def _verifier_card(ctx, why_text):
+    """Hold a call the verifier wants the owner to see, on an approval card.
+    One card per exact call; an approved card carries the call out through the
+    card executor, so a retry by the model is told so rather than run twice."""
+    name, inp = ctx.tool_name, ctx.input or {}
+    fp = _taint_mod.fingerprint(name, inp)
+    subject = f"verifier:{_taint_mod.ledger_key(ctx.session_ctx)}:{fp}"
+    try:
+        from agent_friday.services import approvals as _appr
+        rec = _appr.find_for_subject("tool_action", subject, "tool_confirm")
+        if (rec is None or rec.get("status") == "expired"
+                or (rec.get("consumed") and rec.get("status") != "approved")):
+            if rec is not None:
+                subject = f"{subject}:{uuid.uuid4().hex[:6]}"
+            rec = _appr.create_approval(
+                kind="tool_confirm", subject_type="tool_action", subject_id=subject,
+                title=_taint_title(name, inp),
+                action_description=f"{name} {json.dumps(inp, default=str)[:600]}",
+                description=f"Held for your yes: {why_text}.",
+                force_gate=True,
+                payload=_approval_tool_payload(name, inp, ctx.session_ctx),
+                action_class=_gate_policy_class(name, inp),
+                requested_by="call_verifier")
+        status = rec.get("status")
+    except Exception as e:
+        _log.warning("verifier card unavailable: %s", e)
+        _call_verifier.receipt(name, inp, "verifier_hold", f"card unavailable: {why_text}", ctx.session_ctx)
+        return _hooks.DENY(
+            f"[VERIFIER HOLD] '{name}' was NOT executed: {why_text}. The approval card "
+            f"could not be created ({e}). Tell the user what you were about to do.")
+    _call_verifier.receipt(name, inp, "verifier_hold", why_text, ctx.session_ctx)
+    if status in ("denied", "blocked"):
+        return _hooks.DENY(
+            f"[DECLINED] The user declined '{name}' with these details on an approval "
+            f"card. It was NOT executed. Do not retry it.")
+    if status == "approved":
+        return _hooks.DENY(
+            f"[VERIFIER HOLD] '{name}' was approved on its card and is handled by the "
+            f"card executor. Do not retry it or claim an outcome without its result.")
+    return _hooks.DENY(
+        f"[VERIFIER HOLD] '{name}' was NOT executed: {why_text}. An approval card is "
+        f"waiting for the owner (Approvals card, System workspace). Do not retry it; "
+        f"tell the user what you were about to do and why it needs their yes.")
+
+
+def _hook_verifier_record(ctx, result):
+    """Tell the verifier what a tool returned (cache, failure streak, ids seen,
+    instructions in the text). Post, priority 99: after the PII scrub, so the
+    cache holds exactly what the model was shown. Never changes the result."""
+    _call_verifier.record_result(ctx.tool_name, ctx.input, result, ctx.session_ctx)
+    return result
 
 
 def _resolve_escalated_card(approval_id, name, tool_input):
@@ -12840,6 +12952,10 @@ def _register_builtin_tool_hooks():
     # governance check, so it can be neither switched off nor fail open.
     _hooks.register_pre_hook(_hook_confirmation_gate, name="confirmation_gate",
                              priority=10, critical=True)
+    # Not critical: it can only add a question, so a failure here is the
+    # behaviour before it existed, never a lockout. Switchable under tool_hooks.
+    _hooks.register_pre_hook(_hook_call_verifier, name="call_verifier",
+                             priority=5)
     _hooks.register_pre_hook(_hook_vault_zt, name="vault_zt",
                              priority=25, critical=True)
     _hooks.register_pre_hook(_hook_sandbox_policy, name="sandbox_policy",
@@ -12849,6 +12965,8 @@ def _register_builtin_tool_hooks():
     _hooks.register_post_hook(_hook_cost_attribution, name="cost_attribution",
                               priority=80)
     _hooks.register_post_hook(_hook_audit_log, name="audit_log", priority=90)
+    _hooks.register_post_hook(_hook_verifier_record, name="call_verifier_record",
+                              priority=99)
     _hooks.register_post_hook(_hook_pii_scrub, name="pii_scrub", priority=95)
     _hooks.register_post_hook(_hook_file_grant_registration,
                               name="file_grant_registration", priority=96,
@@ -13448,6 +13566,8 @@ _TOOL_DENY_SENTINELS = (
     # decided, which is how an itinerary that never existed looked like one that
     # did. Adding a refusal message means adding it here in the same edit.
     "[BLOCKED", "[GOVERNANCE HOLD]", "[DECLINED]", "[NOT RUN]",
+    # The verifier's own refusals (services/call_verifier.SENTINELS).
+    "[VERIFIER FIX]", "[VERIFIER LOOP]", "[VERIFIER HOLD]",
 )
 
 #: Raised a card and stopped. NOT a denial -- nobody refused it, and it may yet
@@ -13459,7 +13579,8 @@ _TOOL_PENDING_SENTINELS = ("[APPROVAL CARD RAISED]",)
 # 'ok', so a failure prefix missing from this tuple is a failed call reporting
 # itself as a success — which is the exact defect the receipts work exists to
 # remove. Changing a failure message means updating this tuple in the same edit.
-_TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED")
+_TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED",
+                          "INVALID ARGUMENTS")
 
 
 def _tool_call_status(result):

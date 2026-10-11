@@ -2537,7 +2537,8 @@ def chat():
             # very surprise the confirmation flow exists to prevent.
             _res = str(_entry.get('result') or '')
             if _res.lstrip().startswith(('[CONFIRMATION REQUIRED]', '[GOVERNANCE DENY]',
-                                         '[SANDBOX DENY]', '[VAULT')):
+                                         '[SANDBOX DENY]', '[VAULT',
+                                         '[VERIFIER', 'INVALID ARGUMENTS')):
                 continue
             _ws = _resolve_workspace(str((_entry.get('input') or {}).get('workspace', '')))
             if _ws and _ws not in _seen_nav:
