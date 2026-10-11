@@ -37,6 +37,15 @@ def _executed(*a, **k):
     return ll.note_executed(*a, **dict({"conversation_id": "c1"}, **k))
 
 
+@pytest.fixture(autouse=True)
+def _local_hash_key(monkeypatch):
+    """The text hashes are keyed with the install's sealed local key; these suites use a fixed one."""
+    from agent_friday.services import laya_safe_writes as _sw
+    monkeypatch.setattr(_sw, "_salt", lambda: b"k" * 32)
+    monkeypatch.setattr(_sw, "_KEY_CACHE", None)
+    monkeypatch.setattr(_sw, "_KEY_RETRY_AT", 0.0)
+
+
 OFF = {"tool_head_learn_from_my_history": False}
 ON = {"tool_head_learn_from_my_history": True}
 

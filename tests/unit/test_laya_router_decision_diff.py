@@ -127,6 +127,9 @@ def test_a_hand_off_that_changes_or_disappears_still_fails(tmp_path):
     assert _cmp(tmp_path, a, b) == 1, "a tool route that gains a hand-off is not the deferred class"
 
 
+CARD_ARGS = {"action": "archive", "laya_write": {"ticket": "t"}}
+
+
 def _on_cmp(tmp_path, a, b, on=True):
     _dump(tmp_path / "a.json", [a])
     _dump(tmp_path / "b.json", [b])
@@ -136,7 +139,7 @@ def _on_cmp(tmp_path, a, b, on=True):
 def test_the_on_pass_allows_a_write_to_pointed_rows_to_become_a_safe_write_route_and_nothing_else(tmp_path):
     a = _row("archive these", _both(_r("defer", None, layer="point_act", reason="x")))
     b = _row("archive these", _both(_r("defer", None, layer="point_act", reason="x"),
-                                    _r("tool", "organize_email", layer="safe_write")), )
+                                    _r("tool", "organize_email", layer="safe_write", args=CARD_ARGS)), )
     b["write_referential"] = True
     assert _on_cmp(tmp_path, a, b, on=True) == 0
     assert _on_cmp(tmp_path, a, b, on=False) == 1, "OFF must not show the safe-write layer at all"
@@ -165,3 +168,27 @@ def test_dump_takes_a_safe_writes_option():
     assert "safe_writes" in inspect.signature(dd.dump).parameters
     src = TOOL.read_text(encoding="utf-8")
     assert '"--safe-writes"' in src and "oracle-conversation" in src and "write_referential" in src
+
+
+@pytest.mark.parametrize("new", [
+    _r("tool", "screen_select", layer="safe_write", args=CARD_ARGS),                                  # not the one tool
+    _r("tool", "organize_email", layer="safe_write", args=dict(CARD_ARGS, query="in:inbox")),         # more than a ticket
+    _r("tool", "organize_email", layer="safe_write", args={"action": "trash", "laya_write": {"ticket": "t"}}),
+    _r("tool", "organize_email", layer="safe_write", args={"action": "archive"}),                     # no ticket
+    _r("tool", "organize_email", layer="safe_write", args=dict(CARD_ARGS, refs=["mail:a:t1"])),       # model rows
+    _r("defer", None, layer="safe_write", args={"refs": ["mail:a:t1"]}),                              # a deferral with rows
+    _r("tool", "organize_email", layer="rule", args=CARD_ARGS),                                       # not that layer
+], ids=["other-tool", "extra-args", "trash", "no-ticket", "rows", "defer-with-rows", "other-layer"])
+def test_the_on_class_is_exact_about_the_tool_the_action_and_the_args(tmp_path, new):
+    """Fails on 7f7706984: ANY difference at layer safe_write on a labelled text was accepted."""
+    a = _row("archive these", _both(_r("defer", None, layer="point_act", reason="x")))
+    b = _row("archive these", _both(_r("defer", None, layer="point_act", reason="x"), new))
+    b["write_referential"] = True
+    assert _on_cmp(tmp_path, a, b, on=True) == 1
+
+
+def test_the_on_class_needs_the_hand_label_not_the_parser():
+    cases = dd.build_cases(Path(__file__).resolve().parents[2])
+    by = {c["text"]: c["write_referential"] for c in cases}
+    assert by["archive these"] is True and by["show me everything on my calendar today"] is False
+    assert by["select all of them"] is False and by["archive all of them"] is True

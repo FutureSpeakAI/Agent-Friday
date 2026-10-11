@@ -27,6 +27,7 @@ Everything is synthetic: no model, no network, no real mailbox.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -306,7 +307,7 @@ def test_n6_the_chat_sealed_line_carries_a_row_sample(chat, gmail, monkeypatch):
                                turn_id="t-1", authenticated=True, local=True)
     assert out["outcome"] == "card"
     assert "“Subject t1” from Sender" in out["reply"] and "@" not in out["reply"]
-    assert "archive 3 conversations" in out["reply"] and "Nothing changes until you approve it" in out["reply"]
+    assert "archive 3 conversations" in out["reply"] and "Nothing changes until you press Approve on it" in out["reply"]
     assert "@" not in str(out["tool_trace"]), "what the chat history keeps (and a later cloud turn reads) has no address"
 
 
@@ -956,9 +957,10 @@ def test_l4_the_card_shows_the_sender_of_each_listed_message_not_the_first(real_
     assert "@" not in out and "@" not in str(pay["preview"]), "names only everywhere but the card's own lines"
 
 
-# ── L5: a typed yes counts only if the card was the last question ────────────────────────────────
+# ── a card Laya raised is approved with its Approve button: no typed reply approves it ───────────
 
 def _arm(chat_fixture_gmail, monkeypatch):
+    """Raise a Laya card by the typed path (the reply is the notice; the card id is on the card only)."""
     from agent_friday.services import reflex_chat as rc
     stage = _stage(selected=(1, 2))
     report(stage)
@@ -969,73 +971,111 @@ def _arm(chat_fixture_gmail, monkeypatch):
     return _pending()[0]["approval_id"]
 
 
-def _typed_yes(cid, words="yes"):
+def _typed_yes(cid, words="yes", decision="approve"):
     toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_CONVERSATION.set(CONV),
             agent._CURRENT_OWNER_TEXT.set(words)]
     try:
-        return agent._tool_answer_card({"card_id": cid, "decision": "approve"})
+        return agent._tool_answer_card({"card_id": cid, "decision": decision})
     finally:
         agent._CURRENT_OWNER_TEXT.reset(toks[2])
         agent._CURRENT_CONVERSATION.reset(toks[1])
         agent._CURRENT_SURFACE.reset(toks[0])
 
 
-def test_l5_the_very_next_whole_typed_yes_approves_the_card(chat, gmail, monkeypatch):
-    from agent_friday.services import reflex_chat as rc
-    cid = _arm(gmail, monkeypatch)
-    rc.note_user_turn(CONV, "yes", True)
-    assert "NOT RECORDED" not in _typed_yes(cid)
-    assert ia.wait_for(cid, 10)["status"] == "complete"
+TYPED_REPLIES = ["yes", "ok thanks", "fine", "show me", "please", "go ahead", "sounds good", "right", "open it"]
 
 
-def test_l5_a_yes_after_another_turn_approves_nothing(chat, gmail, monkeypatch):
-    """Fails on f927387bc: a later yes (meant for a question a model asked since) approved the Laya card."""
-    from agent_friday.services import reflex_chat as rc
+@pytest.mark.parametrize("words", TYPED_REPLIES)
+def test_n_mj1_no_typed_reply_approves_a_laya_card(chat, gmail, monkeypatch, words):
+    """Fails on 7f7706984: any of Friday's general yes-words ('ok thanks', 'fine', 'show me') typed as the very
+    next message approved the card, and so did a model's answer_card call."""
     cid = _arm(gmail, monkeypatch)
-    rc.note_user_turn(CONV, "what is on my calendar", True)          # the conversation moved on
-    rc.note_user_turn(CONV, "yes", True)
-    res = _typed_yes(cid)
-    assert res.startswith("NOT RECORDED") and "last question" in res
+    res = _typed_yes(cid, words)
+    assert res == ia.LAYA_CARD_BUTTON and "Approve button" in res
+    assert ia.answer_card(cid, "approve", words, surface="chat")["text"] == ia.LAYA_CARD_BUTTON
+    assert ia.typed_decision(words, cid) is None, "typed_decision never approves a Laya card"
     assert ap.get_approval(cid)["status"] == "pending" and gmail.changes() == []
 
 
-def test_l5_a_second_yes_and_an_untrusted_yes_approve_nothing(chat, gmail, monkeypatch):
+@pytest.mark.parametrize("words", TYPED_REPLIES)
+def test_n_mj1_the_reflex_path_answers_no_card_from_a_typed_reply(chat, gmail, monkeypatch, words):
     from agent_friday.services import reflex_chat as rc
     cid = _arm(gmail, monkeypatch)
-    rc.note_user_turn(CONV, "yes", True)                              # the first yes is consumed by a model that asked on
-    rc.note_user_turn(CONV, "yes", True)
-    assert _typed_yes(cid).startswith("NOT RECORDED")
-    assert gmail.changes() == []
+    assert rc.open_turn(words, {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV, turn_id="t-2",
+                        settings={}, authenticated=True, local=True) is None
+    assert not hasattr(rc, "take_armed_card") and not hasattr(rc, "note_user_turn")
+    assert ap.get_approval(cid)["status"] == "pending"
 
 
-def test_l5_a_yes_that_is_not_the_owners_own_page_approves_nothing(chat, gmail, monkeypatch):
-    from agent_friday.services import reflex_chat as rc
+def test_n_mj1_the_button_still_approves_and_a_typed_no_can_decline(chat, gmail, monkeypatch):
     cid = _arm(gmail, monkeypatch)
-    rc.note_user_turn(CONV, "yes", False)                             # a tunnel, a channel, a script
-    assert _typed_yes(cid).startswith("NOT RECORDED") and gmail.changes() == []
-
-
-def test_l5_another_conversations_yes_approves_nothing(chat, gmail, monkeypatch):
+    ap.decide(cid, "approve")                                         # the Approve button's route
+    assert ia.wait_for(cid, 10)["status"] == "complete"
+    gmail.calls.clear()
+    stage = _stage(selected=(3, 4))
+    report(stage)
     from agent_friday.services import reflex_chat as rc
-    cid = _arm(gmail, monkeypatch)
-    rc.note_user_turn("conv-other", "yes", True)
-    toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_CONVERSATION.set("conv-other"),
-            agent._CURRENT_OWNER_TEXT.set("yes")]
-    try:
-        res = agent._tool_answer_card({"card_id": cid, "decision": "approve"})
-    finally:
-        agent._CURRENT_OWNER_TEXT.reset(toks[2]); agent._CURRENT_CONVERSATION.reset(toks[1]); agent._CURRENT_SURFACE.reset(toks[0])
-    assert res.startswith("NOT RECORDED") and ap.get_approval(cid)["status"] == "pending"
+    rc._safe_write_first("star these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
+                         turn_id="t-3", authenticated=True, local=True)
+    cid3 = _pending()[0]["approval_id"]
+    assert "Recorded: declined" in _typed_yes(cid3, "no", "decline")
+    assert ap.get_approval(cid3)["status"] == "denied" and gmail.changes() == []
 
 
-def test_l5_a_card_a_model_raised_keeps_its_old_typed_yes_rule(chat, gmail, monkeypatch):
+def test_n_mj1_a_card_a_model_raised_keeps_its_typed_yes_rule(chat, gmail, monkeypatch):
     stage = _stage()
     report(stage)
     Page(monkeypatch)
     out = agent._tool_organize_email({"action": "archive", "selection": "screen"})
     assert out.startswith("CARD_RAISED")
     cid = _pending()[0]["approval_id"]
-    assert "last question" not in _typed_yes(cid, "yes")
+    assert ia.typed_decision("yes", cid) == "approve"
+    assert "NOT RECORDED" not in _typed_yes(cid, "yes")
+
+
+def test_n_mj1_the_notice_tells_the_owner_to_press_approve(chat, gmail, monkeypatch):
+    from agent_friday.services import reflex_chat as rc
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
+                               turn_id="t-1", authenticated=True, local=True)
+    assert "press Approve on it" in out["reply"] and "press Approve on it" in out["history_text"]
+
+
+# ── n-3: turning the setting down expires the cards still waiting ──────────────────────────────
+
+def test_n3_turning_the_setting_off_expires_every_pending_laya_card_and_only_those(chat, gmail, settings_file, owner_record,
+                                                                                     monkeypatch):
+    """Fails on 7f7706984: a card raised under 'on' stayed approvable after the owner turned it off."""
+    core = settings_file
+    laya = _arm(gmail, monkeypatch)
+    other = _stage(selected=(3, 4))
+    report(other)
+    model_card = agent._tool_organize_email({"action": "archive", "selection": "screen"})
+    assert model_card.startswith("CARD_RAISED"), model_card
+    pend = {c["approval_id"]: c for c in _pending()}
+    mine = [i for i, c in pend.items() if c["payload"].get("origin") == "laya_safe_write"]
+    others = [i for i in pend if i not in mine]
+    assert laya in mine and others
+    core._save_settings({"laya_safe_writes": "off"})
+    assert ap.get_approval(laya)["status"] == "expired"
+    assert all(ap.get_approval(i)["status"] == "pending" for i in others), "a card a model raised is untouched"
+    assert ia.answer_card(laya, "approve", "yes", surface="chat")["ok"] is False
+
+
+def test_n3_a_file_edited_down_expires_them_too(chat, gmail, settings_file, owner_record, monkeypatch):
+    core = settings_file
+    laya = _arm(gmail, monkeypatch)
+    _click(core, "on")
+    _hand_edit(core, "off")
+    gs.follow_file("laya_safe_writes", "off")
+    import time
+    for _ in range(150):
+        if ap.get_approval(laya)["status"] == "expired":
+            break
+        time.sleep(0.02)
+    assert ap.get_approval(laya)["status"] == "expired"
 
 
 # ── L6: the spent ticket is stored nowhere ───────────────────────────────────────────────────────
@@ -1078,18 +1118,30 @@ def test_mj1_rows_friday_pointed_at_are_not_what_these_means(gmail, monkeypatch)
     assert not sw._TICKETS and not _cards()
 
 
-def test_mj1_the_first_two_count_over_the_screen_not_over_what_friday_pointed_at(gmail, monkeypatch):
+def test_mj1_with_fridays_numbers_on_screen_an_ordinal_is_asked_never_guessed(gmail, monkeypatch):
+    """Fails on 7f7706984 (which counted down the screen and called the rows 'the rows you numbered')."""
+    stage = _stage(selected=())
+    report(stage)
+    _friday_pointed(monkeypatch)
+    for text in ("archive the second one", "archive the first two"):
+        r = lr.route(text, trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+        assert (r.decision, r.layer) == ("ask", "safe_write"), (text, r.decision, r.layer, r.reason)
+        assert r.question == sw.ORDINAL_QUESTION and not r.args and r.tool is None
+    assert not sw._TICKETS and not _cards()
+
+
+def test_mj1_with_no_numbers_on_screen_an_ordinal_counts_from_the_top_and_the_card_says_so(gmail, monkeypatch):
     stage = _stage(selected=())
     report(stage)
     Page(monkeypatch)
-    _friday_pointed(monkeypatch)
     r = lr.route("archive the first two", trusted=True, stage=stage, log=False, conversation_id=CONV,
                  rung_budget_ms=5000)
     assert r.layer == "safe_write" and r.decision == "tool"
     assert agent._tool_organize_email(dict(r.args)).startswith("CARD_RAISED")
-    pay = _pending()[0]["payload"]
-    assert pay["refs"] == [ref(1), ref(2)], "the owner's own numbering of the screen, not Friday's highlighted set"
-    assert pay["laya_rule"] == "the rows you numbered"
+    card = _pending()[0]
+    assert card["payload"]["refs"] == [ref(1), ref(2)]
+    assert card["payload"]["laya_rule"] == "the rows you counted from the top of your screen"
+    assert "numbered" not in card["description"] and "numbered" not in card["action_description"]
 
 
 def test_mj1_a_proposal_resolved_from_pointed_rows_is_refused_and_never_worded_as_the_owners(gmail):
@@ -1097,7 +1149,8 @@ def test_mj1_a_proposal_resolved_from_pointed_rows_is_refused_and_never_worded_a
     p, why = sw.build(pa.PointAct("defer", "archive", [ref(1)], "messages", args=args))
     assert p is None and "model's" in why
     assert "deictic:pointed" not in sw._RULE_WORDS
-    assert sw.rule_words("ordinals:ordinals") == "the rows you numbered"
+    assert sw.rule_words("ordinals:ordinals") == "the rows you counted from the top of your screen"
+    assert "numbered" not in sw.rule_words("ordinals:ordinals") and "numbered" not in sw.rule_words("who")
 
 
 # ── MJ-2: the history keeps no title and no sender name ──────────────────────────────────────────
@@ -1197,75 +1250,20 @@ def test_md1_if_the_record_cannot_be_turned_down_it_is_removed_and_reads_off(set
     assert sw.mode() == "off"
 
 
-# ── MD-3: a typed yes can reach the armed card, and only the very next one ───────────────────────
+# ── the palette reports a raised card as a card ───────────────────────────────────────────────────
 
-def _open(text, conv=CONV, settings=None, **kw):
-    from agent_friday.services import reflex_chat as rc
-    return rc.open_turn(text, {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=conv, turn_id="t-1",
-                        settings=settings if settings is not None else {}, authenticated=True, local=True, **kw)
-
-
-def test_md3_the_very_next_whole_yes_answers_the_armed_card_with_no_model(chat, gmail, monkeypatch):
-    """Fails on 6e50a52a4: nothing handed the model the card id, so the typed yes reached no card."""
-    from agent_friday.services import reflex_chat as rc
-    cid = _arm(gmail, monkeypatch)
-    rc.note_user_turn(CONV, "yes", True)
-    out = _open("yes")
-    assert out and out["outcome"] == "card_answered" and out["reply"].startswith("Approved and done")
-    assert ia.wait_for(cid, 10)["status"] == "complete"
-
-
-def test_md3_a_whole_no_declines_it(chat, gmail, monkeypatch):
-    from agent_friday.services import reflex_chat as rc
-    cid = _arm(gmail, monkeypatch)
-    rc.note_user_turn(CONV, "no", True)
-    out = _open("no")
-    assert out and out["outcome"] == "card_answered" and "declined" in out["reply"].lower()
-    assert ap.get_approval(cid)["status"] == "denied" and gmail.changes() == []
-
-
-def test_md3_a_yes_after_anything_else_answers_nothing(chat, gmail, monkeypatch):
-    from agent_friday.services import reflex_chat as rc
-    cid = _arm(gmail, monkeypatch)
-    rc.note_user_turn(CONV, "what is on my calendar", True)
-    rc.note_user_turn(CONV, "yes", True)
-    assert _open("yes") is None and ap.get_approval(cid)["status"] == "pending" and gmail.changes() == []
-
-
-def test_md3_a_palette_request_with_no_conversation_arms_nothing(chat, gmail, monkeypatch):
-    from agent_friday.services import reflex_chat as rc
-    stage = _stage(selected=(1, 2))
-    report(stage)
-    Page(monkeypatch)
-    rc._LAYA_ASKED.clear()
-    out = _open("archive these", arm=False)
-    assert out and out["outcome"] == "card" and not rc._LAYA_ASKED
-
-
-def test_md3_a_palette_request_in_the_conversation_ages_the_armed_card(chat, gmail, monkeypatch):
+def test_md3_a_palette_request_reports_a_card_as_a_card_not_done(chat, gmail, monkeypatch):
     import json
     from flask import Flask
     from agent_friday.routes import core_routes as cr
     from agent_friday.services import reflex_chat as rc
-    cid = _arm(gmail, monkeypatch)
     monkeypatch.setattr(cr, "_load_settings", lambda: {"reflex_open_enabled": True})
     monkeypatch.setattr(rc, "trusted_surface", lambda data, text, **kw: True)
     monkeypatch.setattr(rc, "open_turn", lambda *a, **k: {"outcome": "card", "reply": "waiting on your card"})
     body = {"text": "open the budget", "source": "app_page", "conversation_id": CONV}
     with Flask(__name__).test_request_context("/api/reflex/open", method="POST", json=body):
         resp = cr.reflex_open()
-    assert json.loads(resp.get_data(as_text=True))["status"] == "card", "a card is reported as raised, not done"
-    assert rc.take_armed_card(CONV) is None, "the palette was another turn: the armed card is no longer the last question"
-    assert ap.get_approval(cid)["status"] == "pending"
-
-
-def test_md3_a_spoken_turn_in_the_conversation_disarms_a_typed_card(safe_call):
-    from agent_friday.services import reflex_chat as rc
-    c = safe_call()
-    rc.arm_laya_card(CALL, "card_id=apr_typed")
-    assert CALL in rc._LAYA_ASKED
-    c.say("what's on my calendar")
-    assert CALL not in rc._LAYA_ASKED
+    assert json.loads(resp.get_data(as_text=True))["status"] == "card"
 
 
 # ── mn-1: a display name that is itself an address ───────────────────────────────────────────────
@@ -1335,3 +1333,146 @@ def test_md4_the_docs_match_the_code():
     for needle in ("Laya's safe writes", "reflex_approval_replies", "reflex_open_enabled", "chat_tool_routing",
                    "laya_tool_head", "Voice point-and-act"):
         assert needle in log, needle
+
+
+# ══ Third review (7f7706984): N-MD-1, n-4, N-MJ-4, N-MD-3, n-1 ══
+
+def test_n_md1_a_cold_cache_still_narrows_from_the_file(settings_file, owner_record):
+    """Fails on 7f7706984: right after a start the cache is cold, follow_file saw 'off' for the record and did
+    nothing, so a later write of 'on' counted."""
+    core = settings_file
+    _click(core, "on")
+    gs.invalidate()                                   # a restart: nothing verified yet
+    _hand_edit(core, "off")
+    sw.mode()                                          # the first read after the start
+    assert _wait_record(core), "the record was turned down even though the cache was cold"
+    _hand_edit(core, "on")
+    assert sw.mode() == "off"
+
+
+def test_n_md1_boot_narrows_the_record_before_any_turn(settings_file, owner_record):
+    core = settings_file
+    _click(core, "on")
+    gs.invalidate()
+    gs.boot_narrow({"laya_safe_writes": "off"})
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+    _click(core, "on")
+    gs.boot_narrow({})                                  # a missing key is the default, off
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "server.py").read_text(encoding="utf-8")
+    assert "boot_narrow" in src, "the server calls it at start"
+
+
+def test_n4_follow_file_never_undoes_a_fresher_owner_click(settings_file, owner_record, monkeypatch):
+    """Fails on 7f7706984: a narrowing decided on an old read of the file ran after the owner's new ON click and
+    turned the record back down."""
+    import types
+    core = settings_file
+    _click(core, "on")
+    _hand_edit(core, "off")
+    ran = []
+
+    class Held:
+        def __init__(self, target=None, **kw):
+            ran.append(target)
+
+        def start(self):
+            pass
+    real_threading = gs._threading
+    monkeypatch.setattr(gs, "_threading", types.SimpleNamespace(Thread=Held, RLock=real_threading.RLock))
+    gs.follow_file("laya_safe_writes", "off")           # decided on the old file; the thread has not run yet
+    assert len(ran) == 1
+    monkeypatch.setattr(gs, "_threading", real_threading)
+    _click(core, "on")                                  # the owner's fresher click
+    assert sw.mode() == "on"
+    ran[0]()                                            # the held narrowing now runs
+    assert gs.owner_choice("laya_safe_writes", block=True) == "on" and sw.mode() == "on"
+
+
+# ── N-MJ-4: voice keeps a neutral line ──────────────────────────────────────────────────────────
+
+def test_n_mj4_the_spoken_card_line_is_said_aloud_but_the_history_keeps_a_neutral_line(safe_call, monkeypatch):
+    """Fails on 7f7706984: the card line with subjects and sender names was saved as the agent's words."""
+    saved = []
+    monkeypatch.setattr(rv, "_persist_voice_turn", lambda u, a, conversation_id=None, provider=None:
+                        saved.append((u, a, conversation_id, provider)) or True)
+    c = safe_call(room=False)
+    c.say("archive these")
+    spoken = " ".join(c.mouth.spoken)
+    assert "Sender" in spoken, "the card line is spoken with the senders' names"
+    assert c.tool_session["history_text"] == rv._CARD_LINE_FALLBACK
+    rv._persist_local_turn(c.tool_session, "archive these", spoken, CALL)
+    assert saved == [("archive these", rv._CARD_LINE_FALLBACK, CALL, "local")]
+    assert "Sender" not in saved[0][1] and "Subject" not in saved[0][1] and "history_text" not in c.tool_session
+
+
+def test_n_mj4_a_question_built_from_the_screen_keeps_a_neutral_line(monkeypatch):
+    saved = []
+    monkeypatch.setattr(rv, "_persist_voice_turn", lambda u, a, conversation_id=None, provider=None:
+                        saved.append(a) or True)
+
+    def run(layer):
+        plan = {"tool": None, "args": None, "ack": "", "label": "", "question": "Which sender: Sarah Jones or Sarah Lee?",
+                "receipt": {"layer": layer}}
+        monkeypatch.setattr(rv, "_voice_route_plan", lambda *a, **k: plan)
+        ts = {"conversation_id": CALL, "spoken": []}
+        rv._run_routed_front_turn("star the ones from Sarah", lambda s: None, front={"contract": {"names": []}},
+                                  tool_session=ts, seat_turn=lambda u, od, p, rt, cl=None: p["question"],
+                                  send=lambda o: None, session=lambda: None, owner_voice=True)
+        rv._persist_local_turn(ts, "star the ones from Sarah", plan["question"], CALL)
+    run("point_act")
+    run("resolver")
+    run("safe_write")
+    assert saved == [rv._NEUTRAL_QUESTION] * 3
+    run("rule")                                          # a question that names nothing from the screen is kept
+    assert saved[-1] == "Which sender: Sarah Jones or Sarah Lee?"
+
+
+# ── N-MD-3: the oracle's ON class is exact ──────────────────────────────────────────────────────
+
+def test_n_md3_the_oracle_takes_its_write_labels_from_the_case_file_not_the_parser():
+    from tools import laya_router_decision_diff as dd
+    cases = dd.build_cases(Path(__file__).resolve().parents[2])
+    labelled = {c["text"] for c in cases if c["write_referential"]}
+    assert labelled == set(dd.WRITE_REFERENTIAL) and "archive these" in labelled
+    assert not any(c["write_referential"] for c in cases if c["text"].startswith("show me"))
+    assert "write_referential(" not in Path(dd.__file__).read_text(encoding="utf-8")
+
+
+# ── n-1: the log key is sealed in the keystore, and no key means no hashed row ───────────────────
+
+def test_n1_the_salt_is_sealed_by_the_keystore_and_denied_to_the_file_tools(gmail, monkeypatch, tmp_path):
+    from agent_friday.services import credential_paths as cred
+    from agent_friday.services import credential_store as cs
+    calls = []
+    monkeypatch.setattr(cs, "write_secret", lambda path, data, **kw: calls.append(("w", path)) or path.write_bytes(b"SEALED" + data))
+    monkeypatch.setattr(cs, "read_secret", lambda path: calls.append(("r", path)) or path.read_bytes()[6:])
+    sw._KEY_CACHE = None
+    sw._KEY_RETRY_AT = 0.0
+    salt = sw._salt()
+    assert salt and len(salt) == 32 and calls and calls[0][0] == "w"
+    path = sw.log_path().parent / "salt"
+    assert path.read_bytes().startswith(b"SEALED"), "never plain on disk"
+    assert cred.check(path, sniff=False)
+
+
+def test_n1_no_key_means_no_hashed_row_and_no_throwaway_key(gmail, monkeypatch, tmp_path):
+    from agent_friday.services import laya_router_head as lh
+    from agent_friday.services import laya_router_learn as ll
+    monkeypatch.setattr(sw, "_salt", lambda: None)
+    sw._KEY_CACHE = None
+    sw._KEY_RETRY_AT = 0.0
+    assert sw.keyed_hash("archive these") == "" and sw._KEY_CACHE is None, "nothing is cached over a failed read"
+    _mode(monkeypatch, "shadow")
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    _route("archive these", stage)
+    assert not (tmp_path / "runtime" / "laya_safe_writes" / "shadow.jsonl").exists()
+    assert ll._sha("x") == ""
+    final = lr.Route("no_tool")
+    wrote = []
+    monkeypatch.setattr(lh, "log_path", lambda: tmp_path / "head.jsonl")
+    lh._write_shadow(lh.shadow_row("star these", None, final, None, "voice", 0.9))
+    assert not (tmp_path / "head.jsonl").exists() and not wrote
+    sw._KEY_RETRY_AT = 0.0

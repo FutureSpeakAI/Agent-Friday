@@ -461,3 +461,17 @@ def test_a_palette_ask_disarms_only_the_conversation_it_names(monkeypatch):
                        turn_id=None, settings=OPEN_ON, local=True, disarm=True,
                        resolve=lambda t: _Res("ask", question="Did you mean the one from Mara?"))
     assert out["outcome"] == "ask" and not _armed()
+
+
+def test_the_resolvers_replies_keep_no_title_in_the_history(monkeypatch):
+    """The live reply names what was opened; the line the conversation keeps says 'that'."""
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "navigate_to", lambda inp: "NAV_OK:email shown")
+    res = _Res("command", command={"tool": "navigate_to", "input": {"kind": "email", "id": "t-1"}},
+               chosen=_Chosen())
+    out = _open(resolve=lambda text: res)
+    assert "Go-live checklist" in out["reply"]
+    assert "Go-live" not in out["history_text"] and out["history_text"] == "Done: opened that (instant, no model)."
+    monkeypatch.setattr(agent, "_governance_check", lambda *a, **kw: (False, "test policy hold"))
+    out = _open(resolve=lambda text: res)
+    assert out["outcome"] == "refused" and "Go-live" in out["reply"] and "Go-live" not in out["history_text"]
+    assert "test policy hold" not in out["history_text"]

@@ -45,6 +45,12 @@ def gmail(tmp_path, monkeypatch):
     import agent_friday.core as core
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(sw, "mode", lambda settings=None: "on")
+    # the log key is sealed by the keystore in production; here the keystore is a plain file, in this test's folder
+    from agent_friday.services import credential_store as _cs
+    monkeypatch.setattr(_cs, "write_secret", lambda path, data, **kw: path.write_bytes(bytes(data)))
+    monkeypatch.setattr(_cs, "read_secret", lambda path: path.read_bytes())
+    sw._KEY_CACHE = None
+    sw._KEY_RETRY_AT = 0.0
     tok = agent._CURRENT_CONVERSATION.set(CONV)
     yield fake
     agent._CURRENT_CONVERSATION.reset(tok)
@@ -368,8 +374,9 @@ def test_laya_cannot_approve_her_own_card(gmail, monkeypatch):
     for words in ("", "archive these please", "I put 3 conversations on an approval card."):
         assert ia.answer_card(card["approval_id"], "approve", words)["ok"] is False, words
     assert ap.get_approval(card["approval_id"])["status"] == "pending" and gmail.changes() == []
-    # positive control: the owner's own yes does
-    assert ia.answer_card(card["approval_id"], "approve", "yes")["ok"] is True
+    # a typed yes does not approve a card Laya raised either; the owner's click on its Approve button does
+    assert ia.answer_card(card["approval_id"], "approve", "yes")["text"] == ia.LAYA_CARD_BUTTON
+    ap.decide(card["approval_id"], "approve")
     assert ia.wait_for(card["approval_id"], 10)["status"] == "complete"
 
 
@@ -848,7 +855,7 @@ def test_chat_on_says_a_card_was_raised_in_sealed_words_and_nothing_changed(chat
     out = _chat("archive these")
     assert out["outcome"] == "card" and out["laya"]["template"] == "safe_write_card"
     assert out["reply"].startswith("I put archive 3 conversations (") and out["reply"].endswith(
-        ") on an approval card. Nothing changes until you approve it, and you can undo it afterwards (instant, no model).")
+        ") on an approval card. Nothing changes until you press Approve on it, and you can undo it afterwards (instant, no model).")
     assert "\u201cSubject t1\u201d from Sender" in out["reply"] and "@" not in out["reply"], "a row sample, names only"
     assert out["tool_trace"][0]["name"] == "organize_email"
     assert len(_pending()) == 1 and gmail.changes() == []
@@ -1233,7 +1240,7 @@ def test_the_shadow_logs_hashes_are_keyed_by_a_per_install_salt(gmail, monkeypat
     row = json.loads((d / "shadow.jsonl").read_text().splitlines()[0])
     assert row["text_sha"] != hashlib.sha256(b"label these as receipts").hexdigest()[:16]
     assert row["label_sha"] != hashlib.sha256(b"receipts").hexdigest()[:16]
-    salt = bytes.fromhex((d / "salt").read_text().strip())
+    salt = (d / "salt").read_bytes()
     assert len(salt) >= 16
     assert row["text_sha"] == hmac.new(salt, b"label these as receipts", hashlib.sha256).hexdigest()[:16]
     (d / "salt").unlink()

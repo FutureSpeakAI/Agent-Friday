@@ -23,6 +23,15 @@ sys.path.insert(0, str(ROOT / "tools"))
 PROTO = lr.Route("no_tool", confidence=0.5, layer="laya2", reason="PROTO")
 
 
+@pytest.fixture(autouse=True)
+def _local_hash_key(monkeypatch):
+    """The text hashes are keyed with the install's sealed local key; these suites use a fixed one."""
+    from agent_friday.services import laya_safe_writes as _sw
+    monkeypatch.setattr(_sw, "_salt", lambda: b"k" * 32)
+    monkeypatch.setattr(_sw, "_KEY_CACHE", None)
+    monkeypatch.setattr(_sw, "_KEY_RETRY_AT", 0.0)
+
+
 class FakeHead:
     def __init__(self, answer):
         self.answer, self.cases = answer, []
