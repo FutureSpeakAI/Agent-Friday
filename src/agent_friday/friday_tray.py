@@ -25,6 +25,7 @@ import pystray
 from PIL import Image
 
 from agent_friday import brand
+from agent_friday.services import notice_registry as _notice_registry
 from agent_friday.paths import clear_server_port, friday_home, server_port
 
 # No console windows from anything this process spawns. The tray outlives the
@@ -564,7 +565,8 @@ class FridayTray:
                     continue
                 if crashed and self.icon is not None:
                     try:
-                        self.icon.notify(
+                        _notice_registry.tray_balloon(
+                            "E66", self.icon,
                             "Friday's server stopped unexpectedly. "
                             "It has NOT been restarted automatically — "
                             "open the tray menu to restart it, or check "
@@ -592,7 +594,7 @@ class FridayTray:
             threading.Thread(target=self.restart_server, daemon=True).start()
         if self.icon is not None:
             try:
-                self.icon.notify(msg, brand.PRODUCT_NAME)
+                _notice_registry.tray_balloon("E67", self.icon, msg, brand.PRODUCT_NAME)
             except Exception:
                 pass
 
@@ -699,7 +701,7 @@ class FridayTray:
     def _notify(self, message: str) -> None:
         if self.icon is not None:
             try:
-                self.icon.notify(message, brand.PRODUCT_NAME)
+                _notice_registry.tray_balloon("E68", self.icon, message, brand.PRODUCT_NAME)
             except Exception:
                 pass
 

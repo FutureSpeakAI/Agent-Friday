@@ -343,7 +343,7 @@ def notify_paused(cfg: dict | None = None) -> None:
         ne.upsert_status(key=PAUSED_NOTICE_KEY,
                          title="Scheduled jobs are paused: no local model",
                          body=body, source="scheduler", kind="scheduled_status",
-                         priority="low",
+                         priority="low", emitter="E10",
                          target={"workspace": "settings", "tab": "costs"})
     except Exception as e:
         _log.debug("paused notice failed: %s", e)

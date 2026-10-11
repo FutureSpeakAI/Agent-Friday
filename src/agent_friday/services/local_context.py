@@ -280,8 +280,8 @@ def grant_for_conversation(conversation_id) -> dict:
 
 
 def _deliver(conversation_id, text, kind) -> bool:
-    from agent_friday.services import voice_live_channel
-    return voice_live_channel.deliver(conversation_id, text, kind=kind)
+    from agent_friday.services import notice_registry as _nr
+    return _nr.voice_say("E78", conversation_id, text, kind=kind)
 
 
 def _deliver_for(payload, conversation_id, text, kind) -> bool:
@@ -554,6 +554,8 @@ def edit(approval_id: str, new_text: str, *, accept: Optional[str] = None) -> di
     updated = approvals._patch(approval_id, payload=p, description=final[:2000])
     try:
         approval_feed.card_pending(updated)
+        from agent_friday.services import notice_registry as _nr
+        _nr.note("E62", True)
     except Exception:
         pass
     return {"ok": True, "approval": updated}

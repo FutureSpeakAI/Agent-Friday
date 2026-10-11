@@ -651,7 +651,7 @@ def generate_daily_creation(force=False):
                       f"Read it in full in the Creations panel."),
                 priority="low",
                 source="daily-creation",
-                kind="creation",
+                kind="creation", emitter="E17",
                 proactive_chat=True,
                 chat_message=(
                     f"I made something this morning — a {creation['type']} called "

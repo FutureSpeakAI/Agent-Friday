@@ -100,9 +100,9 @@ def words_hash(text: str) -> str:
 def _notify(title: str, body: str, kind: str = "info", priority: str = "") -> None:
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title=title, body=body,
-                priority=priority or ("low" if kind == "info" else "medium"),
-                kind=kind, source="actions")
+        priority = priority or ("low" if kind == "info" else "medium")
+        ne.push(title=title, body=body, priority=priority, kind=kind, source="actions",
+                emitter="E49", dedupe_key="actions:%s:%s" % (kind, priority))
     except Exception as e:
         _log.info("could not notify (%s): %s", title, e)
 
@@ -110,9 +110,9 @@ def _notify(title: str, body: str, kind: str = "info", priority: str = "") -> No
 def _tell_pages(domain: str, receipt_id: str) -> None:
     """News for the desktop: a list it shows may have changed."""
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "items_changed", "domain": domain,
-                               "receipt_id": receipt_id}, kind="desktop")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "items_changed", "domain": domain,
+                                  "receipt_id": receipt_id}, kind="desktop")
     except Exception:
         pass
 
@@ -123,16 +123,16 @@ def _post_back(conversation_id: str | None, text: str, approval_id: str | None) 
     if not cid:
         return
     try:
-        from agent_friday.services import conversations as _convs
-        _convs.append(cid, {"role": "friday", "text": text, "ts": time.time(),
-                            "meta": {"kind": "approval_result", "approval_id": approval_id}})
+        from agent_friday.services import notice_registry as _nr
+        _nr.transcript_add("E75", cid, {"role": "friday", "text": text, "ts": time.time(),
+                                        "meta": {"kind": "approval_result", "approval_id": approval_id}})
     except Exception as e:
         _log.warning("could not post the outcome into %s: %s", cid, e)
         return
     try:
-        from agent_friday.services import desktop_bus as _bus
-        _bus.broadcast({"type": "approval_result", "conversation_id": cid,
-                        "approval_id": approval_id}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "approval_result", "conversation_id": cid,
+                                  "approval_id": approval_id}, kind="chat")
     except Exception:
         pass
 
@@ -467,10 +467,11 @@ def _tell_held(detail: dict, state: str, receipt_id: str = "", card_id: str = ""
     if not refs:
         return
     try:
-        from agent_friday.services import desktop_bus, screen_stage
-        desktop_bus.push([{"type": "held", "workspace": detail.get("stage_ws") or "messages", "card_id": card_id,
-                           "refs": refs, "state": state, "action": detail.get("action") or "",
-                           "receipt_id": receipt_id, "selection_id": detail.get("selection_id") or ""}])
+        from agent_friday.services import notice_registry as _nr
+        from agent_friday.services import screen_stage
+        _nr.bus_push("E71", [{"type": "held", "workspace": detail.get("stage_ws") or "messages", "card_id": card_id,
+                              "refs": refs, "state": state, "action": detail.get("action") or "",
+                              "receipt_id": receipt_id, "selection_id": detail.get("selection_id") or ""}])
         screen_stage.log_counts("held_" + state, detail.get("stage_ws") or "messages", len(refs))
     except Exception:
         pass
@@ -2010,7 +2011,8 @@ def _tell_call(conversation_id: str | None, rec: dict | None, ok: bool) -> None:
                 line += " They can say \u201cundo that\u201d to put it back."
         else:
             line = "The approved change did not happen; the reason is on their screen."
-        vlc.deliver(cid, line, kind="result")
+        from agent_friday.services import notice_registry as _nr
+        _nr.voice_say("E75", cid, line, kind="result")
     except Exception as e:
         _log.info("could not tell the live call: %s", e)
 

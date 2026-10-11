@@ -574,7 +574,8 @@ def apply_approved(approval_id: str, actor: str = "owner") -> dict:
 def _notify(title: str, body: str, kind: str = "info") -> None:
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title=title, body=body, priority="medium", kind=kind, source="career")
+        ne.push(title=title, body=body, priority="medium", kind=kind, source="career",
+                emitter="E45", dedupe_key="career:" + kind)
     except Exception as e:
         _log.warning("could not notify (%s): %s", title, e)
 

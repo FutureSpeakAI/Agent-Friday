@@ -926,24 +926,25 @@ def _notify_run(rec, status, summary):
             _ne.push(title=(f"\u26a0\ufe0f {name} failed" if status == "failed"
                             else f"\u26a0\ufe0f {name} did not run"),
                      body=(summary or "")[:900], priority="high", source="scheduler",
-                     kind="scheduled_failure", actions=look,
+                     kind="scheduled_failure", actions=look, emitter="E04",
                      dedupe_key=f"sched-fail:{sid}", resolve_key=f"sched-fail:{sid}")
             return
         if status == "waiting":
             _ne.push(title=f"\u23f3 {name} is waiting for the local seat",
                      body=(summary or "")[:900], priority="low", source="scheduler",
-                     kind="scheduled_task", actions=look,
+                     kind="scheduled_task", actions=look, emitter="E05",
                      dedupe_key=f"sched-wait:{sid}", resolve_key=f"sched-wait:{sid}")
             return
         if status == "retired":
             _ne.push(title=f"{name} was switched off", body=(summary or "")[:900],
-                     source="scheduler", kind="schedule_retired")
+                     source="scheduler", kind="schedule_retired", emitter="E06",
+                     dedupe_key=f"sched-retired:{sid}")
             return
         _ne.resolve(f"sched-fail:{sid}")
         _ne.resolve(f"sched-wait:{sid}")
         _ne.push(title=f"\u2713 {name} ran",
                  body=(summary or "")[:300] or "Completed.", priority="low",
-                 source="scheduler", kind="scheduled_task",
+                 source="scheduler", kind="scheduled_task", emitter="E07",
                  dedupe_key=f"sched-ok:{sid}")
     except Exception as e:
         print(f"  [scheduler] notify failed: {e}")
@@ -2141,7 +2142,7 @@ def _announce_drain(res) -> None:
     """A drain that runs and tells nobody is the same defect as P4."""
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title="Queued work finished",
+        ne.push(title="Queued work finished", emitter="E09", dedupe_key="queue-drained",
                 body=str(res)[:300], proactive_chat=True,
                 chat_message=f"I drained the queued heavy work while you were "
                              f"away. {str(res)[:300]}")

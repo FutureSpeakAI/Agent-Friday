@@ -302,7 +302,7 @@ def _announce(result: dict) -> None:
         body=body,
         priority="low",
         source="update_check",
-        kind="update",
+        kind="update", emitter="E56",
         # One per release. The engine drops a duplicate while the previous one
         # is unread; `notified_version` below covers the dismissed case.
         dedupe_key=f"update-available-{version}",

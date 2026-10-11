@@ -57,6 +57,16 @@ def is_approval(kind: str) -> bool:
     return str(kind or "") in APPROVAL_KINDS
 
 
+def _safety_critical(kind: str, source: str = "") -> bool:
+    """Spend halt, credential problem, budget alert, seat change, a cLaw block
+    (services/notice_registry): always reach the owner."""
+    try:
+        from agent_friday.services import notice_registry
+        return notice_registry.is_safety_critical(kind, source=source)
+    except Exception:
+        return False
+
+
 def tier_for(kind: str, source: str, priority: str, tier: str | None = None) -> str:
     """The tier of a notification. An emitter may name one; an approval is
     always NEEDS_YOU whatever it names."""
@@ -65,6 +75,8 @@ def tier_for(kind: str, source: str, priority: str, tier: str | None = None) -> 
         return NEEDS_YOU
     if tier in TIERS:
         return tier
+    if _safety_critical(kind, source):
+        return NEEDS_YOU
     if (kind, source) in LOG_ONLY_PAIRS or source in LOG_ONLY_SOURCES:
         return LOG_ONLY
     if kind in NEEDS_YOU_KINDS or priority == "critical":
@@ -99,6 +111,8 @@ def muted_kinds() -> set:
 def is_muted(kind: str, source: str) -> bool:
     if is_approval(kind):
         return False                      # never muted away
+    if _safety_critical(kind, source):
+        return False                      # a spend halt is not a thing to mute
     return mute_key(kind, source) in muted_kinds()
 
 

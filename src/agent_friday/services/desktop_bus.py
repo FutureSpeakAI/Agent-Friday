@@ -348,6 +348,15 @@ def page_devices(now: float | None = None) -> dict:
     return dict(d) if isinstance(d, dict) else {}
 
 
+def connected(kind: str = "chat", now: float | None = None) -> bool:
+    """Is a page of `kind` connected and recently heard from? A task that
+    finishes uses this to tell whether the chat is open (services/notice_registry)."""
+    now = now or time.time()
+    with _LOCK:
+        return any(r.get("kind") == kind and r.get("queue") is not None and _fresh(r, now)
+                   for r in _CLIENTS.values())
+
+
 def reset() -> None:
     """Forget every page (tests)."""
     with _LOCK:

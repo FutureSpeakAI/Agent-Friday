@@ -682,7 +682,7 @@ def _announce_seat_notice(conversation_id, text):
         push(title="Answered by a different model than you chose", body=text,
              priority="high", source="routing", kind="seat_notice",
              actions=[SEAT_NOTICE_ACTION],
-             dedupe_key="seat_notice:" + text[:80])
+             emitter="E31", dedupe_key="seat_notice:%s" % (conversation_id or "main"))
     except Exception:
         pass
 

@@ -59,7 +59,7 @@ _OFF_RECORD_ITEMS: Dict[str, Dict[str, Any]] = {}
 _OFF_RECORD_LEDGER: Dict[str, Dict[str, Any]] = {}
 _STUB_KEYS = ("id", "priority", "source", "kind", "read", "dismissed", "created_at",
               "chat_injected", "off_record", "tier", "count", "held", "quiet",
-              "resolved_at")
+              "resolved_at", "place", "emitter", "safety_critical")
 _OPAQUE_KEYS = ("dedupe_key", "collapse_key", "resolve_key", "job")
 _SALT = os.urandom(16)
 
@@ -220,8 +220,16 @@ def push(
     tier: Optional[str] = None,
     resolve_key: Optional[str] = None,
     job: Optional[str] = None,
+    emitter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Add a notification to the tray (services/notification_policy).
+
+    emitter:     the registry id of what is raising this (services/notice_registry).
+                 It names the notice's place (needs_you / activity / updates /
+                 receipts) and whether it is safety-critical (never muted, never
+                 held). Omitted, the registry finds it from kind and source. A
+                 trace or a receipt is never pushed: it is written to the
+                 activity ledger and pulled from the item that made it.
 
     tier:        NEEDS_YOU / FYI / LOG_ONLY; derived from kind, source and
                  priority when omitted. An approval is always NEEDS_YOU.
@@ -250,12 +258,27 @@ def push(
     if priority not in PRIORITY_ORDER:
         priority = "medium"
     from agent_friday.services import notification_policy as _pol
+    from agent_friday.services import notice_registry as _reg
     approval = _pol.is_approval(kind)
+    em = _reg.resolve(kind, source, emitter)
+    safety = _reg.is_safety_critical(kind, emitter, source)
+    if _reg.is_receipt(kind, emitter, source) and not approval:
+        # Traces and receipts are pulled, never pushed.
+        place = _reg.RECEIPTS
+        pulled = {"title": "Off the record" if _off_record_now() else title,
+                  "kind": kind, "source": source, "priority": priority,
+                  "tier": _pol.LOG_ONLY, "logged": True, "pull_only": True,
+                  "place": place, "emitter": em.id if em else None,
+                  "created_at": _now_iso()}
+        _log_only(pulled)
+        return pulled
     t = _pol.tier_for(kind, source, priority, tier)
+    place = _reg.place_of(kind, source, emitter, t)
     if not approval and (t == _pol.LOG_ONLY or _pol.is_muted(kind, source)):
         logged = {"title": "Off the record" if _off_record_now() else title,
                   "kind": kind, "source": source, "priority": priority,
-                  "tier": _pol.LOG_ONLY, "logged": True,
+                  "tier": _pol.LOG_ONLY, "logged": True, "place": place,
+                  "emitter": em.id if em else None,
                   "muted": t != _pol.LOG_ONLY, "created_at": _now_iso()}
         _log_only(logged)
         return logged
@@ -269,6 +292,7 @@ def push(
                  "job": job, "collapse_key": key, "dedupe_key": dedupe_key,
                  "off_record": off}
         if not approval and _hidden(probe, ledger):
+            _notice_line(em, kind, place, False, safety)
             return dict(probe, title=title, body=body, suppressed=True, dismissed=True,
                         read=True, created_at=_now_iso())
         if key:
@@ -279,6 +303,8 @@ def push(
                     continue
                 if approval:
                     return n                     # the same approval, already waiting
+                if safety and n.get("held"):
+                    n["held"] = False            # a safety-critical repeat is never held
                 before = _rank_of(n)
                 n["count"] = int(n.get("count") or 1) + 1
                 n["title"], n["body"] = title, body
@@ -297,6 +323,7 @@ def push(
                     n["tier"] = t                # a failure after progress is louder
                     n["read"] = t == _pol.FYI
                 _save(items, ledger)
+                _notice_line(em, kind, place, not n.get("held"), safety)
                 return n
         entry = {
             "id": str(uuid.uuid4()),
@@ -320,10 +347,13 @@ def push(
             "collapse_key": key,
             # Mid-conversation: a card waits until the owner is done; an
             # approval arrives anyway, marked quiet so nothing interrupts.
-            "held": bool(quiet and not approval),
+            "held": bool(quiet and not approval and not safety),
             "quiet": bool(quiet and approval),
             "resolve_key": resolve_key,
             "job": job,
+            "place": place,
+            "emitter": em.id if em else None,
+            "safety_critical": safety,
         }
         if t == _pol.FYI:
             entry["read"] = True              # an FYI never bumps the badge
@@ -331,7 +361,16 @@ def push(
             entry["off_record"] = True
         items.append(entry)
         _save(items, ledger)
+        _notice_line(em, kind, place, not entry["held"], safety)
         return entry
+
+
+def _notice_line(em: Any, kind: str, place: str, delivered: bool, safety: bool) -> None:
+    """The activity-ledger line for a notice: kind, place, delivered or held.
+    The kind is the registry's, never the caller's words."""
+    from agent_friday.services import notice_registry as _reg
+    _reg.record_line(em.kind if em else "unregistered", place, delivered,
+                     safety=safety, emitter=em.id if em else "")
 
 
 def _off_record_now() -> bool:
@@ -343,7 +382,8 @@ def _off_record_now() -> bool:
 
 
 def _log_only(entry: Dict[str, Any]) -> None:
-    """Housekeeping and muted kinds: the activity log, never the tray."""
+    """Housekeeping, muted kinds and pulled-only receipts: the activity log,
+    never the tray."""
     try:
         import logging
         logging.getLogger("friday.notifications").info(
@@ -352,10 +392,9 @@ def _log_only(entry: Dict[str, Any]) -> None:
     except Exception:
         pass
     try:
-        from agent_friday.services import activity_ledger
-        activity_ledger.record("notification", kind=entry.get("kind"),
-                               source=entry.get("source"), tier=entry.get("tier"),
-                               muted=bool(entry.get("muted")))
+        from agent_friday.services import notice_registry as _reg
+        _notice_line(_reg.get(entry.get("emitter")), entry.get("kind"),
+                     entry.get("place") or "updates", False, False)
     except Exception:
         pass
 
@@ -580,6 +619,7 @@ def upsert_status(
     priority: str = "low",
     target: Optional[Dict[str, Any]] = None,
     meta: Optional[Dict[str, Any]] = None,
+    emitter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create or refresh a single, always-read 'status' entry keyed by
     ``dedupe_key``. Unlike push(), a matching existing entry is UPDATED in place
@@ -591,10 +631,15 @@ def upsert_status(
     """
     if priority not in PRIORITY_ORDER:
         priority = "low"
+    from agent_friday.services import notice_registry as _reg
+    em = _reg.resolve(kind, source, emitter)
+    place = _reg.place_of(kind, source, emitter)
+    _notice_line(em, kind, place, True, False)
     with _LOCK:
         items = _load()
         for n in items:
             if n.get("dedupe_key") == key and not n.get("dismissed"):
+                n["place"] = place
                 n["title"] = title
                 n["body"] = body
                 n["priority"] = priority
@@ -625,6 +670,8 @@ def upsert_status(
             "chat_injected": False,
             "dedupe_key": key,
             "meta": meta or {},
+            "place": place,
+            "emitter": em.id if em else None,
         }
         try:
             from agent_friday.services import off_record as _off

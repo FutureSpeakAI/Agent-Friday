@@ -762,16 +762,16 @@ def _post_back(record: dict, text: str) -> None:
     if not cid:
         return
     try:
-        from agent_friday.services import conversations as _convs
-        _convs.append(cid, {"role": "friday", "text": text, "ts": time.time(),
-                            "meta": {"kind": "approval_result", "approval_id": record.get("approval_id")}})
+        from agent_friday.services import notice_registry as _nr
+        _nr.transcript_add("E75", cid, {"role": "friday", "text": text, "ts": time.time(),
+                                        "meta": {"kind": "approval_result", "approval_id": record.get("approval_id")}})
     except Exception as e:
         _log.warning("could not post the publish result into %s: %s", cid, e)
         return
     try:
-        from agent_friday.services import desktop_bus as _bus
-        _bus.broadcast({"type": "approval_result", "conversation_id": cid,
-                        "approval_id": record.get("approval_id")}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "approval_result", "conversation_id": cid,
+                                  "approval_id": record.get("approval_id")}, kind="chat")
     except Exception:
         pass
 

@@ -430,7 +430,7 @@ def _alarm_new_failures(dropped_shas: list[str]) -> None:
                   f"until this is resolved; your never-send deny marks still "
                   f"apply. Nothing was silently un-denied. Settings › Privacy › "
                   f"File access shows each line and what you can do about it."),
-            priority="high", source="file_grants", kind="warning",
+            priority="high", source="file_grants", kind="warning", emitter="E41",
             dedupe_key="file_grants_ledger_failure:%s" % ident,
         )
         if not sent:
@@ -474,7 +474,7 @@ def _open_retired_notice(sha: str, ev: dict) -> None:
         _write_notices(d)
     _push(title="An old file permission needs you",
           body=_retired_message(ev) + " It grants nothing until you do.",
-          priority="medium", source="file_grants", kind="info",
+          priority="medium", source="file_grants", kind="info", emitter="E41",
           target={"workspace": "settings", "tab": "privacy"},
           dedupe_key="file_grants_retired:%s" % sha)
 

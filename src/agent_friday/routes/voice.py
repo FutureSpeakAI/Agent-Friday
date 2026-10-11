@@ -5131,7 +5131,7 @@ if sock is not None:
                 while _crew_receipts:
                     row = _crew_receipts.popleft()
                     try:
-                        from agent_friday.services import conversations as _crew_cv
+                        from agent_friday.services import notice_registry as _nr
                         from agent_friday.services import conversation_provenance as _crew_prov
                         meta = _crew_prov.turn_meta(row.get("provider"), row["off_record"])
                         meta.update({"kind": ("crew_speech" if row["speaker_id"] == "friday"
@@ -5156,7 +5156,7 @@ if sock is not None:
                             # Private speech never enters ordinary call buffers;
                             # its temporary transcript belongs to off_record.end().
                             continue
-                        _crew_cv.append(row["conversation_id"], message)
+                        _nr.transcript_add("E79", row["conversation_id"], message)
                         if (body and row["status"] == "finished"
                                 and row["conversation_id"] == _voice_session["conversation_id"]):
                             _voice_session["spoken"].append(body)

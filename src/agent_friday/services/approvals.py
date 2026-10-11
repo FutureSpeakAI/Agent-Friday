@@ -688,6 +688,9 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
     try:
         from agent_friday.services import approval_feed
         getattr(approval_feed, name)(record)
+        if name == "card_pending":
+            from agent_friday.services import notice_registry as _nr
+            _nr.note("E61", True)               # the record of the popup, not a gate on it
     except Exception as e:
         _log.warning("approval feed unavailable: %s", e)
     if name == "card_resolved":

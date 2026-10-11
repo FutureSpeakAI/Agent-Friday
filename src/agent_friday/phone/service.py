@@ -115,7 +115,8 @@ def _notify(title: str, body: str, *, priority: str = "medium", kind: str = "inf
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=title, body=body[:600], priority=priority, kind=kind,
-                source="phone", dedupe_key=dedupe_key,
+                source="phone", emitter="E42",
+                dedupe_key=dedupe_key or "phone:%s:%s" % (kind, priority),
                 target={"workspace": "settings", "tab": "phone"})
     except Exception as e:
         _log.debug("phone notify failed: %s", e)
@@ -581,6 +582,8 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
                     "deny. Details are in the app." % (title, code, code))
             try:
                 text_owner(body, reason="approval request")
+                from agent_friday.services import notice_registry as _nr
+                _nr.note("E64", True)
             except PhoneRefused as e:
                 _log.info("approval not offered by text: %s", e)
                 break
@@ -734,6 +737,8 @@ def _handle_sms_in(ev: dict) -> str:
     if reply:
         try:
             text_owner(reply, reason="reply")
+            from agent_friday.services import notice_registry as _nr
+            _nr.note("E65", True)
         except PhoneRefused as e:
             _notify("Friday could not text back", str(e), priority="medium")
     return "answered"

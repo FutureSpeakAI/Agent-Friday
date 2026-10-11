@@ -129,7 +129,8 @@ def _notify(title: str, body: str = "", priority: str = "medium",
     try:
         import agent_friday.notifications_engine as _ne
         _ne.push(title=title, body=body, priority=priority, source="content",
-                 kind="content_publish", actions=actions, dedupe_key=dedupe)
+                 kind="content_publish", actions=actions, emitter="E48",
+                 dedupe_key=dedupe or "content_publish:" + priority)
     except Exception:
         pass
 

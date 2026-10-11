@@ -568,6 +568,12 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
     return {"interrupted": interrupted, "restored": restored}
 
 
+def _incident(task_ids) -> str:
+    """The same set of interrupted tasks is one incident; a new set is a new one."""
+    import hashlib
+    return hashlib.sha1(",".join(sorted(str(i) for i in task_ids)).encode("utf-8")).hexdigest()[:12]
+
+
 def announce_interrupted(interrupted: Iterable[dict]) -> None:
     items = list(interrupted)
     if not items:
@@ -581,7 +587,7 @@ def announce_interrupted(interrupted: Iterable[dict]) -> None:
             body=(f"{names}{more}. Each record is complete up to its last checkpoint. "
                   "Nothing was resumed: re-run any of them from the Task Tray."),
             priority="high", source="task-journal", kind="tasks_interrupted",
-            dedupe_key=f"tasks_interrupted:{int(time.time())}",
+            emitter="E28", dedupe_key="tasks_interrupted:" + _incident([t.get("task_id") for t in items]),
             target={"workspace": "system", "tab": "tasks"},
         )
     except Exception:

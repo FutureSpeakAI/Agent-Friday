@@ -4262,6 +4262,8 @@ def _tool_text_by_phone(inp):
     try:
         if not to or (owner and _pc.normalize_number(to) == owner):
             res = _ps.text_owner(body, reason="asked in chat")
+            from agent_friday.services import notice_registry as _nreg
+            _nreg.note("E65", True)
             return json.dumps({"sent": True, "to": "your cell", "sid": res.get("sid")})
         res = _ps.request_sms(to=to, body=body,
                               owner_instruction=_CURRENT_OWNER_TEXT.get(),
@@ -5799,6 +5801,9 @@ def _report_workflow_completion(task_id, name, status, result_text):
                       'changed': not unchanged})
             return
         cid = rec.get('conversation_id')
+        from agent_friday.services import notice_registry as _nreg
+        # One delivery per completion, chosen by where the owner is.
+        target = _nreg.completion_target(cid)
         label = {'completed_unverified': 'finished; output checks are incomplete',
                  'cancelled': 'stopped', 'failed': 'failed', 'timeout': 'timed out'}.get(aggregate, 'finished')
         body = str(result_text or '').strip() or '(no output)'
@@ -5827,12 +5832,12 @@ def _report_workflow_completion(task_id, name, status, result_text):
                     # but precedes the task snapshot, so retries cannot repeat it.
                     existing = any((m.get('meta') or {}).get('workflow_run_id') == rid
                                    for m in conversations.messages(cid))
-                    if not existing:
-                        conversations.append(cid, {'role': 'friday', 'text': text, 'pinned': False,
-                                                   'meta': message_meta}, settings=delivery_settings)
+                    if target == _nreg.CHAT and not existing:
+                        _nreg.transcript_add('E77', cid, {'role': 'friday', 'text': text, 'pinned': False,
+                                                          'meta': message_meta}, settings=delivery_settings)
                     delivered = any((m.get('meta') or {}).get('workflow_run_id') == rid
                                     for m in conversations.messages(cid))
-                    if not delivered:
+                    if target == _nreg.CHAT and not delivered:
                         reason = 'The result was not confirmed in its conversation.'
         except Exception as exc:
             reason = ('The saved destination chat or project is no longer available for this run.'
@@ -5842,26 +5847,26 @@ def _report_workflow_completion(task_id, name, status, result_text):
             _task_set(task_id, delivery={'status': 'failed', 'notification': 'not_sent',
                 'conversation_id': cid, 'reason': reason, 'at': _time.time()})
             return
-        if delivered and not existing:
-            try:
-                from agent_friday.services import voice_live_channel
-                voice_live_channel.deliver(cid, text, kind='task_result')
-            except Exception:
-                pass
+        if target == _nreg.SPOKEN and not existing:
+            # In a live call: said once. A call that has gone falls to the card.
+            if _nreg.voice_say('E77', cid, text, kind='task_result'):
+                delivered = True
+            else:
+                target = _nreg.PANEL
         notification = 'not_sent'
-        try:
-            import agent_friday.notifications_engine as ne
-            notice = ne.push(title=f'Workflow {label}: {title}', body=body[:400],
-                            proactive_chat=False, dedupe_key=f'workflow-run:{rid}',
-                            target={'kind': 'task', 'id': task_id})
-            notification = 'delivered' if notice else 'unconfirmed'
-            if not cid:
-                delivered = bool(notice)
+        if target == _nreg.PANEL and not existing:
+            try:
+                import agent_friday.notifications_engine as ne
+                notice = ne.push(title=f'Workflow {label}: {title}', body=body[:400],
+                                proactive_chat=False, emitter='E03', dedupe_key=f'workflow-run:{rid}',
+                                target={'kind': 'task', 'id': task_id})
+                notification = 'delivered' if notice else 'unconfirmed'
+                delivered = bool(notice) or delivered
                 reason = '' if delivered else 'The completion notice was not confirmed.'
-        except Exception as exc:
-            notification = 'failed'
-            if not delivered:
-                reason = f'Completion notice failed: {type(exc).__name__}.'
+            except Exception as exc:
+                notification = 'failed'
+                if not delivered:
+                    reason = f'Completion notice failed: {type(exc).__name__}.'
         _task_set(task_id, delivery={'status': 'delivered' if delivered else 'failed',
                   'conversation_id': cid, 'notification': notification,
                   'reason': reason, 'changed': not unchanged, 'at': _time.time()})
@@ -5900,75 +5905,53 @@ def _report_task_completion(task_id, name, status, result_text):
         rec = dict(TASKS.get(task_id) or {})
     if rec.get('run_id'):
         return _report_workflow_completion(task_id, name, status, result_text)
+    body = (result_text or '').strip()
+    ok = status not in ('failed', 'error')
+    cid = None
     try:
+        cid = _task_conversation_id(task_id)
+    except Exception:
+        cid = None
+    text = (f"Background task \"{name}\" {'finished' if ok else 'FAILED'}.\n\n"
+            f"{body or '(no output)'}")
+
+    def card():
         # notifications_engine lives at the PACKAGE ROOT, not under services/.
         # Getting this wrong is invisible: the ImportError lands in the except
         # below and the task completes looking green with nobody told — which
         # is the exact defect this function exists to fix.
         import agent_friday.notifications_engine as notifications_engine
-        body = (result_text or '').strip()
         lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
-        ok = status not in ('failed', 'error')
         notifications_engine.push(
             title=f"Task {'finished' if ok else 'failed'}: {name}",
             body=lede or ('Finished with no output.' if ok else 'Failed.'),
-            proactive_chat=True,
-            chat_message=(
-                f"Background task **{name}** {'finished' if ok else 'FAILED'}.\n\n"
-                f"{lede or '(no output)'}"
-            ),
+            emitter='E02', dedupe_key=f'task-done:{task_id}',
             target={"kind": "task", "id": task_id},
         )
+
+    def chat_line():
+        from agent_friday.services import conversations as _cv
+        from agent_friday.services import notice_registry as _nreg
+        _nreg.transcript_add('E77', _cv.resolve(cid), {"role": "friday", "text": text, "pinned": False,
+                                                       "meta": {"kind": "task_result", "task_id": task_id,
+                                                                "status": status}})
+
+    try:
+        # One delivery, chosen by where the owner is: in a call it is spoken, in an
+        # open chat it is one line, otherwise it waits in the panel's Updates.
+        from agent_friday.services import notice_registry as _nreg
+        _nreg.deliver_completion(cid, text=text, panel=card, chat=chat_line)
     except Exception as ne:
         try:
             _task_log(task_id, f'Completion notice could not be sent: {ne}')
         except Exception:
             pass
-    _post_task_result_to_conversation(task_id, name, status, result_text)
 
 
 def _task_pinned(task_id) -> bool:
     """Was this task spawned pinned to its local seat?"""
     with TASKS_LOCK:
         return bool((TASKS.get(task_id) or {}).get('pin_to_seat'))
-
-
-def _post_task_result_to_conversation(task_id, name, status, result_text):
-    """Land a finished task's outcome in the conversation that asked for it.
-
-    The notification above reaches whichever chat is open; the result also
-    belongs in the transcript of the conversation the task was spawned from
-    (a voice call's, via delegate_to_friday, included), and a voice call that
-    is still up on that conversation is handed it to say aloud
-    (services/voice_live_channel). Best-effort, never silent: a failure is
-    written to the task's own log.
-    """
-    cid = None
-    try:
-        cid = _task_conversation_id(task_id)
-    except Exception:
-        cid = None
-    if not cid:
-        return
-    body = (result_text or '').strip()
-    ok = status not in ('failed', 'error')
-    text = (f"Background task \"{name}\" {'finished' if ok else 'FAILED'}.\n\n"
-            f"{body or '(no output)'}")
-    try:
-        from agent_friday.services import conversations as _cv
-        _cv.append(_cv.resolve(cid), {"role": "friday", "text": text, "pinned": False,
-                                      "meta": {"kind": "task_result", "task_id": task_id,
-                                               "status": status}})
-    except Exception as ce:
-        try:
-            _task_log(task_id, f'Result could not be posted to its conversation: {ce}')
-        except Exception:
-            pass
-    try:
-        from agent_friday.services import voice_live_channel as _vlc
-        _vlc.deliver(cid, text, kind="task_result")
-    except Exception:
-        pass
 
 
 def _spawn_task(name, prompt, description='', on_complete=None,

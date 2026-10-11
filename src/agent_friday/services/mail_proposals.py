@@ -152,7 +152,8 @@ def propose(action: str, ids, gmail_items, *, requested_by: str, reason: str = "
 def _notify(title: str, body: str, kind: str = "info") -> None:
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title=title, body=body, priority="medium", kind=kind, source="mail")
+        ne.push(title=title, body=body, priority="medium", kind=kind, source="mail",
+                emitter="E44", dedupe_key="mail:" + kind)
     except Exception as e:
         _log.warning("could not notify (%s): %s", title, e)
 

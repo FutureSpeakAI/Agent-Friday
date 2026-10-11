@@ -633,6 +633,12 @@ def resumable_after_boot() -> List[Dict[str, Any]]:
     return out
 
 
+def _incident(task_ids) -> str:
+    """The same set of resumable tasks is one incident; a new set is a new one."""
+    import hashlib
+    return hashlib.sha1(",".join(sorted(str(i) for i in task_ids)).encode("utf-8")).hexdigest()[:12]
+
+
 def announce(resumable: List[Dict[str, Any]], resumed: Optional[List[str]] = None) -> None:
     """Tell the user what survived. Separate from task_journal's interruption
     notice, which correctly says nothing was resumed - this one says what
@@ -661,7 +667,8 @@ def announce(resumable: List[Dict[str, Any]], resumed: Optional[List[str]] = Non
                       f"{'s can be resumed' if len(items) != 1 else ' can be resumed'}",
                 body=body, priority="medium", source="task-resume",
                 kind="tasks_resumable",
-                dedupe_key=f"tasks_resumable:{int(time.time())}",
+                emitter="E29",
+                dedupe_key="tasks_resumable:" + _incident([r["task_id"] for r in items]),
                 target={"workspace": "system", "tab": "tasks"})
     except Exception as e:
         _log.warning("task resume: announcement failed (%s)", e)

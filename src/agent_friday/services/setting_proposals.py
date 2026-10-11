@@ -93,8 +93,8 @@ def _path_of(tool: str) -> str:
 def _tell_pages(path: str) -> None:
     """An open Settings page re-reads its rows and its provenance lines."""
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "settings_changed", "path": path}, kind="desktop")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "settings_changed", "path": path}, kind="desktop")
     except Exception:
         pass
 

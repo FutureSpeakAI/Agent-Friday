@@ -732,7 +732,7 @@ def _notify_probe_failure(leaked: list[dict]) -> None:
                   f"({', '.join(p['probe'] for p in leaked)}). The judgment "
                   "layer is off and the original keyword gate is governing "
                   "alone. Cloud calls still work; they will over-block again."),
-            proactive_chat=True,
+            proactive_chat=True, emitter="E32", dedupe_key="judgment-probe-failed",
             chat_message=(
                 "I disabled my own privacy judgment layer just now. At startup I "
                 "test it with planted private material that must never survive — "

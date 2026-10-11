@@ -144,10 +144,10 @@ def milestone(cid: str, aid: str, n: int, status: str, *, step: Optional[str] = 
 
 def _announce(cid: str, rec: dict, what: str) -> None:
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "artifact_put", "conversation_id": cid, "artifact_id": rec["id"],
-                               "version": rec["version"], "kind": rec["kind"], "title": rec["title"],
-                               "author": "you", "plan_event": what}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "artifact_put", "conversation_id": cid, "artifact_id": rec["id"],
+                                  "version": rec["version"], "kind": rec["kind"], "title": rec["title"],
+                                  "author": "you", "plan_event": what}, kind="chat")
     except Exception:
         pass
 

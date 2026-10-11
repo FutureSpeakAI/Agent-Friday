@@ -278,11 +278,11 @@ def _announce(rec: dict) -> None:
     """Tell every open chat page which artifact moved. Content stays home; the
     page reads the store."""
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "artifact_put", "conversation_id": rec["conversation_id"],
-                               "artifact_id": rec["id"], "version": rec["version"],
-                               "kind": rec["kind"], "title": rec["title"],
-                               "author": rec["author"]}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "artifact_put", "conversation_id": rec["conversation_id"],
+                                  "artifact_id": rec["id"], "version": rec["version"],
+                                  "kind": rec["kind"], "title": rec["title"],
+                                  "author": rec["author"]}, kind="chat")
     except Exception:
         pass
 

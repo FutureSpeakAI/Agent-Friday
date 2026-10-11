@@ -654,7 +654,7 @@ class BehavioralMonitor:
         except Exception:
             pass
 
-    def _notify(self, **kwargs) -> None:
+    def _notify(self, *, dedupe_key: str, **kwargs) -> None:
         notifier = self._notifier
         if notifier is None:
             try:
@@ -662,7 +662,8 @@ class BehavioralMonitor:
             except Exception:
                 return
         try:
-            notifier.push(source="behavioral_monitor", kind="security", **kwargs)
+            notifier.push(source="behavioral_monitor", kind="security", emitter="E33",
+                          dedupe_key=dedupe_key, **kwargs)
         except Exception:
             pass
 

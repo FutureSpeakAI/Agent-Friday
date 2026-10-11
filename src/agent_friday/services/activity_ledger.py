@@ -48,7 +48,11 @@ _ALLOWED_FIELDS = {
     # A reasoning trace was archived (services/reasoning_trace.py). A pointer
     # into the encrypted trace ledger by seq/hash plus counts -- the reasoning
     # itself, the label and tool arguments stay in the encrypted record.
-    "notification": {"kind", "source", "tier", "muted"},
+    "notification": {"notification_kind", "source", "tier", "muted"},
+    # One line per notice (services/notice_registry): what it was called, which
+    # of the four places it lives in, and whether it reached the owner or was
+    # held. Counts only: no title, body, id or path.
+    "notice": {"notice_kind", "place", "outcome", "safety", "emitter"},
     "reasoning_trace": {
         "trace_id", "parent_id", "task_id", "model", "seat", "trace_kind", "source",
         "tokens_in", "tokens_out", "reasoning_chars", "tool_calls", "duration_ms",
@@ -80,10 +84,14 @@ def _maybe_rotate_locked():
         pass
 
 
-def record(kind, **fields):
+def record(kind, /, **fields):
     """Append one activity event. Returns True on success, False otherwise.
 
     Unknown kinds and non-whitelisted fields are dropped. Never raises.
+
+    `kind` is positional-only: it names the record, and a caller's own field
+    called "kind" (a notification's kind) is a field, not a second record kind.
+    It is stored as `notification_kind` so it can never overwrite the record's.
     """
     try:
         allowed = _ALLOWED_FIELDS.get(kind)
@@ -99,9 +107,11 @@ def record(kind, **fields):
             _unsaved = False
         if _unsaved:
             rec["off_record"] = True
+        if kind == "notification" and "kind" in fields:
+            fields = dict(fields, notification_kind=fields.pop("kind"))
         for key, val in fields.items():
-            if key not in allowed or val is None:
-                continue
+            if key not in allowed or val is None or key in ("kind", "ts"):
+                continue          # a field never overwrites the record's own kind or time
             if _unsaved and key in _FREE_TEXT_FIELDS:
                 continue
             if isinstance(val, str) and len(val) > _TEXT_CAP:

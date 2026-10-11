@@ -555,7 +555,7 @@ def _notify(title, body, key):
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=title, body=body, priority="low", source="avatar", kind="avatar",
-                dedupe_key=key, target={"workspace": "desktop"})
+                emitter="E54", dedupe_key=key, target={"workspace": "desktop"})
     except Exception as e:
         _log.debug("avatar notice not sent: %s", e)
 

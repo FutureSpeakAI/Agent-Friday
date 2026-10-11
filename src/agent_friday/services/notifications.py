@@ -177,14 +177,14 @@ def _trigger_skill_promotions():
                 body=f"SkillOpt promoted a new best version of `{skill_dir.name}`.",
                 priority="low",
                 source="skillopt",
-                kind="skill_improvement",
+                kind="skill_improvement", emitter="E19",
                 meta={"skill_name": skill_dir.name, "mtime": mtime},
                 actions=[
                     {"label": "Open in Observatory", "kind": "open_observatory",
                      "payload": {"skill": skill_dir.name}},
                 ],
                 target={"workspace": "studio"},
-                dedupe_key=f"skill_promoted:{skill_dir.name}:{int(mtime)}",
+                dedupe_key=f"skill_promoted:{skill_dir.name}",
             )
     if changed:
         _notif_engine.set_trigger_state("skill_best_mtimes", state)
@@ -690,7 +690,7 @@ def _flush_offline_queue(reason="reconnect"):
         kind = (entry.get("kind") or "").strip()
         payload = entry.get("payload") or {}
         try:
-            handled = _offline_dispatch(kind, payload)
+            handled = _offline_dispatch(kind, payload, entry.get("id"))
             if handled:
                 _offline_queue_remove(entry.get("id"))
                 flushed += 1
@@ -707,7 +707,7 @@ def _flush_offline_queue(reason="reconnect"):
             _notif_engine.push(
                 title="Back online — queued work flushed",
                 body=f"Replayed {flushed} task(s) that were waiting for connectivity.",
-                priority="low", source="network", kind="info",
+                priority="low", source="network", kind="info", emitter="E23",
                 dedupe_key=f"offline-flush:{date.today().isoformat()}",
             )
         except Exception:
@@ -715,7 +715,7 @@ def _flush_offline_queue(reason="reconnect"):
     return {"flushed": flushed, "failed": failed, "kept": kept}
 
 
-def _offline_dispatch(kind, payload):
+def _offline_dispatch(kind, payload, entry_id=None):
     """Run one queued task by kind. Returns True if the kind was recognized."""
     if kind == "front_page":
         _run_front_page_job(payload.get("slot") or "morning")
@@ -735,7 +735,8 @@ def _offline_dispatch(kind, payload):
                 title=payload.get("title") or "Queued reminder",
                 body=payload.get("body") or "",
                 priority=payload.get("priority", "medium"),
-                source="offline-queue", kind="info",
+                source="offline-queue", kind="info", emitter="E24",
+                dedupe_key="offline-queue:%s" % (entry_id or "notify"),
             )
         return True
     return False
@@ -781,7 +782,7 @@ def _on_network_transition(old, new, host=None):
                 _notif_engine.push(
                     title="Back online",
                     body="Connection restored. Friday is back on cloud models and feeds are refreshing.",
-                    priority="low", source="network", kind="info",
+                    priority="low", source="network", kind="info", emitter="E23",
                     dedupe_key="network-online",
                 )
             except Exception:

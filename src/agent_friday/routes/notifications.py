@@ -137,16 +137,22 @@ def push_notification_endpoint():
     title = (data.get('title') or '').strip()
     if not title:
         return jsonify({"status": "error", "message": "title required"}), 400
+    from agent_friday.services import notice_registry as _nr
+    kind = str(data.get('kind', 'info'))
+    if kind in _nr.SAFETY_CRITICAL_KINDS:
+        kind = 'external'          # a caller cannot claim to be a spend halt
+    source = data.get('source', 'external')
     entry = _notif_engine.push(
         title=title,
         body=data.get('body', ''),
         priority=data.get('priority', 'medium'),
-        source=data.get('source', 'external'),
-        kind=data.get('kind', 'info'),
+        source=source,
+        kind=kind,
+        emitter='E60',
         actions=data.get('actions') or [],
         proactive_chat=bool(data.get('proactive_chat')),
         chat_message=data.get('chat_message'),
-        dedupe_key=data.get('dedupe_key'),
+        dedupe_key=data.get('dedupe_key') or 'external:%s:%s' % (kind, source),
         meta=data.get('meta') or {},
         target=data.get('target') or {},
     )

@@ -1777,7 +1777,7 @@ def _start_local_share(question, cid, answer_fn=None):
     outcome is also handed to the call (services/voice_live_channel).
     """
     from agent_friday.services import local_context as _lc
-    from agent_friday.services import voice_live_channel as _vlc
+    from agent_friday.services import notice_registry as _nr
     rid = [None]
     done = threading.Event()
 
@@ -1790,13 +1790,13 @@ def _start_local_share(question, cid, answer_fn=None):
         rid[0] = out.get("approval_id")
         done.set()
         if out.get("status") == "pending":
-            _vlc.deliver(cid, (f"The share request {out['approval_id']} is on their screen. Tell them "
-                               f"in one short sentence that you're asking their OK to share some "
-                               f"context from their local model. They can say 'send it', 'don't send "
-                               f"it', or ask you to change it."), kind="notice")
+            _nr.voice_say("E78", cid, (f"The share request {out['approval_id']} is on their screen. Tell them "
+                                       f"in one short sentence that you're asking their OK to share some "
+                                       f"context from their local model. They can say 'send it', 'don't send "
+                                       f"it', or ask you to change it."), kind="notice")
         elif out.get("status") in ("unavailable", "withheld"):
-            _vlc.deliver(cid, "No context came back from their local model: " + str(out.get("reason")),
-                         kind="notice")
+            _nr.voice_say("E78", cid, "No context came back from their local model: " + str(out.get("reason")),
+                          kind="notice")
     threading.Thread(target=_work, name="ask-local-context", daemon=True).start()
     done.wait(3.0)          # a card raised quickly gets its id into the reply
     return rid[0]

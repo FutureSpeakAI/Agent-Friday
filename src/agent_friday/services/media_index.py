@@ -1906,8 +1906,8 @@ def make_video(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
 def _notify(text: str, card_id: str) -> None:
     """A line to the owner's screen; never raises, never silent when it can speak."""
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.send({"type": "notice", "workspace": "media", "card": card_id, "text": text})
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_send("E70", {"type": "notice", "workspace": "media", "card": card_id, "text": text})
     except Exception:
         pass
 

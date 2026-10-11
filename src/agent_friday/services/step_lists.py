@@ -59,9 +59,10 @@ def _narrate(conversation_id: str, n: int, total: int) -> None:
     if not conversation_id:
         return
     try:
+        from agent_friday.services import notice_registry as _nr
         from agent_friday.services import voice_live_channel as vlc
         if vlc.is_live(conversation_id):
-            vlc.deliver(conversation_id, "Step %d of %d has started." % (n, total), kind="progress")
+            _nr.voice_say("E63", conversation_id, "Step %d of %d has started." % (n, total), kind="progress")
     except Exception:
         pass
 

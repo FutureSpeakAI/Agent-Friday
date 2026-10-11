@@ -66,7 +66,7 @@ def _notify(title: str, body: str, kind: str = "info") -> None:
         from agent_friday.services.notifications import _notif_engine
         if _notif_engine:
             _notif_engine.push(title=title, body=body, priority="low",
-                               source="memory-model", kind=kind,
+                               source="memory-model", kind=kind, emitter="E40",
                                dedupe_key="embedder-download:" + STATUS.get("state", ""))
     except Exception:
         pass

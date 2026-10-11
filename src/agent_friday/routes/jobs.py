@@ -53,7 +53,8 @@ def _notify_adapter(payload):
             title=str(payload.get("title") or "Career pipeline"),
             body=str(payload.get("body") or ""),
             priority=str(payload.get("priority") or "medium"),
-            source="career", kind="career",
+            source="career", kind="career", emitter="E45",
+            dedupe_key="career:pipeline",
             meta=payload.get("meta") or {},
         )
     except Exception:

@@ -710,7 +710,8 @@ def _on_decision(record: dict) -> None:
         try:
             import agent_friday.notifications_engine as ne
             ne.push(title='File change did not happen', body=str(e)[:300],
-                    priority='high', kind='warning', source='studio_files')
+                    priority='high', kind='warning', source='studio_files',
+                    emitter='E50', dedupe_key='studio-file-failed')
         except Exception:
             pass
 

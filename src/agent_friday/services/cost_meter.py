@@ -870,11 +870,11 @@ def _push_budget_alert(period, pct, spend, limit):
         _ne = None
     if not _ne:
         return
-    stamp = datetime.now().strftime("%Y-%m-%d" if period == "daily" else "%Y-%m")
-    dk = f"budget:{period}:{'100' if pct >= 100 else '80'}:{stamp}"
+    window = datetime.now().strftime("%Y-%m-%d" if period == "daily" else "%Y-%m")
+    dk = f"budget:{period}:{'100' if pct >= 100 else '80'}:{window}"
     if _LAST_ALERT.get(dk):
         return
-    _LAST_ALERT[dk] = stamp
+    _LAST_ALERT[dk] = window
     _ne.push(
         title=("🛑 " if pct >= 100 else "⚠️ ")
               + f"{period.capitalize()} cost budget {'exceeded' if pct >= 100 else 'at ' + str(int(pct)) + '%'}",
