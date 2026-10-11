@@ -525,7 +525,7 @@ def _gate_core(t: _tq.Ticket) -> str:
         interactive = [x for x in interactive if x.kind != MEETING_KIND]
     # A person's turn that never admitted here (a chat turn in the core
     # registry, a spoken turn) counts the same: the local queue's own rule.
-    people = bool(interactive) or bool(_registered_interactive())
+    people = bool(interactive) or (_hardware_in_play() and bool(_registered_interactive()))
     if t.cls == "background":
         # A person's turn first, on any seat; then the 1.0.2 idle window
         # (background_idle_minutes). A scheduled job is time-bound and never
