@@ -1798,13 +1798,14 @@ def chat():
         # gives Friday cross-session continuity (RAG over past conversations);
         # the citation block (only in cite_sources mode) tells Friday to
         # attribute every factual claim. Both are PII-scrubbed for cloud below.
-        _extra_system = _build_memory_context_block(message, session_id)
+        _mem_part = _build_memory_context_block(message, session_id)
         # Continuity from the most recent end-of-day session summary + tone
         # adaptation from the accumulated emotional arc. Both are content-free /
         # already-summarised, provider-independent, and PII-scrubbed for cloud
         # below like the rest of _extra_system.
-        _extra_system += _build_session_continuity_block()
-        _extra_system += _build_emotional_tone_block()
+        _cont_part = _build_session_continuity_block()
+        _tone_part = _build_emotional_tone_block()
+        _extra_system = _mem_part + _cont_part + _tone_part
         # The ask-first action policy is added by `seal_system_prompt` in
         # `_prep_for`, once and last. The gate in _execute_tool still enforces
         # it if the model forgets.
@@ -1816,6 +1817,13 @@ def chat():
         _last_user_msg = (messages[-1] if messages and messages[-1].get('role') == 'user'
                           and isinstance(messages[-1].get('content'), str) else None)
         _last_user_text = _last_user_msg.get('content') if _last_user_msg is not None else None
+
+        def _tplan_turn_id():
+            try:
+                from agent_friday.services import turn_plan as _tp
+                return _tp.current_turn_id()
+            except Exception:
+                return None
 
         def _prep_for(provider, model=None):
             """The system prompt for `provider`, in two parts.
@@ -1851,11 +1859,19 @@ def chat():
             if _last_user_msg is not None:
                 _last_user_msg['content'] = _last_user_text
             vc = _get_vault_control() if _vault_local_only() else None
+            # The slice-need head's reading of this turn (shadow); it trims the
+            # tail only when the owner chose to send cloud models just what a
+            # turn needs, and never on a local leg (services/slice_head).
+            from agent_friday.services import slice_head as _slice_head
+            _slicer = _slice_head.for_turn(
+                message, conversation_id=_conversation_id, provider=provider,
+                turn_id=_tplan_turn_id(), settings=settings)
             sp, src = _build_context_prompt(
                 message, workspace, vision_description,
                 provider=provider, vault_control=vc,
                 vault_fallback=_vault_cloud_fallback(),
                 model=_prep_model,
+                slicer=_slicer,
                 **({"pilot": _pilot} if _pilot is not None else {}),
             )
             from agent_friday.services.prompt_cache import VOLATILE_MARKER as _VM
@@ -1928,17 +1944,29 @@ def chat():
                     "conversation is open-ended.\n"
                     "=========================\n"
                 )
-            if _extra_system:
-                tail = tail + "\n" + _extra_system
+            _extra = (_slicer.gate_block(
+                          "memory", _mem_part, name="relevant_past_conversations",
+                          marker="== RELEVANT PAST CONVERSATIONS")
+                      + _slicer.gate_block("continuity", _cont_part, name="continuity")
+                      + _slicer.gate_block("tone", _tone_part, name="tone")
+                      + (CITATION_INSTRUCTIONS if cite_sources else ""))
+            if _extra:
+                tail = tail + "\n" + _extra
             # A situation the model pinned with check_situation(pin=true):
             # read now, from memory, on every turn of this conversation.
             try:
                 from agent_friday.services.situation import pinned_block
                 tail = tail + pinned_block(_conversation_id)
                 from agent_friday.services.screen_stage import chat_tail
-                tail = tail + chat_tail(_conversation_id)
+                tail = tail + _slicer.gate_block(
+                    "screen", chat_tail(_conversation_id), name="on_screen")
             except Exception:
                 pass
+            # Context the user approved (or declined) since the last turn, for
+            # a slice the model asked for with request_context.
+            if not _slice_head.is_local(provider):
+                tail = tail + _slice_head.render_released(
+                    _conversation_id, _tplan_turn_id())
             lookup = {}
             # Scrub guarded cloud turns. Scrubbing every message
             # (not just the new one) means a cached LOCAL reply retrieved by the
@@ -3111,11 +3139,22 @@ def chat_send():
         _send_sources = []
 
         def _sys_for(provider_name):
+            # This route has no tier-1 verdict, so the turn gets its id here;
+            # the slice-need head then reads it (shadow, and a trim only for
+            # an owner who chose that on a cloud leg; services/slice_head).
+            from agent_friday.services import slice_head as _slice_head
+            from agent_friday.services import turn_plan as _tplan_send
+            if _tplan_send.current_turn_id() != _turn_id:
+                _tplan_send.begin_turn(_turn_id)
+            _slicer = _slice_head.for_turn(
+                message, conversation_id=_conversation_id, provider=provider_name,
+                turn_id=_tplan_send.current_turn_id(), settings=settings)
             prompt, sources = _build_context_prompt(
                 message, workspace, vision_description,
                 provider=provider_name,
                 vault_control=(_get_vault_control() if _vault_local_only() else None),
                 vault_fallback=_vault_cloud_fallback(),
+                slicer=_slicer,
                 **({"pilot": _pilot} if _pilot is not None else {}),
             )
             _send_sources[:] = sources or []
@@ -3128,9 +3167,15 @@ def chat_send():
             # else above, so a local seat's memory recall isn't scrubbed as
             # if it were headed to the cloud either.
             try:
-                _mem_block = (_build_memory_context_block(message, _session_id)
-                              + _build_session_continuity_block()
-                              + _build_emotional_tone_block())
+                _mem_block = (_slicer.gate_block(
+                                  "memory", _build_memory_context_block(message, _session_id),
+                                  name="relevant_past_conversations",
+                                  marker="== RELEVANT PAST CONVERSATIONS")
+                              + _slicer.gate_block(
+                                  "continuity", _build_session_continuity_block(),
+                                  name="continuity")
+                              + _slicer.gate_block(
+                                  "tone", _build_emotional_tone_block(), name="tone"))
                 if _mem_block:
                     prompt = prompt + "\n" + _mem_block
             except Exception as _mb_err:
@@ -3140,7 +3185,12 @@ def chat_send():
             try:
                 from agent_friday.services.situation import pinned_block
                 prompt = prompt + pinned_block(_conversation_id)
-                prompt = prompt + _screen_block_for(provider_name, _conversation_id)
+                prompt = prompt + _slicer.gate_block(
+                    "screen", _screen_block_for(provider_name, _conversation_id),
+                    name="on_screen")
+                if not _slice_head.is_local(provider_name):
+                    prompt = prompt + _slice_head.render_released(
+                        _conversation_id, _tplan_send.current_turn_id())
             except Exception:
                 pass
             try:

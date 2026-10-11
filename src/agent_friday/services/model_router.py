@@ -3944,8 +3944,13 @@ def _payload_dump_dir():
 
 def _build_context_prompt(message, workspace='', vision_description=None, provider='cloud',
                           vault_control=None, vault_fallback='redact', pilot=None,
-                          tools_block=True, model=''):
+                          tools_block=True, model='', slicer=None):
     """Build an enriched system prompt with all relevant context layers.
+
+    `slicer` (services/slice_head) is the slice-need head's plan for this turn.
+    It reads the sections that exist and, only when the owner chose to send
+    cloud models just what a turn needs and `provider` is cloud, drops or stubs
+    sections of the volatile tail. It never adds, and never touches the head.
 
     When `vault_control` is provided, each context section is tagged with a
     sensitivity tier and gated for `provider`: a local model sees everything,
@@ -4302,16 +4307,24 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     # Stable first, then the clock header (the cache boundary), then what
     # this message chose.
     sections = _stable + ([_clock_section] if _clock_section else []) + _volatile
+    _ledger_sections, _plan_info = sections, None
+    if slicer is not None:
+        try:
+            sections, _plan_info = slicer.apply_sections(
+                sections, len(_stable) + (1 if _clock_section else 0))
+        except Exception:
+            sections, _plan_info = _ledger_sections, None
     try:
         from agent_friday.services import retrieval_ledger as _rl
         from agent_friday.services.egress_gate import is_local_provider as _is_local
         _rl.record_assembly(
-            sections,
+            _ledger_sections,
             turn_id=_rl.new_turn_id(),
             destination_class=("cloud" if _is_cloud_model_tag(model)
                                else "local" if _is_local(provider) else provider),
             gated=vault_control is not None,
             policy_source=_vault_policy().source,
+            plan_info=_plan_info,
         )
     except Exception:
         pass

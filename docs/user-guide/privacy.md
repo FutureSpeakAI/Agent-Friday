@@ -70,6 +70,29 @@ does. You can change the answer in **Settings > Privacy & Data > Cloud consent**
 create a file grant: it is pinned to that file's content and expires. See
 [File grants](file-grants.md).
 
+## Sending a cloud model only what a turn needs
+
+By default a cloud model gets the same context a local one does, after the
+egress gate has run. The first time a turn goes to a cloud model, Friday asks
+once, with nothing preselected: **Send only what each turn needs
+(Recommended)** or **Send everything as before**. You can change it any time in
+Settings > Privacy.
+
+With the first choice, Friday reads each message on this PC and leaves out the
+parts of your personal context that the message does not need: notes, people,
+tasks, calendar, career, memory, what is on your screen. Her identity, your
+rules and her safety rules are never left out. If she is unsure about a private
+part she sends a fixed one-line note saying some personal context was held back
+(it names kinds, never your data), and the model can ask for it. The ask goes
+to your own computer, which answers, hides names and identifiers, and shows you
+the exact text on a card unless you already allowed sharing in that
+conversation. If the turn has read anything from the web or an email, you are
+always asked, even when you allowed it before.
+
+What was kept and what was held back is on every turn's receipt, and you can
+ask "what did you send to the cloud for that?". Local models are never
+affected, and with the setting off nothing changes.
+
 ## What leaves your PC on its own
 
 No telemetry, analytics or crash reports, and nothing to FutureSpeak.AI. The

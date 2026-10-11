@@ -18685,6 +18685,174 @@ function CloudConsentRow({ consent, onChanged, compact }) {
     msg && E('div', { style: { fontSize: 10, color: msg === 'Recorded.' ? '#00ff80' : '#f59e0b', marginTop: 4 } }, msg));
 }
 
+// Cloud context slicing (spec 9.5a, decision D8): what a cloud model is sent
+// besides the message. The choice is offered once, at the first cloud turn, and
+// lives in Settings > Privacy. Nothing is preselected: a button shows as chosen
+// only after it has been.
+const SLICING_CHOICES = [{
+  id: 'slice',
+  label: 'Send only what each turn needs',
+  tag: ' (Recommended)',
+  note: 'A cloud model gets the personal context a message needs and nothing else. If it needs more, it asks and you decide.'
+}, {
+  id: 'everything',
+  label: 'Send everything as before',
+  tag: '',
+  note: 'A cloud model gets the same context a local one does, after the privacy gate has run.'
+}];
+function useCloudSlicing() {
+  const [st, setSt] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const s = d && d.settings || {};
+      setSt({
+        choice: s.cloud_context_slicing || '',
+        offer: s.cloud_context_slicing_offer || ''
+      });
+    }).catch(() => setSt({
+      choice: '',
+      offer: '',
+      error: true
+    }));
+  }, []);
+  useEffect(() => {
+    load();
+    const on = () => load();
+    window.addEventListener('friday:slicing-offer', on);
+    window.addEventListener('friday:settings-changed', on);
+    return () => {
+      window.removeEventListener('friday:slicing-offer', on);
+      window.removeEventListener('friday:settings-changed', on);
+    };
+  }, [load]);
+  const save = useCallback(patch => apiFetch('/api/settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      settings: patch
+    })
+  }).then(r => r.json()).then(() => {
+    load();
+    try {
+      window.dispatchEvent(new CustomEvent('friday:settings-changed'));
+    } catch (_) {}
+  }).catch(() => {}), [load]);
+  return [st, save];
+}
+function CloudSlicingButtons({
+  st,
+  save
+}) {
+  const E = React.createElement;
+  return E('div', {
+    role: 'radiogroup',
+    'aria-label': 'What a cloud model is sent',
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8
+    }
+  }, SLICING_CHOICES.map(c => {
+    const on = st.choice === c.id;
+    return E('button', {
+      key: c.id,
+      type: 'button',
+      role: 'radio',
+      'aria-checked': on,
+      className: 'btn',
+      'data-testid': 'cloud-slicing-' + c.id,
+      style: {
+        textAlign: 'left',
+        padding: '8px 10px',
+        borderColor: on ? 'var(--fr-cyan)' : undefined,
+        background: on ? 'var(--fr-cyan-soft)' : undefined
+      },
+      onClick: () => save({
+        cloud_context_slicing: c.id,
+        cloud_context_slicing_offer: 'done'
+      })
+    }, E('div', {
+      style: {
+        fontSize: 'var(--fr-text-base)'
+      }
+    }, c.label + c.tag), E('div', {
+      style: {
+        fontSize: 'var(--fr-text-sm)',
+        color: 'var(--fr-dim)',
+        marginTop: 2
+      }
+    }, c.note));
+  }));
+}
+function CloudSlicingSettings() {
+  const E = React.createElement;
+  const [st, save] = useCloudSlicing();
+  if (!st) return null;
+  return E('div', null, E('div', {
+    style: {
+      fontSize: 'var(--fr-text-md)',
+      color: 'var(--fr-dim)',
+      lineHeight: 1.6,
+      marginBottom: 10
+    }
+  }, 'Which of your personal context (notes, people, tasks, calendar, career, memory, your screen) goes to a cloud model with your message. Local models always get all of it. ' + fridayName() + '’s identity and your rules are always sent.'), E(CloudSlicingButtons, {
+    st: st,
+    save: save
+  }), !st.choice && E('div', {
+    style: {
+      fontSize: 'var(--fr-text-sm)',
+      color: 'var(--fr-dim)',
+      marginTop: 8
+    }
+  }, 'You have not chosen yet. Until you do, cloud models get everything, as before.'));
+}
+function CloudSlicingCard() {
+  const E = React.createElement;
+  const [st, save] = useCloudSlicing();
+  if (!st || st.offer !== 'pending' || st.choice) return null;
+  return E('div', {
+    className: 'card',
+    role: 'dialog',
+    'aria-label': 'What a cloud model is sent',
+    'data-testid': 'cloud-slicing-offer',
+    style: {
+      position: 'fixed',
+      bottom: 16,
+      right: 16,
+      zIndex: 9700,
+      width: 'min(420px, calc(100vw - 32px))',
+      padding: 12,
+      border: '1px solid var(--fr-glass-edge)'
+    }
+  }, E('div', {
+    className: 'card-title'
+  }, 'One question about cloud models'), E('div', {
+    style: {
+      fontSize: 'var(--fr-text-md)',
+      color: 'var(--fr-dim)',
+      lineHeight: 1.6,
+      margin: '6px 0 10px'
+    }
+  }, fridayName() + ' can send a cloud model only the personal context each message needs, instead of everything she has ready. Pick how you want it. You can change this later in Settings > Privacy.'), E(CloudSlicingButtons, {
+    st: st,
+    save: save
+  }), E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'cloud-slicing-later',
+    style: {
+      fontSize: 11,
+      padding: '2px 8px',
+      marginTop: 8
+    },
+    onClick: () => save({
+      cloud_context_slicing_offer: 'done'
+    })
+  }, 'Decide later in Settings'));
+}
+
 function PrivacyCloudConsent() {
   const E = React.createElement;
   const [st, setSt] = useState(null);
@@ -18750,6 +18918,7 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Cloud mode">
       <PrivacyCloudConsent/>
     </StSection>
+    <StSection title="What cloud models are sent"><CloudSlicingSettings/></StSection>
     <StSection title="Privacy check" desc={("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")}>
       <PrivacyCheckLayers/>
     </StSection>
@@ -25665,6 +25834,9 @@ function App(){
         if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
         else if (m.type === 'desktop_cards_changed') window.dispatchEvent(new Event('friday:desktop-cards-changed'));
         else if (m.type === 'workspace_customizations_changed') window.dispatchEvent(new Event('friday:ws-custom-changed'));
+        else if (m.type === 'slicing_offer') {
+          try { window.dispatchEvent(new Event('friday:slicing-offer')); } catch (_) {}
+        }
         else if (m.type === 'settings_changed') {
           try { window.dispatchEvent(new CustomEvent('friday:settings-changed', { detail: m })); } catch (_) {}
         }
@@ -27010,6 +27182,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
 
   return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
     <ApprovalPopups/>
+    <CloudSlicingCard/>
     {/* ── First-run setup chat. index.html puts the consent screens
          (ConsentFlow, not mirrored here) in front of it. ── */}
     {!setupDone&&<SetupChat onDone={finishSetupChat}/>}

@@ -251,6 +251,12 @@ INTERNAL_TOOLS = frozenset({
     # Sharing local context with the cloud voice model has its own gate: the
     # payload card (services/local_context), decided once, by the owner.
     "ask_local_for_context", "answer_share_request", "revise_share_request",
+    # The text chat's counterpart of ask_local_for_context: the same local
+    # answer, scrub, floor and card (services/slice_head -> local_context). A
+    # turn that has read untrusted content cannot use a standing grant.
+    "request_context",
+    # Reads the turn receipt back; names, sizes and tiers, never content.
+    "why_that_plan",
     # Reads the local conversation store; what a cloud call may hear of it is
     # decided by provenance (services/conversation_recall).
     "search_past_conversations",

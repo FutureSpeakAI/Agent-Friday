@@ -2314,6 +2314,13 @@ DEFAULT_SETTINGS = {
     # or after the call) | "follow_model_routing" (the owner's routing,
     # cloud included, behind the same gates).
     "voice_async_routing": "local_only",
+    # Cloud context slicing (services/slice_head; decision D8). "" = not chosen:
+    # cloud models get everything, as before. "slice" sends them only the
+    # context each turn needs; "everything" records that the owner chose the
+    # old behaviour. Nothing is preselected. The offer key tracks the one-time
+    # choice shown at the first cloud turn: "" | "pending" | "done".
+    "cloud_context_slicing": "",
+    "cloud_context_slicing_offer": "",
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".

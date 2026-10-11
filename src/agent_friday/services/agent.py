@@ -877,6 +877,14 @@ CLAUDE_TOOLS = [
          "required": ["kind"]}},
     {"name": "queue_status", "description": "Read the Local AI queue: background work on the local model, what waits and why. Read-only.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "request_context", "description": "Ask for personal context that was held back from this conversation (the prompt says so when something was). Name the category; the user's own computer answers, scrubs it, and the user decides what is sent: an approval card, or a share they already allowed. Ask only when you need it to answer. Never ask again after they decline.",
+     "input_schema": {"type": "object", "properties": {
+         "category": {"type": "string", "enum": ["memory", "notes", "people", "career", "tasks", "calendar", "screen", "last session", "tone"], "description": "Which kind of context you need."},
+         "why": {"type": "string", "description": "What you need it for, in a sentence."}},
+         "required": ["category"]}},
+    {"name": "why_that_plan", "description": "Say what was sent for a turn and what the planner held back or would have: sections, sizes, tiers and where each went. Reads the turn receipt; defaults to the latest turn in this conversation.",
+     "input_schema": {"type": "object", "properties": {
+         "turn_id": {"type": "string", "description": "A specific turn; leave out for the latest."}}}},
     {"name": "check_situation", "description": "Read live activity/load: focused/open workspaces, CPU/RAM/GPU/disk, serving or loaded models, chat turns, tasks, scheduled/background jobs, queue, stand-down and today's spend. pin=true adds a live summary to later turns in this conversation; pin=false stops it.",
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
@@ -3314,6 +3322,53 @@ def _tool_queue_status(inp):
     content."""
     from agent_friday.services import seat_supervisor as _ss
     return _ss.spoken_summary(local_queue_snapshot())
+
+
+def _tool_request_context(inp):
+    """Tool handler: ask the user's own computer for a slice of context the
+    prompt held back, through local_context (scrub, floor, card or grant).
+
+    A turn that has read untrusted content always raises a card, whatever
+    grant exists, and never becomes a training label (services/slice_head).
+    """
+    inp = inp or {}
+    from agent_friday.services import slice_head
+    from agent_friday.services import turn_plan as _tp
+    conv = _CURRENT_CONVERSATION.get()
+    if slice_head.is_local(_CURRENT_PROVIDER.get()):
+        return "Nothing is held back here: this conversation runs on the user's own computer."
+    if not conv:
+        return "This is not part of a chat conversation, so there is nothing held back to ask for."
+    out = slice_head.request_context(
+        inp.get("category") or "", inp.get("why") or "",
+        conversation_id=conv,
+        cloud_model=_CURRENT_MODEL.get() or "the cloud model",
+        tainted=slice_head.is_tainted(_taint_mod.CURRENT_KEY.get()),
+        turn_id=_tp.current_turn_id())
+    status = (out or {}).get("status")
+    if status == "sent":
+        text = slice_head.take_released_text(conv) or str(out.get("text") or "")
+        return ("The user's own computer answered, scrubbed, under a share they already "
+                "allowed: " + text)
+    if status == "pending":
+        return ("The user has been asked on screen. Carry on without it for now; if they "
+                "approve, it arrives with their next message. Do not ask again.")
+    return str((out or {}).get("reason") or "That context could not be shared.")
+
+
+def _tool_why_that_plan(inp):
+    """Tool handler: read a turn's receipt back in plain words. Slice names go
+    only to a local model; a cloud model hears counts."""
+    inp = inp or {}
+    from agent_friday.services import slice_head, turn_receipt
+    turn_id = str(inp.get("turn_id") or "").strip()
+    if not turn_id:
+        turn_id = slice_head.last_turn_for(_CURRENT_CONVERSATION.get()) or ""
+    if not turn_id:
+        return "I do not have a turn to read back yet."
+    receipt = turn_receipt.build(turn_id)
+    return slice_head.describe_receipt(
+        receipt, names=slice_head.is_local(_CURRENT_PROVIDER.get()))
 
 
 def _tool_check_situation(inp):
@@ -7967,6 +8022,8 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate_to": _tool_navigate_to,
     "check_situation": _tool_check_situation,
     "queue_status": _tool_queue_status,
+    "request_context": _tool_request_context,
+    "why_that_plan": _tool_why_that_plan,
     "set_workspace_layout": _tool_set_workspace_layout,
     "show_my_day": _tool_show_my_day,
     "set_chat_tray": _tool_set_chat_tray,
@@ -8386,6 +8443,7 @@ TOOL_RINGS: dict[str, int] = {
     "navigate_to":          1,
     "check_situation":      0,   # reads state the server already holds
     "queue_status":         0,   # reads the Local AI queue, labels only
+    "why_that_plan":        0,   # reads the turn receipt (names, sizes, tiers)
     # Lays out the owner's own screen and remembers it; ring 1 like navigate_to.
     "set_workspace_layout": 1,
     # Shows the start screen's cluster, or sets when it shows; the owner's own screen.
@@ -8460,6 +8518,7 @@ TOOL_RINGS: dict[str, int] = {
     "spawn_task":           2,
     "delegate_to_friday":   2,   # voice hand-over; spawns a task like spawn_task
     "ask_local_for_context": 2,  # its payload goes out only on the owner's card
+    "request_context":      2,   # the same flow for a text chat: card or existing grant
     "answer_share_request": 2,
     "revise_share_request": 2,
     "search_past_conversations": 2,

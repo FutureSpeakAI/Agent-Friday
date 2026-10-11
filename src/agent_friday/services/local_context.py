@@ -172,11 +172,15 @@ def prepare(raw_answer: str) -> dict:
     return {"text": scrubbed, "placeholders": placeholders, "gate_view": gate_view(scrubbed)}
 
 
-def _audit(approval_id, text):
+def _audit(approval_id, text, payload=None):
     """The send, in the egress audit log, as owner-approved on this card."""
     try:
         from agent_friday.services import egress_gate as eg
-        eg._log("google-gemini", "voice_local_context", eg._classify_cloud(text), "allow",
+        if (payload or {}).get("channel") == "chat":
+            provider, kind = str(payload.get("cloud_model") or "cloud"), "chat_local_context"
+        else:
+            provider, kind = "google-gemini", "voice_local_context"
+        eg._log(provider, kind, eg._classify_cloud(text), "allow",
                 f"owner-approved share card {approval_id} ({len(text)} chars)")
     except Exception:
         pass
@@ -280,6 +284,15 @@ def _deliver(conversation_id, text, kind) -> bool:
     return voice_live_channel.deliver(conversation_id, text, kind=kind)
 
 
+def _deliver_for(payload, conversation_id, text, kind) -> bool:
+    """Deliver to the channel the request came from: the live voice call, or,
+    for a text chat (`channel` == "chat"), the conversation's next turn."""
+    if (payload or {}).get("channel") == "chat":
+        from agent_friday.services import slice_head
+        return slice_head.release_to_chat(conversation_id, text, kind)
+    return _deliver(conversation_id, text, kind)
+
+
 def sign_receipt(approval_id, text, payload=None, *, under_grant=None) -> None:
     """Sign a receipt naming exactly what left this machine. Raises on failure.
 
@@ -349,9 +362,9 @@ def _send(approval_id, conversation_id, text, payload=None, *,
                          "at": time.time()})
         del SENT_LOG[:-50]
         return False
-    ok = _deliver(conversation_id, text, "context")
+    ok = _deliver_for(payload, conversation_id, text, "context")
     if ok:
-        _audit(approval_id, text)
+        _audit(approval_id, text, payload)
         # The one small cube that leaves the frosted lattice: the scrubbed
         # summary, and only once it was really delivered (§13).
         try:
@@ -378,12 +391,15 @@ def _note_in_conversation(conversation_id, text):
 
 
 def request(question: str, *, conversation_id, cloud_model: str,
-            answer_fn: Optional[Callable] = None) -> dict:
+            answer_fn: Optional[Callable] = None, force_card: bool = False,
+            channel: Optional[str] = None) -> dict:
     """Ask the local model; share its scrubbed answer on a grant or a card.
 
     Returns {"status": "sent"|"pending"|"unavailable"|"withheld", ...} and, when
     a card was raised, its approval_id. `answer_fn` stands in for the local
-    model in tests.
+    model in tests. `force_card` ignores a conversation grant (a turn that has
+    read untrusted content); `channel` "chat" delivers an approved answer to
+    the text conversation's next turn instead of a live voice call.
     """
     question = str(question or "").strip()
     if not question:
@@ -417,7 +433,8 @@ def request(question: str, *, conversation_id, cloud_model: str,
         if not local_model:
             return {"status": "unavailable", "reason": unavailable}
         return offer(raw, conversation_id=conversation_id, cloud_model=cloud_model,
-                     local_model=local_model, question=question)
+                     local_model=local_model, question=question,
+                     force_card=force_card, channel=channel)
     finally:
         try:
             from agent_friday.services import presence as _presence
@@ -427,7 +444,8 @@ def request(question: str, *, conversation_id, cloud_model: str,
 
 
 def offer(raw_text: str, *, conversation_id, cloud_model: str, local_model: str,
-          question: str, title: Optional[str] = None) -> dict:
+          question: str, title: Optional[str] = None, force_card: bool = False,
+          channel: Optional[str] = None) -> dict:
     """Scrub text produced on this machine and share it on a grant or a card.
 
     The half of `request` after the local model has spoken, split out because
@@ -453,7 +471,11 @@ def offer(raw_text: str, *, conversation_id, cloud_model: str, local_model: str,
     draft.update({"local_model": local_model, "cloud_model": cloud_model,
                   "question": question, "conversation_id": conversation_id, "version": 1,
                   "history": []})
-    grant = _use_conversation_grant(conversation_id)
+    if channel:
+        draft["channel"] = channel
+    # A grant covers what the owner asked for; it never covers a request made
+    # in a turn that has read untrusted content, which always gets a card.
+    grant = None if force_card else _use_conversation_grant(conversation_id)
     if grant:
         sid = "grant-" + uuid.uuid4().hex[:10]
         if not _send(sid, conversation_id, draft["text"], draft,
@@ -486,8 +508,8 @@ def _on_decision(rec: dict) -> None:
         _send(aid, cid, str(p.get("text") or ""), p)
         approvals.mark_used(aid, "local_context", {"version": p.get("version")})
     else:
-        _deliver(cid, "The user chose not to share that context. Carry on without it, and do "
-                      "not ask for it again unless they bring it up.", "declined")
+        _deliver_for(p, cid, "The user chose not to share that context. Carry on without it, and do "
+                             "not ask for it again unless they bring it up.", "declined")
 
 
 def register() -> None:

@@ -90,8 +90,13 @@ def _sections(turn_id: str) -> List[dict]:
             "tier": r.get("tier"), "chars": r.get("chars"),
             "destination_class": r.get("destination_class"),
             "gated": r.get("gated"), "action_hint": r.get("action_hint"),
-            # What the planner did with the section; wave 1 plans nothing.
-            "planner": r.get("planner", "sent"),
+            # What the slice-need head said about it (include / withhold /
+            # stub) and how sure it was; absent for a section it never slices.
+            # `applied` is False in shadow, where the head only reads and the
+            # section was sent anyway; `sent` is what really happened.
+            "planner": r.get("planner"), "p": r.get("p"),
+            "applied": bool(r.get("applied")),
+            "sent": (not r.get("applied")) or r.get("planner") in (None, "include"),
         })
     return out
 

@@ -30,7 +30,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -207,6 +207,33 @@ def get(turn_id: str) -> Optional[dict]:
         return found
     except Exception:
         return None
+
+
+def attach_slices(turn_id: str, slices: Dict[str, dict],
+                  took_ms: Optional[float] = None) -> bool:
+    """Put the slice-need head's reading into a turn's plan (shadow: nothing
+    reads it to change a prompt unless the owner opted in; services/slice_head).
+
+    Keeps whatever the plan already holds and replaces only `slices`, so the
+    newest preparation of the turn (a fallback leg) wins. Off the record the
+    plan is not kept. Never raises.
+    """
+    try:
+        row = get(turn_id)
+        if row:
+            names = {f for f in TurnPlan.__dataclass_fields__}
+            plan = TurnPlan(**{k: v for k, v in row.items() if k in names})
+            timings = dict(plan.timings_ms)
+        else:
+            plan = TurnPlan(plan_version=PLAN_VERSION, turn_id=str(turn_id),
+                            ts=time.time())
+            timings = {}
+        if took_ms is not None:
+            timings["slice_head"] = round(float(took_ms), 2)
+        return record(replace(plan, slices=dict(slices), timings_ms=timings))
+    except Exception as e:
+        _log.debug("slices not attached: %s", e)
+        return False
 
 
 def shadow_plan(verdict: Optional[dict], turn_id: str) -> Optional[TurnPlan]:

@@ -485,6 +485,9 @@
   "release_holds": [
    "calendar"
   ],
+  "request_context": [
+   "privacy"
+  ],
   "revert_workspace": [
    "workspace"
   ],
@@ -621,6 +624,9 @@
   "voice_preferences": [
    "settings"
   ],
+  "why_that_plan": [
+   "privacy"
+  ],
   "workflow_action": [
    "workflows"
   ],
@@ -741,6 +747,9 @@
   },
   "release_holds": {
    "destructiveHint": true
+  },
+  "request_context": {
+   "openWorldHint": false
   },
   "revert_workspace": {
    "destructiveHint": true
