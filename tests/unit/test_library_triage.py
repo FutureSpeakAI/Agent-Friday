@@ -140,6 +140,18 @@ def test_a_near_copy_is_noted_and_a_different_document_is_not():
     assert st.get_doc_meta(c)["dup_of"] is None
 
 
+def test_a_document_about_the_same_things_in_other_words_is_not_called_a_copy():
+    """The topic vectors agree (the same words), but the words do not run the same way: not a copy."""
+    from agent_friday.services.library import triage
+    words = ["alpha%d" % i for i in range(120)]
+    st = _store()
+    a = _doc(st, "a", " ".join(words))
+    b = _doc(st, "b", " ".join(reversed(words)))
+    triage.triage_pending(st)
+    assert st.get_doc_meta(b)["dup_of"] is None
+    assert triage.same_text(st, a, b) < triage.NEAR_TEXT
+
+
 def test_a_near_copy_of_a_very_different_size_is_not_called_a_copy():
     from agent_friday.services.library import triage
     words = ["alpha%d" % i for i in range(120)]

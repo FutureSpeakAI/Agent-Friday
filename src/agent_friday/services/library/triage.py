@@ -11,7 +11,8 @@ services/minilm and library/embed): reading a document costs no second encoder l
   the text the Library stored. A vault-shelf document is recorded as private at least; its sealed text is
   not opened.
 * **Duplicates**: the same bytes (sha256), or a near copy (the mean of its passage vectors against every
-  other document's, `NEAR_DUP` and a similar size). The later document points at the earlier one. Nothing
+  other document's, `NEAR_DUP`, a similar size, and the words themselves agreeing: a topic match alone is
+  not a copy). The later document points at the earlier one. Nothing
   is deleted or merged: this is a note beside the document that a later "keep one" proposal can read.
 
 Where it sits in the one Laya ladder: rung R1 (the shared embedding, no model), advisory only. It adds a
@@ -38,6 +39,9 @@ MARGIN = 0.02
 #: Cosine of two documents' mean passage vectors above which one is called a near copy of the other.
 NEAR_DUP = 0.975
 NEAR_SIZE_RATIO = 2.0
+#: A topic match is confirmed by the words themselves: this much of their 3-word runs must agree.
+NEAR_TEXT = 0.8
+SHINGLE_WORDS = 3000
 #: How many of a document's first passages join its profile in the type reading.
 HEAD_PASSAGES = 3
 #: One document's triage gives up past this (the encoder is already done; this guards a slow disk).
@@ -211,16 +215,32 @@ class Signatures:
         self.ids.append(doc_id)
         self.mat = np.vstack([self.mat, sig[None, :]])
 
-    def nearest_earlier(self, doc_id: int, sig):
-        """(id, cosine) of the earliest document with a smaller id whose signature is within NEAR_DUP, or None.
-        Every copy points at the earliest one, so "keep one" has one answer."""
+    def candidates_earlier(self, doc_id: int, sig) -> list:
+        """[(id, cosine)] of documents with a smaller id whose signature is within NEAR_DUP, earliest first."""
         import numpy as np
         if not self.ids:
-            return None
+            return []
         sims = self.mat @ sig
         hits = [(self.ids[int(i)], float(sims[int(i)])) for i in np.where(sims >= NEAR_DUP)[0]
                 if self.ids[int(i)] < doc_id]
-        return min(hits) if hits else None
+        return sorted(hits)
+
+
+def _shingles(store: Store, doc_id: int) -> set:
+    """The document's first words as 3-word runs (text as stored, open shelf only)."""
+    import re
+    text = " ".join(r["text"] for r in store.q("SELECT text FROM blocks WHERE doc_id=? ORDER BY ord LIMIT 60", (doc_id,)))
+    w = re.findall(r"[^\W_]+", text.lower())[:SHINGLE_WORDS]
+    return {" ".join(w[i:i + 3]) for i in range(max(0, len(w) - 2))}
+
+
+def same_text(store: Store, a: int, b: int) -> float:
+    """How much of two documents' words run the same way (Jaccard of 3-word runs). A topic vector says two
+    documents are about the same thing; this says they say the same thing."""
+    sa, sb = _shingles(store, a), _shingles(store, b)
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / float(len(sa | sb))
 
 
 def _sensitivity(store: Store, doc) -> int | None:
@@ -270,14 +290,15 @@ def triage_document(store: Store, doc_id: int, sigs: Signatures | None = None) -
         elif sigs is not None and doc["shelf"] == "open" and time.monotonic() - t0 < BUDGET_S:
             sig = signature(store, doc_id)
             if sig is not None:
-                hit = sigs.nearest_earlier(doc_id, sig)
+                hits = sigs.candidates_earlier(doc_id, sig)
                 sigs.add(doc_id, sig)
-                if hit and hit[1] >= NEAR_DUP:
-                    other = store.get_document(hit[0])
+                for other_id, cos in hits[:5]:
+                    other = store.get_document(other_id)
                     a, b = float(doc["size"] or 0), float(other["size"] or 0)
-                    if other is not None and other["kind"] == doc["kind"] and \
-                            (not a or not b or max(a, b) / max(1.0, min(a, b)) <= NEAR_SIZE_RATIO):
-                        dup_of, dup_kind, dup_score = hit[0], "near", round(hit[1], 4)
+                    if other["kind"] == doc["kind"] and (not a or not b or max(a, b) / max(1.0, min(a, b)) <= NEAR_SIZE_RATIO) \
+                            and same_text(store, doc_id, other_id) >= NEAR_TEXT:
+                        dup_of, dup_kind, dup_score = other_id, "near", round(cos, 4)
+                        break
     except Exception:  # noqa: BLE001
         degraded = True
     store.set_doc_meta(doc_id, doc_type=doc_type, type_score=type_score, sensitivity=tier, dup_of=dup_of,
