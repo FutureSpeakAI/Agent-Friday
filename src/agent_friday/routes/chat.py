@@ -400,6 +400,28 @@ def _confirmed_action_response(message, session_ctx):
                                  "Couldn't resume the approved action"))
 
 
+def _instant_response(message, result, conversation_id):
+    """Answer a turn that a rule or the item resolver settled without a model.
+
+    `result` is services/reflex_chat's {"reply", "tool_trace", "actions",
+    "outcome"}. The exchange is written to the conversation like any other.
+    """
+    reply = str(result.get("reply") or "")
+    user_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                'role': 'user', 'text': message, 'pinned': False, 'sources': []}
+    friday_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                  'role': 'friday', 'text': reply, 'pinned': False, 'sources': []}
+    _persist_turn(conversation_id, user_msg, friday_msg)
+    _save_chat_history(CHAT_HISTORY)
+    return jsonify(public_result({"status": "ok", "response": reply,
+                                  "user_msg": user_msg, "friday_msg": friday_msg,
+                                  "sources": [], "tool_trace": result.get("tool_trace") or [],
+                                  "actions": result.get("actions") or [],
+                                  "instant": True,
+                                  "laya": result.get("laya")},
+                                 "Couldn't finish that without a model"))
+
+
 try:
     # The brain's seat warms its prompt head the moment it is ready
     # (services/seat_warm); registered here because the chat routes are
@@ -1103,6 +1125,30 @@ def chat():
         cite_sources = bool(data.get('cite_sources',
                                      settings_early.get('cite_sources', False)))
         session_id = _current_session_id()
+        # Turns answered without a model round (spec 9.5f). A whole "yes" to a
+        # question that is waiting runs the stored action by the same claim path
+        # used further down, before the turn is prepared. With the opt-in on,
+        # "open the X" is resolved and run through the governed tool path. A
+        # conditional "yes, but ..." and everything else is the ordinary turn.
+        _instant_ctx = _opened = None
+        try:
+            from agent_friday.services import reflex_chat as _reflex_chat
+            _reflex_auth = bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD)
+            _instant_ctx = _reflex_chat.approval_turn(
+                message, data, session_id=session_id, conversation_id=_conversation_id,
+                turn_id=_turn_id, settings=settings_early, authenticated=_reflex_auth)
+            if _instant_ctx is None:
+                _opened = _reflex_chat.open_turn(
+                    message, data, session_id=session_id, conversation_id=_conversation_id,
+                    turn_id=_turn_id, settings=settings_early, authenticated=_reflex_auth)
+        except Exception as _reflex_err:
+            _LOG.debug("reflex path skipped: %s", _reflex_err)
+        if _instant_ctx is not None:
+            _instant = _confirmed_action_response(message, _instant_ctx)
+            if _instant is not None:
+                return _instant
+        if _opened is not None:
+            return _instant_response(message, _opened, _conversation_id)
         vision_description = None
 
         # ── B2: seat-change visibility. ANY change to the seat-relevant
@@ -2171,6 +2217,42 @@ def chat():
             except Exception as _safe_e:
                 print(f"  [ROUTER] local safety-net routing failed: {_safe_e}")
 
+        # ── Laya routes the tool, when the owner chose it (chat_tool_routing). ──
+        # The same services/laya_router.route the local voice front uses, through
+        # laya.route_turn (one deadline, a receipt). On a local model a `tool`
+        # route runs through agent._execute_tool and the model answers from the
+        # fenced result; `ask` is the router's one question; `defer` and
+        # `no_tool` are the model's own turn with native tool calling untouched.
+        # A cloud model gets only a high-confidence `tool` fast path and keeps
+        # its whole catalogue. Unchosen, or a turn that is not the owner's own
+        # short line, never reaches the router. The owner mark of the voice
+        # router is not given here: a typed "quiet until morning" is a card.
+        _laya_tr = _laya_entry = None
+        try:
+            from agent_friday.services import chat_tool_routing as _ctr
+            if _ctr.enabled(settings) and messages and messages[-1].get('role') == 'user':
+                from agent_friday.services import off_record as _off_laya
+                _laya_tr = _ctr.decide(
+                    message, data, settings=settings, local=_routed_local,
+                    held=[str(t.get('name')) for t in _ag_tools_for_turn(workspace, _conversation_id)],
+                    off_record=bool(_off_laya.active()),
+                    conversation_id=_conversation_id)
+            if _laya_tr is not None and _laya_tr.action == 'ask':
+                _ctr.record(_turn_id, _laya_tr, ran=None, outcome='asked')
+                return _instant_response(
+                    message, _ctr.ask_result(_laya_tr), _conversation_id)
+            if _laya_tr is not None and _laya_tr.action == 'run':
+                _laya_entry = _ctr.run(_laya_tr, session_ctx=_sess_ctx, pii_lookup=pii_lookup)
+                if _laya_entry is not None:
+                    _ctr.attach_block(messages, _ctr.result_block(_laya_tr, _laya_entry))
+            if _laya_tr is not None:
+                _ctr.record(_turn_id, _laya_tr,
+                            ran=(_laya_entry or {}).get('name'),
+                            outcome=('ran' if _laya_entry is not None
+                                     else 'model' if _laya_tr.action == 'model' else 'error'))
+        except Exception as _laya_err:
+            _LOG.warning("chat tool routing skipped: %s", _laya_err)
+
         # ── Dispatch. ──
         reply, tool_trace = None, []
         _fell_back_from_local = None
@@ -2398,6 +2480,9 @@ def chat():
             )
         if _outage_local:
             reply, _outage_receipt = _outage_fallback.announce(reply, _outage_local["provider"])
+
+        if _laya_entry is not None:
+            tool_trace = [_laya_entry] + list(tool_trace or [])
 
         # ── FR-2: tool-call integrity — scan for fabricated bracket-syntax
         # pseudo-tool-calls (e.g. [query_calendar], [search_email(...)])

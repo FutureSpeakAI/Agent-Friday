@@ -3363,6 +3363,34 @@
  },
  {
   "section": "Privacy & Data",
+  "panel": "Instant answers (no model)",
+  "label": "Run a plain yes to a waiting question right away",
+  "kind": "toggle",
+  "keys": [
+   "reflex_approval_replies"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/reflex_chat.py",
+  "reader_needle": "reflex_approval_replies",
+  "status": "ok",
+  "note": "Default on: the outcome is the one the ordinary turn gives, without a model round."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Instant answers (no model)",
+  "label": "Open it right away / Ask the model every time",
+  "kind": "choice",
+  "keys": [
+   "reflex_open_enabled"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/reflex_chat.py",
+  "reader_needle": "reflex_open_enabled",
+  "status": "ok",
+  "note": "Opt-in, unchosen until picked; the recommended choice is labelled, never preselected."
+ },
+ {
+  "section": "Privacy & Data",
   "panel": "Scheduled jobs: what they may do on their own",
   "label": "Revoke (per grant)",
   "kind": "button",

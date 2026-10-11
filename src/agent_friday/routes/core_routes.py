@@ -353,6 +353,57 @@ def reflex_resolve():
         return api_error(e, "Couldn't resolve that request")
 
 
+@core_bp.route('/api/reflex/status')
+def reflex_status():
+    """Which instant (no model) answers are on, and how they have gone."""
+    try:
+        from agent_friday.services import reflex_chat
+        settings = _load_settings()
+        return jsonify({"status": "ok",
+                        "approval_replies": reflex_chat.approval_enabled(settings),
+                        "open_enabled": reflex_chat.open_enabled(settings),
+                        "open_choice": settings.get(reflex_chat.OPEN_SETTING),
+                        "stats": reflex_chat.stats()})
+    except Exception as e:
+        return api_error(e, "Couldn't read the instant-answer status")
+
+
+@core_bp.route('/api/reflex/open', methods=['POST'])
+def reflex_open():
+    """The command palette's "open the X": resolve one item and open it.
+
+    Only with the opt-in on, only from this PC. The resolved command runs
+    through the ordinary governed tool path (agent._execute_tool), so approvals
+    and receipts are exactly those of the tool. {text[, conversation_id]} ->
+    {status: "done"|"ask"|"model"|"off"|"untrusted", reply}. "model" means the
+    resolver could not settle it and the request belongs in chat.
+    """
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()[:500]
+    if not text:
+        return jsonify({"status": "error", "message": "text is required"}), 400
+    try:
+        from agent_friday.services import reflex_chat
+        from agent_friday.services import conversations as _conv
+        from agent_friday.services.model_router import _current_session_id
+        settings = _load_settings()
+        if not reflex_chat.open_enabled(settings):
+            return jsonify({"status": "off", "reply": ""})
+        if not reflex_chat.trusted_surface(data, text):
+            return jsonify({"status": "untrusted", "reply": ""}), 403
+        cid = _conv.resolve(str(data.get("conversation_id") or "").strip() or None)
+        auth = bool(session.get("authenticated")) or not bool(core.FRIDAY_PASSWORD)
+        out = reflex_chat.open_turn(text, data, session_id=_current_session_id(),
+                                    conversation_id=cid, turn_id=None,
+                                    settings=settings, authenticated=auth)
+        if out is None:
+            return jsonify({"status": "model", "reply": ""})
+        return jsonify({"status": "ask" if out["outcome"] == "ask" else "done",
+                        "outcome": out["outcome"], "reply": out["reply"]})
+    except Exception as e:
+        return api_error(e, "Couldn't open that")
+
+
 @core_bp.route('/api/decisions/label_queue')
 def decisions_label_queue():
     """What to ask the owner next: "does this reach outside my machine?"."""
@@ -1421,6 +1472,8 @@ _VOICE_ENUMS = {
     # Not a voice key, but the same rule: an unknown value would silently
     # resolve to automatic, which is not what was written.
     "call_mode": ("automatic", "ask", "off"),
+    # Typed chat: who picks the tool (services/chat_tool_routing). Same rule.
+    "chat_tool_routing": ("laya", "model"),
 }
 
 

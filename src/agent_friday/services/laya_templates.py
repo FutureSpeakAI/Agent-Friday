@@ -32,10 +32,22 @@ OUTAGE_LOCAL = "Answering locally: no connection to {provider}."
 
 #: template key -> (kind, format string).
 TEMPLATES = {
+    # "Open the X" (reflex_chat._run_command)
+    "open_done": ("confirmation", "Done: opened {shown} (instant, no model)."),
+    "open_asked": ("ask", "Opening {shown} needs your OK first. Shall I go ahead?"),
+    "open_card": ("notice", "Opening {shown} is waiting on an approval card. Nothing was opened yet."),
+    "open_refused": ("error", "I did not open {shown}: {detail} (instant, no model; nothing ran)."),
+    "open_unconfirmed": ("error", "I could not confirm {shown} opened: {detail} (instant, no model)."),
+    # Point-and-act (reflex_chat._point_act_turn)
+    "point_done": ("confirmation", "{said} (instant, no model)."),
+    "point_asked": ("ask", "That needs your OK first. Shall I go ahead?"),
+    "point_card": ("notice", "That is waiting on an approval card. Nothing was changed yet."),
+    "point_refused": ("error", "I did not do that: {detail} (instant, no model; nothing ran)."),
+    "point_unconfirmed": ("error", "I could not confirm that: {detail} (instant, no model)."),
     # Cloud preferred, cloud unreachable.
     "outage_local": ("notice", OUTAGE_LOCAL),
     # A question a rule or the router asked; the words come from the rule's own
-    # sealed question templates (laya_router, laya_resolver), never
+    # sealed question templates (laya_router, laya_resolver, point_act), never
     # from a model. The receipt keeps the layer that asked.
     "rule_ask": ("ask", "{question}"),
 }
@@ -56,6 +68,10 @@ EXTERNAL_SETS = (
 #: engine that runs on this machine (Settings > Voice); the mode does not pick it.
 SURFACES = {
     "chat_answer": "cloud_model",
+    "chat_reflex_open": "laya_template",
+    "chat_reflex_point": "laya_template",
+    "chat_tool_routing_ask": "laya_template",
+    "chat_tool_routing_run": "cloud_model",
     "voice_cloud_answer": "cloud_model",
     "voice_local_front_ack": "laya_template",
     "voice_local_front_defer": "laya_template",
@@ -98,6 +114,6 @@ def outage_notice(provider: str) -> Line:
 
 def rule_question(question: str, layer: str = "rule") -> Line:
     """A question a sealed rule asked, carried with its receipt. ``layer`` names
-    who asked (``laya_router``, ``resolver``)."""
+    who asked (``laya_router``, ``resolver``, ``point_act``)."""
     ln = line("rule_ask", question=str(question or ""))
     return Line(ln.text, "rule_ask:" + (str(layer or "rule")), ln.kind)

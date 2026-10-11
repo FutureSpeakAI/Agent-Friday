@@ -236,6 +236,26 @@ def attach_slices(turn_id: str, slices: Dict[str, dict],
         return False
 
 
+def attach_route(turn_id: str, route_receipt: dict, reason: Optional[str] = None) -> bool:
+    """Put the Laya router's receipt for a typed turn into the turn's plan
+    (``reflex``: who chose, at what confidence, the runner-up, whether it
+    ran), keeping everything else the plan holds. Labels and numbers only;
+    off the record nothing is kept. Never raises."""
+    try:
+        row = get(turn_id)
+        if row:
+            names = {f for f in TurnPlan.__dataclass_fields__}
+            plan = TurnPlan(**{k: v for k, v in row.items() if k in names})
+        else:
+            plan = TurnPlan(plan_version=PLAN_VERSION, turn_id=str(turn_id),
+                            ts=time.time())
+        return record(replace(plan, reflex=dict(route_receipt, by="laya_router"),
+                              route_reason=reason or plan.route_reason))
+    except Exception as e:
+        _log.debug("route receipt not attached: %s", e)
+        return False
+
+
 def shadow_plan(verdict: Optional[dict], turn_id: str) -> Optional[TurnPlan]:
     """Build and record the plan for a turn from its tier-1 verdict. Never raises."""
     try:

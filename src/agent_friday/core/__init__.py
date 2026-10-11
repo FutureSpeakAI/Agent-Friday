@@ -2871,6 +2871,29 @@ DEFAULT_SETTINGS = {
     # Optional chat preparation experiment. Alternate ordinary and assisted
     # turns; Laya only prepares read schemas/context and never grants actions.
     "laya_pilot_enabled": False,
+    # Chat turns answered with no model round (services/reflex_chat). A whole
+    # "yes" to a waiting approval question runs the stored action first thing:
+    # same outcome, no model. Default on; false sends every reply through the
+    # ordinary turn.
+    "reflex_approval_replies": True,
+    # "Open the X" resolved and opened with no model. Opt-in and unchosen
+    # (None) until the owner picks; only true turns it on. It runs through the
+    # same approvals and receipts as a model's tool call.
+    "reflex_open_enabled": None,
+    # Who picks the tool for a typed chat turn (services/chat_tool_routing).
+    # "" = not chosen: the chat model picks its own tools, as always. "laya"
+    # lets the Laya router run a plain lookup through the governed runner and
+    # hands the model the result; "model" records that the owner chose the
+    # old behaviour. Offered in Settings; nothing is preselected.
+    "chat_tool_routing": "",
+    # The trained tool chooser as a tier of the Laya router
+    # (services/laya_router_head): "off" | "shadow" | "on". Ships in shadow and
+    # inert until a certified checkpoint exists in this profile's folder.
+    # "shadow" logs its choice beside the router's (hashes only) and changes
+    # nothing; "on" lets it replace the router's guess for a turn only when it
+    # is sure above its certified threshold. Fixed rules, the change guard
+    # and the approval gates are not touched by it.
+    "laya_tool_head": "shadow",
     # How Laya runs on the CPU (services/laya_runtime): "auto" takes the
     # fastest engine measured and checked on this PC, else laya's own fp32.
     # "torch-fp32" | "torch-int8" | "onnx-int8" pin one.

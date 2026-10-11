@@ -3315,12 +3315,15 @@ function CommandPalette({onClose,onOpenWs,openWins,commands}){
   const[sel,setSel]=useState(0);
   const[contacts,setContacts]=useState([]);
   const[routines,setRoutines]=useState([]);
+  const[reflexOn,setReflexOn]=useState(false);
+  const[reflexMsg,setReflexMsg]=useState('');
   const inputRef=useRef(null);
 
   useEffect(()=>{inputRef.current?.focus()},[]);
   useEffect(()=>{
     fetch('/api/contacts').then(r=>r.json()).then(d=>setContacts(d.contacts||d.items||[])).catch(()=>{});
     fetch('/api/routines').then(r=>r.json()).then(d=>setRoutines(d.routines||d.items||[])).catch(()=>{});
+    fetch('/api/reflex/status').then(r=>r.json()).then(d=>setReflexOn(d.open_enabled===true)).catch(()=>{});
   },[]);
 
   const query=q.trim().toLowerCase();
@@ -3333,18 +3336,30 @@ function CommandPalette({onClose,onOpenWs,openWins,commands}){
   // Things to do rather than places to go (fullscreen with chat).
   const cmdResults=(commands||[]).filter(c=>!query||c.label.toLowerCase().includes(query)||(c.aka||[]).some(a=>a.includes(query)))
     .map(c=>({kind:'cmd',id:c.id,ico:c.ico,label:c.label,meta:c.meta,run:c.run}));
+  // "Open the X": one item, opened with no model (Settings > Instant answers).
+  const reflexResults=(reflexOn&&query.length>4&&/^(open|show|pull up|bring up|go to|take me to|launch|view|find)\b/.test(query))
+    ?[{kind:'reflex',id:'reflex',ico:'⚡',label:'Open “'+q.trim()+'” now',meta:'instant, no model'}]:[];
   const sections=[
+    {title:'Instant',items:reflexResults},
     {title:'Workspaces',items:wsResults},
     {title:'Actions',items:cmdResults},
     {title:'Contacts',items:contactResults},
     {title:'Routines',items:routineResults},
   ].filter(s=>s.items.length>0);
   const flat=sections.flatMap(s=>s.items);
-  useEffect(()=>{setSel(0)},[q]);
+  useEffect(()=>{setSel(0);setReflexMsg('')},[q]);
 
   const activate=(item)=>{
     if(!item)return;
-    if(item.kind==='cmd'){onClose();item.run()}
+    if(item.kind==='reflex'){
+      apiFetch('/api/reflex/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q.trim()})})
+        .then(r=>r.json()).then(d=>{
+          if(d.status==='done'){onClose();fridayToast(d.reply||'Done.')}
+          else if(d.status==='ask')setReflexMsg(d.reply||'Which one did you mean?');
+          else setReflexMsg('That one needs the model. Ask in chat.');
+        }).catch(()=>setReflexMsg('Could not reach '+fridayName()+'. Ask in chat.'));
+    }
+    else if(item.kind==='cmd'){onClose();item.run()}
     else if(item.kind==='ws')onOpenWs(item.id);
     else if(item.kind==='routine'){
       fetch(`/api/routines/${item.id}/run`,{method:'POST'}).catch(()=>{});
@@ -3367,6 +3382,7 @@ function CommandPalette({onClose,onOpenWs,openWins,commands}){
         value={q} onChange={e=>setQ(e.target.value)}/>
       <div className="cmd-palette-results">
         {flat.length===0&&<div className="cmd-palette-empty">No matches</div>}
+        {reflexMsg&&<div className="cmd-palette-empty" role="status">{reflexMsg}</div>}
         {(()=>{let idx=-1;return sections.map(s=>(<div key={s.title}>
           <div className="cmd-palette-section">{s.title}</div>
           {s.items.map(it=>{idx++;const i=idx;return(
@@ -19132,6 +19148,9 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="What Laya learns about you">
       <LayaLearningPanel s={s} save={save}/>
     </StSection>
+    <StSection title="Instant answers (no model)">
+      <LayaReflexPanel s={s} save={save}/>
+    </StSection>
     <StSection title="Scheduled jobs: what they may do on their own">
       <GovernanceGrantsPanel/>
     </StSection>
@@ -19597,6 +19616,55 @@ function LayaPilotPanel({s, save}) {
   );
 }
 // End Laya chat pilot panel
+
+function LayaReflexPanel({s, save}) {
+  // Turns answered with no model round (services/reflex_chat). The approval-reply
+  // switch is on by default; "open the X" is the owner's choice, unchosen at first.
+  const E = React.createElement;
+  const openChoice = s.reflex_open_enabled;
+  const pick = (value, label, desc) => E('button', {
+    type:'button', className:'settings-btn', 'aria-pressed': openChoice === value,
+    onClick:() => save({reflex_open_enabled:value}),
+    style:{display:'block',textAlign:'left',width:'100%',marginBottom:6,fontSize:12,
+      borderColor: openChoice === value ? 'var(--st-accent, #00d4ff)' : undefined}},
+    E('span', {style:{display:'block',fontWeight:600}}, label),
+    E('span', {style:{display:'block',fontSize:11,color:'var(--st-dim)',marginTop:2}}, desc));
+  const toolChoice = s.chat_tool_routing;
+  const pickTool = (value, label, desc) => E('button', {
+    type:'button', className:'settings-btn', 'aria-pressed': toolChoice === value,
+    onClick:() => save({chat_tool_routing:value}),
+    style:{display:'block',textAlign:'left',width:'100%',marginBottom:6,fontSize:12,
+      borderColor: toolChoice === value ? 'var(--st-accent, #00d4ff)' : undefined}},
+    E('span', {style:{display:'block',fontWeight:600}}, label),
+    E('span', {style:{display:'block',fontSize:11,color:'var(--st-dim)',marginTop:2}}, desc));
+  return E('div', null,
+    E(StToggle, {
+      label:'Run a plain yes right away', value:s.reflex_approval_replies !== false,
+      onChange:() => save({reflex_approval_replies:s.reflex_approval_replies === false}),
+      desc:'When ' + fridayName() + ' is waiting on your OK, a plain \u201cyes\u201d runs it at once, with no model in the way. Same approval, same receipt. \u201cYes, but\u2026\u201d is a change request and still goes to the model. Typed in the app on this PC only.',
+    }),
+    E('div', {style:{fontSize:12,margin:'12px 0 6px'}}, 'When you ask ' + fridayName() + ' to open one thing, like \u201copen the go-live email from Dana\u201d:'),
+    pick(true, 'Open it right away (Recommended)',
+      'Opens the one item you named, instantly, with no model. It goes through the same approvals as any action, and the answer says it was instant.'),
+    pick(false, 'Ask the model every time',
+      'Slower and uses the model, but nothing changes from today.'),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
+      typeof openChoice !== 'boolean'
+        ? 'You have not chosen yet. Until you do, these requests go to the model, as they do today.'
+        : openChoice ? 'On. If Laya is not available on this PC, a request goes to the model as usual.'
+        : 'Off. These requests go to the model.'),
+    E('div', {style:{fontSize:12,margin:'16px 0 6px'}}, 'When you ask ' + fridayName() + ' to look something up in chat, like \u201cwhat\u2019s on my calendar\u201d, who picks the tool?'),
+    pickTool('laya', 'Laya picks it (Recommended)',
+      'A small model on this PC reads your line first. For a plain lookup it runs the tool itself, through the same approvals, and your chat model answers from the result. Anything it is unsure of goes to the chat model, as today.'),
+    pickTool('model', 'The chat model picks it',
+      'Slower for simple lookups, but nothing changes from today.'),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
+      toolChoice === 'laya' ? 'Laya picks. A cloud model still holds its full toolbox and is only spared a round when Laya is very sure.'
+        : toolChoice === 'model' ? 'The chat model picks.'
+        : 'You have not chosen yet. Until you do, the chat model picks, as it does today.')
+  );
+}
+// End instant answers panel
 
 function LayaLabelQueue({st, reload}) {
   // The owner's answer key for the approval scanner: one yes/no question per
