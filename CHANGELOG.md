@@ -80,6 +80,8 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   privacy gate. The gate now decides from the model as well as the provider
   name, and those models are checked like any other cloud model. The model
   list also hides both forms of cloud tag from the on-device picks.
+- Library search stays fast with thousands of documents. Your consents are
+  still read fresh on every search, so removing a folder takes effect at once.
 
 ---
 
