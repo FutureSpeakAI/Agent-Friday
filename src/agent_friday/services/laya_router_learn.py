@@ -99,6 +99,18 @@ def note_route(text: str, r, *, surface: str = "voice", conversation_id: Optiona
         _held.append(ent)
 
 
+def _personal(name: str, *args, **kw) -> None:
+    """Tell the personal layer (services/laya_personal) what just happened. It holds only the owner's own
+    turns (``note_routed`` is offered nothing else), matches by conversation id (none matches nothing) and
+    keeps nothing unless personal learning is on for the signed-in profile. A failure here is never the
+    caller's."""
+    try:
+        from agent_friday.services import laya_personal
+        getattr(laya_personal, name)(*args, **kw)
+    except Exception as e:  # noqa: BLE001
+        _log.debug("personal layer skipped %s: %s", name, type(e).__name__)
+
+
 def _same_conversation(ent: dict, conversation_id: Optional[str]) -> bool:
     a, b = ent.get("conversation_id"), conversation_id
     return bool(a) and bool(b) and str(a) == str(b)      # no id matches nothing
@@ -163,6 +175,7 @@ def note_undo(*, conversation_id: Optional[str] = None, tainted=False, settings:
                 return False
         except Exception:
             return False
+    _personal("on_undo", conversation_id=conversation_id, tainted=tainted)
     now = now_fn()
     with _lock:
         ent = next((e for e in reversed(_held)
@@ -182,7 +195,10 @@ def note_executed(tool: str, args: Optional[dict] = None, *, ok: bool, tainted=F
     its resolution, that resolution is the correction: an ask answered with
     a different tool (the owner's), a defer the brain resolved to a tool.
     ``tainted`` is a bool or a callable evaluated only when a correction is
-    possible (it is read on every tool call otherwise)."""
+    possible (it is read on every tool call otherwise). The personal layer is told first and applies
+    its own rules (a failed, denied or tainted call, a missing conversation id and the router's own
+    machinery record nothing there)."""
+    _personal("on_executed", tool, args, ok=ok, tainted=tainted, denied=denied, conversation_id=conversation_id)
     if not ok or denied or not tool or tool in _NOT_A_LABEL:
         return False
     if tainted is True:

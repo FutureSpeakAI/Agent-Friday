@@ -10,7 +10,8 @@ a derived thing that can always be rebuilt from the rows, so forgetting a row,
 resetting, rolling back or a base update is "delete, then rebuild".
 
 WHAT LEARNS
-  gold   an explicit correction (said in a local voice call on this PC: "no, I meant my work calendar"),
+  gold   an explicit correction (said in a local voice call on this PC, or typed on Friday's own page when
+         Laya picks the tool for typed chat: "no, I meant my work calendar"),
          an ask-back answer (the question always offers "something else"), or a
          brain choice the owner later confirmed. These can become U1 phrasings.
   weak   a card approved or declined, an undo inside the window. These tell U2
@@ -30,8 +31,10 @@ THE GATES (every one has a test)
     per speaker, so other voices on the same microphone are heard as the owner unless room mode is
     on) and refuses every surface but "voice" and "chat". A phone, a relay, a tunnel, cloud voice, a
     crew agent and a delegated task never reach it, and a label needs a held turn of the same
-    conversation, so a card decision or an answer from anywhere else finds nothing to label. On this
-    tree only the local voice call routes through Laya, so nothing typed is held or labelled.
+    conversation, so a card decision or an answer from anywhere else finds nothing to label. Typed chat
+    reaches it only when Laya picks the tool for typed chat (``chat_tool_routing`` = laya), the seat is
+    local and the line passed ``reflex_chat.trusted_surface`` (Friday's own page and its session token);
+    otherwise nothing typed is held or labelled. A turn the screen rungs placed is not held either.
   - a minor profile (minor_mode, or moderation family mode, or a profile marked
     minor) learns nothing and keeps no text (Decision 14).
   - top-sensitivity turns are never stored, held or counted by their words
@@ -119,10 +122,13 @@ OTHER = "other"          # "something else": none of Laya's routes
 _NOT_A_LABEL = frozenset({"delegate_to_friday", "answer_card", "undo_action", "task_control"})
 
 NOTICE = ("Friday now learns from your corrections, on this PC only. When you correct her or answer a question "
-          "she asks in a local voice call, she keeps those words, sealed in your vault, and checks them against "
+          "she asks in a local voice call on this PC, or typed on Friday's own page when you have chosen Laya to "
+          "pick the tool for typed chat, she keeps those words, sealed in your vault, and checks them against "
           "her test questions before she uses them. She learns from the voice connection on this PC, not from "
           "one speaker: if other people or a TV are heard in the call, they can be heard as you, so turn on room "
-          "mode for those calls. She never learns from silence, a paired phone, a relay or cloud voice. She does "
+          "mode for those calls. She never learns from silence, a paired phone, a relay or cloud voice, and "
+          "she never learns from what the deeper mind chose until you confirm it in Settings > Privacy & Data "
+          "> What Laya learns about you (\"Waiting for your OK\"). She does "
           "not keep what she can tell is sensitive (money, health, legal, identity), and "
           "when she cannot tell, she keeps nothing. Other personal details, like a name or an address in a "
           "request, can be kept in the sealed vault for 180 days. You can see, undo, forget, reset or wipe all of "
@@ -874,10 +880,15 @@ def _named_option(text: str, cands) -> Optional[str]:
     return hits[0] if len(hits) == 1 else None
 
 
-#: The surfaces a turn may come from: the local voice call (the only caller on this tree) and a
-#: verified local chat page (no caller passes ``trusted`` yet). ``note_routed`` refuses every other surface (cloud voice "voice-live", a phone,
-#: a relay, a delegated task); the caller must also pass ``trusted`` to the router.
+#: The surfaces a turn may come from: the local voice call, and typed chat routed by Laya on this PC
+#: (services/chat_tool_routing: the setting chosen, a local model, and a line that passed
+#: ``reflex_chat.trusted_surface``, i.e. Friday's own page with its session token). ``note_routed``
+#: refuses every other surface (cloud voice "voice-live", a phone, a relay, a delegated task); the
+#: caller must also pass ``trusted`` to the router.
 OWNER_SURFACES = frozenset({"voice", "chat"})
+#: Router layers whose answer comes from the owner's screen or the item index, not from the words (see
+#: services/laya_router): such a turn is never held for learning.
+SCREEN_LAYERS = frozenset({"point_act", "resolver"})
 
 #: The last learning control the owner said as a whole utterance and the router handed over (a rule whose
 #: reason is ``laya_router.LEARNING_CONTROL_REASON``). The tool acts on THIS, never on the rolling buffer of
@@ -955,6 +966,9 @@ def note_routed(text: str, r, *, surface: str = "voice", conversation_id: Option
             prior = [e for e in _held if not e["resolved"] and _same_conv(e, conversation_id)]
         sens = top_sensitivity(text)
         decision, tool, layer = getattr(r, "decision", ""), getattr(r, "tool", None), getattr(r, "layer", "")
+        # A turn the screen rungs placed ("open the second one") means what the screen showed, not what the
+        # phrasing says: it is never held, so nothing is learned from it and no deeper-mind choice attaches to it.
+        screen_turn = layer in SCREEN_LAYERS
         # A correction is read from Laya's sealed RULES only: the line is not routed by the personal layer, so a
         # learned phrasing cannot label its own next example.
         by_laya = layer == "rule"
@@ -991,6 +1005,8 @@ def note_routed(text: str, r, *, surface: str = "voice", conversation_id: Option
             with _lock:
                 _skipped[label] = _skipped.get(label, 0) + 1
             return
+        if screen_turn:
+            return
         cands = [c[0] for c in (getattr(r, "candidates", None) or []) if c] + ([tool] if tool else [])
         with _lock:
             _held.append({"at": now, "text": text, "decision": decision, "tool": tool,
@@ -1006,9 +1022,8 @@ def _source(surface: str) -> str:
 
 def on_executed(tool: str, args: Optional[dict] = None, *, ok: bool = True, tainted=False, denied: bool = False,
                 conversation_id: Optional[str] = None) -> None:
-    """A tool really ran. Nothing on this chain calls this yet: the hook that reports an executed tool
-    belongs to the router-learning track, and until it lands no shadow row is made. The only thing this resolves is
-    a deferred turn: the deeper mind's choice becomes a SHADOW row, which measures Laya and is never a
+    """A tool really ran (laya_router_learn.note_executed passes it on from the governed runner). The only
+    thing this resolves is a deferred turn: the deeper mind's choice becomes a SHADOW row, which measures Laya and is never a
     label until the owner confirms it (Decision 3). A call with no conversation id, from a tainted turn,
     a background task or a crew agent (the caller passes tainted=True for those), a failed or denied
     call and the router's own machinery never record anything."""
@@ -1037,12 +1052,14 @@ def on_executed(tool: str, args: Optional[dict] = None, *, ok: bool = True, tain
         _log.debug("on_executed skipped: %s", type(e).__name__)
 
 
-def on_undo(*, conversation_id: Optional[str] = None) -> None:
+def on_undo(*, conversation_id: Optional[str] = None, tainted=False) -> None:
     """An undo of Friday's change within the window of a routed turn: weak, and
-    the routed action was unwanted."""
+    the routed action was unwanted. ``tainted`` (a bool, or a callable read only once a turn is found)
+    is for an undo that came from a turn which read untrusted content: that is never a correction. A
+    missing conversation id matches nothing."""
     try:
         profile = current_profile()
-        if not conversation_id or not _active(profile):
+        if tainted is True or not conversation_id or not _active(profile):
             return
         now = now_fn()
         with _lock:
@@ -1050,6 +1067,12 @@ def on_undo(*, conversation_id: Optional[str] = None) -> None:
                         and now - e["at"] <= UNDO_WINDOW_S and _same_conv(e, conversation_id)), None)
         if ent is None:
             return
+        if callable(tainted):
+            try:
+                if tainted():
+                    return                                       # read untrusted content: never a correction
+            except Exception:
+                return
         ent["resolved"] = True
         _capture(profile, "undo", ent, label=None, outcome="unwanted", source="owner")
     except Exception as e:  # noqa: BLE001
