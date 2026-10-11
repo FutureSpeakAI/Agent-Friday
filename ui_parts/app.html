@@ -17194,10 +17194,11 @@ function SetupChat({ onDone }) {
 }
 
 // ── Settings: the setup checklist and "Your profile" ────────────────────────
-function SettingsSetupChecklist() {
+function SettingsSetupChecklist({s}) {
   return (
     <StSection title="Setup checklist" desc={("Everything " + fridayName() + " can connect to, with exactly what each one asks for. Anything you skipped in the setup chat waits here.")}>
       <SetupConnectionsPanel />
+      <QuietHoursOffer s={s} />
     </StSection>
   );
 }
@@ -22552,10 +22553,15 @@ function SettingsWS() {
     }
   }, /*#__PURE__*/React.createElement(FileAccessPausedBanner, {
     key: 'fa-' + tab
-  }), tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, null), /*#__PURE__*/React.createElement(SettingsTabGeneral, {
+  }), tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, {
+    s: s
+  }), /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), /*#__PURE__*/React.createElement(SettingsYourProfile, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabModels, {
+  }), /*#__PURE__*/React.createElement(SettingsYourProfile, null), /*#__PURE__*/React.createElement(SettingsInterruptions, {
+    s: s,
+    save: save
+  }), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabModels, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(StSection, {
@@ -22896,6 +22902,250 @@ function localAiMarkActive() {
     method: 'POST'
   }).catch(() => {});
 }
+// ── The four places behind the chip: Needs you, Activity, Updates, Receipts & traces ──
+// The chip below is the way in; this is what it opens (routes/lanes.py, services/activity_lane.py).
+// Needs you holds only what blocks on your decision, with the badge. Activity lists every task there
+// is, whoever started it, with its model, status, a link to its reasoning trace, its place in the
+// queue and Stop only where the job honours it. Updates is a digest you pull; it never pops up.
+// Receipts & traces are pulled, from an item ("Why?") or from here, never pushed. Amber is for
+// "needs you", violet for working, neutral for waiting; nothing here moves.
+const LANE_TABS = [['needs', 'Needs you'], ['activity', 'Activity'], ['updates', 'Updates'], ['receipts', 'Receipts & traces']];
+function laneChipContent(lane, localText) {
+  const h = React.createElement;
+  const n = lane && lane.needs_you || 0;
+  const out = [];
+  if (n) out.push(h('span', { key: 'b', className: 'place-badge', 'data-testid': 'lane-badge' }, n + (n === 1 ? ' needs you' : ' need you')));
+  if (localText) out.push(localText);
+  else if (lane && lane.activity) out.push('Activity: ' + [lane.running ? lane.running + ' running' : '', lane.queued ? lane.queued + ' queued' : ''].filter(Boolean).join(' · '));
+  else if (!n) out.push('Updates');
+  if (lane && lane.updates) out.push(h('span', { key: 'd', className: 'place-dot', 'data-testid': 'lane-updates-dot', role: 'img', 'aria-label': 'New updates' }));
+  return out;
+}
+function laneStatusWords(t) {
+  if (t.status === 'queued') return t.queue_position ? 'waiting, place ' + t.queue_position : 'waiting';
+  const words = { running: 'running', paused: 'paused', complete: 'done', completed: 'done', failed: 'failed', cancelled: 'stopped', interrupted: 'interrupted' };
+  return words[t.status] || t.status;
+}
+function laneAgo(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - (typeof iso === 'number' ? iso * 1000 : Date.parse(iso));
+  if (!(ms >= 0)) return '';
+  const m = Math.round(ms / 60000);
+  return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago';
+}
+function useLaneData(url, every) {
+  const [d, setD] = useState(null);
+  const load = () => apiFetch(url, { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(x => { if (x) setD(x); }).catch(() => {});
+  useEffect(() => {
+    setD(null);
+    load();
+    const t = setInterval(() => { if (!document.hidden) load(); }, every || 5000);
+    return () => clearInterval(t);
+  }, [url]);
+  return [d, load];
+}
+// "Why?" on an item: how it reached you, in plain words, and its trace if it has one. Pulled.
+function LaneWhy({ id }) {
+  const h = React.createElement;
+  const [w, setW] = useState(null);
+  const [open, setOpen] = useState(false);
+  const toggle = () => {
+    setOpen(v => !v);
+    if (!w) apiFetch('/api/lanes/why/' + encodeURIComponent(id)).then(r => r.json()).then(setW).catch(() => setW({ ok: false }));
+  };
+  return h('span', { className: 'place-why' },
+    h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-why', 'aria-expanded': open ? 'true' : 'false', onClick: toggle }, 'Why?'),
+    open && h('div', { className: 'place-why-text', role: 'note', 'data-testid': 'lane-why-text' },
+      !w ? 'One moment.' : w.ok ? w.sentence : 'There is no record of that item any more.',
+      w && w.trace_id ? h('button', { type: 'button', className: 'ws-tab-link', onClick: () => window.fridayOpenTrace(w.trace_id) }, 'Open its trace') : null));
+}
+// A batch of approvals of one kind and source: one card, each action listed. Approving the batch
+// approves exactly the listed actions, one approval each; "Review each" shows the single cards.
+function fridayDecideBatch(b, decision) {
+  return fetch('/api/approvals/batches/' + encodeURIComponent(b.batch_id) + '/decide', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision, approval_ids: b.approval_ids, decided_by: 'owner:ui' })
+  }).then(r => r.json()).then(d => {
+    if (d && d.ok) (d.results || []).forEach(x => { if (x.won) fridayApprovalFeed.drop(x.approval_id); });
+    else if (d && d.error === 'changed') fridayToast('That batch changed while you looked. Here is the new list.');
+    return d;
+  }).catch(() => { fridayToast('Could not reach ' + fridayName() + ' to record that. The cards are still waiting.'); return null; });
+}
+function LaneBatch({ b, items, busy, onBusy, onDecided }) {
+  const h = React.createElement;
+  const [each, setEach] = useState(false);
+  const run = decision => {
+    if (busy) return;
+    onBusy(b.batch_id);
+    fridayDecideBatch(b, decision).then(() => { onBusy(''); onDecided(); });
+  };
+  const cards = (items || []).filter(a => b.approval_ids.indexOf(a.approval_id) >= 0);
+  return h('div', { className: 'place-card', 'data-testid': 'lane-batch', 'data-batch-id': b.batch_id },
+    h('div', { className: 'place-card-title' }, b.sentence),
+    !each && h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-items' }, b.items.map(it => h(ApprovalCardBody, { key: it.approval_id, a: it, busy: busy, onDecide: () => {} }))),
+    h('div', { className: 'place-note' }, 'Each action stays its own approval. Approving these approves exactly the ' + b.count + ' listed and nothing else.'),
+    h('div', { className: 'place-actions' },
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-ok)' }, disabled: !!busy, 'data-testid': 'lane-batch-approve', onClick: () => run('approve') }, 'Approve these ' + b.count),
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-deny)' }, disabled: !!busy, 'data-testid': 'lane-batch-deny', onClick: () => run('deny') }, 'Decline these ' + b.count),
+      h('button', { type: 'button', className: 'ws-tab-link', 'aria-expanded': each ? 'true' : 'false', onClick: () => setEach(v => !v) }, each ? 'Hide the cards' : 'Review each')),
+    each && cards.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { onBusy(id); fridayDecideApproval(id, decision).then(() => { onBusy(''); onDecided(); }); } })));
+}
+function LaneNeedsYou({ onChanged }) {
+  const h = React.createElement;
+  const [d, reload] = useLaneData('/api/lanes/needs-you');
+  const feed = useApprovalFeed();
+  const [busy, setBusy] = useState('');
+  useEffect(() => { reload(); }, [feed.length]);
+  if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
+  const inBatch = new Set();
+  d.batches.forEach(b => b.approval_ids.forEach(id => inBatch.add(id)));
+  const singles = feed.filter(a => !inBatch.has(a.approval_id));
+  const q = d.quiet || {};
+  const until = q.until ? new Date(q.until * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+  const setQuiet = on => apiFetch('/api/lanes/quiet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ until_morning: on }) }).then(() => { reload(); onChanged(); }).catch(() => {});
+  const done = () => { reload(); onChanged(); };
+  return h('div', { 'data-testid': 'lane-needs-you' },
+    h('div', { className: 'place-quiet', 'data-testid': 'lane-quiet' },
+      q.active
+        ? [h('span', { key: 't' }, 'Quiet until ' + until + '. Only safety-critical things interrupt.'),
+           q.why === 'until_morning' ? h('button', { key: 'b', type: 'button', className: 'ws-tab-link', onClick: () => setQuiet(false) }, 'End quiet') : null]
+        : h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-quiet-on', onClick: () => setQuiet(true) }, 'Quiet until morning')),
+    d.count === 0 && !singles.length ? h('div', { className: 'place-empty' }, 'Nothing needs you.') : h('div', { className: 'place-summary', role: 'status' }, d.summary ? d.summary.charAt(0).toUpperCase() + d.summary.slice(1) + '.' : ''),
+    d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, busy: busy, onBusy: setBusy, onDecided: done })),
+    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { setBusy(id); fridayDecideApproval(id, decision).then(() => { setBusy(''); done(); }); } })),
+    d.others.map(o => h('div', { key: o.id, className: 'place-card', 'data-testid': 'lane-need', 'data-kind': o.kind },
+      h('div', { className: 'place-card-title' }, o.title + (o.count > 1 ? ' (' + o.count + ' times)' : '')),
+      o.body ? h('div', { className: 'place-note' }, o.body) : null,
+      h('div', { className: 'place-actions' },
+        (o.actions || []).filter(x => x && x.label).map((x, i) => h('button', { key: i, type: 'button', className: 'btn',
+          onClick: () => { if (window.fridayOpenWorkspace && (x.workspace || (o.target && o.target.workspace))) window.fridayOpenWorkspace(Object.assign({}, o.target || {}, x.workspace ? { workspace: x.workspace, tab: x.tab } : {})); } }, x.label)),
+        !(o.actions || []).some(x => x && x.label) ? h('span', { className: 'place-note' }, 'There is nothing to fix from here.') : null,
+        h(LaneWhy, { id: o.id })))));
+}
+function LaneActivity({ q, onLocal, busy, onChanged }) {
+  const h = React.createElement;
+  const [d, reload] = useLaneData('/api/lanes/activity');
+  const [stopping, setStopping] = useState('');
+  if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
+  const stop = t => {
+    setStopping(t.id);
+    apiFetch(t.stop.url, { method: t.stop.method }).catch(() => {}).then(() => { setStopping(''); reload(); onChanged(); });
+  };
+  return h('div', { 'data-testid': 'lane-activity' },
+    (q && q.jobs && q.jobs.length) ? h('div', { className: 'local-ai-list-note' }, 'One job at a time on your local model. Your chats and voice always go first.') : null,
+    !d.tasks.length ? h('div', { className: 'place-empty' }, 'Nothing is running and nothing is waiting.') : d.tasks.map(t => h('div', { key: t.id, className: 'local-ai-row', 'data-state': t.status === 'running' ? 'running' : t.status, 'data-testid': 'lane-task', 'data-task-id': t.id, 'data-kind': t.kind },
+      h('div', { className: 'local-ai-row-text' },
+        h('div', { className: 'local-ai-row-label' }, t.label),
+        h('div', { className: 'local-ai-row-meta', 'data-testid': 'lane-task-meta' },
+          [t.model || (t.status === 'queued' ? 'model chosen when it starts' : 'model not named'), laneStatusWords(t)].concat(t.why ? [t.why] : []).concat(t.source === 'local_queue' && LOCAL_AI_KIND_WORDS[t.kind] ? [LOCAL_AI_KIND_WORDS[t.kind]] : []).join(' · '))),
+      t.trace_id ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-trace', title: 'How it is thinking, step by step. Pulled, never pushed.', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Trace') : null,
+      t.run_now ? h('button', { type: 'button', className: 'ws-tab-link', disabled: !!busy, onClick: () => onLocal(t.id, 'run-now'), title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.' }, 'Run now') : null,
+      t.stoppable && t.stop ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-stop', disabled: !!busy || stopping === t.id, onClick: () => t.source === 'local_queue' ? onLocal(t.id, 'cancel') : stop(t), title: t.status === 'queued' ? 'Remove from the line' : 'Stop it after its current step. The record is kept.' }, t.source === 'local_queue' || t.status === 'queued' ? 'Cancel' : 'Stop') : null)));
+}
+function LaneUpdates() {
+  const h = React.createElement;
+  const [d] = useLaneData('/api/lanes/updates?today=1', 15000);
+  if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
+  if (!d.groups.length) return h('div', { className: 'place-empty', 'data-testid': 'lane-updates' }, 'No new updates today.');
+  return h('div', { 'data-testid': 'lane-updates' },
+    h('div', { className: 'place-note' }, 'Results and FYIs, grouped. They never pop up; you read them here.'),
+    d.groups.map(g => h('div', { key: g.kind, className: 'place-card', 'data-kind': g.kind },
+      h('ul', { className: 'place-list' }, g.items.map(it => h('li', { key: it.id },
+        h('span', null, it.title + (it.count > 1 ? ' (' + it.count + ' times)' : '')),
+        h('span', { className: 'place-ago' }, ' ' + laneAgo(it.created_at)),
+        h(LaneWhy, { id: it.id })))))));
+}
+function LaneReceipts() {
+  const h = React.createElement;
+  const [d] = useLaneData('/api/lanes/receipts?limit=30', 15000);
+  if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
+  if (!d.traces.length) return h('div', { className: 'place-empty', 'data-testid': 'lane-receipts' }, 'No traces yet. They appear as work happens.');
+  return h('div', { 'data-testid': 'lane-receipts' },
+    h('div', { className: 'place-note' }, 'Why ' + fridayName() + ' did what she did, step by step. Pulled from here or from any item; never pushed.'),
+    d.traces.map(t => h('div', { key: t.trace_id, className: 'local-ai-row' },
+      h('div', { className: 'local-ai-row-text' },
+        h('div', { className: 'local-ai-row-label' }, t.label || t.kind || 'A trace'),
+        h('div', { className: 'local-ai-row-meta' }, [t.model, t.status, laneAgo(t.started)].filter(Boolean).join(' · '))),
+      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
+}
+function LaneBody({ tab, onTab, lane, q, onLocal, busy, onChanged }) {
+  const h = React.createElement;
+  const counts = { needs: lane && lane.needs_you || 0, activity: lane && lane.activity || 0, updates: lane && lane.updates || 0, receipts: 0 };
+  const onKey = e => {
+    const i = LANE_TABS.findIndex(x => x[0] === tab);
+    if (e.key === 'ArrowRight') onTab(LANE_TABS[(i + 1) % LANE_TABS.length][0]);
+    else if (e.key === 'ArrowLeft') onTab(LANE_TABS[(i + LANE_TABS.length - 1) % LANE_TABS.length][0]);
+    else return;
+    e.preventDefault();
+  };
+  return h(React.Fragment, null,
+    h('div', { className: 'place-tabs', role: 'tablist', 'aria-label': 'Needs you, Activity, Updates, Receipts and traces', onKeyDown: onKey },
+      LANE_TABS.map(([id, label]) => h('button', { key: id, type: 'button', role: 'tab', id: 'lane-tab-' + id, 'aria-selected': tab === id ? 'true' : 'false', tabIndex: tab === id ? 0 : -1,
+        className: 'place-tab' + (tab === id ? ' on' : '') + (id === 'needs' && counts.needs ? ' needs' : ''), 'data-testid': 'lane-tab-' + id, onClick: () => onTab(id) },
+        label, counts[id] ? h('span', { className: 'place-count' }, counts[id]) : null))),
+    h('div', { role: 'tabpanel', 'aria-labelledby': 'lane-tab-' + tab, 'data-testid': 'lane-panel' },
+      tab === 'needs' ? h(LaneNeedsYou, { onChanged }) : tab === 'activity' ? h(LaneActivity, { q, onLocal, busy, onChanged }) : tab === 'updates' ? h(LaneUpdates, null) : h(LaneReceipts, null)));
+}
+// Settings: how often something that needs you may interrupt, and quiet hours. Nothing is preselected
+// for you beyond the default; the recommended choice carries its label. Safety-critical items
+// (spend halt, credential problem, seat change, a cLaw block) are exempt from all of it.
+const LANE_BUDGETS = [[3, '3 an hour'], [6, '6 an hour (Recommended)'], [12, '12 an hour'], [0, 'No limit']];
+function laneQuietChoice(s) {
+  if (!s || !s.quiet_hours_enabled) return 'off';
+  return (s.quiet_hours_start || '22:00') === '22:00' && (s.quiet_hours_end || '07:00') === '07:00' ? 'recommended' : 'custom';
+}
+function QuietHoursRow({ s, save }) {
+  const h = React.createElement;
+  const choice = laneQuietChoice(s);
+  const [custom, setCustom] = useState(choice === 'custom');
+  const start = s && s.quiet_hours_start || '22:00', end = s && s.quiet_hours_end || '07:00';
+  const pick = v => {
+    setCustom(v === 'custom');
+    if (v === 'off') save({ quiet_hours_enabled: false });
+    else if (v === 'recommended') save({ quiet_hours_enabled: true, quiet_hours_start: '22:00', quiet_hours_end: '07:00' });
+    else save({ quiet_hours_enabled: true });
+  };
+  return h(StRow, { label: 'Quiet hours', settingKey: 'quiet_hours_enabled',
+    desc: 'In quiet hours only safety-critical things interrupt you. Everything else waits in your badge and in Updates, and background work that would ask for approvals runs when they end.' },
+    h('select', { className: 'input', 'aria-label': 'Quiet hours', value: custom ? 'custom' : choice, onChange: e => pick(e.target.value) },
+      h('option', { value: 'off' }, 'Off'), h('option', { value: 'recommended' }, '22:00 to 07:00 (Recommended)'), h('option', { value: 'custom' }, 'Choose the times')),
+    (custom || choice === 'custom') && h('div', { className: 'place-times' },
+      h('label', null, 'From ', h('input', { type: 'time', className: 'input', value: start, onChange: e => e.target.value && save({ quiet_hours_start: e.target.value }) })),
+      h('label', null, ' to ', h('input', { type: 'time', className: 'input', value: end, onChange: e => e.target.value && save({ quiet_hours_end: e.target.value }) }))));
+}
+function SettingsInterruptions({ s, save }) {
+  const h = React.createElement;
+  const v = s && Number.isInteger(s.interruption_budget_per_hour) ? s.interruption_budget_per_hour : 6;
+  return h(StSection, { title: 'Interruptions' },
+    h(StRow, { label: 'How often something may interrupt you', settingKey: 'interruption_budget_per_hour',
+      desc: 'Over the limit, things that need you wait in your badge instead of popping up, and the badge says how many. Safety-critical things always get through.' },
+      h('select', { className: 'input', 'aria-label': 'How often something may interrupt you', value: String(v), onChange: e => save({ interruption_budget_per_hour: Number(e.target.value) }) },
+        LANE_BUDGETS.map(([n, label]) => h('option', { key: n, value: String(n) }, label)))),
+    h(QuietHoursRow, { s: s, save: save }),
+    h(StRow, { label: 'Follow Windows Focus Assist', settingKey: 'honour_focus_assist',
+      desc: 'When Windows Do Not Disturb is on, only safety-critical things interrupt. Off until you choose it.' },
+      h('select', { className: 'input', 'aria-label': 'Follow Windows Focus Assist', value: s && s.honour_focus_assist ? 'on' : 'off', onChange: e => save({ honour_focus_assist: e.target.value === 'on' }) },
+        h('option', { value: 'off' }, 'No, leave Windows alone'), h('option', { value: 'on' }, 'Yes, follow it'))));
+}
+// A card the policy judged "may not interrupt" (quiet hours, over the hour's budget, Focus Assist) is
+// listed and counted but does not pop the approval window open (services/interruption_policy).
+function fridayApprovalQuiet(id) {
+  const q = window.__fridayQuietApprovals;
+  return !!(q && q.has(id));
+}
+// In the Setup checklist: quiet hours are offered, and the Recommended window is named, but nothing is
+// chosen for you. The row itself lives under Interruptions.
+function QuietHoursOffer({ s }) {
+  const h = React.createElement;
+  const on = !!(s && s.quiet_hours_enabled);
+  const go = () => {
+    const el = document.querySelector('[data-st-key="quiet_hours_enabled"] select');
+    if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+  };
+  return h(StRow, { label: 'Quiet hours',
+    desc: on ? 'On. Only safety-critical things interrupt you in your quiet hours.' : 'Off. Something that needs you can interrupt at any hour. 22:00 to 07:00 is the recommended window, and the choice is yours.' },
+    h('button', { type: 'button', className: 'settings-btn', onClick: go }, on ? 'Change' : 'Choose'));
+}
 function LocalAiQueueChip() {
   const [q, setQ] = useState(null);
   const [open, setOpen] = useState(false);
@@ -22903,6 +23153,13 @@ function LocalAiQueueChip() {
   const chipRef = useRef(null);
   const listRef = useRef(null);
   const wasOpen = useRef(false);
+  const [lane, setLane] = useState(null);
+  const [tab, setTab] = useState('');
+  const loadLane = () => apiFetch('/api/lanes/summary', {
+    cache: 'no-store'
+  }).then(r => r.ok ? r.json() : null).then(d => {
+    if (d) setLane(d);
+  }).catch(() => {});
   const load = () => apiFetch('/api/local-queue', {
     cache: 'no-store'
   }).then(r => r.ok ? r.json() : null).then(d => {
@@ -22912,11 +23169,14 @@ function LocalAiQueueChip() {
     // Polls every 5 s while the page is visible; a hidden page asks nothing
     // and catches up the moment it is shown again.
     load();
+    loadLane();
     const t = setInterval(() => {
       if (!document.hidden) load();
+      if (!document.hidden) loadLane();
     }, 5000);
     const onVisible = () => {
       if (!document.hidden) load();
+      if (!document.hidden) loadLane();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -22965,8 +23225,13 @@ function LocalAiQueueChip() {
     }).catch(() => {}).then(() => setBusy(''));
   };
   const jobs = q && q.jobs || [];
-  if (!jobs.length) return null;
-  const working = !!(q.running && q.running.length);
+  const laneAny = !!(lane && (lane.activity || lane.needs_you || lane.updates));
+  if (!jobs.length && !laneAny) return null;
+  const working = !!(q && q.running && q.running.length) || !!(lane && lane.running);
+  const openLane = () => {
+    if (!open) setTab(lane && lane.needs_you ? 'needs' : jobs.length || lane && lane.activity ? 'activity' : 'updates');
+    setOpen(v => !v);
+  };
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
     type: "button",
     ref: chipRef,
@@ -22974,48 +23239,32 @@ function LocalAiQueueChip() {
     "data-testid": "local-ai-queue-chip",
     "aria-haspopup": "dialog",
     "aria-expanded": open ? 'true' : 'false',
-    onClick: () => setOpen(v => !v),
-    title: 'Background work waiting for your local AI model. It runs one job at a time and never during your chats.'
-  }, localAiChipText(q)), open && /*#__PURE__*/React.createElement("div", {
+    onClick: openLane,
+    title: 'What ' + fridayName() + ' is doing, and what is waiting on you. Background AI work runs one job at a time and never during your chats.'
+  }, laneChipContent(lane, jobs.length ? localAiChipText(q) : '')), open && /*#__PURE__*/React.createElement("div", {
     className: "ws-tab-drawer local-ai-list",
     ref: listRef,
     tabIndex: -1,
     role: "dialog",
-    "aria-label": "Local AI queue",
+    "aria-label": "Activity",
     "data-testid": "local-ai-queue-list"
   }, /*#__PURE__*/React.createElement("div", {
     className: "local-ai-list-head"
-  }, /*#__PURE__*/React.createElement("b", null, "Local AI queue"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("b", null, "Activity"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     "aria-label": 'Close',
     title: 'Close',
     className: "ws-tab-link",
     onClick: () => setOpen(false)
-  }, "✕")), /*#__PURE__*/React.createElement("div", {
-    className: "local-ai-list-note"
-  }, "One job at a time on your local model. Your chats and voice always go first."), jobs.map(j => /*#__PURE__*/React.createElement("div", {
-    key: j.id,
-    className: "local-ai-row",
-    "data-state": j.state
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "local-ai-row-text"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "local-ai-row-label"
-  }, j.label), /*#__PURE__*/React.createElement("div", {
-    className: "local-ai-row-meta"
-  }, (LOCAL_AI_KIND_WORDS[j.kind] || j.kind) + ' · ' + (j.state === 'running' ? 'running now' : j.why || 'waiting'))), j.state === 'queued' && j.deferrable && !j.run_now && /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "ws-tab-link",
-    disabled: !!busy,
-    onClick: () => act(j.id, 'run-now'),
-    title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.'
-  }, "Run now"), j.cancellable !== false && /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "ws-tab-link",
-    disabled: !!busy,
-    onClick: () => act(j.id, 'cancel'),
-    title: j.state === 'queued' ? 'Remove from the queue' : 'Stop before its next step'
-  }, "Cancel")))));
+  }, "✕")), /*#__PURE__*/React.createElement(LaneBody, {
+    tab: tab || 'activity',
+    onTab: setTab,
+    lane: lane,
+    q: q,
+    onLocal: act,
+    busy: busy,
+    onChanged: loadLane
+  })));
 }
 // Settings > Advanced: how long the computer must be idle before deferrable
 // background work (wiki notes, daily creation, the session summary) starts.
@@ -23124,6 +23373,8 @@ const FEED_SILENT_MS = 60000;
 const fridayApprovalFeed = (() => {
   let cards = new Map(), es = null, started = false, leader = false, heard = Date.now(), release = null;
   const listeners = new Set();
+  // Cards judged "may not interrupt" (quiet hours, over budget, Focus Assist): listed, not popped open.
+  const quiet = window.__fridayQuietApprovals = new Set();
   // Presence frames (services/presence.py) ride this same stream: the
   // lattice's processing-state gestures listen here, in every tab.
   const presenceListeners = new Set();
@@ -23138,6 +23389,12 @@ const fridayApprovalFeed = (() => {
   const apply = d => {
     if (!d || !d.type) return;
     heard = Date.now();
+    if (d.type === 'snapshot') {
+      quiet.clear();
+      (d.quiet || []).forEach(id => quiet.add(id));
+    } else if (d.type === 'pending' && d.approval) {
+      if (d.interrupt === false) quiet.add(d.approval.approval_id);else quiet.delete(d.approval.approval_id);
+    }
     if (d.type === 'snapshot') { cards = new Map((d.pending || []).map(a => [a.approval_id, a])); emit(); }
     else if (d.type === 'pending' && d.approval && d.approval.status === 'pending') { cards.set(d.approval.approval_id, d.approval); emit(); }
     else if (d.type === 'resolved') { if (cards.delete(d.approval_id)) emit(); }
@@ -23445,11 +23702,12 @@ function ApprovalCardBody({ a, busy, onDecide }) {
 function ApprovalPopups() {
   const items = useApprovalFeed();
   const [later, setLater] = useState(false);
+  const [peek, setPeek] = useState(false);
   const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
-    const fresh = items.some(a => !seen.current.has(a.approval_id));
-    seen.current = new Set(items.map(a => a.approval_id));
+    const fresh = items.some(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    seen.current = new Set(items.filter(a => !fridayApprovalQuiet(a.approval_id)).map(a => a.approval_id));
     if (fresh) setLater(false);
   }, [items]);
   // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
@@ -23458,6 +23716,7 @@ function ApprovalPopups() {
     const on = e => {
       const id = e && e.detail && e.detail.approval_id;
       setLater(false);
+      setPeek(true);
       setTimeout(() => {
         let el = null;
         try {
@@ -23485,10 +23744,14 @@ function ApprovalPopups() {
     fridayDecideApproval(id, decision).then(() => setBusy(''));
   };
   const pos = { position: 'fixed', top: 48, right: 16, zIndex: 9800 };
-  if (later && window.__FRIDAY_STANDALONE__) return null;
-  if (later) return <button type="button" className="btn" data-testid="approval-popup-pill"
+  const folded = later || !peek && items.every(a => fridayApprovalQuiet(a.approval_id));
+  if (folded && window.__FRIDAY_STANDALONE__) return null;
+  if (folded) return <button type="button" className="btn" data-testid="approval-popup-pill"
     style={Object.assign({}, pos, { borderColor: 'rgba(245,158,11,0.6)', color: '#f59e0b', background: 'rgba(10,14,26,0.9)' })}
-    onClick={() => setLater(false)}>✋ {items.length === 1 ? '1 approval waiting' : items.length + ' approvals waiting'}</button>;
+    onClick={() => {
+    setLater(false);
+    setPeek(true);
+  }}>✋ {items.length === 1 ? '1 approval waiting' : items.length + ' approvals waiting'}</button>;
   return (<div className="card" role="dialog" aria-label={(fridayName() + " is waiting for your approval")} data-testid="approval-popup"
     style={Object.assign({}, pos, { width: 'min(400px, calc(100vw - 32px))', maxHeight: 'calc(100vh - 150px)', overflowY: 'auto', padding: 10, border: '1px solid rgba(245,158,11,0.25)' })}>
     <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
