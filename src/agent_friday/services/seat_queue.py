@@ -37,6 +37,12 @@ The background work queue (hotfix 1.0.2) is this queue, not a second one:
 - Promotion takes the first queued task the gate allows, head-of-line ones
   (``head``: a job that yielded, or one the user asked to run now) first,
   FIFO otherwise. Without a gate and head flags the order is plain FIFO.
+- ``seat_gate`` / ``seat_why`` / ``on_run`` / ``on_done`` are the bridge to the
+  local work scheduler's admission queue (services/turn_queue,
+  ``attach_seat_queue``): a person's turn on the seat goes first, and a running
+  task holds a ``background`` slot there. ``lend_slot`` / ``reclaim_slot`` hand
+  that slot back while a running task is paused for a person's turn, so the
+  turn is never queued behind the job it is waiting on.
 - ``find_queued(key)`` lets a request whose job key is already waiting merge
   into it instead of queueing a second job.
 """
@@ -61,6 +67,9 @@ USER_NOTICE: str = (
 
 #: Why a queued task waits when the only obstacle is the busy seat.
 SEAT_BUSY_REASON: str = "waits for the local model"
+
+#: Why a queued task waits when a person's turn holds or awaits its seat.
+PEOPLE_FIRST_REASON: str = "waits for your chat to finish"
 
 QUEUED = "queued-for-seat"
 
@@ -99,10 +108,44 @@ class SeatQueue:
         # seat -> task_id currently running on that local seat (None when free)
         self._running: dict[str, str] = {}
         # gate(record) -> "" when the task may take a free local seat now,
-        # else the plain-words reason it waits. None: the seat is the only rule.
+        # else the plain-words reason it waits (the Local AI queue's rule:
+        # services/background_gate.block_reason). None: the seat is the only rule.
         self.gate = gate
+        # The bridge to services/turn_queue (attach_seat_queue), which makes
+        # this the `background` class of the seat's admission queue. All four
+        # stay None on a bare SeatQueue, which behaves exactly as before.
+        #   seat_gate(seat, rec) -> bool  False while a person holds or awaits the seat
+        #   seat_why(seat, rec) -> str    the plain words for that
+        #   on_run(seat, id, record)  a task started running on a local seat
+        #   on_done(seat, id)         that task freed the seat
+        self.seat_gate = None
+        self.seat_why = None
+        self.on_run = None
+        self.on_done = None
+
+    def _seat_block(self, seat, rec=None) -> str:
+        """Why a person's turn (not a rule about this job) holds the seat, or ""."""
+        if self.seat_gate is None:
+            return ""
+        try:
+            if self.seat_gate(seat, rec):
+                return ""
+        except Exception:
+            return ""  # a broken gate must never strand background work
+        why = ""
+        if self.seat_why is not None:
+            try:
+                why = str(self.seat_why(seat, rec) or "")
+            except Exception:
+                why = ""
+        return why or PEOPLE_FIRST_REASON
 
     def _gate_reason(self, rec: dict) -> str:
+        """The plain-words reason this task may not take a free local seat now:
+        a person's turn first, then the Local AI queue's rule. "" = it may."""
+        held = self._seat_block(rec.get("seat"), rec)
+        if held:
+            return held
         if self.gate is None:
             return ""
         try:
@@ -110,6 +153,14 @@ class SeatQueue:
         except Exception:
             # Fail open: a broken gate must never strand background work.
             return ""
+
+    def _notify(self, hook, *args) -> None:
+        if hook is None:
+            return
+        try:
+            hook(*args)
+        except Exception:
+            pass
 
     # -- submission -------------------------------------------------------
 
@@ -131,13 +182,14 @@ class SeatQueue:
             status = "running"
             self._running[seat] = rec.get("id")  # harmless bookkeeping
         else:
-            # Local seat: only one running at a time, and only when the gate
-            # allows it.
+            # Local seat: only one running at a time, only when no person is
+            # running or waiting on it, and only when the gate allows it.
             reason = (SEAT_BUSY_REASON if self._running.get(seat) is not None
                       else self._gate_reason(rec))
             if not reason:
                 status = "running"
                 self._running[seat] = rec.get("id")
+                self._notify(self.on_run, seat, rec.get("id"), rec)
             else:
                 status = QUEUED
                 # Attach the honest notice to the held record.
@@ -219,6 +271,7 @@ class SeatQueue:
             rec.pop("user_notice", None)  # no longer held; notice no longer needed
             rec.pop("wait_reason", None)
             self._running[seat] = task_id
+            self._notify(self.on_run, seat, task_id, rec)
             promoted = task_id  # one promotion per call
         return promoted
 
@@ -253,10 +306,32 @@ class SeatQueue:
         seat = rec.get("seat")
         if self._running.get(seat) == task_id:
             self._running[seat] = None
+            if not rec.pop("slot_lent", False):
+                self._notify(self.on_done, seat, task_id)
         rec["status"] = QUEUED
         rec["head"] = True
         rec["wait_reason"] = reason
         self._promote(seat)
+        return True
+
+    def lend_slot(self, task_id: str) -> bool:
+        """A RUNNING task that is paused before its next model call (a person's
+        turn is active) hands its admission slot back to the turn queue, so the
+        turn it waits for is not queued behind it. It keeps its seat here."""
+        rec = self._records.get(task_id)
+        if rec is None or rec.get("status") != "running" or rec.get("slot_lent"):
+            return False
+        rec["slot_lent"] = True
+        self._notify(self.on_done, rec.get("seat"), task_id)
+        return True
+
+    def reclaim_slot(self, task_id: str) -> bool:
+        """The paused task resumes: it takes its admission slot back."""
+        rec = self._records.get(task_id)
+        if rec is None or not rec.pop("slot_lent", False):
+            return False
+        if rec.get("status") == "running":
+            self._notify(self.on_run, rec.get("seat"), task_id, rec)
         return True
 
     def cancel(self, task_id: str) -> bool:
@@ -269,6 +344,11 @@ class SeatQueue:
         rec.pop("wait_reason", None)
         return True
 
+    def promote_ready(self) -> None:
+        """Promote on every seat that has queued work and is now free (the
+        gate opened). A no-op for a seat still held."""
+        self.pump()
+
     # -- lifecycle -------------------------------------------------------
 
     def complete(self, task_id: str) -> None:
@@ -280,6 +360,7 @@ class SeatQueue:
         seat = rec.get("seat")
         if self._running.get(seat) == task_id:
             self._running[seat] = None
+            self._notify(self.on_done, seat, task_id)
         self._promote(seat)
 
     # -- watchdog wiring ---------------------------------------------------
@@ -310,6 +391,7 @@ class SeatQueue:
                 seat = rec.get("seat")
                 if self._running.get(seat) == task_id:
                     self._running[seat] = None
+                    self._notify(self.on_done, seat, task_id)
                 self._promote(seat)
 
     def _assess_one(self, assess, rec, now):

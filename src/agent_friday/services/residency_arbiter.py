@@ -2489,8 +2489,19 @@ class Arbiter:
 
     # ── leases ──────────────────────────────────────────────────────────────
 
-    def grant(self, kind, *, role=None, ttl_s=300):
-        """Grant a capability lease, executing its transition serially."""
+    def grant(self, kind, *, role=None, ttl_s=300, wait_s=None, cls=None):
+        """Grant a capability lease, executing its transition serially.
+
+        A request made while another lease is held, or while work of a higher
+        class runs or waits on the seats it would stand down, waits its turn
+        (``wait_s``; the setting ``local_scheduler_lease_wait_s`` when None)
+        instead of being refused. ``wait_s=0`` asks once and takes the answer.
+        See services/local_scheduler.lease_grant."""
+        from agent_friday.services import local_scheduler as _ls
+        return _ls.lease_grant(self, kind, role=role, ttl_s=ttl_s, wait_s=wait_s, cls=cls)
+
+    def _grant_now(self, kind, *, role=None, ttl_s=300):
+        """The lease transition itself: one attempt, refused when it cannot go now."""
         with self._lock:
             _why = self.gpu_not_ours()
             if _why:

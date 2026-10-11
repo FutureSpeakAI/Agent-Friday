@@ -402,7 +402,7 @@ class SeatSupervisor:
         gives the seat to that job and waits at the head of the line, resuming
         when the queue promotes it again. If nothing behind it could run, it
         keeps the seat, so its prompt prefix stays the seat's cache."""
-        from agent_friday.services.background_gate import JobCancelled
+        from agent_friday.services.background_gate import JobCancelled, REASON_INTERACTIVE
         while True:
             yielded_now = False
             with self._lock:
@@ -426,9 +426,22 @@ class SeatSupervisor:
                     if not reason:
                         if record.pop("paused_reason", None) is not None:
                             record.pop("paused_at", None)
+                        # A slot lent below for a person's turn comes back
+                        # with the job.
+                        reclaim = getattr(self.queue, "reclaim_slot", None)
+                        if reclaim is not None:
+                            reclaim(task_id)
                         return
                     record["paused_reason"] = reason
                     record.setdefault("paused_at", time.time())
+                    # A paused job must not stand in front of the person it is
+                    # waiting for: it lends its slot in the turn queue (the 1.1
+                    # admission queue) and keeps its seat here, and its prompt
+                    # cache with it.
+                    if reason == REASON_INTERACTIVE:
+                        lend = getattr(self.queue, "lend_slot", None)
+                        if lend is not None:
+                            lend(task_id)
                     yb = getattr(self.queue, "startable_behind", None)
                     if yb is not None and yb(task_id) is not None:
                         self.queue.yield_seat(task_id, reason)
@@ -501,7 +514,10 @@ class SeatSupervisor:
                     "deferrable": bool(rec.get("deferrable")),
                     "run_now": bool(rec.get("run_now")),
                     "queued_at": rec.get("queued_at"),
-                    "merged": int(rec.get("merged") or 0)}
+                    "merged": int(rec.get("merged") or 0),
+                    # Work a person is waiting on (services/visible_jobs): the
+                    # local work scheduler lists it as a job you asked for.
+                    "foreground": bool(rec.get("foreground"))}
         with self._lock:
             running = []
             for tid, rec in self._records.items():
@@ -573,6 +589,23 @@ class SeatSupervisor:
         self.pump()
         return promoted
 
+    def poke(self) -> Optional[str]:
+        """A seat may have become free for background work (no person is
+        running or waiting on it any more): promote what the gate now lets
+        through and start those workers. Called by the turn queue's idle hook
+        and at the top of every supervisor pass."""
+        first = None
+        with self._lock:
+            ready = getattr(self.queue, "promote_ready", None)
+            if ready is not None:
+                ready()
+            while True:
+                promoted = self._sync_promotions()
+                if promoted is None:
+                    break
+                first = first or promoted
+        return first
+
     def _sync_promotions(self) -> Optional[str]:
         """seat_queue promotes on its own copies; sync any newly-running
         queued task back onto the live record and start its thread."""
@@ -597,6 +630,7 @@ class SeatSupervisor:
         if now is None:
             now = time.time()
         events: List[Dict[str, Any]] = []
+        self.poke()
         self._notify_waiting(now)
         with self._lock:
             for task_id, record in list(self._records.items()):

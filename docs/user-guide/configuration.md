@@ -72,6 +72,15 @@ hand.
 | `local_reasoning_effort_policy` | `deep_xhigh` on, `reflex_thinking_off` off | What `auto` may do: let deep coding or analysis turns think at `xhigh`, and let quick turns skip thinking. |
 | `display_reserve_mode` | `"adaptive"` | How much graphics memory is kept free for the desktop. `adaptive` uses the measured idle draw plus 512 MiB (never under 1 GiB on Windows); `fixed` keeps 2,560 MiB. |
 | `seat_prefix_warm` | `true` | When the main local model answers its health check, send it a one-token request so the first real turn after a restart is fast. |
+| `background_idle_minutes` | `10` | Background work on a local model (wiki notes, the daily creation, any call nothing is waiting on) starts only after this many minutes with no keyboard or mouse, and waits again when you are back. Choose it in Settings > Advanced. |
+| `turn_queue_enabled` | on | Every call to a local model waits its turn, in the order voice, chat, Local API, jobs you asked for, background. Off, calls go straight to the model as before. |
+| `turn_queue_tool_release_s` | `60` | A turn that has been in one slow tool this long lets the next person in line have the local brain, then goes back to the front of its line. |
+| `turn_queue_seat_slots` | none | How many turns a local model seat runs at once, by seat name. Empty means Friday reads the seat's own `-np`, and one when it says nothing. |
+| `local_scheduler_ram_floor_gb` | `4` | No model load starts if it would leave less free memory than this. The job waits, and the queue says so. |
+| `local_scheduler_lease_wait_s` | `120` | A GPU job (image, heavy model) that finds the card in use waits this long for its turn instead of being refused. A voice call waits 20 seconds. |
+| `local_scheduler_admit_timeout_s` | `900` | A local model call stuck behind other work this long goes ahead without its place, and the numbers count it. |
+| `local_scheduler_resident_s` | `300` | A model the scheduler ran this recently counts as still loaded, so its jobs go together. |
+| `local_scheduler_wrap_background` | on | A background call that no job claims becomes a waiting job in the Local AI queue, with a card that names the model. Off, such a call goes straight to the model. |
 | `runtime_dir` | `""` | Where local runtimes and model weights live. Empty means `~/.friday/runtime`. `FRIDAY_RUNTIME_DIR` overrides it. |
 | `demo_mode` | `null` | `null` shows canned replies only when no provider is set up; `true`/`false` forces it. |
 | `providers` | `{}` | Per-provider `{"enabled", "base_url"}`. Never holds keys. |

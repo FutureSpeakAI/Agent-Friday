@@ -2430,6 +2430,18 @@ DEFAULT_SETTINGS = {
     # work on a local model (wiki distillation, daily creation, the session
     # summary) waits until the computer has been idle this many minutes.
     "background_idle_minutes": 10,
+    # The local work scheduler (services/local_scheduler, services/turn_queue): every
+    # local model call waits its turn, at the class voice > chat > api > user_job >
+    # background. The one idle window for background work is background_idle_minutes
+    # above (the 1.0.2 rule).
+    "turn_queue_enabled": True,          # False: local calls skip the scheduler, as before 1.1
+    "turn_queue_tool_release_s": 60,     # a turn in one tool this long lets a waiting person go first
+    "turn_queue_seat_slots": {},         # {seat: slots} overrides the seat's real -np; empty reads -np from the seat
+    "local_scheduler_ram_floor_gb": 4,   # no model load starts if it would leave less free RAM than this
+    "local_scheduler_lease_wait_s": 120, # how long a second GPU lease waits behind the first (a voice call: 20 s)
+    "local_scheduler_admit_timeout_s": 900,  # a call stuck behind other work this long goes ahead unqueued, and says so
+    "local_scheduler_resident_s": 300,   # a model it ran this recently counts as still loaded (the daemon keeps it 5 minutes)
+    "local_scheduler_wrap_background": True,  # an unlabelled background call becomes a deferrable visible job in the queue
     # ── Tool lifecycle hooks (Part B) ──
     # Each built-in PreToolUse/PostToolUse hook can be toggled here. Critical
     # hooks (governance_rings, vault_zt) ignore the toggle — they can't be

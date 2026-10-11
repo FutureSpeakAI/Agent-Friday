@@ -238,6 +238,23 @@ def interactive_kinds() -> List[str]:
     return out
 
 
+def turn_queue_people() -> bool:
+    """A typed chat, a spoken turn or a Local API call is running or waiting in
+    the local scheduler's turn queue (services/turn_queue). The same rule as
+    the registrations above, read from the queue the 1.1 transports admit
+    through, so a turn that never registered here still wins. A job the owner
+    asked for (``user_job``) is not counted: it may be waiting on this one."""
+    try:
+        from agent_friday.services import turn_queue as _tq
+        for q in _tq.queues():
+            for t in list(q.running_tickets()) + list(q.waiting_tickets()):
+                if t.cls in ("voice", "chat", "api"):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  The one rule
 # ─────────────────────────────────────────────────────────────────────────────
@@ -259,7 +276,7 @@ def block_reason(record: Dict[str, Any]) -> str:
         # itself be waiting on it, and never for idle.
         return ""
     kinds = interactive_kinds()
-    if any(k != KIND_VOICE_CALL for k in kinds):
+    if any(k != KIND_VOICE_CALL for k in kinds) or turn_queue_people():
         return REASON_INTERACTIVE
     if record.get("deferrable") and not record.get("run_now"):
         # An open call is not idle, even when nobody has touched a key.
@@ -312,6 +329,12 @@ def background_job(*, kind: str, key: str, label: str, deferrable: bool):
         yield job
         status = "completed"
     finally:
+        hold = job.pop("hold", None)
+        if hold is not None:
+            try:
+                hold.__exit__(None, None, None)
+            except Exception:
+                pass
         CURRENT_JOB.reset(tok)
         if job.get("id"):
             try:
@@ -345,5 +368,14 @@ def before_local_model_call(model: Optional[str] = None) -> None:
         })
         job["pending"] = False
         job["id"] = job_id
+        # The job's own model calls run on this thread under the slot it was
+        # just admitted to: they must not queue again behind it (turn_queue.HELD).
+        try:
+            from agent_friday.services import turn_queue as _tq
+            hold = _tq.holding(seat, "user_job" if job.get("foreground") else "background")
+            hold.__enter__()
+            job["hold"] = hold
+        except Exception:
+            pass
     if job.get("id"):
         sup.wait_while_blocked(job["id"])
