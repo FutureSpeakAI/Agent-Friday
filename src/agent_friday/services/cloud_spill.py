@@ -37,6 +37,7 @@ numbers are attached so the answer is informed — they never decide it.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, Optional
 
 _log = logging.getLogger(__name__)
@@ -131,11 +132,41 @@ def cloud_alternative(record: Dict[str, Any]) -> Optional[str]:
         cfg = _settings().get("capability_routing") or {}
         for role in ("subagent", "orchestrator", "heavy_hitter"):
             m = ((cfg.get(role) or {}).get("model") or "").strip()
-            if m:
+            # Only a model that really is a paid cloud one: a local seat's
+            # model named in a role is not something to "spend money" on.
+            if m and is_paid_cloud_model(m):
                 return m
     except Exception:
         pass
     return None
+
+
+_CLOUD_FAMILIES = re.compile(
+    r"^(claude|gpt-|chatgpt|o[134](-|$)|gemini|grok|command-r|"
+    r"deepseek-(chat|reasoner)|mistral-(large|medium)|sonar)", re.I)
+
+
+def is_paid_cloud_model(model: str) -> bool:
+    """Is this model run in someone else's datacenter, for money?
+
+    The same classification the egress gate uses for a model tag (an Ollama
+    model relayed to ollama.com: `glm-4.6:cloud`, `gpt-oss:120b-cloud`), plus
+    the paid families by name and a routed `vendor/model` id (OpenRouter).
+    Anything else, including every local seat's model, is not."""
+    m = str(model or "").strip()
+    if not m:
+        return False
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    if is_cloud_model_tag(m):
+        return True
+    return bool(_CLOUD_FAMILIES.match(m)) or "/" in m
+
+
+def _waits_by_rule(record: Dict[str, Any]) -> bool:
+    """Waiting for idle or for the owner's own turn is the queue working as
+    set, not a busy seat to spend money around."""
+    why = str(record.get("wait_reason") or "").lower()
+    return "idle" in why or "your chat" in why or "your call" in why
 
 
 def should_offer(record: Dict[str, Any], *, wait_s: float = 0.0) -> bool:
@@ -148,6 +179,10 @@ def should_offer(record: Dict[str, Any], *, wait_s: float = 0.0) -> bool:
         return False           # nothing local to be blocked on
     if record.get("cloud_spill_asked"):
         return False           # one card per task, ever
+    if record.get("deferrable") or (record.get("job_kind") or "") == "wiki_distill":
+        return False           # it waits for idle BY DESIGN (1.0.2): the owner's rule, not a busy seat
+    if _waits_by_rule(record):
+        return False
     if wait_s < min_wait_s():
         return False
     return bool(cloud_alternative(record))
