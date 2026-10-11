@@ -661,6 +661,32 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     return out, True
 
 
+def expire_matching(match, by: str, note: str = "") -> int:
+    """Move every PENDING card for which ``match(record)`` is true to 'expired' (never approves anything) and
+    fire the card hooks. Used when what raised the cards is switched off. Returns how many."""
+    expired: List[Dict[str, Any]] = []
+    with _LOCK:
+        recs = _read_store()
+        for r in recs:
+            if r.get("status") == "pending":
+                try:
+                    hit = bool(match(r))
+                except Exception:
+                    hit = False
+                if hit:
+                    r["status"] = "expired"
+                    r["decided_at"] = time.time()
+                    r["decided_by"] = by
+                    r["decision_note"] = note
+                    expired.append(dict(r))
+        if expired:
+            _write_store(recs)
+    for rec in expired:
+        _feed("card_resolved", rec)
+        _fire_hook(rec)
+    return len(expired)
+
+
 def _expire_due(now: float, notify: bool = True) -> List[Dict[str, Any]]:
     """Move pending cards past their expiry to 'expired' (never approves anything). A card the
     interruption policy was holding expires on its own clock like any other: holding stops a popup, not

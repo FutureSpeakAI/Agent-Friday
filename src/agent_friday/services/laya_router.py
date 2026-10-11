@@ -886,6 +886,14 @@ def safe_write_route(text: str, *, stage=_UNSET, pointed=_UNSET, quiet: bool = F
             # and the resolver keep every such turn ("show me everything on my calendar today", "select all
             # of them"). The scope check below never sees them.
             return None
+        if parsed.kind == "ordinals" and point_act._fresh_pointed(point_act._default_pointed(sw.WORKSPACE), time.time()):
+            # Friday's own numbers are on screen: "the second one" may mean the second row of the list or the
+            # row she numbered 2. Neither is guessed and no rows ride along.
+            if m == "shadow":
+                sw.shadow(None, "an ordinal with Friday's numbers on screen", text, surface)
+                return None
+            return Route("ask", confidence=0.9, layer=sw.LAYER, question=sw.ORDINAL_QUESTION,
+                         reason="an ordinal while Friday's own numbers are on screen is asked, never guessed")
         if sw.scope_unclear(text):
             # An exclusion or a quantifier ("not those", "everything", "the rest"): no rule
             # says which rows, and a ranking must not. Shadow notes it; on defers WITHOUT rows.

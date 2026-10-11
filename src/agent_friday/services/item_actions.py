@@ -2206,7 +2206,11 @@ def is_laya_card(card_id: str) -> bool:
         return False
 
 
-def typed_decision(words: str) -> str | None:
+LAYA_CARD_BUTTON = ("NOT RECORDED: a card Laya raised is approved with its Approve button on your screen; "
+                    "a typed reply does not approve it. You can still say no here to decline it.")
+
+
+def typed_decision(words: str, card_id: str | None = None) -> str | None:
     """'approve', 'deny' or None from the owner's typed words, by the chat
     confirmation gate's rule (agent._is_affirmative): the whole reply must
     approve, so "yes, but not those" approves nothing, and a reply that reads
@@ -2217,7 +2221,8 @@ def typed_decision(words: str) -> str | None:
     if _ag._is_negative(w):
         return "deny"
     if _ag._is_affirmative(w):
-        return "approve"
+        # Never an approval of a card Laya raised herself: that card is approved with its own button.
+        return None if (card_id is not None and is_laya_card(card_id)) else "approve"
     return None
 
 
@@ -2289,6 +2294,8 @@ def answer_card(card_id: str, claimed: str, owner_words: str, *, room_mode: bool
     if want is None:
         return {"ok": False, "text": "NOT RECORDED: the decision is approve or decline."}
     spoken = str(surface or "").startswith("voice")
+    if want == "approve" and not spoken and (rec.get("payload") or {}).get("origin") == "laya_safe_write":
+        return {"ok": False, "text": LAYA_CARD_BUTTON}
     if spoken:
         from agent_friday.services import local_context as _lc
         got = _lc.decide_by_voice(rec["approval_id"], owner_words, room_mode, want)
@@ -2296,7 +2303,7 @@ def answer_card(card_id: str, claimed: str, owner_words: str, *, room_mode: bool
             return _not_recorded(want, room_mode)
         won, status = bool(got.get("won")), got.get("status")
     else:
-        if typed_decision(owner_words) != want:
+        if typed_decision(owner_words, rec["approval_id"]) != want:
             return _not_recorded(want, room_mode)
         out, won = ap.decide_with_outcome(rec["approval_id"], want,
                                           decided_by="owner:%s" % (surface or "chat"))

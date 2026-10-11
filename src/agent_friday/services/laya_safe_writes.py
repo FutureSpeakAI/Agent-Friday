@@ -95,6 +95,8 @@ LABEL = "putting together a card for that"
 SURFACES = ("voice", "chat")
 #: What she asks when the owner says "mark ... as important": Gmail's own marker is not hers
 #: to set, and a star is a different thing than the one asked for. A fixed question.
+ORDINAL_QUESTION = ("My numbers are on your screen too. Do you mean counted from the top of the list, "
+                    "or the row I numbered? Say “top of the list” or “your numbers”.")
 IMPORTANT_QUESTION = ("“Important” is Gmail's own marker and I don't set it. Do you want those starred "
                       "instead? Say “star these” and I'll put it on a card.")
 
@@ -262,7 +264,7 @@ def rule_words(method: str) -> str:
     if m in _RULE_WORDS:
         return _RULE_WORDS[m]
     if m.startswith("ordinals"):
-        return "the rows you numbered"
+        return "the rows you counted from the top of your screen"
     return "the rows your words matched on screen"
 
 
@@ -453,34 +455,54 @@ def log_path():
     return FRIDAY_DIR / "runtime" / "laya_safe_writes" / "shadow.jsonl"
 
 
-def _salt() -> Optional[bytes]:
-    """This install's secret for the shadow log's hashes, made on first use beside the log.
-    None when it cannot be made: the log then carries no hashes at all."""
+def expire_pending_cards() -> int:
+    """Safe writes were turned down: every card Laya raised that is still waiting expires, so nothing she
+    proposed under the old setting can be approved afterwards."""
     try:
+        from agent_friday.services import approvals
+        return approvals.expire_matching(
+            lambda r: (r.get("payload") or {}).get("origin") == "laya_safe_write",
+            "system:safe_writes_off", "Laya's safe writes were turned off")
+    except Exception as e:      # noqa: BLE001
+        _log.debug("could not expire pending safe-write cards: %s", e)
+        return 0
+
+
+def _salt() -> Optional[bytes]:
+    """This install's secret for the log hashes, sealed by the install's keystore (credential_store: the vault
+    key or DPAPI) beside the logs, made on first use. None when it cannot be read or made: a salt that exists
+    but cannot be read is never replaced (the hashes would change), and with no salt no hashed row is written."""
+    try:
+        from agent_friday.services import credential_store
         path = log_path().parent / "salt"
         if path.is_file():
-            raw = bytes.fromhex(path.read_text(encoding="ascii").strip())
-            if len(raw) >= 16:
-                return raw
+            raw = credential_store.read_secret(path)
+            return raw if len(raw) >= 16 else None
         path.parent.mkdir(parents=True, exist_ok=True)
         raw = secrets.token_bytes(32)
-        path.write_text(raw.hex(), encoding="ascii")
+        credential_store.write_secret(path, raw)
         return raw
     except Exception:       # noqa: BLE001
         return None
 
 
-_PROCESS_SALT = secrets.token_bytes(32)
 _KEY_CACHE: Optional[bytes] = None
+_KEY_RETRY_AT = 0.0
 
 
 def keyed_hash(text: Any, n: int = 16) -> str:
-    """HMAC-SHA256 of ``text`` under this install's local salt (a per-process one when the salt cannot be
-    made), cut to ``n`` hex digits. Equal texts hash equal within an install; a dictionary cannot reverse it."""
-    global _KEY_CACHE
+    """HMAC-SHA256 of ``text`` under this install's sealed local key, cut to ``n`` hex digits; "" when the key
+    is unavailable (a caller then writes no hashed row). The key is read once per process; a failed read is
+    retried at most every 30 seconds and never replaced by a throw-away key."""
+    global _KEY_CACHE, _KEY_RETRY_AT
     key = _KEY_CACHE
-    if key is None:                         # read the salt file once per process, never on every turn
-        key = _salt() or _PROCESS_SALT
+    if key is None:
+        if time.time() < _KEY_RETRY_AT:
+            return ""
+        key = _salt()
+        if key is None:
+            _KEY_RETRY_AT = time.time() + 30.0
+            return ""
         _KEY_CACHE = key
     return hmac.new(key, str(text or "").encode("utf-8"), hashlib.sha256).hexdigest()[:n]
 
@@ -504,6 +526,8 @@ def shadow(p: Optional[Proposal], why_not: str, text: str, surface: str) -> None
         pass
     try:
         salt = _salt()
+        if not salt:
+            return                          # no key, no hashed row
         row = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "surface": surface, "text_sha": _h(text, salt),
                "would_card": bool(p)}
         if p:

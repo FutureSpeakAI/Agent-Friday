@@ -393,16 +393,11 @@ def reflex_open():
             return jsonify({"status": "untrusted", "reply": ""}), 403
         cid = _conv.resolve(str(data.get("conversation_id") or "").strip() or None)
         auth = bool(session.get("authenticated")) or not bool(core.FRIDAY_PASSWORD)
-        if str(data.get("conversation_id") or "").strip():
-            # a palette request is another turn in that conversation: an armed card is no longer the last question
-            reflex_chat.note_user_turn(cid, text, False)
         out = reflex_chat.open_turn(text, data, session_id=_current_session_id(),
                                     conversation_id=cid, turn_id=None,
                                     settings=settings, authenticated=auth,
                                     # only a conversation the page named is its own to disarm: Main is not
-                                    disarm=bool(str(data.get("conversation_id") or "").strip()),
-                                    # ...and a card raised for no named conversation arms no typed yes anywhere
-                                    arm=bool(str(data.get("conversation_id") or "").strip()))
+                                    disarm=bool(str(data.get("conversation_id") or "").strip()))
         if out is None:
             return jsonify({"status": "model", "reply": ""})
         status = "ask" if out["outcome"] == "ask" else ("card" if out["outcome"] == "card" else "done")

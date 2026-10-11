@@ -4199,16 +4199,6 @@ def _tool_answer_card(inp):
         if cid not in voiced and _ia.unvoiced_card_approval_blocked(
                 cid, _CURRENT_OWNER_TEXT.get(), _voice_room()):
             return _ia.UNVOICED_CARD
-    else:
-        # The typed twin of that rule, for a card Laya raised herself: a typed yes counts only if that card
-        # was the last thing asked in this conversation (the very next turn, a whole yes or no, from the
-        # owner's own page). A model that asked something else since cannot use a later yes on it.
-        cid = str(inp.get("card_id") or "")
-        if _ia.is_laya_card(cid):
-            from agent_friday.services import reflex_chat as _rc
-            if not _rc.laya_card_is_last_question(_CURRENT_CONVERSATION.get(), cid):
-                return ("NOT RECORDED: that card is not the last question asked in this conversation, so a "
-                        "typed yes does not approve it. Answer it on the card, or ask for the change again.")
     tok = _ia.QUIET.set(_cloud_voice())
     try:
         res = _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),

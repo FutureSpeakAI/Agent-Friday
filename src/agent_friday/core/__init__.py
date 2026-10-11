@@ -3716,6 +3716,9 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                 # Any other write that carries the key can only have narrowed it (core dropped a widening):
                 # the record follows, so a stale "on" can never be re-armed by a later file edit.
                 _gs.narrow_record("laya_safe_writes", merged.get("laya_safe_writes"))
+            if merged.get("laya_safe_writes") != "on":
+                from agent_friday.services import laya_safe_writes as _lsw
+                _lsw.expire_pending_cards()         # nothing she proposed under the old setting stays approvable
         except Exception:
             pass
     # Switching off the record off drops what the session kept in memory.
