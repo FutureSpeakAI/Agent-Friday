@@ -375,3 +375,45 @@ def test_the_receipt_says_resolver(monkeypatch, isolated):
 def test_a_turn_with_no_opening_verb_is_never_looked_at():
     assert _open("what is the weather like", resolve=_boom) is None
     assert rc.stats() == {}
+
+
+# --- a Laya question must not leave an older question armed (stray-yes) -------------
+
+def _armed():
+    return any(e.get("awaiting_reply") for b in agent._PENDING_CONFIRMATIONS.values() for e in b.values())
+
+
+def test_a_resolver_question_disarms_an_older_pending_send_so_a_yes_approves_nothing(monkeypatch):
+    """The model asked 'send this?' (armed); the owner moved on and said 'open the email from Mara'; the
+    resolver asks 'did you mean ...?'; the next 'yes' answers THAT question, never the old send."""
+    ran = _handler(monkeypatch)
+    _ask()
+    assert _armed()
+    out = _open("open the email from Mara", resolve=lambda t: _Res("ask", question="Did you mean the one from Mara?"))
+    assert out["outcome"] == "ask"
+    assert not _armed()
+    assert _approve("yes") is None
+    assert ran == []
+
+
+def test_a_point_and_act_question_disarms_an_older_pending_send(monkeypatch):
+    from agent_friday.services import laya, laya_router as lr, point_act
+    ran = _handler(monkeypatch)
+    _ask()
+    assert _armed()
+    monkeypatch.setattr(point_act, "looks_like", lambda m: True)
+    monkeypatch.setattr(laya, "point_act_turn", lambda *a, **k: lr.Route(
+        "ask", question="Did you mean the one from Mara?", layer="point_act"))
+    out = rc.open_turn("open the second one", {}, session_id=SID, conversation_id=CONV, turn_id=TURN,
+                       settings=OPEN_ON, local=True)
+    assert out["outcome"] == "ask"
+    assert not _armed()
+    assert _approve("yes") is None
+    assert ran == []
+
+
+def test_disarm_keeps_the_entry_but_it_can_no_longer_be_granted(monkeypatch):
+    _ask()
+    assert agent.disarm_pending(SID, CONV) >= 1
+    assert any(agent._PENDING_CONFIRMATIONS.values())            # stored, not dropped
+    assert not _armed()

@@ -198,6 +198,24 @@ def _confirmation_key(session_id, conversation_id) -> str:
     return f"conversation:{conversation_id}" if conversation_id else session_id
 
 
+def _disarm(session_id, conversation_id) -> None:
+    """A Laya question is the reply to this turn, so the conversation has moved on from any older
+    question: none stays armed for a "yes" that was meant for Laya's. The ordinary turn does this in
+    ``prepare_confirmation_ctx``; an instant reply returns before that, so it does it itself. If it
+    cannot, the whole pending set for the conversation is dropped (a lost question is asked again; a
+    stray yes approving an old one is the failure that cannot be undone)."""
+    try:
+        from agent_friday.services import agent
+        agent.disarm_pending(session_id, conversation_id)
+    except Exception as e:
+        _log.warning("could not disarm pending questions, dropping them: %s", e)
+        try:
+            from agent_friday.services import agent
+            agent._clear_pending(_confirmation_key(session_id, conversation_id))
+        except Exception:
+            pass
+
+
 def _pending(session_id, conversation_id) -> dict:
     from agent_friday.services import agent
     key = _confirmation_key(session_id, conversation_id)
@@ -329,6 +347,7 @@ def open_turn(message: str, data: Optional[dict], *, session_id, conversation_id
         reason = str(getattr(res, "reason", "") or "")
         if status == "ask":
             count("open_ask")
+            _disarm(session_id, conversation_id)
             _record_plan(turn_id, shape="reflex_open", reason="resolver: asked which one",
                          reflex={"by": "resolver", "kind": "open", "outcome": "ask"})
             ask = _laya_templates.rule_question(str(res.question or res.text), "resolver")
@@ -415,6 +434,7 @@ def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, auth
         return None
     if r.decision == "ask":
         count("point_ask")
+        _disarm(session_id, conversation_id)
         _record_plan(turn_id, shape="reflex_point", reason="point-and-act: asked which rows",
                      reflex={"by": "rule", "kind": "point", "outcome": "ask"})
         ask = _laya_templates.rule_question(r.question, "point_act")

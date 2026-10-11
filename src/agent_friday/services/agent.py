@@ -11860,6 +11860,25 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     return ctx
 
 
+def disarm_pending(session_id, conversation_id=None):
+    """The conversation moved on: no pending question stays armed for a later yes.
+
+    The effect of ``prepare_confirmation_ctx`` on a message that is not a yes, for a turn answered
+    without it (a Laya instant reply, whose own question a yes would otherwise be taken to answer
+    through an older card). Entries stay stored; none is awaiting a reply or granted."""
+    key = f"conversation:{conversation_id}" if conversation_id else session_id
+    if not key:
+        return 0
+    n = 0
+    with _PENDING_LOCK:
+        for entry in (_PENDING_CONFIRMATIONS.get(key) or {}).values():
+            if entry.get("awaiting_reply") or entry.get("granted"):
+                n += 1
+            entry["awaiting_reply"] = False
+            entry["granted"] = False
+    return n
+
+
 def resume_confirmed_action(session_ctx):
     """Run the exact stored action once, without asking a model to recreate it.
 
