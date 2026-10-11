@@ -512,6 +512,8 @@ class OllamaManager:
         if disable_thinking:
             body["think"] = False
         try:
+            from agent_friday.services import cloud_intent as _cloud_intent
+            _cloud_intent.require("ollama", "health probe (cloud-tagged model)", str(model or ""))
             resp = self._post("/api/generate", body, timeout=timeout) or {}
         except Exception as e:
             return {"ok": False, "error": ExceptionText("%s: %s" % (type(e).__name__, e)),
@@ -611,7 +613,11 @@ class OllamaManager:
         # base_url says. This is the one place every Ollama chat turn passes
         # through, so the privacy gate sits here: a plain local model is
         # returned untouched, a cloud-tagged one is sealed (or the send is
-        # refused when the gate cannot run).
+        # refused when the gate cannot run). The same relay is a cloud call for
+        # the routing mode: a cloud-tagged model needs a recorded intent in a
+        # local mode (a plain local model passes `require` untouched).
+        from agent_friday.services import cloud_intent as _cloud_intent
+        _cloud_intent.require("ollama", "Ollama chat (cloud-tagged model)", str(model or ""))
         from agent_friday.services.egress_gate import gate_ollama_body
         native = gate_ollama_body(native, model)
         resp = self._post("/api/chat", native, timeout=timeout)

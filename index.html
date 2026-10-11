@@ -15958,7 +15958,11 @@ function ChatSurface(props) {
       dest: 'clipboard',
       ico: '📋'
     }]
-  }), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
+  }), m.role === 'friday' && m.laya && m.laya.laya && /*#__PURE__*/React.createElement("span", {
+    className: "laya-chip",
+    title: 'Laya wrote this line (' + (m.laya.kind || 'fixed') + '). It is a fixed phrase, not a model answer.',
+    style: { marginTop: 6, marginRight: 6, display: 'inline-block', fontSize: 10, padding: '1px 6px', border: '1px solid var(--fr-glass-edge)', borderRadius: 8, color: 'var(--fr-dim)' }
+  }, "Laya"), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       marginTop: 6,
@@ -17006,6 +17010,7 @@ function ConversationWindow({
           trace_id: d.trace_id || streamTraceId || null,
           reasoning_sources: d.reasoning_sources || [],
           offer_cloud_switch: !!d.offer_cloud_switch,
+          laya: d.laya || null,
           time: stamp()
         });
         setMsgs(p => [...p, ...add]);
@@ -67557,6 +67562,7 @@ function App() {
         // The local model could not finish: the offer (try again locally / a
         // shorter version / send to Claude), and the words it re-sends.
         local_fallback: d.local_fallback || null,
+        laya: d.laya || null,
         source_text: m,
         time: new Date().toLocaleTimeString()
       }]);

@@ -62,6 +62,9 @@ _SCANNER_MEANING = {
 
 _MODE_MEANING = {
     "cloud_only": "all turns go to the cloud orchestrator",
+    "cloud_preferred": "all turns go to the cloud orchestrator; if the cloud "
+                       "cannot be reached, the local model may answer and the "
+                       "reply says so",
     "local_only": "ALL turns go to the local seat — the cloud orchestrator "
                   "is not consulted",
     # `smart` reads as local_preferred: it is no longer offered in the picker

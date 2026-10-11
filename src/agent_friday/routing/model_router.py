@@ -961,7 +961,7 @@ class ModelRouter:
         task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace,
                                        is_voice=bool(ctx.get("is_voice")))
 
-        if mode == "cloud_only":
+        if mode in ("cloud_only", "cloud_preferred"):
             # cloud_only means NOTHING RUNS ON THIS MACHINE. It never meant
             # "ignore the picker", but that is what it did: this branch used to
             # return the default cloud model here, above both the task_overrides

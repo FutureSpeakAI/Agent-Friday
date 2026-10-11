@@ -29,7 +29,7 @@ RULES = {"kind": "rules", "model": "", "provider": ""}
 
 #: Routing modes from the consent screen under which a cloud reader may even
 #: be offered. `local_only` never offers one.
-CLOUD_MODES = ("cloud_only", "local_preferred")
+CLOUD_MODES = ("cloud_only", "cloud_preferred", "local_preferred")
 
 
 def local_model() -> str | None:

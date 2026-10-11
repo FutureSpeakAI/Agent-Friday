@@ -59,16 +59,16 @@ def routing_mode() -> str:
 
     The user's model_routing.mode (the offline overlay is folded in by
     `_load_settings`), or "local_only" while a local-only run is active.
-    `smart` reads as `local_preferred`. An unreadable setting fails CLOSED to
+    `smart` reads as `local_preferred`. A blank mode is unset and behaves as
+    the factory default, `cloud_only` (one reading, `cloud_intent.routing_mode`,
+    which this delegates to). An unreadable setting fails CLOSED to
     "local_only": the cloud is reached only on an affirmative read.
     """
     if is_active():
         return "local_only"
     try:
-        from agent_friday import core
-        mode = str(((core._load_settings() or {}).get("model_routing") or {})
-                   .get("mode") or "local_preferred").lower()
-        return "local_preferred" if mode == "smart" else mode
+        from agent_friday.services import cloud_intent as _ci
+        return _ci.normalize_mode(_ci.routing_mode())
     except Exception:
         return "local_only"
 

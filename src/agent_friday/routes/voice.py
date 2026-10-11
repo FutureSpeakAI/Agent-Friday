@@ -2441,6 +2441,11 @@ def _resolve_voice_engine(settings=None):
         if engine == "local":
             label = ("Local GPU (NeMo, private)" if tier == "gpu"
                      else "Local (private, on-device)")
+            # In a cloud mode a local voice is the owner's own engine choice,
+            # not something the mode picked; the panel says so.
+            from agent_friday.services import cloud_intent as _ci_label
+            label = _ci_label.local_voice_label(
+                (settings.get('model_routing') or {}).get('mode'), label)
             return {"engine": "local", "ws_url": "/ws/voice-local",
                     "label": label, "tier": tier,
                     "models_ready": models_ready,
@@ -4992,7 +4997,7 @@ if sock is not None:
             def _client_for(api_version):
                 if api_version not in _clients:
                     from agent_friday.services import cloud_intent as _voice_ci
-                    _voice_ci.record_owner_engine("google-gemini", "Gemini Live voice call")
+                    _voice_ci.require_owner_engine("google-gemini", "Gemini Live voice call")
                     if api_version:
                         _clients[api_version] = genai.Client(
                             api_key=core.GEMINI_API_KEY, http_options={"api_version": api_version})  # pragma: allowlist secret

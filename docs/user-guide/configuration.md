@@ -106,7 +106,7 @@ A capability that is not in the defaults is removed on the next save.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mode` | `"cloud_only"` | `cloud_only`, `local_preferred` or `local_only`. First-run setup asks. `smart`, an older fourth mode, was the same as `local_preferred`; a settings file that still says `smart` is renamed to `local_preferred` the first time it is read. In both local modes the cloud is reached only when you ask for it: background tasks use the local model unless a task or a scheduled job is pinned to a cloud model, and a turn the local model cannot take is refused with an offer to answer it in the cloud, never sent on its own. In `local_only`, asking for the cloud for one turn needs a confirm that names the mode. |
+| `mode` | `"cloud_only"` | `cloud_only`, `local_preferred` or `local_only`; `cloud_preferred` is also accepted but is not offered in Settings yet. First-run setup asks. A blank `mode` means you have not chosen: it behaves as `cloud_only`, every part of Friday reads it that way, and setup can ask you. `cloud_preferred` is a cloud mode: the cloud answers, background work runs as in `cloud_only`, cloud voice is allowed, and if the cloud cannot be reached the local model may answer, opening with "Answering locally: no connection to <provider>." `smart`, an older fourth mode, was the same as `local_preferred`; a settings file that still says `smart` is renamed to `local_preferred` the first time it is read. In both local modes the cloud is reached only when you ask for it: background tasks use the local model unless a task or a scheduled job is pinned to a cloud model, and a turn the local model cannot take is refused with an offer to answer it in the cloud, never sent on its own. In `local_only`, asking for the cloud for one turn needs a confirm that names the mode. |
 | `default_cloud_model` | `"claude-sonnet-5"` | The router's default cloud model. |
 | `local_model` | `"gemma4:e2b"` | The default local model. |
 | `ollama_url` | `"http://localhost:11434"` | Ollama endpoint. |
@@ -121,6 +121,18 @@ A capability that is not in the defaults is removed on the next save.
 | `openai_api_key` | `""` | Key for that path, **stored in plain text**. Leave blank and use the encrypted store or `OPENAI_API_KEY` / `OPENROUTER_API_KEY` instead. |
 | `cloud_consent` | not answered | *Internal.* Your recorded answer to the unrestricted-cloud screen. The only thing that can turn the egress gate's safeguards off. |
 | `unrestricted_cloud` | `false` | *Internal.* Legacy; read once to migrate into `cloud_consent`. |
+
+#### Who answers, in each mode
+
+Laya plans, picks tools, runs quick actions (open, select, play, timers, reads) and checks every action in all four modes. The mode only decides who writes the answer and what may leave this PC.
+
+| | `local_only` | `local_preferred` | `cloud_preferred` | `cloud_only` |
+|---|---|---|---|---|
+| Text chat | The local model answers. Nothing leaves. | The local model answers; the cloud only when you ask. | The cloud answers. If it cannot be reached the local model answers and says so. | The cloud answers. Never a local answer; an outage is said plainly with a retry. |
+| Cloud voice (Gemini Live) | Blocked. | Allowed because you chose it. | Allowed. | Allowed. |
+| Local voice | Local model speaks. | Local model speaks. | Local model speaks. | Local model speaks, because you chose a local voice engine. |
+| Background jobs | Local. | Local unless a job is pinned to a cloud model. | As `cloud_only`. | Cloud, after Laya has sorted and batched them. |
+| Laya's own words | Free-form answers allowed. | Free-form answers allowed. | Fixed lines, plus the "Answering locally" notice. | Fixed lines only: confirmations like "Done: opened it", questions, and errors. Each is marked as Laya's. |
 
 ### Offline
 

@@ -32,30 +32,30 @@ import logging
 _log = logging.getLogger("friday.cloud_mode_policy")
 
 LOCAL_MODES = ("local_only", "local_preferred")
-CLOUD_MODES = ("cloud_only",)
+CLOUD_MODES = ("cloud_preferred", "cloud_only")
 
 
 def normalize_mode(mode) -> str:
     """The mode as the rest of the code should read it.
 
     `smart` was a duplicate of `local_preferred` with drifting meanings (RM-D1);
-    an old value reads as `local_preferred`. An empty value reads as
-    `local_preferred`, matching the model-soup payload.
+    an old value reads as `local_preferred`. An empty value is UNSET and behaves
+    as the factory default, `cloud_only`: the same reading as
+    `cloud_intent.routing_mode`, which is the one reader.
     """
-    m = str(mode or "").strip().lower()
-    if m == "smart" or not m:
-        return "local_preferred"
-    return m
+    from agent_friday.services import cloud_intent as _ci
+    return _ci.normalize_mode(mode)
 
 
 def current_mode() -> str:
     """The routing mode a direct (non-router) call must honour.
 
-    Fails closed: an unreadable setting is `local_only`.
+    Delegates to `cloud_intent.routing_mode`, the single reader. Fails closed:
+    an unreadable setting is `local_only`.
     """
     try:
-        from agent_friday.services.local_only_guard import routing_mode
-        return normalize_mode(routing_mode())
+        from agent_friday.services import cloud_intent as _ci
+        return normalize_mode(_ci.routing_mode())
     except Exception:
         return "local_only"
 

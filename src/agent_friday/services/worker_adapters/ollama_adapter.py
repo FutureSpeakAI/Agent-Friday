@@ -119,6 +119,20 @@ class OllamaAdapter(BaseAdapter):
         # every other site enforces. The gate itself now decides whether gating
         # applies, from the destination, so the decision can no longer be made
         # by a call site simply omitting the call.
+        #
+        # A model Ollama relays to its own cloud (`glm-4.6:cloud`) is also a
+        # cloud call for the routing mode: it needs a recorded intent in a
+        # local mode. A plain local model passes `require` untouched.
+        try:
+            from agent_friday.services import cloud_intent as _cloud_intent
+            _cloud_intent.require("ollama", "worker task (cloud-tagged model)", str(model or ""))
+        except Exception as exc:
+            with _JOBS_LOCK:
+                _JOBS[aid].update({
+                    "status": WorkerStatus.FAILED,
+                    "error": exception_text(exc),
+                })
+            return
         try:
             from agent_friday.services.egress_gate import gate_worker_payload
             body = gate_worker_payload(body, base_url=_OLLAMA_BASE,

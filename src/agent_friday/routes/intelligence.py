@@ -909,11 +909,10 @@ def _model_soup(settings: dict, routing: dict, costs: dict, seats: dict,
                 providers: list, labels: dict) -> dict:
     from agent_friday.services import local_seats
     mr = settings.get("model_routing") or {}
-    mode = str(mr.get("mode") or "local_preferred").lower()
-    if mode == "smart":
-        # `smart` is gone from the picker (§11.2 B); an existing value reads
-        # as local_preferred until the router's branches are deleted.
-        mode = "local_preferred"
+    # One reader: a blank mode is unset and reads as the factory cloud_only;
+    # `smart` (gone from the picker, §11.2 B) reads as local_preferred.
+    from agent_friday.services.cloud_intent import normalize_mode as _normalize_mode
+    mode = _normalize_mode(mr.get("mode"))
 
     try:
         serving = local_seats.serving()
@@ -1537,13 +1536,10 @@ def _intelligence_payload() -> dict:
     # Routing mode. Present in the payload because it belongs on the same page
     # as the seats: it decides whether a seat may be substituted at all, and
     # dropping it from the rebuilt picker was a regression.
-    routing_mode = str(((settings.get("model_routing") or {}).get("mode")
-                        or "local_preferred")).lower()
-    if routing_mode == "smart":
-        # Removed from the picker (model-soup.md §11.2 B). The
-        # router's `smart` branches stay for one release; the UI reads the
-        # value as local_preferred, which is what it does for tool turns.
-        routing_mode = "local_preferred"
+    # Same single reading as everywhere (cloud_intent.normalize_mode): blank is
+    # unset and behaves as cloud_only; the removed `smart` reads as local_preferred.
+    from agent_friday.services.cloud_intent import normalize_mode as _normalize_mode2
+    routing_mode = _normalize_mode2((settings.get("model_routing") or {}).get("mode"))
 
     labels = {m["id"]: (m.get("label") or m["id"]) for m in models
               if m.get("id")}

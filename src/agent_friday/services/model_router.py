@@ -428,7 +428,7 @@ def _mode_filtered_attempts(attempts, routing_cfg, *, vault_access=False):
             raise _cloud_intent.LocalUnavailable(
                 "no local model was lined up for this call", mode=mode)
         return local[:1]
-    if mode == "cloud_only":
+    if mode in ("cloud_only", "cloud_preferred"):
         banned = _LOCAL_LEGS
     elif mode == "local_only":
         banned = _CLOUD_LEGS

@@ -306,6 +306,8 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     try:
         # A cloud-tagged Ollama model is relayed to ollama.com: seal it like
         # any cloud payload. A plain local model is returned untouched.
+        from agent_friday.services import cloud_intent as _cloud_intent
+        _cloud_intent.require("ollama", "local_call (cloud-tagged model)", str(model or ""))
         from agent_friday.services.egress_gate import gate_ollama_body
         payload = gate_ollama_body(payload, model)
         r = requests.post(f"{ollama_url()}/api/chat", json=payload, timeout=timeout)

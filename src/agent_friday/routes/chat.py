@@ -21,6 +21,7 @@ import contextvars as _contextvars
 from agent_friday.services.reasoning_trace import current as _rt_current
 from agent_friday.services import cloud_intent as _cloud_intent
 from agent_friday.services import local_offer as _local_offer
+from agent_friday.services import outage_fallback as _outage_fallback
 import difflib as _difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
@@ -2065,8 +2066,9 @@ def chat():
             if _route_info.get('provider') == 'openai':
                 _provider = 'openai'
                 system_prompt, sources, pii_lookup = _prep_for('openai')
+        _outage_local = _outage_receipt = None
         if (not _routed_local) and _provider == 'cloud' and get_anthropic_client() is None:
-            _mode = str((_routing_cfg or {}).get('mode') or 'local_preferred').lower()
+            _mode = _cloud_intent.normalize_mode((_routing_cfg or {}).get('mode'))
             if _mode == 'cloud_only':
                 print("  [ROUTER] No Anthropic key and mode is cloud_only — "
                       "refusing the local fallback and asking for a key")
@@ -2135,6 +2137,9 @@ def chat():
                     _route_info['is_local'] = True
                     # Rebuild the prompt for local (vault content allowed, no PII scrub).
                     system_prompt, sources, pii_lookup = _prep_for('local', model=_local_pick)
+                    if _outage_fallback.may_fall_back(_mode, no_key=True):
+                        # cloud_preferred: the local answer is said out loud.
+                        _outage_local = {"provider": _outage_fallback.provider_label('cloud')}
             except Exception as _safe_e:
                 print(f"  [ROUTER] local safety-net routing failed: {_safe_e}")
 
@@ -2245,7 +2250,7 @@ def chat():
                 # is the honest outcome: the user asked for on-device work,
                 # and a slow answer from the model they chose beats a fast
                 # one from a model they rejected.
-                _mode = str((_routing_cfg or {}).get('mode') or 'local_preferred').lower()
+                _mode = _cloud_intent.normalize_mode((_routing_cfg or {}).get('mode'))
                 # An explicit per-chat pick is a local choice the owner made for
                 # this chat; its failure is reported the same way.
                 _explicit = _explicit_local_pick(_conv_seat, _route_info.get('model'))
@@ -2300,50 +2305,71 @@ def chat():
                     model=_route_info.get('model'), seat_events=_seat_events,
                     flags=_lf_flags)
 
-        if not _routed_local:
-            if _provider == 'openai':
-                # OpenAI-compatible cloud path with a full agentic tool loop.
-                # The route decision carries the RESOLVED registry provider
-                # (openrouter / groq / huggingface / a custom endpoint ...), so
-                # each request hits that provider's own base_url + credentials
-                # (multi-provider dispatch, GAP-3 fix). provider_name=None
-                # keeps the legacy single-slot settings behavior.
-                # The cloud gets the same opening set as the local seat and
-                # loads the rest through load_tools (services/tool_catalogue).
-                _cloud_tools, _cloud_catalogue = _cloud_tool_set(
-                    _pilot, _ag_tools_for_turn(workspace, _conversation_id))
-                reply, tool_trace = _call_openai(
-                    messages, system=system_prompt, model=_route_info.get('model'),
-                    temperature=settings.get('temperature'),
-                    orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
-                    tools=_cloud_tools, catalogue_all=_cloud_catalogue,
-                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
-                    provider=_route_info.get('provider_name'),
-                )
-            else:
-                # Honor the user's chosen Claude model (orchestrator selection)
-                # rather than always using the Anthropic default. Only forward a
-                # claude-* id; anything unexpected falls back to the default.
-                _cloud_model = _route_info.get('model')
-                _claude_model = _cloud_model if str(_cloud_model or '').startswith('claude') else None
-                reply, tool_trace = _call_claude_agent(
-                    messages, system=system_prompt, model=_claude_model,
-                    temperature=settings.get('temperature'),
-                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
-                    orb_label=_orb_label, orb_category='default', orb_icon='💬',
-                )
-                if _routing_cfg.get('cost_tracking', True):
-                    try:
-                        from agent_friday.routing.model_router import get_router
-                        _router = get_router()
-                        _est_tokens = len(str(messages)) // 4 + len(reply) // 4
-                        _router.cost_tracker.record(
-                            "cloud",
-                            settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
-                            prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
-                        )
-                    except Exception:
-                        pass
+        try:
+            if not _routed_local:
+                if _provider == 'openai':
+                    # OpenAI-compatible cloud path with a full agentic tool loop.
+                    # The route decision carries the RESOLVED registry provider
+                    # (openrouter / groq / huggingface / a custom endpoint ...), so
+                    # each request hits that provider's own base_url + credentials
+                    # (multi-provider dispatch, GAP-3 fix). provider_name=None
+                    # keeps the legacy single-slot settings behavior.
+                    # The cloud gets the same opening set as the local seat and
+                    # loads the rest through load_tools (services/tool_catalogue).
+                    _cloud_tools, _cloud_catalogue = _cloud_tool_set(
+                        _pilot, _ag_tools_for_turn(workspace, _conversation_id))
+                    reply, tool_trace = _call_openai(
+                        messages, system=system_prompt, model=_route_info.get('model'),
+                        temperature=settings.get('temperature'),
+                        orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
+                        tools=_cloud_tools, catalogue_all=_cloud_catalogue,
+                        pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                        provider=_route_info.get('provider_name'),
+                    )
+                else:
+                    # Honor the user's chosen Claude model (orchestrator selection)
+                    # rather than always using the Anthropic default. Only forward a
+                    # claude-* id; anything unexpected falls back to the default.
+                    _cloud_model = _route_info.get('model')
+                    _claude_model = _cloud_model if str(_cloud_model or '').startswith('claude') else None
+                    reply, tool_trace = _call_claude_agent(
+                        messages, system=system_prompt, model=_claude_model,
+                        temperature=settings.get('temperature'),
+                        pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                        orb_label=_orb_label, orb_category='default', orb_icon='💬',
+                    )
+                    if _routing_cfg.get('cost_tracking', True):
+                        try:
+                            from agent_friday.routing.model_router import get_router
+                            _router = get_router()
+                            _est_tokens = len(str(messages)) // 4 + len(reply) // 4
+                            _router.cost_tracker.record(
+                                "cloud",
+                                settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
+                                prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
+                            )
+                        except Exception:
+                            pass
+        except Exception as _cloud_exc:
+            # cloud_preferred only: a connection/transport failure (never a
+            # refusal, the spend cap or a policy error) lets the local model
+            # answer, and the reply says so. cloud_only re-raises as before.
+            _outage_model = (None if _routed_local else _outage_fallback.local_model_for(
+                _routing_cfg.get('mode'), _cloud_exc, settings))
+            if not _outage_model:
+                raise
+            _outage_local = {"provider": _outage_fallback.provider_label(_provider, _route_info)}
+            _routed_local, _provider = True, 'local'
+            _route_info['model'], _route_info['is_local'] = _outage_model, True
+            system_prompt, sources, pii_lookup = _prep_for('local', model=_outage_model)
+            reply, tool_trace = _call_ollama(
+                messages, system=system_prompt, model=_outage_model,
+                temperature=settings.get('temperature'),
+                orb_label=f"🏠 {_orb_label}", orb_icon='🏠',
+                tools=None, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+            )
+        if _outage_local:
+            reply, _outage_receipt = _outage_fallback.announce(reply, _outage_local["provider"])
 
         # ── FR-2: tool-call integrity — scan for fabricated bracket-syntax
         # pseudo-tool-calls (e.g. [query_calendar], [search_email(...)])
@@ -2802,6 +2828,10 @@ def chat():
             # cloud did instead. The client renders it as a system line so the
             # substitution is visible in the transcript, not just in a log.
             "local_fallback": _fell_back_from_local,
+            # cloud_preferred answered locally because the cloud was out: the
+            # reply already opens with the fixed notice; this is its receipt.
+            "laya": _outage_receipt,
+            "outage_local": bool(_outage_local),
             # A capability loss the user did not ask for and cannot otherwise
             # see. When the seat could not carry the whole toolbox, say so in
             # the turn — same principle as local_fallback above. Absent on

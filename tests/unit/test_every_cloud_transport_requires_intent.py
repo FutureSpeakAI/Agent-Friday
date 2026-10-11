@@ -47,6 +47,10 @@ _SDK_CTORS = {"Anthropic", "AsyncAnthropic", "AnthropicBedrock", "OpenAI",
               "AsyncOpenAI", "AzureOpenAI"}
 _HTTP_VERBS = {"post", "get", "put", "patch", "request", "urlopen", "stream"}
 _HTTP_ROOTS = {"requests", "httpx", "urllib", "session", "client", "http"}
+#: Ollama's own cloud: a model tagged `:cloud` / `-cloud` is relayed by the LOCAL
+#: daemon to ollama.com, so the wire call is a loopback POST to one of these paths.
+_OLLAMA_RELAY_VERBS = {"post", "_post", "Request"}
+_OLLAMA_RELAY_PATHS = ("/api/chat", "/api/generate")
 _CLOUD_HOST = re.compile(
     r"api\.anthropic\.com|openrouter\.ai|api\.openai\.com|"
     r"generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|"
@@ -63,6 +67,32 @@ KNOWN_TRANSPORTS = {
     ("services/kie_generate.py", "_request"),
     ("services/higgsfield_generate.py", "_call"),
     ("services/claude_engine.py", "run_task"),
+}
+
+#: Live's Ollama relay transports. Each posts a prompt to the local daemon, which
+#: relays a cloud-tagged model to ollama.com, so each must call
+#: `require("ollama", purpose, model)` before it (a plain local model passes
+#: `require` as a `local` token without reading the mode).
+OLLAMA_RELAY_TRANSPORTS = {
+    ("routing/ollama_manager.py", "chat_completion"),
+    ("routing/ollama_manager.py", "probe_generate"),
+    ("services/local_call.py", "call"),
+    ("services/worker_adapters/ollama_adapter.py", "_run"),
+    ("services/residency_arbiter.py", "load"),
+}
+
+#: Cloud engines the owner picks or an agent tool drives that the routing mode does
+#: not govern. They are not found by the scan (the host sits in a provider table),
+#: so each is registered by name: if one is renamed or removed this test says so.
+#: (relpath, function) -> why it is not under `require`.
+OWNER_ENGINE_TRANSPORTS = {
+    ("services/cloud_voice.py", "_synth_elevenlabs"):
+        "speech synthesis on the cloud voice the owner picked; synthesize() refuses local_only before it",
+    ("services/cloud_voice.py", "_synth_inworld"):
+        "speech synthesis on the cloud voice the owner picked; synthesize() refuses local_only before it",
+    ("services/elevenlabs_tools.py", "_request"):
+        "ElevenLabs speech tools (speak_text, list_voices): ring-gated agent tools with their own egress "
+        "gate; NOT yet governed by the routing mode (open question for the lead)",
 }
 
 #: Client factories: a function that builds a cloud client and calls `require`
@@ -93,7 +123,12 @@ EXEMPT = {
         "setup wizard key check the owner presses; sends no user content",
     ("routes/voice.py", "_client_for"):
         "Gemini Live is a voice engine the owner picks (Settings > Voice, voice_engine); "
-        "local_only refuses /ws/live in code, and it never auto-spills",
+        "the client is built through cloud_intent.require_owner_engine, which calls require "
+        "(tests/unit/test_gemini_live_through_require.py); local_only refuses it, and it never auto-spills",
+    ("services/residency_arbiter.py", "evict"):
+        "unloads a model from memory (empty prompt, keep_alive 0); sends no content to anything",
+    ("services/sensitivity_classifier.py", "_local_llm_tier"):
+        "refuses a cloud-tagged adjudicating model itself (is_cloud_model_tag) before the call",
     ("services/voice_engine.py", "_synthesize_tts_wav_gemini"):
         "speech synthesis on the voice engine the owner picked; governed by voice_engine, not the routing mode",
 }
@@ -167,6 +202,8 @@ def _classify(call, consts):
         return "sdk-ctor:" + last
     if _tail_matches(chain, ("genai", "Client")):
         return "sdk-ctor:genai.Client"
+    if last in _OLLAMA_RELAY_VERBS and any(p in ast.unparse(call) for p in _OLLAMA_RELAY_PATHS):
+        return "ollama-relay:" + ".".join(p for p in chain if p != "()")
     if last in _HTTP_VERBS and chain[0] in _HTTP_ROOTS | {"urllib"}:
         hay = ast.unparse(call)
         for n in ast.walk(call):
@@ -371,6 +408,41 @@ def test_every_registered_wrapper_exists_and_requires_intent():
     assert not missing, "registered transport wrappers have moved or been renamed: %s" % missing
     assert not unguarded, (
         "these transport wrappers do not call cloud_intent.require: %s" % unguarded)
+
+
+def test_the_scan_finds_every_ollama_relay_transport_live_has():
+    """Discovered, not copied from the b11 list: live's egress fix made a `:cloud`
+    / `-cloud` Ollama model a cloud model, and the daemon relays it from a loopback
+    POST the host-based scan cannot see. Every such POST is found by its path."""
+    found = {(s["file"], s["func"]) for s in _SITES if s["kind"].startswith("ollama-relay")}
+    assert len(found) >= 6, "the scan found only %s Ollama relay sites" % sorted(found)
+    missing = OLLAMA_RELAY_TRANSPORTS - found
+    assert not missing, "registered Ollama relay transports the scan no longer sees: %s" % sorted(missing)
+    unregistered = found - OLLAMA_RELAY_TRANSPORTS - set(EXEMPT)
+    assert not unregistered, (
+        "a new Ollama relay POST: call `_cloud_intent.require(\"ollama\", purpose, model)` "
+        "before it and register it in OLLAMA_RELAY_TRANSPORTS, or exempt it with the reason: %s"
+        % sorted(unregistered))
+
+
+def test_every_ollama_relay_transport_requires_intent():
+    missing, unguarded = [], []
+    for rel, name in sorted(OLLAMA_RELAY_TRANSPORTS):
+        fn = _find_function(_PARSED, rel, name)
+        if fn is None:
+            missing.append("%s::%s" % (rel, name))
+        elif not _requires_at_top_level(fn):
+            unguarded.append("%s::%s" % (rel, name))
+    assert not missing, "Ollama relay transports have moved or been renamed: %s" % missing
+    assert not unguarded, (
+        "these Ollama relay transports do not call cloud_intent.require: %s" % unguarded)
+
+
+def test_the_owner_engine_transports_still_exist_and_each_says_why():
+    gone = [("%s::%s" % k) for k in sorted(OWNER_ENGINE_TRANSPORTS)
+            if _find_function(_PARSED, *k) is None]
+    assert not gone, "registered owner-engine transports have moved or been renamed: %s" % gone
+    assert all(len(why.strip()) > 20 for why in OWNER_ENGINE_TRANSPORTS.values())
 
 
 def test_every_client_factory_requires_intent():

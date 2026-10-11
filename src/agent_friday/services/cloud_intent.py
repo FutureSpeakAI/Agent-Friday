@@ -3,6 +3,13 @@
 Routing modes (Beta 1.1, routing-modes addendum 2.1 / 2.4):
 
 * ``cloud_only``      -- the cloud is the answer; the intent ``cloud_mode`` is implicit.
+                         Laya never answers in the cloud's place (services/laya_templates).
+* ``cloud_preferred`` -- a cloud mode like ``cloud_only`` (the intent ``cloud_mode`` is
+                         implicit), with one difference: when the cloud cannot be
+                         reached the local brain may answer, and the reply says so in
+                         the fixed words of ``laya_templates.OUTAGE_LOCAL`` (``outage_local``).
+                         Background work behaves as ``cloud_only``. Not offered in the UI
+                         until the lead turns it on (``UI_HIDDEN_MODES``).
 * ``local_preferred`` -- local is the default for every model call. The cloud is
   called only with a recorded INTENT.
 * ``local_only``      -- the same, stricter: only an explicit request the owner
@@ -52,6 +59,19 @@ EXPLICIT_INTENTS = ("user_explicit", "laya_escalation", "remembered_choice",
                     "scheduled_cloud")
 #: Every intent a receipt can name. ``cloud_mode`` is implicit and never set by hand.
 INTENTS = EXPLICIT_INTENTS + ("cloud_mode",)
+
+#: Every routing mode. The one list the other mode tuples in the code are
+#: checked against (tests/unit/test_mode_lists_agree.py).
+MODES = ("local_only", "local_preferred", "cloud_preferred", "cloud_only")
+#: The modes in which the cloud is the default answer.
+CLOUD_MODES = ("cloud_preferred", "cloud_only")
+#: Modes that exist in the code but are not shown in any picker yet.
+UI_HIDDEN_MODES = ("cloud_preferred",)
+#: Old spellings that read as another mode.
+MODE_ALIASES = {"smart": "local_preferred"}
+#: The factory default, and what a blank mode behaves as. A blank mode is
+#: reported as UNSET (``mode_is_unset``) so setup can ask.
+DEFAULT_MODE = "cloud_only"
 
 #: Modes in which the cloud needs an intent. ``smart`` is the old duplicate of
 #: local_preferred (decision RM-D1 migrates it); it behaves as one here.
@@ -286,10 +306,14 @@ def carry(fn):
 def routing_mode() -> str:
     """The routing mode a transport must honour right now.
 
+    THE single reader: ``local_only_guard.routing_mode`` and
+    ``cloud_mode_policy.current_mode`` delegate here.
+
     ``local_only`` while a local-only run is active; otherwise
     ``model_routing.mode`` (the offline overlay is folded in by
-    ``_load_settings``). A missing setting is the factory default,
-    ``cloud_only``. An unreadable setting fails CLOSED to ``local_only``.
+    ``_load_settings``). A blank or missing setting behaves as the factory
+    default, ``cloud_only``, and ``mode_is_unset`` reports that it is unset.
+    An unreadable setting fails CLOSED to ``local_only``.
     """
     try:
         from agent_friday.services import local_only_guard as _guard
@@ -298,11 +322,62 @@ def routing_mode() -> str:
     except Exception:
         return "local_only"
     try:
-        from agent_friday import core
-        mode = ((core._load_settings() or {}).get("model_routing") or {}).get("mode")
-        return str(mode or "cloud_only").strip().lower()
+        return str(_stored_mode() or DEFAULT_MODE).strip().lower()
     except Exception:
         return "local_only"
+
+
+def _stored_mode():
+    from agent_friday import core
+    return ((core._load_settings() or {}).get("model_routing") or {}).get("mode")
+
+
+def mode_is_unset() -> bool:
+    """True when the owner has not chosen a mode (a blank or missing setting).
+
+    The behaviour is still the factory default (``cloud_only``, for
+    compatibility); this only reports that nobody chose it, so setup can ask.
+    An unreadable setting is not "unset": it fails closed in ``routing_mode``.
+    """
+    try:
+        return not str(_stored_mode() or "").strip()
+    except Exception:
+        return False
+
+
+def normalize_mode(mode) -> str:
+    """A mode as the rest of the code should read it: old spellings mapped
+    (``smart`` -> ``local_preferred``), a blank one as the factory default."""
+    m = str(mode or "").strip().lower() or DEFAULT_MODE
+    return MODE_ALIASES.get(m, m)
+
+
+def is_cloud_mode(mode: str | None = None) -> bool:
+    return normalize_mode(mode if mode is not None else routing_mode()) in CLOUD_MODES
+
+
+def outage_local_allowed(mode: str | None = None) -> bool:
+    """May the local brain answer when the cloud cannot be reached?
+
+    Only ``cloud_preferred`` allows it, and only with the announcement
+    ``outage_notice`` provides. ``cloud_only`` never does (an outage there is
+    said plainly with a retry offer); the local modes are local already.
+    """
+    return normalize_mode(mode if mode is not None else routing_mode()) == "cloud_preferred"
+
+
+def local_voice_label(mode, default: str) -> str:
+    """How the voice panel names the local engine. In a cloud mode (cloud_only,
+    cloud_preferred) a local voice is the owner's own engine choice, and the
+    label says so; in a local mode (or ``default`` for anything else) it keeps
+    ``default``."""
+    return "Local voice (your choice)" if normalize_mode(mode) in CLOUD_MODES else default
+
+
+def outage_notice(provider: str):
+    """The fixed words a ``cloud_preferred`` outage answer must open with."""
+    from agent_friday.services import laya_templates
+    return laya_templates.outage_notice(provider)
 
 
 def is_local_mode(mode: str | None = None) -> bool:
@@ -359,7 +434,7 @@ def require(provider, purpose: str, model: str = "") -> CloudToken:
     token. Otherwise:
 
     * a run the owner pinned to a cloud model carries ``scheduled_cloud``;
-    * ``cloud_only`` carries the implicit ``cloud_mode``;
+    * ``cloud_only`` and ``cloud_preferred`` carry the implicit ``cloud_mode``;
     * a local mode needs the context's intent to open the cloud in that mode, or
       raises ``NoCloudIntent``.
     """
@@ -380,7 +455,7 @@ def require(provider, purpose: str, model: str = "") -> CloudToken:
             raise NoCloudIntent(name, purpose, model, mode)
         tok = CloudToken(cur.intent, name, purpose, model, mode, cur.source)
     else:
-        # cloud_only: the mode is the intent. A more specific intent, when the
+        # cloud_only / cloud_preferred: the mode is the intent. A more specific intent, when the
         # route has one, is the better receipt.
         tok = (CloudToken(cur.intent, name, purpose, model, mode, cur.source)
                if cur is not None else
@@ -434,6 +509,24 @@ def record_owner_engine(provider, purpose: str, model: str = "",
                      str(purpose or "voice"), str(model or ""), routing_mode(), source)
     _record(tok)
     return tok
+
+
+def require_owner_engine(provider, purpose: str, model: str = "",
+                         source: str = "voice_engine") -> CloudToken:
+    """The checkpoint for a cloud engine the owner picked by name (Gemini Live).
+
+    The owner's engine choice is a recorded ``user_explicit`` intent, so this
+    goes through ``require`` like every other cloud transport and leaves the
+    same receipt. Outcomes by mode:
+
+    * ``cloud_only`` / ``cloud_preferred``: allowed (the mode is the intent; the
+      more specific ``user_explicit`` is the receipt).
+    * ``local_preferred``: allowed by the recorded intent. Same result as before.
+    * ``local_only``: refused (``NoCloudIntent``). The intent is not CONFIRMED
+      for a turn, and a voice engine setting is not that confirm.
+    """
+    with intent_scope("user_explicit", source=source, confirmed=False):
+        return require(provider, purpose, model)
 
 
 def recent(n: int = 50) -> list:

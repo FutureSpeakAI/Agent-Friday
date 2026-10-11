@@ -33,7 +33,7 @@ _LOCK = threading.Lock()
 _NEXT = 0
 _ROWS = deque(maxlen=MAX_RECORDS)
 _COUNTERS = ("model_rounds", "loader_calls", "tool_calls", "added_tools", "context_blocks")
-_MODES = {"local_only", "local_preferred", "cloud_only"}
+_MODES = {"local_only", "local_preferred", "cloud_preferred", "cloud_only"}
 
 
 def _settings():

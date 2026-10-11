@@ -2278,6 +2278,7 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
           {/* local_only refused (no local seat available) rather than
              silently answering from the cloud — offer the explicit choice
              to switch instead of a dead end. */}
+          {m.role==='friday'&&m.laya&&m.laya.laya&&<span className="laya-chip" title={'Laya wrote this line (' + (m.laya.kind || 'fixed') + '). It is a fixed phrase, not a model answer.'} style={{marginTop:6,marginRight:6,display:'inline-block',fontSize:10,padding:'1px 6px',border:'1px solid var(--fr-glass-edge)',borderRadius:8,color:'var(--fr-dim)'}}>Laya</span>}
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
             onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner_action:'routing_mode',settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
           {/* The local model could not finish: an offer, nothing preselected. */}
@@ -25874,7 +25875,7 @@ function App(){
         setTurnPause({kind:'privacy_hold',message:m,hold:d.privacy_hold});if(!d.response)return;}
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
-      setTurnMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,local_fallback:d.local_fallback||null,source_text:m,time:new Date().toLocaleTimeString()}]);
+      setTurnMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,local_fallback:d.local_fallback||null,laya:d.laya||null,source_text:m,time:new Date().toLocaleTimeString()}]);
       // Execute any structured actions Friday returned (navigate, open_path…).
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);

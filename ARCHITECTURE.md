@@ -71,7 +71,7 @@ friday_tray.py  (system tray; Windows)
 4. **Routing** (`routing/model_router.py`). Vault requests are routed first
    (local, or refused, while `vault_local_only` is on). Otherwise the seat you
    chose for the conversation or globally wins; the task classifier and the
-   routing mode (`cloud_only`, `smart`, `local_preferred`, `local_only`) decide
+   routing mode (`cloud_only`, `cloud_preferred`, `smart`, `local_preferred`, `local_only`) decide
    the rest. In `local_only`, a turn with no local seat is refused with an offer
    to answer in the cloud.
 5. **Egress** (`services/model_router._seal_or_block`). Before any cloud call:
