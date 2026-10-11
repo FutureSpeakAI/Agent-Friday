@@ -155,13 +155,8 @@ def test_calendar_declares_the_start_nav_key_in_both_files():
 
 
 def test_the_calendar_manifest_declares_the_start_key_and_keeps_recording_by_design():
-    # The Laya manifests arrive with the WS-1 package; until they are on this
-    # tree there is nothing to check, and once they are this test holds the line.
     import json
-    import pytest
     path = ROOT / "src" / "agent_friday" / "resources" / "laya_manifests" / "calendar.json"
-    if not path.exists():
-        pytest.skip("no Laya manifests on this tree yet (WS-1)")
     m = json.loads(path.read_text(encoding="utf-8"))
     assert "start" in m["nav"]["keys"]
     nfl = {n["action"]: n for n in m["not_for_laya"]}

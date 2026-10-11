@@ -5,7 +5,7 @@
  "group": "life",
  "held": null,
  "spoken_words": {"router_extra": []},
- "nav": {"key": null, "keys": ["date", "view", "meeting_id", "event"], "sections": ["meetings"]},
+ "nav": {"key": null, "keys": ["date", "view", "meeting_id", "event", "start"], "sections": ["meetings"]},
  "objects": [
   {
    "kind": "event",
@@ -211,7 +211,7 @@
   {
    "action": "calendar.record_meeting",
    "kind": "by_design",
-   "reason": "Recording turns the microphone on, so the owner presses it themselves."
+   "reason": "Recording is the owner's own press and confirm; \"start recording\" by voice only opens the on-screen start card."
   },
   {
    "action": "calendar.delete_event",

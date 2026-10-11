@@ -76,7 +76,7 @@
    {
     "id": "calendar.record_meeting",
     "group": "create",
-    "label": "record meeting start/stop / redo notes",
+    "label": "record meeting start/stop / redo notes / consent line / keep or delete audio",
     "audit_status": "N"
    },
    {"id": "calendar.follow_up_draft", "group": "create", "label": "draft thank-you / follow-up", "audit_status": "M"},
@@ -256,7 +256,7 @@
   ],
   "settings": [
    {"id": "settings.open_section", "group": "navigate", "label": "open section", "audit_status": "M"},
-   {"id": "settings.toggle_setting", "group": "settings", "label": "toggle / set a setting", "audit_status": "M"},
+   {"id": "settings.toggle_setting", "group": "settings", "label": "toggle / set a setting (meeting retention is owner-only)", "audit_status": "M"},
    {"id": "settings.model_provider", "group": "settings", "label": "model / provider", "audit_status": "M"},
    {"id": "settings.voice_pace", "group": "settings", "label": "voice pace / depth", "audit_status": "L"},
    {

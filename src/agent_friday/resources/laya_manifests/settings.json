@@ -28,7 +28,7 @@
    "id": "settings.toggle_setting",
    "action": "settings.toggle_setting",
    "group": "settings",
-   "ui": {"control": "toggle / set a setting"},
+   "ui": {"control": "toggle / set a setting (meeting retention is owner-only)"},
    "tool": "set_setting",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
@@ -168,6 +168,12 @@
  ],
  "not_for_laya": [
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."}
+ ],
+ "notes": [
+  {
+   "id": "meeting_retention",
+   "text": "Meeting retention (meeting_audio_retention, meeting_text_retention, meeting_text_retention_days) is the owner's own choice, set in Privacy & Data and the Meetings view; it is not a voice-settable key and has no verb."
+  }
  ],
  "resolver_sources": [],
  "workspace_tools": {"key": "settings", "pools": []}
