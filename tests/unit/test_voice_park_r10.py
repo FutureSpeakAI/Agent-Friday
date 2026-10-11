@@ -1,12 +1,15 @@
-"""The voice-call lease parks the brain even on a one-model plan; R10 holds
-for every other lease; a release that cannot bring the brain back says so.
+"""The voice leases (a local call, a podcast's speech) park the brain even on
+a one-model plan; R10 holds for every other lease; a release that cannot
+bring the brain back says so.
 
 Live, every role (interactive_brain, memory_manager, sidekick,
 sidekick_heavy) was bonsai2:27b: one process. `_evict_pinned` keeps any
 model the retained sidekick serves (R10, "keep e2b awake so Friday is
 always alive"), so the voice_call grant displaced nothing and the call's
 voice never fitted. During a local call Friday is not mute (the voice front
-is a live local model), so for that lease only the brain's model goes.
+is a live local model), so for that lease the brain's model goes. A
+podcast's speaking lease met the same wall (the episode waited "for room"
+with the brain loaded), so it parks the brain too, bounded by its budget.
 """
 import threading
 
@@ -87,15 +90,16 @@ def _arbiter(seats, monkeypatch, load_ok=True, load_raises=False):
     return arb
 
 
-def test_a_voice_call_parks_the_brain_on_a_one_model_plan(monkeypatch):
+@pytest.mark.parametrize("kind", ["voice_call", "podcast_voice"])
+def test_a_voice_lease_parks_the_brain_on_a_one_model_plan(monkeypatch, kind):
     arb = _arbiter(ONE_MODEL, monkeypatch)
-    got = arb.grant("voice_call", ttl_s=120)
+    got = arb.grant(kind, ttl_s=120)
     assert got["ok"], got
     assert got["lease"]["displaced"] == ["interactive_brain"]
     assert arb.llama.evicted == [BRAIN] and BRAIN not in arb.llama.procs
 
 
-@pytest.mark.parametrize("kind", ["image_job", "bench_job", "podcast_voice"])
+@pytest.mark.parametrize("kind", ["image_job", "bench_job"])
 def test_every_other_lease_keeps_r10(monkeypatch, kind):
     arb = _arbiter(ONE_MODEL, monkeypatch)
     got = arb.grant(kind, ttl_s=120)

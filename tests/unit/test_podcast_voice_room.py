@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def short(monkeypatch):
     """A machine with 1 GB of commit headroom and no speaker running."""
     room = {"mb": 1024}
+    monkeypatch.setattr(pe, "ROOM_SETTLE_S", 0.0)
     monkeypatch.setattr(render, "speaker_running", lambda: False)
     monkeypatch.setattr(render, "commit_headroom_mb", lambda: room["mb"])
     monkeypatch.setattr(render, "release_speaker", lambda: None)
@@ -60,22 +61,28 @@ def test_short_of_room_the_brain_is_parked_for_the_speaking_job_and_put_back(mon
     assert calls["kind"] == "podcast_voice" and calls["kw"]["expect_files"] is False and calls["restored"]
 
 
-@pytest.mark.parametrize("arb", ["none", "refused", "still_short"])
-def test_when_no_room_can_be_made_the_episode_waits_with_a_plain_reason(monkeypatch, short, arb):
+@pytest.mark.parametrize("arb,why", [
+    ("none", "nothing could be set aside"),
+    ("refused", "the local models could not be set aside"),
+    ("still_short", "memory is still short with the main model set aside"),
+])
+def test_when_no_room_can_be_made_the_episode_waits_with_a_plain_reason(monkeypatch, short, arb, why):
     class Arb:
         def heavy_job(self, kind, job, **kw):
             if arb == "refused":
-                return {"ok": False, "error": "lease podcast_voice refused"}
+                return {"ok": False, "status": "refused", "error": "lease podcast_voice refused"}
             try:
                 return {"ok": True, "result": job()}
             except Exception as e:      # the job says there is still no room
-                return {"ok": False, "exception": e, "error": str(e)}
+                return {"ok": False, "status": "failed", "exception": e, "error": str(e),
+                        "displaced": ["interactive_brain"]}
     from agent_friday.services import residency_arbiter
     monkeypatch.setattr(residency_arbiter, "get_arbiter", lambda: None if arb == "none" else Arb())
     with pytest.raises(render.RenderError) as e:
         pe._speak_with_room("e1", lambda: pytest.fail("never spoken without room"), 3)
     assert e.value.code == "low_memory" and e.value.code in pe.RETRYABLE
-    assert str(e.value) == pe.NO_ROOM_TO_SPEAK
+    assert why in str(e.value) and str(e.value).endswith("Friday will try again in a few minutes.")
+    assert not re.search(r"\d", str(e.value)), "the owner reads a sentence, not figures"
 
 
 @pytest.mark.parametrize("routine,notify,arg", [
