@@ -12376,6 +12376,15 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=False, denied=True, detail=result)
     else:
         _receipts.record(name, ok=True)
+        try:  # a tool that resolved a routed ask or defer is a router correction
+            from agent_friday.services import laya_router_learn as _llearn
+            from agent_friday.services import slice_head as _sh
+            _llearn.note_executed(
+                name, ctx.input, ok=True, actor="brain",
+                tainted=lambda: _sh.is_tainted(_taint_mod.CURRENT_KEY.get()),
+                conversation_id=_CURRENT_CONVERSATION.get())
+        except Exception:
+            pass
 
     # Cap result size to prevent token explosion in the model context window.
     # The cut keeps the part that matters for the kind of tool (start of a

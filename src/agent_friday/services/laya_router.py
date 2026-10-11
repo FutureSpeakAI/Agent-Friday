@@ -30,6 +30,19 @@ How it decides, on the CPU, nothing new downloaded:
           shadow already loads): nearest prototype over seed sentences per
           tool, plus ``conversation`` and ``act``; thresholds as reflex_turn.
 
+  head    (optional, ``laya_tool_head`` off|shadow|on, default off) a trained
+          tool head, services/laya_router_head: only when a CERTIFIED
+          checkpoint exists. ``shadow`` logs its choice beside the
+          prototypes' (hashes only) and changes nothing; ``on`` replaces
+          tier 1 for a decision above its certified threshold. Tier 0, the
+          ``_ACT`` mutation guard and governance are untouched by it.
+
+Free-form arguments: Laya chooses, generators compose. A fuzzy date goes
+through calendar_quickadd's parser (an unparsable one asks); composed text
+(a body, a reply, a note) is never written here: a compose, send or reply
+request is ``defer`` with ``handoff="compose_text"`` and only the choices
+(recipients) the words and the candidates support.
+
 Every decision is written to ``runtime/laya2/router.jsonl`` (local only)
 with the layer that chose it and its confidence, and the caller puts the
 same in the turn's receipt (Transparency). The text is stored as a hash.
@@ -78,6 +91,15 @@ class Route:
     candidates: list = field(default_factory=list)
     reason: str = ""
     elapsed_ms: float = 0.0
+    #: choice-slot picks for a deferred write (a recipient from the retrieved
+    #: candidates); never text, never an invented value.
+    chosen: dict = field(default_factory=dict)
+    #: "compose_text": the words are for a generator to write, not for Laya.
+    handoff: str = ""
+    #: An intent flag only, never an action: "plan_cloud_execute_local" when the
+    #: owner said to have a cloud model plan it and do it here. The cloud turn and
+    #: its work order are still governed by cloud_intent and services/work_orders.
+    intent: str = ""
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -204,6 +226,8 @@ def _quiet_args(_text: str, _m=None) -> dict:
 TOOLS: Dict[str, Tuple[str, Callable, Optional[str]]] = {
     # Friday's own screen, player and background work: reversible, local.
     "navigate_to": ("opening it", _nav_args, "query"),
+    # Point-and-act (services/point_act): ticks rows the owner named on a list. Shows only.
+    "screen_select": ("selecting that", _no_args, None),
     "podcast_play": ("on it", _player_args, None),
     "media_play": ("starting that", _media_args, None),
     "voice_preferences": ("adjusting how I talk", _pace_args, None),
@@ -253,7 +277,8 @@ _TOP_STORIES = re.compile(r"(?:the\s+)?(?:news|headlines|top stories|today|the d
 #: An imperative that changes something: never the router's to run.
 #: Polite openers, any number of them: "can you please send ..." is a send.
 _POLITE = (r"^(?:(?:um+|uh+|so|okay|ok|hey|friday|please|and|can you|could you|would you|"
-           r"will you|go ahead and|i want you to|i need you to|i'd like you to)[\s,]+)*")
+           r"will you|go ahead and|i want you to|i need you to|i'd like you to|also|just|then|now|"
+           r"kindly|quickly|i want to|i need to|i have to|i'd like to|i would like to|i gotta)[\s,]+)*")
 
 _ACT = re.compile(
     _POLITE +
@@ -261,11 +286,50 @@ _ACT = re.compile(
     r"schedule|book|cancel|reschedule|add|create|make|write|draft|post|publish|"
     r"buy|pay|order|unsubscribe|mark|turn (?:on|off)|switch (?:on|off)|enable|"
     r"disable|set|change|update|install|uninstall|share|invite|accept|decline|"
-    r"put|text|call|message|remind me to|save|clear|empty|restore)\b"
+    r"put|text(?!\s+messages?\b)|call|message|remind me to|save|clear|empty|restore|"
+    # Said to someone, or filed away: "email my brother that ...", "tell Sam
+    # ...", "label this". "tell me" / "tell us" ask Friday for something.
+    r"e-?mail(?!\s+(?:from|about|is|was|are|were|has|have|had|isn'?t|wasn'?t)\b)|"
+    r"tell(?!\s+(?:me|us)\b)|let\s+\w+(?:\s+\w+)?\s+know|notify|ping|dm|"
+    r"label|snooze|flag|tag|pin|unpin|mute|unmute|block|dismiss|reserve|rsvp|sign up)\b"
     # A fragment or an idiom is not a request to change anything: "cancel
     # that", "move on", "make sense?", "set?" carry no object to act on.
     r"(?!\s*(?:that|it|this|them)?\s*[?.!]*$)(?!\s+(?:on|sense|up)\b\s*[?.!]*$)",
     re.I)
+
+#: Where one request holds several: "look up the meeting time and put it on my
+#: calendar". Any clause after the first that is an imperative which changes
+#: something makes the whole turn a write: the read half is never run alone.
+_CLAUSE_SPLIT = re.compile(
+    r"\s*(?:[,;]|\b(?:and then|and|then|also|after that|afterwards)\b)\s*", re.I)
+
+
+def _clauses(text: str):
+    return [c.strip() for c in _CLAUSE_SPLIT.split(text) if c and c.strip()]
+
+
+def _has_write_intent(text: str) -> bool:
+    """True when any clause of ``text``, not only the first, is a change."""
+    return bool(_ACT.search(text)) or any(_ACT.search(c) for c in _clauses(text))
+
+
+#: A request whose result is TEXT the owner will send or keep (an email, a
+#: reply, a note): Laya chooses the action and the recipient, a generator
+#: composes the words. Never filled by the router, whatever the model says.
+_COMPOSE = re.compile(
+    _POLITE + r"(?:send|reply|respond|forward|write|draft|compose|post|text|message|"
+    r"remind me to|save|put|e-?mail(?!\s+(?:from|about|is|was|are|were)\b)|"
+    r"tell(?!\s+(?:me|us)\b))\b", re.I)
+
+
+def _has_compose(text: str) -> bool:
+    return bool(_COMPOSE.search(text)) or any(_COMPOSE.search(c) for c in _clauses(text))
+
+
+#: Argument names that carry composed text. A route holding one is not a
+#: router route (``_guard_composed`` turns it into ``defer``).
+COMPOSED_ARGS = frozenset({"body", "text", "message", "content", "subject", "draft", "note",
+                           "reply", "caption", "title", "description", "html"})
 
 #: Not a request at all: "don't check my email", "are you able to look things
 #: up", "can you read email?" asked about Friday rather than of her.
@@ -469,21 +533,49 @@ def _learning_control(text: str) -> bool:
     return False
 
 
+_CLOUD_WHO =(r"(?:claude|chat\s?gpt|gpt|gemini|the cloud(?: model)?|a cloud model|the big model)")
+_HERE = r"(?:locally|on (?:this|my) (?:pc|computer|machine)|right here|here)"
+#: "have Claude plan it, do it locally" and the near phrasings.
+_PLAN_CLOUD_DO_LOCAL = re.compile(
+    r"\b(?:have|let|get|ask)\s+" + _CLOUD_WHO + r"\s+(?:plan|map out|work out|figure out|spec(?:ify)?)\b"
+    r".{0,60}?\b(?:do|run|carry|execute|have you do)\b.{0,30}?" + _HERE +
+    r"|\bplan\s+(?:it|this|that)\s+(?:with|using)\s+" + _CLOUD_WHO + r".{0,40}?\b(?:do|run|carry|execute)\b.{0,30}?" + _HERE,
+    re.I)
+
+PLAN_CLOUD_EXECUTE_LOCAL = "plan_cloud_execute_local"
+
+
+def work_order_intent(text: str) -> str:
+    """The intent flag for "have Claude plan it, do it locally", or ""."""
+    return PLAN_CLOUD_EXECUTE_LOCAL if _PLAN_CLOUD_DO_LOCAL.search(str(text or "")) else ""
+
+
 def _tier0(text: str) -> Optional[Route]:
+    return _tier0_actions(text) or _tier0_rest(text)
+
+
+def _tier0_actions(text: str) -> Optional[Route]:
     for tool, pat in _ACTION_RULES:
         m = pat.search(text)
         if m:
             label, template, required = TOOLS[tool]
             return _with_args(tool, template(text, m), 0.95, "rule", label, required,
-                              reason="pattern")
+                              reason="pattern", text=text)
     if _learning_control(text):
+        # Laya's own learning controls are a hand-off to the deeper mind (which holds the tool); the
+        # reason is what services/laya_personal reads to note the owner's whole utterance.
         return Route("defer", confidence=0.95, layer="rule", reason=LEARNING_CONTROL_REASON)
+    return None
+
+
+def _tier0_rest(text: str) -> Optional[Route]:
     if _NOT_A_REQUEST.search(text):
         return Route("no_tool", confidence=0.95, layer="rule",
                      reason="a negation or a question about what Friday can do")
-    if _ACT.search(text):
+    if _has_write_intent(text):
         return Route("defer", confidence=0.95, layer="rule",
-                     reason="an imperative that changes something")
+                     reason="an imperative that changes something",
+                     handoff="compose_text" if _has_compose(text) else "")
     if not _REQUEST_FORM.search(text):
         if _SMALL_TALK.match(text):
             return Route("no_tool", confidence=0.95, layer="rule", reason="small talk")
@@ -494,13 +586,86 @@ def _tier0(text: str) -> Optional[Route]:
         if m:
             label, template, required = TOOLS[tool]
             return _with_args(tool, template(text, m), 0.95, "rule", label, required,
-                              reason="pattern")
+                              reason="pattern", text=text)
     if _SMALL_TALK.match(text):
         return Route("no_tool", confidence=0.95, layer="rule", reason="small talk")
     return None
 
 
-def _with_args(tool, args, conf, layer, label, required, reason="") -> Route:
+#: tool -> (date argument, day-part argument or None), for a tool whose schema
+#: declares a date argument. None of today's read tools does (query_calendar
+#: takes no arguments), so nothing is filled until one does: a date is never
+#: passed to a tool that did not declare it (the verifier's rule).
+DATE_ARGS: Dict[str, Tuple[str, Optional[str]]] = {}
+
+_DAYPARTS = {"morning": "morning", "afternoon": "afternoon", "evening": "evening",
+             "tonight": "evening", "night": "evening"}
+_DATE_CUE = re.compile(
+    r"\b(?:today|tonight|tomorrow|yesterday|weekend|morning|afternoon|evening|"
+    r"mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|"
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
+    r"(?:next|last|this|coming)\s+(?:week|month|year)|soon|sometime|later|holidays?|"
+    r"\d{4}-\d{2}-\d{2}|\d{1,2}(?:st|nd|rd|th))\b", re.I)
+_now: Callable = None  # tests replace this; None means the wall clock
+
+
+@dataclass
+class When:
+    state: str                 # "none" (no date words) | "date" | "unparsable"
+    date: str = ""             # ISO day when state == "date"
+    part: str = ""             # morning | afternoon | evening, if said
+
+
+def resolve_when(text: str, now=None) -> When:
+    """A fuzzy date in the owner's words, resolved WITHOUT a model through the
+    same parser the calendar quick-add uses. Words that point at a date the
+    parser cannot place ("sometime after the holidays", "next week") are
+    ``unparsable``: the caller asks instead of guessing."""
+    if not _DATE_CUE.search(text or ""):
+        return When("none")
+    from datetime import datetime
+    from agent_friday.services import calendar_quickadd as cq
+    from agent_friday.services.desktop_targets import _parse_day
+    now = now or (_now() if _now else datetime.now())
+    day = ""
+    try:
+        got = cq.parse(text, now=now)["fields"].get("start_time") or ""
+        day = got[:10]
+        if not day:
+            d = _parse_day(text, today=now.date())
+            day = d.isoformat() if d else ""
+    except Exception:
+        day = ""
+    if not day or re.search(r"\b(?:soon|sometime|holidays?|later)\b", text, re.I):
+        return When("unparsable")
+    part = next((v for k, v in _DAYPARTS.items() if re.search(r"\b%s\b" % k, text, re.I)), "")
+    return When("date", day, part)
+
+
+def _apply_when(tool: str, text: str, args: dict):
+    """(args with the resolved date, None) or (args, an ask Route)."""
+    spec = DATE_ARGS.get(tool)
+    if not spec or not text:
+        return args, None
+    w = resolve_when(text)
+    if w.state == "unparsable":
+        return args, Route("ask", tool=tool, layer="rule", label=TOOLS[tool][0],
+                           question="Which day do you mean?",
+                           reason="a date was named that could not be placed")
+    if w.state == "date":
+        args = dict(args)
+        args[spec[0]] = w.date
+        if spec[1] and w.part:
+            args[spec[1]] = w.part
+    return args, None
+
+
+def _with_args(tool, args, conf, layer, label, required, reason="", text="") -> Route:
+    args, asked = _apply_when(tool, text, args)
+    if asked is not None:
+        asked.confidence, asked.layer = conf, layer
+        return asked
     if required and not args.get(required):
         return Route("ask", tool=tool, confidence=conf, layer=layer, label=label,
                      question=_ASK_FOR.get(tool, _ASK_WHICH),
@@ -577,6 +742,72 @@ def follow_up(text: str, last: Optional[dict]) -> Optional[Route]:
                              reason="a follow-up on an outward search is asked, never run")
             return _with_args(tool, {"query": q}, 0.9, "rule", label, required,
                               reason="a follow-up on the same look-up")
+    return None
+
+
+# ── tier 0.5: point-and-act on the screen's own rows ─────────────────────────
+
+_UNSET = object()
+
+#: Opening verbs that hand "open X" to the item resolver when X is not on screen.
+_OPEN_LEAD = re.compile(_POLITE + r"(?:open|pull up|bring up|show me|take me to|go to|view)\b", re.I)
+#: The resolver is asked for these commands only: both are screen moves the action
+#: gate classes INTERNAL. (A news story's open_url is the model's to run.)
+_RESOLVER_TOOLS = frozenset({"navigate_to", "library_show"})
+#: A resolver call may take its own Laya question and an index lookup.
+RESOLVER_BUDGET_MS = 3500
+_res_exec: Optional[ThreadPoolExecutor] = None
+
+
+def point_act_route(text: str, *, stage, pointed, quiet: bool) -> Optional[Route]:
+    """The owner pointed at rows on screen ("these", "the second one", "the ones
+    from X"): open/select run their governed tool with the exact rows; a change
+    is a ``defer`` that carries the rows; ambiguity is one question. None when
+    the words are not that, or name nothing on this screen."""
+    from agent_friday.services import point_act
+    kw = {}
+    if stage is not _UNSET:
+        kw["stage"] = stage
+    if pointed is not _UNSET:
+        kw["pointed"] = pointed
+    pa = point_act.plan(text, quiet=quiet, **kw)
+    if pa is None:
+        return None
+    reason = "%s (%s)" % (pa.reason or pa.method, pa.method) if pa.reason else pa.method
+    if pa.decision == "tool":
+        return Route("tool", tool=pa.tool, args=dict(pa.args), confidence=0.92, layer="point_act",
+                     label=pa.label or TOOLS.get(pa.tool, ("",))[0], reason=reason)
+    if pa.decision == "ask":
+        return Route("ask", confidence=0.9, layer="point_act", question=pa.question, reason=reason)
+    return Route("defer", args=dict(pa.args), confidence=0.92, layer="point_act", reason=reason)
+
+
+def _resolver_route(text: str) -> Optional[Route]:
+    """"Open X" where X is not a row on screen: the item resolver (services/
+    laya_resolver) names one item or asks which. Only on a trusted surface."""
+    if not _OPEN_LEAD.search(text):
+        return None
+    global _res_exec
+    from agent_friday.services import laya_resolver
+    with _pool_lock:
+        if _res_exec is None:
+            _res_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="laya-resolver")
+        ex = _res_exec
+    try:
+        res = ex.submit(laya_resolver.resolve, text).result(timeout=RESOLVER_BUDGET_MS / 1000.0)
+    except _FutureTimeout:
+        return None                  # over budget: the next tier answers
+    except Exception as e:  # noqa: BLE001
+        _log.debug("resolver unavailable: %s", e)
+        return None
+    if res.status == "ask":
+        return Route("ask", confidence=res.confidence or 0.5, layer="resolver",
+                     question=str(res.question or res.text), reason="the resolver asks which one")
+    cmd = res.command or {}
+    if res.status == "command" and cmd.get("tool") in _RESOLVER_TOOLS:
+        return Route("tool", tool=cmd["tool"], args=dict(cmd.get("input") or {}),
+                     confidence=res.confidence or 0.9, layer="resolver", label="opening it",
+                     reason=res.reason or "one item")
     return None
 
 
@@ -853,7 +1084,7 @@ def _decide(ranked, text: str, act_threshold: float = ACT_THRESHOLD) -> Route:
                      reason="a guess at an outward search is asked, never run")
     if conf >= act_threshold and margin >= MARGIN_THRESHOLD:
         r = _with_args(best, template(text), round(conf, 3), "laya2", label, required,
-                       reason="nearest prototype")
+                       reason="nearest prototype", text=text)
         r.candidates = cands
         return r
     if conf >= ASK_THRESHOLD:
@@ -866,9 +1097,85 @@ def _decide(ranked, text: str, act_threshold: float = ACT_THRESHOLD) -> Route:
 
 # ── the contract ────────────────────────────────────────────────────────────
 
-def _sealed_rules(text: str, pending_card: Optional[str], last_route: Optional[dict]) -> Optional[Route]:
-    """Tier 0 and the follow-up rules for a normalised ``text``: deterministic,
-    no encoder, no I/O. None means only tier 1 could place the turn."""
+def _head_mode(explicit: Optional[str]) -> str:
+    """off | shadow | on: the argument if given, else the setting. Never raises."""
+    if explicit in ("off", "shadow", "on"):
+        return explicit
+    try:
+        from agent_friday.services import laya_router_head as lh
+        return lh.configured_mode()
+    except Exception:
+        return "off"
+
+
+def _tier1_head(text: str) -> Route:
+    """Worker thread, mode ``on``: the certified head's decision when it is
+    sure enough, else the prototypes'."""
+    try:
+        from agent_friday.services import laya_router_head as lh
+        r = lh.decide(text)
+        if r is not None:
+            return r
+    except Exception as e:  # noqa: BLE001
+        _log.warning("tool head tier failed: %s", type(e).__name__)
+    return _tier1(text)
+
+
+def _guard_composed(r: Route) -> Route:
+    """No route carries composed text, and no route runs a tool the router
+    does not hold as read-only: either becomes ``defer`` (the deeper mind and
+    the governance gate decide)."""
+    if r.decision == "tool" and (r.tool not in TOOLS or any(k in COMPOSED_ARGS for k in r.args)):
+        return Route("defer", confidence=r.confidence, layer=r.layer, candidates=r.candidates,
+                     handoff="compose_text", reason="composed text is a generator's, not the router's")
+    return r
+
+
+def _place(text: str, point: Optional[Callable] = None, resolver: Optional[Callable] = None) -> Optional[Route]:
+    """Tier 0 for a normalised, non-empty ``text``, in the order that keeps a change from running as a
+    read: a change anywhere in the turn is a ``defer`` before any other rule looks (the read half is
+    never run alone); then Friday's own screen, player and background work; then, for the owner's own
+    words only (``point`` and ``resolver`` are given by ``route(trusted=True)`` and never by the
+    degraded path), the rows the owner pointed at; then the rest of the sealed patterns; then the item
+    resolver. None means only tier 1 could place the turn."""
+    write = _has_write_intent(text) and not _NOT_A_REQUEST.search(text)
+    r = _tier0_actions(text)
+    if r is not None:
+        # Friday's own screen, player and task rules keep every single-clause turn they claimed before
+        # ("cancel the task"). A change in a LATER clause still wins: the first half is never run alone.
+        if write and any(_ACT.search(c) for c in _clauses(text)[1:]):
+            return _tier0_rest(text)
+        return r
+    if write:
+        # A change: the rows the owner pointed at ride along on the defer; nothing else a rung says counts.
+        if point is not None:
+            try:
+                pr = point(text)
+                if pr is not None and pr.decision == "defer":
+                    return pr
+            except Exception as e:  # noqa: BLE001
+                _log.debug("point-and-act skipped: %s", e)
+        return _tier0_rest(text)
+    if point is not None:
+        try:
+            r = point(text)
+        except Exception as e:  # noqa: BLE001
+            _log.debug("point-and-act skipped: %s", e)
+    if r is None:
+        r = _tier0_rest(text)
+    if r is None and resolver is not None:
+        try:
+            r = resolver(text)
+        except Exception as e:  # noqa: BLE001
+            _log.debug("resolver skipped: %s", e)
+    return r
+
+
+def _sealed_rules(text: str, pending_card: Optional[str], last_route: Optional[dict], *,
+                  point: Optional[Callable] = None, resolver: Optional[Callable] = None) -> Optional[Route]:
+    """Tier 0 and the follow-up rules for a normalised ``text``: deterministic, no encoder.
+    ``point`` and ``resolver`` are the trusted rungs (see ``_place``); ``rules_route`` never passes them,
+    so the degraded path does no I/O. None means only tier 1 could place the turn."""
     r = None
     if text and pending_card:
         decision = "approve" if _YES.match(text) else "decline" if _NO.match(text) else None
@@ -877,7 +1184,7 @@ def _sealed_rules(text: str, pending_card: Optional[str], last_route: Optional[d
                       confidence=0.95, layer="rule", label=TOOLS["answer_card"][0],
                       reason="a spoken answer to the waiting card")
     if r is None:
-        r = _tier0(text) if text else Route("no_tool", reason="empty")
+        r = _place(text, point, resolver) if text else Route("no_tool", reason="empty")
     if text and (r is None or r.decision == "no_tool"):
         # A turn that drops its subject is never the speaker's to answer from
         # imagination: the previous turn's tool with the new argument, or, with
@@ -896,8 +1203,9 @@ def rules_route(text: str, *, tools: Optional[Sequence[str]] = None, pending_car
                 last_route: Optional[dict] = None, reason: str = "") -> Route:
     """The sealed rules alone, for a caller whose full ``route`` could not run in
     time (services/laya's degraded path): the same rules ``route`` runs first
-    (stop, a bare yes or no to a waiting card, follow-ups), the same held-tool
-    filter, never the encoder, never a log row. A turn they cannot place is
+    (stop, a bare yes or no to a waiting card, a change anywhere in the turn,
+    follow-ups), the same held-tool filter, never the encoder, never the
+    trusted screen rungs, never a log row. A turn they cannot place is
     ``no_tool`` at layer degraded. Never raises."""
     t0 = time.perf_counter()
     try:
@@ -909,6 +1217,7 @@ def rules_route(text: str, *, tools: Optional[Sequence[str]] = None, pending_car
         if r.tool and held is not None and r.tool not in held:
             r = Route("defer", confidence=r.confidence, layer=r.layer, candidates=r.candidates,
                       reason="%s is not held by this session" % r.tool)
+        r = _guard_composed(r)
     except Exception as e:  # noqa: BLE001
         r = Route("no_tool", layer="degraded", reason="rules unavailable: %s" % type(e).__name__)
     r.elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
@@ -933,39 +1242,70 @@ def _with_profile(profile_id, fn, *args):
         _PROFILE.pid = None
 
 
+def note_learn(text: str, r: Route, surface: str, conversation_id: Optional[str] = None) -> None:
+    """Offer a logged decision to the opt-in correction capture (services/laya_router_learn). Never raises."""
+    try:
+        from agent_friday.services import laya_router_learn as ll
+        ll.note_route(text, r, surface=surface, conversation_id=conversation_id)
+    except Exception:
+        pass
+
+
 def route(text: str, *, tools: Optional[Sequence[str]] = None,
           budget_ms: int = DEFAULT_BUDGET_MS, surface: str = "voice",
           log: bool = True, pending_card: Optional[str] = None,
-          last_route: Optional[dict] = None, trusted: bool = False,
-          conversation_id: Optional[str] = None) -> Route:
+          last_route: Optional[dict] = None,
+          head_mode: Optional[str] = None, conversation_id: Optional[str] = None,
+          trusted: bool = False, quiet: bool = False,
+          stage=_UNSET, pointed=_UNSET) -> Route:
     """Decide for one turn within ``budget_ms``. Never raises.
 
-    ``trusted`` is True only for the owner's own voice on this PC (services/routes/voice
-    ``_owner_voice``): only such a turn is offered to the personal layer
-    (services/laya_personal.note_routed). The signed-in profile whose own phrasings and
-    raised act threshold tier 1 may use is not an argument: ``laya.ask`` sets
-    ``PROFILE_CTX`` for the call, and None is the shipped base alone. Rules (tier 0) never
-    see it.
+    The signed-in profile whose own phrasings and raised act threshold tier 1 may use is not
+    an argument: ``laya.ask`` sets ``PROFILE_CTX`` for the call, and None is the shipped base
+    alone. Rules (tier 0), the screen rungs and the item resolver never see it: a learned
+    phrasing cannot make any of them fire or change what they answer.
 
     ``tools`` is what this session holds; a tool it does not hold is never
     chosen (that request is ``defer``). A slow or missing encoder degrades
     to tier 0 alone; a turn tier 0 cannot place is ``no_tool``, which is the
-    generating model's own turn. ``pending_card`` is the one organize card
+    generating model's own turn. ``head_mode`` overrides the ``laya_tool_head``
+    setting (off | shadow | on). ``pending_card`` is the one organize card
     waiting in this conversation, if exactly one is: a bare yes or no then
     answers it (answer_card still requires the owner's own words, said after
     the card was raised).
+
+    ``trusted`` is True only for the owner's own words on this PC (the local
+    voice path, or a chat line that passed ``reflex_chat.trusted_surface``).
+    Only then are the owner's screen read and the item resolver used: a
+    turn from a channel, a call, the Local API or tainted content never
+    points at rows or opens an item through here. A logged ``trusted`` voice
+    turn is also offered to the personal layer (services/laya_personal.note_routed).
+    ``stage`` and ``pointed`` default to what the pages report; ``quiet`` keeps
+    names out of questions.
     """
     t0 = time.perf_counter()
     text = " ".join(str(text or "").split())
     held = set(tools) if tools is not None else None
-    r = _sealed_rules(text, pending_card, last_route)
+    r = _sealed_rules(text, pending_card, last_route,
+                      point=(lambda t: point_act_route(t, stage=stage, pointed=pointed, quiet=quiet))
+                      if trusted else None,
+                      resolver=_resolver_route if trusted else None)
+    mode = _head_mode(head_mode) if text else "off"
+    decided_by_rule = r is not None
     if r is None:
         try:
             from agent_friday.services import laya2_encoder
-            if not laya2_encoder.is_available():
-                raise RuntimeError("encoder missing")
-            r = _pool().submit(_with_profile, PROFILE_CTX.get(), _tier1, text).result(
-                timeout=max(0.0, budget_ms) / 1000.0)
+            use_head = False
+            if mode == "on":
+                from agent_friday.services import laya_router_head as lh
+                use_head = lh.available()
+            if not use_head and not laya2_encoder.is_available():
+                r = Route("no_tool", layer="degraded",
+                          reason="encoder missing: Laya's reading model is not installed "
+                                 "(Settings > Models)")
+            else:
+                r = _pool().submit(_with_profile, PROFILE_CTX.get(), _tier1_head if use_head else _tier1,
+                                   text).result(timeout=max(0.0, budget_ms) / 1000.0)
         except _FutureTimeout:
             r = Route("no_tool", layer="degraded", reason="encoder over budget")
         except Exception as e:  # noqa: BLE001
@@ -973,9 +1313,18 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
     if r.tool and held is not None and r.tool not in held:
         r = Route("defer", confidence=r.confidence, layer=r.layer, candidates=r.candidates,
                   reason="%s is not held by this session" % r.tool)
+    r = _guard_composed(r)
+    r.intent = work_order_intent(text)
     r.elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    if mode == "shadow" and r.tool != "answer_card":
+        try:
+            from agent_friday.services import laya_router_head as lh
+            lh.shadow(text, r, None if decided_by_rule or r.layer != "laya2" else r, surface)
+        except Exception:
+            pass
     if log:
         _write(text, r, surface)
+        note_learn(text, r, surface, conversation_id)
         try:   # the owner's own voice on this PC only; services/laya_personal decides whether anything is kept
             if trusted:
                 from agent_friday.services import laya_personal
@@ -1013,6 +1362,14 @@ def receipt(r: Route) -> dict:
             "tool": r.tool, "confidence": r.confidence,
             "runner_up": (r.candidates[1] if len(r.candidates) > 1 else None),
             "elapsed_ms": r.elapsed_ms}
+
+
+def surface_receipt(r: Route, *, ran: Optional[str] = None,
+                    handed_to: Optional[str] = None) -> dict:
+    """The receipt every surface carries for a routed turn: ``receipt`` plus
+    the tool that actually ran and where a deferred request went. Voice and
+    chat build theirs here, so the two cannot drift apart."""
+    return dict(receipt(r), ran=ran, handed_to=handed_to)
 
 
 def log_path() -> Path:

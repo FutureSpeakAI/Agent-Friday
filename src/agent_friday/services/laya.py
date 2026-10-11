@@ -357,7 +357,7 @@ def _answer(value, p=None, set_=None, abstain=False) -> dict:
             "set": set_, "abstain": bool(abstain)}
 
 
-_ROUTER_LAYER = {"rule": "rule", "none": "rule", "degraded": "degraded"}
+_ROUTER_LAYER = {"rule": "rule", "none": "rule", "degraded": "degraded", "point_act": "rule", "resolver": "rule"}
 _DECISION_VERDICT = {"tool": "act", "no_tool": "no_tool", "ask": "ask", "defer": "defer"}
 
 
@@ -424,6 +424,7 @@ def _preset_route(ctx: Ctx, spec: dict) -> dict:
         def _commit():
             if want_log:
                 laya_router._write(ctx.text, r, surface, at=at)
+                laya_router.note_learn(ctx.text, r, surface, cid)
             if owner_turn:
                 # The owner's own voice on this PC only (route_turn's `trusted`); services/laya_personal
                 # decides whether anything is kept. Only for an answer that was used, off the turn's thread.
