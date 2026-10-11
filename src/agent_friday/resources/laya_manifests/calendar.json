@@ -1,0 +1,225 @@
+{
+ "schema": 1,
+ "id": "calendar",
+ "label": "Calendar",
+ "group": "life",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": ["date", "view", "meeting_id", "event"], "sections": ["meetings"]},
+ "objects": [
+  {
+   "kind": "event",
+   "stage_workspace": "calendar",
+   "noun": "events",
+   "ref_template": "event:{id}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (domList over fridayRow)",
+    "facets": ["all_day", "has_guests", "kind", "recurring", "when"],
+    "filters": {},
+    "fields": ["quickadd", "followup.{part}"],
+    "selectable": true,
+    "privacy": "titles"
+   },
+   "open": {"tool": "navigate_to", "kind": "calendar", "args": {"id": "{id}"}, "row_level": true},
+   "resolver": {"source": "calendar"}
+  }
+ ],
+ "verbs": [
+  {
+   "id": "calendar.view",
+   "action": "calendar.view",
+   "group": "read",
+   "ui": {"control": "view day / week / agenda"},
+   "tool": "query_calendar",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["what's on my calendar this afternoon", "do I have anything tomorrow morning"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["laya_router_eval.json#What's on my calendar this afternoon?"]
+  },
+  {
+   "id": "calendar.open_event",
+   "action": "calendar.open_event",
+   "group": "navigate",
+   "ui": {"control": "open event / pick day"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open the second event", "open that meeting"],
+   "deictic": ["ordinal", "these", "description"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["point_act_eval.json#s57-01"]
+  },
+  {
+   "id": "calendar.select_events",
+   "action": "calendar.select_events",
+   "group": "select",
+   "ui": {"control": "tick events"},
+   "tool": "screen_select",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["select these events", "tick the first two"],
+   "deictic": ["these", "ordinal", "facet"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["point_act_eval.json#s57-02"]
+  },
+  {
+   "id": "calendar.quick_add",
+   "action": "calendar.quick_add",
+   "group": "create",
+   "ui": {"control": "quick add event"},
+   "tool": "create_calendar_event",
+   "also_tools": [],
+   "gate": {"class": "outward", "ring": 2, "card": "required"},
+   "laya_tier": "model_only",
+   "phrasings": ["put lunch with Sam on my calendar for Tuesday"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "calendar.meeting_prep",
+   "action": "calendar.meeting_prep",
+   "group": "create",
+   "ui": {"control": "generate meeting prep"},
+   "tool": "annotate_calendar_events",
+   "also_tools": [],
+   "gate": {"class": "outward", "ring": 2, "card": "required"},
+   "laya_tier": "model_only",
+   "phrasings": ["get me ready for my next meeting"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "calendar.follow_up_draft",
+   "action": "calendar.follow_up_draft",
+   "group": "create",
+   "ui": {"control": "draft thank-you / follow-up"},
+   "tool": "draft_email",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["draft a thank-you to everyone from that meeting"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "calendar.action_items",
+   "action": "calendar.action_items",
+   "group": "create",
+   "ui": {"control": "add action items to Tasks"},
+   "tool": "create_task",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["add those action items to my tasks"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "calendar.move_event",
+   "action": "calendar.move_event",
+   "group": "organize",
+   "ui": {"control": "move / shift event"},
+   "tool": "organize_calendar",
+   "also_tools": ["update_calendar_event"],
+   "gate": {"class": "self_gated", "ring": 1, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["move my three o'clock to four"],
+   "deictic": [],
+   "undo": {"fn": "item_actions.undo_calendar", "via": "undo_action"},
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "calendar.day_notes",
+   "trigger": "button",
+   "model_class": "fast",
+   "helper": "visible_job",
+   "task_kind": "calendar_notes",
+   "activity_label": "Calendar day notes",
+   "entry": "agent_friday.services.calendar_engine:_day_annotation"
+  },
+  {
+   "id": "calendar.meeting_prep",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "meeting_prep",
+   "activity_label": "Meeting prep",
+   "entry": "agent_friday.routes.calendar:api_calendar_prep"
+  },
+  {
+   "id": "calendar.quick_add",
+   "trigger": "button",
+   "model_class": "fast",
+   "helper": "visible_job",
+   "task_kind": "calendar_quick_add",
+   "activity_label": "Quick add event",
+   "entry": "agent_friday.routes.calendar:api_calendar_quick_add"
+  },
+  {
+   "id": "calendar.meeting_transcript",
+   "trigger": "button",
+   "model_class": "speech",
+   "helper": "visible_job",
+   "task_kind": "meeting_transcript",
+   "activity_label": "Meeting transcript",
+   "entry": "agent_friday.services.meeting_capture:_default_transcriber"
+  },
+  {
+   "id": "calendar.meeting_notes",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "meeting_notes",
+   "activity_label": "Meeting notes",
+   "entry": "agent_friday.services.meeting_capture:_default_notes_call"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "calendar.meeting_notes",
+   "kind": "gap",
+   "reason": "No tool reads a meeting transcript or its notes.",
+   "wave": "WS-2"
+  },
+  {
+   "action": "calendar.record_meeting",
+   "kind": "by_design",
+   "reason": "Recording turns the microphone on, so the owner presses it themselves."
+  },
+  {
+   "action": "calendar.delete_event",
+   "kind": "gap",
+   "reason": "No delete-event tool; a write, so it waits for the safe-writes review.",
+   "wave": "WS-2"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

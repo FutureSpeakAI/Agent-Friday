@@ -1,0 +1,67 @@
+{
+ "schema": 1,
+ "id": "finance",
+ "label": "Finance",
+ "group": "life",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": [], "sections": []},
+ "objects": [
+  {
+   "kind": "fin",
+   "stage_workspace": "finance",
+   "noun": "records",
+   "ref_template": "fin:{pos|perk}-{n}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (domList, counts only)",
+    "facets": ["kind"],
+    "filters": {},
+    "fields": [],
+    "selectable": false,
+    "privacy": "counts_only"
+   },
+   "open": {"tool": null, "none_because": "no row-level target yet (WS-2/WS-3)", "gap": true, "wave": "WS-2/WS-3"},
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "finance.switch_section",
+   "action": "finance.switch_section",
+   "group": "navigate",
+   "ui": {"control": "switch section"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open finance"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [],
+ "not_for_laya": [
+  {
+   "action": "finance.view",
+   "kind": "gap",
+   "reason": "Counts-only stage by design; a privacy-preserving read verb is planned.",
+   "wave": "WS-4"
+  },
+  {
+   "action": "finance.refresh",
+   "kind": "gap",
+   "reason": "No tool refreshes the figures; a counts-only read is planned.",
+   "wave": "WS-4"
+  },
+  {
+   "action": "finance.transfer",
+   "kind": "by_design",
+   "reason": "Money stays with the owner: Friday never sends a transfer or claims a grant."
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

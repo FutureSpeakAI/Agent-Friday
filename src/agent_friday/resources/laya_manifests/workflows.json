@@ -1,0 +1,167 @@
+{
+ "schema": 1,
+ "id": "workflows",
+ "label": "Workflows",
+ "group": "system",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": ["project_id", "slug"], "sections": []},
+ "objects": [
+  {
+   "kind": "wf",
+   "stage_workspace": "workflows",
+   "noun": "workflows",
+   "ref_template": "wf:{slug}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (domList over fridayRow)",
+    "facets": ["scheduled", "status", "steps"],
+    "filters": {},
+    "fields": ["compose", "name", "description", "step.{n}.prompt"],
+    "selectable": false,
+    "privacy": "titles"
+   },
+   "open": {"tool": null, "none_because": "no row-level target yet (WS-2/WS-3)", "gap": true, "wave": "WS-2/WS-3"},
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "workflows.list_progress",
+   "action": "workflows.list_progress",
+   "group": "read",
+   "ui": {"control": "list / view progress"},
+   "tool": "workflow_action",
+   "also_tools": ["workflow_status"],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["what workflows do I have", "how is the nightly one going"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "workflows.create_edit",
+   "action": "workflows.create_edit",
+   "group": "create",
+   "ui": {"control": "create / draft / edit / save"},
+   "tool": "workflow_action",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["make a workflow that summarizes my mail each morning"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "workflows.run_retry",
+   "action": "workflows.run_retry",
+   "group": "create",
+   "ui": {"control": "run / retry delivery"},
+   "tool": "run_workflow",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["run the weekly review now"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "workflows.stop_run",
+   "action": "workflows.stop_run",
+   "group": "organize",
+   "ui": {"control": "stop run"},
+   "tool": "task_control",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["stop the workflow"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_task_control_tool.py::test_stop_with_no_target_stops_the_running_workflow"]
+  },
+  {
+   "id": "workflows.delete_pause_resume",
+   "action": "workflows.delete_pause_resume",
+   "group": "organize",
+   "ui": {"control": "delete / pause / resume"},
+   "tool": "workflow_action",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["pause the nightly workflow"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "workflows.schedule",
+   "action": "workflows.schedule",
+   "group": "settings",
+   "ui": {"control": "schedule / notifications"},
+   "tool": "workflow_action",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["run that every Monday at nine"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "workflows.goal_milestone",
+   "trigger": "schedule",
+   "also": ["button"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "goal_milestone",
+   "activity_label": "Goal milestone",
+   "entry": "agent_friday.services.goals:run_milestone",
+   "schedule_ref": "goal_milestones_tick"
+  },
+  {
+   "id": "workflows.work_queue",
+   "trigger": "button",
+   "also": ["idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "work_queue",
+   "activity_label": "Queued work",
+   "entry": "agent_friday.routes.work_plan:_runner"
+  },
+  {
+   "id": "workflows.away_drain",
+   "trigger": "idle",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "away_drain",
+   "activity_label": "Queued background item",
+   "entry": "agent_friday.services.scheduler:_drain_runner"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "workflows.open_workflow",
+   "kind": "gap",
+   "reason": "A workflow row has no row-level open target yet, only the Workflows workspace.",
+   "wave": "WS-2"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": ["on_demand"]}
+}

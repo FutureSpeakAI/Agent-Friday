@@ -1,0 +1,115 @@
+{
+ "schema": 1,
+ "id": "contacts",
+ "label": "People",
+ "group": "work",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": ["name"], "sections": []},
+ "objects": [
+  {
+   "kind": "person",
+   "stage_workspace": "contacts",
+   "noun": "people",
+   "ref_template": "person:{name}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (domList over fridayRow)",
+    "facets": ["has_follow_up", "kind"],
+    "filters": {},
+    "fields": [],
+    "selectable": false,
+    "privacy": "titles"
+   },
+   "open": {"tool": "navigate_to", "kind": "contact", "args": {"id": "{name}"}, "row_level": true},
+   "resolver": {"source": "contact"}
+  }
+ ],
+ "verbs": [
+  {
+   "id": "contacts.lookup",
+   "action": "contacts.lookup",
+   "group": "read",
+   "ui": {"control": "list / detail / timeline"},
+   "tool": "search_contacts",
+   "also_tools": ["person_timeline", "people_at"],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["what do I know about Dana"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "contacts.open_person",
+   "action": "contacts.open_person",
+   "group": "navigate",
+   "ui": {"control": "open person"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open the first person", "open Dana's card"],
+   "deictic": ["ordinal", "these", "description"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_point_act.py::test_open_and_select_become_tool_routes_with_the_exact_rows"]
+  },
+  {
+   "id": "contacts.follow_up",
+   "action": "contacts.follow_up",
+   "group": "create",
+   "ui": {"control": "set follow-up"},
+   "tool": "set_follow_up",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["remind me to follow up with Dana next week"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "contacts.save_google",
+   "action": "contacts.save_google",
+   "group": "create",
+   "ui": {"control": "save to Google"},
+   "tool": "save_google_contact",
+   "also_tools": [],
+   "gate": {"class": "outward", "ring": 2, "card": "required"},
+   "laya_tier": "model_only",
+   "phrasings": ["save Dana to my Google contacts"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [],
+ "not_for_laya": [
+  {"action": "contacts.select_people", "kind": "gap", "reason": "People rows cannot be ticked yet.", "wave": "WS-3"},
+  {
+   "action": "contacts.import_sync",
+   "kind": "by_design",
+   "reason": "Importing from another service is an account step the owner does themselves."
+  },
+  {
+   "action": "contacts.forget_person",
+   "kind": "gap",
+   "reason": "Deleting a person is a write; it waits for the safe-writes review.",
+   "wave": "WS-3"
+  },
+  {
+   "action": "contacts.relationship_config",
+   "kind": "by_design",
+   "reason": "Connecting an account or changing relationship memory is owner-only."
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

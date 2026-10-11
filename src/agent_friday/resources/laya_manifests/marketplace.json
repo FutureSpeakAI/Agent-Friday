@@ -1,0 +1,34 @@
+{
+ "schema": 1,
+ "id": "marketplace",
+ "label": "Marketplace",
+ "group": "system",
+ "held": "federation",
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": [], "sections": []},
+ "objects": [],
+ "verbs": [],
+ "jobs": [],
+ "not_for_laya": [
+  {
+   "action": "marketplace.browse",
+   "kind": "gap",
+   "reason": "Marketplace is held and has no stage or tool yet.",
+   "wave": "WS-4"
+  },
+  {
+   "action": "marketplace.publish",
+   "kind": "by_design",
+   "reason": "Publishing a listing reaches other people; it is the owner's own action."
+  },
+  {"action": "marketplace.buy", "kind": "by_design", "reason": "Money stays with the owner: Friday never buys."},
+  {
+   "action": "marketplace.remove_listing",
+   "kind": "gap",
+   "reason": "Marketplace is held and has no stage or tool yet.",
+   "wave": "WS-4"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

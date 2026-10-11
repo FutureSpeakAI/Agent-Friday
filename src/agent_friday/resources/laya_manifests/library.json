@@ -1,0 +1,177 @@
+{
+ "schema": 1,
+ "id": "library",
+ "label": "Library",
+ "group": "work",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {
+  "key": "view",
+  "keys": ["view", "lib", "q", "libdoc", "libblock", "root", "path", "file"],
+  "sections": ["pc", "list", "shelves"]
+ },
+ "objects": [
+  {
+   "kind": "lib",
+   "stage_workspace": "library",
+   "noun": "documents",
+   "ref_template": "lib:{id}",
+   "see_touch": {
+    "publisher": "static/library_ws.js",
+    "facets": ["folder", "kind", "tracked"],
+    "filters": {"folder": null},
+    "fields": [],
+    "selectable": true,
+    "privacy": "titles"
+   },
+   "open": {"tool": null, "none_because": "no row-level target yet (WS-2/WS-3)", "gap": true, "wave": "WS-2/WS-3"},
+   "resolver": {"source": "library"}
+  },
+  {
+   "kind": "file",
+   "stage_workspace": "files",
+   "noun": "files",
+   "ref_template": "file:{root}:{path}",
+   "see_touch": {
+    "publisher": "static/studio_files3d.js (the 3D file browser)",
+    "facets": ["dir", "ext", "kind"],
+    "filters": {},
+    "fields": [],
+    "selectable": true,
+    "privacy": "titles"
+   },
+   "open": {"tool": "navigate_to", "kind": "file", "args": {"id": "{root}:{path}"}, "row_level": true},
+   "resolver": {"source": "file"}
+  }
+ ],
+ "verbs": [
+  {
+   "id": "library.search",
+   "action": "library.search",
+   "group": "read",
+   "ui": {"control": "search / ask library"},
+   "tool": "search_library",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["what does my lease say about pets"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "library.open_document",
+   "action": "library.open_document",
+   "group": "navigate",
+   "ui": {"control": "open document"},
+   "tool": "library_show",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open the lease document", "show me the tax guide"],
+   "deictic": ["description"],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_laya_resolver.py::test_the_only_full_match_opens_without_a_choice"]
+  },
+  {
+   "id": "library.select_documents",
+   "action": "library.select_documents",
+   "group": "select",
+   "ui": {"control": "tick documents"},
+   "tool": "screen_select",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["select these documents", "tick the first two"],
+   "deictic": ["these", "ordinal", "facet"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["point_act_eval.json#s53-01"]
+  },
+  {
+   "id": "library.add",
+   "action": "library.add",
+   "group": "create",
+   "ui": {"control": "add folder / file"},
+   "tool": "file_access",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["add my taxes folder to the library"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "library.show_3d",
+   "action": "library.show_3d",
+   "group": "read",
+   "ui": {"control": "show in 3D"},
+   "tool": "show_files_3d",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["show my library on the shelves"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "library.search",
+   "trigger": "button",
+   "also": ["laya", "voice"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "library_search",
+   "activity_label": "Library search",
+   "entry": "agent_friday.routes.library:lib_search.stream"
+  },
+  {
+   "id": "library.question",
+   "trigger": "button",
+   "also": ["laya", "voice"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "kg_question",
+   "activity_label": "Knowledge graph question",
+   "entry": "agent_friday.services.knowledge_graph.retrieval:global_search"
+  },
+  {
+   "id": "library.research",
+   "trigger": "button",
+   "also": ["voice"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "research",
+   "activity_label": "Deep research",
+   "entry": "agent_friday.services.research:run"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "library.remove_forget",
+   "kind": "by_design",
+   "reason": "Removing or forgetting a document is the owner's own click on the Library page."
+  },
+  {"action": "library.shelf", "kind": "by_design", "reason": "Shelving is the owner's own click on the Library page."},
+  {
+   "action": "library.tracked_reindex",
+   "kind": "gap",
+   "reason": "No tool tracks a folder or rebuilds the index.",
+   "wave": "WS-2"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": ["on_demand"]}
+}

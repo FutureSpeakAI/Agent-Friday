@@ -1,0 +1,363 @@
+{
+ "schema": 1,
+ "id": "media",
+ "label": "Media",
+ "group": "work",
+ "held": null,
+ "spoken_words": {"router_extra": ["studio", "podcast", "podcasts"]},
+ "nav": {
+  "key": "view",
+  "keys": ["view", "card", "q", "kind", "project", "default_view", "status"],
+  "sections": ["library", "board", "calendar", "card"]
+ },
+ "objects": [
+  {
+   "kind": "media",
+   "stage_workspace": "media",
+   "noun": "cards",
+   "ref_template": "media:{id}",
+   "see_touch": {
+    "publisher": "static/media_ws.js",
+    "facets": ["kind", "origin", "privacy", "project", "status"],
+    "filters": {"status": ["draft", "idea", "published", "review", "scheduled"], "kind": null, "project": null, "q": null},
+    "fields": [],
+    "selectable": true,
+    "privacy": "titles"
+   },
+   "open": {"tool": "navigate_to", "kind": "card", "args": {"id": "{id}"}, "row_level": true},
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "media.browse",
+   "action": "media.browse",
+   "group": "read",
+   "ui": {"control": "browse / views / group / sort"},
+   "tool": "media_cards",
+   "also_tools": ["screen_select"],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["show me my drafts", "what did I make this week"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "media.quick_look",
+   "action": "media.quick_look",
+   "group": "read",
+   "ui": {"control": "quick look / play"},
+   "tool": "media_play",
+   "also_tools": ["media_show"],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["play the last thing I made"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"]
+  },
+  {
+   "id": "media.open_card",
+   "action": "media.open_card",
+   "group": "navigate",
+   "ui": {"control": "open card"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open the second card", "open that one"],
+   "deictic": ["ordinal", "these", "facet", "description"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["point_act_eval.json#s41-01"]
+  },
+  {
+   "id": "media.select_cards",
+   "action": "media.select_cards",
+   "group": "select",
+   "ui": {"control": "tick cards"},
+   "tool": "screen_select",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["select these cards", "tick the drafts"],
+   "deictic": ["these", "ordinal", "facet"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["point_act_eval.json#s41-02"]
+  },
+  {
+   "id": "media.favourite",
+   "action": "media.favourite",
+   "group": "organize",
+   "ui": {"control": "favourite"},
+   "tool": "organize_media",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 1, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["star these"],
+   "deictic": ["these", "ordinal", "facet"],
+   "undo": {"fn": "item_actions.undo_media", "via": "undo_action"},
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_point_act.py::test_every_change_is_a_defer_that_carries_the_rows_and_names_no_tool"]
+  },
+  {
+   "id": "media.tag_move",
+   "action": "media.tag_move",
+   "group": "organize",
+   "ui": {"control": "tag / move to project"},
+   "tool": "organize_media",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 1, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["tag these as holiday", "move these to the garden project"],
+   "deictic": ["these", "ordinal", "facet"],
+   "undo": {"fn": "item_actions.undo_media", "via": "undo_action"},
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_point_act.py::test_a_change_s_intent_and_destination_come_from_the_owner_s_words"]
+  },
+  {
+   "id": "media.new_card",
+   "action": "media.new_card",
+   "group": "create",
+   "ui": {"control": "new card / project"},
+   "tool": "creative_project",
+   "also_tools": ["start_creative_pipeline"],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["start a new project called garden"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "media.turn_into",
+   "action": "media.turn_into",
+   "group": "create",
+   "ui": {"control": "turn into..."},
+   "tool": "media_turn",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["turn this into a podcast"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "media.schedule_publish",
+   "action": "media.schedule_publish",
+   "group": "create",
+   "ui": {"control": "schedule / publish"},
+   "tool": "content_schedule_post",
+   "also_tools": [],
+   "gate": {"class": "outward", "ring": 2, "card": "required"},
+   "laya_tier": "model_only",
+   "phrasings": ["schedule that post for Friday"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "media.image",
+   "trigger": "button",
+   "model_class": "image",
+   "helper": "visible_job",
+   "task_kind": "studio_image",
+   "activity_label": "Image",
+   "entry": "agent_friday.routes.creations:create_image"
+  },
+  {
+   "id": "media.text",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "studio_text",
+   "activity_label": "Studio text",
+   "entry": "agent_friday.routes.creations:create_text"
+  },
+  {
+   "id": "media.code_art",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "studio_code_art",
+   "activity_label": "Code art",
+   "entry": "agent_friday.routes.creations:create_code_art"
+  },
+  {
+   "id": "media.poem",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "studio_poem",
+   "activity_label": "Poem",
+   "entry": "agent_friday.routes.creations:create_poem"
+  },
+  {
+   "id": "media.video",
+   "trigger": "button",
+   "model_class": "image",
+   "helper": "visible_job",
+   "task_kind": "studio_video",
+   "activity_label": "Video",
+   "entry": "agent_friday.routes.creations:create_video"
+  },
+  {
+   "id": "media.daily_creation",
+   "trigger": "schedule",
+   "also": ["button", "idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "daily_creation",
+   "activity_label": "Daily creation",
+   "entry": "agent_friday.services.creations:generate_daily_creation",
+   "schedule_ref": "daily_creation"
+  },
+  {
+   "id": "media.takes_images",
+   "trigger": "button",
+   "model_class": "image",
+   "helper": "visible_job",
+   "task_kind": "takes_images",
+   "activity_label": "Comparing image takes",
+   "entry": "agent_friday.routes.creative_pipeline:takes_images"
+  },
+  {
+   "id": "media.takes_text",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "takes_text",
+   "activity_label": "Comparing text takes",
+   "entry": "agent_friday.routes.creative_pipeline:takes_text"
+  },
+  {
+   "id": "media.pipeline",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "pipeline",
+   "activity_label": "Creative pipeline",
+   "entry": "agent_friday.services.creative_pipeline:run"
+  },
+  {
+   "id": "media.quality_check",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "qa_check",
+   "activity_label": "Quality check",
+   "entry": "agent_friday.services.qa_gates:evaluate_text"
+  },
+  {
+   "id": "media.transcribe",
+   "trigger": "button",
+   "also": ["idle"],
+   "model_class": "speech",
+   "helper": "visible_job",
+   "task_kind": "transcribe",
+   "activity_label": "Transcribing audio",
+   "entry": "agent_friday.services.media_transcripts:_run_whisper"
+  },
+  {
+   "id": "media.podcast",
+   "trigger": "button",
+   "also": ["laya", "voice"],
+   "model_class": "speech",
+   "helper": "visible_job",
+   "task_kind": "podcast",
+   "activity_label": "Podcast episode",
+   "entry": "agent_friday.services.podcast_engine:produce"
+  },
+  {
+   "id": "media.content_draft",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "content_draft",
+   "activity_label": "Content draft",
+   "entry": "agent_friday.routes.workflows:content_draft"
+  },
+  {
+   "id": "media.content_adapt",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "content_adapt",
+   "activity_label": "Adapting a post",
+   "entry": "agent_friday.services.content_composer:adapt"
+  },
+  {
+   "id": "media.content_preview",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "content_preview",
+   "activity_label": "Post preview",
+   "entry": "agent_friday.services.content_composer:preview"
+  },
+  {
+   "id": "media.content_convert",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "content_convert",
+   "activity_label": "Converting a post",
+   "entry": "agent_friday.services.content_composer:convert_format"
+  },
+  {
+   "id": "media.presentation",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "presentation",
+   "activity_label": "Building a presentation",
+   "entry": "agent_friday.services.showcase_engine:generate_presentation"
+  },
+  {
+   "id": "media.website",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "website",
+   "activity_label": "Building a website",
+   "entry": "agent_friday.services.showcase_engine:generate_website"
+  }
+ ],
+ "not_for_laya": [
+  {"action": "media.change_status", "kind": "gap", "reason": "No tool changes a card's status.", "wave": "WS-2"},
+  {
+   "action": "media.trash_tidy",
+   "kind": "gap",
+   "reason": "organize_media has no trash or tidy action yet.",
+   "wave": "WS-2"
+  },
+  {"action": "media.save_view", "kind": "gap", "reason": "No tool saves a view or a collection.", "wave": "WS-2"},
+  {
+   "action": "media.export",
+   "kind": "gap",
+   "reason": "Only the generic open_path reaches an export or a folder.",
+   "wave": "WS-2"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": "media", "pools": []}
+}

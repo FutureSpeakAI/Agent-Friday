@@ -1,0 +1,103 @@
+{
+ "schema": 1,
+ "id": "crew",
+ "label": "Crew",
+ "group": "work",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": [], "sections": []},
+ "objects": [],
+ "verbs": [
+  {
+   "id": "crew.roster",
+   "action": "crew.roster",
+   "group": "read",
+   "ui": {"control": "roster / status / current work"},
+   "tool": "list_crew",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["who is on my crew", "what is the crew working on"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "crew.new_agent",
+   "action": "crew.new_agent",
+   "group": "create",
+   "ui": {"control": "new agent"},
+   "tool": "propose_crew_agent",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["add a researcher to my crew"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "crew.hand_off",
+   "action": "crew.hand_off",
+   "group": "create",
+   "ui": {"control": "hand off / ask / steer"},
+   "tool": "ask_crew",
+   "also_tools": ["steer_crew"],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["ask the researcher to look into that"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "crew.voice_room",
+   "action": "crew.voice_room",
+   "group": "create",
+   "ui": {"control": "start / stop voice room"},
+   "tool": "talk_crew",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["start a room with my crew"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "crew.turn",
+   "trigger": "button",
+   "also": ["laya", "voice"],
+   "model_class": "brain",
+   "helper": "task",
+   "activity_label": "A crew agent at work",
+   "entry": "agent_friday.services.crew_runtime:_run"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "crew.retire_edit",
+   "kind": "gap",
+   "reason": "Retiring an agent or editing its permissions changes its authority; it waits for the safe-writes review.",
+   "wave": "WS-3"
+  },
+  {
+   "action": "crew.open_chat",
+   "kind": "gap",
+   "reason": "Crew has no stage and no deep link to a chat yet.",
+   "wave": "WS-3"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

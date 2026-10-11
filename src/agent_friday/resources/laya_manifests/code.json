@@ -1,0 +1,140 @@
+{
+ "schema": 1,
+ "id": "code",
+ "label": "Code",
+ "group": "work",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {
+  "key": "tab",
+  "keys": ["tab", "codebase_id", "path"],
+  "sections": ["understand", "files", "changes", "preview", "terminal"]
+ },
+ "objects": [
+  {
+   "kind": "convo",
+   "stage_workspace": "chat",
+   "noun": "chats",
+   "ref_template": "convo:{id}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (the chat sidebar, selectable)",
+    "facets": ["age_h", "archived", "pinned", "project"],
+    "filters": {},
+    "fields": [],
+    "selectable": true,
+    "privacy": "titles"
+   },
+   "open": {"tool": null, "none_because": "A chat opens from its sidebar row; the desktop has no deep link to a chat yet."},
+   "resolver": null,
+   "todo": "WS-3 decides where the chat list lives; it is not a registry workspace, so it rides with code for now."
+  }
+ ],
+ "verbs": [
+  {
+   "id": "code.read_repo",
+   "action": "code.read_repo",
+   "group": "read",
+   "ui": {"control": "repos / diff / processes"},
+   "tool": "codebase_read",
+   "also_tools": ["codebase_understand"],
+   "gate": {"class": "by_argument", "ring": 0, "card": "by_argument"},
+   "laya_tier": "model_only",
+   "phrasings": ["what changed in the repo"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "code.open_repo",
+   "action": "code.open_repo",
+   "group": "navigate",
+   "ui": {"control": "open repo / tab / file"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open the changes tab"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "code.edit_run",
+   "action": "code.edit_run",
+   "group": "create",
+   "ui": {"control": "edit / run / launch agent"},
+   "tool": "codebase_edit",
+   "also_tools": ["codebase_run", "codebase_agent"],
+   "gate": {"class": "by_argument", "ring": 1, "card": "by_argument"},
+   "laya_tier": "model_only",
+   "phrasings": ["fix that bug in the parser"],
+   "deictic": [],
+   "undo": {"fn": "codebase_undo", "via": "self"},
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "code.open_pr",
+   "action": "code.open_pr",
+   "group": "create",
+   "ui": {"control": "open pull request"},
+   "tool": "run_command",
+   "also_tools": [],
+   "gate": {"class": "by_argument", "ring": 2, "card": "by_argument"},
+   "laya_tier": "model_only",
+   "phrasings": ["open a pull request"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "code.undo_edit",
+   "action": "code.undo_edit",
+   "group": "organize",
+   "ui": {"control": "undo edit"},
+   "tool": "codebase_undo",
+   "also_tools": [],
+   "gate": {"class": "by_argument", "ring": 1, "card": "by_argument"},
+   "laya_tier": "model_only",
+   "phrasings": ["undo that edit"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "code.plan",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "code_plan",
+   "activity_label": "Code plan",
+   "entry": "agent_friday.routes.code:code_plan"
+  },
+  {
+   "id": "code.worker",
+   "trigger": "button",
+   "also": ["laya", "voice"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "worker",
+   "activity_label": "Coding worker",
+   "entry": "agent_friday.services.worker_adapters.claude_code_adapter:ClaudeCodeAdapter._run"
+  }
+ ],
+ "not_for_laya": [
+  {"action": "code.kill_process", "kind": "gap", "reason": "No tool stops a running process by name.", "wave": "WS-3"}
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": ["hub"]}
+}

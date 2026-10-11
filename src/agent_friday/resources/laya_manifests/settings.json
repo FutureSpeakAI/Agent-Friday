@@ -1,0 +1,126 @@
+{
+ "schema": 1,
+ "id": "settings",
+ "label": "Settings",
+ "group": "system",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": "tab", "keys": ["tab", "section", "row"], "sections": null},
+ "objects": [],
+ "verbs": [
+  {
+   "id": "settings.open_section",
+   "action": "settings.open_section",
+   "group": "navigate",
+   "ui": {"control": "open section"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open the privacy settings"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "settings.toggle_setting",
+   "action": "settings.toggle_setting",
+   "group": "settings",
+   "ui": {"control": "toggle / set a setting"},
+   "tool": "set_setting",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["turn off the morning briefing"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "settings.model_provider",
+   "action": "settings.model_provider",
+   "group": "settings",
+   "ui": {"control": "model / provider"},
+   "tool": "switch_model",
+   "also_tools": ["local_model_status"],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["switch to the local model"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "settings.voice_pace",
+   "action": "settings.voice_pace",
+   "group": "settings",
+   "ui": {"control": "voice pace / depth"},
+   "tool": "voice_preferences",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["speak a little slower", "keep it brief"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"]
+  },
+  {
+   "id": "settings.cards_layout",
+   "action": "settings.cards_layout",
+   "group": "settings",
+   "ui": {"control": "Hide cards / Show cards (Simple desktop)"},
+   "tool": "set_chat_tray",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["hide the cards", "show the cards"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_simple_cards.py::test_the_router_hides_and_shows_the_cards_through_the_chat_tray_tool"]
+  }
+ ],
+ "jobs": [
+  {
+   "id": "settings.seat_gate",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "seat_gate",
+   "activity_label": "Seat conformance check",
+   "entry": "agent_friday.services.model_seat_gate:run_conformance_gate"
+  },
+  {
+   "id": "settings.persona_eval",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "persona_eval",
+   "activity_label": "Persona evaluation",
+   "entry": "agent_friday.services.persona_eval:run_live_eval"
+  },
+  {
+   "id": "settings.channel_reply",
+   "trigger": "idle",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "channel_reply",
+   "activity_label": "Channel reply",
+   "entry": "agent_friday.services.channels.manager:handle_incoming"
+  }
+ ],
+ "not_for_laya": [
+  {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."}
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": "settings", "pools": []}
+}
