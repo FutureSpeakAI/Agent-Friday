@@ -451,23 +451,32 @@ def blocked_reason(profile: Optional[str] = None) -> str:
     return ""
 
 
+def _sweep() -> None:
+    """Old items age out whether or not learning is on. Deletion only: no rebuild, no embedding."""
+    try:
+        lp.enforce_retention(lp.current_profile() or lp.OWNER_PROFILE)
+    except Exception as e:  # noqa: BLE001
+        _log.debug("retention sweep skipped: %s", type(e).__name__)
+
+
 def run_scheduled() -> dict:
     """The scheduler built-in. A visible job (services/visible_jobs, kind ``laya_personal_refit``): the
     Activity lane, the Local AI queue chip and the task card name it, its steps and its place in line.
     It waits (SkippedRun) rather than fails when a condition does not hold, and opens no card for a run
     that is not going to happen."""
-    try:
-        lp.enforce_retention(lp.current_profile())      # old items age out whether or not learning is on
-    except Exception as e:  # noqa: BLE001
-        _log.debug("retention sweep skipped: %s", type(e).__name__)
+    # The presence, AC-power, vault and learning checks come FIRST. Old items still age out when they
+    # fail, but that is only a deletion (never a rebuild, never the reading model), so a locked,
+    # unattended or on-battery PC does nothing but delete.
     why = blocked_reason()
     if why:
+        _sweep()
         _skip("Laya's personal refit waits: " + why + ".")
         return {"status": "waiting", "why": why}
     from agent_friday.services import background_gate as bg
     from agent_friday.services.visible_jobs import note_inference, visible_job
     with visible_job("Learning from your corrections", kind="laya_personal_refit", workspace="settings",
                      deferrable=True, key=JOB_REF, label=JOB_LABEL):
+        _sweep()
         # The reading model is the CPU encoder Laya already shares: no GPU, no model seat.
         note_inference(JOB_MODEL, local=True)
         try:

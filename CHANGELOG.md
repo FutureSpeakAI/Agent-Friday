@@ -18,8 +18,10 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 - **What Laya learns about you** (on by default; Settings > Privacy & Data).
   When you correct her, or answer a question she asks, in a local voice call on
   this PC, she keeps those words, sealed in your vault on this PC, and learns your
-  phrasing. Nothing said on a paired phone, through a relay, in a cloud voice call
-  or in a delegated task teaches her. A new phrasing must pass a collision check
+  phrasing. She goes by the voice connection on this PC, not by speaker (turn on room
+  mode when others or a TV are heard). Nothing said on a paired phone, through a
+  relay, in a cloud voice call or in a delegated task teaches her, and nothing
+  typed is learned. A new phrasing must pass a collision check
   and a re-score of her shipped test questions and of your own earlier answers
   before she uses it; if anything she got right would turn wrong, she turns it
   down and says why. Her confidence is retuned from your labels as a visible
@@ -36,7 +38,10 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   "reset", "go back to how you were last week") come with it. Loosening a
   threshold is yours alone, per head, by a card you click on screen. Corrections
   are kept 180 days, at most 4,000 (the oldest go first, as if forgotten), and
-  **Forget** on a person in Contacts deletes every correction that names them.
+  **Forget** on a person in Contacts deletes every correction that names them and the
+  versions built from them (with the vault without a key, the sealed ones go when it
+  opens). The spoken controls work in a local voice call and in typed chat on this PC,
+  not in a cloud voice call.
   Settings: `laya_personal_learning`, `laya_personal_retention_days`,
   `laya_personal_shadow_days`.
 - When Laya asks which of several places you mean, she now always offers

@@ -1169,7 +1169,7 @@ def test_the_refit_is_a_registered_visible_scheduler_job_in_the_local_ai_queue(w
     assert job["trigger"] == "idle" and "schedule" in job["also"] and job["model_class"] == "encoder" and job["activity_label"].strip()
     assert job["entry"] == "agent_friday.services.laya_personal_fit:run_scheduled"
     rebuild = next(j for j in m["jobs"] if j["id"] == "settings.laya_personal_rebuild")
-    assert rebuild["task_kind"] == "laya_personal_rebuild" and rebuild["entry"] == "agent_friday.services.laya_personal:_safe_rebuild"
+    assert rebuild["task_kind"] == "laya_personal_rebuild" and rebuild["entry"] == "agent_friday.services.laya_personal:rebuild"
 
 
 def test_a_run_that_waits_opens_no_task_card_and_a_run_that_goes_ahead_names_its_model(w):
@@ -1184,7 +1184,7 @@ def test_a_run_that_waits_opens_no_task_card_and_a_run_that_goes_ahead_names_its
     fit.on_ac_override = lambda: True
     w.monkeypatch.setattr(bg, "before_local_model_call", lambda model=None: None)
     fit.run_scheduled()
-    assert opened == ["laya_personal_refit"]
+    assert opened[0] == "laya_personal_refit" and set(opened) <= {"laya_personal_refit", "laya_personal_rebuild"}
     # red when: the card opens before the conditions are checked, or the job runs outside visible_job
 
 
@@ -1387,7 +1387,8 @@ def test_the_control_words_do_not_catch_ordinary_requests():
 @pytest.fixture
 def tool(w):
     from agent_friday.services import agent, laya_learning_tools as t, taint
-    toks = [agent._CURRENT_OWNER_TEXT.set(""), taint.CURRENT_KEY.set("tool-test-clean")]
+    toks = [agent._CURRENT_OWNER_TEXT.set(""), taint.CURRENT_KEY.set("tool-test-clean"),
+            agent._CURRENT_CONVERSATION.set("ctl")]
     taint.reset("tool-test-clean")
 
     def say(text):
@@ -1401,6 +1402,7 @@ def tool(w):
     yield SimpleNamespace(handle=t.handle, say=say, taint_key=lambda k: taint.CURRENT_KEY.set(k))
     agent._CURRENT_OWNER_TEXT.reset(toks[0])
     taint.CURRENT_KEY.reset(toks[1])
+    agent._CURRENT_CONVERSATION.reset(toks[2])
 
 
 def test_what_have_you_learned_is_a_short_spoken_summary(w, tool):
@@ -1664,7 +1666,7 @@ def test_the_settings_are_documented():
         assert "| `%s` | `%s` |" % (key, default) in cfg
     guide = (ROOT / "docs/user-guide/privacy.md").read_text(encoding="utf-8")
     assert "## What Laya learns about you" in guide and "180 days" in guide and "something else" in guide
-    assert "your own words in a local voice call" in guide
+    assert "Words spoken in a local voice call on this PC" in guide and "room mode" in guide
 
 
 def test_the_changelog_names_it_under_the_unreleased_block():
@@ -2177,7 +2179,8 @@ def test_a_control_said_minutes_ago_or_buried_in_the_buffer_authorises_nothing_n
 
 def test_the_controls_work_in_typed_chat_on_this_pc_and_nowhere_else(w, tool):
     import agent_friday.core as core
-    from agent_friday.services import agent
+    from agent_friday.services import agent, screen_click
+    w.monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
     w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
     # typed chat, router off: the turn is never routed; the chat turn setup alone sees the sentence, and only
     # for a page on this PC (not a relay, a phone, a channel, a background task or a crew task)
@@ -2364,3 +2367,210 @@ def test_queued_rows_are_embedded_inside_one_visible_job_per_batch(w):
     assert opened and set(opened) == {"laya_personal_embed"} and len(opened) < 3      # batched, never a card per correction
     assert len(w.rows()) >= 1
     # red when: the writer embeds outside visible_job, or opens one job per row
+
+
+# ---------------------------------------------------------------------------
+#  critic pass on the chain port: forget list at unlock, every rebuild a visible job, and the minors
+# ---------------------------------------------------------------------------
+
+def _watch_jobs(w):
+    from agent_friday.services import visible_jobs
+    opened = []
+    real = visible_jobs.visible_job.__enter__
+    w.monkeypatch.setattr(visible_jobs.visible_job, "__enter__", lambda self: (opened.append(self._kw["kind"]), real(self))[1])
+    return opened
+
+
+def _dana_world(w):
+    EMB["ask dana about my agenda"] = unit((0, 1.0), (6, 0.35))
+    w.correct("show my agenda", "query_calendar", routed=("tool", "conversation"), cid="p1")
+    w.correct("ask dana about my agenda", "query_calendar", routed=("tool", "conversation"), cid="p2")
+    return lp._person_patterns({"dana"}, set())
+
+
+def test_a_forgotten_person_is_neither_served_nor_rebuilt_from_before_the_list_is_applied(w):
+    """MAJOR-1: the forget list is applied before the router is served an artifact and inside every rebuild."""
+    pats = _dana_world(w)
+    lp.rebuild(lp.OWNER_PROFILE)
+    dana = next(r["id"] for r in w.rows() if "dana" in r["text"])
+    assert lp.has_live(lp.OWNER_PROFILE) and any(dana in (a.get("row_ids") or []) for a in _all_artifacts(w))
+    w.monkeypatch.setattr(lp, "_forgotten_patterns", lambda: pats)               # the person was forgotten while it was locked
+    lp._forget_applied.clear()                                                    # the vault opens again
+    w.monkeypatch.setattr(lp, "_kick_prime", lambda profile: None)
+    assert lp._live(lp.OWNER_PROFILE) is None and lp.has_live(lp.OWNER_PROFILE) is False     # nothing served until applied
+    lp.rebuild(lp.OWNER_PROFILE)                                                  # a rebuild applies it before it reads a row
+    assert [r["text"] for r in w.rows()] == ["show my agenda"]
+    assert all(dana not in (a.get("row_ids") or []) for a in _all_artifacts(w))
+    # red when: _live serves an artifact before the list is applied, or rebuild reads the forgotten person's rows
+
+
+def test_the_snapshot_applies_the_forget_list_before_it_is_published(w):
+    pats = _dana_world(w)
+    lp.rebuild(lp.OWNER_PROFILE)
+    w.monkeypatch.setattr(lp, "_forgotten_patterns", lambda: pats)
+    lp._forget_applied.clear()
+    lp._load_snapshot(lp.OWNER_PROFILE)
+    assert [r["text"] for r in w.rows()] == ["show my agenda"] and lp._forget_applied[lp.OWNER_PROFILE] is True
+
+
+def test_an_unreadable_forget_list_fails_closed(w, tmp_path):
+    """m8: nothing is captured, served or rebuilt while the list of forgotten people cannot be read."""
+    from agent_friday.services import forget_person as fp
+    bad = tmp_path / "tombstones.json"
+    bad.write_text("{not json", encoding="utf-8")
+    w.monkeypatch.setattr(fp, "_tombstone_path", lambda: bad)
+    assert lp._forgotten_patterns() is None
+    w.correct("show my agenda", "query_calendar", routed=("tool", "conversation"), cid="p1")
+    assert w.rows() == []                                                        # not captured
+    lp._forget_applied.clear()
+    w.monkeypatch.setattr(lp, "_kick_prime", lambda profile: None)
+    assert lp._live(lp.OWNER_PROFILE) is None and lp._apply_forget_list(lp.OWNER_PROFILE) is False
+    assert lp.rebuild(lp.OWNER_PROFILE)["status"] == "waiting"                    # not rebuilt
+
+
+def test_every_rebuild_path_runs_inside_a_visible_job(w):
+    """MAJOR-2: forget, undo, put back, "forget that" and forget-person all open the one rebuild job."""
+    opened = _watch_jobs(w)
+    w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
+    w.correct("show my agenda", "query_calendar", routed=("tool", "check_email"))
+    ids = {r["text"]: r["id"] for r in w.rows()}
+    steps = [lambda: lp.forget(lp.OWNER_PROFILE, ids["show my agenda"]),
+             lambda: lp.set_item_off(lp.OWNER_PROFILE, ids["pull up my inbox"], True),
+             lambda: lp.set_item_off(lp.OWNER_PROFILE, ids["pull up my inbox"], False),
+             lambda: lp.forget_last(lp.OWNER_PROFILE)]
+    for go in steps:
+        opened.clear()
+        go()
+        assert "laya_personal_rebuild" in opened
+    _dana_world(w)
+    opened.clear()
+    assert lp.people_purge({"dana"}, set()) == 1 and "laya_personal_rebuild" in opened
+    # red when: any of these calls rebuild bare
+
+
+def test_with_no_visible_job_door_nothing_is_embedded(w, monkeypatch):
+    import sys
+    w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
+    monkeypatch.setitem(sys.modules, "agent_friday.services.visible_jobs", None)       # the import now fails
+    lp.capture_inline = False
+    w.correct("show my agenda", "query_calendar", routed=("tool", "check_email"), cid="c2")
+    assert lp.flush_capture(10.0)
+    assert [r["text"] for r in w.rows()] == ["pull up my inbox"]                  # the queued batch was dropped, not run bare
+    assert lp.rebuild(lp.OWNER_PROFILE)["status"] == "no_job"
+
+
+def test_a_sweep_and_the_report_card_only_delete(w):
+    calls = []
+    w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
+    lp.rebuild(lp.OWNER_PROFILE)
+    w.tick(181 * 86400)
+    w.monkeypatch.setattr(lp, "rebuild", lambda *a, **k: calls.append(a))
+    assert lp.enforce_retention(lp.OWNER_PROFILE) == 1
+    lp.report()
+    assert calls == [] and w.rows() == []
+    # red when: retention rebuilds (the encoder) outside a job, on a request thread or overnight
+
+
+def test_the_daily_job_checks_first_and_when_blocked_only_deletes(w):
+    from agent_friday.services import scheduler
+    calls, opened = [], _watch_jobs(w)
+    w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
+    w.tick(181 * 86400)
+    fit.on_ac_override = lambda: False
+    w.monkeypatch.setattr(lp, "rebuild", lambda *a, **k: calls.append(a))
+    with pytest.raises(scheduler.SkippedRun):
+        fit.run_scheduled()
+    assert calls == [] and opened == [] and w.rows() == []                        # aged out, nothing embedded, no card
+    # red when: the retention rebuild runs before the presence and power checks
+
+
+def test_a_wipe_waits_for_the_queue_so_a_late_row_cannot_land_after_it(w):
+    """m1."""
+    import threading
+    lp.capture_inline = False
+    gate, real = threading.Event(), lp._persist
+    w.monkeypatch.setattr(lp, "_persist", lambda profile, row: (gate.wait(5), real(profile, row))[1])
+    w.correct("show my agenda", "query_calendar", routed=("tool", "conversation"), cid="c2")      # queued, in flight
+    threading.Timer(0.3, gate.set).start()
+    assert lp.wipe(lp.OWNER_PROFILE)["ok"]
+    lp.flush_capture()
+    assert w.rows() == []
+    # red when: wipe does not settle the capture queue first
+
+
+def test_a_row_from_before_a_click_or_before_learning_went_off_is_not_written(w):
+    import threading
+    lp.capture_inline = False
+    gate, real = threading.Event(), lp._persist
+    w.monkeypatch.setattr(lp, "_persist", lambda profile, row: (gate.wait(5), real(profile, row))[1])
+    w.correct("show my agenda", "query_calendar", routed=("tool", "conversation"), cid="c2")
+    lp._epoch[0] += 1                                                             # a wipe, reset or roll back happened
+    gate.set()
+    assert lp.flush_capture(10.0) and w.rows() == []
+    gate.clear()
+    w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"), cid="c3")
+    lp.use_settings({lp.SETTING_ON: False})                                       # learning went off while it was queued
+    gate.set()
+    assert lp.flush_capture(10.0) and w.rows() == []
+
+
+def test_forgetting_by_voice_works_while_learning_is_off(w, tool):
+    """m2."""
+    w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
+    lp.use_settings({lp.SETTING_ON: False})
+    tool.say("forget what you just learned")
+    assert tool.handle({"op": "forget_last"}).startswith("DONE") and w.rows() == []
+
+
+def test_a_learned_phrasing_cannot_turn_an_ask_into_a_defer(w):
+    """m4: learning only tightens, so it never creates an action the shipped base would not take."""
+    _router_world(w)
+    text = "is that new mail"
+    assert lr._tier1(text).decision == "ask"
+    mine = [list(p) for p in BASE_PROTOS]
+    mine[LABELS.index("act")] = list(EMB[text])                                    # a phrasing that drags it onto "act"
+    assert lr._decide(lr._rank(EMB[text], LABELS, mine), text).decision == "defer"      # unguarded, it would hand off
+    w.monkeypatch.setattr(lr, "_with_personal", lambda labels, protos: (labels, mine))
+    assert _tier1_for(text).decision == "ask"
+    assert lr._no_new_action(text, lr.Route("defer", layer="laya2"), None).decision == "ask"     # no vector: it asks
+    # red when: only the tool decision is guarded
+
+
+def test_forget_and_wipe_clear_the_owners_text_from_process_memory(w):
+    """m6."""
+    def fill():
+        w.correct("show my agenda", "query_calendar", routed=("tool", "conversation"), cid="c1")
+        lp.embed_private("show my agenda")
+        lp.note_routed("a held sentence", w.route("tool", "query_calendar"), conversation_id="c9")
+        lp._control_turn.update(op="reset", text="reset what you learned", at=w.clock[0], cid="c9")
+        assert lp._private_vecs and lp._held and lp._control_turn
+
+    def empty():
+        return not lp._private_vecs and not lp._held and not lp._control_turn
+    fill()
+    lp.forget(lp.OWNER_PROFILE, w.rows()[0]["id"])
+    assert empty()
+    fill()
+    lp.wipe(lp.OWNER_PROFILE)
+    assert empty()
+    _dana_world(w)
+    fill()
+    lp.people_purge({"dana"}, set())
+    assert empty()
+
+
+def test_a_control_is_bound_to_its_conversation_and_armed_only_by_the_page(w, tool):
+    """m7."""
+    import agent_friday.core as core
+    from agent_friday.services import agent, screen_click
+    lp.note_control_utterance("reset what you learned")                           # no conversation: not armed
+    assert lp.take_control_turn("ctl") is None
+    lp.note_control_utterance("reset what you learned", "ctl")
+    assert lp.take_control_turn(None) is None and lp.take_control_turn("other") is None
+    assert lp.take_control_turn("ctl")["op"] == "reset"
+    w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
+    w.monkeypatch.setattr(core, "_is_local_request", lambda: True)
+    w.monkeypatch.setattr(screen_click, "screen_session", lambda request: False)  # a local script holding the token
+    agent._CURRENT_OWNER_TEXT.set("Friday, forget that")
+    agent.prepare_confirmation_ctx("sess-typed", "Friday, forget that", {"conversation_id": "ctl"})
+    assert tool.handle({"op": "forget_last"}).startswith("NOT DONE") and len(w.rows()) == 1

@@ -110,9 +110,12 @@ report card and controls you can reach by screen or by voice. Turn it off any
 time in **Settings > Privacy & Data > What Laya learns about you**
 (`laya_personal_learning`).
 
-**What teaches her.** Only your own words in a local voice call on this PC.
-Nothing said on a paired phone, through a relay or tunnel, in a cloud voice call,
-by another agent or in a delegated task ever teaches her.
+**What teaches her.** Words spoken in a local voice call on this PC. She goes by
+the voice connection, not by who is speaking: if other people or a TV are heard
+in the call, they can be heard as you, so turn on room mode for those calls
+(nothing is learned in room mode). Nothing said on a paired phone, through a
+relay or tunnel, in a cloud voice call, by another agent or in a delegated task
+ever teaches her, and nothing you type is learned.
 
 | You do this | She treats it as |
 |---|---|
@@ -156,9 +159,12 @@ turned down and why, and the routes she learns less about because of
 sensitivity. She keeps her last three versions plus how she shipped: **Go back to
 this**, **Reset** (sets everything aside) and **Wipe everything** (deletes it, after
 a second click; by voice it only raises a card that a click on the screen
-approves). By voice, once, with the owner's whole sentence: "what have you
-learned?", "forget that", "reset", "go back to how you were last week". **Forget**
-on a person in Contacts also deletes every correction that names them.
+approves). In a local voice call or in typed chat on this PC (not in a cloud voice
+call), once, with your whole sentence: "what have you learned?", "forget that",
+"reset", "go back to how you were last week". Forgetting works even when learning
+is off. **Forget** on a person in Contacts deletes every correction that names them
+and the saved versions built from them; while the vault has no key the sealed ones
+are removed the next time it opens, and nothing from before is used until then.
 
 ## Other people
 

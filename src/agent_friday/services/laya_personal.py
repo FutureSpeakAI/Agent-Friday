@@ -10,7 +10,7 @@ a derived thing that can always be rebuilt from the rows, so forgetting a row,
 resetting, rolling back or a base update is "delete, then rebuild".
 
 WHAT LEARNS
-  gold   an explicit correction (said in a local voice call: "no, I meant my work calendar"),
+  gold   an explicit correction (said in a local voice call on this PC: "no, I meant my work calendar"),
          an ask-back answer (the question always offers "something else"), or a
          brain choice the owner later confirmed. These can become U1 phrasings.
   weak   a card approved or declined, an undo inside the window. These tell U2
@@ -26,10 +26,12 @@ THE GATES (every one has a test)
     only principals are the owner and a read-only observer), so this is a
     single-user machine and the one profile is "owner" (single_user_machine()).
   - the owner's own turns only: ``note_routed`` is offered a turn by the router only for ``trusted``
-    (the owner's voice on this PC, authenticated and a local request) and refuses every surface but
-    "voice" and "chat". A phone, a relay, a tunnel, cloud voice, a crew agent and a delegated task
-    never reach it, and a label needs a held turn of the same conversation, so a card decision or
-    an answer from anywhere else finds nothing to label.
+    (the owner's voice connection on this PC, authenticated and a local request: per connection, not
+    per speaker, so other voices on the same microphone are heard as the owner unless room mode is
+    on) and refuses every surface but "voice" and "chat". A phone, a relay, a tunnel, cloud voice, a
+    crew agent and a delegated task never reach it, and a label needs a held turn of the same
+    conversation, so a card decision or an answer from anywhere else finds nothing to label. On this
+    tree only the local voice call routes through Laya, so nothing typed is held or labelled.
   - a minor profile (minor_mode, or moderation family mode, or a profile marked
     minor) learns nothing and keeps no text (Decision 14).
   - top-sensitivity turns are never stored, held or counted by their words
@@ -117,13 +119,15 @@ OTHER = "other"          # "something else": none of Laya's routes
 _NOT_A_LABEL = frozenset({"delegate_to_friday", "answer_card", "undo_action", "task_control"})
 
 NOTICE = ("Friday now learns from your corrections, on this PC only. When you correct her or answer a question "
-          "she asks, she keeps those words, sealed in your vault, and checks them against her test questions "
-          "before she uses them. She never learns from silence or from what the deeper mind chose until you "
-          "confirm it. She does not keep what she can tell is sensitive (money, health, legal, identity), and "
+          "she asks in a local voice call, she keeps those words, sealed in your vault, and checks them against "
+          "her test questions before she uses them. She learns from the voice connection on this PC, not from "
+          "one speaker: if other people or a TV are heard in the call, they can be heard as you, so turn on room "
+          "mode for those calls. She never learns from silence, a paired phone, a relay or cloud voice. She does "
+          "not keep what she can tell is sensitive (money, health, legal, identity), and "
           "when she cannot tell, she keeps nothing. Other personal details, like a name or an address in a "
           "request, can be kept in the sealed vault for 180 days. You can see, undo, forget, reset or wipe all of "
-          "it in Settings > Privacy & Data > What Laya learns about you, or by saying \"what have you learned?\". "
-          "Turn it off there.")
+          "it in Settings > Privacy & Data > What Laya learns about you, or by saying \"what have you learned?\" "
+          "in a local voice call or typed chat on this PC. Turn it off there.")
 
 #: ``_lock`` guards small in-memory things only (the held turns, counters). The router and the turn path
 #: take nothing else. ``_build_lock`` serialises the long jobs (rebuild, refit, forget, reset ...) among
@@ -205,6 +209,8 @@ def reset() -> None:
         with _private_lock:
             _private_vecs.clear()
         _priming.clear()
+        _forget_applied.clear()
+        _epoch[0] = 0
         while not _capq.empty():
             try:
                 _capq.get_nowait()
@@ -423,6 +429,22 @@ def embed(text: str) -> Optional[List[float]]:
 
 _private_vecs: Dict[str, List[float]] = {}
 _private_lock = threading.Lock()
+#: Per profile: has the forget list (services/forget_person tombstones) been applied to what is kept
+#: since the last time it could have changed? Until it has, the router is served nothing (``_live``).
+_forget_applied: Dict[str, bool] = {}
+#: Bumped by wipe, reset and rollback; a captured row from an earlier epoch is dropped, so a row queued
+#: before the owner's click cannot land after it.
+_epoch = [0]
+
+
+def scrub_memory() -> None:
+    """Forget the owner's text held in process memory: the vector cache keyed by raw sentences, the held
+    turns waiting for an answer, and the last control sentence. Called by every forget and by wipe."""
+    with _private_lock:
+        _private_vecs.clear()
+    with _lock:
+        _held.clear()
+    _control_turn.clear()
 
 
 def embed_private(text: str) -> Optional[List[float]]:
@@ -718,7 +740,9 @@ def run_control(op: str, words: str, profile: Optional[str] = None) -> dict:
     so it only raises a card that a click on the screen approves; a spoken yes never does."""
     profile = profile or current_profile()
     if not profile:
-        return {"ok": False, "text": learning_state(profile)["why"]}
+        if op == "summary":
+            return {"ok": False, "text": learning_state(profile)["why"]}
+        profile = OWNER_PROFILE                           # forgetting never needs a signed-in profile
     if op not in owner_intent(words):
         return {"ok": False, "text": REFUSED_LINE}
     if op != "summary" and not flush_capture(CONTROL_FLUSH_S):
@@ -735,8 +759,8 @@ def run_control(op: str, words: str, profile: Optional[str] = None) -> dict:
                         "screen can do it. A card is waiting, and Settings > Privacy & Data > What Laya learns about you has the button. "
                         "Nothing has been deleted; reset sets everything aside instead." % (n, "" if n == 1 else "s")
                 if card.get("ok") else "NOT DONE: " + str(card.get("why") or "a wipe could not be offered.")}
-    if not learning_state(profile)["on"]:
-        return {"ok": False, "text": learning_state(profile)["why"]}
+    # Forget, reset and go back only shrink what is kept, so they run whatever the learning state
+    # (switched off, a minor profile): the owner's right to forget never depends on a setting.
     if op == "forget_last":
         out = forget_last(profile)
         done = "Forgot 1 thing"
@@ -826,8 +850,8 @@ def _named_option(text: str, cands) -> Optional[str]:
     return hits[0] if len(hits) == 1 else None
 
 
-#: The surfaces whose turns are the owner's own words on this PC: the local voice call and the
-#: local chat page. ``note_routed`` refuses every other surface (cloud voice "voice-live", a phone,
+#: The surfaces a turn may come from: the local voice call (the only caller on this tree) and a
+#: verified local chat page (no caller passes ``trusted`` yet). ``note_routed`` refuses every other surface (cloud voice "voice-live", a phone,
 #: a relay, a delegated task); the caller must also pass ``trusted`` to the router.
 OWNER_SURFACES = frozenset({"voice", "chat"})
 
@@ -860,6 +884,8 @@ def note_control_utterance(text: str, conversation_id: Optional[str] = None) -> 
     chat with the router off, on a page on this PC): the same anchored whole-utterance rule decides whether it is a
     learning control, and nothing else is kept from it. Never raises."""
     try:
+        if not conversation_id:
+            return                                       # bound to its own conversation, or not armed at all
         t = " ".join(str(text or "").split())
         if t and owner_intent(t):
             _note_control_turn(t, conversation_id)
@@ -875,8 +901,8 @@ def take_control_turn(conversation_id: Optional[str] = None) -> Optional[Dict[st
     t = dict(_control_turn)
     if not t or now_fn() - float(t.get("at") or 0) > CONTROL_WINDOW_S:
         return None
-    if conversation_id and t.get("cid") and str(t["cid"]) != str(conversation_id):
-        return None
+    if not conversation_id or not t.get("cid") or str(t["cid"]) != str(conversation_id):
+        return None                                      # a control is bound to its own conversation, on both sides
     _control_turn.clear()
     return t
 
@@ -1043,7 +1069,7 @@ def _capture(profile: str, kind: str, ent: dict, *, label: Optional[str], outcom
         return
     row = {"id": "lr_" + uuid.uuid4().hex[:12], "at": now_fn(), "kind": kind, "weight": KIND_WEIGHT[kind],
            "text": text, "vec": None, "label": label, "outcome": outcome, "source": source,
-           "surface": ent.get("surface"),
+           "surface": ent.get("surface"), "_epoch": _epoch[0],
            "routed": {"decision": ent.get("decision"), "tool": ent.get("tool"),
                       "confidence": ent.get("confidence"), "layer": ent.get("layer")},
            "u1": {"status": "pending", "reason": "", "at": None}}
@@ -1097,15 +1123,13 @@ def _persist_batch(batch) -> None:
     reading model inside ONE visible job (kind ``laya_personal_embed``), never one card per correction."""
     try:
         from agent_friday.services.visible_jobs import note_inference, visible_job
-    except Exception:  # noqa: BLE001 - the card is a courtesy; the learning does not depend on it
-        visible_job = None
+    except Exception:  # noqa: BLE001 - no door, no embedding: the batch is dropped (fail closed), never run bare
+        _count("dropped_no_job")
+        return
     try:
-        if visible_job is None:
+        with visible_job("Laya learning", kind="laya_personal_embed", workspace="settings", queued=False):
+            note_inference("laya-reading-model", local=True)
             _persist_rows(batch)
-        else:
-            with visible_job("Laya learning", kind="laya_personal_embed", workspace="settings", queued=False):
-                note_inference("laya-reading-model", local=True)
-                _persist_rows(batch)
     except Exception as e:  # noqa: BLE001
         _log.debug("a batch was not kept: %s", type(e).__name__)
 
@@ -1119,6 +1143,13 @@ def _persist_rows(batch) -> None:
 
 
 CONTROL_FLUSH_S = 10.0
+
+
+def _settle_capture() -> None:
+    """Before a click that wipes, resets or rolls back: let the queued rows land (bounded), then start a
+    new epoch, so a row said before the click can never be written after it."""
+    flush_capture(CONTROL_FLUSH_S)
+    _epoch[0] += 1
 
 
 def flush_capture(timeout: Optional[float] = None) -> bool:
@@ -1140,6 +1171,13 @@ def flush_capture(timeout: Optional[float] = None) -> bool:
 def _persist(profile: str, row: dict) -> Optional[str]:
     """The writer's half: the deep sensitivity pass, the row's vector, one sealed append."""
     text = row.get("text") or ""
+    epoch = row.pop("_epoch", _epoch[0])
+    if epoch != _epoch[0]:
+        _count("dropped_epoch")                           # a wipe, reset or roll back came after this was said
+        return None
+    if not _active(profile):
+        _count("dropped_inactive")                        # learning went off, or the owner went off the record, since
+        return None
     if not text or top_sensitivity(text, deep=True):
         label = (row.get("routed") or {}).get("tool") or "act"
         with _lock:
@@ -1214,20 +1252,9 @@ def schedule_rebuild(profile: str, why: str) -> None:
 
 
 def _safe_rebuild(profile: str, why: str) -> None:
-    # A visible job (services/visible_jobs): the rebuild embeds the owner's phrasings on the CPU. It is not
-    # queued behind idle (queued=False): it runs once, for a correction the owner just made.
+    # rebuild() is itself the visible job (kind laya_personal_rebuild), for every caller.
     try:
-        from agent_friday.services.visible_jobs import note_inference, visible_job
-    except Exception:  # noqa: BLE001 - the card is a courtesy; the learning does not depend on it
-        visible_job = None
-    try:
-        if visible_job is None:
-            rebuild(profile, why)
-        else:
-            with visible_job("Applying your correction", kind="laya_personal_rebuild", workspace="settings",
-                             queued=False):
-                note_inference("laya-reading-model", local=True)
-                rebuild(profile, why)
+        rebuild(profile, why)
     except Exception as e:  # noqa: BLE001
         _log.warning("personal rebuild failed: %s", type(e).__name__)
 
@@ -1289,6 +1316,9 @@ def _load_snapshot(profile: str) -> None:
     or the priming thread, never on the router's worker or a turn."""
     if not store.vault_open():
         return
+    if not _forget_applied.get(profile) and not _apply_forget_list(profile):
+        _live_cache.pop(profile, None)                  # the forget list is unreadable: serve nothing
+        return
     st = _state(profile)
     art = _artifact(profile, st["live"]) if st.get("live") else None
     _live_cache[profile] = _Snap(art)
@@ -1320,6 +1350,9 @@ def _live(profile: str) -> Optional[dict]:
     profile not loaded yet is the shipped base for that turn while a thread loads it."""
     if not store.vault_open():
         return None
+    if not _forget_applied.get(profile):
+        _kick_prime(profile)                            # the forget list has not been applied since it could have changed:
+        return None                                     # the shipped base serves until it has
     snap = _live_cache.get(profile)
     if snap is None:
         _kick_prime(profile)
@@ -1563,14 +1596,35 @@ def check_phrasing(vec, label: str, labels: Sequence[str], protos: Sequence[Sequ
 
 
 def rebuild(profile: str, why: str = "") -> dict:
-    """Rebuild U1 from the rows. Needs the vault open and the reading model. Applies
-    retention, drains the staging buffer, sets each row's U1 status, and writes a new
-    artifact when the set of live phrasings changed. Returns a summary."""
+    """Rebuild U1 from the rows, as ONE visible job (kind ``laya_personal_rebuild``). Every rebuild and
+    every pass of the reading model over the kept words goes through here: forget, "forget that", undo,
+    confirm, forget-person, a correction, the scheduled refit. When the visible-job door cannot be
+    opened nothing is embedded (it fails closed) instead of running bare."""
+    ls = learning_state(profile)
+    if not ls["on"]:                                       # nothing will be embedded: no card for it
+        return {"status": "off", "why": ls["why"]}
+    if not store.vault_open():
+        return {"status": "locked", "why": "The vault is locked, so nothing is rebuilt until it opens."}
+    try:
+        from agent_friday.services.visible_jobs import note_inference, visible_job
+    except Exception:  # noqa: BLE001
+        return {"status": "no_job", "why": "The Activity lane is not available, so nothing is rebuilt."}
+    with visible_job("Applying your correction", kind="laya_personal_rebuild", workspace="settings", queued=False):
+        note_inference("laya-reading-model", local=True)
+        return _rebuild(profile, why)
+
+
+def _rebuild(profile: str, why: str = "") -> dict:
+    """The rebuild itself. Needs the vault open and the reading model. Applies the forget list and
+    retention, drains the staging buffer, sets each row's U1 status, and writes a new artifact when the
+    set of live phrasings changed. Returns a summary."""
     with _build_lock:
         if not learning_state(profile)["on"]:
             return {"status": "off", "why": learning_state(profile)["why"]}
         if not store.vault_open():
             return {"status": "locked", "why": "The vault is locked, so nothing is rebuilt until it opens."}
+        if _forgotten_patterns() is None:
+            return {"status": "waiting", "why": "The list of people to forget cannot be read, so nothing is rebuilt until it can."}
         enforce_retention_quiet(profile)
         rows = store.load_rows(profile) or []
         base = base_state()
@@ -1653,7 +1707,9 @@ def rebuild(profile: str, why: str = "") -> dict:
 def enforce_retention(profile: str) -> int:
     """Delete what is older than the retention days (Decision 11), whether or not
     learning is on, and delete every artifact trained on it, as a forget does. The
-    locked-vault buffer ages out too. Returns how many rows went."""
+    locked-vault buffer ages out too. Returns how many rows went. This only DELETES: it never
+    rebuilds and never embeds, so a sweep (the report card, the daily job before its checks) cannot run
+    the reading model; the next correction, or the gated refit, rebuilds from what is left."""
     with _build_lock:
         n = purge_forgotten_people(profile)              # a person forgotten while the vault was locked goes now
         days = retention_days()
@@ -1668,8 +1724,6 @@ def enforce_retention(profile: str) -> int:
             _drop_artifacts_containing(profile, st, ids)
             _save_state(profile, st)
             refresh(profile)
-            if learning_state(profile)["on"]:
-                rebuild(profile, "old items aged out")
         return n
 
 
@@ -1699,9 +1753,10 @@ def _names_person(text: str, pats) -> bool:
     return any(p.search(t) or p.search(raw) for p in pats)
 
 
-def _purge_matching(profile: str, pats) -> int:
+def _purge_matching(profile: str, pats, rebuild_after: bool = True) -> int:
     """Delete every kept row whose words name the person, with every saved version built on it, and
-    rebuild from what is left. Needs the vault open and ``_build_lock`` held. Returns rows deleted."""
+    (unless ``rebuild_after`` is False) rebuild from what is left. Needs the vault open and
+    ``_build_lock`` held. Returns rows deleted."""
     rows = store.load_rows(profile) or []                 # drains the buffer into the store first
     ids = {r["id"] for r in rows if r.get("id") and _names_person(r.get("text"), pats)}
     if not ids:
@@ -1711,7 +1766,8 @@ def _purge_matching(profile: str, pats) -> int:
     _drop_artifacts_containing(profile, st, ids)
     _save_state(profile, st)
     refresh(profile)
-    if learning_state(profile)["on"]:
+    scrub_memory()
+    if rebuild_after and learning_state(profile)["on"]:
         rebuild(profile, "forgot a person")
     return n
 
@@ -1733,22 +1789,18 @@ def people_find(names, emails) -> int:
 def people_purge(names, emails) -> int:
     """Forget a person: delete every correction that names them, every saved version built from it, and
     anything of theirs still waiting to be written (the forget registry's purger). With the vault
-    locked the sealed rows cannot be read, so the buffer is dropped whole and the sealed rows are removed
-    at the next unlock from the forget list (``purge_forgotten_people``); the registry's receipt shows the
-    error until then, never a clean zero."""
+    locked the sealed rows cannot be read, so the buffer is dropped whole, what the router is serving is
+    withdrawn until the forget list has been applied, and the sealed rows are removed at the next unlock
+    (``_apply_forget_list``, which runs before anything is served or rebuilt); the registry's receipt shows
+    the error until then, never a clean zero."""
     pats = _person_patterns(names, emails)
     if not pats:
         return 0
     profile = current_profile() or OWNER_PROFILE
     flush_capture(timeout=5.0)                            # a correction still in the queue is not left behind
-    with _lock:
-        for e in list(_held):
-            if _names_person(e.get("text"), pats):
-                try:
-                    _held.remove(e)
-                except ValueError:
-                    pass
+    scrub_memory()
     with _build_lock:
+        _forget_applied[profile] = False                  # the forget list changed: serve nothing until it is applied
         if not store.vault_open():
             dropped = store.clear_staging(profile)
             try:
@@ -1756,20 +1808,31 @@ def people_purge(names, emails) -> int:
             except Exception:  # noqa: BLE001
                 sealed = True
             if not dropped and not sealed:
+                _forget_applied[profile] = True
                 return 0                                  # nothing was ever kept: nothing to forget
             raise RuntimeError("the vault is locked: %d waiting correction(s) were dropped; the sealed ones are "
                                "removed when it next opens" % dropped)
-        return _purge_matching(profile, pats)
+        n = _purge_matching(profile, pats)
+        _forget_applied[profile] = True
+        return n
 
 
-def _forgotten_patterns() -> list:
-    """Patterns for every person on the forget list (services/forget_person tombstones). Empty when the
-    list cannot be read: a capture is then judged by its other gates alone."""
+def _forgotten_patterns():
+    """Patterns for every person on the forget list (services/forget_person tombstones): a list, empty
+    when nobody is forgotten, or None when the list cannot be read. None FAILS CLOSED: nothing is
+    captured, served or rebuilt until it is readable."""
     try:
+        import json
         from agent_friday.services import forget_person as fp
-        entries = (fp._load_tombstones() or {}).get("forgotten") or []
+        p = fp._tombstone_path()
+        if not p.exists():
+            return []
+        data = json.loads(p.read_text(encoding="utf-8"))
+        entries = data.get("forgotten") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            return None
     except Exception:  # noqa: BLE001
-        return []
+        return None
     names, emails = set(), set()
     for e in entries:
         if isinstance(e, dict):
@@ -1781,25 +1844,55 @@ def _forgotten_patterns() -> list:
 
 def _names_forgotten_person(text: str) -> bool:
     pats = _forgotten_patterns()
+    if pats is None:
+        return True                                       # the list is unreadable: keep nothing
     return bool(pats) and _names_person(text, pats)
 
 
-def purge_forgotten_people(profile: str) -> int:
+def _apply_forget_list(profile: str) -> bool:
+    """Apply the forget list to what is kept: delete the rows that name a forgotten person and every saved
+    version built on them, without rebuilding (the caller decides). Safe to call anywhere: it takes the
+    build lock and does nothing the owner would not already have asked for. Returns True when the list was
+    readable and applied (or the vault is not open, so nothing is served anyway)."""
+    if not store.vault_open():
+        return True
+    pats = _forgotten_patterns()
+    if pats is None:
+        return False
+    with _build_lock:
+        _forget_applied[profile] = True                   # set first: the purge refreshes the snapshot, which asks
+        try:
+            if pats:
+                _purge_matching(profile, pats, rebuild_after=False)
+        except Exception:
+            _forget_applied[profile] = False
+            raise
+    return True
+
+
+def purge_forgotten_people(profile: str, rebuild_after: bool = False) -> int:
     """Apply the forget list to the kept corrections: a person forgotten while the vault was locked, or a
     correction that named them after they were forgotten. Needs the vault open; a no-op otherwise.
-    Returns rows deleted."""
+    Returns rows deleted. It never rebuilds unless asked (``rebuild_after``): a rebuild is a visible job
+    and is not started by a sweep."""
     if not store.vault_open():
         return 0
     pats = _forgotten_patterns()
     if not pats:
         return 0
     with _build_lock:
-        return _purge_matching(profile, pats)
+        n = _purge_matching(profile, pats, rebuild_after=rebuild_after)
+        _forget_applied[profile] = True
+        return n
 
 
 def enforce_retention_quiet(profile: str) -> None:
     """Retention inside a rebuild: delete the old rows and the artifacts built on them,
-    without recursing into another rebuild."""
+    without recursing into another rebuild. The forget list is applied here too, so no rebuild ever
+    reads a row that names a forgotten person."""
+    pats = _forgotten_patterns()
+    if pats:
+        _purge_matching(profile, pats, rebuild_after=False)
     days = retention_days()
     ids = set(store.expired_ids(profile, days))
     store.purge_expired(profile, days)
@@ -1859,6 +1952,7 @@ def forget(profile: str, row_id: str) -> dict:
             return {"ok": False, "why": "The vault is locked. I can forget it once it opens."}
         if not store.delete_row(profile, row_id):
             return {"ok": False, "why": "I do not have that one."}
+        scrub_memory()                                    # the sentence is not left in the process either
         st = _state(profile)
         gone = _drop_artifacts_containing(profile, st, {row_id})
         _save_state(profile, st)
@@ -1876,6 +1970,7 @@ def forget_last(profile: str) -> dict:
             if store.drop_last_staged(profile):
                 return {"ok": True, "text": "Forgotten. That was the newest thing waiting for the vault to open."}
             return {"ok": False, "text": "I have nothing waiting to forget, and the vault is locked."}
+        _apply_forget_list(profile)                       # a forgotten person's rows are not "the newest thing"
         rows = [r for r in (store.load_rows(profile) or []) if r.get("weight") != SHADOW]
         if not rows:
             return {"ok": False, "text": "There is nothing learned to forget."}
@@ -1931,6 +2026,7 @@ def confirm_shadow(profile: str, row_id: str, confirm: bool) -> dict:
 def reset_to_base(profile: str) -> dict:
     """Back to the shipped Laya. Every artifact goes; every row is set aside (kept,
     switched off, put back one by one on the report card). Wipe deletes them."""
+    _settle_capture()
     with _build_lock:
         n = 0
         if store.vault_open():
@@ -1954,11 +2050,11 @@ def reset_to_base(profile: str) -> dict:
 
 def wipe(profile: str) -> dict:
     """Delete everything kept for the profile, including the locked-vault buffer."""
+    _settle_capture()
     with _build_lock:
         out = store.wipe(profile)
         refresh(profile)
-        with _lock:
-            _held.clear()
+        scrub_memory()
         return {"ok": not out.get("remaining"), "deleted": out,
                 "text": ("Wiped. I deleted %d correction%s, %d waiting in the vault buffer and every saved version. A score you loosened yourself stays as you set it."
                          % (out["rows"], "" if out["rows"] == 1 else "s", out["staged"]))
@@ -1969,6 +2065,7 @@ def wipe(profile: str) -> dict:
 def rollback(profile: str, target: str) -> dict:
     """Make ``target`` (an artifact id, or "base") live. Rows newer than the target
     are set aside so the next rebuild does not just remake what you rolled back from."""
+    _settle_capture()
     with _build_lock:
         if not store.vault_open():
             return {"ok": False, "why": "The vault is locked."}
@@ -2132,6 +2229,7 @@ def spoken_summary(profile: Optional[str] = None) -> str:
         n = store.staged_count(profile)
         return ("The vault is locked. %d thing%s %s waiting in my sealed buffer, and I will use %s once it opens."
                 % (n, "" if n == 1 else "s", "is" if n == 1 else "are", "it" if n == 1 else "them"))
+    _apply_forget_list(profile)                           # a forgotten person's rows are not counted
     rows = [r for r in (store.load_rows(profile) or []) if r["weight"] != SHADOW and not r.get("off")]
     live = [r for r in rows if (r.get("u1") or {}).get("status") == "live"]
     rej = [r for r in rows if (r.get("u1") or {}).get("status") in ("rejected", "correction_only")]

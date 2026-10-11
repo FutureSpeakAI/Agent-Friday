@@ -758,7 +758,28 @@ def _tier1(text: str) -> Route:
     pid = getattr(_PROFILE, "pid", None)
     if pid and r.decision == "tool":
         r = _graduation_guard(pid, text, r, getattr(_PROFILE, "vec", None))
+    elif pid and r.decision == "defer":
+        r = _no_new_action(text, r, getattr(_PROFILE, "vec", None))
     return r
+
+
+def _no_new_action(text: str, r: Route, vec) -> Route:
+    """Learning only tightens: a learned phrasing may never turn a turn the shipped base would not
+    act on (an ask, or no tool) into a hand-off to the deeper mind, which is an action path of its
+    own. Where the base's decision is not an action, the base's decision stands. With no vector to
+    compare, or on any error, it asks."""
+    try:
+        if vec is None:
+            raise RuntimeError("no turn vector")
+        labels, protos = _prototypes()
+        base = _decide(_rank(vec, labels, protos), text, _owner_threshold())
+        if base.decision in ("ask", "no_tool"):
+            return base
+        return r
+    except Exception as e:  # noqa: BLE001
+        _log.debug("defer guard fell back to asking: %s", type(e).__name__)
+        return Route("ask", confidence=r.confidence, layer="laya2", candidates=r.candidates,
+                     question=_ASK_WHICH, reason="the check on a learned guess could not run, so it asks")
 
 
 def _owner_threshold() -> float:

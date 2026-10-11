@@ -11797,7 +11797,11 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     ctx["owner_text"] = str(message or "")[:4000]
     try:                         # the typed learning controls work with the chat router off, too: but only for a
         from agent_friday.core import _is_local_request   # page on this PC (a relay, a phone, a channel or a task is not)
-        if (_is_local_request() and not ctx.get("is_background_task")
+        from flask import request as _flask_request
+        from agent_friday.services import screen_click as _sc_ctl
+        # armed only by a click on Friday's own page carrying the page's session token: a local script or an
+        # injected command holding the token is not the owner's page
+        if (_is_local_request() and _sc_ctl.screen_session(_flask_request) and not ctx.get("is_background_task")
                 and not ctx.get("origin") and not ctx.get("task_id")):
             from agent_friday.services import laya_personal as _lp_ctl
             _lp_ctl.note_control_utterance(message, conversation_id)

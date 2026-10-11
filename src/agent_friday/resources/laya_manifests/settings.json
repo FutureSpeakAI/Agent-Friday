@@ -135,7 +135,7 @@
    "helper": "visible_job",
    "task_kind": "laya_personal_rebuild",
    "activity_label": "Applying your correction",
-   "entry": "agent_friday.services.laya_personal:_safe_rebuild"
+   "entry": "agent_friday.services.laya_personal:rebuild"
   },
   {
    "id": "settings.laya_personal_embed",
