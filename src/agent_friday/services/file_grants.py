@@ -65,6 +65,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import hmac
+import itertools
 import json
 import threading
 import time
@@ -77,6 +78,7 @@ _MAX_EXPIRY_DAYS = 30
 _APPEND_LOCK = threading.Lock()
 _STATE_LOCK = threading.Lock()
 _STATE_CACHE: dict = {"mtime": -2.0, "state": None}
+_LEDGER_REV = itertools.count(1)
 
 
 def _ledger_path() -> Path:
@@ -176,6 +178,10 @@ class LedgerState:
     paused_library: dict = field(default_factory=dict)
     #: (principal, normcased path) -> "open" | "vault", from library_shelf events.
     library_shelves: dict = field(default_factory=dict)
+    #: Which fold this is. Every re-read of the ledger (an append, a changed file,
+    #: a forced load) makes a new state with a higher number, so a verdict kept
+    #: against one revision is never read against another.
+    rev: int = 0
 
 
 #: Ledger events that can only ever ADD access. Removing one of these from the
@@ -531,7 +537,7 @@ def _load_state(force: bool = False) -> LedgerState:
         state = LedgerState(grants=grants, denies=denies, suspended=suspended,
                             dropped=dropped, paused_grants=paused, held=held,
                             library=library, paused_library=paused_library,
-                            library_shelves=shelves)
+                            library_shelves=shelves, rev=next(_LEDGER_REV))
         _STATE_CACHE["mtime"] = mtime
         _STATE_CACHE["state"] = state
     if suspended:
