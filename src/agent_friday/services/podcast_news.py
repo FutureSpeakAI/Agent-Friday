@@ -327,7 +327,7 @@ def queue_for_run(routine: str, run_id: str) -> dict | None:
         if prev and prev.get("id") != ep["id"]:
             # A regenerated run replaces its episode: stop the old one if it is
             # still pending, and point it at the new one.
-            pe.cancel(prev["id"])
+            pe.cancel(prev["id"], "replaced by a newer run of this show")
             pe._update(prev["id"], superseded_by=ep["id"])
         return ep
     except Exception as e:
