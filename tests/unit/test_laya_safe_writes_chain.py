@@ -1690,3 +1690,155 @@ def test_f3_docs_say_how_a_laya_card_is_approved_and_what_is_named():
     assert "A text message does not approve it either" in mail and "never addresses" in mail
     assert "never texted" in phone and "Voice history keeps no card details" in log
     assert "they say that a card was raised" in mail
+
+
+# ══ Owner decisions: MD-2 (a spoken yes needs the line read in this conversation) and MJ-4 (card-free, logged, pinned) ══
+
+def _voice_answer(cid, words, voiced, conv=CALL):
+    toks = [agent._CURRENT_SURFACE.set("voice"), agent._CURRENT_CONVERSATION.set(conv),
+            agent._CURRENT_OWNER_TEXT.set(words), agent._CURRENT_TOOL_CONTEXT.set({"voiced_cards": list(voiced)})]
+    try:
+        return agent._tool_answer_card({"card_id": cid, "decision": "approve"})
+    finally:
+        agent._CURRENT_TOOL_CONTEXT.reset(toks[3])
+        agent._CURRENT_OWNER_TEXT.reset(toks[2])
+        agent._CURRENT_CONVERSATION.reset(toks[1])
+        agent._CURRENT_SURFACE.reset(toks[0])
+
+
+def test_md2_a_line_that_never_played_is_not_enough_even_when_the_action_is_named(safe_call, monkeypatch):
+    """Fails on da66aaa40: 'yes, archive them' approved a Laya card whose line was never delivered."""
+    c = safe_call()
+    monkeypatch.setattr(c.mouth, "synthesize_stream", lambda text, cancel=None: iter(()))   # nothing is played
+    c.say("archive these")
+    cid = _pending()[0]["approval_id"]
+    c.say("what's on my calendar")                      # the next turn works out which cards were voiced
+    voiced = c.tool_session.get("voiced_cards") or []
+    assert cid not in voiced
+    assert _voice_answer(cid, "yes archive them", voiced) == ia.UNVOICED_CARD
+    assert _voice_answer(cid, "yes", voiced) == ia.UNVOICED_CARD
+    assert ap.get_approval(cid)["status"] == "pending"
+
+
+def test_md2_a_line_read_whole_lets_a_yes_approve_that_card(safe_call, monkeypatch):
+    c = safe_call()
+    c.say("archive these")
+    cid = _pending()[0]["approval_id"]
+    c.say("yes")
+    voiced = c.tool_session.get("voiced_cards") or []
+    assert cid in voiced, "the fixed line was played whole in this conversation"
+    res = _voice_answer(cid, "yes", voiced)
+    assert res != ia.UNVOICED_CARD and "NOT RECORDED" not in res
+    assert ia.wait_for(cid, 10)["status"] == "complete"
+
+
+def test_md2_a_line_read_in_another_conversation_does_not_count(safe_call, monkeypatch):
+    """Fails on da66aaa40: the voiced list of whatever session asked was trusted."""
+    c = safe_call()
+    c.say("archive these")
+    cid = _pending()[0]["approval_id"]
+    c.say("yes")
+    voiced = c.tool_session.get("voiced_cards") or []
+    assert cid in voiced
+    assert _voice_answer(cid, "yes", voiced, conv="another-call") == ia.UNVOICED_CARD
+    assert ap.get_approval(cid)["status"] == "pending"
+
+
+def test_md2_a_card_a_model_raised_keeps_the_action_naming_rule(safe_call, monkeypatch):
+    c = safe_call()
+    out = agent._tool_organize_email({"action": "archive", "selection": "screen"})
+    assert out.startswith("CARD_RAISED")
+    cid = _pending()[0]["approval_id"]
+    assert ia.is_laya_card(cid) is False
+    assert _voice_answer(cid, "yes archive them", []) != ia.UNVOICED_CARD
+    assert ia.wait_for(cid, 10)["status"] == "complete"
+
+
+def test_md2_the_live_voice_bridge_applies_the_same_rule(gmail, monkeypatch):
+    stage = _stage(selected=(1, 2))
+    report(stage)
+    Page(monkeypatch)
+    _go("archive these", stage)
+    cid = _pending()[0]["approval_id"]
+    assert ia.unvoiced_card_approval_blocked(cid, "yes archive them") is True
+    assert ia.unvoiced_card_approval_blocked(cid, "no thanks") is False, "a refusal is never blocked"
+    assert ia.card_in_conversation(cid, CONV) and not ia.card_in_conversation(cid, "elsewhere")
+
+
+# ── MJ-4: card-free star, unstar, label and mark read/unread: pinned, logged, exactly undoable ───
+
+CARD_FREE = {"read", "unread", "star", "unstar", "label", "unlabel"}
+
+
+def test_mj4_the_card_free_list_is_pinned_to_the_owners_rule():
+    """Any other mutation added to EMAIL_NO_CARD fails here (a source check, so it needs no run of the tool)."""
+    import ast
+    src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "services" / "item_actions.py").read_text(
+        encoding="utf-8")
+    values = [ast.literal_eval(n.value) for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "EMAIL_NO_CARD" for t in n.targets)]
+    assert len(values) == 1 and set(values[0]) == CARD_FREE and len(values[0]) == len(CARD_FREE)
+    assert set(ia.EMAIL_NO_CARD) == CARD_FREE
+    always_a_card = set(ia.EMAIL_ACTIONS) - CARD_FREE
+    assert {"archive", "move", "trash", "spam", "restore", "not_spam", "inbox"} <= always_a_card
+
+
+@pytest.mark.parametrize("action", ["archive", "move", "trash", "spam", "restore", "not_spam", "inbox"])
+def test_mj4_these_always_raise_a_card_and_change_nothing(gmail, monkeypatch, action):
+    Page(monkeypatch)
+    out = ia.propose_email(action, thread_ids=["acct_work:t1"], label="receipts")
+    assert out["status"] == "pending_approval" and gmail.changes() == []
+
+
+def test_mj4_a_card_free_change_is_in_the_turn_receipt_without_subjects_and_undoes_exactly(real_mail, monkeypatch):
+    """Fails on da66aaa40: the turn receipt knew nothing of the change (action, count, message ids)."""
+    import json
+    from agent_friday.services import turn_plan, turn_receipt
+    before = _snap()
+    turn_plan.begin_turn("turn-card-free")
+    try:
+        out = agent._tool_organize_email({"action": "star", "thread_ids": ["acct_work:t1", "acct_work:t3"]})
+    finally:
+        turn_plan.begin_turn(None)
+    assert out.startswith("DONE"), out
+    assert not _pending(), "no card was raised"
+    assert MAIL["m1"]["labels"] >= {"STARRED"} and MAIL["m7"]["labels"] >= {"STARRED"}
+    got = turn_receipt.build("turn-card-free")
+    (change,) = got["card_free_changes"]
+    assert change["tool"] == "organize_email" and change["action"] == "star" and change["count"] == 2
+    assert change["message_ids"] == {"acct_work": {"t1": ["m1", "m2"], "t3": ["m6", "m7"]}}, change["message_ids"]
+    assert change["undoable"] is True and got["found"] is True
+    assert "Subject" not in json.dumps(got["card_free_changes"]) and "Sender" not in json.dumps(got["card_free_changes"])
+    # the existing Undo path puts every message back exactly (m3 was already starred and stays so)
+    undo = ia.undo(change["receipt_id"], conversation_id=CONV)
+    assert undo["status"] == "pending_approval"
+    ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
+    assert ia.wait_for(undo["approval_id"], 10)["status"] == "complete"
+    assert _snap() == before
+
+
+def test_mj4_a_card_that_was_approved_is_not_listed_as_card_free(real_mail, monkeypatch):
+    from agent_friday.services import turn_plan, turn_receipt
+    stage = _stage(selected=(1,))
+    report(stage)
+    Page(monkeypatch)
+    turn_plan.begin_turn("turn-with-card")
+    try:
+        _go("archive these", stage)
+        cid = _pending()[0]["approval_id"]
+        ap.decide(cid, "approve", decided_by="owner:ui")
+        ia.wait_for(cid, 10)
+    finally:
+        turn_plan.begin_turn(None)
+    assert "card_free_changes" not in turn_receipt.build("turn-with-card")
+
+
+def test_mj4_the_docs_call_it_a_rule_not_a_known_issue():
+    root = Path(__file__).resolve().parents[2]
+    flat = lambda name: " ".join((root / name).read_text(encoding="utf-8").split())
+    mail, known = flat("docs/user-guide/mail.md"), flat("KNOWN_ISSUES.md")
+    assert "Changes Friday makes without a card (a rule you set)" in mail and "never a subject" in mail
+    section = known[known.index("## 3. Deliberate behaviour"):]
+    assert "run with no card when a model asks" in section and "This is your rule" in section
+    assert "Open in Beta 1.1" in known and "model path still runs star" not in known
+    assert "only if Friday actually read that card's line aloud in this conversation" in mail
