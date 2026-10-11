@@ -1498,6 +1498,31 @@ def _check_podcast_length(new_settings):
                         % (", ".join(_pe.LENGTH_SHOWS), ", ".join(_pe.LENGTHS), val))}
 
 
+def _check_interruption_settings(new_settings):
+    """The interruption budget is a whole number from 0 (no limit) to 60, and quiet hours are two
+    HH:MM times. A bad value would be read as the default, so the row would say one thing and the
+    policy do another (services/interruption_policy). An error dict, or None."""
+    if "interruption_budget_per_hour" in new_settings:
+        v = new_settings.get("interruption_budget_per_hour")
+        if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 60:
+            return {"status": "error",
+                    "message": ("interruption_budget_per_hour must be a whole number from 0 "
+                                "(no limit) to 60 (got %r)" % (v,))}
+    for key in ("quiet_hours_start", "quiet_hours_end"):
+        if key in new_settings:
+            v = new_settings.get(key)
+            ok = False
+            if isinstance(v, str) and len(v) == 5 and v[2] == ":" and v[:2].isdigit() and v[3:].isdigit():
+                ok = int(v[:2]) <= 23 and int(v[3:]) <= 59
+            if not ok:
+                return {"status": "error",
+                        "message": "%s must be a time like 22:00 (got %r)" % (key, v)}
+    for key in ("quiet_hours_enabled", "honour_focus_assist"):
+        if key in new_settings and not isinstance(new_settings.get(key), bool):
+            return {"status": "error", "message": "%s must be true or false" % key}
+    return None
+
+
 def _check_local_only_seats(new_settings):
     """Refuse a cloud model on a seat declared local-only. 400, or None.
 
@@ -1723,6 +1748,10 @@ def api_settings():
         podcast_error = _check_podcast_length(new_settings)
         if podcast_error is not None:
             return jsonify(podcast_error), 400
+
+        interrupt_error = _check_interruption_settings(new_settings)
+        if interrupt_error is not None:
+            return jsonify(interrupt_error), 400
 
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting

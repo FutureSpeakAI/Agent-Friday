@@ -74,10 +74,11 @@ class Emitter:
     source: str = ""            # the push source, when the push names one
     ledger: bool = True         # False for ambient frames that are not notices
     push_kind: str = ""         # the `kind=` the push passes, when it is not `kind`
+    burst: bool = False         # a burst of these within five minutes is ONE card with a count
 
 
-def _e(id_, where, kind, place, key, route=PUSH, source="", safety=False, ledger=True, pk=""):
-    return Emitter(id_, where, kind, place, key, bool(safety), route, source, ledger, pk)
+def _e(id_, where, kind, place, key, route=PUSH, source="", safety=False, ledger=True, pk="", burst=False):
+    return Emitter(id_, where, kind, place, key, bool(safety), route, source, ledger, pk, bool(burst))
 
 
 _ALL = [
@@ -91,11 +92,11 @@ _ALL = [
     _e("E04", "services/scheduler.py:_notify_run:failed", "scheduled_failure", NEEDS_YOU,
        "sched-fail:{schedule_id}", source="scheduler"),
     _e("E05", "services/scheduler.py:_notify_run:waiting", "scheduled_wait", ACTIVITY,
-       "sched-wait:{schedule_id}", source="scheduler", pk="scheduled_task"),
+       "sched-wait:{schedule_id}", source="scheduler", pk="scheduled_task", burst=True),
     _e("E06", "services/scheduler.py:_notify_run:retired", "schedule_retired", ACTIVITY,
        "sched-retired:{schedule_id}", source="scheduler"),
     _e("E07", "services/scheduler.py:_notify_run:ran", "scheduled_ran", UPDATES,
-       "sched-ok:{schedule_id}", source="scheduler", pk="scheduled_task"),
+       "sched-ok:{schedule_id}", source="scheduler", pk="scheduled_task", burst=True),
     _e("E08", "services/scheduler.py:_notify_status", "scheduled_status", ACTIVITY,
        "sched-status:{schedule_id}", source="scheduler"),
     _e("E09", "services/scheduler.py:_announce_drain", "queue_drained", UPDATES,
@@ -266,6 +267,16 @@ _ALL = [
        route=STREAM, ledger=False),
     _e("L06", "routes/voice.py:_run_routed_front_turn", "router_receipt", RECEIPTS, "",
        route=STREAM, ledger=False),
+    # Quiet turned on by the owner (voice, chat or the page): a visible line in Updates that never
+    # merges with another, so every activation can be seen.
+    _e("NQ1", "services/notification_tools.py:_quiet", "quiet_on", UPDATES, "quiet-on:{surface}:{seq}",
+       source="interruptions"),
+    # An approval whose time ran out while quiet hours, the limit or Focus Assist held it back.
+    _e("NQ3", "services/approvals.py:_notify_expired_while_held", "approval_expired_held", NEEDS_YOU,
+       "approval-expired:{approval_id}", source="approvals"),
+    # A scheduled run that was due in quiet hours and waits for them to end.
+    _e("NQ2", "services/scheduler.py:_defer_for_quiet", "scheduled_deferred", UPDATES,
+       "sched-deferred:{schedule_id}:{day}", source="scheduler"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),

@@ -2469,6 +2469,19 @@ DEFAULT_SETTINGS = {
     "local_scheduler_admit_timeout_s": 900,  # a call stuck behind other work this long goes ahead unqueued, and says so
     "local_scheduler_resident_s": 300,   # a model it ran this recently counts as still loaded (the daemon keeps it 5 minutes)
     "local_scheduler_wrap_background": True,  # an unlabelled background call becomes a deferrable visible job in the queue
+    # Interruptions (services/interruption_policy): how often something that needs you may pop up,
+    # speak or text. Over the hour's budget, items wait silently in the Needs-you badge. 0 = no limit.
+    # Safety-critical items (spend halt, credential problem, seat change, a cLaw block) are exempt.
+    "interruption_budget_per_hour": 6,
+    # Quiet hours: off until you turn them on (22:00 to 07:00 is the offered window). In them only
+    # safety-critical items interrupt, and background jobs that would raise approvals wait.
+    "quiet_hours_enabled": False,
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "07:00",
+    # "Quiet until morning": an epoch time; 0 = not set. Set by voice or the Needs-you panel.
+    "quiet_until_ts": 0,
+    # Follow Windows Focus Assist / Do Not Disturb. Off until you choose it.
+    "honour_focus_assist": False,
     # ── Tool lifecycle hooks (Part B) ──
     # Each built-in PreToolUse/PostToolUse hook can be toggled here. Critical
     # hooks (governance_rings, vault_zt) ignore the toggle — they can't be

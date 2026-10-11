@@ -521,3 +521,13 @@ def _settings_do_not_outlive_their_file():
         core = sys.modules.get("agent_friday.core")
         if core is not None:
             core._invalidate_settings_cache()
+
+
+@pytest.fixture(autouse=True)
+def _interruption_state_per_test(tmp_path):
+    """The hour's interruption count (services/interruption_policy) starts empty in every test, so
+    one test's approvals never use up the budget the next test sees."""
+    from agent_friday.services import interruption_policy as _ip
+    _ip.set_state_path(tmp_path / "interruptions.json")
+    yield
+    _ip.set_state_path(None)

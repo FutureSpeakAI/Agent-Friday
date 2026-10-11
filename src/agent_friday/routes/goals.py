@@ -233,6 +233,23 @@ def decide_approval_route(approval_id):
     return jsonify({"ok": True, "approval": rec, "won": won, "already_decided": not won})
 
 
+def _snapshot_event(pending):
+    """The full pending list, with the ids a page lists without popping open (quiet hours, over the
+    hour's budget, Focus Assist: services/interruption_policy). Every card is in `pending` either way."""
+    # A card the hold marks (held, or released quietly by the cap) is listed, never popped open by a
+    # page that connects or reloads later; the policy's own verdict covers the rest.
+    quiet = [p.get("approval_id") for p in pending
+             if p.get("held_by_policy") or p.get("hold_capped")]
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        quiet += [p.get("approval_id") for p in pending
+                  if p.get("approval_id") not in quiet
+                  and _ip.held("approval:%s" % p.get("approval_id"))]
+    except Exception:
+        pass
+    return {"type": "snapshot", "pending": pending, "quiet": quiet}
+
+
 #: Seconds between heartbeats on a quiet approvals stream.
 BEAT_S = 20
 
@@ -261,8 +278,7 @@ def approval_events_route():
         q = approval_feed.subscribe()
         try:
             pending = _approvals.list_approvals(status="pending")
-            yield "data: " + _json.dumps({"type": "snapshot", "pending": pending},
-                                         default=str) + "\n\n"
+            yield "data: " + _json.dumps(_snapshot_event(pending), default=str) + "\n\n"
             while True:
                 try:
                     evt = q.get(timeout=BEAT_S)
@@ -273,8 +289,7 @@ def approval_events_route():
                     yield 'data: {"type": "beat"}\n\n'
                     continue
                 if evt.get("type") == "resync":
-                    evt = {"type": "snapshot",
-                           "pending": _approvals.list_approvals(status="pending")}
+                    evt = _snapshot_event(_approvals.list_approvals(status="pending"))
                 yield "data: " + _json.dumps(evt, default=str) + "\n\n"
         finally:
             approval_feed.unsubscribe(q)

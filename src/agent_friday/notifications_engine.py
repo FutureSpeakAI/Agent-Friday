@@ -221,8 +221,13 @@ def push(
     resolve_key: Optional[str] = None,
     job: Optional[str] = None,
     emitter: Optional[str] = None,
+    off_record: bool = False,
 ) -> Dict[str, Any]:
     """Add a notification to the tray (services/notification_policy).
+
+    off_record:  the notice is about something raised off the record. It is treated as off the record
+                 whatever the mode is now (kept in memory, never written to notifications.json), and
+                 the caller keeps the private words out of title, body and key.
 
     emitter:     the registry id of what is raising this (services/notice_registry).
                  It names the notice's place (needs_you / activity / updates /
@@ -259,13 +264,14 @@ def push(
         priority = "medium"
     from agent_friday.services import notification_policy as _pol
     from agent_friday.services import notice_registry as _reg
+    private = bool(off_record) or _off_record_now()
     approval = _pol.is_approval(kind)
     em = _reg.resolve(kind, source, emitter)
     safety = _reg.is_safety_critical(kind, emitter, source)
     if _reg.is_receipt(kind, emitter, source) and not approval:
         # Traces and receipts are pulled, never pushed.
         place = _reg.RECEIPTS
-        pulled = {"title": "Off the record" if _off_record_now() else title,
+        pulled = {"title": "Off the record" if private else title,
                   "kind": kind, "source": source, "priority": priority,
                   "tier": _pol.LOG_ONLY, "logged": True, "pull_only": True,
                   "place": place, "emitter": em.id if em else None,
@@ -275,7 +281,7 @@ def push(
     t = _pol.tier_for(kind, source, priority, tier)
     place = _reg.place_of(kind, source, emitter, t)
     if not approval and (t == _pol.LOG_ONLY or _pol.is_muted(kind, source)):
-        logged = {"title": "Off the record" if _off_record_now() else title,
+        logged = {"title": "Off the record" if private else title,
                   "kind": kind, "source": source, "priority": priority,
                   "tier": _pol.LOG_ONLY, "logged": True, "place": place,
                   "emitter": em.id if em else None,
@@ -284,8 +290,14 @@ def push(
         return logged
     quiet = _pol.owner_in_conversation()
     key = dedupe_key if approval else _pol.collapse_key(kind, source, title, dedupe_key)
+    # May this interrupt? (services/interruption_policy: quiet hours, Focus Assist if chosen, the
+    # hourly budget; safety-critical always.) A needs-you item that may not still lands in the badge,
+    # silently. Nothing here removes or hides the item.
+    # An off-the-record notice is counted but not remembered by key: its key can embed its title.
+    interrupt, hold_reason = _interruption(kind, source, emitter, None if private else key,
+                                           approval, t)
     job = _pol.job_for(job=job, meta=meta, dedupe_key=dedupe_key, resolve_key=resolve_key)
-    off = _off_record_now()
+    off = private
     with _LOCK:
         items, ledger = _read_store()
         probe = {"kind": kind, "source": source, "priority": priority, "tier": t,
@@ -325,6 +337,34 @@ def push(
                 _save(items, ledger)
                 _notice_line(em, kind, place, not n.get("held"), safety)
                 return n
+        if (not approval and not safety and not off and t != _pol.NEEDS_YOU and em is not None
+                and em.burst and place in (_reg.UPDATES, _reg.ACTIVITY)
+                and not (meta or {}).get("no_coalesce")):
+            # A burst of one kind from one source within five minutes is one card with a count, for the
+            # emitters that declare themselves bursty (the "ran" lines of schedules). A card about one
+            # task, run or message keeps its own key; needs-you items stay one per decision.
+            from agent_friday.services import interruption_policy as _ip
+            for n in reversed(items):
+                if n.get("dismissed") or n.get("tier") == _pol.NEEDS_YOU:
+                    continue
+                if n.get("kind") != kind or n.get("source") != source or n.get("emitter") != em.id:
+                    continue
+                if n.get("off_record") or n.get("meta", {}).get("no_coalesce"):
+                    continue                 # an off-the-record card is never merged into, or out of
+                if not _ip.coalesces(_utc_ts(n.get("created_at") or "")):
+                    break
+                n["count"] = int(n.get("count") or 1) + 1
+                n["title"], n["body"] = title, body
+                n["created_at"] = _now_iso()
+                if target:
+                    n["target"] = target     # the card opens the latest item, not the first
+                if actions:
+                    n["actions"] = actions
+                if meta:
+                    n["meta"] = dict(n.get("meta") or {}, **meta)
+                _save(items, ledger)
+                _notice_line(em, kind, place, not n.get("held"), safety)
+                return n
         entry = {
             "id": str(uuid.uuid4()),
             "title": title,
@@ -348,7 +388,9 @@ def push(
             # Mid-conversation: a card waits until the owner is done; an
             # approval arrives anyway, marked quiet so nothing interrupts.
             "held": bool(quiet and not approval and not safety),
-            "quiet": bool(quiet and approval),
+            "quiet": bool(quiet and approval) or not interrupt,
+            "interrupt": interrupt,
+            "hold_reason": hold_reason,
             "resolve_key": resolve_key,
             "job": job,
             "place": place,
@@ -361,8 +403,28 @@ def push(
             entry["off_record"] = True
         items.append(entry)
         _save(items, ledger)
-        _notice_line(em, kind, place, not entry["held"], safety)
+        _notice_line(em, kind, place, not entry["held"] and (interrupt or t != _pol.NEEDS_YOU), safety)
         return entry
+
+
+def _interruption(kind: str, source: str, emitter: Optional[str], key: Optional[str],
+                  approval: bool, tier: str):
+    """(may_interrupt, why_not) for a notice. Only a needs-you item interrupts at all; an FYI never
+    does and is not counted against the hour's budget. Never raises: on a fault it interrupts."""
+    try:
+        from agent_friday.services import notice_registry as _reg
+        if _reg.is_safety_critical(kind, emitter, source):
+            return True, ""                  # whatever tier it was given, it always reaches the owner
+    except Exception:
+        return True, ""
+    if not approval and tier != "needs_you":
+        return False, ""
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        v = _ip.verdict(kind, source=source, emitter=emitter, key=key)
+        return v.interrupt, ("" if v.interrupt else v.reason)
+    except Exception:
+        return True, ""
 
 
 def _notice_line(em: Any, kind: str, place: str, delivered: bool, safety: bool) -> None:
@@ -717,6 +779,16 @@ def list_notifications(
 def _iso_ts(s: str) -> float:
     try:
         return datetime.fromisoformat(s.replace("Z", "")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _utc_ts(s: str) -> float:
+    """Epoch seconds of a stored ``_now_iso()`` stamp (UTC, trailing Z)."""
+    try:
+        from datetime import timezone
+        return datetime.fromisoformat(str(s).replace("Z", "")).replace(
+            tzinfo=timezone.utc).timestamp()
     except Exception:
         return 0.0
 

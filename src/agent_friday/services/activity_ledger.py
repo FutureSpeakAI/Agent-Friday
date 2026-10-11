@@ -56,6 +56,9 @@ _ALLOWED_FIELDS = {
     # A meeting's recording, transcript or notes were deleted for real
     # (services/meeting_policy). Counts only: no title, id, path or text.
     "meeting_deletion": {"scope", "reason", "audio_files", "meetings"},
+    # Quiet turned on (services/interruption_policy.turn_on_quiet): where it was asked from, until when,
+    # and whether the 12-hour cap shortened it. No words.
+    "quiet_on": {"surface", "until_ts", "capped"},
     "reasoning_trace": {
         "trace_id", "parent_id", "task_id", "model", "seat", "trace_kind", "source",
         "tokens_in", "tokens_out", "reasoning_chars", "tool_calls", "duration_ms",

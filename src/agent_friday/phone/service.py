@@ -560,6 +560,17 @@ def _on_decision(record: dict) -> None:
 _REPLY = re.compile(r"^\s*(yes|y|approve|no|n|deny)\s+(\d{6})\s*[.!]?\s*$", re.I)
 
 
+def _may_text_about(rec: dict) -> bool:
+    """A text is an interruption: the same verdict as the popup for this approval (quiet hours, the
+    hour's budget, Focus Assist when chosen; services/interruption_policy). Fails open."""
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        return _ip.verdict("approval_pending", source="approvals",
+                           key="approval:%s" % rec.get("approval_id")).interrupt
+    except Exception:
+        return True
+
+
 def offer_pending_approvals(now: Optional[float] = None) -> int:
     """Text the owner a code for each new pending card. Returns how many."""
     cfg = config.load()
@@ -574,7 +585,13 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
         for rec in ap.list_approvals(status="pending"):
             aid = rec.get("approval_id")
             live_ids.add(aid)
-            if aid in st["codes"] or (now - (rec.get("created_at") or 0)) > SMS_APPROVAL_MAX_AGE_S:
+            if aid in st["codes"] or rec.get("held_by_policy") or rec.get("hold_capped"):
+                continue                    # held (quiet or over budget): offered when the hold ends;
+                                            # a hold ended by its cap is a quiet release: no text
+            # Age counts from when the hold ended, so a card held all night is still texted in the morning.
+            if (now - float(rec.get("released_at") or rec.get("created_at") or 0)) > SMS_APPROVAL_MAX_AGE_S:
+                continue
+            if not _may_text_about(rec):
                 continue
             code, salt = _new_code(), secrets.token_hex(8)
             title = _gate_text((rec.get("title") or "an action")[:120])

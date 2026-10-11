@@ -12515,7 +12515,8 @@ def _approval_tool_payload(name, tool_input, session_ctx):
     """Keep a deferred action bound to the Crew authority that requested it."""
     sc = session_ctx or {}
     payload = {"tool": name, "input": tool_input,
-                "conversation_id": sc.get("conversation_id") or ""}
+                "conversation_id": sc.get("conversation_id") or "",
+                "task_id": sc.get("task_id") or ""}
     from agent_friday.services.crew_profiles import BROWSER_TOOLS
     if name in BROWSER_TOOLS:
         from agent_friday.services.browser_authority import approval_owner
