@@ -350,17 +350,22 @@ def _first_line(text: str, n: int = 200) -> str:
 def open_turn(message: str, data: Optional[dict], *, session_id, conversation_id,
               turn_id: Optional[str], settings: Optional[dict],
               authenticated: bool = True, local: Optional[bool] = None,
-              resolve=None, disarm: bool = True) -> Optional[dict]:
+              resolve=None, disarm: bool = True, arm: bool = True) -> Optional[dict]:
     """Resolve and run one "open the X" request, or None to take the normal turn.
 
     Returns {"reply", "tool_trace", "actions", "outcome"} when the turn was
     answered here. The opt-in setting off means the resolver is never called.
     """
     try:
+        if trusted_surface(data, message, local=local):
+            armed = take_armed_card(conversation_id)
+            if armed:
+                return _answer_armed_card(armed, message, conversation_id, turn_id)
         # Laya's safe writes ride the typed line on trusted_surface alone, NOT on reflex_open_enabled
         # (a different opt-in: "open the X"). Off, this returns None without reading anything.
         safe = _safe_write_first(message, data, session_id=session_id, conversation_id=conversation_id,
-                                 turn_id=turn_id, authenticated=authenticated, local=local, disarm=disarm)
+                                 turn_id=turn_id, authenticated=authenticated, local=local, disarm=disarm,
+                                 arm=arm)
         if safe is not None:
             return safe
         if not open_enabled(settings):
@@ -389,7 +394,7 @@ def open_turn(message: str, data: Optional[dict], *, session_id, conversation_id
                          reflex={"by": "resolver", "kind": "open", "outcome": "ask"})
             ask = _laya_templates.rule_question(str(res.question or res.text), "resolver")
             return {"reply": ask.text, "tool_trace": [], "actions": [],
-                    "outcome": "ask", "laya": ask.receipt()}
+                    "outcome": "ask", "laya": ask.receipt(), "history_text": NEUTRAL_ASK}
         if status != "command" or not getattr(res, "command", None):
             # brain / not_found: the normal turn. A resolver that did not
             # answer (Laya absent, slow, errored) is counted as degraded.
@@ -493,6 +498,31 @@ def note_user_turn(conversation_id, message: str, trusted: bool) -> None:
             _LAYA_ASKED.pop(cid, None)
 
 
+def take_armed_card(conversation_id) -> Optional[str]:
+    """The card id armed by the previous reply in this conversation, once, when the turn now being answered
+    is the very next one and ``note_user_turn`` kept it (a whole yes or no from the owner's own page)."""
+    cid = str(conversation_id or "").strip()
+    with _lock:
+        rec = _LAYA_ASKED.get(cid)
+        if rec is None or rec["age"] != 1:
+            return None
+        _LAYA_ASKED.pop(cid, None)
+        return rec["card_id"]
+
+
+def _answer_armed_card(card_id: str, message: str, conversation_id, turn_id) -> dict:
+    """A whole yes or no, typed on the owner's page as the very next message after Laya's card: it answers
+    that card directly, with no model round (the model never held the card id). The card's own gate decides."""
+    from agent_friday.services import item_actions as _ia
+    decision = _ia.typed_decision(message) or ""
+    res = _ia.answer_card(card_id, decision, message, surface="chat")
+    count("card_answer_" + ("ok" if res.get("ok") else "refused"))
+    _record_plan(turn_id, shape="reflex_card", reason="a typed yes or no answered the card Laya raised",
+                 reflex={"by": "rule", "kind": "card_answer", "outcome": "ok" if res.get("ok") else "refused"})
+    return {"reply": str(res.get("text") or ""), "tool_trace": [], "actions": [],
+            "outcome": "card_answered" if res.get("ok") else "refused"}
+
+
 def laya_card_is_last_question(conversation_id, card_id) -> bool:
     """True once, for the card armed by the previous reply in this conversation."""
     cid = str(conversation_id or "").strip()
@@ -502,6 +532,11 @@ def laya_card_is_last_question(conversation_id, card_id) -> bool:
             return False
         _LAYA_ASKED.pop(cid, None)
         return True
+
+
+#: What the conversation's history keeps for a reply that named rows from the owner's screen. The live reply
+#: shows the sample or the choices on the page; a later model turn (possibly a cloud model) reads only this.
+NEUTRAL_ASK = "I need to know which one you mean. The choices are on your screen."
 
 
 def _card_sample(result: str) -> str:
@@ -519,7 +554,7 @@ def _card_sample(result: str) -> str:
         return ""
 
 
-def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authenticated):
+def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authenticated, arm=True):
     """Run Laya's safe-write call (the governed organize_email handler), which can only raise
     ONE card. The line the owner reads is sealed: the verb, a count and their own label."""
     from agent_friday.services import agent
@@ -531,11 +566,15 @@ def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authen
     result = str(agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx) or "")
     status = agent._tool_call_status(result)
     # The single-use ticket is spent by now; it is not kept in the trace either.
-    entry = {"name": r.tool, "input": {"action": r.args.get("action")}, "result": result}
+    entry = {"name": r.tool, "input": {"action": r.args.get("action")}, "result": ""}
+    history = None
     if result.startswith("CARD_RAISED"):
-        arm_laya_card(conversation_id, result)
+        if arm:
+            arm_laya_card(conversation_id, result)
         sample = _card_sample(result)
         outcome, reply = "card", _lt.line("safe_write_card", what=(what + (" (" + sample + ")" if sample else "")))
+        history = _lt.line("safe_write_card", what=what).text       # the count and the owner's own label; no title or name
+        entry["result"] = history
     elif result.startswith("NOT DONE") or status in ("deny", "error"):
         outcome, reply = "refused", _lt.line("point_refused", detail=_first_line(result))
     else:
@@ -545,11 +584,16 @@ def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authen
     count("point_" + outcome)
     _record_plan(turn_id, shape="reflex_point", reason="safe write: one card for the rows named",
                  reflex={"by": "rule", "kind": "safe_write", "tool": r.tool, "outcome": outcome})
-    return {"reply": reply.text, "tool_trace": [entry], "actions": [], "outcome": outcome,
-            "laya": reply.receipt()}
+    if not entry["result"]:
+        entry["result"] = _first_line(result)
+    out = {"reply": reply.text, "tool_trace": [entry], "actions": [], "outcome": outcome, "laya": reply.receipt()}
+    if history:
+        out["history_text"] = history
+    return out
 
 
-def _safe_write_first(message, data, *, session_id, conversation_id, turn_id, authenticated, local, disarm=True):
+def _safe_write_first(message, data, *, session_id, conversation_id, turn_id, authenticated, local, disarm=True,
+                      arm=True):
     """One reversible mail change to the rows a short typed line names: ONE card, or one question, or
     None (the ordinary turn). Never raises into the caller beyond open_turn's own guard."""
     from agent_friday.services import laya_safe_writes as _sw
@@ -566,7 +610,7 @@ def _safe_write_first(message, data, *, session_id, conversation_id, turn_id, au
         return None
     if r.decision == "tool":
         return _safe_write_turn(r, message, session_id=session_id, conversation_id=conversation_id,
-                                turn_id=turn_id, authenticated=authenticated)
+                                turn_id=turn_id, authenticated=authenticated, arm=arm)
     if r.decision == "ask" and r.question:
         count("point_ask")
         if disarm:
@@ -574,7 +618,8 @@ def _safe_write_first(message, data, *, session_id, conversation_id, turn_id, au
         _record_plan(turn_id, shape="reflex_point", reason="safe write: asked which reading",
                      reflex={"by": "rule", "kind": "safe_write", "outcome": "ask"})
         ask = _laya_templates.rule_question(r.question, "point_act")
-        return {"reply": ask.text, "tool_trace": [], "actions": [], "outcome": "ask", "laya": ask.receipt()}
+        return {"reply": ask.text, "tool_trace": [], "actions": [], "outcome": "ask", "laya": ask.receipt(),
+                "history_text": NEUTRAL_ASK}
     return None
 
 
@@ -601,7 +646,7 @@ def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, auth
                      reflex={"by": "rule", "kind": "point", "outcome": "ask"})
         ask = _laya_templates.rule_question(r.question, "point_act")
         return {"reply": ask.text, "tool_trace": [], "actions": [], "outcome": "ask",
-                "laya": ask.receipt()}
+                "laya": ask.receipt(), "history_text": NEUTRAL_ASK}
     if r.decision != "tool" or not r.tool:
         count("point_to_model")
         return None

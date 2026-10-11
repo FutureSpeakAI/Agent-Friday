@@ -896,9 +896,10 @@ def safe_write_route(text: str, *, stage=_UNSET, pointed=_UNSET, quiet: bool = F
                          reason="the words exclude or quantify rows; no rows are picked for them")
         if stage is _UNSET:
             stage = point_act._default_stage()      # the screen, read once, on the caller's bounded rung
-        kw = {"stage": stage}
-        if pointed is not _UNSET:
-            kw["pointed"] = pointed
+        # Rows Friday herself pointed at (a model's call) are never what the owner means by "these" or "the
+        # first two" for a change, whatever the caller passed: the owner's selection, cursor, open and focused
+        # rows and their own numbering of the screen still are (the rule point_act_route applies too).
+        kw = {"stage": stage, "pointed": None}
         pa = point_act.plan(text, quiet=quiet, **kw)
         if pa is None or pa.verb not in point_act.WRITE_VERBS:
             return None

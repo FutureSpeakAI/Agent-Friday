@@ -29,6 +29,12 @@ HOME and USERPROFILE stay on a scratch directory.
     python tools/laya_router_decision_diff.py dump --src <worktree> --cases <cases.json> --out <out.json>
     python tools/laya_router_decision_diff.py compare <base.json> <new.json>
 
+The NEW tree is dumped twice: with Laya's safe writes OFF (the shipped default) and ON (``--safe-writes on``, the
+mode forced in the dump process; the base tree has no such setting and is dumped once). OFF must differ from the base
+only by the classes above. ON may additionally turn a WRITE verb with a referential object, on the trusted surfaces, into
+a safe-write route (layer ``safe_write``: a card call, a question, or a row-less defer); every other difference,
+including any read, select or open taken by that layer, is NOT ALLOWED.
+
 CPU only (CUDA_VISIBLE_DEVICES=-1); nothing is sent anywhere; no real home is written.
 """
 from __future__ import annotations
@@ -167,9 +173,21 @@ def nondeterministic(stats: dict, slow_turns: list) -> bool:
     return bool(stats.get("timeout") or stats.get("skipped") or slow_turns)
 
 
-def dump(src: Path, cases_path: Path, out: Path) -> int:
+def dump(src: Path, cases_path: Path, out: Path, safe_writes: str = "off") -> int:
     sys.path.insert(0, str(src / "src"))
     from agent_friday.services import laya, laya2_encoder, laya_router as lr
+    write_referential = None
+    if safe_writes == "on":
+        try:        # the setting forced on in this process; the base tree has no such module and stays as it is
+            from agent_friday.services import laya_safe_writes as _sw
+            from agent_friday.services import point_act as _pa
+            _sw.mode = lambda settings=None: "on"
+
+            def write_referential(text):
+                p = _pa.parse(text)
+                return bool(p is not None and p.verb in _pa.WRITE_VERBS and _pa.is_referential(p))
+        except ImportError:
+            write_referential = None
     if not laya2_encoder.is_available():
         print("REFUSED: the Laya reading model is not on disk (%s); tier 1 would be a silent 'degraded' on both "
               "sides. Pass --encoder-dir." % laya2_encoder.artifacts_dir(), file=sys.stderr)
@@ -193,11 +211,15 @@ def dump(src: Path, cases_path: Path, out: Path) -> int:
     for c in cases:
         t, kw = c["text"], dict(c["kw"])
         row = {"text": t, "kw": kw, "feature": c.get("feature", False), "trust_supported": takes_trust}
+        if write_referential is not None:
+            row["write_referential"] = write_referential(t)
         for b in BUDGETS:
             row["route@%d" % b] = _row(lr.route(t, budget_ms=b, log=False, **kw))
             row["route_turn@%d" % b] = _row(laya.route_turn(t, caller="eval.diff", budget_ms=b, log=False, **kw))
             if takes_trust:
                 tk = dict(kw, trusted=True, quiet=False, stage=stage, pointed=None)
+                if safe_writes == "on":
+                    tk["conversation_id"] = "oracle-conversation"       # a ticket binds to a conversation
                 if takes_budget:          # the oracle alone widens the rung budgets, so a run is deterministic
                     tk["rung_budget_ms"] = ORACLE_RUNG_BUDGET_MS
                 row["route_trusted@%d" % b] = _row(lr.route(t, budget_ms=b, log=False, **tk))
@@ -231,6 +253,14 @@ def _same(a: dict, b: dict) -> bool:
     return all(a.get(k) == b.get(k) for k in keys)
 
 
+def _handoff_added(a: dict, b: dict) -> bool:
+    """Everything the same except that the new tree names a hand-off on a request the base already deferred
+    (the ``handoff`` field is new: a send, reply or write phrase now says a writer composes it)."""
+    keys = ("decision", "tool", "args", "question", "layer", "chosen")
+    return (a["decision"] == "defer" and not a.get("handoff") and bool(b.get("handoff"))
+            and all(a.get(k) == b.get(k) for k in keys))
+
+
 def _narrower(a: dict, b: dict) -> bool:
     return (b["decision"] == "defer" and not b["tool"] and a["decision"] != "defer"
             and (WRITE_REASON in (b["reason"] or "") or b["layer"] == "point_act"))
@@ -240,7 +270,13 @@ def _feature(row: dict, surface: str, b: dict) -> bool:
     return bool(row.get("feature")) and "trusted" in surface and b["layer"] in ("point_act", "resolver")
 
 
-def compare(base: Path, new: Path) -> int:
+def _safe_write_feature(row: dict, surface: str, b: dict, on: bool) -> bool:
+    """ON pass only: a WRITE verb with a referential object, on a trusted surface, may become Laya's safe-write
+    route (a card call, a question, a row-less defer). Nothing else may take the layer."""
+    return bool(on and "trusted" in surface and b["layer"] == "safe_write" and row.get("write_referential"))
+
+
+def compare(base: Path, new: Path, on: bool = False) -> int:
     A = json.loads(base.read_text(encoding="utf-8"))
     B = json.loads(new.read_text(encoding="utf-8"))
     ra = {(r["text"], json.dumps(r["kw"], sort_keys=True)): r for r in A["rows"]}
@@ -251,12 +287,18 @@ def compare(base: Path, new: Path) -> int:
     surfaces = [k for k in next(iter(rb.values())) if k.startswith(("route", "rules_route"))]
     allowed = {s: [] for s in surfaces}
     feature = {s: [] for s in surfaces}
+    handoff = {s: [] for s in surfaces}
+    safe = {s: [] for s in surfaces}
     bad, same = [], 0
     for k in sorted(ra):
         for s in surfaces:
             a, b = ra[k][s], rb[k][s]
             if _same(a, b):
                 same += 1
+            elif _handoff_added(a, b):
+                handoff[s].append((k[0], a, b))
+            elif _safe_write_feature(rb[k], s, b, on):
+                safe[s].append((k[0], a, b))
             elif _feature(rb[k], s, b):
                 feature[s].append((k[0], a, b))
             elif _narrower(a, b):
@@ -266,6 +308,8 @@ def compare(base: Path, new: Path) -> int:
     print("compared %d cases x %d surfaces: %d identical (tier-1 decided: base %s, new %s)" % (
         len(ra), len(surfaces), same, A.get("tier1_decided"), B.get("tier1_decided")))
     for title, bucket in (("ALLOWED (narrower: a change anywhere in the turn is a defer)", allowed),
+                          ("ALLOWED (a hand-off named on a request the base already deferred)", handoff),
+                          ("FEATURE (safe writes ON: a write to pointed rows becomes a safe-write route)", safe),
                           ("FEATURE (words that point at the screen, trusted surfaces only)", feature)):
         for s, rows in bucket.items():
             if rows:
@@ -291,15 +335,19 @@ def run(base: Path, new: Path, scratch: Path, encoder_dir: Path, hf_home: str) -
                HF_HUB_OFFLINE="1")
     if hf_home:
         env["HF_HOME"] = hf_home
-    outs = []
-    for name, tree in (("base", base), ("new", new)):
+    outs = {}
+    for name, tree, mode in (("base", base, "off"), ("new", new, "off"), ("new_on", new, "on")):
         out = scratch / ("decisions_%s.json" % name)
         r = subprocess.run([sys.executable, str(Path(__file__).resolve()), "dump", "--src", str(tree),
-                            "--cases", str(cases), "--out", str(out)], env=env)
+                            "--cases", str(cases), "--out", str(out), "--safe-writes", mode], env=env)
         if r.returncode:
             return r.returncode
-        outs.append(out)
-    return compare(outs[0], outs[1])
+        outs[name] = out
+    print("== safe writes OFF ==")
+    off = compare(outs["base"], outs["new"])
+    print("\n== safe writes ON ==")
+    on = compare(outs["base"], outs["new_on"], on=True)
+    return off or on
 
 
 def main(argv=None) -> int:
@@ -315,15 +363,17 @@ def main(argv=None) -> int:
     d.add_argument("--src", required=True)
     d.add_argument("--cases", required=True)
     d.add_argument("--out", required=True)
+    d.add_argument("--safe-writes", choices=("off", "on"), default="off")
     c = sub.add_parser("compare")
     c.add_argument("base")
     c.add_argument("new")
+    c.add_argument("--on", action="store_true", help="the new dump was made with safe writes on")
     a = ap.parse_args(argv)
     if a.cmd == "run":
         return run(Path(a.base), Path(a.new), Path(a.scratch), Path(a.encoder_dir), a.hf_home)
     if a.cmd == "dump":
-        return dump(Path(a.src), Path(a.cases), Path(a.out))
-    return compare(Path(a.base), Path(a.new))
+        return dump(Path(a.src), Path(a.cases), Path(a.out), a.safe_writes)
+    return compare(Path(a.base), Path(a.new), on=a.on)
 
 
 if __name__ == "__main__":

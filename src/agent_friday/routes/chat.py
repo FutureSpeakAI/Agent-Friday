@@ -407,10 +407,13 @@ def _instant_response(message, result, conversation_id):
     "outcome"}. The exchange is written to the conversation like any other.
     """
     reply = str(result.get("reply") or "")
+    # A reply that names rows from the owner's screen (a title, a sender) is shown to them live, but the
+    # conversation keeps a neutral line: the next turn's model may be a cloud model that reads the history.
+    kept = str(result.get("history_text") or reply)
     user_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                 'role': 'user', 'text': message, 'pinned': False, 'sources': []}
     friday_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
-                  'role': 'friday', 'text': reply, 'pinned': False, 'sources': []}
+                  'role': 'friday', 'text': kept, 'pinned': False, 'sources': []}
     _persist_turn(conversation_id, user_msg, friday_msg)
     _save_chat_history(CHAT_HISTORY)
     return jsonify(public_result({"status": "ok", "response": reply,
