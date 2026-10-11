@@ -167,7 +167,12 @@
   }
  ],
  "not_for_laya": [
-  {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."}
+  {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
+  {
+   "action": "settings.interruptions",
+   "kind": "by_design",
+   "reason": "The interruption limit, quiet-hour times and Focus Assist are the owner's to loosen; by voice Laya can only quiet things (quiet until morning)."
+  }
  ],
  "notes": [
   {

@@ -18,8 +18,8 @@
   "trust": {"laya": 0, "pct": 0.0},
   "marketplace": {"laya": 0, "pct": 0.0},
   "workflows": {"laya": 1, "pct": 14.3},
-  "system": {"laya": 3, "pct": 50.0},
+  "system": {"laya": 6, "pct": 60.0},
   "settings": {"laya": 2, "pct": 25.0}
  },
- "overall": {"laya": 15, "pct": 11.4}
+ "overall": {"laya": 18, "pct": 13.1}
 }

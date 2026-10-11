@@ -212,7 +212,8 @@
   ],
   "trust": [
    {"id": "trust.view", "group": "read", "label": "view trust graph", "audit_status": "M"},
-   {"id": "trust.expand_person", "group": "navigate", "label": "expand person", "audit_status": "N"}
+   {"id": "trust.expand_person", "group": "navigate", "label": "expand person", "audit_status": "N"},
+   {"id": "trust.receipts_traces", "group": "read", "label": "receipts & traces: why it did that, pulled from an item", "audit_status": "new"}
   ],
   "marketplace": [
    {"id": "marketplace.browse", "group": "read", "label": "browse listings", "audit_status": "N"},
@@ -252,7 +253,12 @@
    },
    {"id": "system.self_review", "group": "create", "label": "run self-review", "audit_status": "N"},
    {"id": "system.observer_token", "group": "settings", "label": "observer token / retention", "audit_status": "N"},
-   {"id": "system.open_card", "group": "navigate", "label": "open card", "audit_status": "N"}
+   {"id": "system.open_card", "group": "navigate", "label": "open card", "audit_status": "N"},
+   {"id": "system.activity_running", "group": "read", "label": "Activity: what is running (every task, with its model and status)", "audit_status": "new"},
+   {"id": "system.activity_waiting", "group": "read", "label": "Activity: what is waiting, in queue order", "audit_status": "new"},
+   {"id": "system.needs_you", "group": "read", "label": "Needs you and Updates: what waits for a decision, and today's digest", "audit_status": "new"},
+   {"id": "system.quiet", "group": "settings", "label": "Quiet until morning (Needs you panel)", "audit_status": "new"},
+   {"id": "system.batch_decide", "group": "organize", "label": "approve or decline a batch of approvals", "audit_status": "new"}
   ],
   "settings": [
    {"id": "settings.open_section", "group": "navigate", "label": "open section", "audit_status": "M"},
@@ -268,7 +274,8 @@
    {"id": "settings.connectors", "group": "settings", "label": "connectors / accounts / keys", "audit_status": "N"},
    {"id": "settings.local_voice_measure", "group": "settings", "label": "local voice: Measure now", "audit_status": "new"},
    {"id": "settings.local_voice_status", "group": "settings", "label": "local voice: can it run here, and why cloud voice", "audit_status": "new"},
-   {"id": "settings.local_voice_switch_offer", "group": "settings", "label": "local voice: switch offer (switch / stay)", "audit_status": "new"}
+   {"id": "settings.local_voice_switch_offer", "group": "settings", "label": "local voice: switch offer (switch / stay)", "audit_status": "new"},
+   {"id": "settings.interruptions", "group": "settings", "label": "interruptions: hourly limit, quiet hours, Focus Assist", "audit_status": "new"}
   ]
  }
 }

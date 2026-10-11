@@ -40,6 +40,22 @@
    "voice": {"live": false, "shared": false},
    "quiet_result": null,
    "eval": []
+  },
+  {
+   "id": "trust.receipts_traces",
+   "action": "trust.receipts_traces",
+   "group": "read",
+   "ui": {"control": "Receipts & traces: why it did that, from any item or the Activity lane"},
+   "tool": "why_that_plan",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["why did you do that"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
   }
  ],
  "jobs": [],

@@ -90,6 +90,60 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": ["tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"]
+  },
+  {
+   "id": "system.activity_running",
+   "action": "system.activity_running",
+   "group": "read",
+   "ui": {"control": "Activity: what is running (every task, with its model and status)"},
+   "tool": "queue_status",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["what's running?", "what is running right now"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_activity_lane.py::test_what_is_running_is_said_for_every_task_not_only_the_local_queue",
+    "tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"
+   ]
+  },
+  {
+   "id": "system.activity_waiting",
+   "action": "system.activity_waiting",
+   "group": "read",
+   "ui": {"control": "Activity: what is waiting, in queue order"},
+   "tool": "queue_status",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["what's queued", "what's in your queue?"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_activity_lane.py::test_what_is_running_is_said_for_every_task_not_only_the_local_queue",
+    "tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"
+   ]
+  },
+  {
+   "id": "system.quiet",
+   "action": "system.quiet",
+   "group": "settings",
+   "ui": {"control": "Quiet until morning (Needs you panel; by voice or the page, not typed chat)"},
+   "tool": "notifications",
+   "also_tools": [],
+   "gate": {"class": "by_argument", "ring": 1, "card": "by_argument"},
+   "laya_tier": "router_rule",
+   "phrasings": ["quiet until morning", "be quiet until morning"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_notifications_gate.py::test_the_router_takes_quiet_until_morning_to_the_notifications_tool"]
   }
  ],
  "jobs": [
@@ -171,6 +225,17 @@
    "action": "system.open_card",
    "kind": "by_design",
    "reason": "An approval card is answered, yes or no, not opened."
+  },
+  {
+   "action": "system.batch_decide",
+   "kind": "by_design",
+   "reason": "A batch of approvals is decided on screen; a spoken yes answers one card at a time, never several at once."
+  },
+  {
+   "action": "system.needs_you",
+   "kind": "gap",
+   "reason": "No chat or voice tool reads Needs you or the Updates digest yet; the panel and activity_lane's spoken lines exist.",
+   "wave": "WS-2"
   }
  ],
  "resolver_sources": [],
