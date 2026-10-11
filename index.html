@@ -39379,6 +39379,7 @@ function MeetingsPanel() {
   const [sysAudio, setSysAudio] = useState(false);
   const [speak, setSpeak] = useState(false);
   const [consent, setConsent] = useState(null);
+  const [card, setCard] = useState(null);
   const [line, setLine] = useState('');
   const [copied, setCopied] = useState(false);
   const [ret, setRet] = useState(null);
@@ -39390,6 +39391,15 @@ function MeetingsPanel() {
     setLine(d.line || '');
     setSpeak(!!d.speak);
   }).catch(() => {});
+  // The start card's own text, version and single-use token come from one request; Start stays off until they have all arrived.
+  const loadCard = () => fetch('/api/meetings/start-card').then(r => r.json()).then(d => {
+    if (d && d.status === 'ok' && d.nonce && d.consent_text && d.jurisdiction_note) {
+      setCard(d);
+      setConsent(d);
+      setLine(d.line || '');
+      setSpeak(!!d.speak);
+    } else setCard(null);
+  }).catch(() => setCard(null));
   const loadRet = () => fetch('/api/meetings/retention').then(r => r.json()).then(setRet).catch(() => {});
   const loadList = () => fetch('/api/meetings').then(r => r.json()).then(d => setList(d.meetings || [])).catch(() => {});
   const openMeeting = id => fetch('/api/meetings/' + id).then(r => r.json()).then(d => {
@@ -39543,7 +39553,8 @@ function MeetingsPanel() {
     setMsg('');
     setAsking(true);
     setCopied(false);
-    loadConsent();
+    setCard(null);
+    loadCard();
     setTitle(typeof t0 === 'string' ? t0 : '');
     if (typeof t0 === 'string' && t0) return;
     try {
@@ -39551,7 +39562,9 @@ function MeetingsPanel() {
       if (d.event && d.event.title) setTitle(d.event.title);
     } catch (e) {}
   };
+  const startReady = !!(card && card.nonce && card.consent_text && card.jurisdiction_note && card.consent_version);
   const start = async () => {
+    if (!startReady) return;
     setBusy(true);
     setMsg('');
     try {
@@ -39562,8 +39575,9 @@ function MeetingsPanel() {
         },
         body: JSON.stringify({
           consent_ack: true,
-          confirm: true,
-          consent_version: st && st.consent_version,
+          nonce: card.nonce,
+          consent_version: card.consent_version,
+          consent_line: line,
           title,
           keep_audio: keepAudio,
           system_audio: sysAudio,
@@ -39574,9 +39588,16 @@ function MeetingsPanel() {
       const d = await r.json();
       if (d.status === 'ok') {
         setAsking(false);
-      } else setMsg(d.error || 'Could not start recording.');
+        setCard(null);
+      } else {
+        setMsg(d.error || 'Could not start recording.');
+        setCard(null);
+        loadCard();
+      }
     } catch (e) {
       setMsg('Could not start recording.');
+      setCard(null);
+      loadCard();
     }
     setBusy(false);
     meetingsChanged();
@@ -39804,12 +39825,12 @@ function MeetingsPanel() {
       fontWeight: 600,
       marginBottom: 6
     }
-  }, st ? st.consent_text : ''), /*#__PURE__*/React.createElement("div", {
+  }, card ? card.consent_text : 'Loading the consent statement…'), /*#__PURE__*/React.createElement("div", {
     style: {
       ...small,
       marginBottom: 8
     }
-  }, consent ? consent.jurisdiction_note : '', " Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks."), /*#__PURE__*/React.createElement("div", {
+  }, card ? card.jurisdiction_note : '', " Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks."), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 8
     }
@@ -39901,7 +39922,7 @@ function MeetingsPanel() {
   }, "Cancel"), /*#__PURE__*/React.createElement("button", {
     className: "btn active",
     onClick: start,
-    disabled: busy
+    disabled: busy || !startReady
   }, consent && consent.mode === 'owner_decides' ? "I've checked what applies — start recording" : "I've told everyone — start recording"))), msg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,

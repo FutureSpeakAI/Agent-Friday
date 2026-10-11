@@ -64,14 +64,16 @@ def test_only_the_start_route_calls_start_on_the_meeting_manager():
     assert [(f, r) for f, _l, r in offenders] == [("routes/meetings.py", "mc.get_manager()")], offenders
 
 
-def test_the_start_route_forwards_consent_and_confirm_exactly_as_sent():
+def test_the_start_route_forwards_consent_and_the_cards_token_exactly_as_sent():
     tree = _parse(ROUTE)
     fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "meetings_start")
     assert ("methods=['POST']" in ast.unparse(fn.decorator_list[0])) or "POST" in ast.unparse(fn.decorator_list[0])
     start = next(c for c in _calls(fn) if isinstance(c.func, ast.Attribute) and c.func.attr == "start")
     kw = {k.arg: ast.unparse(k.value) for k in start.keywords}
     assert kw["consent_ack"] == "d.get('consent_ack') is True"
-    assert kw["confirm"] == "d.get('confirm') is True"
+    assert kw["nonce"] == "d.get('nonce')"
+    assert "confirm" not in kw, "a confirm in the request body must never reach start()"
+    assert "d.get('confirm')" not in ast.unparse(fn)
 
 
 def test_the_recorder_never_starts_itself():
@@ -193,17 +195,29 @@ def test_a_voice_start_recording_only_opens_the_start_card(monkeypatch):
         assert "nothing is recorded until you confirm" in r["label"]
 
 
-def test_the_page_sends_confirm_only_from_the_start_button():
-    """In both UI files `confirm:true` appears once, in the start card's own
-    request, and the nav target `start:'confirm'` only opens the card."""
+def test_the_page_starts_only_from_the_start_button_with_the_cards_token():
+    """In both UI files the start request carries the token the start card was
+    handed, never a literal `confirm:true`, and the nav target `start:'confirm'`
+    only opens the card. The button stays off until the consent statement, the
+    jurisdiction note and the token have all loaded."""
     index = (ROOT / "index.html").read_text(encoding="utf-8-sig")
     app = (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8-sig")
-    app = app[app.index("// \u2550\u2550\u2550 MEETINGS ("):app.index("// \u2550\u2550\u2550 DRAFT PREVIEW HELPERS")]
-    index = index[index.index("// \u2550\u2550\u2550 MEETINGS ("):index.index("// \u2550\u2550\u2550 DRAFT PREVIEW HELPERS")]
-    assert app.count("confirm:true") == 1 and index.count("confirm: true") == 1
+    app = app[app.index("// ═══ MEETINGS ("):app.index("// ═══ DRAFT PREVIEW HELPERS")]
+    index = index[index.index("// ═══ MEETINGS ("):index.index("// ═══ DRAFT PREVIEW HELPERS")]
+    for src, sp in ((app, ""), (index, " ")):
+        assert "confirm:" + sp + "true" not in src and "confirm: true" not in src
+        assert "/api/meetings/start-card" in src
+        assert "nonce:" + sp + "card.nonce" in src
+        assert "consent_version:" + sp + "card.consent_version" in src
+        assert "consent_line:" + sp + "line" in src
+    assert "disabled={busy||!startReady}" in app
+    assert "disabled: busy || !startReady" in index
+    # the text shown is the card's own, not a status field that may not have loaded
+    assert "card?card.consent_text" in app and "card ? card.consent_text" in index
+    assert "card?card.jurisdiction_note" in app and "card ? card.jurisdiction_note" in index
     start = app[app.index("const start=async()=>"):]
     start = start[:start.index("const stop=")]
-    assert "confirm:true" in start
+    assert "if(!startReady)return;" in start
     nav = app[app.index("const apply=t=>"):]
     nav = nav[:nav.index("apply(window.__fridayNavTarget)")]
     assert "ask()" in nav and "start()" not in nav.replace("ask()", "")

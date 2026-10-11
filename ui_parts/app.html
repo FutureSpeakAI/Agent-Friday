@@ -12203,6 +12203,7 @@ function MeetingsPanel(){
   const [sysAudio,setSysAudio]=useState(false);
   const [speak,setSpeak]=useState(false);
   const [consent,setConsent]=useState(null);
+  const [card,setCard]=useState(null);
   const [line,setLine]=useState('');
   const [copied,setCopied]=useState(false);
   const [ret,setRet]=useState(null);
@@ -12210,6 +12211,8 @@ function MeetingsPanel(){
   const [suggOff,setSuggOff]=useState(false);
   const [liveTx,setLiveTx]=useState({});
   const loadConsent=()=>fetch('/api/meetings/consent').then(r=>r.json()).then(d=>{setConsent(d);setLine(d.line||'');setSpeak(!!d.speak);}).catch(()=>{});
+  // The start card's own text, version and single-use token come from one request; Start stays off until they have all arrived.
+  const loadCard=()=>fetch('/api/meetings/start-card').then(r=>r.json()).then(d=>{if(d&&d.status==='ok'&&d.nonce&&d.consent_text&&d.jurisdiction_note){setCard(d);setConsent(d);setLine(d.line||'');setSpeak(!!d.speak);}else setCard(null);}).catch(()=>setCard(null));
   const loadRet=()=>fetch('/api/meetings/retention').then(r=>r.json()).then(setRet).catch(()=>{});
   const loadList=()=>fetch('/api/meetings').then(r=>r.json()).then(d=>setList(d.meetings||[])).catch(()=>{});
   const openMeeting=id=>fetch('/api/meetings/'+id).then(r=>r.json()).then(d=>{if(d.meeting){setSel(d.meeting);setPicked({});setFu(null);setShowTx(false);}else setMsg(d.error||'Could not open that meeting.');}).catch(()=>setMsg('Could not open that meeting.'));
@@ -12243,8 +12246,9 @@ function MeetingsPanel(){
   const copyLine=async()=>{try{await navigator.clipboard.writeText(line);setCopied(true);}catch(e){const ta=document.createElement('textarea');ta.value=line;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');setCopied(true);}catch(_){setMsg('Select the line and copy it yourself.');}document.body.removeChild(ta);}};
   const saveLine=async()=>{const d=await (await fetch('/api/meetings/consent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({line})})).json().catch(()=>({}));if(d.status==='ok'){setConsent(d);setLine(d.line);setMsg('Consent line saved.');}else setMsg(d.error||'Could not save the line.');};
   const setRetention=async b=>{const d=await (await fetch('/api/meetings/retention',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json().catch(()=>({}));if(d.status==='ok')setRet(d);else setMsg(d.error||'Could not save that choice.');};
-  const ask=async(t0)=>{setMsg('');setAsking(true);setCopied(false);loadConsent();setTitle(typeof t0==='string'?t0:'');if(typeof t0==='string'&&t0)return;try{const d=await (await fetch('/api/meetings/suggest')).json();if(d.event&&d.event.title)setTitle(d.event.title);}catch(e){}};
-  const start=async()=>{setBusy(true);setMsg('');try{const r=await fetch('/api/meetings/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({consent_ack:true,confirm:true,consent_version:st&&st.consent_version,title,keep_audio:keepAudio,system_audio:sysAudio,speak_consent:speak,max_duration_s:maxH*3600})});const d=await r.json();if(d.status==='ok'){setAsking(false);}else setMsg(d.error||'Could not start recording.');}catch(e){setMsg('Could not start recording.');}setBusy(false);meetingsChanged();};
+  const ask=async(t0)=>{setMsg('');setAsking(true);setCopied(false);setCard(null);loadCard();setTitle(typeof t0==='string'?t0:'');if(typeof t0==='string'&&t0)return;try{const d=await (await fetch('/api/meetings/suggest')).json();if(d.event&&d.event.title)setTitle(d.event.title);}catch(e){}};
+  const startReady=!!(card&&card.nonce&&card.consent_text&&card.jurisdiction_note&&card.consent_version);
+  const start=async()=>{if(!startReady)return;setBusy(true);setMsg('');try{const r=await fetch('/api/meetings/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({consent_ack:true,nonce:card.nonce,consent_version:card.consent_version,consent_line:line,title,keep_audio:keepAudio,system_audio:sysAudio,speak_consent:speak,max_duration_s:maxH*3600})});const d=await r.json();if(d.status==='ok'){setAsking(false);setCard(null);}else{setMsg(d.error||'Could not start recording.');setCard(null);loadCard();}}catch(e){setMsg('Could not start recording.');setCard(null);loadCard();}setBusy(false);meetingsChanged();};
   const stop=async()=>{setBusy(true);try{await fetch('/api/meetings/stop',{method:'POST'});}catch(e){}setBusy(false);meetingsChanged();loadList();};
   const delAudio=async m=>{if(!window.confirm('Delete the audio of “'+(m.title||'this meeting')+'”? The transcript and notes stay. The audio is removed from this computer and cannot be brought back.'))return;const d=await (await fetch('/api/meetings/'+m.id+'/audio',{method:'DELETE'})).json().catch(()=>({}));if(d.status==='ok'){setMsg('Audio deleted. The transcript and notes are untouched.');openMeeting(m.id);}else setMsg(d.error||'Could not delete the audio.');};
   const del=async m=>{if(!window.confirm('Delete “'+(m.title||'this meeting')+'”? The transcript, notes and any kept audio are removed from this computer.'))return;const d=await (await fetch('/api/meetings/'+m.id,{method:'DELETE'})).json().catch(()=>({}));if(d.status==='ok'){setSel(null);loadList();}else setMsg(d.error||'Could not delete it.');};
@@ -12280,8 +12284,8 @@ function MeetingsPanel(){
     </div>}
     {suggOff&&!rec&&<div style={{...small,marginTop:6}}>Suggestions are off after two “not now” answers. <button className="btn" onClick={suggBack} style={{marginLeft:4}}>Turn them back on</button></div>}
     {asking&&!rec&&<div role="dialog" aria-label="Start recording" style={{...box,marginTop:10,borderColor:'rgba(245,158,11,0.5)'}}>
-      <div style={{fontSize:13,color:'#fde68a',fontWeight:600,marginBottom:6}}>{st?st.consent_text:''}</div>
-      <div style={{...small,marginBottom:8}}>{consent?consent.jurisdiction_note:''} Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks.</div>
+      <div style={{fontSize:13,color:'#fde68a',fontWeight:600,marginBottom:6}}>{card?card.consent_text:'Loading the consent statement…'}</div>
+      <div style={{...small,marginBottom:8}}>{card?card.jurisdiction_note:''} Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks.</div>
       <div style={{marginBottom:8}}>
         <div style={small}>What to tell everyone (edit it, then copy it into the call chat; I don't post into other apps):</div>
         <textarea className="input" rows={2} aria-label="Consent line" style={{width:'100%',marginTop:2}} value={line} onChange={e=>{setLine(e.target.value);setCopied(false);}}/>
@@ -12299,7 +12303,7 @@ function MeetingsPanel(){
         <label>Stop after <select value={maxH} onChange={e=>setMaxH(Number(e.target.value))}>{[1,2,3,4].map(h=><option key={h} value={h}>{h} h</option>)}</select></label>
         <span style={{flex:1}}></span>
         <button className="btn" onClick={()=>setAsking(false)}>Cancel</button>
-        <button className="btn active" onClick={start} disabled={busy}>{consent&&consent.mode==='owner_decides'?"I've checked what applies — start recording":"I've told everyone — start recording"}</button>
+        <button className="btn active" onClick={start} disabled={busy||!startReady}>{consent&&consent.mode==='owner_decides'?"I've checked what applies — start recording":"I've told everyone — start recording"}</button>
       </div>
     </div>}
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:6}}>{msg}</div>}
