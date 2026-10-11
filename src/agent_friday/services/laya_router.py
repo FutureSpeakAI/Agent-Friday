@@ -20,6 +20,10 @@ surface's own governed runner (voice: ``routes.voice._local_voice_tool`` ->
 ``voice_engine._voice_tool_run`` -> ``agent._execute_tool``), so gates,
 approvals, cards and receipts are exactly those of text mode. The router
 only ever runs READ-ONLY tools; a state-changing request is ``defer``.
+The one exception is Laya's safe writes (``laya_safe_writes``, setting
+``laya_safe_writes``, OFF by default): with it ``on``, a reversible mail change
+to rows the owner pointed at becomes an ``organize_email`` call that can only
+raise the batch card (layer ``safe_write``); it never changes anything itself.
 
 How it decides, on the CPU, nothing new downloaded:
 
@@ -857,6 +861,71 @@ def point_act_route(text: str, *, stage, pointed, quiet: bool) -> Optional[Route
     return Route("defer", args=args, confidence=0.92, layer="point_act", reason=reason)
 
 
+def safe_write_route(text: str, *, stage=_UNSET, pointed=_UNSET, quiet: bool = False,
+                     surface: str = "voice", conversation_id: Optional[str] = None) -> Optional[Route]:
+    """Laya's safe writes (services/laya_safe_writes): a reversible change to the
+    rows the owner pointed at. ``off``: None, nothing read, nothing logged.
+    ``shadow``: the proposal she would make is logged (hashes only) and None is
+    returned, so the turn goes where it always went. ``on``: an ``organize_email``
+    call carrying a single-use ticket, which can only raise ONE batch card, or one
+    question when the words fit two readings. A compound, a negation and anything
+    point_act does not resolve to rows are None. Trusted surfaces only (the caller
+    checks). Never raises."""
+    try:
+        from agent_friday.services import laya_safe_writes as sw
+        m = sw.mode()
+        if (m == "off" or surface not in sw.SURFACES or not text or _NOT_A_REQUEST.search(text)
+                or len(_clauses(text)) != 1):
+            return None
+        from agent_friday.services import point_act
+        if not point_act.looks_like(text):
+            return None
+        if sw.scope_unclear(text):
+            # An exclusion or a quantifier ("not those", "everything", "the rest"): no rule
+            # says which rows, and a ranking must not. Shadow notes it; on defers WITHOUT rows.
+            if m == "shadow":
+                sw.shadow(None, "the words exclude or quantify rows", text, surface)
+                return None
+            return Route("defer", confidence=0.9, layer=sw.LAYER,
+                         reason="the words exclude or quantify rows; no rows are picked for them")
+        if stage is _UNSET:
+            stage = point_act._default_stage()      # the screen, read once, on the caller's bounded rung
+        kw = {"stage": stage}
+        if pointed is not _UNSET:
+            kw["pointed"] = pointed
+        pa = point_act.plan(text, quiet=quiet, **kw)
+        if pa is None or pa.verb not in point_act.WRITE_VERBS:
+            return None
+        if pa.decision == "ask":
+            if m != "on" or pa.verb in sw.NEVER:
+                return None
+            return Route("ask", confidence=0.9, layer=sw.LAYER, question=pa.question,
+                         reason="%s (%s)" % (pa.reason or pa.method, pa.method))
+        if m == "on" and pa.args.get("intent") == "mark_important":
+            return Route("ask", confidence=0.9, layer=sw.LAYER, question=sw.IMPORTANT_QUESTION,
+                         reason="“important” is not a star: asked, never mapped")
+        p = sw.decide(pa, text, surface=surface, stage=stage if isinstance(stage, dict) else None,
+                      conversation_id=conversation_id)
+        if p is None:
+            return None
+        return Route("tool", tool=sw.TOOL, args=p.args(), confidence=0.92, layer=sw.LAYER,
+                     label=sw.LABEL, reason="%s: a card for %s (%s)" % (sw.LAYER, p.what, p.method))
+    except Exception as e:  # noqa: BLE001
+        _log.debug("safe writes skipped: %s", e)
+        return None
+
+
+def safe_write_bounded(text: str, *, stage=_UNSET, pointed=_UNSET, quiet: bool = False, surface: str = "voice",
+                       conversation_id: Optional[str] = None,
+                       budget_ms: Optional[float] = None) -> Optional[Route]:
+    """``safe_write_route`` on the bounded rung worker: the screen read AND the encoder rank both sit inside
+    ``budget_ms`` (default POINT_BUDGET_MS), so a cold or busy encoder or a slow page can never hold the turn.
+    Over budget, busy or failed is None: the turn goes the ordinary way (a defer to the deeper mind)."""
+    return _bounded("safe_write", lambda t: safe_write_route(
+        t, stage=stage, pointed=pointed, quiet=quiet, surface=surface, conversation_id=conversation_id),
+        text, POINT_BUDGET_MS if budget_ms is None else budget_ms, surface)
+
+
 def _resolver_route(text: str) -> Optional[Route]:
     """"Open X" where X is not a row on screen: the item resolver (services/
     laya_resolver) names one item or asks which. Only on a trusted surface."""
@@ -1194,7 +1263,13 @@ def _tier1_head(text: str) -> Route:
 def _guard_composed(r: Route) -> Route:
     """No route carries composed text, and no route runs a tool the router
     does not hold as read-only: either becomes ``defer`` (the deeper mind and
-    the governance gate decide)."""
+    the governance gate decide). The one tool let through is a live safe-write
+    proposal's own call (a verb and a single-use ticket), which can only raise
+    a card."""
+    if r.decision == "tool" and r.layer == "safe_write":
+        from agent_friday.services import laya_safe_writes as _sw
+        if _sw.is_card_route(r.tool, r.args):
+            return r
     if r.decision == "tool" and (r.tool not in TOOLS or any(k in COMPOSED_ARGS for k in r.args)):
         return Route("defer", confidence=r.confidence, layer=r.layer, candidates=r.candidates,
                      handoff="compose_text", reason="composed text is a generator's, not the router's")
@@ -1328,7 +1403,8 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
           last_route: Optional[dict] = None,
           head_mode: Optional[str] = None, conversation_id: Optional[str] = None,
           trusted: bool = False, quiet: bool = False,
-          stage=_UNSET, pointed=_UNSET, rung_budget_ms: Optional[float] = None) -> Route:
+          stage=_UNSET, pointed=_UNSET, rung_budget_ms: Optional[float] = None,
+          safe_writes: bool = True) -> Route:
     """Decide for one turn within ``budget_ms``. Never raises.
 
     The signed-in profile whose own phrasings and raised act threshold tier 1 may use is not
@@ -1359,15 +1435,31 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
     t0 = time.perf_counter()
     text = " ".join(str(text or "").split())
     held = set(tools) if tools is not None else None
-    r = _sealed_rules(text, pending_card, last_route,
-                      point=(lambda t: _bounded("point", lambda x: point_act_route(
-                          x, stage=stage, pointed=pointed, quiet=quiet), t,
-                          POINT_BUDGET_MS if rung_budget_ms is None else rung_budget_ms, surface))
-                      if trusted else None,
-                      resolver=(lambda t: _bounded("resolver", _resolver_route, t,
-                                                   RESOLVER_BUDGET_MS if rung_budget_ms is None else rung_budget_ms,
-                                                   surface))
-                      if trusted else None)
+    r = None
+    if text and trusted and safe_writes and surface in ("voice", "chat") and not (
+            pending_card and (_YES.match(text) or _NO.match(text))):
+        # Laya's safe writes (setting laya_safe_writes). Off: nothing here runs and nothing is read.
+        # Shadow and on read the screen and rank rows INSIDE one bounded rung (the screen fetch and the
+        # encoder both): over budget, busy or failed is None, and the turn takes the chain's own path
+        # (a defer, rows only for verbs that raise a card on the model path).
+        try:
+            from agent_friday.services import laya_safe_writes as _sw
+            if _sw.mode() != "off":
+                r = safe_write_bounded(text, stage=stage, pointed=pointed, quiet=quiet, surface=surface,
+                                       conversation_id=conversation_id, budget_ms=rung_budget_ms)
+        except Exception as e:  # noqa: BLE001
+            _log.debug("safe writes skipped: %s", e)
+            r = None
+    if r is None:
+        r = _sealed_rules(text, pending_card, last_route,
+                        point=(lambda t: _bounded("point", lambda x: point_act_route(
+                            x, stage=stage, pointed=pointed, quiet=quiet), t,
+                            POINT_BUDGET_MS if rung_budget_ms is None else rung_budget_ms, surface))
+                        if trusted else None,
+                        resolver=(lambda t: _bounded("resolver", _resolver_route, t,
+                                                     RESOLVER_BUDGET_MS if rung_budget_ms is None else rung_budget_ms,
+                                                     surface))
+                        if trusted else None)
     mode = _head_mode(head_mode) if text else "off"
     decided_by_rule = r is not None
     if r is None:

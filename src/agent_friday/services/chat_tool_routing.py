@@ -77,13 +77,16 @@ def decide(message: str, data: Optional[dict], *, settings: Optional[dict],
         if not trusted:
             return None
         from agent_friday.services import laya_router as _lr
+        own_route = route_fn is None or route_fn is _lr.route
         if route_fn is None:
             if not _lr.ready():
                 _lr.warm()                  # the encoder loads off the turn's path
             from agent_friday.services import laya as _laya
             route_fn = _laya.route_turn          # the contract: one deadline, a receipt, sealed rules on a hang
         r = route_fn(message, tools=list(held), surface="chat", log=not off_record,
-                     trusted=bool(local), quiet=False, conversation_id=conversation_id)   # no screen rungs for a cloud seat
+                     trusted=bool(local), quiet=False, conversation_id=conversation_id,   # no screen rungs for a cloud seat
+                     **({"safe_writes": False} if own_route else {}))
+        # Safe writes ride the main composer (reflex_chat) only: never here, whatever route_fn returned.
         if local:
             action = {"tool": "run", "ask": "ask"}.get(r.decision, "model")
         else:
@@ -91,6 +94,8 @@ def decide(message: str, data: Optional[dict], *, settings: Optional[dict],
             # ("opened <title>. Other matches: ..."). Those layers answer on a local seat only, as voice does.
             action = ("run" if r.decision == "tool" and r.layer not in _SCREEN_LAYERS
                       and float(r.confidence or 0.0) >= CLOUD_MIN_CONFIDENCE else "model")
+        if getattr(r, "layer", "") == "safe_write":
+            return None                     # never carried here, whatever a route_fn returned
         if action == "ask" and not r.question:
             action = "model"
         return TurnRoute(r, action, cloud=not local)

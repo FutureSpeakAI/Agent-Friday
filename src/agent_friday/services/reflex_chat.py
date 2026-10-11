@@ -357,6 +357,12 @@ def open_turn(message: str, data: Optional[dict], *, session_id, conversation_id
     answered here. The opt-in setting off means the resolver is never called.
     """
     try:
+        # Laya's safe writes ride the typed line on trusted_surface alone, NOT on reflex_open_enabled
+        # (a different opt-in: "open the X"). Off, this returns None without reading anything.
+        safe = _safe_write_first(message, data, session_id=session_id, conversation_id=conversation_id,
+                                 turn_id=turn_id, authenticated=authenticated, local=local, disarm=disarm)
+        if safe is not None:
+            return safe
         if not open_enabled(settings):
             return None
         pointed = _point_act_turn(message, data, session_id=session_id, conversation_id=conversation_id,
@@ -446,6 +452,78 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
 # ---------------------------------------------------------------------------
 
 _POINT_OK = ("NAV_OK", "SELECT_OK", "SELECT_PARTIAL")
+
+
+def _card_sample(result: str) -> str:
+    """A row sample of the card a result raised (“subject” from sender), from the card itself, for
+    the sealed chat line. '' when it cannot be read: the line then gives the count alone."""
+    try:
+        m = re.search(r"card_id=([\w-]+)", result or "")
+        if not m:
+            return ""
+        from agent_friday.services import approvals
+        from agent_friday.services import item_actions as _ia
+        rec = approvals.get_approval(m.group(1)) or {}
+        return _ia.card_sample((rec.get("payload") or {}).get("preview"))
+    except Exception:
+        return ""
+
+
+def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authenticated):
+    """Run Laya's safe-write call (the governed organize_email handler), which can only raise
+    ONE card. The line the owner reads is sealed: the verb, a count and their own label."""
+    from agent_friday.services import agent
+    from agent_friday.services import laya_safe_writes as sw
+    prop = sw.peek((r.args.get("laya_write") or {}).get("ticket"))
+    what = prop.what if prop else "that change"
+    ctx = _base_ctx(conversation_id, "laya:safe_write", authenticated)
+    ctx = agent.prepare_confirmation_ctx(session_id, message, ctx)
+    result = str(agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx) or "")
+    status = agent._tool_call_status(result)
+    entry = {"name": r.tool, "input": dict(r.args), "result": result}
+    if result.startswith("CARD_RAISED"):
+        sample = _card_sample(result)
+        outcome, reply = "card", _lt.line("safe_write_card", what=(what + (" (" + sample + ")" if sample else "")))
+    elif result.startswith("NOT DONE") or status in ("deny", "error"):
+        outcome, reply = "refused", _lt.line("point_refused", detail=_first_line(result))
+    else:
+        # A safe write that did not end in a card is a bug, never a success: say so, change nothing more.
+        _log.error("a Laya safe write ended without a card: %s", _first_line(result, 80))
+        outcome, reply = "not_confirmed", _lt.line("point_unconfirmed", detail=_first_line(result))
+    count("point_" + outcome)
+    _record_plan(turn_id, shape="reflex_point", reason="safe write: one card for the rows named",
+                 reflex={"by": "rule", "kind": "safe_write", "tool": r.tool, "outcome": outcome})
+    return {"reply": reply.text, "tool_trace": [entry], "actions": [], "outcome": outcome,
+            "laya": reply.receipt()}
+
+
+def _safe_write_first(message, data, *, session_id, conversation_id, turn_id, authenticated, local, disarm=True):
+    """One reversible mail change to the rows a short typed line names: ONE card, or one question, or
+    None (the ordinary turn). Never raises into the caller beyond open_turn's own guard."""
+    from agent_friday.services import laya_safe_writes as _sw
+    if _sw.mode() == "off":
+        return None
+    from agent_friday.services import point_act
+    if not point_act.looks_like(message) or not trusted_surface(data, message, local=local):
+        return None
+    from agent_friday.services import laya as _laya
+    from agent_friday.services import laya_router
+    r = laya_router.safe_write_bounded(message, surface="chat", conversation_id=conversation_id,
+                                       budget_ms=_laya.POINT_ACT_BUDGET_MS)
+    if r is None or r.layer != _sw.LAYER:
+        return None
+    if r.decision == "tool":
+        return _safe_write_turn(r, message, session_id=session_id, conversation_id=conversation_id,
+                                turn_id=turn_id, authenticated=authenticated)
+    if r.decision == "ask" and r.question:
+        count("point_ask")
+        if disarm:
+            _disarm(session_id, conversation_id)
+        _record_plan(turn_id, shape="reflex_point", reason="safe write: asked which reading",
+                     reflex={"by": "rule", "kind": "safe_write", "outcome": "ask"})
+        ask = _laya_templates.rule_question(r.question, "point_act")
+        return {"reply": ask.text, "tool_trace": [], "actions": [], "outcome": "ask", "laya": ask.receipt()}
+    return None
 
 
 def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, authenticated, local, disarm=True):

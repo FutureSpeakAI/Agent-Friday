@@ -25,8 +25,10 @@ The verb picks what happens, and only the owner's words pick the verb:
                 was ticked: Friday never says it from here)
   archive, move, label, star, mark, trash ...
                 NOT run here. The result is a `defer` that carries the refs, so
-                the model path (organize_email, one batch card) takes it. DA-3
-                is the package that may change this.
+                the model path (organize_email, one batch card) takes it. The
+                one exception is services/laya_safe_writes (setting
+                `laya_safe_writes`, off by default), which may turn a REVERSIBLE
+                mail change into a card; this module still runs nothing.
 
 Stage text is DATA: titles and senders are read only to rank the owner's own
 description of a row, never parsed for a verb, and any text of theirs that is
@@ -181,8 +183,10 @@ def _intent(verb: str, dest: str) -> str:
             return "mark_unread"
         if d in ("spam", "as spam", "junk", "as junk"):
             return "spam"
-        if d in ("important", "starred", "a favorite", "favorite"):
+        if d in ("starred", "a favorite", "favorite"):
             return "star"
+        if d in ("important", "as important"):
+            return "mark_important"         # Gmail's own marker: never a star, whatever the safe writes do
         return "mark"
     return _INTENT.get(verb, verb)
 
