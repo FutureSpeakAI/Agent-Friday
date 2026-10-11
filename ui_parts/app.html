@@ -3352,7 +3352,7 @@ function CommandPalette({onClose,onOpenWs,openWins,commands}){
   const activate=(item)=>{
     if(!item)return;
     if(item.kind==='reflex'){
-      apiFetch('/api/reflex/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q.trim()})})
+      apiFetch('/api/reflex/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q.trim(),source:'app_page'})})
         .then(r=>r.json()).then(d=>{
           if(d.status==='done'){onClose();fridayToast(d.reply||'Done.')}
           else if(d.status==='ask')setReflexMsg(d.reply||'Which one did you mean?');
@@ -26818,7 +26818,7 @@ function App(){
     setTurnPause(null);
     setTurnBusy(true);
     try{
-      const body={message:m,conversation_id:turnConversation||undefined,voice_mode:voiceOn,cite_sources:!!agentSettings.cite_sources};
+      const body={message:m,conversation_id:turnConversation||undefined,voice_mode:voiceOn,source:'app_page',cite_sources:!!agentSettings.cite_sources};
       if(opts.routeMode)body.route_mode=opts.routeMode;
       if(opts.confirmLocalOnly)body.confirm_local_only=true;
       if(opts.privacyOverride)body.privacy_layer3_override=true;

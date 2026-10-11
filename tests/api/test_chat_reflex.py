@@ -12,6 +12,13 @@ from agent_friday.services import agent, approvals
 from agent_friday.services import conversations as conv
 
 SID = "sess-api-reflex"
+PAGE = {"source": "app_page"}      # what the app page sends on every chat post
+
+@pytest.fixture(autouse=True)
+def page_session(monkeypatch):
+    """The server's check that a request is the app's own page (same-origin plus the page's session token)."""
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
 
 
 @pytest.fixture
@@ -57,7 +64,7 @@ def test_a_whole_yes_runs_the_action_with_zero_model_calls(client, model_calls, 
     monkeypatch.setattr(model_router, "get_router",
                         lambda *a, **k: prepared.append(1) or real_get_router(*a, **k))
     cid, ran = pending
-    resp = client.post("/api/chat", json={"message": "yes", "conversation_id": cid})
+    resp = client.post("/api/chat", json={**PAGE, "message": "yes", "conversation_id": cid})
     body = resp.get_json()
     assert resp.status_code == 200
     assert ran == [{"command": "Write-Output first"}]
@@ -69,7 +76,7 @@ def test_a_whole_yes_runs_the_action_with_zero_model_calls(client, model_calls, 
 
 def test_yes_but_is_not_an_approval_and_reaches_the_model(client, model_calls, pending):
     cid, ran = pending
-    resp = client.post("/api/chat", json={"message": "yes, but use the other folder",
+    resp = client.post("/api/chat", json={**PAGE, "message": "yes, but use the other folder",
                                           "conversation_id": cid})
     assert resp.status_code == 200
     assert ran == []
@@ -82,7 +89,7 @@ def test_a_reply_marked_as_sms_is_not_a_reflex(client, model_calls, pending):
     from agent_friday.services import reflex_chat
     reflex_chat.reset_stats()
     cid, ran = pending
-    client.post("/api/chat", json={"message": "yes", "conversation_id": cid, "source": "sms"})
+    client.post("/api/chat", json={**PAGE, "message": "yes", "conversation_id": cid, "source": "sms"})
     stats = reflex_chat.stats()
     assert stats.get("approval_untrusted_surface") == 1
     assert "approval_reply" not in stats
@@ -103,7 +110,7 @@ def test_opted_in_open_answers_with_zero_model_calls(client, model_calls, monkey
     real = chat_mod._load_settings
     monkeypatch.setattr(chat_mod, "_load_settings",
                         lambda *a, **k: dict(real(*a, **k), reflex_open_enabled=True))
-    body = client.post("/api/chat", json={"message": "open the go-live checklist"}).get_json()
+    body = client.post("/api/chat", json={**PAGE, "message": "open the go-live checklist"}).get_json()
     assert body["response"] == "Done: opened Go-live checklist (instant, no model)."
     assert body["instant"] is True
     assert asked == ["open the go-live checklist"]
@@ -114,7 +121,7 @@ def test_opt_in_off_means_no_resolver_call_and_a_normal_turn(client, model_calls
     from agent_friday.services import laya_resolver
     monkeypatch.setattr(laya_resolver, "resolve",
                         lambda text: (_ for _ in ()).throw(AssertionError("resolver called")))
-    resp = client.post("/api/chat", json={"message": "open the go-live checklist"})
+    resp = client.post("/api/chat", json={**PAGE, "message": "open the go-live checklist"})
     assert resp.status_code == 200
     assert model_calls
 
@@ -123,6 +130,31 @@ def test_the_palette_route_is_off_until_chosen(client, monkeypatch):
     from agent_friday.services import laya_resolver
     monkeypatch.setattr(laya_resolver, "resolve",
                         lambda text: (_ for _ in ()).throw(AssertionError("resolver called")))
-    assert client.post("/api/reflex/open", json={"text": "open news"}).get_json()["status"] == "off"
+    assert client.post("/api/reflex/open", json={**PAGE, "text": "open news"}).get_json()["status"] == "off"
     status = client.get("/api/reflex/status").get_json()
     assert status["approval_replies"] is True and status["open_enabled"] is False
+
+
+# --- the typed page is trusted only when the page proves it -------------------------
+
+def test_without_the_page_session_or_the_page_source_a_yes_is_not_a_reflex(client, model_calls, pending, monkeypatch):
+    """screen_session is the only request the server takes as the owner's click on the screen; a loopback
+    poster that omits `source` (or names none) is not that, however local it is."""
+    from agent_friday.services import reflex_chat
+    reflex_chat.reset_stats()
+    cid, ran = pending
+    client.post("/api/chat", json={"message": "yes", "conversation_id": cid})                 # no source
+    assert reflex_chat.stats().get("approval_untrusted_surface") == 1
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: False)               # no page session
+    client.post("/api/chat", json={**PAGE, "message": "yes", "conversation_id": cid})
+    assert reflex_chat.stats().get("approval_untrusted_surface") == 2
+    assert "approval_reply" not in reflex_chat.stats()
+
+
+def test_a_voice_mode_post_is_not_a_typed_turn(client, model_calls, pending):
+    from agent_friday.services import reflex_chat
+    reflex_chat.reset_stats()
+    cid, ran = pending
+    client.post("/api/chat", json={**PAGE, "message": "yes", "conversation_id": cid, "voice_mode": True})
+    assert reflex_chat.stats().get("approval_untrusted_surface") == 1

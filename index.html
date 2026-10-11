@@ -16979,6 +16979,7 @@ function ConversationWindow({
     const body = {
       message: m,
       voice_mode: false,
+      source: 'app_page',
       cite_sources: !!(SH.agentSettings || {}).cite_sources,
       // conversation_id is the whole feature. Without it every window would
       // write into Main and the threads would be one thread wearing three
@@ -17309,7 +17310,8 @@ function CommandPalette({
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          text: q.trim()
+          text: q.trim(),
+          source: 'app_page'
         })
       }).then(r => r.json()).then(d => {
         if (d.status === 'done') {
@@ -68834,6 +68836,7 @@ function App() {
       const body = {
         message: m,
         voice_mode: voiceOn,
+        source: 'app_page',
         cite_sources: !!agentSettings.cite_sources,
         // Without this every turn lands in Main and the transcripts merge again.
         conversation_id: turnConversation || undefined,

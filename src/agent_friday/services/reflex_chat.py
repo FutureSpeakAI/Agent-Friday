@@ -95,12 +95,42 @@ def _request_is_local() -> bool:
         return False
 
 
-def trusted_surface(data: Optional[dict], message: str, *, local: Optional[bool] = None) -> bool:
-    """Is this turn the owner's own short line, typed in the app on this PC?"""
+#: What the app's own page says it is on every chat post and palette request. A body that omits it, or
+#: names anything else, is not the page.
+PAGE_SOURCE = "app_page"
+
+
+def _request_is_page() -> bool:
+    """True when the current request is this server's own page: same-origin, the page's rotating session
+    token (services/screen_click.screen_session, the only request the server takes as the owner's click)."""
+    try:
+        from flask import request
+        from agent_friday.services import screen_click
+        return bool(screen_click.screen_session(request))
+    except Exception:
+        return False
+
+
+def trusted_surface(data: Optional[dict], message: str, *, local: Optional[bool] = None,
+                    page: Optional[bool] = None) -> bool:
+    """Is this turn the owner's own short line, typed in the app's page on this PC?
+
+    ALL of: a local request; a verified page session (``screen_session``); the page's explicit
+    ``source`` (never because a source is missing); not a voice-mode post; no untrusted origin hint, no
+    attachment; one short plain line. ``local`` and ``page`` are for tests and internal callers; a page
+    check not given follows ``local`` when that was given, else the live request."""
     data = data or {}
     if not (_request_is_local() if local is None else local):
         return False
+    if not (_request_is_page() if page is None and local is None else (local if page is None else page)):
+        return False
+    if str(data.get("source") or "").strip().lower() != PAGE_SOURCE:
+        return False
+    if data.get("voice_mode"):
+        return False
     for key in _SOURCE_KEYS:
+        if key == "source":
+            continue
         if str(data.get(key) or "").strip().lower() in UNTRUSTED_SOURCES:
             return False
     if any(data.get(k) for k in _CONTENT_KEYS):

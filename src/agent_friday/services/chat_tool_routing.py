@@ -36,6 +36,9 @@ MODES = ("laya", "model")
 #: when it is this sure (the sealed tier-0 patterns report 0.95).
 CLOUD_MIN_CONFIDENCE = 0.9
 
+#: Router layers that read the owner's screen or item index.
+_SCREEN_LAYERS = frozenset({"point_act", "resolver"})
+
 
 def mode(settings: Optional[dict]) -> str:
     """"laya" only when chosen; anything else, including unchosen, is "model"."""
@@ -80,11 +83,13 @@ def decide(message: str, data: Optional[dict], *, settings: Optional[dict],
             from agent_friday.services import laya as _laya
             route_fn = _laya.route_turn          # the contract: one deadline, a receipt, sealed rules on a hang
         r = route_fn(message, tools=list(held), surface="chat", log=not off_record,
-                     trusted=True, quiet=False, conversation_id=conversation_id)
+                     trusted=bool(local), quiet=False, conversation_id=conversation_id)   # no screen rungs for a cloud seat
         if local:
             action = {"tool": "run", "ask": "ask"}.get(r.decision, "model")
         else:
-            action = ("run" if r.decision == "tool"
+            # A cloud model never gets a point-and-act or resolver result: it names items on the owner's screen
+            # ("opened <title>. Other matches: ..."). Those layers answer on a local seat only, as voice does.
+            action = ("run" if r.decision == "tool" and r.layer not in _SCREEN_LAYERS
                       and float(r.confidence or 0.0) >= CLOUD_MIN_CONFIDENCE else "model")
         if action == "ask" and not r.question:
             action = "model"

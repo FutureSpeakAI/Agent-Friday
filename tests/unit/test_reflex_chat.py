@@ -19,6 +19,7 @@ KEY = b"k" * 32
 SID = "sess-1"
 CONV = "conv-1"
 TURN = "turn-reflex-1"
+PAGE = {"source": "app_page"}
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +54,7 @@ def _ask(command="Write-Output first"):
 
 def _approve(message, **kw):
     kw.setdefault("local", True)
-    return rc.approval_turn(message, kw.pop("data", {}), session_id=SID,
+    return rc.approval_turn(message, kw.pop("data", dict(PAGE)), session_id=SID,
                             conversation_id=CONV, turn_id=TURN,
                             settings=kw.pop("settings", {}), **kw)
 
@@ -226,7 +227,7 @@ OPEN_ON = {"reflex_open_enabled": True}
 
 def _open(message="open the go-live checklist", *, resolve, settings=OPEN_ON, **kw):
     kw.setdefault("local", True)
-    return rc.open_turn(message, kw.pop("data", {}), session_id=SID,
+    return rc.open_turn(message, kw.pop("data", dict(PAGE)), session_id=SID,
                         conversation_id=CONV, turn_id=TURN, settings=settings,
                         resolve=resolve, **kw)
 
@@ -417,3 +418,20 @@ def test_disarm_keeps_the_entry_but_it_can_no_longer_be_granted(monkeypatch):
     assert agent.disarm_pending(SID, CONV) >= 1
     assert any(agent._PENDING_CONFIRMATIONS.values())            # stored, not dropped
     assert not _armed()
+
+
+# --- the typed surface needs the page's own proof -------------------------------------
+
+def test_a_local_post_that_omits_the_page_source_is_not_trusted():
+    assert rc.trusted_surface({"source": "app_page"}, "yes", local=True) is True
+    assert rc.trusted_surface({}, "yes", local=True) is False
+    assert rc.trusted_surface({"source": ""}, "yes", local=True) is False
+    assert rc.trusted_surface({"source": "app"}, "yes", local=True) is False
+
+
+def test_a_post_without_the_page_session_is_not_trusted_whatever_it_says():
+    assert rc.trusted_surface({"source": "app_page"}, "yes", local=True, page=False) is False
+
+
+def test_a_voice_mode_post_is_not_a_typed_line():
+    assert rc.trusted_surface({"source": "app_page", "voice_mode": True}, "yes", local=True) is False

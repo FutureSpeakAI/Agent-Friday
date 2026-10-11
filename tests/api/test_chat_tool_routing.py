@@ -28,6 +28,12 @@ def _fake_context(message, *a, **k):
     return ("== PERSONA ==\nI am Friday.\n== TOOLS ==\nsearch_web — search\n"
             + VOLATILE_MARKER + "\nNow: 12:00\n", [])
 
+@pytest.fixture(autouse=True)
+def page_session(monkeypatch):
+    """The server's check that a request is the app's own page (same-origin plus the page's session token)."""
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
+
 
 @pytest.fixture
 def wired(monkeypatch, patch_app, tmp_path):
@@ -78,7 +84,7 @@ def _post(client, text, **extra):
     # A conversation of its own, so one post never reads the one before it.
     from agent_friday.services import conversations as conv
     extra.setdefault("conversation_id", conv.create()["id"])
-    r = client.post("/api/chat", json={"message": text, **extra})
+    r = client.post("/api/chat", json={"source": "app_page", "message": text, **extra})
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     return r.get_json()
 

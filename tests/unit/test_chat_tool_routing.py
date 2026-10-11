@@ -308,3 +308,33 @@ def test_a_typed_line_never_carries_the_owner_mark_into_the_governed_runner():
         agent._execute_tool = orig
     assert out and out["name"] == "notifications"
     assert "owner_utterance" not in captured["ctx"] and captured["ctx"]["x"] == 1
+
+
+@pytest.mark.parametrize("layer", ["point_act", "resolver"])
+def test_a_cloud_seat_never_takes_a_screen_rung_result_on_the_fast_path(layer):
+    """Point-and-act and the resolver answer with item names (NAV_OK ... Other matches: ...); the fast path
+    would put them in a cloud prompt. Voice keeps rows from a cloud mind; so does typed chat."""
+    r = lr.Route("tool", tool="navigate_to", args={"kind": "email", "id": "t1"}, confidence=0.95, layer=layer)
+    tr_ = ctr.decide("open the second one", {"source": "app_page"}, settings=LAYA, held=HELD, local=False,
+                     trusted=True, route_fn=lambda *a, **k: r)
+    assert tr_.action == "model"
+    local = ctr.decide("open the second one", {"source": "app_page"}, settings=LAYA, held=HELD, local=True,
+                       trusted=True, route_fn=lambda *a, **k: r)
+    assert local.action == "run"
+    rule = lr.Route("tool", tool="query_calendar", confidence=0.95, layer="rule")
+    assert ctr.decide("what is on my calendar", {"source": "app_page"}, settings=LAYA, held=HELD, local=False,
+                      trusted=True, route_fn=lambda *a, **k: rule).action == "run"
+
+
+def test_a_cloud_seat_routes_untrusted_so_the_screen_is_never_read_for_it():
+    seen = {}
+
+    def spy(*a, **k):
+        seen.update(k)
+        return lr.Route("no_tool")
+    ctr.decide("open the second one", {"source": "app_page"}, settings=LAYA, held=HELD, local=False,
+               trusted=True, route_fn=spy)
+    assert seen["trusted"] is False
+    ctr.decide("open the second one", {"source": "app_page"}, settings=LAYA, held=HELD, local=True,
+               trusted=True, route_fn=spy)
+    assert seen["trusted"] is True
