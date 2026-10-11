@@ -240,3 +240,38 @@ def test_the_hook_registration_is_idempotent(monkeypatch):
     cs.register()
     cs.register()
     assert registered == [cs.KIND]
+
+
+# ── work that waits by design, and what counts as a cloud model ──────────────
+
+def test_a_deferrable_job_waiting_for_idle_is_never_offered_a_spill():
+    """Wiki distillation waits for idle by the owner's own 1.0.2 rule; that
+    wait is not a busy seat to pay around."""
+    assert cs.should_offer(_queued(deferrable=True), wait_s=900) is False
+    assert cs.should_offer(_queued(job_kind="wiki_distill"), wait_s=900) is False
+    assert cs.should_offer(_queued(wait_reason="waits for idle"), wait_s=900) is False
+    assert cs.should_offer(_queued(wait_reason="waits for your chat to finish"), wait_s=900) is False
+    # a plainly busy seat still is
+    assert cs.should_offer(_queued(wait_reason="waits for the local model"), wait_s=900) is True
+
+
+def test_a_local_model_is_never_the_cloud_alternative(monkeypatch):
+    monkeypatch.setattr(cs, "_settings", lambda: {"capability_routing": {
+        "subagent": {"model": "bonsai2:27b"}, "orchestrator": {"model": "gemma4:12b"}}})
+    assert cs.cloud_alternative(_queued()) is None
+    assert cs.should_offer(_queued(), wait_s=900) is False
+
+
+def test_the_alternative_skips_a_local_role_for_a_real_cloud_one(monkeypatch):
+    monkeypatch.setattr(cs, "_settings", lambda: {"capability_routing": {
+        "subagent": {"model": "bonsai2:27b"}, "orchestrator": {"model": "claude-sonnet-5"}}})
+    assert cs.cloud_alternative(_queued()) == "claude-sonnet-5"
+
+
+@pytest.mark.parametrize("model,paid", [
+    ("claude-sonnet-5", True), ("gpt-5", True), ("gemini-2.5-flash", True),
+    ("anthropic/claude-sonnet-5", True), ("glm-4.6:cloud", True), ("gpt-oss:120b-cloud", True),
+    ("bonsai2:27b", False), ("gemma4:12b", False), ("qwen3:4b", False), ("", False),
+])
+def test_what_counts_as_a_paid_cloud_model(model, paid):
+    assert cs.is_paid_cloud_model(model) is paid
