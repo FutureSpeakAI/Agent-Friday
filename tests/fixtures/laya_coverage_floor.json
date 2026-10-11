@@ -1,25 +1,25 @@
 {
  "_note": "Coverage ratchet. A workspace's Laya coverage may go up and never down, on two measures: the covered count (verbs at a Laya tier) and the share of Laya-eligible actions (every action except the by_design not-for-Laya ones). Raise a floor in the same commit that raises coverage. Recomputed against the live tree.",
  "workspaces": {
-  "news": {"laya": 2, "pct": 14.3},
-  "messages": {"laya": 4, "pct": 25.0},
-  "calendar": {"laya": 1, "pct": 10.0},
+  "news": {"laya": 4, "pct": 28.6},
+  "messages": {"laya": 11, "pct": 68.8},
+  "calendar": {"laya": 3, "pct": 30.0},
   "family": {"laya": 0, "pct": 0.0},
   "health": {"laya": 0, "pct": 0.0},
   "finance": {"laya": 0, "pct": 0.0},
   "career": {"laya": 0, "pct": 0.0},
-  "contacts": {"laya": 0, "pct": 0.0},
+  "contacts": {"laya": 1, "pct": 16.7},
   "crew": {"laya": 0, "pct": 0.0},
   "code": {"laya": 0, "pct": 0.0},
   "futurespeak": {"laya": 0, "pct": 0.0},
-  "media": {"laya": 1, "pct": 7.7},
-  "library": {"laya": 1, "pct": 11.1},
-  "knowledge": {"laya": 1, "pct": 12.5},
+  "media": {"laya": 5, "pct": 38.5},
+  "library": {"laya": 3, "pct": 33.3},
+  "knowledge": {"laya": 2, "pct": 25.0},
   "trust": {"laya": 0, "pct": 0.0},
   "marketplace": {"laya": 0, "pct": 0.0},
   "workflows": {"laya": 1, "pct": 14.3},
   "system": {"laya": 6, "pct": 60.0},
   "settings": {"laya": 2, "pct": 40.0}
  },
- "overall": {"laya": 19, "pct": 14.0}
+ "overall": {"laya": 38, "pct": 27.9}
 }

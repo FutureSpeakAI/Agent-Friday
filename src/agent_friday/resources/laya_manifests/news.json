@@ -88,13 +88,14 @@
    "tool": "navigate_to",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_tool",
    "phrasings": ["open the second story", "open that one"],
    "deictic": ["ordinal", "these", "description"],
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": []
+   "eval": ["point_act_eval.json#s35-01"],
+   "point_verb": "open"
   },
   {
    "id": "news.switch_view",
@@ -120,13 +121,14 @@
    "tool": "screen_select",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_tool",
    "phrasings": ["select these stories", "tick the first three"],
    "deictic": ["these", "ordinal", "facet"],
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": []
+   "eval": ["point_act_eval.json#s35-02"],
+   "point_verb": "select"
   },
   {
    "id": "news.media_diet_rule",

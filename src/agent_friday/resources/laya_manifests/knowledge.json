@@ -36,7 +36,7 @@
    "tool": "navigate_to",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "resolver",
    "phrasings": ["open my page on the pitch", "show the garden page"],
    "deictic": ["description"],
    "undo": null,

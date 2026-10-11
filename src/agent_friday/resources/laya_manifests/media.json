@@ -69,13 +69,14 @@
    "tool": "navigate_to",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_tool",
    "phrasings": ["open the second card", "open that one"],
    "deictic": ["ordinal", "these", "facet", "description"],
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": []
+   "eval": ["point_act_eval.json#s41-01"],
+   "point_verb": "open"
   },
   {
    "id": "media.select_cards",
@@ -85,13 +86,14 @@
    "tool": "screen_select",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_tool",
    "phrasings": ["select these cards", "tick the drafts"],
    "deictic": ["these", "ordinal", "facet"],
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": []
+   "eval": ["point_act_eval.json#s41-02"],
+   "point_verb": "select"
   },
   {
    "id": "media.favourite",
@@ -101,13 +103,14 @@
    "tool": "organize_media",
    "also_tools": [],
    "gate": {"class": "self_gated", "ring": 1, "card": "own_card"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_defer",
    "phrasings": ["star these"],
    "deictic": ["these", "ordinal", "facet"],
    "undo": {"fn": "item_actions.undo_media", "via": "undo_action"},
    "voice": {"live": false, "shared": true},
    "quiet_result": null,
-   "eval": []
+   "eval": ["tests/unit/test_point_act.py::test_every_change_is_a_defer_that_carries_the_rows_and_names_no_tool"],
+   "point_verb": "star"
   },
   {
    "id": "media.tag_move",
@@ -117,13 +120,14 @@
    "tool": "organize_media",
    "also_tools": [],
    "gate": {"class": "self_gated", "ring": 1, "card": "own_card"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_defer",
    "phrasings": ["tag these as holiday", "move these to the garden project"],
    "deictic": ["these", "ordinal", "facet"],
    "undo": {"fn": "item_actions.undo_media", "via": "undo_action"},
    "voice": {"live": false, "shared": true},
    "quiet_result": null,
-   "eval": []
+   "eval": ["tests/unit/test_point_act.py::test_a_change_s_intent_and_destination_come_from_the_owner_s_words"],
+   "point_verb": "label"
   },
   {
    "id": "media.new_card",

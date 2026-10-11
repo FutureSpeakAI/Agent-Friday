@@ -31,6 +31,7 @@ from agent_friday.governance import action_gate as ag
 from agent_friday.services import laya_manifests as lm
 from agent_friday.services import laya_resolver as lres
 from agent_friday.services import laya_router as lr
+from agent_friday.services import point_act as pa
 from agent_friday.services import screen_stage as ss
 from agent_friday.services import workspace_registry as wr
 
@@ -169,6 +170,13 @@ def test_a_verbs_tier_names_a_path_that_exists(ws, verb):
         assert tool in lr.TOOLS and tool in rules or tool == "answer_card"
     elif tier == "router_seed":
         assert tool in lr.TOOLS and tool in lr.SEEDS
+    elif tier == "resolver":
+        assert tool in lr._RESOLVER_TOOLS
+    elif tier == "point_act_tool":
+        assert tool in ("navigate_to", "screen_select") and verb["point_verb"] in ("open", "select")
+    elif tier == "point_act_defer":
+        assert tool.startswith("organize_") and verb["point_verb"] in pa.WRITE_VERBS
+        assert verb["undo"] and verb["undo"]["via"] == "undo_action"
     else:
         assert tier == "model_only"
 
@@ -198,6 +206,24 @@ def test_router_phrasings_route_to_their_tool():
                 assert r is not None and r.tool == v["tool"], (v["id"], p, r and (r.decision, r.tool))
             checked += 1
     assert checked >= 20
+
+
+def test_the_phrasings_of_a_point_and_act_verb_parse_to_its_verb():
+    for ws, v in VERBS:
+        if v["laya_tier"] not in ("point_act_tool", "point_act_defer"):
+            continue
+        for p in v["phrasings"]:
+            parsed = pa.parse(p)
+            assert parsed is not None, (v["id"], p)
+            if v["laya_tier"] == "point_act_defer":
+                assert parsed.verb in pa.WRITE_VERBS, (v["id"], p, parsed.verb)
+            else:
+                assert parsed.verb in (v["point_verb"], "show", "clear", "unselect"), (v["id"], p, parsed.verb)
+
+
+def test_a_point_and_act_verb_names_its_point_verb_and_only_those_do():
+    for ws, v in VERBS:
+        assert bool(v.get("point_verb")) == (v["laya_tier"] in ("point_act_tool", "point_act_defer")), v["id"]
 
 
 # ── rows: what each stage publishes and how one opens ──────────────────────────
@@ -251,6 +277,44 @@ def test_the_rows_with_no_row_level_target_are_the_manifests_gaps():
     assert gaps == {"lib", "wf", "job", "trust", "site", "health", "fin", "fam"}
     assert next(o for _, o in OBJECTS if o["kind"] == "card")["open"]["tool"] is None   # an approval card is answered
     assert next(o for _, o in OBJECTS if o["kind"] == "media")["open"]["kind"] == "card"   # a Media card opens
+
+
+def test_a_system_approval_card_is_not_a_media_card():
+    """Bug 1: `card:` is System's approval card prefix; point_act sent it to the Media card resolver."""
+    assert pa._open_args("card:ap_1") is None
+    assert pa._open_args("media:m_1") == {"kind": "card", "id": "m_1"}
+    st = ss.bound_stage({"workspace": "system", "rev": 1, "items": [
+        {"ref": "card:ap_1", "n": 1, "title": "Send the report", "facets": {"kind": "send", "status": "pending"}},
+        {"ref": "card:ap_2", "n": 2, "title": "Delete the draft", "facets": {"kind": "delete", "status": "pending"}}]}, now=NOW)
+    r = pa.plan("open the second one", stage=st, pointed=None, now=NOW)
+    assert r.decision == "defer" and r.tool is None and "card" in r.reason.lower()
+
+
+_GAP_ROWS = [("lib", "library"), ("wf", "workflows"), ("job", "career"), ("trust", "trust"), ("site", "futurespeak"),
+             ("health", "health"), ("fin", "finance"), ("fam", "family")]
+
+
+@pytest.mark.parametrize("prefix,stage_ws", _GAP_ROWS)
+def test_a_row_with_no_row_level_target_is_an_honest_defer_never_an_open_of_its_workspace(prefix, stage_ws):
+    """Bug 2: eight stages publish rows with no open target. 'Open the second one' must not turn into 'open the
+    workspace' (it looks like success and does nothing); it defers and says why, and the manifest marks the gap."""
+    st = ss.bound_stage({"workspace": stage_ws, "rev": 1, "items": [
+        {"ref": "%s:a1" % prefix, "n": 1, "title": "", "facets": {}},
+        {"ref": "%s:a2" % prefix, "n": 2, "title": "", "facets": {}}]}, now=NOW)
+    r = pa.plan("open the second one", stage=st, pointed=None, now=NOW)
+    assert (r.decision, r.tool) == ("defer", None)
+    assert "no row-level target yet" in r.reason
+    o = next(o for _, o in OBJECTS if o["kind"] == prefix)
+    assert o["open"]["tool"] is None and o["open"]["gap"] is True
+
+
+def test_a_row_open_still_names_the_row():
+    st = ss.bound_stage({"workspace": "news", "rev": 1, "items": [
+        {"ref": "news:s1", "n": 1, "title": "One", "facets": {}}, {"ref": "news:s2", "n": 2, "title": "Two", "facets": {}}]}, now=NOW)
+    r = pa.plan("open the second one", stage=st, pointed=None, now=NOW)
+    assert r.args == {"kind": "news_article", "id": "s2"} and r.label == "opening it"
+
+
 
 
 # ── what can be ticked ──────────────────────────────────────────────────────────

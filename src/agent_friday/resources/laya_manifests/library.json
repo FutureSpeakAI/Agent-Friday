@@ -69,7 +69,7 @@
    "tool": "library_show",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 0, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "resolver",
    "phrasings": ["open the lease document", "show me the tax guide"],
    "deictic": ["description"],
    "undo": null,
@@ -85,13 +85,14 @@
    "tool": "screen_select",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_tool",
    "phrasings": ["select these documents", "tick the first two"],
    "deictic": ["these", "ordinal", "facet"],
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": []
+   "eval": ["point_act_eval.json#s53-01"],
+   "point_verb": "select"
   },
   {
    "id": "library.add",

@@ -49,13 +49,14 @@
    "tool": "navigate_to",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_tool",
    "phrasings": ["open the second event", "open that meeting"],
    "deictic": ["ordinal", "these", "description"],
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": []
+   "eval": ["point_act_eval.json#s57-01"],
+   "point_verb": "open"
   },
   {
    "id": "calendar.select_events",
@@ -65,13 +66,14 @@
    "tool": "screen_select",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
-   "laya_tier": "model_only",
+   "laya_tier": "point_act_tool",
    "phrasings": ["select these events", "tick the first two"],
    "deictic": ["these", "ordinal", "facet"],
    "undo": null,
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
-   "eval": []
+   "eval": ["point_act_eval.json#s57-02"],
+   "point_verb": "select"
   },
   {
    "id": "calendar.quick_add",

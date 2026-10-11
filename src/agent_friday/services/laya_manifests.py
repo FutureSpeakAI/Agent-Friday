@@ -57,9 +57,10 @@ def wave_ids(wave) -> list:
 
 
 #: A verb at one of LAYA_TIERS counts toward coverage and needs an eval case.
-#: A tier is added here, with its path check in the guard, in the package that builds the path
-#: (point-and-act tools, a resolver the router runs): until then those verbs are model_only.
-LAYA_TIERS = ("router_rule", "router_seed")
+#: A tier is added here, with its path check in the guard (tests/test_laya_workspace_contracts.py), in the
+#: package that builds the path. point_act_tool / point_act_defer: services/point_act on the owner's own
+#: screen; resolver: the item resolver the trusted router rung runs. Until then a verb is model_only.
+LAYA_TIERS = ("router_rule", "router_seed", "point_act_tool", "point_act_defer", "resolver")
 OTHER_TIERS = ("model_only",)
 GATE_CLASSES = ("internal", "outward", "self_gated", "by_argument", "card_only_when_outward")
 GROUPS = ("read", "navigate", "select", "organize", "create", "settings")

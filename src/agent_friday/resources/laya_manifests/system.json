@@ -56,7 +56,8 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": [
-    "tests/unit/test_voice_card_readback.py::test_the_fixed_line_fully_emitted_lets_a_bare_yes_approve_exactly_that_card"
+    "tests/unit/test_voice_card_readback.py::test_the_fixed_line_fully_emitted_lets_a_bare_yes_approve_exactly_that_card",
+    "tests/api/test_chat_reflex.py::test_a_whole_yes_runs_the_action_with_zero_model_calls"
    ]
   },
   {
@@ -133,7 +134,7 @@
    "id": "system.quiet",
    "action": "system.quiet",
    "group": "settings",
-   "ui": {"control": "Quiet until morning (Needs you panel; by voice or the page, not typed chat)"},
+   "ui": {"control": "Quiet until morning (Needs you panel; by voice or the page; typed chat can route it but only raises a card)"},
    "tool": "notifications",
    "also_tools": [],
    "gate": {"class": "by_argument", "ring": 1, "card": "by_argument"},
