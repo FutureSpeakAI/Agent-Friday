@@ -2891,9 +2891,10 @@ def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None,
     this surface's policy for "defer" (a change goes to delegate_to_friday,
     a governed background task whose own gates and cards decide it, exactly
     as in text mode). Returns {tool, args, ack, question, label, receipt}."""
+    from agent_friday.services import laya as _laya
     from agent_friday.services import laya_router as _lr
     kw = {"last_route": last_route} if last_route else {}
-    r = (route_fn or _lr.route)(user_text, tools=list(held), surface="voice",
+    r = (route_fn or _laya.route_turn)(user_text, tools=list(held), surface="voice",
                                 pending_card=pending_card, **kw)
     tool, args = (r.tool, dict(r.args)) if r.decision == "tool" else (None, None)
     ack, label = _lr.acknowledgement(r), r.label
