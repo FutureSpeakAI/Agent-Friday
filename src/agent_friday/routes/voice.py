@@ -2896,14 +2896,20 @@ def _lr_follow_turns() -> int:
 
 
 def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None,
-                      last_route=None) -> dict:
+                      last_route=None, owner_voice=False, conversation_id=None) -> dict:
     """What a routed voice turn does: services/laya_router's decision, with
     this surface's policy for "defer" (a change goes to delegate_to_friday,
     a governed background task whose own gates and cards decide it, exactly
-    as in text mode). Returns {tool, args, ack, question, label, receipt}."""
+    as in text mode). Returns {tool, args, ack, question, label, receipt}.
+
+    ``owner_voice`` is the owner's own voice on this PC (authenticated and a local
+    request; a paired phone, a tunnel or a relay is not). Only then is the turn offered
+    to Laya's personal learning (services/laya_personal), under the call's conversation."""
     from agent_friday.services import laya as _laya
     from agent_friday.services import laya_router as _lr
     kw = {"last_route": last_route} if last_route else {}
+    if owner_voice and conversation_id:
+        kw.update(trusted=True, conversation_id=str(conversation_id))
     r = (route_fn or _laya.route_turn)(user_text, tools=list(held), surface="voice",
                                 pending_card=pending_card, **kw)
     tool, args = (r.tool, dict(r.args)) if r.decision == "tool" else (None, None)
@@ -3044,7 +3050,7 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
             _prev = None
     plan = _voice_route_plan(user_text, list(front["contract"].get("names") or []),
                              pending_card=_pending_voice_card(spoken, _cid),
-                             last_route=_prev)
+                             last_route=_prev, owner_voice=bool(owner_voice), conversation_id=_cid)
     if plan.get("tool") and plan["tool"] != "delegate_to_friday" and plan.get("args") is not None:
         tool_session["last_route"] = {"tool": plan["tool"], "args": dict(plan["args"]), "age": 0}
     send({"type": "route", **plan["receipt"]})

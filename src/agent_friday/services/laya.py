@@ -53,9 +53,10 @@ SHADOW. The route preset also computes the calibrated reading (temperature plus
 conformal set, services/laya_calibration) and puts it in the receipt next to the
 decision that was made. It changes nothing until the lead certifies it.
 
-``profile_id`` None means the shipped base only. No personal layer exists yet,
-so a profile id is recorded in the receipt and ``versions.personal`` stays
-"none"; the contract is in place for the layer that will use it.
+``profile_id`` None means the shipped base only. With a profile, the route
+preset reads that profile's personal layer (services/laya_personal: its own
+phrasings in the router's prototypes and a raised act threshold; layer
+``t1+personal``) and ``versions.personal`` names the artifact in force.
 """
 from __future__ import annotations
 
@@ -148,6 +149,12 @@ def versions(profile_id: Optional[str] = None) -> Dict[str, str]:
             out["calibration"] = laya_calibration.table_version()
     except Exception:
         pass
+    if profile_id:
+        try:
+            from agent_friday.services import laya_personal
+            out["personal"] = laya_personal.version_id(profile_id)
+        except Exception:
+            pass
     return out
 
 
@@ -388,18 +395,44 @@ def _preset_route(ctx: Ctx, spec: dict) -> dict:
     kw = dict(ctx.opts.get("route_kw") or {})
     want_log = bool(kw.get("log", True))
     kw["log"] = False       # the router's own log row is written only if this answer is the one used (see ask)
-    r = laya_router.route(ctx.text, **kw)
+    # The profile (None is the shipped base alone) rides in a context variable, not an argument.
+    tok = laya_router.PROFILE_CTX.set(ctx.profile_id)
+    try:
+        r = laya_router.route(ctx.text, **kw)
+    finally:
+        laya_router.PROFILE_CTX.reset(tok)
     layer = _ROUTER_LAYER.get(r.layer, "t1")
+    if layer == "t1" and ctx.profile_id:
+        try:
+            from agent_friday.services import laya_personal
+            if laya_personal.has_live(ctx.profile_id):
+                layer = "t1+personal"                      # the shared reading plus the owner's own phrasings
+        except Exception:
+            pass
     cal = _calibrated_route(ctx, r)
     verdict = _DECISION_VERDICT.get(r.decision, "no_tool")
     ans = _answer(r.decision, r.confidence, (cal or {}).get("set"), abstain=(layer == "degraded"))
     ans["tool"] = r.tool
     out = {"answer": ans, "layer": layer, "verdict": verdict, "native": r, "calibrated": cal,
            "why": r.reason or r.layer, "tool": r.tool}
-    if want_log:
+    owner_turn = bool(kw.get("trusted")) and bool(kw.get("conversation_id"))
+    if want_log or owner_turn:
         surface = str(kw.get("surface", "voice"))
         at = time.strftime("%Y-%m-%dT%H:%M:%S")            # the decision's time, taken on the worker at decision
-        out["commit"] = lambda: laya_router._write(ctx.text, r, surface, at=at)
+        cid = kw.get("conversation_id")
+
+        def _commit():
+            if want_log:
+                laya_router._write(ctx.text, r, surface, at=at)
+            if owner_turn:
+                # The owner's own voice on this PC only (route_turn's `trusted`); services/laya_personal
+                # decides whether anything is kept. Only for an answer that was used, off the turn's thread.
+                try:
+                    from agent_friday.services import laya_personal
+                    laya_personal.note_routed(ctx.text, r, surface=surface, conversation_id=cid)
+                except Exception:
+                    pass
+        out["commit"] = _commit
     return out
 
 
@@ -716,7 +749,7 @@ def _route_kw() -> frozenset:
     (the head, trust and on-screen-row arguments arrive with their own tracks)."""
     import inspect
     from agent_friday.services import laya_router
-    base = frozenset({"tools", "budget_ms", "surface", "log", "pending_card", "last_route"})
+    base = frozenset({"tools", "budget_ms", "surface", "log", "pending_card", "last_route", "trusted", "conversation_id"})
     try:
         params = inspect.signature(laya_router.route).parameters.values()
     except (TypeError, ValueError):
@@ -739,11 +772,20 @@ def route_turn(text: str, *, caller: Optional[str] = None, mode: Optional[str] =
         raise TypeError("route_turn() got unexpected keyword argument %r" % sorted(bad)[0])
     surface = kw.get("surface", "voice")
     tier1 = int(kw.get("budget_ms", laya_router.DEFAULT_BUDGET_MS))
+    # Personal learning is for the owner's own voice on this PC (trusted) and a signed-in
+    # profile; anything else is the shipped base alone (swot spec d.7).
+    profile_id = None
+    if kw.get("trusted") and surface == "voice":
+        try:
+            from agent_friday.services import laya_personal
+            profile_id = laya_personal.current_profile()
+        except Exception:
+            profile_id = None
     res = ask({"text": text, "surface": surface, "mode": mode,
                "opts": {"route_kw": kw, "log": kw.get("log", True),
                         "trusted": bool(kw.get("trusted", False))}},
               route_question(), caller or _SURFACE_CALLER.get(surface, "surface.%s" % surface),
-              budget_ms=tier1 + RULE_ALLOWANCE_MS)
+              budget_ms=tier1 + RULE_ALLOWANCE_MS, profile_id=profile_id)
     r = res["native"].get("route")
     if r is None:
         # Laya could not answer in time. The turn takes the router's sealed

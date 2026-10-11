@@ -36,6 +36,7 @@ same in the turn's receipt (Transparency). The text is stored as a hash.
 """
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import logging
@@ -241,7 +242,7 @@ _ASK_FOR = {
     "search_wiki": "What should I look up in your notes?",
     "search_past_conversations": "What part of our past conversations should I look for?",
 }
-_ASK_WHICH = "Do you want me to look that up, and where: your email, calendar, files, notes, or the web?"
+_ASK_WHICH = "Do you want me to look that up, and where: your email, calendar, files, notes, the web, or something else?"
 
 
 # ── tier 0: sealed patterns ─────────────────────────────────────────────────
@@ -436,6 +437,38 @@ _SMALL_TALK = re.compile(
     re.I)
 
 
+#: The owner asking about, or acting on, what Laya has learned about them
+#: (services/laya_personal; swot spec d.4). A rule hands these to the deeper mind,
+#: which holds the ``laya_learning`` tool and the owner's own words; the router
+#: does not run them. The bare forms ("forget that", "reset") count only right after
+#: she kept something, so an ordinary "forget that, let's move on" is left alone.
+_LEARNING_CONTROL = re.compile(
+    r"^(?:(?:hey |ok |okay )?friday,?\s+|laya,?\s+|please\s+|can you\s+|could you\s+)*"
+    r"(?:what(?:'ve| have| did) you (?:learn(?:ed|t)?|picked up)(?: about me| so far| from me)?"
+    r"|what do you know about how i (?:talk|say things|phrase things)"
+    r"|forget (?:what you(?:'ve)? (?:just )?learned|the last thing you learned|everything you learned)"
+    r"|(?:reset|wipe|clear) (?:what you(?:'ve)? learned|your learning|laya|everything you learned)"
+    r"|go back to how you were(?: (?:last week|a week ago|yesterday|last month))?"
+    r"|show me what you(?:'ve)? learned)"
+    r"(?:\s+(?:please|now|for me))?[\s.!?]*$", re.I)
+_LEARNING_BARE = re.compile(r"^(?:friday,?\s+)?(?:forget (?:that|it)|reset|undo that learning)[\s.!]*$", re.I)
+#: The reason a learning-control rule carries; services/laya_personal reads it to
+#: note the owner's whole utterance for the ``laya_learning`` tool.
+LEARNING_CONTROL_REASON = "Laya's own learning controls go to the deeper mind, which has the tool"
+
+
+def _learning_control(text: str) -> bool:
+    if _LEARNING_CONTROL.search(text):
+        return True
+    if _LEARNING_BARE.match(text):
+        try:
+            from agent_friday.services import laya_personal
+            return laya_personal.recent_learning()
+        except Exception:
+            return False
+    return False
+
+
 def _tier0(text: str) -> Optional[Route]:
     for tool, pat in _ACTION_RULES:
         m = pat.search(text)
@@ -443,6 +476,8 @@ def _tier0(text: str) -> Optional[Route]:
             label, template, required = TOOLS[tool]
             return _with_args(tool, template(text, m), 0.95, "rule", label, required,
                               reason="pattern")
+    if _learning_control(text):
+        return Route("defer", confidence=0.95, layer="rule", reason=LEARNING_CONTROL_REASON)
     if _NOT_A_REQUEST.search(text):
         return Route("no_tool", confidence=0.95, layer="rule",
                      reason="a negation or a question about what Friday can do")
@@ -652,26 +687,129 @@ def _pool() -> ThreadPoolExecutor:
         return _exec
 
 
+#: The profile whose personal layer the router worker is reading for, set for the
+#: length of one tier-1 call (the worker is a pool thread, so a context variable
+#: would not follow). None is the shipped base alone.
+_PROFILE = threading.local()
+#: Set by laya.ask around a route question, read by route() on the same thread.
+PROFILE_CTX: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar("laya_router_profile", default=None)
+
+
+def _with_personal(labels, protos):
+    """The prototypes with the signed-in profile's own phrasings folded in
+    (services/laya_personal), or the shipped ones unchanged. Never raises."""
+    pid = getattr(_PROFILE, "pid", None)
+    if not pid:
+        return labels, protos
+    try:
+        from agent_friday.services import laya_personal
+        return laya_personal.personal_protos(pid, labels, protos)
+    except Exception as e:  # noqa: BLE001
+        _log.debug("personal phrasings skipped: %s", type(e).__name__)
+        return labels, protos
+
+
+def _rank(vec, labels, protos) -> List[Tuple[str, float, float]]:
+    """(label, softmax confidence, raw cosine), best first, for one unit vector
+    against a set of prototypes. Pure."""
+    return _rank_sims(labels, [sum(a * b for a, b in zip(vec, p)) for p in protos])
+
+
+def _rank_sims(labels, sims) -> List[Tuple[str, float, float]]:
+    """The same ranking from cosines already in hand. Pure."""
+    import math
+    top = max(sims)
+    exps = [math.exp((s - top) / TEMPERATURE) for s in sims]
+    total = sum(exps)
+    return sorted(zip(labels, [e / total for e in exps], sims), key=lambda r: -r[1])
+
+
 def _score(text: str) -> List[Tuple[str, float, float]]:
     """(label, softmax confidence, raw cosine), best first."""
-    import math
     from agent_friday.services import laya2_encoder, turn_vector
     labels, protos = _prototypes()
+    labels, protos = _with_personal(labels, protos)
     # The turn's one embedding of this message (services/turn_vector); the
     # head reading is the first 256 tokens, which is what this always embedded.
     vec = turn_vector.compute_head(text)
     if vec is None:
         (vec,) = laya2_encoder.embed([text])
-    sims = [sum(a * b for a, b in zip(vec, p)) for p in protos]
-    top = max(sims)
-    exps = [math.exp((s - top) / TEMPERATURE) for s in sims]
-    total = sum(exps)
-    ranked = sorted(zip(labels, [e / total for e in exps], sims), key=lambda r: -r[1])
-    return ranked
+    _PROFILE.vec = vec                      # the guard reuses exactly this vector (same thread, same call)
+    return _rank(vec, labels, protos)
+
+
+def _act_threshold() -> float:
+    """What a guess must clear to act: the shipped floor, or higher when this
+    profile's own corrections raised it (services/laya_personal; invariant 6:
+    never lower than the shipped value without the owner's approved card)."""
+    pid = getattr(_PROFILE, "pid", None)
+    if not pid:
+        return ACT_THRESHOLD
+    try:
+        from agent_friday.services import laya_personal
+        return float(laya_personal.act_threshold(pid, ACT_THRESHOLD))
+    except Exception:  # noqa: BLE001
+        return ACT_THRESHOLD
 
 
 def _tier1(text: str) -> Route:
-    ranked = _score(text)
+    _PROFILE.vec = None
+    r = _decide(_score(text), text, _act_threshold())
+    pid = getattr(_PROFILE, "pid", None)
+    if pid and r.decision == "tool":
+        r = _graduation_guard(pid, text, r, getattr(_PROFILE, "vec", None))
+    return r
+
+
+def _owner_threshold() -> float:
+    """The act score the BASE acts at for this owner: the shipped value, or the lower one the owner
+    approved with a screen-click card (Decision 15), which is the owner's own per-head choice. Never
+    a learned value."""
+    try:
+        from agent_friday.services import laya_personal
+        shipped, eff = laya_personal.calibration_view()
+        if shipped is not None and eff is not None and float(eff) < float(shipped) - 1e-9:
+            return float(eff)
+    except Exception:  # noqa: BLE001
+        pass
+    return ACT_THRESHOLD
+
+
+def _graduation_guard(pid: str, text: str, r: Route, vec) -> Route:
+    """Invariant 6 at DECISION time: learning never makes her bolder on its own. If the personal
+    layer would ACT where the base (at the threshold in force, the owner's own loosening included)
+    would not, or would act differently, that stands only for a read-only, local, ring-0 tool the
+    owner has confirmed at least three times, and only for an utterance that is a near-exact match
+    of one of those confirmed phrasings (laya_personal.graduation_ok). Anything else falls back to
+    the base's own decision, or to an ask that names the personal suggestion. ``vec`` is the vector
+    the scoring step used; with none (an encode that failed or timed out) the guard cannot compare,
+    so it asks. It never returns the personal decision unguarded and never raises."""
+    try:
+        from agent_friday.services import laya_personal
+        if vec is None:
+            raise RuntimeError("no turn vector")
+        labels, protos = _prototypes()
+        base = _decide(_rank(vec, labels, protos), text, _owner_threshold())
+        if base.decision == "tool" and base.tool == r.tool:
+            return r
+        if laya_personal.graduation_ok(pid, vec, r.tool):
+            return r
+        if base.decision == "tool":
+            return base
+        return Route("ask", tool=r.tool, confidence=r.confidence, layer="laya2", label=r.label,
+                     question=laya_personal.suggestion_question(r.tool), candidates=r.candidates,
+                     reason="your own phrasings point at this, but a guess like it still asks first")
+    except Exception as e:  # noqa: BLE001
+        _log.debug("graduation guard fell back to asking: %s", type(e).__name__)
+        return Route("ask", tool=r.tool, confidence=r.confidence, layer="laya2", label=r.label,
+                     question="Did you mean that one?", candidates=r.candidates,
+                     reason="the check on a learned guess could not run, so it asks")
+
+
+def _decide(ranked, text: str, act_threshold: float = ACT_THRESHOLD) -> Route:
+    """The tier-1 decision from a ranking. Pure, so a personal phrasing can be
+    re-scored against the shipped sets (services/laya_personal) with the very
+    rules the router uses."""
     (best, conf, sim), runner = ranked[0], ranked[1]
     cands = [(l, round(c, 3)) for l, c, _ in ranked[:3]]
     margin = conf - runner[1]
@@ -692,7 +830,7 @@ def _tier1(text: str) -> Route:
                      question=_ASK_OUTWARD.get(best, "Do you want me to look that up online?"),
                      candidates=cands,
                      reason="a guess at an outward search is asked, never run")
-    if conf >= ACT_THRESHOLD and margin >= MARGIN_THRESHOLD:
+    if conf >= act_threshold and margin >= MARGIN_THRESHOLD:
         r = _with_args(best, template(text), round(conf, 3), "laya2", label, required,
                        reason="nearest prototype")
         r.candidates = cands
@@ -756,11 +894,37 @@ def rules_route(text: str, *, tools: Optional[Sequence[str]] = None, pending_car
     return r
 
 
+def rule_route(text: str) -> Optional[Route]:
+    """The sealed rules alone, exactly as route() applies them to a turn with no card waiting and no
+    previous look-up: the Route a rule gives, or None when only the prototypes could decide. Pure and
+    pool-free, so a caller that only needs to know whether a rule decides a text does not queue
+    behind a turn."""
+    return _sealed_rules(" ".join(str(text or "").split()), None, None)
+
+
+def _with_profile(profile_id, fn, *args):
+    """Run a tier-1 call on the worker with ``profile_id`` as the personal layer
+    it reads, and clear it after (a pool thread is reused)."""
+    _PROFILE.pid = profile_id
+    try:
+        return fn(*args)
+    finally:
+        _PROFILE.pid = None
+
+
 def route(text: str, *, tools: Optional[Sequence[str]] = None,
           budget_ms: int = DEFAULT_BUDGET_MS, surface: str = "voice",
           log: bool = True, pending_card: Optional[str] = None,
-          last_route: Optional[dict] = None) -> Route:
+          last_route: Optional[dict] = None, trusted: bool = False,
+          conversation_id: Optional[str] = None) -> Route:
     """Decide for one turn within ``budget_ms``. Never raises.
+
+    ``trusted`` is True only for the owner's own voice on this PC (services/routes/voice
+    ``_owner_voice``): only such a turn is offered to the personal layer
+    (services/laya_personal.note_routed). The signed-in profile whose own phrasings and
+    raised act threshold tier 1 may use is not an argument: ``laya.ask`` sets
+    ``PROFILE_CTX`` for the call, and None is the shipped base alone. Rules (tier 0) never
+    see it.
 
     ``tools`` is what this session holds; a tool it does not hold is never
     chosen (that request is ``defer``). A slow or missing encoder degrades
@@ -779,7 +943,8 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
             from agent_friday.services import laya2_encoder
             if not laya2_encoder.is_available():
                 raise RuntimeError("encoder missing")
-            r = _pool().submit(_tier1, text).result(timeout=max(0.0, budget_ms) / 1000.0)
+            r = _pool().submit(_with_profile, PROFILE_CTX.get(), _tier1, text).result(
+                timeout=max(0.0, budget_ms) / 1000.0)
         except _FutureTimeout:
             r = Route("no_tool", layer="degraded", reason="encoder over budget")
         except Exception as e:  # noqa: BLE001
@@ -790,6 +955,12 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
     r.elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
     if log:
         _write(text, r, surface)
+        try:   # the owner's own voice on this PC only; services/laya_personal decides whether anything is kept
+            if trusted:
+                from agent_friday.services import laya_personal
+                laya_personal.note_routed(text, r, surface=surface, conversation_id=conversation_id)
+        except Exception:
+            pass
     return r
 
 
