@@ -44,6 +44,9 @@ TEMPLATES = {
     "point_card": ("notice", "That is waiting on an approval card. Nothing was changed yet."),
     "point_refused": ("error", "I did not do that: {detail} (instant, no model; nothing ran)."),
     "point_unconfirmed": ("error", "I could not confirm that: {detail} (instant, no model)."),
+    # Laya's safe writes (laya_safe_writes): a card raised for rows she resolved, never a change.
+    "safe_write_card": ("notice", "I put {what} on an approval card. Nothing changes until you approve it, "
+                                  "and you can undo it afterwards (instant, no model)."),
     # Cloud preferred, cloud unreachable.
     "outage_local": ("notice", OUTAGE_LOCAL),
     # A question a rule or the router asked; the words come from the rule's own

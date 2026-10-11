@@ -307,6 +307,13 @@ def _search_threads(account_id: str, query: str, limit: int) -> tuple[list[str],
             return out, False
 
 
+def _address(from_header: str) -> str:
+    """The address in a From header, lower-cased, or '' when there is none that looks like one."""
+    from email.utils import parseaddr
+    addr = parseaddr(str(from_header or ""))[1].strip().lower()
+    return addr[:120] if re.fullmatch(r"[^\s<>@,;]{1,64}@[^\s<>@,;]{1,120}", addr) else ""
+
+
 def _thread_heads(account_id: str, tids: list[str]) -> dict:
     """{thread id: {"subject", "sender", "date"}} for a few conversations."""
     from agent_friday.services import gmail_api
@@ -324,6 +331,7 @@ def _thread_heads(account_id: str, tids: list[str]) -> dict:
              for x in (first.get("payload") or {}).get("headers") or []}
         out[tid] = {"subject": (h.get("subject") or "(no subject)")[:140],
                     "sender": re.sub(r"\s*<[^>]*>\s*$", "", h.get("from") or "")[:80] or "someone",
+                    "address": _address(h.get("from") or ""),
                     "date": (h.get("date") or "")[:40], "messages": len(msgs)}
     return out
 
@@ -365,8 +373,22 @@ def _split_ids(thread_ids, accounts: list[dict]) -> dict:
     return {a: list(dict.fromkeys(t)) for a, t in out.items()}
 
 
+#: A Laya card is bound to the messages shown; more than this many on one card goes the model's way.
+MAX_LAYA_MESSAGES = 400
+
+
+def _clean_row(value, limit: int) -> str:
+    """A subject or sender as the card shows it: no control, bidi or zero-width characters
+    (they can reorder or hide text so one row reads as another), one line, capped."""
+    import unicodedata
+    s = "".join(" " if unicodedata.category(c) in ("Zl", "Zp") else c
+                for c in str(value or "") if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cn", "Cs")
+                or c in "\t\n")
+    return " ".join(s.split())[:limit]
+
+
 def select_email(query: str = "", thread_ids=None, account: str = "",
-                 limit: int = MAX_ITEMS) -> dict:
+                 limit: int = MAX_ITEMS, addresses: bool = False) -> dict:
     """The conversations a request names, per account, with the first few
     described. Accounts that cannot be changed are named, not included."""
     query = str(query or "").strip()
@@ -412,9 +434,14 @@ def select_email(query: str = "", thread_ids=None, account: str = "",
             heads = {}
         for tid in want:
             h = heads.get(tid) or {}
+            sender = _clean_row(h.get("sender"), 80)
+            if addresses:
+                # A display name is the sender's to choose: a card Laya raises shows the address too.
+                addr = _clean_row(h.get("address"), 120)
+                sender = ("%s <%s>" % (_clean_row(h.get("sender"), 40), addr)) if addr else                     ("%s <address not shown>" % _clean_row(h.get("sender"), 40))
             preview.append({"id": tid, "account_id": acct, "account": names.get(acct, acct),
-                            "subject": h.get("subject") or "(conversation %s)" % tid,
-                            "sender": h.get("sender") or "", "date": h.get("date") or ""})
+                            "subject": _clean_row(h.get("subject"), 200) or "(conversation %s)" % tid,
+                            "sender": sender, "date": h.get("date") or ""})
     return {"accounts": per, "count": total, "preview": preview, "blocked": blocked,
             "errors": errors, "truncated": truncated, "query": query}
 
@@ -481,20 +508,50 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
                   label: str = "", why: str = "", conversation_id: str | None = None,
                   owner_words: str = "", requested_by: str = "friday", room_mode: bool = False,
                   replaces: str = "", refs=None, selection_id: str = "",
-                  stage_rev: int = 0, rule: str = "") -> dict:
+                  stage_rev: int = 0, rule: str = "", laya_card: bool = False) -> dict:
     """Find the mail a request names and raise ONE card to change all of it.
 
     `refs` (with `selection_id` and `stage_rev`) bind the batch to what the owner saw ticked:
     `thread_ids` are exactly those conversations, nothing is searched, and the card keeps the
     refs so the page can hold those rows until the owner answers. A mark-read, star or label
-    change (EMAIL_NO_CARD) runs at once and returns its receipt."""
+    change (EMAIL_NO_CARD) runs at once and returns its receipt.
+
+    `laya_card` (Laya's safe writes, services/laya_safe_writes) only ever ADDS: the change waits
+    for ONE card even when it is a no-card kind, it must be on Laya's reversible list, and a label
+    must already exist (Laya never makes one). Nothing here can skip a card."""
     action = str(action or "").strip().lower().replace(" ", "_").replace("-", "_")
     if action not in EMAIL_ACTIONS:
         raise Refused("organize_email can: " + ", ".join(EMAIL_ACTIONS))
     label = str(label or "").strip()[:225]
     if action in _LABEL_ACTIONS and not label:
         raise Refused("say which label")
-    sel = select_email(query, thread_ids, account)
+    if laya_card:
+        from agent_friday.services import laya_safe_writes as _lsw
+        try:
+            _lsw.guard_card(action, laya_card=True)
+        except _lsw.Refusal as e:
+            raise Refused(str(e))
+        query = ""
+    sel = select_email(query, thread_ids, account, addresses=laya_card)
+    if laya_card and action in _LABEL_ACTIONS:
+        for acct in sel["accounts"]:
+            if _label_id(acct, label, create=False)[0] is None:
+                raise Refused("there is no label called \u201c%s\u201d in that mailbox; Laya does not make labels"
+                              % label)
+    messages = {}
+    if laya_card:
+        # The card is bound to the MESSAGES shown now, not the conversations: a reply that arrives
+        # before the owner approves is not changed, and undo has an exact record to reverse.
+        from agent_friday.services import gmail_mailbox as _gm
+        try:
+            for acct, tids in sel["accounts"].items():
+                messages[acct] = _gm.snapshot_messages(acct, tids)
+        except Exception as e:
+            raise Refused("Laya could not read those conversations message by message, so she did not "
+                          "put a change on a card (%s)" % exception_text(e))
+        if sum(len(m) for per in messages.values() for m in per.values()) > MAX_LAYA_MESSAGES:
+            raise Refused("those conversations hold too many messages for Laya to put on one card; "
+                          "the model path can take it")
     n = sel["count"]
     notes = []
     for b in sel["blocked"]:
@@ -522,8 +579,13 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
     if refs:
         detail.update(refs=[str(r) for r in refs][:MAX_ITEMS], selection_id=str(selection_id or "")[:40],
                       stage_rev=int(stage_rev or 0))
+    if laya_card:
+        detail["messages"] = messages
+        detail["origin"] = "laya_safe_write"
+        detail["laya_rule"] = str(rule or "")[:80]
+        requested_by = "laya:safe_write"        # the approval and the signed gate receipt say who asked
     _verb, doing = _email_words(action, label, n)
-    if action in EMAIL_NO_CARD:
+    if action in EMAIL_NO_CARD and not laya_card:
         rec = run_email(detail)
         _tell_held(detail, "done", receipt_id=rec.get("receipt_id") or "")
         _tell_pages("email", rec.get("receipt_id") or "")
@@ -537,6 +599,10 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
         said.append("The search matched more than %d; only these %d are in this batch." % (MAX_ITEMS, n))
     if rule:
         said.append("Selected on screen: %s." % rule)
+    if laya_card:
+        said.append("This covers the %d messages in these conversations as they are now; a reply that "
+                    "arrives before you approve is not changed." % sum(
+                        len(m) for per in messages.values() for m in per.values()))
     if detail["why"]:
         said.append("Why (Friday's words): " + detail["why"])
     card = _raise_card("email", action, detail, title=title, body=" ".join(said),
@@ -570,19 +636,24 @@ def run_email(detail: dict, approval_id: str | None = None) -> dict:
     preview = {(p.get("account_id"), p.get("id")): p for p in detail.get("preview") or []}
     items, changed_all, created = [], {}, []
     for acct, tids in (detail.get("accounts") or {}).items():
+        laya = detail.get("origin") == "laya_safe_write"
+        # A card Laya raised changes only the messages it listed and only what it can put back exactly.
+        exact = ({"only": (detail.get("messages") or {}).get(acct) or {}, "exact_only": True} if laya else {})
         try:
             if action in _LABEL_ACTIONS:
-                lid, made = _label_id(acct, label, create=(action != "unlabel"))
+                # A card Laya raised never makes a label (a label that vanished while it waited fails).
+                lid, made = _label_id(acct, label, create=(action != "unlabel"
+                                                           and detail.get("origin") != "laya_safe_write"))
                 if made:
                     created.append(label)
                 if lid is None:
                     raise Refused("there is no label called \u201c%s\u201d" % label)
                 if action == "unlabel":
-                    res = gm.modify_threads(acct, tids, (), (lid,))
+                    res = gm.modify_threads(acct, tids, (), (lid,), **exact)
                 else:
-                    res = gm.modify_threads(acct, tids, (lid,), ("INBOX",) if action == "move" else ())
+                    res = gm.modify_threads(acct, tids, (lid,), ("INBOX",) if action == "move" else (), **exact)
             else:
-                res = gm.apply_action(acct, tids, gm_action)
+                res = gm.apply_action(acct, tids, gm_action, **exact)
         except Exception as e:
             why = getattr(e, "user_message", None) or exception_text(e)
             res = {"changed": {}, "failed": {t: why for t in tids}}
@@ -609,7 +680,29 @@ def run_email(detail: dict, approval_id: str | None = None) -> dict:
     return journal.record("organize_email", action, "email", items=items, summary=summary + ".",
                           status=status, undo={"email": changed_all} if changed_all else {},
                           approval_id=approval_id, conversation_id=detail.get("conversation_id"),
-                          extra={"query": detail.get("query") or "", "said": said})
+                          extra={"query": detail.get("query") or "", "said": said,
+                                 **_laya_receipt(detail)})
+
+
+def card_sample(preview, n: int = 2) -> str:
+    """A short sample of a card's rows for a sealed line: the first few subjects with their sender
+    (an address, on a card Laya raised). Cleaned text only; '' when there is nothing to show."""
+    bits = []
+    for p in list(preview or [])[:n]:
+        subj, who = _clean_row(p.get("subject"), 60), _clean_row(p.get("sender"), 80)
+        if subj:
+            bits.append("“%s”%s" % (subj, (" from " + who) if who else ""))
+    return " and ".join(bits)
+
+
+def _laya_receipt(detail: dict) -> dict:
+    """The journal's Laya receipt for a batch Laya proposed: who proposed it, on which rung,
+    and how the rows were chosen. Nothing for a batch she did not."""
+    if detail.get("origin") != "laya_safe_write":
+        return {}
+    return {"origin": "laya_safe_write",
+            "laya": {"by": "laya:safe_write", "rung": "R0 rules", "rows_chosen": detail.get("laya_rule") or "",
+                     "approved_by": "owner"}}
 
 
 def undo_email(receipt: dict, approval_id: str | None = None) -> dict:

@@ -78,6 +78,11 @@ _BATCH = 1000
 #: What undo says for a conversation whose exact per-message state was never recorded.
 UNDO_INEXACT = "Friday could not record this conversation's exact state, so it can't undo exactly"
 
+#: What a batch that must be exactly undoable (a card Laya raised) says for a conversation it could not
+#: read first. It is left alone: a change that cannot be put back exactly is not made.
+NOT_EXACT_REFUSED = ("Friday could not read this conversation first, so it left it alone "
+                     "(it could not have been undone exactly)")
+
 
 def _why(e: Exception) -> str:
     if isinstance(e, gmail_api.GmailError):
@@ -121,13 +126,25 @@ def _apply_groups(svc, groups: dict) -> dict:
     return errors
 
 
-def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=()) -> dict:
+def snapshot_messages(account_id: str, thread_ids) -> dict:
+    """{thread id: [message ids]} for these conversations right now, in order. Raises when any
+    conversation cannot be read: a caller that binds a card to messages cannot guess."""
+    svc = _svc(account_id)
+    return {tid: list(_thread_messages(svc, tid)) for tid in dict.fromkeys(t for t in thread_ids if t)}
+
+
+def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=(),
+                   only=None, exact_only=False) -> dict:
     """Apply label changes to conversations, message by message. Returns
     {"changed": {thread_id: {"added": [...], "removed": [...], "messages": {message_id:
     {"added": [...], "removed": [...]}}}}, "failed": {thread_id: error}}.
     `messages` holds only the labels each message really gained or lost, which is what undo
     reverses; a message that arrives later is not in it. If a conversation's state could not
-    be read first, the change still runs and the entry says `inexact`, so undo says so too."""
+    be read first, the change still runs and the entry says `inexact`, so undo says so too.
+
+    `only` ({thread id: message ids}) restricts the change to the messages a card listed: a reply
+    that arrived since is not touched, and a thread with no entry is left alone. `exact_only`
+    refuses a conversation whose state could not be read first instead of running it inexactly."""
     add, remove = [l for l in add if l], [l for l in remove if l]
     touched = set(add) | set(remove)
     if _FORBIDDEN & touched:
@@ -138,9 +155,18 @@ def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=()) ->
     changed, failed = {}, {}
     plan, groups = {}, {}                  # tid -> {mid: (add, remove)}; (add, remove) -> [mid]
     for tid in dict.fromkeys(t for t in thread_ids if t):
+        if only is not None and tid not in only:
+            failed[tid] = "this conversation was not in the batch that was approved"
+            continue
         try:
             before = _thread_messages(svc, tid)
+            if only is not None:
+                want = set(only[tid])
+                before = {mid: labels for mid, labels in before.items() if mid in want}
         except Exception as first:
+            if exact_only or only is not None:      # never run a change that undo could not reverse exactly
+                failed[tid] = NOT_EXACT_REFUSED
+                continue
             try:                           # no record to undo from: run it, and say so
                 gmail_api.execute(svc.users().threads().modify(
                     userId="me", id=tid, body={"addLabelIds": add, "removeLabelIds": remove}))
@@ -188,14 +214,17 @@ def trash_threads(account_id: str, thread_ids, restore: bool = False) -> dict:
     return {"changed": changed, "failed": failed}
 
 
-def apply_action(account_id: str, thread_ids, action: str) -> dict:
+def apply_action(account_id: str, thread_ids, action: str, only=None, exact_only=False) -> dict:
     if action in TRASH_ACTIONS:
+        if only is not None or exact_only:
+            raise UserFacingValueError("trash is not a per-message change")
         return trash_threads(account_id, thread_ids, restore=(action == "untrash"))
     if action not in ACTIONS:
         raise UserFacingValueError("unknown mailbox action %r" % action)
     add, remove = ACTIONS[action]
     return modify_threads(account_id, thread_ids, add, remove,
-                          _allow=_SPAM_ONLY if action in ("spam", "notspam") else ())
+                          _allow=_SPAM_ONLY if action in ("spam", "notspam") else (),
+                          only=only, exact_only=exact_only)
 
 
 def undo(account_id: str, changed: dict) -> dict:

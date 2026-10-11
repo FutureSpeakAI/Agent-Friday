@@ -3724,6 +3724,21 @@ def _tool_organize_email(inp):
     inp = inp or {}
     extra = {}
     thread_ids, query = inp.get("thread_ids") or None, inp.get("query") or ""
+    if inp.get("laya_write"):
+        # Laya's safe writes (services/laya_safe_writes): a ticket the router minted for rows the
+        # owner pointed at. The rows, the verb and the label come from the ticket alone; whatever
+        # else the call carries is ignored, and the change waits for ONE card, always.
+        from agent_friday.services import laya_safe_writes as _lsw
+        try:
+            call = _lsw.redeem(inp.get("laya_write"), action=inp.get("action"),
+                               stage=_fresh_screen_stage(_lsw.WORKSPACE),
+                               conversation_id=_CURRENT_CONVERSATION.get())
+        except _lsw.Refusal as e:
+            return "NOT DONE: " + str(e)
+        return _organize_call(_ia.propose_email, call.action, query="", thread_ids=call.thread_ids,
+                              account="", label=call.label, why=call.why, replaces="",
+                              room_mode=_voice_room(), laya_card=True, refs=call.refs,
+                              selection_id="", stage_rev=call.stage_rev, rule=call.rule)
     if str(inp.get("selection") or "").strip().lower() == "screen":
         refs, st, rule, err = _screen_target("messages")
         if err:
