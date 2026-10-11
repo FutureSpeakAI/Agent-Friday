@@ -16,6 +16,15 @@ Two independent firing mechanisms, layered for robustness:
      being scheduled, so it can still dump even in the rarer case where
      every Python thread — including our own heartbeat/monitor — is wedged
      (a true GIL-level freeze).
+
+Why the backstop is re-armed on every beat and never left to fire on a timer:
+CPython's dump timer walks the other threads' frames WITHOUT the GIL. Fired
+while those threads are running Python code (a 100 s repeating timer on a busy
+indexing run, or 20 ms in a four-thread loop) it can read a frame that is being
+freed and kill the process with an access violation (exit 139, no traceback).
+Armed this way it only ever fires when the interpreter is already frozen, and
+tests/unit/test_library_index_and_search_share_the_process.py keeps any other
+module from arming one.
 """
 from __future__ import annotations
 
