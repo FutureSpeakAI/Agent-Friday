@@ -347,6 +347,9 @@
   "local_models_advise": [
    "settings"
   ],
+  "local_voice_readiness": [
+   "settings"
+  ],
   "make_podcast": [
    "media",
    "news"
