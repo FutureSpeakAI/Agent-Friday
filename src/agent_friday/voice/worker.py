@@ -151,6 +151,8 @@ class _Fake:
 class _KokoroCuda:
     device = "cuda"
     model = "kokoro-82M"
+    #: True for the CPU engine: Kokoro on the processor, no CUDA, no VRAM.
+    _cpu = False
 
     def __init__(self, voice: str):
         self.voice = voice
@@ -164,7 +166,7 @@ class _KokoroCuda:
         with timed(prof, "import_s"):
             import torch  # noqa: F401  (the import is the cost being measured)
             from agent_friday.services.kokoro_voice import KokoroTTS
-        self._tts = KokoroTTS(self.voice, allow_cpu=False)
+        self._tts = KokoroTTS(self.voice, allow_cpu=self._cpu, cpu_only=self._cpu)
         with timed(prof, "prepare_s"):
             self._tts.prepare(progress=progress)
         try:
@@ -187,10 +189,10 @@ class _KokoroCuda:
             with timed(prof, "import_s"):
                 import torch  # noqa: F401
                 from agent_friday.services.kokoro_voice import KokoroTTS
-        prof["cuda_init_s"] = _cuda_init_s()
-        before = _cuda_free_mib()
+        prof["cuda_init_s"] = 0.0 if self._cpu else _cuda_init_s()
+        before = None if self._cpu else _cuda_free_mib()
         if not prepared:
-            self._tts = KokoroTTS(self.voice, allow_cpu=False)
+            self._tts = KokoroTTS(self.voice, allow_cpu=self._cpu, cpu_only=self._cpu)
         with timed(prof, "model_load_s"):
             self._tts.load(progress=progress)
         try:
@@ -200,13 +202,13 @@ class _KokoroCuda:
                 prof["model_path"], prof["file_mib"] = path, file_mib(path)
         except Exception:
             pass
-        self.device = self._tts._device or "cuda"
+        self.device = self._tts._device or ("cpu" if self._cpu else "cuda")
         with timed(prof, "warmup_s"):
             try:
                 self._tts.synthesize("Ready.")        # first inference: kernels and caches
             except Exception:
                 pass
-        after = _cuda_free_mib()
+        after = None if self._cpu else _cuda_free_mib()
         resident = (before - after) if (before is not None and after is not None) else None
         return {"resident_mib": max(0, resident) if resident is not None else None,
                 "voice": self.voice, "profile": prof}
@@ -223,6 +225,14 @@ class _KokoroCuda:
 
     def transcribe(self, pcm: bytes) -> str:
         raise RuntimeError("kokoro is a mouth, not an ear")
+
+
+class _KokoroCpu(_KokoroCuda):
+    """Kokoro on the processor, in its own process: when the call ends the
+    process exits and torch, transformers and the model all go back to the OS,
+    which an in-process engine in the server never does."""
+    device = "cpu"
+    _cpu = True
 
 
 class _WhisperCuda:
@@ -322,6 +332,8 @@ def build_engine(name: str, **kw):
         return _Fake()
     if name == "kokoro-cuda":
         return _KokoroCuda(kw.get("voice") or "af_heart")
+    if name == "kokoro-cpu":
+        return _KokoroCpu(kw.get("voice") or "af_heart")
     if name == "whisper-cuda":
         return _WhisperCuda(kw.get("model") or "small", kw.get("compute") or "int8_float16")
     raise ValueError(f"unknown voice worker engine {name!r}")

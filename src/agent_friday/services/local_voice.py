@@ -427,6 +427,11 @@ class WhisperASR:
         self._model = None
         self._lock = threading.Lock()
 
+    def unload(self):
+        """Drop the model (CTranslate2 frees its weights when it is collected)."""
+        with self._lock:
+            self._model = None
+
     def _download_root(self) -> Path:
         """Where faster-whisper should look for (and, if absent, download)
         this model's checkpoint.
@@ -576,6 +581,10 @@ class PiperTTS:
         self.voice = voice or DEFAULT_PIPER_VOICE
         self._piper = None
         self._lock = threading.Lock()
+
+    def unload(self):
+        with self._lock:
+            self._piper = None
 
     def _voice_path(self) -> Path:
         rel = _PIPER_VOICE_PATHS.get(self.voice)
