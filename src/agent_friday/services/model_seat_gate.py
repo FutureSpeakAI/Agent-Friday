@@ -35,6 +35,7 @@ from agent_friday.core import FRIDAY_DIR
 from agent_friday.paths import contained
 from agent_friday.services.tool_integrity import find_pseudo_toolcalls
 from agent_friday.services.visible_jobs import visible_job
+from agent_friday.services.local_scheduler import admitted as _admitted
 
 GATE_DIR = FRIDAY_DIR / "model_seat_conformance"
 
@@ -277,6 +278,7 @@ def _gate_chat_fn(model: str, ollama_url: str, *, num_ctx=GATE_NUM_CTX,
 
         base = (prov.get("base_url") or "").rstrip("/")
 
+        @_admitted("model_seat_gate.chat", cls="background")
         @visible_job('Seat conformance probe', kind='seat_gate', workspace='settings', eager=False)
         def chat_fn(messages, model, tools=None, temperature=0.2,
                     max_tokens=300):

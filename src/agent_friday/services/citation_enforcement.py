@@ -79,6 +79,8 @@ from __future__ import annotations
 
 import re
 
+from agent_friday.services.local_scheduler import admitted as _admitted
+
 # Every citation grammar CITATION_INSTRUCTIONS teaches, plus the inert form
 # provenance rewrites unbacked web citations into. `[unverified-web:...]` COUNTS
 # as a citation attempt here on purpose: the model did its job and cited; the
@@ -214,6 +216,7 @@ CLAIM_JUDGE_PROMPT = (
 )
 
 
+@_admitted("citation_enforcement.judge", seat="default")
 def judge_claims(reply: str, *, local_only: bool, settings=None,
                  timeout: float = 60.0) -> dict:
     """Ask a model whether the reply asserts checkable facts.

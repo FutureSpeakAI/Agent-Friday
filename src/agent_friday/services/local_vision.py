@@ -42,6 +42,7 @@ import time
 import urllib.error
 import urllib.request
 from agent_friday.user_errors import ExceptionText
+from agent_friday.services.local_scheduler import admitted as _admitted
 
 _log = logging.getLogger("friday.local_vision")
 
@@ -123,6 +124,7 @@ def capability(settings: dict | None = None) -> dict:
             "projector": str(proj), "reason": "ready"}
 
 
+@_admitted("local_vision.describe", seat="default")
 def describe(image_b64: str, *, mime: str = "image/png",
              prompt: str = DEFAULT_PROMPT, settings: dict | None = None,
              timeout: float = 180.0,

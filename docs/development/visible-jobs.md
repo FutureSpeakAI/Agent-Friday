@@ -59,6 +59,16 @@ A model call that does not go through the router (a speech model, a direct
 HTTP call to a seat, a Gemini client) calls `visible_jobs.note_inference(model,
 local=...)` right before it, so the card names that model too.
 
+A local call that no job claims (nothing opened a `visible_job` or a queue job
+around it, and no person's turn made it) is wrapped by the local work scheduler
+(`services/local_scheduler.admit`) as a deferrable `visible_job` of kind
+`background_call`, `eager=False`: it waits in the Local AI queue for idle like
+any deferrable job, shows one row in the chip and, once a model answers, one
+card that names it. Work that is time-bound (a schedule that is due, an episode
+someone asked for) says so with `local_scheduler.work(label, cls="background",
+deferrable=False)` and is not held for idle. The setting
+`local_scheduler_wrap_background` turns the wrapping off.
+
 The task card (`TaskCard` in `index.html` and `ui_parts/app.html`) shows the
 model line (`data-testid="task-model"`), the queue line
 (`data-testid="task-queue"`) and the reasoning button.

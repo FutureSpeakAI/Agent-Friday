@@ -12,6 +12,7 @@ import uuid
 from typing import TYPE_CHECKING, Dict
 
 from agent_friday.services.worker_adapters.base import BaseAdapter, WorkerStatus
+from agent_friday.services.local_scheduler import admitted as _admitted
 from agent_friday.user_errors import ExceptionText, exception_text
 
 if TYPE_CHECKING:
@@ -87,6 +88,7 @@ class OllamaAdapter(BaseAdapter):
         t.start()
         return aid
 
+    @_admitted("ollama_adapter.run", cls="background")
     def _run(self, aid: str, task: "WorkerTask"):
         from agent_friday.services.orchestrator import ResultStatus
         model = "gemma4:latest"

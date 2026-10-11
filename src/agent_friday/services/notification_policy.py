@@ -176,9 +176,15 @@ def group_key(n: dict) -> str:
 
 
 def note_owner_turn(when: float | None = None) -> None:
-    """The owner just spoke to Friday (a chat or voice turn)."""
+    """The owner just spoke to Friday (a chat or voice turn). Also the moment
+    the local work scheduler's idle clock restarts."""
     with _TURN_LOCK:
         _LAST_TURN[0] = when if when is not None else time.time()
+    try:
+        from agent_friday.services import local_scheduler as _ls
+        _ls.mark_activity("turn", when)
+    except Exception:
+        pass
 
 
 def owner_in_conversation(now: float | None = None) -> bool:

@@ -5414,6 +5414,15 @@ def _seat_supervisor():
                 _cs.register()
             except Exception:
                 pass
+            # Background jobs are the `background` class of the local seat's
+            # admission queue: people go first (services/turn_queue), and the
+            # work a person is waiting on holds its seat as a `user_job`.
+            try:
+                from agent_friday.services import local_scheduler as _ls  # installs the gate
+                from agent_friday.services import turn_queue as _tq
+                _tq.attach_seat_queue(sup.queue, on_idle=lambda _seat: sup.poke())
+            except Exception:
+                pass
             sup.start()
             _SEAT_SUPERVISOR = sup
         return _SEAT_SUPERVISOR
@@ -5532,20 +5541,15 @@ def _make_task_thread(task_id, name, prompt, description, *, orb_icon='🛰',
 
 
 def local_queue_snapshot():
-    """The Local AI queue for the chip, the tray, the API and queue_status."""
-    from agent_friday.services import background_gate as _bg
+    """The Local AI queue for the chip, the tray, the API and queue_status.
+    One source: the local work scheduler reads the queue's own rows
+    (services/seat_supervisor) with the podcast waiting for its turn, the
+    leases and the calls it holds, and the idle state (services/background_gate)."""
+    from agent_friday.services import local_scheduler as _ls
     try:
-        snap = _seat_supervisor().snapshot()
+        return _ls.queue_snapshot()
     except Exception:
-        snap = {"running": [], "queued": [], "count": 0, "jobs": []}
-    try:
-        st = _bg.idle_state()
-        snap["idle"] = {"idle": bool(st["idle"]), "idle_s": int(st["idle_s"]),
-                        "threshold_s": int(st["threshold_s"]),
-                        "os_readable": bool(st["os_readable"])}
-    except Exception:
-        snap["idle"] = None
-    return snap
+        return {"running": [], "queued": [], "count": 0, "jobs": [], "idle": None}
 
 
 def local_queue_run_now(job_id):
@@ -5577,7 +5581,15 @@ def local_queue_cancel(job_id):
         else:
             _task_log(tid, 'Cancel requested from the Local AI queue: it stops before its next model call.')
     try:
-        return _seat_supervisor().cancel(job_id, on_cancel=_teardown)
+        if _seat_supervisor().cancel(job_id, on_cancel=_teardown):
+            return True
+    except Exception:
+        pass
+    # Not one of the queue's own jobs: a podcast, a lease or a call the
+    # local work scheduler holds (it is the same list on screen).
+    try:
+        from agent_friday.services import local_scheduler as _ls
+        return bool(_ls.cancel(job_id, _skip_queue=True).get("ok"))
     except Exception:
         return False
 
@@ -10860,6 +10872,17 @@ try:
                                 workspace_tools=WORKSPACE_TOOLS)
 except Exception as _lme:  # never let optional deps break the agent import
     print(f"  [LOCAL-MODEL] registration skipped: {_lme}")
+
+# local_work: what the local models are working on and what waits, and cancel a
+# waiting job. A text tool outside the always-on catalogue (the voice front does
+# not declare it; voice reaches it through the router and ask_friday).
+# See services/queue_tools.py and services/local_scheduler.py.
+try:
+    from agent_friday.services import queue_tools as _queue_tools
+    _queue_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS,
+                          workspace_tools=WORKSPACE_TOOLS)
+except Exception as _qte:  # never let optional deps break the agent import
+    print(f"  [QUEUE] registration skipped: {_qte}")
 
 
 _GOVERNANCE_KEY: bytes | None = None

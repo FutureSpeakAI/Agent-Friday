@@ -31,6 +31,7 @@ import time
 import wave
 from pathlib import Path
 from agent_friday.user_errors import ExceptionText
+from agent_friday.services.local_scheduler import admitted as _admitted
 
 log = logging.getLogger("friday.voice_manifest")
 
@@ -237,6 +238,7 @@ def _run_mouth(selection: dict, text: str, progress) -> tuple[bytes, dict]:
     return voice_workers.run_mouth_proof(selection, text, progress)
 
 
+@_admitted("voice_manifest.mind", seat="default", cls="voice")
 def _run_mind(selection: dict, progress) -> dict:
     """One short completion on the resident brain seat with the REAL tools.
 
@@ -348,6 +350,7 @@ def _run_mind(selection: dict, progress) -> dict:
 FRONT_ARMS_WITH_CALL = "voice_front_arms_with_call"
 
 
+@_admitted("voice_manifest.front_mind", seat="voice-front", cls="voice")
 def _run_front_mind(model: str, progress) -> dict:
     """The mind proof against the voice front: arm it, then one short
     completion carrying the voice tool contract."""

@@ -62117,7 +62117,10 @@ const LOCAL_AI_KIND_WORDS = {
   prefix_warm: 'warm-up',
   runner: 'background job',
   task: 'task',
-  podcast: 'podcast'
+  podcast: 'podcast',
+  background_call: 'background AI work',
+  model_call: 'model call',
+  gpu_lease: 'GPU turn'
 };
 function localAiChipText(q) {
   const n = q && q.count || 0;
@@ -62252,7 +62255,7 @@ function LocalAiQueueChip() {
     disabled: !!busy,
     onClick: () => act(j.id, 'run-now'),
     title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.'
-  }, "Run now"), /*#__PURE__*/React.createElement("button", {
+  }, "Run now"), j.cancellable !== false && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "ws-tab-link",
     disabled: !!busy,

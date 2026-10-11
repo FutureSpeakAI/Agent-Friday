@@ -30,6 +30,8 @@ import json as _json
 import logging
 import time as _time
 
+from agent_friday.services.local_scheduler import admitted as _admitted
+
 _log = logging.getLogger("friday.local_call")
 
 # Measured on the reference machine: extraction on a large page runs 121s and
@@ -250,6 +252,7 @@ def log_dispatch_table(models, expect_up=None) -> list:
     return rows
 
 
+@_admitted("local_call.call", on_cancel=lambda: "")
 def call(system: str, user: str, model: str, *, json_mode: bool = False,
          max_tokens: int = 2048, timeout: int = DEFAULT_TIMEOUT_S,
          num_ctx: int | None = None) -> str:
@@ -310,6 +313,7 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
         return ""
 
 
+@_admitted("local_call.openai_style", on_cancel=lambda: "")
 def _openai_style(base: str, system: str, user: str, model: str,
                   json_mode: bool, max_tokens: int, timeout: int) -> str:
     """An Arbiter-owned seat speaks the OpenAI-compatible dialect.

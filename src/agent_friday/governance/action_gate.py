@@ -221,8 +221,10 @@ INTERNAL_TOOLS = frozenset({
     # set_chat_tray shows, hides or docks the chat tray, and check_situation
     # reads state the server already holds. None reaches anyone else.
     "navigate_to", "check_situation", "set_workspace_layout", "show_my_day",
-    # Reads the Local AI queue (labels and reasons only).
-    "queue_status",
+    # Reads the Local AI queue (labels and reasons only). local_work says what
+    # the local models are working on and takes a waiting job out of the line:
+    # Friday's own queue, nothing reaches anyone else.
+    "queue_status", "local_work",
     "set_chat_tray",
     # See & Touch (services/screen_stage): ticks rows on the owner's own screen. It shows
     # and changes nothing; every change to the mail still goes through organize_email.

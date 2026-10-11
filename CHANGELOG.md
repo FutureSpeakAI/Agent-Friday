@@ -13,6 +13,23 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+### Added
+
+- **One scheduler decides what the local models do next.** Every call to a
+  local model now waits its turn in the order voice, chat, Local API, jobs you
+  asked for, background. A model that is loaded finishes its waiting jobs before
+  anything asks for another to load, and the jobs for one unloaded model go
+  together. No model loads if it would leave less than 4 GB of memory free; the
+  job waits and the Local AI chip says why. A second GPU job (an image, a heavy
+  model) waits for the card instead of being refused. A background call nothing
+  claims, such as a summary written after a chat, becomes a waiting job in the
+  same Local AI queue, with a card that names the model, and starts only after
+  you have been away for `background_idle_minutes`. A voice turn holds
+  background work; an open call keeps only the work that can wait waiting. Say
+  "cancel the podcast job" to take a waiting job out of the line. The scheduler
+  keeps swaps, free memory, waits and finished jobs in a file on this PC and
+  sends none of it anywhere (`GET /api/work/local/metrics`).
+
 ### Fixed
 
 - **Undoing a mailbox change is now exact for every message in a conversation.**

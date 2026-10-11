@@ -77,6 +77,7 @@ from agent_friday.services.wiki_engine import (
     wiki_write_text,
 )  # noqa: E501
 from agent_friday.services import visible_jobs as _vj
+from agent_friday.services.local_scheduler import admitted as _sched_admitted
 
 # Re-export routing helpers so callers can use a single import location.
 # Canonical source is routing/model_router.py — import from there when you only
@@ -801,6 +802,8 @@ def _served_ctx(model):
     return _plan_num_ctx(model)
 
 
+@_sched_admitted("model_router.ollama", model_fallback=lambda: (
+    (_load_settings().get('model_routing') or {}).get('local_model')))
 def _call_ollama(messages, system=None, model=None, max_tokens=None,
                  # An orb's icon should say what the WORK is, not what
                  # transport carried it. A house default here makes every
@@ -1526,6 +1529,26 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None,
     return out
 
 
+def _openai_leg_is_local(bound):
+    """True when an OpenAI-compatible call is aimed at a local provider (a
+    llama.cpp seat, LM Studio, vLLM on this PC or LAN): those legs wait for the
+    local work scheduler. A cloud leg never does."""
+    prov = bound.get('provider')
+    if prov is None:
+        return False
+    try:
+        from agent_friday.routing.provider_descriptors import (
+            adapter_of, classification_of, LOCAL_CAPABLE_ADAPTERS)
+        if not isinstance(prov, dict):
+            from agent_friday.services.provider_registry import get_provider_registry
+            prov = get_provider_registry().get_provider(str(prov))
+        return (bool(prov) and classification_of(prov) == 'local'
+                and adapter_of(prov) in LOCAL_CAPABLE_ADAPTERS)
+    except Exception:
+        return False
+
+
+@_sched_admitted("model_router.openai", local=_openai_leg_is_local)
 def _call_openai(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='☁️',
                  tools=None, pii_lookup=None, session_ctx=None,

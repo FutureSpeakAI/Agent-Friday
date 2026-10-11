@@ -546,6 +546,18 @@ def idle_work_blocked_reason(rec=None, spec=None, now=None):
     except Exception:
         pass
 
+    # The owner's turns are the clock. A chat or voice turn running or waiting
+    # in the local queue is activity whatever the last mark says, and the
+    # marks themselves (a chat send, a voice turn, a click in the page) come
+    # from services/local_scheduler, so "idle" is time since you were here.
+    try:
+        from agent_friday.services import local_scheduler as _ls
+        busy = _ls.interactive_busy_reason()
+        if busy:
+            return busy + ", so idle work waits"
+    except Exception:
+        pass
+
     after = float(spec.get("idle_after_s", cfg["after_s"]))
     # One idle signal for all background work: the minimum of Windows'
     # last-input time and Friday's own activity (services/background_gate).

@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 
 from agent_friday.user_errors import ExceptionText
+from agent_friday.services.local_scheduler import admitted as _admitted
 
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
@@ -533,6 +534,7 @@ class OllamaManager:
         return bool(self.probe_generate(
             model, disable_thinking=disable_thinking).get("ok"))
 
+    @_admitted("ollama_manager.chat")
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
                         max_tokens=4096, num_ctx=None, timeout=120,
                         think=None, keep_alive=None, format=None):
