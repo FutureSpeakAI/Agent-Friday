@@ -507,6 +507,8 @@ def shadow_row(text: str, p: Optional[Proposal], final, proto, surface: str, thr
 
 
 def _write_shadow(row: dict) -> None:
+    if not row.get("text_sha"):
+        return                              # no local key to hash with: no hashed row is written
     try:
         p = log_path()
         p.parent.mkdir(parents=True, exist_ok=True)

@@ -84,6 +84,18 @@ FEATURE_PROBES = [
     "open the budget spreadsheet", "open the go-live checklist", "show me the first one", "clear the selection",
 ]
 
+#: HAND-LABELLED: the phrases that are a WRITE verb with a referential object. The ON pass takes
+#: ``write_referential`` from this list, never from the parser under test.
+WRITE_REFERENTIAL = frozenset({
+    "archive these", "archive all of them", "trash all of them", "star all of them", "mark all of them as read",
+    "star these", "unstar these", "mark these as read", "mark these as unread", "label these as receipts",
+    "move these to receipts", "archive the first two", "archive the second one"})
+
+#: What a safe-write route may carry: the one tool, the allowed actions, and only these argument keys.
+SAFE_WRITE_TOOL = "organize_email"
+SAFE_WRITE_ACTIONS = frozenset({"archive", "read", "unread", "star", "unstar", "label", "move"})
+SAFE_WRITE_ARGS = frozenset({"action", "laya_write"})
+
 #: Every regex the port changed gets cases generated from it.
 OPENERS = ["also", "just", "then", "now", "kindly", "quickly", "i want to", "i need to", "i have to", "i'd like to",
            "i would like to", "i gotta"]
@@ -151,6 +163,10 @@ def build_cases(root: Path) -> list:
         add(text)
     for text in FEATURE_PROBES:
         add(text, feature=True)
+    for text in sorted(WRITE_REFERENTIAL):
+        add(text, feature=True)
+    for c in cases:
+        c["write_referential"] = c["text"] in WRITE_REFERENTIAL
     return cases
 
 
@@ -176,18 +192,12 @@ def nondeterministic(stats: dict, slow_turns: list) -> bool:
 def dump(src: Path, cases_path: Path, out: Path, safe_writes: str = "off") -> int:
     sys.path.insert(0, str(src / "src"))
     from agent_friday.services import laya, laya2_encoder, laya_router as lr
-    write_referential = None
     if safe_writes == "on":
         try:        # the setting forced on in this process; the base tree has no such module and stays as it is
             from agent_friday.services import laya_safe_writes as _sw
-            from agent_friday.services import point_act as _pa
             _sw.mode = lambda settings=None: "on"
-
-            def write_referential(text):
-                p = _pa.parse(text)
-                return bool(p is not None and p.verb in _pa.WRITE_VERBS and _pa.is_referential(p))
         except ImportError:
-            write_referential = None
+            pass
     if not laya2_encoder.is_available():
         print("REFUSED: the Laya reading model is not on disk (%s); tier 1 would be a silent 'degraded' on both "
               "sides. Pass --encoder-dir." % laya2_encoder.artifacts_dir(), file=sys.stderr)
@@ -211,8 +221,7 @@ def dump(src: Path, cases_path: Path, out: Path, safe_writes: str = "off") -> in
     for c in cases:
         t, kw = c["text"], dict(c["kw"])
         row = {"text": t, "kw": kw, "feature": c.get("feature", False), "trust_supported": takes_trust}
-        if write_referential is not None:
-            row["write_referential"] = write_referential(t)
+        row["write_referential"] = bool(c.get("write_referential"))        # the hand label in the case file
         for b in BUDGETS:
             row["route@%d" % b] = _row(lr.route(t, budget_ms=b, log=False, **kw))
             row["route_turn@%d" % b] = _row(laya.route_turn(t, caller="eval.diff", budget_ms=b, log=False, **kw))
@@ -273,7 +282,15 @@ def _feature(row: dict, surface: str, b: dict) -> bool:
 def _safe_write_feature(row: dict, surface: str, b: dict, on: bool) -> bool:
     """ON pass only: a WRITE verb with a referential object, on a trusted surface, may become Laya's safe-write
     route (a card call, a question, a row-less defer). Nothing else may take the layer."""
-    return bool(on and "trusted" in surface and b["layer"] == "safe_write" and row.get("write_referential"))
+    if not (on and "trusted" in surface and b["layer"] == "safe_write" and row.get("write_referential")):
+        return False
+    args = b.get("args") or {}
+    if b["decision"] == "tool":
+        return (b["tool"] == SAFE_WRITE_TOOL and set(args) <= SAFE_WRITE_ARGS
+                and args.get("action") in SAFE_WRITE_ACTIONS and isinstance(args.get("laya_write"), dict))
+    if b["decision"] in ("ask", "defer"):
+        return not b["tool"] and not args           # a question or a deferral that carries no tool and no rows
+    return False
 
 
 def compare(base: Path, new: Path, on: bool = False) -> int:

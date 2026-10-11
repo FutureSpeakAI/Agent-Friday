@@ -302,6 +302,11 @@ def record_owner_choice(key: str, value: Any) -> bool:
     then the record is removed and the key reads as off (fail closed)."""
     if key not in GUARDED or not isinstance(value, str) or value not in GUARDED[key]:
         return False
+    with _WRITE_LOCK:
+        return _record_owner_choice_locked(key, value)
+
+
+def _record_owner_choice_locked(key: str, value: str) -> bool:
     try:
         import secrets
         import time
@@ -383,22 +388,63 @@ def narrow_record(key: str, value: Any) -> bool:
         return False
 
 
-def follow_file(key: str, file_value: Any) -> None:
-    """The setting file says ``file_value``. If that is narrower than the owner's recorded click (a hand edit,
-    a file write or a restore turned it down), bring the record down to it, on a background thread so a turn
-    never waits on the keychain; if that cannot be done the record is removed and the key reads as off. Cheap
-    (two stat calls) when nothing differs."""
+_WRITE_LOCK = _threading.RLock()
+
+
+def _marker(key: str):
+    """(counter, time) of the record now on disk, to tell whether an owner click landed since it was looked at."""
+    rec = _read_records().get(key)
+    return (rec.get("counter"), rec.get("at")) if isinstance(rec, dict) else None
+
+
+def _file_value(key: str) -> str:
+    """What settings.json holds NOW (read fresh, not a turn's cached copy), or the narrowest."""
     try:
-        if rank(key, file_value) >= rank(key, owner_choice(key, block=False)):
+        from agent_friday.core import SETTINGS_FILE
+        v = (read(SETTINGS_FILE) or {}).get(key)
+    except Exception:       # noqa: BLE001
+        v = None
+    return v if isinstance(v, str) and v in GUARDED[key] else GUARDED[key][0]
+
+
+def _after_narrowing(key: str, value: str) -> None:
+    if key == "laya_safe_writes" and value != "on":
+        try:
+            from agent_friday.services import laya_safe_writes
+            laya_safe_writes.expire_pending_cards()
+        except Exception:       # noqa: BLE001
+            pass
+
+
+def follow_file(key: str, file_value: Any) -> None:
+    """The setting file says ``file_value``. If that may be narrower than the owner's recorded click (a hand
+    edit, a file write or a restore turned it down), bring the record down to it on a background thread, so a
+    turn never waits on the keychain. A cold cache (right after a start) cannot tell, so it checks too: the
+    narrowing verifies the record itself. It never undoes a fresher owner click: the file is re-read and the
+    record's counter compared under a lock. If the record cannot be turned down it is removed (reads as off)."""
+    try:
+        stamp = _stamp()
+        if stamp[0] is None or key in _FORCE_OFF:
+            return                          # no record (or already off in this process): nothing to narrow
+        with _LOCK:
+            hit = _CACHE.get(key)
+        warm = hit is not None and hit[0] == stamp
+        if warm and rank(key, file_value) >= rank(key, hit[1]):
             return
         with _LOCK:
             if ("narrow", key) in _PENDING:
                 return
             _PENDING.add(("narrow", key))
+        seen = _marker(key)
 
         def run():
             try:
-                narrow_record(key, file_value)
+                with _WRITE_LOCK:
+                    if _marker(key) != seen:
+                        return              # the owner clicked since: that click is the fresher word
+                    fresh = _file_value(key)
+                    narrow_record(key, fresh)
+                    _after_narrowing(key, fresh)
             except Exception:       # noqa: BLE001
                 pass
             finally:
@@ -407,6 +453,17 @@ def follow_file(key: str, file_value: Any) -> None:
         _threading.Thread(target=run, name="guarded-settings-narrow", daemon=True).start()
     except Exception:       # noqa: BLE001
         pass
+
+
+def boot_narrow(settings: Any) -> None:
+    """At server start, before any turn: a settings file edited down while Friday was stopped turns the record
+    down now. Synchronous (it is not a turn) and fail closed."""
+    for key in GUARDED:
+        v = settings.get(key) if isinstance(settings, dict) else None
+        v = v if isinstance(v, str) and v in GUARDED[key] else GUARDED[key][0]
+        with _WRITE_LOCK:
+            narrow_record(key, v)
+        _after_narrowing(key, v)
 
 
 def narrow_all(config: dict) -> None:

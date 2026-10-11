@@ -1215,6 +1215,15 @@ if __name__ == '__main__':
     except Exception as _hw_err:
         print(f"  Hang watchdog: skipped ({_hw_err})")
 
+    # Laya's safe writes: a settings file edited down while Friday was stopped turns the owner's record down
+    # now, before any turn reads the setting (services/guarded_settings.boot_narrow).
+    try:
+        from agent_friday.core import _load_settings as _ls_boot
+        from agent_friday.services import guarded_settings as _gs_boot
+        _gs_boot.boot_narrow(_ls_boot() or {})
+    except Exception as _gs_err:
+        print(f"  Safe writes record: boot check skipped ({_gs_err})")
+
     # BOOT INVARIANT (services/boot_guard.py).
     #
     # Two consecutive starts that never reached "serving" mean the last change

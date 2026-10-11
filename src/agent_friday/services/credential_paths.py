@@ -88,6 +88,7 @@ def _deny_files() -> list[tuple[Path, str]]:
         (f / "secret_key", "my web session secret"),
         (f / "vault" / ".vault_config.json", "the vault key-derivation salt"),
         (f / "vault" / ".governance-key", "the governance signing key"),
+        (f / "runtime" / "laya_safe_writes" / "salt", "the key that keys Laya's log hashes"),
         (a / ".env", "the API keys an earlier release kept beside the app"),
         (a / "secrets.yaml", "the API keys an earlier release kept beside the app"),
     ]
@@ -464,6 +465,7 @@ _COMMAND_MARKERS: tuple[tuple[str, str], ...] = (
     (".governance-key", "the governance signing key"),
     (".guarded-anchor-", "the counter that anchors a guarded setting's owner record"),
     ("runtime/guarded_settings", "the record that your own Settings click turned a guarded setting on"),
+    ("runtime/laya_safe_writes/salt", "the key that keys Laya's log hashes"),
     (".vault_config.json", "the vault key-derivation salt"),
     (".attestation-key", "the vault attestation signing key"),
     ("keystore.json", "my keystore"),

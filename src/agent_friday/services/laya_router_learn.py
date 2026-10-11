@@ -92,6 +92,8 @@ def note_route(text: str, r, *, surface: str = "voice", conversation_id: Optiona
     never a correction to learn from."""
     if not owner or not text or r is None or r.tool == "answer_card":
         return
+    if not _sha(text):
+        return                      # no local key to hash with: nothing is kept, hashed or otherwise
     keep = _learning(settings if settings is not None else _settings())
     ent = {"at": now_fn(), "hash": _sha(text), "text": text if keep else None,
            "decision": r.decision, "tool": r.tool, "args": dict(r.args or {}),

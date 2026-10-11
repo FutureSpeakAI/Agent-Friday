@@ -2992,6 +2992,15 @@ def _cards_carried(results, conversation_id) -> list:
 
 #: The count-only sentence for a card whose own fields cannot make the
 #: email readback. It names no private content.
+_NEUTRAL_QUESTION = "I asked which one you meant; the choices were on your screen."
+
+
+def _persist_local_turn(tool_session, user_text, agent_text, conversation_id):
+    """Save a completed local voice turn. A turn that read a card aloud or asked a question built from the
+    owner's screen keeps only a neutral line in the conversation (set by ``_run_routed_front_turn``): the
+    words were spoken, but a later typed turn on a cloud model reads this history."""
+    kept = tool_session.pop("history_text", None) or agent_text
+    return _persist_voice_turn(user_text, kept, conversation_id=conversation_id, provider="local")
 _CARD_LINE_FALLBACK = ("I have a change waiting for your OK; the details are on your screen. "
                        "Shall I go ahead?")
 
@@ -3066,11 +3075,7 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
     turn. If that cannot be shown, no bare yes counts: the owner answers on
     screen or says the card's action."""
     _cid = tool_session.get("conversation_id")
-    try:        # a spoken turn is another turn in this conversation: a card Laya raised by typing is no longer the last question
-        from agent_friday.services import reflex_chat as _rc
-        _rc.note_user_turn(_cid, user_text, False)
-    except Exception:
-        pass
+    tool_session.pop("history_text", None)      # (set below for THIS turn only)
     sealed = tool_session.pop("sealed_card", None) or {}
     try:
         sess = session() if session else None
@@ -3132,6 +3137,13 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
         if _said:
             tool_session.setdefault("spoken", []).append(str(_said))
             del tool_session["spoken"][:-60]
+        # What the conversation keeps of this turn names no row: the spoken card line (subjects and senders)
+        # and a question built from the owner's screen are said aloud, but a later typed turn on a cloud model
+        # reads the history.
+        if _carried["line"]:
+            tool_session["history_text"] = _CARD_LINE_FALLBACK
+        elif plan["question"] and plan["receipt"].get("layer") in ("point_act", "resolver", "safe_write"):
+            tool_session["history_text"] = _NEUTRAL_QUESTION
         # The card line this turn spoke is the last question asked; the
         # router's own question, or none, clears it. A barged turn may not
         # have voiced it. Delivery is confirmed at the next turn.
@@ -4413,8 +4425,7 @@ if sock is not None:
                     return None
 
             hooks = {
-                "persist": lambda u, a, cid: _persist_voice_turn(u, a, conversation_id=cid,
-                                                                 provider="local"),
+                "persist": lambda u, a, cid: _persist_local_turn(_tool_session, u, a, cid),
                 "distill": _spawn_voice_distill,
                 "actions": _voice_actions_for,
                 "receipt": _receipt,
