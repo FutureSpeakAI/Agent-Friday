@@ -233,13 +233,27 @@ def test_a_change_s_intent_and_destination_come_from_the_owner_s_words():
     assert run("archive these", st).args["intent"] == "archive"
 
 
-def test_the_router_defers_a_change_with_the_rows_and_runs_nothing():
+def test_the_router_defers_a_change_with_the_rows_and_runs_nothing_when_safe_writes_are_on(monkeypatch):
+    """The rows ride on the write guard's defer only with laya_safe_writes "on" (the M1 rule). A change
+    that is not a safe write (trash) shows it; an allowed one becomes a safe-write card route instead."""
+    from agent_friday.services import laya_safe_writes as sw
+    monkeypatch.setattr(sw, "mode", lambda settings=None: "on")
     st = _deictic_stage(selected=[1, 2])
-    r = lr.route("archive these", trusted=True, stage=st, pointed=None, log=False)
+    r = lr.route("trash these", trusted=True, stage=st, pointed=None, log=False)
     assert r.decision == "defer" and r.tool is None and r.layer == "point_act"
-    assert r.args["refs"] == [ref(1), ref(2)] and r.args["intent"] == "archive"
+    assert r.args["refs"] == [ref(1), ref(2)] and r.args["intent"] == "trash"
     ran = []
     assert lr.execute(r, lambda n, a: ran.append(n)) is None and not ran
+
+
+@pytest.mark.parametrize("mode", ["off", "shadow"])
+def test_the_router_defers_a_change_without_rows_when_safe_writes_are_off(monkeypatch, mode):
+    """Off (and shadow) follows the M1 rule: exactly the guard's row-less defer as before DA-3."""
+    from agent_friday.services import laya_safe_writes as sw
+    monkeypatch.setattr(sw, "mode", lambda settings=None: mode)
+    st = _deictic_stage(selected=[1, 2])
+    r = lr.route("archive these", trusted=True, stage=st, pointed=None, log=False)
+    assert (r.decision, r.tool, r.layer) == ("defer", None, "rule") and not r.args
 
 
 # --- the router -----------------------------------------------------------------

@@ -49,7 +49,7 @@ def cloud_only(monkeypatch):
 
 # ── the template set ─────────────────────────────────────────────────────────────────
 
-SLOTS = dict(provider="Anthropic", question="Which one?")
+SLOTS = dict(provider="Anthropic", question="Which one?", what="archive 3 conversations")
 
 
 def test_every_template_renders_with_its_receipt():
