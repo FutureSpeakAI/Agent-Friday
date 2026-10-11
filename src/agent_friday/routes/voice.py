@@ -2174,8 +2174,7 @@ def _run_after_call(items, conversation_id, wait_s=None, poll_s=10.0) -> None:
             try:
                 _persist_voice_turn(
                     "", "I couldn't get to what you asked during our call: my "
-                        "deeper mind didn't come back. Ask me again when it's up: "
-                    + "; ".join(i["request"] for i in items),
+                        "deeper mind didn't come back. Ask me again when it's up.",
                     conversation_id=conversation_id, provider="local")
             except Exception:
                 pass
@@ -2904,7 +2903,8 @@ def _deferred_request(user_text, r, local=False) -> str:
     mailbox account, and they leave this PC only with the owner's own words."""
     text = str(user_text)[:3500]
     refs = [x for x in (r.args.get("refs") or []) if re.fullmatch(r"[a-z]+:[A-Za-z0-9_.@:+=-]{1,120}", str(x))]
-    if not local or not r.args.get("intent") or not refs:
+    from agent_friday.services import point_act as _pa
+    if not local or r.args.get("intent") not in _pa.CARDED_INTENTS or not refs:
         return text[:4000]
     note = ("[Resolved on the owner's screen by rules, not by you: %s %d row(s) in %s%s. Row ids: %s. "
             "Nothing has been changed yet; raise the one card for it.]"

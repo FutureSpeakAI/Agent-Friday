@@ -628,7 +628,10 @@ class LiveLaya:
         if "quiet" in _ROUTE_PARAMS(lr):
             kw["quiet"] = True
         if "trusted" in _ROUTE_PARAMS(lr):
-            kw["trusted"] = self.trusted
+            # Never the screen rungs: a Gemini Live transcript (cloud ASR, any voice in the room) must not read
+            # the owner's stage, run the item resolver or open/select rows. `self.trusted` says the call is
+            # the owner's for the call's other checks; it does not widen the router.
+            kw["trusted"] = False
         return lr.route(text, **kw)
 
     def _decide(self, text: str, execute: bool = True) -> None:

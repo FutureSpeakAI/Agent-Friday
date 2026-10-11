@@ -509,6 +509,25 @@ def _default_pointed(ws: str):
     return desktop_bus.pointed(ws)
 
 
+#: A change on rows Laya resolved is carried to the deeper mind only for an intent that ALWAYS raises an
+#: approval card on the model path. star / label / mark-read run without a card there (item_actions.
+#: EMAIL_NO_CARD), so for them the owner's words go on alone and no row ids ride with them.
+CARDED_INTENTS = frozenset({"archive", "move", "trash", "spam", "restore"})
+
+_DEMONSTRATIVE = re.compile(r"\b(?:these|those|that|this|them|ones?)\b")
+
+
+def is_referential(p: Optional["Parsed"]) -> bool:
+    """Does the parse point at what is ON SCREEN (these, this, them, the second one, all of them, the ones from
+    X) rather than describe something to look up ("the email from Sarah", "my unread emails", "the news about X")?
+    Only the first is point-and-act's; a description is Friday's read rule or the resolver's."""
+    if p is None:
+        return False
+    if p.kind in ("deictic", "all", "ordinals", "clear"):
+        return True
+    return p.kind == "facets" and bool(_DEMONSTRATIVE.search(p.obj))
+
+
 def looks_like(text: Any) -> bool:
     """Cheap test: does this read as a point-and-act request at all?"""
     try:

@@ -762,14 +762,23 @@ _res_exec: Optional[ThreadPoolExecutor] = None
 def point_act_route(text: str, *, stage, pointed, quiet: bool) -> Optional[Route]:
     """The owner pointed at rows on screen ("these", "the second one", "the ones
     from X"): open/select run their governed tool with the exact rows; a change
-    is a ``defer`` that carries the rows; ambiguity is one question. None when
-    the words are not that, or name nothing on this screen."""
+    is a ``defer`` that carries the rows only when that change always raises a card;
+    ambiguity is one question. None when the words are not that, name nothing on
+    this screen, or DESCRIBE something to look up ("the email from Sarah", "my unread
+    emails"): that is Friday's own read rule or the resolver, and the screen is not read."""
     from agent_friday.services import point_act
+    p = point_act.parse(text)
+    if not point_act.is_referential(p):
+        return None
     kw = {}
     if stage is not _UNSET:
         kw["stage"] = stage
     if pointed is not _UNSET:
         kw["pointed"] = pointed
+    if p.verb in point_act.WRITE_VERBS:
+        # What Friday herself pointed at in the last two minutes (a model's call) is never what the owner means
+        # by "these" for a change; the owner's selection, cursor, open and focused rows still are.
+        kw["pointed"] = None
     pa = point_act.plan(text, quiet=quiet, **kw)
     if pa is None:
         return None
@@ -779,7 +788,12 @@ def point_act_route(text: str, *, stage, pointed, quiet: bool) -> Optional[Route
                      label=pa.label or TOOLS.get(pa.tool, ("",))[0], reason=reason)
     if pa.decision == "ask":
         return Route("ask", confidence=0.9, layer="point_act", question=pa.question, reason=reason)
-    return Route("defer", args=dict(pa.args), confidence=0.92, layer="point_act", reason=reason)
+    args = dict(pa.args)
+    if args.get("intent") and args["intent"] not in point_act.CARDED_INTENTS:
+        # star / label / mark read run without a card on the model path: no Laya-resolved rows go along.
+        return Route("defer", confidence=0.92, layer="point_act",
+                     reason="a change that runs without a card on the model path: the words go alone")
+    return Route("defer", args=args, confidence=0.92, layer="point_act", reason=reason)
 
 
 def _resolver_route(text: str) -> Optional[Route]:

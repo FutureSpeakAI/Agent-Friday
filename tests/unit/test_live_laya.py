@@ -619,3 +619,25 @@ def test_the_setting_is_validated_and_routed_like_its_siblings():
     from agent_friday.services import setting_proposals as sp
     assert sp._route("settings.laya.live_reflex", "Off") == ("live_laya", {"action": "reflex", "mode": "off"})
     assert set(sp.TOOL_OF.values()) == set(sp.KEYS_OF) == set(sp.LABELS)
+
+
+def test_live_laya_never_routes_trusted_even_for_the_owners_authenticated_local_call(monkeypatch):
+    """Gemini Live transcripts are cloud ASR of anything said in the room: they never read the owner's
+    stage, run the item resolver, or open/select rows, whatever the call's trust flag says."""
+    seen = {}
+    real = laya_router.route
+
+    def spy(text, **kw):
+        seen.update(kw)
+        return real(text, **kw)
+
+    def boom(*a, **k):
+        raise AssertionError("a Gemini Live turn reached a screen rung")
+    monkeypatch.setattr(laya_router, "route", spy)
+    monkeypatch.setattr(laya_router, "point_act_route", boom)
+    monkeypatch.setattr(laya_router, "_resolver_route", boom)
+    ll = live_laya.LiveLaya("t-trust", settings_fn=lambda: {"voice_live_reflex": "shadow"}, trusted=True)
+    for text in ("open the second one", "select these", "archive these", "open the budget spreadsheet"):
+        ll._route(text)
+    assert seen["trusted"] is False and seen["surface"] == live_laya.SURFACE
+    ll.shutdown()
