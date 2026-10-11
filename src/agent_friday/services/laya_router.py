@@ -30,9 +30,10 @@ How it decides, on the CPU, nothing new downloaded:
           shadow already loads): nearest prototype over seed sentences per
           tool, plus ``conversation`` and ``act``; thresholds as reflex_turn.
 
-  head    (optional, ``laya_tool_head`` off|shadow|on, default off) a trained
+  head    (optional, ``laya_tool_head`` off|shadow|on, default shadow) a trained
           tool head, services/laya_router_head: only when a CERTIFIED
-          checkpoint exists. ``shadow`` logs its choice beside the
+          checkpoint exists (with none, shadow does nothing and loads nothing),
+          on the CPU, as a visible job. ``shadow`` logs its choice beside the
           prototypes' (hashes only) and changes nothing; ``on`` replaces
           tier 1 for a decision above its certified threshold. Tier 0, the
           ``_ACT`` mutation guard and governance are untouched by it.
@@ -1286,11 +1287,12 @@ def _with_profile(profile_id, fn, *args):
         _PROFILE.pid = None
 
 
-def note_learn(text: str, r: Route, surface: str, conversation_id: Optional[str] = None) -> None:
+def note_learn(text: str, r: Route, surface: str, conversation_id: Optional[str] = None,
+               owner: bool = False) -> None:
     """Offer a logged decision to the opt-in correction capture (services/laya_router_learn). Never raises."""
     try:
         from agent_friday.services import laya_router_learn as ll
-        ll.note_route(text, r, surface=surface, conversation_id=conversation_id)
+        ll.note_route(text, r, surface=surface, conversation_id=conversation_id, owner=owner)
     except Exception:
         pass
 
@@ -1370,7 +1372,7 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
             pass
     if log:
         _write(text, r, surface)
-        note_learn(text, r, surface, conversation_id)
+        note_learn(text, r, surface, conversation_id, owner=trusted)
         try:   # the owner's own voice on this PC only; services/laya_personal decides whether anything is kept
             if trusted:
                 from agent_friday.services import laya_personal

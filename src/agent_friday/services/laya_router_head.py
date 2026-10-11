@@ -90,6 +90,11 @@ class Proposal:
 
 def configured_mode(settings: Optional[dict] = None) -> str:
     """The setting, read strictly: only a literal "shadow" or "on" counts."""
+    cached = settings is None
+    if cached:
+        with _state_lock:
+            if time.time() - float(_mode_cache["at"]) < MODE_TTL_S:
+                return _mode_cache["mode"]
     try:
         if settings is None:
             from agent_friday.core import _load_settings
@@ -97,7 +102,11 @@ def configured_mode(settings: Optional[dict] = None) -> str:
         v = settings.get(SETTING) if isinstance(settings, dict) else None
     except Exception:
         return "off"
-    return v if v in ("shadow", "on") else "off"
+    mode = v if v in ("shadow", "on") else "off"
+    if cached:
+        with _state_lock:
+            _mode_cache.update(at=time.time(), mode=mode)
+    return mode
 
 
 def root_dir() -> Path:
@@ -144,6 +153,9 @@ _state_lock = threading.Lock()
 _cache: Dict[str, object] = {"receipt_at": 0.0, "receipt": None, "head": None,
                              "failed_at": 0.0}
 RECEIPT_TTL_S = 10.0
+#: The setting is read from disk at most this often (route() asks on every turn).
+MODE_TTL_S = 2.0
+_mode_cache: Dict[str, object] = {"at": 0.0, "mode": "off"}
 
 
 def available(profile: str = DEFAULT_PROFILE) -> bool:
@@ -168,6 +180,7 @@ def reset() -> None:
     """Forget the cached receipt and head (tests; a new checkpoint)."""
     with _state_lock:
         _cache.update(receipt_at=0.0, receipt=None, head=None, failed_at=0.0, profile=None)
+        _mode_cache.update(at=0.0, mode="off")
 
 
 def threshold(profile: str = DEFAULT_PROFILE) -> Optional[float]:
@@ -181,16 +194,40 @@ def _tools_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "tools"
 
 
+def import_tool_head(sub: str = ""):
+    """``tools/tool_head`` (or one of its modules) imported as the package ``tool_head`` WITHOUT touching
+    ``sys.path``: the package is registered under its name with its own directory as the search location."""
+    import importlib
+    import importlib.machinery
+    import importlib.util
+    if "tool_head" not in sys.modules:
+        pkg = _tools_dir() / "tool_head"
+        if not pkg.is_dir():
+            raise ImportError("tools/tool_head is not shipped here")
+        init = pkg / "__init__.py"
+        if init.is_file():
+            spec = importlib.util.spec_from_file_location("tool_head", init, submodule_search_locations=[str(pkg)])
+        else:
+            spec = importlib.machinery.ModuleSpec("tool_head", None, is_package=True)
+            spec.submodule_search_locations = [str(pkg)]
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["tool_head"] = mod
+        try:
+            if spec.loader is not None:
+                spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop("tool_head", None)
+            raise
+    return importlib.import_module("tool_head." + sub) if sub else sys.modules["tool_head"]
+
+
 def make_span_head(runner, catalogue: dict) -> Callable[[dict], dict]:
     """tool_head's ``ToolHead`` with one change: a required free-text
     ``query`` is a CHOICE among the spans of the owner's words that this
     turn supplies (``case["candidates"]["query"]``), so the head fills it
-    without ever writing a word. Needs tools/tool_head on the path."""
-    d = str(_tools_dir())
-    if d not in sys.path:
-        sys.path.insert(0, d)
-    from tool_head import eval_wiring as ew
-    from tool_head import items as items_mod
+    without ever writing a word. Needs tools/tool_head (imported without a sys.path change)."""
+    ew = import_tool_head("eval_wiring")
+    items_mod = import_tool_head("items")
 
     class SpanToolHead(ew.ToolHead):
         def _slots(self, case, tool, conf):
@@ -215,17 +252,18 @@ def make_span_head(runner, catalogue: dict) -> Callable[[dict], dict]:
 
 
 def _default_loader(profile: str) -> Callable[[dict], dict]:  # pragma: no cover - loads a model
+    import inspect
     import os
     if not _tools_dir().is_dir():
         raise RuntimeError("tools/tool_head is not shipped here")
-    d = str(_tools_dir())
-    if d not in sys.path:
-        sys.path.insert(0, d)
-    from tool_head import catalogue as cat_mod
-    from tool_head import eval_wiring as ew
+    cat_mod = import_tool_head("catalogue")
+    ew = import_tool_head("eval_wiring")
     pd = profile_dir(profile)
     cat = cat_mod.load_catalogue(str(pd / "catalogue.json"))
-    return make_span_head(ew.LayaRunner(str(pd / "model"), os.environ.get("LAYA_SRC")), cat)
+    # The head runs on the CPU, always: a runner that cannot be told so is not loaded (the brain may hold the GPU).
+    if "device" not in inspect.signature(ew.LayaRunner).parameters:
+        raise RuntimeError("the tool head's runner cannot be pinned to the CPU")
+    return make_span_head(ew.LayaRunner(str(pd / "model"), os.environ.get("LAYA_SRC"), device="cpu"), cat)
 
 
 #: ``loader(profile) -> head(case) -> {"operation", "args", "score"}`` (tests
@@ -321,7 +359,12 @@ def propose(text: str, profile: str = DEFAULT_PROFILE) -> Optional[Proposal]:
             "candidates": {"query": spans}}
     t0 = time.perf_counter()
     try:
-        out = head(case)
+        # A model job is always visible (shadow or on): it names the model and shows in the Activity lane.
+        # Where the door is unavailable the head does not run.
+        from agent_friday.services import visible_jobs as _vj
+        with _vj.visible_job("Laya tool head", kind="laya_head", workspace="system", eager=False):
+            _vj.note_inference("laya-tool-head", local=True)
+            out = head(case)
     except Exception as e:  # noqa: BLE001
         _log.warning("tool head failed on a turn: %s", type(e).__name__)
         return None

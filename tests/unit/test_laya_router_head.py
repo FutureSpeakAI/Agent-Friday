@@ -391,3 +391,58 @@ def test_the_head_path_can_satisfy_all_five_given_a_head_that_gets_them_right(tm
     r = _route(text, "on")
     assert (r.decision, r.tool, r.layer) == ("tool", tool, "head")
     assert {k: str(v).lower() for k, v in r.args.items()} == args
+
+
+# ── the head is a visible CPU job, reads its setting rarely, and touches no sys.path ─────
+
+def test_the_mode_setting_is_read_from_disk_at_most_once_per_ttl(monkeypatch):
+    import agent_friday.core as core
+    reads = []
+    monkeypatch.setattr(core, "_load_settings", lambda: reads.append(1) or {"laya_tool_head": "shadow"})
+    lh.reset()
+    assert [lh.configured_mode() for _ in range(6)] == ["shadow"] * 6
+    assert len(reads) == 1
+
+
+def test_a_head_proposal_runs_inside_a_visible_job_or_not_at_all(monkeypatch, tmp_path):
+    from agent_friday.services import visible_jobs as vj
+    seen = []
+
+    class Door:
+        def __init__(self, name, **kw):
+            seen.append((name, kw.get("kind")))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setattr(vj, "visible_job", Door)
+    monkeypatch.setattr(vj, "note_inference", lambda *a, **k: None)
+    monkeypatch.setattr(lh, "_get_head", lambda profile="owner": (lambda case: {"operation": "none", "args": None, "score": 0.9}))
+    assert lh.propose("what's on my calendar") is not None
+    assert seen == [("Laya tool head", "laya_head")]
+    monkeypatch.setattr(vj, "visible_job", None)           # the door is unavailable: the head does not run
+    assert lh.propose("what's on my calendar") is None
+
+
+def test_the_default_loader_pins_the_runner_to_the_cpu_or_refuses():
+    import inspect
+    src = inspect.getsource(lh._default_loader)
+    assert 'device="cpu"' in src and "cannot be pinned to the CPU" in src
+
+
+def test_importing_the_training_package_leaves_sys_path_alone(monkeypatch, tmp_path):
+    pkg = tmp_path / "tools" / "tool_head"
+    pkg.mkdir(parents=True)
+    (pkg / "common.py").write_text("MARK = 7\n", encoding="utf-8")
+    monkeypatch.setattr(lh, "_tools_dir", lambda: tmp_path / "tools")
+    monkeypatch.delitem(sys.modules, "tool_head", raising=False)
+    before = list(sys.path)
+    try:
+        assert lh.import_tool_head("common").MARK == 7
+    finally:
+        for k in [k for k in sys.modules if k == "tool_head" or k.startswith("tool_head.")]:
+            sys.modules.pop(k, None)
+    assert sys.path == before
+    assert "sys.path.insert" not in __import__("inspect").getsource(lh)

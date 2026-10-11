@@ -420,11 +420,12 @@ def _preset_route(ctx: Ctx, spec: dict) -> dict:
         surface = str(kw.get("surface", "voice"))
         at = time.strftime("%Y-%m-%dT%H:%M:%S")            # the decision's time, taken on the worker at decision
         cid = kw.get("conversation_id")
+        owner = bool(kw.get("trusted"))       # the owner's own voice or verified page only
 
         def _commit():
             if want_log:
                 laya_router._write(ctx.text, r, surface, at=at)
-                laya_router.note_learn(ctx.text, r, surface, cid)
+                laya_router.note_learn(ctx.text, r, surface, cid, owner=owner)
             if owner_turn:
                 # The owner's own voice on this PC only (route_turn's `trusted`); services/laya_personal
                 # decides whether anything is kept. Only for an answer that was used, off the turn's thread.

@@ -207,6 +207,15 @@
    "task_kind": "avatar_evolution",
    "activity_label": "Avatar evolution step",
    "entry": "agent_friday.services.avatar_growth:run_step"
+  },
+  {
+   "id": "system.laya_tool_head",
+   "trigger": "laya",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "laya_head",
+   "activity_label": "Laya tool head",
+   "entry": "agent_friday.services.laya_router_head:propose"
   }
  ],
  "not_for_laya": [

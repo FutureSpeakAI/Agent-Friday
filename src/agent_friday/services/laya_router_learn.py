@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import sys
 import threading
 import time
 from collections import deque
@@ -57,14 +56,11 @@ def reset() -> None:
 
 
 def _dagger():
-    d = str(Path(__file__).resolve().parents[3] / "tools")
-    if not Path(d).is_dir():
-        return None
-    if d not in sys.path:
-        sys.path.insert(0, d)
+    """tools/tool_head's common and dagger modules, imported without a sys.path change; None where the
+    training package is not shipped (capture is then a quiet no-op)."""
     try:
-        from tool_head import common, dagger
-        return common, dagger
+        from agent_friday.services import laya_router_head as lh
+        return lh.import_tool_head("common"), lh.import_tool_head("dagger")
     except Exception:
         return None
 
@@ -86,11 +82,13 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def note_route(text: str, r, *, surface: str = "voice", conversation_id: Optional[str] = None,
+def note_route(text: str, r, *, surface: str = "voice", conversation_id: Optional[str] = None, owner: bool = False,
                settings: Optional[dict] = None) -> None:
     """Remember a routed turn so a later correction can find it. In memory,
-    bounded; the words are kept only with the owner's opt-in."""
-    if not text or r is None or r.tool == "answer_card":
+    bounded; the words are kept only with the owner's opt-in. Only the OWNER'S turns count: the local
+    voice and the verified page (``owner``); a paired phone, a tunnel or another voice in the room is
+    never a correction to learn from."""
+    if not owner or not text or r is None or r.tool == "answer_card":
         return
     keep = _learning(settings if settings is not None else _settings())
     ent = {"at": now_fn(), "hash": _sha(text), "text": text if keep else None,
@@ -103,7 +101,7 @@ def note_route(text: str, r, *, surface: str = "voice", conversation_id: Optiona
 
 def _same_conversation(ent: dict, conversation_id: Optional[str]) -> bool:
     a, b = ent.get("conversation_id"), conversation_id
-    return a is None or b is None or str(a) == str(b)
+    return bool(a) and bool(b) and str(a) == str(b)      # no id matches nothing
 
 
 def _router_op(ent: dict) -> str:
@@ -152,10 +150,19 @@ def _write(ent: dict, *, actor: str, op: str, args: Optional[dict], tainted: boo
         return False
 
 
-def note_undo(*, conversation_id: Optional[str] = None, settings: Optional[dict] = None,
+def note_undo(*, conversation_id: Optional[str] = None, tainted=False, settings: Optional[dict] = None,
               root=None) -> bool:
     """An undo just happened: if the newest routed turn is within 120 s, it
-    was corrected. The example's label is "ask"."""
+    was corrected. The example's label is "ask". ``tainted`` (a bool or a callable, as for
+    note_executed): a turn that read untrusted content is never a correction."""
+    if tainted is True:
+        return False
+    if callable(tainted):
+        try:
+            if tainted():
+                return False
+        except Exception:
+            return False
     now = now_fn()
     with _lock:
         ent = next((e for e in reversed(_held)
