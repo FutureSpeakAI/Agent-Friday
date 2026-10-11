@@ -2337,6 +2337,11 @@ DEFAULT_SETTINGS = {
     # choice shown at the first cloud turn: "" | "pending" | "done".
     "cloud_context_slicing": "",
     "cloud_context_slicing_offer": "",
+    # The one-time offer to move cloud voice to local voice once this PC is
+    # measured capable (services/local_voice_readiness): "" (never offered),
+    # "pending" (shown, not answered), "accepted" or "declined". Declined and
+    # accepted are final; nothing ever switches the engine without the owner.
+    "local_voice_switch_offer": "",
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".

@@ -609,6 +609,16 @@ if not _TESTING:
     except Exception as _pw_e:
         print(f"  Podcasts: render worker not started ({_pw_e})")
 
+    # Local voice readiness: keeps the stored capability snapshot fresh (a GPU or
+    # driver change, a week gone by) and runs wanted measurements as an idle
+    # background job through the local scheduler, never during a call
+    # (services/local_voice_readiness.py).
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        threading.Thread(target=_lvr.loop, daemon=True, name="local-voice-readiness").start()
+    except Exception as _lvr_e:
+        print(f"  Local voice readiness: not started ({_lvr_e})")
+
     # Media library index: built in the background at boot and kept fresh with a
     # cheap periodic change check, so the Library is never an empty grid over a
     # full creations folder (services/media_index.py).

@@ -121,6 +121,7 @@ A capability that is not in the defaults is removed on the next save.
 | `openai_api_key` | `""` | Key for that path, **stored in plain text**. Leave blank and use the encrypted store or `OPENAI_API_KEY` / `OPENROUTER_API_KEY` instead. |
 | `cloud_context_slicing` | `""` | What a cloud model is sent besides your message. `""` means you have not chosen: it gets everything, as before. `slice` sends only the context each turn needs and holds the rest back (a model can ask for it, and you decide on a card); `everything` records that you chose the old behaviour. Local models are never affected. Offered once, at the first cloud turn; nothing is preselected. |
 | `cloud_context_slicing_offer` | `""` | *Internal.* Where that one-time choice stands: `""`, `pending` or `done`. |
+| `local_voice_switch_offer` | `""` | *Internal.* Where the one-time offer to move cloud voice to local voice stands: `""` (never made), `pending` (shown, not answered), `accepted` or `declined`. It is made once, only after local voice has been measured on this computer and runs well, and only if you are on cloud voice. Nothing is preselected and nothing switches by itself; `declined` means it is never offered again. |
 | `cloud_consent` | not answered | *Internal.* Your recorded answer to the unrestricted-cloud screen. The only thing that can turn the egress gate's safeguards off. |
 | `unrestricted_cloud` | `false` | *Internal.* Legacy; read once to migrate into `cloud_consent`. |
 

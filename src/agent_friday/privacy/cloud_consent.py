@@ -188,25 +188,68 @@ def _row_ok(row: dict) -> bool:
     return fits not in _BAD_FITS_STATUSES and runs_well == "ready"
 
 
-def _role_capable(rows: list) -> tuple:
-    """(ok, reason). `rows` are LocalModelRow-shaped dicts from
-    `routes.intelligence.local_models_catalog()` — the same rows the model
+#: The three honest answers to "can this machine do it". `unknown` is not
+#: `refused`: nothing has been measured yet, so nobody can say "can't", and the
+#: way out is to measure. `refused` is a measured or derived "no" with a reason.
+STATE_CAPABLE, STATE_UNKNOWN, STATE_REFUSED = "capable", "unknown", "refused"
+_UNKNOWN_STATUSES = ("unknown", None)
+_NOT_MEASURED_WHY = "not measured on this machine yet"
+
+
+def _row_state(row: dict) -> str:
+    """capable / unknown / refused for one catalogue row.
+
+    A row is `unknown` only when no axis is a definite "no" and at least one axis
+    has no basis yet; any axis that is refused or degraded makes it `refused`,
+    whatever the other axis says."""
+    if _row_ok(row):
+        return STATE_CAPABLE
+    v = (row or {}).get("verdicts") or {}
+    fits = (v.get("fits") or {}).get("status")
+    runs_well = (v.get("runs_well") or {}).get("status")
+    if fits == "refused" or runs_well not in ("ready",) + _UNKNOWN_STATUSES:
+        return STATE_REFUSED
+    return STATE_UNKNOWN
+
+
+def _states_to_one(states: list) -> str:
+    """capable if any is; else unknown if any could still turn out capable."""
+    if STATE_CAPABLE in states:
+        return STATE_CAPABLE
+    if STATE_UNKNOWN in states:
+        return STATE_UNKNOWN
+    return STATE_REFUSED
+
+
+def _role_state(rows: list) -> tuple:
+    """(state, reason). `rows` are LocalModelRow-shaped dicts from
+    `routes.intelligence.local_models_catalog()` -- the same rows the model
     picker renders, so this can never disagree with what a user sees there.
     """
     if not rows:
-        return False, "no local model is catalogued for this role at all"
-    for row in rows:
-        if _row_ok(row):
-            return True, None
-    v = (rows[0] or {}).get("verdicts") or {}
+        return STATE_REFUSED, "no local model is catalogued for this role at all"
+    states = [_row_state(r) for r in rows]
+    state = _states_to_one(states)
+    if state == STATE_CAPABLE:
+        return state, None
+    # Say why using a row that is in the state the role ended in.
+    pick = rows[states.index(state)] if state in states else rows[0]
+    v = (pick or {}).get("verdicts") or {}
     explanation = ((v.get("runs_well") or {}).get("explanation")
-                  or (v.get("fits") or {}).get("explanation")
-                  or "no candidate for this role runs well on this machine")
-    return False, explanation
+                  or (v.get("fits") or {}).get("explanation"))
+    if state == STATE_UNKNOWN:
+        return state, explanation or _NOT_MEASURED_WHY
+    return state, explanation or "no candidate for this role runs well on this machine"
 
 
-def _text_capable(profile: dict, ladder_rows: list) -> tuple:
-    """(ok, reason) for reasoning specifically. Unlike voice/image/video —
+def _role_capable(rows: list) -> tuple:
+    """(ok, reason): `_role_state` for callers that only want the bar."""
+    state, why = _role_state(rows)
+    return state == STATE_CAPABLE, why
+
+
+def _text_state(profile: dict, ladder_rows: list) -> tuple:
+    """(state, reason) for reasoning specifically. Unlike voice/image/video —
     each served by exactly one runner Friday ships (CPU faster-whisper/
     Piper or GPU NeMo for voice; ComfyUI for image and video) — text can be
     served by Ollama, Friday's own runtime store (a fetched GGUF under
@@ -234,15 +277,28 @@ def _text_capable(profile: dict, ladder_rows: list) -> tuple:
         conversational = [n for n, _ in local_seats.installed()]
     except Exception:
         conversational = []
+    resident_states = []
     for model_id in conversational:
         v = rp.verdicts({"model_id": model_id}, profile)
-        if _row_ok({"verdicts": v}):
-            return True, None
+        st = _row_state({"verdicts": v})
+        if st == STATE_CAPABLE:
+            return STATE_CAPABLE, None
+        resident_states.append(st)
     # Nothing actually resident runs well — fall back to the curated
     # ladder's OWN verdicts, so a capable-but-empty machine (real headroom,
     # nothing downloaded yet) still reads as capable, matching what the
     # model picker itself would recommend fetching.
-    return _role_capable(ladder_rows)
+    ladder_state, ladder_why = _role_state(ladder_rows)
+    if ladder_state == STATE_REFUSED and STATE_UNKNOWN in resident_states:
+        # An installed model nobody has measured yet could still be the answer.
+        return STATE_UNKNOWN, _NOT_MEASURED_WHY
+    return ladder_state, ladder_why
+
+
+def _text_capable(profile: dict, ladder_rows: list) -> tuple:
+    """(ok, reason): `_text_state` for callers that only want the bar."""
+    state, why = _text_state(profile, ladder_rows)
+    return state == STATE_CAPABLE, why
 
 
 def assess_local_capability(profile: dict | None = None) -> dict:
@@ -252,8 +308,15 @@ def assess_local_capability(profile: dict | None = None) -> dict:
     onboarding starter set already compute — this is deliberately not a
     second, independent guess at hardware capability.
 
-    Returns `{"capable": bool, "roles": {role: {"ok": bool, "why": str|None}},
-    "chain_ok": bool, "chain_why": str|None}`.
+    Returns `{"capable": bool, "state": "capable"|"unknown"|"refused",
+    "roles": {role: {"ok": bool, "state": ..., "why": str|None}},
+    "chain_ok": bool, "chain_state": ..., "chain_why": str|None,
+    "assessed_at": iso}`.
+
+    `capable` is still the strict bar (everything capable). `state` is the
+    honest reading of it: `unknown` means something has not been measured on
+    this machine yet, which is never the same as `refused`. A surface says
+    "not measured" and offers to measure; it says "can't" only for `refused`.
     """
     try:
         from agent_friday.services import hardware_profile as hwp
@@ -263,24 +326,32 @@ def assess_local_capability(profile: dict | None = None) -> dict:
         lm = local_models_catalog(prof, {})
 
         roles = {}
-        text_ok, text_why = _text_capable(prof, lm.get("text") or [])
-        roles["text"] = {"ok": text_ok, "why": text_why}
+
+        def _put(role, state, why):
+            roles[role] = {"ok": state == STATE_CAPABLE, "state": state, "why": why}
+
+        _put("text", *_text_state(prof, lm.get("text") or []))
         voice_rows = lm.get("voice") or []
-        stt_ok, stt_why = _role_capable(
+        stt_state, stt_why = _role_state(
             [r for r in voice_rows if r.get("modality") == "stt"])
-        tts_ok, tts_why = _role_capable(
+        tts_state, tts_why = _role_state(
             [r for r in voice_rows if r.get("modality") == "tts"])
         # Both directions are needed for a real conversation — a machine
         # that can hear but not speak (or the reverse) cannot honour "voice"
         # as a private-local capability, even though one row individually
-        # runs well.
-        voice_ok = stt_ok and tts_ok
-        voice_why = None if voice_ok else (stt_why or tts_why)
-        roles["voice"] = {"ok": voice_ok, "why": voice_why}
-        image_ok, image_why = _role_capable(lm.get("image") or [])
-        roles["image"] = {"ok": image_ok, "why": image_why}
-        video_ok, video_why = _role_capable(lm.get("video") or [])
-        roles["video"] = {"ok": video_ok, "why": video_why}
+        # runs well. A definite no on either side is a no; otherwise anything
+        # unmeasured keeps the answer open.
+        if STATE_REFUSED in (stt_state, tts_state):
+            voice_state = STATE_REFUSED
+            voice_why = (stt_why if stt_state == STATE_REFUSED else tts_why)
+        elif STATE_UNKNOWN in (stt_state, tts_state):
+            voice_state = STATE_UNKNOWN
+            voice_why = (stt_why if stt_state == STATE_UNKNOWN else tts_why)
+        else:
+            voice_state, voice_why = STATE_CAPABLE, None
+        _put("voice", voice_state, voice_why)
+        _put("image", *_role_state(lm.get("image") or []))
+        _put("video", *_role_state(lm.get("video") or []))
 
         # `plan_chain()`'s real shape (residency_policy.py): a normal return
         # is {"stages": [{"where": "leased"|"cloud"|"refused", ...}, ...],
@@ -288,13 +359,14 @@ def assess_local_capability(profile: dict | None = None) -> dict:
         # "status" key on a genuine result. `build_starter_set()` wraps a
         # raised exception as {"error": str(e)} itself, which is the one
         # shape that IS an error here.
-        chain_ok, chain_why = True, None
+        chain_ok, chain_why, chain_failed_state = True, None, STATE_REFUSED
         try:
             starter = build_starter_set(prof)
             chain = starter.get("chain") or {}
             for name, result in chain.items():
                 if not isinstance(result, dict) or result.get("error"):
                     chain_ok = False
+                    chain_failed_state = STATE_UNKNOWN
                     chain_why = ("the planner could not price a %s turn on "
                                 "this hardware (%s)" % (
                                     name, (result or {}).get("error")
@@ -314,17 +386,39 @@ def assess_local_capability(profile: dict | None = None) -> dict:
                     break
         except Exception as exc:
             chain_ok, chain_why = False, "chain planning failed (%s)" % exc
+            chain_failed_state = STATE_UNKNOWN
 
-        capable = all(r["ok"] for r in roles.values()) and chain_ok
-        return {"capable": capable, "roles": roles,
-                "chain_ok": chain_ok, "chain_why": chain_why}
+        role_states = [r["state"] for r in roles.values()]
+        # A chain that fails while a role is still unmeasured is not a firm no:
+        # the planner priced a footprint nobody has measured.
+        if chain_ok:
+            chain_state = STATE_CAPABLE
+        elif STATE_UNKNOWN in role_states:
+            chain_state = STATE_UNKNOWN
+        else:
+            chain_state = chain_failed_state
+        all_states = role_states + [chain_state]
+        if STATE_REFUSED in all_states:
+            state = STATE_REFUSED
+        elif STATE_UNKNOWN in all_states:
+            state = STATE_UNKNOWN
+        else:
+            state = STATE_CAPABLE
+        capable = state == STATE_CAPABLE
+        return {"capable": capable, "state": state, "roles": roles,
+                "chain_ok": chain_ok, "chain_state": chain_state,
+                "chain_why": chain_why, "assessed_at": _now_iso()}
     except Exception as exc:  # pragma: no cover - defensive
         _log.error("local capability could not be assessed (%s); treating "
                    "as insufficient.", exc)
-        return {"capable": False,
-                "roles": {r: {"ok": False, "why": "capability check failed"}
+        # An assessment that crashed has not shown the machine to be incapable.
+        return {"capable": False, "state": STATE_UNKNOWN,
+                "roles": {r: {"ok": False, "state": STATE_UNKNOWN,
+                              "why": "capability check failed"}
                           for r in ("text", "voice", "image", "video")},
-                "chain_ok": False, "chain_why": "capability check failed"}
+                "chain_ok": False, "chain_state": STATE_UNKNOWN,
+                "chain_why": "capability check failed",
+                "assessed_at": _now_iso()}
 
 
 #: Plain words for the planner's turn and stage names. The consent screen
@@ -372,6 +466,14 @@ def record_consent(choice: str, *, profile: dict | None = None) -> dict:
         raise ValueError("choice must be one of %r, got %r" % (VALID_CHOICES, choice))
 
     snapshot = assess_local_capability(profile)
+    if (choice == CHOICE_LOCAL and not snapshot["capable"]
+            and snapshot.get("state") == STATE_UNKNOWN):
+        # Nothing here says "can't": something has not been measured yet.
+        raise ConsentRejected(
+            "local_private was requested but this machine has not been "
+            "measured for local models yet, so it cannot be promised. "
+            "Measure it first (Settings > Voice > Measure now), then answer "
+            "again.")
     if choice == CHOICE_LOCAL and not snapshot["capable"]:
         raise ConsentRejected(
             "local_private was requested but this machine's own capability "
@@ -394,6 +496,63 @@ def record_consent(choice: str, *, profile: dict | None = None) -> dict:
     return record
 
 
+def snapshot_state(snapshot: dict | None) -> str:
+    """capable / unknown / refused for a STORED snapshot.
+
+    A snapshot written before the states existed only has `capable`; its False
+    meant "not capable OR not measured" and cannot be told apart, so it reads as
+    `unknown` (stale) until the next re-assessment replaces it. No snapshot at
+    all is `unknown` too."""
+    if not isinstance(snapshot, dict) or not snapshot:
+        return STATE_UNKNOWN
+    st = snapshot.get("state")
+    if st in (STATE_CAPABLE, STATE_UNKNOWN, STATE_REFUSED):
+        return st
+    return STATE_CAPABLE if snapshot.get("capable") is True else STATE_UNKNOWN
+
+
+def snapshot_is_legacy(snapshot: dict | None) -> bool:
+    """A stored snapshot from before the states (or none): due a refresh."""
+    return not isinstance(snapshot, dict) or "state" not in snapshot
+
+
+def refresh_snapshot(profile: dict | None = None, *,
+                     snapshot: dict | None = None) -> dict:
+    """Re-assess and store the capability snapshot; returns it.
+
+    Only `capability_snapshot` changes. The owner's answer (`answered`,
+    `choice`, `at`) is carried over byte for byte: a re-assessment is not an
+    answer and never changes what leaves the machine. Written through the same
+    blessed internal path as `record_consent`. Never raises."""
+    snap = snapshot if snapshot is not None else assess_local_capability(profile)
+    try:
+        from agent_friday.core import _load_settings, _save_settings
+        cfg = (_load_settings() or {}).get("model_routing") or {}
+        cur = cfg.get("cloud_consent") if isinstance(cfg, dict) else None
+        record = dict(cur) if isinstance(cur, dict) else {
+            "answered": False, "choice": None, "at": None,
+            "capability_snapshot": None}
+        record["capability_snapshot"] = snap
+        _save_settings({"model_routing": {"cloud_consent": record}},
+                       _internal_cloud_consent_write=True)
+    except Exception as exc:  # pragma: no cover - defensive
+        _log.warning("capability snapshot could not be stored (%s)", exc)
+    return snap
+
+
+def stored_snapshot() -> dict | None:
+    """The stored snapshot whether or not the consent question was answered
+    (`resolve()` only hands it out once it was)."""
+    try:
+        from agent_friday.core import _load_settings
+        cfg = (_load_settings() or {}).get("model_routing") or {}
+        cc = cfg.get("cloud_consent") if isinstance(cfg, dict) else None
+        snap = cc.get("capability_snapshot") if isinstance(cc, dict) else None
+        return snap if isinstance(snap, dict) else None
+    except Exception:
+        return None
+
+
 def status(profile: dict | None = None) -> dict:
     """Serialisable posture for the onboarding/Settings UI and /api/health."""
     cs = resolve()
@@ -409,6 +568,9 @@ def status(profile: dict | None = None) -> dict:
         # "answered when the machine believed local was incapable because
         # nothing had been measured" instead of just the date.
         "capability_snapshot": cs.capability_snapshot,
+        # unknown ("not measured") is not refused ("can't"): a surface offers
+        # "Measure now" for the first and a reason for the second.
+        "snapshot_state": snapshot_state(cs.capability_snapshot),
     }
     if needs_prompt:
         payload["capability"] = _capability_for_status(profile)

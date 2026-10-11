@@ -11014,6 +11014,15 @@ try:
 except Exception as _qte:  # never let optional deps break the agent import
     print(f"  [QUEUE] registration skipped: {_qte}")
 
+# Can voice run locally, and measure it (local_voice_readiness): the spoken side
+# of Settings > Voice > Local voice. Loaded on demand. See
+# services/local_voice_tools.py and services/local_voice_readiness.py.
+try:
+    from agent_friday.services import local_voice_tools as _local_voice_tools
+    _local_voice_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _lvte:  # never let optional deps break the agent import
+    print(f"  [LOCAL-VOICE] registration skipped: {_lvte}")
+
 
 _GOVERNANCE_KEY: bytes | None = None
 
@@ -15723,6 +15732,7 @@ ON_DEMAND_TOOLS = (
     "hand_cursor",           # the hand cursor and big mode, by voice
     "big_mode",
     "hologram_window",       # the hologram window's depth, by voice
+    "local_voice_readiness",  # can voice run locally; measure it when idle (never switches)
 )
 WORKSPACE_TOOLS.setdefault("on_demand", []).extend(
     t for t in CLAUDE_TOOLS if isinstance(t, dict) and t.get("name") in ON_DEMAND_TOOLS)

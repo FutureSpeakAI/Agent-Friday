@@ -1287,9 +1287,23 @@ def _cancel_lease(job_id: str) -> bool:
     return False
 
 
+def _capability_jobs() -> List[dict]:
+    """The idle capability re-assessment / voice measurement, when one is wanted."""
+    import sys
+    m = sys.modules.get("agent_friday.services.local_voice_readiness")
+    return m._jobs_listing() if m is not None else []
+
+
+def _cancel_capability(job_id: str) -> bool:
+    import sys
+    m = sys.modules.get("agent_friday.services.local_voice_readiness")
+    return bool(m is not None and m._cancel_listed(job_id))
+
+
 def _default_sources() -> Dict[str, Tuple[Callable, Callable]]:
     return {"task": (_task_jobs, _cancel_task), "podcast": (_podcast_jobs, _cancel_podcast),
-            "lease": (_lease_jobs, _cancel_lease)}
+            "lease": (_lease_jobs, _cancel_lease),
+            "local_capability": (_capability_jobs, _cancel_capability)}
 
 
 def _active_sources() -> Dict[str, Tuple[Callable, Callable]]:

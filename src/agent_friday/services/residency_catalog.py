@@ -463,6 +463,14 @@ def record_footprint(model_id: str, fingerprint: str, fp: dict) -> None:
     at the same num_ctx", and None is a valid, stable dict key there.
     """
     record_measurement(model_id, fingerprint, dict(fp, num_ctx=None))
+    # A new measurement can turn "not measured" into an answer: refresh the
+    # stored capability snapshot in the next idle window (the re-assessment job
+    # ignores the measurements it makes itself).
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        _lvr.note_event("measured")
+    except Exception:
+        pass
 
 
 # ── thrash degradation (headroom.md §5.2, §7's thrash row) ─────────────────

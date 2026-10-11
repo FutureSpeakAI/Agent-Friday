@@ -43,6 +43,13 @@ def is_live(conversation_id) -> bool:
         return bool(conversation_id) and str(conversation_id) in _CHANNELS
 
 
+def any_live() -> bool:
+    """A voice call is open on some conversation: background jobs that load
+    models wait until none is."""
+    with _LOCK:
+        return bool(_CHANNELS)
+
+
 def deliver(conversation_id, text: str, *, kind: str = "result") -> bool:
     """Queue `text` for the live call on this conversation. False if none."""
     if not conversation_id or not str(text or "").strip():

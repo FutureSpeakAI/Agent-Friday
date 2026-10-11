@@ -516,6 +516,11 @@ def _run_job(target: str):
         with _LOCK:
             _JOB["state"] = "done"
             _JOB["finished"] = time.time()
+        try:
+            from agent_friday.services import local_voice_readiness as _lvr
+            _lvr.note_event("installed")
+        except Exception:
+            pass
         _append_log("✓ install complete and verified — start a voice session "
                     "to use it (models need no restart; a pip install may)")
     except Exception as e:

@@ -1031,6 +1031,9 @@ def _model_soup(settings: dict, routing: dict, costs: dict, seats: dict,
         consent = {"answered": cs.answered, "choice": cs.choice, "at": cs.at,
                    "source": cs.source, "unrestricted": cs.unrestricted,
                    "snapshot_capable": snap.get("capable"),
+                   # "Not measured" (unknown) and "can't" (refused) read
+                   # differently in the UI: the first offers Measure now.
+                   "snapshot_state": cc.snapshot_state(cs.capability_snapshot),
                    "snapshot_why": snap.get("why") or
                    (((snap.get("roles") or {}).get("text") or {}).get("why")
                     if isinstance(snap.get("roles"), dict) else None)

@@ -232,6 +232,9 @@ INTERNAL_TOOLS = frozenset({
     # Stopping a workflow or task after its step, or steering one (the steer's words are checked for where they
     # came from, like any instruction): it only ends or redirects Friday's own background work.
     "task_control",
+    # Can voice run locally, and queue the measurement for an idle moment
+    # (services/local_voice_tools). It never changes the voice engine.
+    "local_voice_readiness",
     # a setting change holds itself for the owner's Yes on its own card (services/setting_proposals)
     "set_setting",
     # The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show the

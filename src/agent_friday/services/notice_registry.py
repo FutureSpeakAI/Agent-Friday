@@ -249,6 +249,10 @@ _ALL = [
     # A model swap on the same side of the cloud line: a receipt, pulled not pushed.
     _e("X02", "services/seat_transparency.py:observe_seats(same side)", "seat_receipt", RECEIPTS,
        "seat_receipt:{seat_state}"),
+    # The one-time offer to switch cloud voice to local voice once it is measured
+    # capable (services/local_voice_readiness). Declined means never again.
+    _e("LV7", "services/local_voice_readiness.py:maybe_offer_switch", "local_voice_switch_offer",
+       NEEDS_YOU, "local-voice-switch-offer", source="local-voice"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),

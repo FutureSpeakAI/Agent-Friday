@@ -3259,7 +3259,58 @@ def voice_session_info():
         info["manifest"] = m.snapshot()
     except Exception as e:
         info["manifest"] = {"error": error_text(e, "Couldn't read the voice manifest")}
+    # Why the voice is on the cloud, when it is: your choice / local not ready /
+    # local not measured (which carries the Measure now action).
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        info["why_cloud"] = _lvr.why_cloud(engine=info.get("engine"))
+    except Exception as e:
+        info["why_cloud"] = {"on_cloud": None,
+                             "error": error_text(e, "Couldn't read why the voice is on the cloud")}
     return jsonify({"status": "ok", **info})
+
+
+@voice_bp.route('/api/voice/local-readiness', methods=['GET'])
+def voice_local_readiness():
+    """Whether local voice is measured and runs well on this PC, why Friday is on
+    cloud voice when she is, the idle measuring job's progress, and the one-time
+    switch offer when it is pending. Read-only; stored values, nothing measured."""
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        return jsonify({"status": "ok", **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't read local voice readiness")
+
+
+@voice_bp.route('/api/voice/local-readiness/measure', methods=['POST'])
+@login_required
+def voice_local_readiness_measure():
+    """Measure now: queue the voice measurement and re-assessment as an idle
+    background job. It starts once the owner has been away for the scheduler's
+    idle window, never during a call, and never changes the voice engine."""
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        _lvr.request_measure("owner")
+        return jsonify({"status": "ok", **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't queue the measurement")
+
+
+@voice_bp.route('/api/voice/local-readiness/offer', methods=['POST'])
+@login_required
+def voice_local_readiness_offer():
+    """The owner's answer to the one-time switch card: `switch` or `stay`.
+    Only a pending offer can be answered, and only this route (from the owner's
+    click) moves the voice engine."""
+    data = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        res = _lvr.decide_offer(data.get("choice"))
+        if not res.get("ok"):
+            return jsonify({"status": "error", "message": res.get("message")}), 409
+        return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't record your answer")
 
 
 @voice_bp.route('/api/voice/arm', methods=['GET', 'POST'])
