@@ -489,9 +489,16 @@ class TestReturnPolicy:
     def test_p2_is_p1_where_the_mode_does_not_allow_it(self, monkeypatch):
         monkeypatch.setattr(wo, "owner_class", lambda: "P2_summary")
         oid = _done(_order())
-        monkeypatch.setattr(ci, "routing_mode", lambda: "cloud_preferred")
+        monkeypatch.setattr(ci, "routing_mode", lambda: "local_only")
         st = wo.status(oid, CONV, provider=CLOUD)
         assert st["privacy_class"] == "P1_aggregate" and "summary" not in st
+
+    def test_p2_is_allowed_in_cloud_preferred(self, monkeypatch):
+        monkeypatch.setattr(wo, "owner_class", lambda: "P2_summary")
+        oid = _done(_order())
+        monkeypatch.setattr(ci, "routing_mode", lambda: "cloud_preferred")
+        wo.live(oid)["mode"] = "cloud_preferred"
+        assert wo.status(oid, CONV, provider=CLOUD)["privacy_class"] == "P2_summary"
 
     def test_the_egress_gate_runs_on_every_return_and_fails_closed(self, monkeypatch):
         from agent_friday.services import egress_gate
@@ -565,7 +572,11 @@ class TestWrites:
         assert len(props) == 1
         args = props[0][1]
         assert args["file"] == "projects/launch.md" and args["new_value"] == "The new project summary."
-        assert oid in args["reason"]
+        assert args["reason"] == "Proposed by a work order from %s: wiki · order %s" % (CLOUD, oid[-6:])
+        assert "update the project page" not in args["reason"]
+        note = args["cloud_note"]
+        assert note.startswith("%s's note, not checked by Friday" % CLOUD + chr(10)) and "update the project page" in note
+        assert "update the project page" not in json.dumps({k: v for k, v in args.items() if k != "cloud_note"})
         assert wo.get(oid)["writes"][0]["state"] == "proposed"
         ex.run(oid, tool_fn=tools, model_fn=_model("x"))                 # a second run adds nothing
         assert len([c for c in tools.calls if c[0] == "propose_wiki_update"]) == 1

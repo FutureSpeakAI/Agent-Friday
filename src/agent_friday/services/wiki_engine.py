@@ -254,7 +254,7 @@ def _save_pending_wiki(items):
     WIKI_PENDING_FILE.write_text(json.dumps(items, indent=2, default=str), encoding='utf-8')
 
 
-def _propose_wiki_update(file, section, new_value, reason, old_value=""):
+def _propose_wiki_update(file, section, new_value, reason, old_value="", cloud_note=""):
     """Stash a proposed update for user approval. Returns the new id."""
     items = _load_pending_wiki()
     item = {
@@ -267,6 +267,8 @@ def _propose_wiki_update(file, section, new_value, reason, old_value=""):
         "created": datetime.utcnow().isoformat() + "Z",
         "status": "pending",
     }
+    if cloud_note:      # a cloud model's words, labelled and fenced by the caller; never the reason
+        item["cloud_note"] = str(cloud_note)
     items.append(item)
     _save_pending_wiki(items)
     return item["id"]

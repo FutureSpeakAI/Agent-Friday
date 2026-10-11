@@ -225,7 +225,7 @@ class TestNoCanaryReachesTheCloud:
         monkeypatch.setattr(wo, "owner_class", lambda: "P2_summary")
         monkeypatch.setattr(local_context, "offer", lambda raw, **kw: {"status": "pending", "approval_id": "ap"})
         oid, st = drive(cloud, issue_all(), model_text="Secret: %s" % C_WIKI)
-        monkeypatch.setattr(ci, "routing_mode", lambda: "cloud_preferred")
+        monkeypatch.setattr(ci, "routing_mode", lambda: "local_only")
         cloud.see(wo.status(oid, CONV, provider=CLOUD, turn_id=TURN))
         assert_no_canary(cloud.blob(skip_summary=True), allowed=())
         later = wo.status(oid, CONV, provider=CLOUD)

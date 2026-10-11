@@ -8,7 +8,7 @@ decided here, by the order's privacy class, and nothing else decides it:
                 private sources, however the cloud named the field
   P2_summary    a PII-free summary through the existing ``local_context``
                 pipeline (scrub, floor, then a card or a conversation grant),
-                plus the same aggregates. Only in local_preferred and cloud_only.
+                plus the same aggregates. Not in local_only (no cloud model is in play there).
   P3_local_only {order_id, status, result_handle}, nothing else (a failed P3
                 order says only that it failed)
 
@@ -35,7 +35,7 @@ from agent_friday.services import handles as _handles
 _log = logging.getLogger("friday.work_order_returns")
 
 #: Modes in which a free-text (P2) summary may go back. A card or a grant still decides.
-P2_MODES = ("local_preferred", "cloud_only")
+P2_MODES = ("local_preferred", "cloud_preferred", "cloud_only")
 #: How strict each class is: the larger number shares less.
 _STRICT = {"P0_public": 0, "P2_summary": 1, "P1_aggregate": 2, "P3_local_only": 3}
 

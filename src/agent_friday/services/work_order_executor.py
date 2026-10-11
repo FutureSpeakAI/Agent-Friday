@@ -708,7 +708,7 @@ def apply_writes(env: Env, order: dict, ctx: dict, writes: List[dict],
     setting waits on its card. SOUL is never a target."""
     result = ctx.get("result") or {}
     local_text = str(ctx["values"].get("summary") or result.get("summary") or "").strip()
-    who = "work order %s from %s" % (env.order_id, (order.get("specified_by") or {}).get("provider") or "a cloud model")
+    provider = (order.get("specified_by") or {}).get("provider") or "a cloud model"
     out = [dict(w) for w in writes]
     for idx, w in enumerate(out):
         if w.get("state") != "intent":
@@ -722,9 +722,11 @@ def apply_writes(env: Env, order: dict, ctx: dict, writes: List[dict],
                     raise StepFailed("a wiki write needs a wiki page handle")
                 if not local_text:
                     raise StepFailed("there was nothing locally produced to propose")
-                r = env.tool("propose_wiki_update", {"file": page, "section": "",
-                                                     "new_value": local_text,
-                                                     "reason": "%s. Asked for: %s" % (who, note[:200])})
+                args = {"file": page, "section": "", "new_value": local_text,
+                        "reason": reason_line(provider, "wiki", env.order_id)}
+                if note:
+                    args["cloud_note"] = cloud_note(provider, note)
+                r = env.tool("propose_wiki_update", args)
                 if tool_failed(r):
                     raise StepFailed("the proposal was not accepted: %s" % r[:100])
                 w.update(state="proposed", proposal="wiki", detail=str(r)[:200])
@@ -754,6 +756,20 @@ def apply_writes(env: Env, order: dict, ctx: dict, writes: List[dict],
         if save is not None:                 # one intent, one proposal, even across a crash
             save([dict(x) for x in out])
     return out
+
+
+def reason_line(provider: str, target: str, order_id: str) -> str:
+    """The proposal's reason, a fixed local template. No cloud text in it."""
+    return "Proposed by a work order from %s: %s · order %s" % (
+        re.sub(r"[^A-Za-z0-9 ._-]", "", str(provider))[:40] or "a cloud model", target, str(order_id)[-6:])
+
+
+def cloud_note(provider: str, text: str) -> str:
+    """The cloud's own summary, shown apart from the reason: labelled as unchecked,
+    fenced as data, control characters stripped, 200 characters at most."""
+    from agent_friday.services import office_engine
+    label = "%s's note, not checked by Friday" % (re.sub(r"[^A-Za-z0-9 ._-]", "", str(provider))[:40] or "The cloud model")
+    return label + chr(10) + office_engine.as_untrusted(_clean_note(text)[:200], limit=200)
 
 
 def _clean_note(text) -> str:
