@@ -95,8 +95,10 @@ LABEL = "putting together a card for that"
 SURFACES = ("voice", "chat")
 #: What she asks when the owner says "mark ... as important": Gmail's own marker is not hers
 #: to set, and a star is a different thing than the one asked for. A fixed question.
-ORDINAL_QUESTION = ("My numbers are on your screen too. Do you mean counted from the top of the list, "
-                    "or the row I numbered? Say “top of the list” or “your numbers”.")
+ORDINAL_QUESTION = ("My numbers are on your screen too, so I did not guess. Say it again with a number "
+                    "counted from the top of your list, or tick the rows you mean.")
+DEICTIC_QUESTION = ("I have numbered other rows on your screen, so I did not guess which you mean. Tick the "
+                    "rows you want, or say it again with a number counted from the top of your list.")
 IMPORTANT_QUESTION = ("“Important” is Gmail's own marker and I don't set it. Do you want those starred "
                       "instead? Say “star these” and I'll put it on a card.")
 

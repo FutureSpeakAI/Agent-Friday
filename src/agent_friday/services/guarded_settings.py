@@ -242,27 +242,36 @@ def _read_records() -> dict:
         return {}
 
 
-def _verify(key: str) -> str:
-    """The recorded value if the record verifies against the current nonce and governance key, else
-    the narrowest. Reads the keychain: never on a turn."""
+def _verify2(key: str):
+    """(value, verified). ``verified`` is True when the record positively verifies against the current nonce,
+    anchor and governance key, or when there is no record for the key at all; the value is then what it holds.
+    A record that cannot be verified (a tampered or replayed one, or a keychain that did not answer) gives
+    (narrowest, False). Reads the keychain: never on a turn."""
     import hmac
+    narrowest = GUARDED[key][0]
     try:
         rec = _read_records().get(key)
+        if rec is None:
+            return narrowest, True
         nonce = _load_nonce()
         if not isinstance(rec, dict) or nonce is None:
-            return GUARDED[key][0]
-        anchor = _anchor_get(key)               # raises when unreadable: that is off, below
+            return narrowest, False
+        anchor = _anchor_get(key)               # raises when unreadable: unverified, below
         if anchor is None or rec.get("counter") != anchor:
-            return GUARDED[key][0]              # an old pair of files carries an old counter
+            return narrowest, False             # an old pair of files carries an old counter
         value, at, counter, mac = rec.get("value"), rec.get("at"), rec.get("counter"), rec.get("mac")
         if (not isinstance(value, str) or value not in GUARDED[key]
                 or not isinstance(at, (int, float)) or not isinstance(counter, int)
                 or not isinstance(mac, str)
                 or not hmac.compare_digest(mac, _mac(key, value, at, counter, nonce))):
-            return GUARDED[key][0]
-        return value
+            return narrowest, False
+        return value, True
     except Exception:       # noqa: BLE001
-        return GUARDED[key][0]
+        return narrowest, False
+
+
+def _verify(key: str) -> str:
+    return _verify2(key)[0]
 
 
 def refresh(key: str) -> str:
@@ -370,21 +379,42 @@ def owner_choice(key: str, block: bool = False) -> str:
     return narrowest
 
 
+def _remove_record(key: str) -> bool:
+    """Take the record away (the key then reads as off). False, and off in this process, if it cannot be."""
+    try:
+        _record_path().unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        with _LOCK:
+            _FORCE_OFF.add(key)
+        return False
+    with _LOCK:
+        _CACHE.pop(key, None)
+    return True
+
+
 def narrow_record(key: str, value: Any) -> bool:
     """Bring the record down to ``value`` if it holds anything wider. Narrowing is always safe, so any
-    caller may do it. True when the record is now no wider than ``value``."""
+    caller may do it. A record that cannot be positively verified is NOT treated as narrow: it is removed, so
+    that a keychain which comes back later cannot revive an old "on". True when the record is now no wider
+    than ``value``."""
     try:
         want = value if isinstance(value, str) and value in GUARDED[key] else GUARDED[key][0]
-        if rank(key, want) >= rank(key, owner_choice(key, block=True)):
+        if rank(key, want) >= len(GUARDED[key]) - 1:
+            return True                         # the file is as wide as it gets: there is nothing to narrow
+        if _stamp()[0] is None:
+            return True                         # no record
+        cur, verified = _verify2(key)
+        if not verified:
+            return _remove_record(key)
+        if rank(key, want) >= rank(key, cur):
             return True
         return record_owner_choice(key, want)
     except Exception:       # noqa: BLE001
         with _LOCK:
             _FORCE_OFF.add(key)
-        try:
-            _record_path().unlink()
-        except OSError:
-            pass
+        _remove_record(key)
         return False
 
 
@@ -444,7 +474,7 @@ def follow_file(key: str, file_value: Any) -> None:
                         return              # the owner clicked since: that click is the fresher word
                     fresh = _file_value(key)
                     narrow_record(key, fresh)
-                    _after_narrowing(key, fresh)
+                _after_narrowing(key, fresh)        # the card hooks run with no lock held
             except Exception:       # noqa: BLE001
                 pass
             finally:
@@ -455,15 +485,25 @@ def follow_file(key: str, file_value: Any) -> None:
         pass
 
 
-def boot_narrow(settings: Any) -> None:
+def boot_narrow(settings: Any, timeout_s: float = 3.0) -> None:
     """At server start, before any turn: a settings file edited down while Friday was stopped turns the record
-    down now. Synchronous (it is not a turn) and fail closed."""
-    for key in GUARDED:
-        v = settings.get(key) if isinstance(settings, dict) else None
-        v = v if isinstance(v, str) and v in GUARDED[key] else GUARDED[key][0]
-        with _WRITE_LOCK:
-            narrow_record(key, v)
-        _after_narrowing(key, v)
+    down now. The keychain read runs on its own thread with a short timeout: if it does not answer in time the
+    guarded settings read as off in this process (fail closed) and start-up goes on."""
+    def work():
+        for key in GUARDED:
+            v = settings.get(key) if isinstance(settings, dict) else None
+            v = v if isinstance(v, str) and v in GUARDED[key] else GUARDED[key][0]
+            with _WRITE_LOCK:
+                narrow_record(key, v)
+            _after_narrowing(key, v)
+    t = _threading.Thread(target=work, name="guarded-settings-boot", daemon=True)
+    t.start()
+    t.join(max(0.0, float(timeout_s)))
+    if t.is_alive():
+        with _LOCK:
+            _FORCE_OFF.update(GUARDED)
+        _log.error("guarded settings: the boot check did not finish in %.1fs; they read as off until the owner "
+                   "clicks again", timeout_s)
 
 
 def narrow_all(config: dict) -> None:

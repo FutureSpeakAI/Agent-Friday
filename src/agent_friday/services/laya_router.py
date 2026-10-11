@@ -886,7 +886,9 @@ def safe_write_route(text: str, *, stage=_UNSET, pointed=_UNSET, quiet: bool = F
             # and the resolver keep every such turn ("show me everything on my calendar today", "select all
             # of them"). The scope check below never sees them.
             return None
-        if parsed.kind == "ordinals" and point_act._fresh_pointed(point_act._default_pointed(sw.WORKSPACE), time.time()):
+        friday_pointed = point_act._default_pointed(sw.WORKSPACE)
+        fresh_numbers = point_act._fresh_pointed(friday_pointed, time.time())
+        if parsed.kind == "ordinals" and fresh_numbers:
             # Friday's own numbers are on screen: "the second one" may mean the second row of the list or the
             # row she numbered 2. Neither is guessed and no rows ride along.
             if m == "shadow":
@@ -911,6 +913,18 @@ def safe_write_route(text: str, *, stage=_UNSET, pointed=_UNSET, quiet: bool = F
         pa = point_act.plan(text, quiet=quiet, **kw)
         if pa is None or pa.verb not in point_act.WRITE_VERBS:
             return None
+        if fresh_numbers and parsed.kind == "deictic" and pa.decision != "ask":
+            # Friday's numbers are on screen and "these" resolved to something else: the open or focused row,
+            # a cursor, or a different count than she numbered (a plural that found one row included). Asked.
+            got = [r for r in (pa.args.get("refs") or [])]
+            plural = bool(re.match(r"(?:these|those|them|both|all)\b", str(parsed.obj or "")))
+            if (str(pa.args.get("rule") or "") in ("deictic:open", "deictic:focus", "deictic:cursor")
+                    or len(got) != len(friday_pointed.get("refs") or []) or (plural and len(got) == 1)):
+                if m == "shadow":
+                    sw.shadow(None, "a deictic with Friday's numbers on screen", text, surface)
+                    return None
+                return Route("ask", confidence=0.9, layer=sw.LAYER, question=sw.DEICTIC_QUESTION,
+                             reason="a deictic while Friday's own numbers are on screen is asked, never guessed")
         if pa.decision == "ask":
             if m != "on" or pa.verb in sw.NEVER:
                 return None
