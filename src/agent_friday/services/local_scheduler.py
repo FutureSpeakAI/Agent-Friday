@@ -91,10 +91,10 @@ KIND_CLASS = {"voice_call": "voice", "heavy_turn": "user_job", "image_job": "use
               "podcast_voice": "background", "bench_job": "background"}
 #: Lease kinds that load a model (the rest only stand the pinned seats down).
 LOADING_KINDS = ("heavy_turn", "image_job")
-#: The admission kind of a recording meeting: a job the owner asked for is not
-#: held back by their own recording. (The meeting's hold itself comes with the
-#: meetings package; this module only reads ``turn_queue.background_pause_reason``.)
+#: The admission kind and seat of a recording meeting (see ``MeetingHold``): a
+#: job the owner asked for is not held back by their own recording.
 MEETING_KIND = "meeting_capture"
+MEETING_SEAT = "meeting-capture"
 
 
 class LocalWorkCancelled(BaseException):
@@ -751,6 +751,60 @@ def admit(kind: str, *, model: Any = None, cls: Optional[str] = None,
     emit("wait", cls=use_cls, kind=kind, seconds=round(adm.waited_s, 3))
     sample_ram()
     return Grant(kind, model, use_cls, adm=adm, waited_s=adm.waited_s, swap=swap)
+
+
+class MeetingHold:
+    """A recording meeting's place in the scheduler.
+
+    The meeting is admitted at the ``voice`` class (the owner is here) and
+    holds that ticket until ``release()``. It sits on a seat of its own, so it
+    never takes the slot a chat turn needs, yet to every gate it reads as a
+    person who is busy: ``people_active`` is true, the idle clock stays at
+    zero, no ``background`` ticket is admitted, and a background job that is
+    already running is asked to wait at its next checkpoint
+    (``turn_queue.background_checkpoint``). The admission is taken on a thread
+    of its own so the request thread that starts the meeting keeps no
+    admission context behind it."""
+
+    def __init__(self, meeting_id: str):
+        self.id = str(meeting_id)
+        self.holder = "meeting:" + self.id
+        self.how = ""
+        self._ready = threading.Event()
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="meeting-scheduler-hold")
+
+    def start(self, timeout_s: float = 5.0) -> "MeetingHold":
+        self._thread.start()
+        self._ready.wait(timeout_s)
+        return self
+
+    def _run(self) -> None:
+        grant = None
+        try:
+            _tq.request_background_pause(self.holder, "you are in a meeting")
+            grant = admit(MEETING_KIND, model=MEETING_SEAT, cls="voice",
+                          label="Recording a meeting")
+            self.how = grant.how
+        except BaseException:                       # never strand start()
+            _log.warning("local scheduler: a meeting could not be admitted", exc_info=True)
+        finally:
+            self._ready.set()
+        self._done.wait()
+        if grant is not None:
+            grant.release()
+        _tq.clear_background_pause(self.holder)
+
+    def release(self) -> None:
+        self._done.set()
+        if self._thread.is_alive() and threading.current_thread() is not self._thread:
+            self._thread.join(5.0)
+        _tq.clear_background_pause(self.holder)       # even if the thread never ran
+
+
+def hold_for_meeting(meeting_id: str) -> MeetingHold:
+    return MeetingHold(meeting_id).start()
 
 
 #: A direct background call outside any queue job becomes a deferrable job of

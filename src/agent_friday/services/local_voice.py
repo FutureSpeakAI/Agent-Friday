@@ -314,6 +314,12 @@ class VADEndpointer:
                 pass
         return _pcm16_rms(pcm) >= self.start_rms
 
+    def silero_decider(self):
+        """The Silero speech/no-speech callable for a chunk of PCM, or None
+        when it is unavailable (not installed, under test, or switched off):
+        the caller keeps its own energy gate as the fallback."""
+        return self._maybe_silero()
+
     def _maybe_silero(self):
         if self._use_silero is False:
             return None
