@@ -117,7 +117,17 @@ class _Fake:
     device = "fake"
     model = "fake"
 
+    def prepare(self, progress=None):
+        ms = int(os.environ.get("FRIDAY_VOICE_FAKE_PREPARE_MS") or 0)
+        if ms:
+            time.sleep(ms / 1000.0)
+        self._prepared = True
+        return {"profile": {"prepare_s": ms / 1000.0}}
+
     def load(self, progress=None):
+        ms = int(os.environ.get("FRIDAY_VOICE_FAKE_LOAD_MS") or 0)
+        if ms:
+            time.sleep(ms / 1000.0)
         return {"resident_mib": 7}
 
     def synth_stream(self, text: str, cancelled):
@@ -146,15 +156,41 @@ class _KokoroCuda:
         self.voice = voice
         self._tts = None
 
-    def load(self, progress=None):
+    def prepare(self, progress=None):
+        """Imports and the weights into RAM, on the CPU: no CUDA, no VRAM. The
+        parent runs this while the brain is still being parked."""
         from agent_friday.services.voice_start_profile import file_mib, timed
         prof = {}
         with timed(prof, "import_s"):
             import torch  # noqa: F401  (the import is the cost being measured)
             from agent_friday.services.kokoro_voice import KokoroTTS
+        self._tts = KokoroTTS(self.voice, allow_cpu=False)
+        with timed(prof, "prepare_s"):
+            self._tts.prepare(progress=progress)
+        try:
+            from huggingface_hub import try_to_load_from_cache
+            path = try_to_load_from_cache("hexgrad/Kokoro-82M", "kokoro-v1_0.pth")
+            if isinstance(path, str):
+                prof["model_path"], prof["file_mib"] = path, file_mib(path)
+        except Exception:
+            pass
+        self._prep_prof = prof
+        return {"profile": prof}
+
+    def load(self, progress=None):
+        """Take the card: the CUDA context and the move to the device (the
+        remainder of the load when ``prepare`` already ran)."""
+        from agent_friday.services.voice_start_profile import file_mib, timed
+        prof = dict(getattr(self, "_prep_prof", None) or {})
+        prepared = self._tts is not None
+        if not prepared:
+            with timed(prof, "import_s"):
+                import torch  # noqa: F401
+                from agent_friday.services.kokoro_voice import KokoroTTS
         prof["cuda_init_s"] = _cuda_init_s()
         before = _cuda_free_mib()
-        self._tts = KokoroTTS(self.voice, allow_cpu=False)
+        if not prepared:
+            self._tts = KokoroTTS(self.voice, allow_cpu=False)
         with timed(prof, "model_load_s"):
             self._tts.load(progress=progress)
         try:
@@ -197,16 +233,17 @@ class _WhisperCuda:
         self.compute = compute
         self.model = f"{size} {compute}"
         self._m = None
+        self._src = None
+        self._WhisperModel = None
+        self._prep_prof = None
 
-    def load(self, progress=None):
+    def _resolve(self, prof):
+        """Imports and the local checkpoint path; no CUDA, no VRAM."""
         from agent_friday.services.voice_start_profile import file_mib, timed
-        prof = {}
         with timed(prof, "import_s"):
             from agent_friday.services.light_imports import faster_whisper_model
             WhisperModel = faster_whisper_model()
             from agent_friday.services.local_voice import WHISPER_DIR
-        prof["cuda_init_s"] = _cuda_init_s()
-        before = _cuda_free_mib()
         WHISPER_DIR.mkdir(parents=True, exist_ok=True)
         # The checkpoint is resolved from the local cache alone: the load
         # never asks the hub whether a newer revision exists.
@@ -218,6 +255,32 @@ class _WhisperCuda:
             prof["model_path"], prof["file_mib"] = str(src), file_mib(src)
         except Exception:
             src = self.size
+        self._WhisperModel, self._src = WhisperModel, src
+        return WHISPER_DIR
+
+    def prepare(self, progress=None):
+        """Imports, and the checkpoint read once into the OS file cache: no
+        CUDA, no VRAM. The parent runs this while the brain is being parked."""
+        from agent_friday.services.voice_prefetch import read_into_cache
+        from agent_friday.services.voice_start_profile import timed
+        prof = {}
+        self._resolve(prof)
+        if self._src != self.size:
+            with timed(prof, "prefetch_s"):
+                read_into_cache([self._src])
+        self._prep_prof = prof
+        return {"profile": prof}
+
+    def load(self, progress=None):
+        from agent_friday.services.voice_start_profile import timed
+        prof = dict(self._prep_prof or {})
+        if self._WhisperModel is None:
+            WHISPER_DIR = self._resolve(prof)
+        else:
+            from agent_friday.services.local_voice import WHISPER_DIR
+        WhisperModel, src = self._WhisperModel, self._src
+        prof["cuda_init_s"] = _cuda_init_s()
+        before = _cuda_free_mib()
         with timed(prof, "model_load_s"):
             try:
                 self._m = WhisperModel(src, device="cuda", compute_type=self.compute,
@@ -288,6 +351,28 @@ def serve(engine, inp, out) -> int:
     # arrive during a load anyway: the parent's only lever during load is
     # its timeout, which kills us.
     first = read_frame(inp)
+    # A `prepare` (imports and weights into RAM, no CUDA, no VRAM) may precede
+    # the `load`: still single-threaded, so the same rule holds.
+    while first is not None and first[0] == _KIND_JSON:
+        try:
+            pm = json.loads(first[1].decode("utf-8"))
+        except Exception:
+            pm = {}
+        if pm.get("op") != "prepare":
+            break
+        try:
+            t0 = time.perf_counter()
+            prep = getattr(engine, "prepare", None)
+            pinfo = (prep() if prep else None) or {}
+            send_json(out, {"ok": True, "job": pm.get("job"),
+                            "prepare_ms": int((time.perf_counter() - t0) * 1000),
+                            "profile": pinfo.get("profile")})
+        except Exception as e:  # noqa: BLE001
+            send_json(out, {"error": str(getattr(e, "code", None) or "engine_error"),
+                            "job": pm.get("job"),
+                            "detail": f"{type(e).__name__}: {str(e)[:300]}"})
+            return 3
+        first = read_frame(inp)
     if first is None:
         return 0
     if first[0] == _KIND_JSON:

@@ -470,8 +470,51 @@ class VoiceWorker:
         self._idle_thread = None
         self._stop = threading.Event()
         self.jobs = 0
+        # prepare/commit split: a worker may be spawned and have its imports and
+        # weights read into RAM (prepare: no lease, no claim, no VRAM) before the
+        # card is cleared, and then be committed (start) once the room is there.
+        self._preparing = False
+        self._prepare_done = threading.Event()
+        self._prepare_ok = False
+        self._prepare_t0 = None
+        self._prepare_s = None
 
     # ── lifecycle ────────────────────────────────────────────────────────
+
+    def prepare(self, progress=None) -> "VoiceWorker":
+        """Spawn the worker and run its ``prepare`` op. Takes no lease and no
+        VRAM, so it is safe while the brain is still being parked. Raises
+        WorkerDied; ``start()`` then spawns afresh."""
+        self._preparing = True
+        try:
+            self._prepare_t0 = time.perf_counter()
+            self.proc = self._spawn()
+            self._alive = True
+            reply = self._call({"op": "prepare", "job": 0},
+                               timeout_s=max(180.0, self.stage_budget_ms / 1000.0 * 8))
+            if not reply.get("ok"):
+                raise WorkerDied(reply.get("detail") or reply.get("error") or "prepare failed")
+            self._prepare_s = time.perf_counter() - self._prepare_t0
+            self._prepare_ok = True
+        except Exception:
+            self.abandon("prepare_failed")
+            raise
+        finally:
+            self._prepare_done.set()
+        return self
+
+    def abandon(self, reason: str = "abandoned") -> None:
+        """End the child at once without waiting for an operation in flight
+        (``stop`` takes the I/O lock a long prepare holds)."""
+        self._stop.set()
+        p = self.proc
+        if p is not None:
+            try:
+                p.kill()
+            except Exception:
+                pass
+        self._prepare_done.set()
+        self._finish(reason)
 
     def _default_spawn(self):
         warm = take_warm(self.engine, self.args)
@@ -483,7 +526,12 @@ class VoiceWorker:
         """Admit, lease, spawn, load. Raises GpuRefused / WorkerDied."""
         claimed = 0
         if self._want_lease:
-            claimed = claim_gpu(self.declared_mib, self.stage)
+            try:
+                claimed = claim_gpu(self.declared_mib, self.stage)
+            except BaseException:
+                if self._preparing:
+                    self.abandon("refused")      # a prepared worker the card turned away
+                raise
             try:
                 dec = acquire_lease(self.engine, self.holder, self.declared_mib, self.idle_s)
                 if not dec.get("granted"):
@@ -495,14 +543,29 @@ class VoiceWorker:
                 self.lease_id = dec["lease_id"]
             except BaseException:
                 unclaim_gpu(claimed)
+                if self._preparing:
+                    self.abandon("refused")      # a prepared worker the card turned away
                 raise
         try:
             if progress:
                 progress(f"loading {self.engine}")
+            if self._preparing:
+                # Its imports and weights are already in RAM (or on their way):
+                # only the card is left.
+                self._prepare_done.wait(timeout=max(180.0, self.stage_budget_ms / 1000.0 * 8))
+                if not self._prepare_ok:
+                    self._preparing = False
+                    self.proc, self._alive, self._stop = None, False, threading.Event()
+                    self._exit_fired = False
             _t_start = time.perf_counter()
-            self.proc = self._spawn()
-            _t_spawned = time.perf_counter()
-            self._alive = True
+            _prepared = self._preparing and self._prepare_ok
+            if _prepared:
+                _t_start -= (self._prepare_s or 0.0)
+                _t_spawned = time.perf_counter()
+            else:
+                self.proc = self._spawn()
+                _t_spawned = time.perf_counter()
+                self._alive = True
             reply = self._call({"op": "load", "job": 0}, timeout_s=max(120.0, self.stage_budget_ms / 1000.0 * 6))
             if not reply.get("ok"):
                 raise WorkerDied(reply.get("detail") or reply.get("error") or "load failed")
@@ -532,6 +595,11 @@ class VoiceWorker:
             now = time.perf_counter()
             prof = dict(reply.get("profile") or {})
             load_s = (reply.get("load_ms") or 0) / 1000.0
+            if self._prepare_ok:
+                # Spawned and prepared before the card was cleared: what is left
+                # after the park is the commit alone.
+                prof["prepared_s"] = round(self._prepare_s or 0.0, 3)
+                prof["commit_s"] = round(now - t_spawned, 3)
             prof["spawn_s"] = round(t_spawned - t_start, 3)
             # Interpreter start, the worker's imports and the pipe: what the
             # parent waited for beyond the engine's own load.
@@ -1050,7 +1118,86 @@ def release_own_gpu(reason: str = "released") -> dict:
     return out
 
 
+# ── prepared stages (the overlap with the brain's park) ─────────────────────
+
+_PREPARED: dict = {}
+_PREPARED_LOCK = threading.Lock()
+
+
+def prepare_stage(stage: str, engine: str, args: dict | None = None) -> VoiceWorker:
+    """Start preparing `stage`'s GPU worker in the background: spawn, imports,
+    weights into RAM. No lease, no VRAM claim, nothing on the card. Returns
+    at once; ``take_prepared`` hands it to the build that commits it."""
+    w = VoiceWorker(engine, stage, idle_s=_idle_s(), args=dict(args or {}),
+                    on_evicted=_on_evicted)
+    w._preparing = True
+    with _PREPARED_LOCK:
+        old = _PREPARED.pop(stage, None)
+        _PREPARED[stage] = w
+
+    def run():
+        try:
+            w.prepare()
+        except Exception as e:  # noqa: BLE001
+            log.info("voice %s prepare failed (%s); it will start afresh", stage, e)
+    threading.Thread(target=run, name="voice-prepare-" + stage, daemon=True).start()
+    if old is not None:
+        old.abandon("replaced")
+    return w
+
+
+def take_prepared(stage: str, engine: str, args: dict | None = None):
+    """The worker being prepared for exactly this stage, engine and arguments
+    (it is then the caller's to ``start``), or None."""
+    with _PREPARED_LOCK:
+        w = _PREPARED.pop(stage, None)
+    if w is None:
+        return None
+    if w.engine != engine or w.args != dict(args or {}):
+        w.abandon("different arguments")
+        return None
+    return w
+
+
+def release_prepared(reason: str = "released") -> int:
+    """End every worker still waiting to be committed (the stage fell back to
+    the CPU, or the start failed). Returns how many."""
+    with _PREPARED_LOCK:
+        items = list(_PREPARED.values())
+        _PREPARED.clear()
+    for w in items:
+        w.abandon(reason)
+    return len(items)
+
+
+def prepare_for_selection(selection: dict) -> list:
+    """Begin preparing the GPU workers this session's selection may use, before
+    the card is cleared. Returns the stages begun. Never raises."""
+    began = []
+    try:
+        from agent_friday.services.local_voice import resolve_whisper_model
+        sel = selection or {}
+        ear = sel.get("ear") or {}
+        if (str(ear.get("device_policy") or "if_free") != "never"
+                and not isinstance(held("ear"), WorkerEar)):
+            prepare_stage("ear", "whisper-cuda",
+                          {"model": resolve_whisper_model(str(ear.get("model") or "auto"), "cuda")})
+            began.append("ear")
+        mouth = sel.get("mouth") or {}
+        if (str(mouth.get("engine") or "") == "kokoro"
+                and str(mouth.get("device_policy") or "preferred") != "never"):
+            voice = str(mouth.get("voice") or "af_heart")
+            cur = held("mouth")
+            if not (isinstance(cur, WorkerMouth) and getattr(cur, "voice", None) == voice):
+                prepare_stage("mouth", "kokoro-cuda", {"voice": voice})
+                began.append("mouth")
+    except Exception as e:  # noqa: BLE001
+        log.info("voice prepare not begun: %s", e)
+    return began
+
+
 def release_all(reason: str = "released") -> None:
+    release_prepared(reason)
     release_warm(reason)
     with _HELD_LOCK:
         items = list(_HELD.items())
@@ -1096,9 +1243,10 @@ def build_ear(selection: dict, progress=None) -> EarEngine:
         if isinstance(cur, WorkerEar):
             return cur
         try:
-            w = VoiceWorker("whisper-cuda", "ear", idle_s=_idle_s(),
-                            args={"model": resolve_whisper_model(model, "cuda")},
-                            on_evicted=_on_evicted)
+            ear_args = {"model": resolve_whisper_model(model, "cuda")}
+            w = take_prepared("ear", "whisper-cuda", ear_args) or VoiceWorker(
+                "whisper-cuda", "ear", idle_s=_idle_s(), args=ear_args,
+                on_evicted=_on_evicted)
             w.start(progress=progress)
             eng = WorkerEar(w)
             eng.model = w.model
@@ -1146,8 +1294,9 @@ def build_mouth(selection: dict, progress=None) -> MouthEngine:
             if isinstance(cur, WorkerMouth) and getattr(cur, "voice", None) == voice:
                 return cur
             try:
-                w = VoiceWorker("kokoro-cuda", "mouth", idle_s=_idle_s(),
-                                args={"voice": voice}, on_evicted=_on_evicted)
+                w = take_prepared("mouth", "kokoro-cuda", {"voice": voice}) or VoiceWorker(
+                    "kokoro-cuda", "mouth", idle_s=_idle_s(),
+                    args={"voice": voice}, on_evicted=_on_evicted)
                 w.start(progress=progress)
                 eng = WorkerMouth(w)
                 eng.voice = voice

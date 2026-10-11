@@ -461,6 +461,7 @@ class KokoroTTS:
         self._pipeline = None
         self._device = None
         self._voice_path = None
+        self._prep = None
         self._lock = threading.Lock()
         # The worker of an utterance abandoned at its time budget, while it is
         # still running. See the bounds above.
@@ -527,82 +528,102 @@ class KokoroTTS:
             if self._pipeline is not None:
                 return
             device = self._resolve_device()
-            if progress:
-                progress(f"Loading Kokoro voice ({self.voice})…")
-            # Belt and braces. The probe in _resolve_device should have caught
-            # an unusable install, but if anything slips past it the failure
-            # must still be WELL-FORMED: a bare ModuleNotFoundError reaches the
-            # voice session as an unlabelled crash -- no code, no reason, no
-            # offer of Piper. KPipeline() is included because misaki and
-            # espeakng_loader are imported during construction, not at the
-            # `from kokoro import` line, so that is a second way in.
-            # MUST run before kokoro/misaki import, or the g2p fallback is
-            # silently None and synthesis crashes on ordinary words.
-            esp = ensure_espeak_fallback()
-            if not esp["wired"]:
-                log.warning("espeak fallback not wired: %s",
-                            esp.get("detail") or "unknown reason")
-            if self.lang_code in ("a", "b"):
-                # A load never reaches the network: the model is installed
-                # (the voice installer's consented step) or this refuses.
-                if not english_g2p_model_installed():
-                    raise KokoroUnavailable("local_voice_kokoro_missing", G2P_MODEL_MISSING)
-            # The model, its config and the voice are read from the local cache
-            # by path. Left to itself kokoro calls hf_hub_download for each, which
-            # asks the hub for the latest revision on every load; a load never
-            # reaches the network, and a first-run download is the voice
-            # installer's explicit, consented step, never a side effect of a call.
-            _cfg = _cached_file("config.json")
-            _pth = _cached_file("kokoro-v1_0.pth")
-            _vox = _cached_file("voices/%s.pt" % self.voice)
-            _absent = [n for n, p in (("config", _cfg), ("model", _pth),
-                                      ("voice " + str(self.voice), _vox)) if not p]
-            if _absent:
-                raise KokoroUnavailable(
-                    "local_voice_kokoro_missing",
-                    "Kokoro's files are not on this computer (%s), and loading never "
-                    "downloads them. Install the voice from Settings > Voice "
-                    "(Setup & install)." % ", ".join(_absent))
-            try:
-                from agent_friday.services.ml_imports import guarded
-
-                def _imp():
-                    from kokoro import KModel, KPipeline
-                    return KModel, KPipeline
-                KModel, KPipeline = guarded(_imp)
-                log.info("kokoro load voice=%s device=%s lang=%s espeak=%s",
-                         self.voice, device, self.lang_code, esp["wired"])
-                _kmodel = guarded(lambda: KModel(config=_cfg, model=_pth).to(device).eval())
-                # misaki/espeak import during construction: also guarded.
-                pipeline = guarded(KPipeline, lang_code=self.lang_code, model=_kmodel)
-                self._voice_path = _vox
-            except KokoroUnavailable:
-                raise
-            except BaseException as e:  # noqa: BLE001
-                _missing = getattr(e, "name", "") or ""
-                raise KokoroUnavailable(
-                    "local_voice_kokoro_missing",
-                    "Kokoro failed to load"
-                    + (" -- no module named '%s'" % _missing if _missing else "")
-                    + " (%s: %s). Reinstall it with its dependencies: "
-                      "`pip install kokoro misaki espeakng-loader`."
-                      % (type(e).__name__, str(e)[:120])) from e
-            # A pipeline with no g2p fallback is not a working pipeline: it
-            # synthesizes common words and raises TypeError on the rest. Refuse
-            # with a reason and an offer rather than shipping a voice that dies
-            # mid-sentence.
-            _fb = attach_espeak_fallback(pipeline)
-            if not _fb["fallback"]:
-                raise KokoroUnavailable(
-                    "local_voice_kokoro_no_g2p_fallback",
-                    "Kokoro loaded but its pronunciation fallback is missing, so "
-                    "it would crash on any word outside its dictionary (about "
-                    "half of ordinary speech): "
-                    + (_fb.get("detail") or esp.get("detail")
-                       or "the fallback could not be attached")
-                    + ".")
-            self._pipeline = pipeline
+            prep, self._prep = self._prep, None
+            if prep is not None:
+                # prepare() read the weights into RAM and built the pipeline on
+                # the CPU while the card was still being cleared; only the move
+                # to the device is left, so only now does it ask for VRAM.
+                prep.model.to(device)
+                self._pipeline, self._device = prep, device
+                return
+            self._pipeline = self._build(device, progress)
             self._device = device
+
+    def prepare(self, progress=None):
+        """Everything a load does except taking the card: the weights, the
+        config and the pronunciation front end are read and built on the CPU.
+        ``load()`` then only moves the model to the device. No VRAM, no CUDA."""
+        with self._lock:
+            if self._pipeline is None and self._prep is None:
+                self._prep = self._build("cpu", progress)
+
+    def _build(self, device, progress=None):
+        """A Kokoro pipeline with its model on `device`."""
+        if progress:
+            progress(f"Loading Kokoro voice ({self.voice})…")
+        # Belt and braces. The probe in _resolve_device should have caught
+        # an unusable install, but if anything slips past it the failure
+        # must still be WELL-FORMED: a bare ModuleNotFoundError reaches the
+        # voice session as an unlabelled crash -- no code, no reason, no
+        # offer of Piper. KPipeline() is included because misaki and
+        # espeakng_loader are imported during construction, not at the
+        # `from kokoro import` line, so that is a second way in.
+        # MUST run before kokoro/misaki import, or the g2p fallback is
+        # silently None and synthesis crashes on ordinary words.
+        esp = ensure_espeak_fallback()
+        if not esp["wired"]:
+            log.warning("espeak fallback not wired: %s",
+                        esp.get("detail") or "unknown reason")
+        if self.lang_code in ("a", "b"):
+            # A load never reaches the network: the model is installed
+            # (the voice installer's consented step) or this refuses.
+            if not english_g2p_model_installed():
+                raise KokoroUnavailable("local_voice_kokoro_missing", G2P_MODEL_MISSING)
+        # The model, its config and the voice are read from the local cache
+        # by path. Left to itself kokoro calls hf_hub_download for each, which
+        # asks the hub for the latest revision on every load; a load never
+        # reaches the network, and a first-run download is the voice
+        # installer's explicit, consented step, never a side effect of a call.
+        _cfg = _cached_file("config.json")
+        _pth = _cached_file("kokoro-v1_0.pth")
+        _vox = _cached_file("voices/%s.pt" % self.voice)
+        _absent = [n for n, p in (("config", _cfg), ("model", _pth),
+                                  ("voice " + str(self.voice), _vox)) if not p]
+        if _absent:
+            raise KokoroUnavailable(
+                "local_voice_kokoro_missing",
+                "Kokoro's files are not on this computer (%s), and loading never "
+                "downloads them. Install the voice from Settings > Voice "
+                "(Setup & install)." % ", ".join(_absent))
+        try:
+            from agent_friday.services.ml_imports import guarded
+
+            def _imp():
+                from kokoro import KModel, KPipeline
+                return KModel, KPipeline
+            KModel, KPipeline = guarded(_imp)
+            log.info("kokoro load voice=%s device=%s lang=%s espeak=%s",
+                     self.voice, device, self.lang_code, esp["wired"])
+            _kmodel = guarded(lambda: KModel(config=_cfg, model=_pth).to(device).eval())
+            # misaki/espeak import during construction: also guarded.
+            pipeline = guarded(KPipeline, lang_code=self.lang_code, model=_kmodel)
+            self._voice_path = _vox
+        except KokoroUnavailable:
+            raise
+        except BaseException as e:  # noqa: BLE001
+            _missing = getattr(e, "name", "") or ""
+            raise KokoroUnavailable(
+                "local_voice_kokoro_missing",
+                "Kokoro failed to load"
+                + (" -- no module named '%s'" % _missing if _missing else "")
+                + " (%s: %s). Reinstall it with its dependencies: "
+                  "`pip install kokoro misaki espeakng-loader`."
+                  % (type(e).__name__, str(e)[:120])) from e
+        # A pipeline with no g2p fallback is not a working pipeline: it
+        # synthesizes common words and raises TypeError on the rest. Refuse
+        # with a reason and an offer rather than shipping a voice that dies
+        # mid-sentence.
+        _fb = attach_espeak_fallback(pipeline)
+        if not _fb["fallback"]:
+            raise KokoroUnavailable(
+                "local_voice_kokoro_no_g2p_fallback",
+                "Kokoro loaded but its pronunciation fallback is missing, so "
+                "it would crash on any word outside its dictionary (about "
+                "half of ordinary speech): "
+                + (_fb.get("detail") or esp.get("detail")
+                   or "the fallback could not be attached")
+                + ".")
+        return pipeline
 
     def unload(self):
         """Drop the pipeline (and the CUDA memory it holds); the next

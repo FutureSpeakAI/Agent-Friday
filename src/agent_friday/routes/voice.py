@@ -2073,6 +2073,35 @@ def _record_front_profile(model, armed, arm_s, seat, total_s) -> None:
         pass
 
 
+def _begin_prepare(settings, selection) -> None:
+    """Overlap the stage loads with the brain's park. While the arbiter clears
+    the card the ear and mouth workers spawn, import and read their weights
+    into RAM (prepare: no lease, no VRAM), and the front's gguf is read into the
+    OS file cache. The card is asked for only afterwards, by each stage's own
+    admission, so the display reserve is held exactly as before. Never raises;
+    not under test (it spawns processes)."""
+    if os.environ.get("FRIDAY_TESTING") or os.environ.get("FRIDAY_NO_PREWARM"):
+        return
+    try:
+        from agent_friday.services import voice_workers as _vw
+        _vw.prepare_for_selection(selection)
+    except Exception:
+        pass
+
+    def _read_front():
+        try:
+            from agent_friday.services import voice_front as _vf
+            from agent_friday.services import voice_prefetch as _pf
+            model, _n = _vf.resolve(settings)
+            if model is None:
+                return
+            r = _pf.read_into_cache([_vf.model_path(model)])
+            _log.info("voice start: front model read into the file cache: %s", r)
+        except Exception:
+            pass
+    threading.Thread(target=_read_front, name="voice-prefetch-front", daemon=True).start()
+
+
 def _prewarm_voice(settings, reason: str) -> None:
     """Warm the kokoro worker (imports only, under the free-RAM gate and an
     idle TTL) so the next call pays the model load, not the library import.
@@ -3845,9 +3874,11 @@ if sock is not None:
         # Make room FIRST: when this call parks the brain, the park happens
         # before the ear and mouth ask the card, so they are admitted against
         # the room the park frees, not refused against the resident brain.
+        _begin_prepare(settings, _sel)
         try:
             _room = _make_room_for_voice(settings, _sel, progress=_prog, holder=_vsession)
         except Exception as _re:
+            _vw.release_prepared("no room for the voice")
             _vlog.error("session refused: no room for the voice: %s: %s",
                         type(_re).__name__, _re)
             _send({"type": "error", "error": "voice_front_unavailable",
@@ -3888,10 +3919,14 @@ if sock is not None:
                     mouth = _mouth_run.result()
                 except BaseException as _e2:  # noqa: BLE001
                     _mouth_exc = _e2
+                # A stage that fell back to the CPU leaves its prepared GPU worker
+                # unused; it is ended, not kept.
+                _vw.release_prepared("stages built")
                 if _ear_exc or _mouth_exc:
                     raise (_ear_exc or _mouth_exc)
             except _vw.GpuRefused as _ge:
                 # Only the ear can land here (its `required` policy).
+                _vw.release_prepared("start refused")
                 _front_gone()
                 _release_voice_front(_room)
                 from agent_friday.services import reasoning_trace as _rt_v
@@ -3899,6 +3934,7 @@ if sock is not None:
                 _send({"type": "error", "error": _ge.code, "detail": _ge.message})
                 return
             except Exception as _le:
+                _vw.release_prepared("start failed")
                 _front_gone()
                 _release_voice_front(_room)
                 _vlog.error("session aborted: engine load failed: %s: %s",
