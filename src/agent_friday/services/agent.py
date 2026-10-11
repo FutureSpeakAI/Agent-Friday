@@ -12193,11 +12193,6 @@ def _bind_browser_dispatch(fn):
     return dispatch
 
 
-from agent_friday.services import live_laya as _live_laya
-
-
-@_bind_browser_dispatch
-@_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
 def _learn_facts(session_ctx) -> dict:
     """What the router's learning hooks need to know about one tool call, from the call's own session
     context: its conversation, its taint ledger key, the background task that made it, whether Laya's own
@@ -12212,6 +12207,11 @@ def _learn_facts(session_ctx) -> dict:
             "unsafe": bool(sc.get("crew_agent_id") or sc.get("origin") == "phone")}
 
 
+from agent_friday.services import live_laya as _live_laya
+
+
+@_bind_browser_dispatch
+@_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
