@@ -462,6 +462,8 @@ def task_launchers():
 #: Kinds in the source that are not a registry workspace's job, and why. Everything else is a manifest's.
 UNOWNED_KINDS = {
     "analyze_file": "A file attached to a chat (/api/analyze); the chat is its surface, not a workspace.",
+    "cloud_once": "The one cloud turn the owner asked for in a chat (local_offer); the chat is its surface, not a workspace.",
+    "voice_live_reduce": "A tool result trimmed inside a Gemini Live call; the call is its surface, not a workspace.",
 }
 
 
