@@ -434,14 +434,15 @@ def select_email(query: str = "", thread_ids=None, account: str = "",
             heads = {}
         for tid in want:
             h = heads.get(tid) or {}
-            sender = _clean_row(h.get("sender"), 80)
+            entry = {"id": tid, "account_id": acct, "account": names.get(acct, acct),
+                     "subject": _clean_row(h.get("subject"), 200) or "(conversation %s)" % tid,
+                     "sender": _clean_row(h.get("sender"), 80), "date": h.get("date") or ""}
             if addresses:
-                # A display name is the sender's to choose: a card Laya raises shows the address too.
-                addr = _clean_row(h.get("address"), 120)
-                sender = ("%s <%s>" % (_clean_row(h.get("sender"), 40), addr)) if addr else                     ("%s <address not shown>" % _clean_row(h.get("sender"), 40))
-            preview.append({"id": tid, "account_id": acct, "account": names.get(acct, acct),
-                            "subject": _clean_row(h.get("subject"), 200) or "(conversation %s)" % tid,
-                            "sender": sender, "date": h.get("date") or ""})
+                # A display name is the sender's to choose: the card the owner reads on screen shows the
+                # address too. It stays in this field and the card's own lines; every readback, spoken
+                # line, tool result and chat history uses the name alone.
+                entry["address"] = _clean_row(h.get("address"), 120)
+            preview.append(entry)
     return {"accounts": per, "count": total, "preview": preview, "blocked": blocked,
             "errors": errors, "truncated": truncated, "query": query}
 
@@ -568,13 +569,19 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
                 "text": "Nothing to change: no conversation matches%s." % (
                     (" " + sel["query"]) if sel["query"] else "")
                 + ("" if not notes else " " + "; ".join(notes) + ".")}
-    lines = ["%s%s" % (p["subject"], (" \u2014 " + p["sender"]) if p.get("sender") else "")
+    def _who(p):
+        who = p.get("sender") or ""
+        if laya_card:       # the card on screen names the address too; nothing spoken or stored in a chat does
+            who = ("%s <%s>" % (who or "someone", p["address"])) if p.get("address") else \
+                ("%s <address not shown>" % (who or "someone"))
+        return who
+    lines = ["%s%s" % (p["subject"], (" \u2014 " + _who(p)) if _who(p) else "")
              for p in sel["preview"][:PREVIEW]]
     if n > len(lines):
         lines.append("\u2026and %d more" % (n - len(lines)))
     detail = {"handler": HANDLER, "domain": "email", "action": action, "label": label,
               "query": sel["query"], "accounts": sel["accounts"], "count": n,
-              "preview": sel["preview"], "lines": lines, "conversation_id": conversation_id or "",
+              "preview": [{k: v for k, v in p.items() if k != "address"} for p in sel["preview"]], "lines": lines, "conversation_id": conversation_id or "",
               "asked_with": words_hash(owner_words), "why": str(why or "").strip()[:300]}
     if refs:
         detail.update(refs=[str(r) for r in refs][:MAX_ITEMS], selection_id=str(selection_id or "")[:40],
