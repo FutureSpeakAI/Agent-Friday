@@ -904,11 +904,17 @@ def _notify_pending(record: Dict[str, Any]) -> None:
             meta["detail"] = (record.get("action_description") or "")[:300]
     except Exception:
         pass
+    body = (record.get("description") or record.get("action_description") or "")
+    if (record.get("payload") or {}).get("origin") == "laya_safe_write":
+        # A card Laya raised names each sender's ADDRESS on its on-screen lines (the display name is the
+        # sender's to choose). The tray notice, and anything that forwards it, carries names only.
+        import re as _re
+        body = _re.sub(r"\s*<[^<>\n]{0,160}>", "", body)
     try:
         _ne.push(
             meta=meta,
             title=f"Approval needed: {record.get('title')}",
-            body=(record.get("description") or record.get("action_description") or "")[:300],
+            body=body[:300],
             priority="medium", source="approvals", kind="approval_pending",
             # `target` is the shape the notification tray's click handler
             # actually navigates on (index.html: `n.target.workspace`); the
