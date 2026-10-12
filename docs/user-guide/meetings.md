@@ -78,7 +78,7 @@ fails. The meeting says why it stopped.
 While you record, the workspace shows **Your notes pad**: a line to jot short
 bullets in ("Priya: budget by Friday"), each stamped with how far into the call
 you wrote it. Press Enter or **Add**; the **x** takes a bullet away. The pad is
-also a field Friday can fill when you ask her to. Friday's on-demand `meeting` tool can also add a bullet without a card (it is the owner's own pad and stays on this PC); a bullet she added is marked "added by Friday" and is not yours until you keep it. Bullets stay with the meeting, encrypted like the transcript. You can
+also a field Friday can fill when you ask her to. Friday's on-demand `meeting` tool can also add a bullet without a card (it is the owner's own pad and stays on this PC); a bullet she added is marked "added by Friday". It is never treated as your own words: the notes model may not take names from it, and the archive files what comes from it as "From a bullet Friday added". Bullets stay with the meeting, encrypted like the transcript. You can
 add more after the call too.
 
 ## Notes from your bullets
@@ -129,15 +129,15 @@ meeting's transcript and notes are read into your Library, in a scope of their
 own, on this PC. Then **Ask your meetings** answers "what did we decide about
 the budget?" with footnotes that open the exact transcript line, and you can
 ask the same by voice. Saying yes is a click on the screen in the Friday window: the
-settings write ignores `meeting_archive`, and voice and Friday's tools cannot set it. Saying no
-indexes nothing, and **Stop making them searchable** removes what was indexed. Both
+settings write ignores `meeting_archive`, and voice and Friday's tools cannot set it. Saying no is a click on the screen too. It
+indexes nothing, and **Stop making them searchable** removes what was indexed, in the background as a visible job. It also removes the memory suggestions made from meetings and, from your saved chats, the footnotes and quoted lines of replies that cited a meeting (nothing else in your chats, and never your own messages). Both
 ends take effect at once: the answer is read again on every search, so a meeting
 stops being an answer the moment you say no, before the documents are cleared.
 Deleting a meeting takes it out of search first and removes its Library documents
 in the same step, and so does a retention choice that deletes it. Deleting only the
 audio leaves the notes and the archive as they are. If you ask Friday to forget a
-Library document or a person, the meeting's documents are included, and the
-transcript is not read back in with that name or that document.
+Library document or a person, the meeting's documents are included; forgetting a person also redacts the name in the meeting record itself and in its suggestions (a meeting that is still being recorded or transcribed is redacted when it is saved settled), and the transcript is not read back in with that name or that document.
+
 
 Meetings are encrypted in their own store, so they are read into the Library
 only when the Library's index is encrypted too (its optional encryption
@@ -161,7 +161,7 @@ meetings. The setting is
   that meeting in the workspace. "Open the second one" means the second in the
   list on screen.
 - "Select these" and "tick the first two" tick meetings in the list, which only
-  shows them. Friday sees meeting rows as a count and a position, and the Library list shows a meeting's document without its title, whoever is listening; a title is named only to a local model speaking on this PC.
+  shows them. Friday sees meeting rows as a count and a position, and what Friday sees of the Library screen leaves a meeting document's title out (the list on your screen still shows it). A title is named only to a local model speaking on this PC.
 - "Add those action items to my tasks", "draft a thank-you to everyone from that
   meeting" and "put the summary on the calendar event" go through the same
   tools, cards and approvals as everywhere else.

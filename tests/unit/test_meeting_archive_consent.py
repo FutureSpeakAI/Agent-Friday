@@ -143,7 +143,7 @@ def test_the_settings_write_cannot_say_yes_for_the_owner():
     assert "meeting_archive" in block and "k != 'meeting_archive'" in block
 
 
-def test_choosing_yes_is_a_click_on_the_screen_and_choosing_no_is_not(env, monkeypatch):
+def test_choosing_yes_or_no_is_a_click_on_the_screen(env, monkeypatch):
     from flask import Flask
     from agent_friday.routes.meetings import meetings_bp
     from agent_friday.services import screen_click
@@ -157,9 +157,9 @@ def test_choosing_yes_is_a_click_on_the_screen_and_choosing_no_is_not(env, monke
     monkeypatch.setattr(screen_click, "screen_session", lambda request: False)
     r = client.post("/api/meetings/archive", json={"choice": "on"})
     assert r.status_code == 403 and r.get_json()["code"] == "screen_only" and saved == []
-    assert client.post("/api/meetings/archive", json={"choice": "off"}).status_code == 200 and saved == ["off"]
+    assert client.post("/api/meetings/archive", json={"choice": "off"}).status_code == 403 and saved == []
     monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
-    assert client.post("/api/meetings/archive", json={"choice": "on"}).status_code == 200 and saved == ["off", "on"]
+    assert client.post("/api/meetings/archive", json={"choice": "on"}).status_code == 200 and saved == ["on"]
 
 
 # ── no, deletion and forget take a meeting out of search at once ──────────────
@@ -389,7 +389,7 @@ def test_reading_meetings_into_the_archive_is_a_visible_job_that_waits_for_a_rec
     out = ma.reindex_all(mgr, hold=hold)
     assert out == {"meetings": 1, "indexed": 2} and seen["holds"] == 3 and seen["ids"] == [A["id"]]
     src = (ROOT / "src" / "agent_friday" / "services" / "meeting_archive.py").read_text(encoding="utf-8")
-    assert src.count("with visible_job(") == 3 and src.count('kind="meeting_archive"') == 3
+    assert src.count("with visible_job(") == 4 and src.count('kind="meeting_archive"') == 4
     assert "cuda" not in src.lower() and "device" not in src.lower(), "the archive loads no encoder of its own"
 
 
