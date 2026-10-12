@@ -178,7 +178,7 @@
       setBusy('memory'); setMsg('');
       post('/api/meetings/' + m.id + '/memory').then(d => {
         setBusy('');
-        setMsg(d.proposed ? d.proposed + ' suggested below. Nothing is kept unless you choose it.' : (d.note || d.reason || 'Nothing in this meeting looked worth remembering.'));
+        setMsg(d.proposed ? d.proposed + ' suggested below. Nothing is kept unless you choose it, and a kept suggestion joins what Friday knows about you.' : (d.note || d.reason || 'Nothing in this meeting looked worth remembering.'));
         loadProps();
       }).catch(() => { setBusy(''); setMsg('That could not be done just now.'); });
     };
@@ -195,7 +195,7 @@
     return h('div', { className: 'mt-box meetings-after', role: 'group', 'aria-label': 'Notes from your bullets' },
       pad.length > 0 && h(React.Fragment, null,
         h('div', { className: 'mt-title' }, 'Your bullets'),
-        h('ul', { className: 'mt-list' }, pad.map(b => h('li', { key: b.id }, b.t != null && h('span', { className: 'mt-time' }, clock(b.t)), h('span', null, b.text)))),
+        h('ul', { className: 'mt-list' }, pad.map(b => h('li', { key: b.id }, b.t != null && h('span', { className: 'mt-time' }, clock(b.t)), h('span', null, b.text), b.by === 'friday' && h('span', { className: 'mt-note' }, ' (added by Friday)')))),
         h('div', { className: 'mt-row' },
           h('button', { className: 'btn', onClick: polish, disabled: !!busy }, busy === 'polish' ? 'Writing…' : (pol && pol.status === 'done' ? 'Write them again' : 'Turn my bullets into notes')),
           h('span', { className: 'mt-note' }, 'A model on this PC reads the transcript. Each line below says which transcript line it came from, and a line that does not trace to one is left out.'))),
@@ -213,7 +213,7 @@
           h('span', { className: 'mt-pill' }, p.category),
           h('span', { style: { flex: '1 1 280px' } }, p.text),
           p.provenance && h('span', { className: 'mt-time' }, 'line ' + p.provenance.span.segment + ' · ' + clock(p.provenance.span.t) + ' · ' + p.provenance.model),
-          h('button', { className: 'btn', onClick: () => decide(p.fact_id, true) }, 'Keep'),
+          h('button', { className: 'btn', onClick: () => decide(p.fact_id, true) }, 'Keep (it joins what Friday knows about you, which a cloud model may be told)'),
           h('button', { className: 'btn', onClick: () => decide(p.fact_id, false) }, 'Not now'))))),
       h('div', { className: 'mt-row' },
         h('button', { className: 'btn', onClick: remember, disabled: !!busy || !hasNotes }, busy === 'memory' ? 'Reading…' : 'Suggest what to remember'),
@@ -275,7 +275,7 @@
         h('div', null, 'Make your meetings searchable?'),
         h('div', { className: 'mt-note' }, who() + ' reads each meeting’s transcript and notes into your Library, in a scope of its own, on this PC. Then you can ask “what did we decide about the budget?” and get an answer with the transcript lines it came from. A cloud model never reads them from the Library. Nothing is read until you choose.' + (st.index_encrypted === false ? ' The Library’s index is a plain file on this PC, because its optional encryption component is not installed.' : '')),
         h('div', { className: 'mt-row' },
-          h('button', { className: 'btn', onClick: () => choose('on') }, 'Make my meetings searchable (Recommended)'),
+          h('button', { className: 'btn', onClick: () => choose('on') }, 'Make my meetings searchable'),
           h('button', { className: 'btn', onClick: () => choose('off') }, 'Not now'))),
       st.choice === 'off' && st.available !== false && h('div', { className: 'mt-row' },
         h('span', { className: 'mt-note' }, 'Your meetings are not searchable. Nothing from them is in the Library.'),

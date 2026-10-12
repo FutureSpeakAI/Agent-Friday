@@ -65,10 +65,14 @@ _ID_RE = re.compile(r"^[0-9a-f]{12}$")
 CHOICES = ("on", "off")
 
 
-_FILE: dict = {"key": None, "val": {}}
+_FILE: dict = {"key": None, "val": {}, "failed": False}
 
 
 def _settings() -> dict:
+    return _read_settings_file()
+
+
+def _read_settings_file() -> dict:
     """The persisted settings, read straight from their file and re-read only when it changes.
 
     The owner's yes is what is wanted here, as persisted. The full settings loader also resolves model
@@ -82,9 +86,21 @@ def _settings() -> dict:
         if _FILE["key"] != key:
             data = json.loads(p.read_text(encoding="utf-8-sig"))
             _FILE.update(key=key, val=data if isinstance(data, dict) else {})
+        _FILE["failed"] = False
         return _FILE["val"]
-    except Exception:
+    except FileNotFoundError:
+        _FILE["failed"] = False          # no settings file yet: the owner has chosen nothing
         return {}
+    except Exception:
+        _FILE["failed"] = True        # unknown, not "no": reads are refused meanwhile, but nothing is removed for it
+        return {}
+
+
+def settings_readable() -> bool:
+    """False when the last read of the settings failed (a file held by another program mid-write). Then the
+    owner's answer is unknown: no document is shown, and the sweeps do not take the archive out for it."""
+    _settings()
+    return not _FILE["failed"]
 
 
 def choice() -> str:
@@ -301,6 +317,7 @@ def _remove_part(store, mid: str, part: str) -> int:
         return 0
     try:
         from agent_friday.services.library import forget
+        forget.scrub_copies(OWNER, doc["id"])       # a chat that quoted it loses the words too
         forget.remove_document(OWNER, doc["id"])
     except Exception as e:  # noqa: BLE001 - fall back to the plain purge
         log.info("archive document %s not removed through forget: %s", doc["id"], e)
@@ -329,6 +346,7 @@ def remove_all(*, store=None) -> int:
         if is_archive_path(row["path"]):
             try:
                 from agent_friday.services.library import forget
+                forget.scrub_copies(OWNER, row["id"])
                 forget.remove_document(OWNER, row["id"])
             except Exception:  # noqa: BLE001
                 st.purge_document(row["id"], keep_row=False)
@@ -420,6 +438,11 @@ def set_choice(value: str, *, store=None) -> dict:
     _save_settings({"meeting_archive": value})
     if value == "off":
         remove_all(store=store)
+        try:
+            from agent_friday.services import memory_proposals
+            memory_proposals.purge_meeting(None)      # suggestions made from meetings go with the archive
+        except Exception as e:  # noqa: BLE001
+            log.info("meeting suggestions not cleared: %s", type(e).__name__)
     return status(store=store)
 
 
@@ -433,5 +456,5 @@ def status(*, store=None) -> dict:
         pass
     return {"choice": choice(), "documents": n, "scope": SCOPE, "index_encrypted": encrypted,
             "available": encrypted is True, "unavailable_reason": "" if encrypted is True else NOT_ENCRYPTED,
-            "options": [{"value": "on", "label": "Make my meetings searchable", "recommended": True},
+            "options": [{"value": "on", "label": "Make my meetings searchable", "recommended": False},
                         {"value": "off", "label": "Not now", "recommended": False}]}

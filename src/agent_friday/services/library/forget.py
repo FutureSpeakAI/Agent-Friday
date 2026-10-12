@@ -292,3 +292,31 @@ def _principals() -> list[str]:
 def register() -> None:
     from agent_friday.services import forget_registry
     forget_registry.register_store("library", people_find, people_purge)
+
+
+def scrub_copies(principal: str, doc_id: int) -> int:
+    """Take the document's words out of the places that kept a copy, without forgetting the document: every
+    saved chat that cited it ("[forgotten source]" for the footnote, its quotations removed) and the other
+    stores forget sweeps for. For a meeting's transcript or notes, which are removed when the meeting is deleted or
+    the archive is turned off: those words must not outlive it in a chat. Best effort; returns the chats changed."""
+    st = lstore.store_for(principal)
+    doc = st.get_document(doc_id)
+    if not doc or (doc["shelf"] == "vault" and not st.vault_open()):
+        return 0
+    from agent_friday.services import conversations
+    from agent_friday.services.library import sweep
+    changed = 0
+    try:
+        doc_norm = _doc_text(st, doc_id)
+        fp = sweep.fingerprint(_doc_plain(st, doc_id), doc_id)
+        for cid in cited_conversations(st, doc_id):
+            try:
+                changed += conversations.rewrite(cid, lambda m, d=doc_id, n=doc_norm: _scrub_message(m, d, n))
+            except Exception:  # noqa: BLE001 - the rest still goes
+                continue
+        swept = sweep.sweep_all(fp, doc_id)
+        changed += int(swept.get("chats") or 0)
+        st.x("DELETE FROM cited_in WHERE doc_id=?", (doc_id,))
+    except Exception:  # noqa: BLE001 - the document itself is removed by the caller either way
+        pass
+    return changed

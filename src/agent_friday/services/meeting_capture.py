@@ -665,6 +665,11 @@ def _default_archive_remove(mid: str):
     return meeting_archive.remove_meeting(mid)
 
 
+def _default_proposal_purge(meeting_id: str):
+    from agent_friday.services import memory_proposals
+    return memory_proposals.purge_meeting(meeting_id)
+
+
 def _default_proposer(candidates, meeting_id, day, model):
     from agent_friday.services import memory_proposals
     return memory_proposals.propose_from_meeting(candidates, meeting_id, day, model)
@@ -736,7 +741,7 @@ class MeetingManager:
                  todo_writer=None, email_requester=None,
                  speech_gate=None, partials_factory=None, scheduler=None,
                  speaker=None, ledger=None, retention=None,
-                 archive_index=None, archive_remove=None, proposer=None,
+                 archive_index=None, archive_remove=None, proposer=None, proposal_purge=None,
                  clock=time.monotonic, wall=time.time, tick_s=TICK_S,
                  chunk_s=CHUNK_S, auto_notes=True):
         self.source_factory = source_factory or _default_source_factory
@@ -758,6 +763,7 @@ class MeetingManager:
         self.archive_index = archive_index or _default_archive_index
         self.archive_remove = archive_remove or _default_archive_remove
         self.proposer = proposer or _default_proposer
+        self.proposal_purge = proposal_purge or _default_proposal_purge
         self.vad_backend = ""
         self.clock = clock
         self.wall = wall
@@ -1523,6 +1529,7 @@ class MeetingManager:
                 self.archive_remove(mid)
             except Exception as e:  # noqa: BLE001 - the archive never blocks a deletion
                 log.info("meeting %s: archive not cleared: %s", mid, e)
+            self._purge_proposals(mid)
         with self._io:
             if not d.exists():
                 raise MeetingError("not_found", "No such meeting.", 404)
@@ -1539,8 +1546,20 @@ class MeetingManager:
             self.archive_remove(mid)       # its Library documents go with it
         except Exception as e:  # noqa: BLE001 - the archive never blocks a deletion
             log.info("meeting %s: archive not cleared: %s", mid, e)
+        self._purge_proposals(mid)          # and any a suggestion still being made wrote meanwhile
         self._count("meeting", reason, n_audio, 1)
         return {"deleted": mid, "exists": d.exists()}
+
+    def _gone(self, mid: str) -> bool:
+        with self._io:
+            return mid in self._deleted or not (_dir(mid) / "meeting.json.enc").exists()
+
+    def _purge_proposals(self, mid: str) -> None:
+        """Memory proposals made from a meeting sit outside its encrypted record; they go with it."""
+        try:
+            self.proposal_purge(mid)
+        except Exception as e:  # noqa: BLE001 - never blocks a deletion
+            log.info("meeting %s: proposals not cleared: %s", mid, type(e).__name__)
 
     def delete_audio(self, mid: str, reason: str = "owner") -> dict:
         """Delete the kept audio and nothing else: the transcript and notes
@@ -1808,7 +1827,7 @@ class MeetingManager:
                 return [dict(b) for b in r.meeting.get("pad") or []]
         return [dict(b) for b in self.get(mid).get("pad") or []]
 
-    def pad_add(self, mid: str, text) -> dict:
+    def pad_add(self, mid: str, text, by: str = "") -> dict:
         """Add a shorthand bullet. While the meeting records it goes into the live record, stamped
         with how far into the call it was jotted; afterwards into the stored one."""
         text = " ".join(str(text or "").split())[:mw.PAD_MAX_CHARS]
@@ -1826,6 +1845,8 @@ class MeetingManager:
             if len(pad) >= mw.PAD_MAX_BULLETS:
                 raise MeetingError("pad_full", "That is a lot of bullets. Expand these before adding more.", 409)
             item = {"id": max([b.get("id", 0) for b in pad], default=0) + 1, "t": t, "text": text}
+            if by == "friday":
+                item["by"] = "friday"       # a bullet Friday's tools added, shown as hers, not the owner's
             pad.append(item)
             self._save(m)
         return item
@@ -1978,7 +1999,12 @@ class MeetingManager:
         for group, model in (([c for c in cands if c["category"] != "decision"], seat or ""),
                              ([c for c in cands if c["category"] == "decision"], decisions_model)):
             if group and model:
+                if self._gone(mid):
+                    break                    # deleted while the model ran: nothing is written for it
                 stored += self.proposer(group, mid, day, model)
+        if self._gone(mid):
+            self._purge_proposals(mid)       # a write that raced the deletion
+            stored = 0
         with self._io:
             if mid not in self._deleted:
                 m = _load(mid)
@@ -2021,3 +2047,78 @@ def tray_tooltip(status: dict) -> str | None:
     return "Friday — recording a meeting%s (%d:%02d:%02d)" % (
         " and the other side of the call" if both else "",
         t // 3600, t // 60 % 60, t % 60)
+
+
+# ── forget-person reaches the meeting itself ─────────────────────────────────
+# The Library copy of a meeting is redacted when it is read in; the encrypted record is the source, and it
+# still names the person in its title, transcript, notes, bullets and polished notes. forget-person
+# (services/forget_registry) finds and redacts them there too. A meeting still being recorded is left until it
+# has ended.
+
+def _name_pattern(names):
+    words = sorted({" ".join(str(n or "").split()) for n in (names or ()) if len(str(n or "").strip()) >= 3},
+                   key=len, reverse=True)
+    if not words:
+        return None
+    alts = [r"\s+".join(re.escape(w) for w in n.split(" ")) for n in words]
+    return re.compile(r"\b(?:" + "|".join(alts) + r")\b", re.IGNORECASE)
+
+
+def _redact_value(v, pat):
+    """(value, how many names were replaced); only strings are touched."""
+    if isinstance(v, str):
+        out, n = pat.subn("[removed]", v)
+        return out, n
+    if isinstance(v, list):
+        total, out = 0, []
+        for x in v:
+            y, n = _redact_value(x, pat)
+            out.append(y)
+            total += n
+        return out, total
+    if isinstance(v, dict):
+        total, out = 0, {}
+        for k, x in v.items():
+            if k in ("id", "state", "started_at", "ended_at", "stop_reason", "source", "kind", "speaker", "event_id"):
+                out[k] = x
+                continue
+            y, n = _redact_value(x, pat)
+            out[k] = y
+            total += n
+        return out, total
+    return v, 0
+
+
+def _meetings_naming(names, redact: bool) -> int:
+    pat = _name_pattern(names)
+    if pat is None:
+        return 0
+    mgr = get_manager()
+    hits = 0
+    for row in mgr.list():
+        mid = row.get("id")
+        if not mid or row.get("state") in ("recording", "unreadable"):
+            continue
+        try:
+            with mgr._io:
+                m = _load(mid)
+                new, n = _redact_value(m, pat)
+                if not n:
+                    continue
+                hits += 1
+                if redact:
+                    mgr._save(new)
+        except Exception as e:  # noqa: BLE001 - one unreadable meeting must not stop the rest
+            log.info("meeting %s: not checked for a forgotten name (%s)", mid, type(e).__name__)
+            continue
+        if redact:
+            mgr._index_archive(new)       # the archive is read in again, redacted
+    return hits
+
+
+def people_find(names, emails) -> int:
+    return _meetings_naming(set(names or ()) | set(emails or ()), redact=False)
+
+
+def people_purge(names, emails) -> int:
+    return _meetings_naming(set(names or ()) | set(emails or ()), redact=True)

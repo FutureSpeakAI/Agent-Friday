@@ -581,3 +581,79 @@ def state() -> Dict[str, Any]:
             "scheduled": False,
             "note": "Manual only. Nothing here runs unattended, and nothing "
                     "reaches durable memory without being approved."}
+
+
+# ── Meeting proposals leave with their meeting ───────────────────────────────
+# A proposal from a meeting sits in this plain table, outside the meeting's encrypted record. It carries no
+# transcript line and no title (meeting_workspace.proposal_candidates), but it does carry a decision, a name
+# or a project. So it goes with the meeting: on delete, on retention, on "off", and on forget-person.
+
+def _meeting_id_of(provenance) -> str:
+    try:
+        return str((json.loads(provenance) or {}).get("meeting_id") or "")
+    except (TypeError, ValueError, AttributeError):
+        return ""
+
+
+def purge_meeting(meeting_id: Optional[str] = None) -> int:
+    """Delete every proposal that came from the meeting (any status), or from any meeting when `meeting_id`
+    is None. Returns how many rows went."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT fact_id, provenance FROM proposed_facts "
+                            "WHERE provenance IS NOT NULL AND provenance != ''").fetchall()
+        ids = [fid for fid, prov in rows
+               if _meeting_id_of(prov) and (meeting_id is None or _meeting_id_of(prov) == str(meeting_id))]
+        for fid in ids:
+            conn.execute("DELETE FROM proposed_facts WHERE fact_id=?", (fid,))
+        conn.commit()
+        return len(ids)
+    finally:
+        conn.close()
+
+
+def _name_rows(conn, names) -> List[str]:
+    wanted = [n for n in {str(x or "").strip().lower() for x in (names or [])} if len(n) >= 3]
+    if not wanted:
+        return []
+    out = []
+    for fid, text, evidence in conn.execute("SELECT fact_id, text, evidence FROM proposed_facts").fetchall():
+        hay = ("%s %s" % (text or "", evidence or "")).lower()
+        if any(n in hay for n in wanted):
+            out.append(fid)
+    return out
+
+
+def people_find(names, emails) -> int:
+    """forget-person: how many proposals name the person (any status)."""
+    conn = _connect()
+    try:
+        return len(_name_rows(conn, set(names or ()) | set(emails or ())))
+    finally:
+        conn.close()
+
+
+def people_purge(names, emails) -> int:
+    conn = _connect()
+    try:
+        ids = _name_rows(conn, set(names or ()) | set(emails or ()))
+        for fid in ids:
+            conn.execute("DELETE FROM proposed_facts WHERE fact_id=?", (fid,))
+        conn.commit()
+        return len(ids)
+    finally:
+        conn.close()
+
+
+def any_from_meeting(fact_ids) -> bool:
+    """Is any of these proposals one a meeting made? (Approving one needs a click on the screen.)"""
+    ids = [str(i) for i in (fact_ids or []) if str(i).strip()]
+    if not ids:
+        return False
+    conn = _connect()
+    try:
+        marks = ",".join("?" * len(ids))
+        rows = conn.execute(f"SELECT provenance FROM proposed_facts WHERE fact_id IN ({marks})", ids).fetchall()
+        return any(_meeting_id_of(r[0]) for r in rows)
+    finally:
+        conn.close()

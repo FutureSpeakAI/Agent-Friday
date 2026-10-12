@@ -391,9 +391,8 @@ def proposal_candidates(m: dict, found: dict, lines: list) -> tuple:
     A person or project is kept only when its name is in the transcript (the cited line when it
     gave one, any line otherwise); a decision is kept only when it ties to a line. Each
     candidate carries its span."""
-    title = (m.get("title") or "a meeting").strip()
     day = (m.get("started_at") or "")[:10]
-    where = "in \"%s\"%s" % (title, (", " + day) if day else "")
+    where = "in a meeting%s" % ((" on " + day) if day else "")      # no title: the proposal sits outside the encrypted record
     cands, left_out = [], []
 
     def locate(name, line):
@@ -411,21 +410,21 @@ def proposal_candidates(m: dict, found: dict, lines: list) -> tuple:
             left_out.append(p["name"])
             continue
         role = (", %s" % p["role"]) if p.get("role") else ""
-        cands.append({"category": "relationship", "span": sp, "evidence": lines[sp["i"]]["text"][:300],
+        cands.append({"category": "relationship", "span": sp, "evidence": "transcript line %d" % sp["i"],
                       "text": "%s%s came up %s." % (p["name"], role, where)})
     for p in found.get("projects") or []:
         sp = locate(p["name"], p["line"])
         if sp is None:
             left_out.append(p["name"])
             continue
-        cands.append({"category": "project", "span": sp, "evidence": lines[sp["i"]]["text"][:300],
+        cands.append({"category": "project", "span": sp, "evidence": "transcript line %d" % sp["i"],
                       "text": "%s was discussed %s." % (p["name"], where)})
     for d in (m.get("summary") or {}).get("decisions") or []:
         sp = ground(d, lines)
         if sp is None:
             left_out.append(d)
             continue
-        cands.append({"category": "decision", "span": sp, "evidence": lines[sp["i"]]["text"][:300],
+        cands.append({"category": "decision", "span": sp, "evidence": "transcript line %d" % sp["i"],
                       "text": "Decided %s: %s" % (where, d)})
     return cands, left_out
 
