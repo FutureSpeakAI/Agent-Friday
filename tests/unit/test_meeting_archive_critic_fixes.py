@@ -180,6 +180,7 @@ def test_keeping_a_meeting_suggestion_needs_a_click_on_the_screen(env, monkeypat
     from agent_friday.services import screen_click
     app = Flask(__name__)
     app.config.update(TESTING=True)
+    app.secret_key = "test"                 # login_required keeps a session on loopback
     app.register_blueprint(memory_proposals_bp)
     c = app.test_client()
     proposals_db.propose_from_meeting([CAND], A["id"], "2026-10-09", "m")

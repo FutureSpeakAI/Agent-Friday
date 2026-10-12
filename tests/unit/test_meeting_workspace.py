@@ -86,7 +86,7 @@ class Rig:
             return self.reply(system, user)
 
         @contextlib.contextmanager
-        def fake_work(label, cls=None, needs=None, quiet=True):
+        def fake_work(label, cls=None, needs=None, quiet=True, deferrable=None):
             self.work.append((label, cls))
             yield
         from agent_friday.services import local_scheduler
@@ -169,7 +169,7 @@ def test_the_faithfulness_check_can_fail():
 
 def test_a_bullet_jotted_while_recording_is_stamped_and_survives_the_stop(rig):
     r = rig()
-    st = r.m.start(consent_ack=True, confirm=True, title="Pad test")
+    st = r.m.start(consent_ack=True, confirm=True, consent_version=mc.CONSENT_VERSION, title="Pad test")
     mid = st["id"]
     item = r.m.pad_add(mid, "  budget   by Friday ")
     assert item["text"] == "budget by Friday" and item["t"] is not None and item["id"] == 1
@@ -526,7 +526,8 @@ def test_deleting_a_meeting_or_turning_the_archive_off_removes_its_documents(lib
     assert ma.remove_meeting(A["id"]) == 2 and st.one("SELECT count(*) n FROM documents")["n"] == 2
     saved = []
     from agent_friday import core
-    monkeypatch.setattr(core, "_save_settings", lambda d: saved.append(d))
+    # the saved choice is what choice() reads next: the clearing job checks it before it removes anything
+    monkeypatch.setattr(core, "_save_settings", lambda d: saved.append(d) or lib.update(choice=d["meeting_archive"]))
     out = ma.set_choice("off")
     assert saved == [{"meeting_archive": "off"}] and out["documents"] == 0
     with pytest.raises(ValueError):
