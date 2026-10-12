@@ -348,6 +348,10 @@ def test_boot_seat_binding_over_a_failed_read_writes_nothing(owned, monkeypatch)
     monkeypatch.setattr(hwp, "summary", lambda p: "test")
     monkeypatch.setattr(rc, "installed_entries", lambda p: [])
     monkeypatch.setattr(ra, "Arbiter", Arb)
+    # Boot publishes the instance it built as the process-wide handle: put the
+    # real one back afterwards, or every later test that asks for the arbiter
+    # gets this stand-in.
+    monkeypatch.setattr(ra, "ARBITER", ra.ARBITER)
     monkeypatch.setattr(sb, "overrides_from_settings", lambda s: {})
     monkeypatch.setattr(sb, "apply", apply)
     monkeypatch.setattr(sb, "describe", lambda p: "")
