@@ -294,8 +294,13 @@ def _check(name, deep=False) -> dict:
     if deep:
         # Decision D1: a key is CONFIGURATION, not health. Prove inference.
         # `deep` is a request from the Providers panel (or a Test button), so
-        # it is the owner's explicit ask for a paid probe.
-        probed = inference_probe(name, prov=prov, explicit=True)
+        # it is the owner's explicit ask for a paid probe. In a local mode the
+        # cloud opens only under a recorded intent, so the ask is recorded
+        # here, for this one fixed probe and nothing else: the scope ends with
+        # the call. Nothing else reaches `deep`; status polls stay shallow.
+        with _cloud_intent.intent_scope("user_explicit", source="providers_panel_check",
+                                        confirmed=True):
+            probed = inference_probe(name, prov=prov, explicit=True)
         if probed is not None:
             return probed
 
