@@ -38,7 +38,8 @@ const activity = {
     { id: 't2', source: 'task', kind: 'task', label: 'Research the thing', model: '', status: 'queued', trace_id: '', queue_position: 1,
       stoppable: true, stop: { method: 'POST', url: '/api/tasks/t2/stop-after-step' } },
     { id: 'q9', source: 'local_queue', kind: 'wiki_distill', label: 'Wiki notes', model: '', status: 'queued', trace_id: '', queue_position: 2,
-      stoppable: true, stop: { method: 'POST', url: '/api/local-queue/q9/cancel' }, run_now: true, why: 'waiting for idle' },
+      stoppable: true, stop: { method: 'POST', url: '/api/local-queue/q9/cancel' }, run_now: true, why: 'waiting for idle',
+      pausable: true, paused_by_you: false },
   ],
 };
 const updates = { count: 2, today_only: true, groups: [
@@ -129,6 +130,9 @@ test('Activity shows model, status, place in line and Stop only where a job can 
   await rows.nth(1).getByTestId('lane-stop').click();
   await expect.poll(() => calls.some(c => c.method === 'POST' && c.url.endsWith('/api/tasks/t2/stop-after-step'))).toBeTruthy();
   await expect(rows.nth(2).getByRole('button', { name: 'Run now' })).toBeVisible();
+  await expect(rows.nth(0).getByTestId('lane-pause')).toHaveCount(0);         // no queue checkpoint: no Pause
+  await rows.nth(2).getByTestId('lane-pause').click();
+  await expect.poll(() => calls.some(c => c.method === 'POST' && c.url.endsWith('/api/local-queue/q9/pause'))).toBeTruthy();
 });
 
 test('Updates is a digest, Receipts lists traces, and neither pops anything', async ({ page }) => {
