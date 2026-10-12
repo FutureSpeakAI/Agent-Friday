@@ -2342,6 +2342,17 @@ DEFAULT_SETTINGS = {
     # "pending" (shown, not answered), "accepted" or "declined". Declined and
     # accepted are final; nothing ever switches the engine without the owner.
     "local_voice_switch_offer": "",
+    # The owner's recorded switch to cloud voice (services/local_voice_readiness):
+    # {} when there is none, else {scope: "call" | "always", engine, previous, at,
+    # reason, source}. "call" puts `voice_engine` back to `previous` when that cloud
+    # call ends; "always" stays until the owner changes it. Written only by the
+    # question "just this call, or always?" and its answer, never by a settings write.
+    "voice_engine_choice": {},
+    # Where the one offer to switch back to local voice stands after an "always":
+    # {} (not offered), else {state: "pending" | "switched" | "kept", made_at,
+    # choice_at}. Forgotten when readiness changes, so it is offered once per spell
+    # of local voice being capable.
+    "voice_switch_back": {},
     # Cloud work orders (services/work_orders): a cloud model hands this PC a plan,
     # and this PC carries it out locally (services/work_order_executor), returning
     # only what the privacy class below allows. The two tools that take an order

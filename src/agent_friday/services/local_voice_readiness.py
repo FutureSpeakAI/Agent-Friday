@@ -28,12 +28,28 @@ of that story (Laya in every mode addendum, section 4, LV-7):
   does, and only from the owner's click or spoken yes.
 * **Why cloud?** `why_cloud` says why Friday is on cloud voice: your choice,
   local not ready, or local not measured (with the measure button).
+* **Cloud voice is asked, never assumed.** Whatever starts the switch to cloud
+  voice (Settings, the voice, the offer after a local voice failure) Friday asks
+  "just this call, or always?", two choices, nothing preselected, one marked
+  Recommended (just this call: it keeps local voice the default). "Just this call"
+  puts the engine back to what it was when that cloud call ends; "always" is
+  recorded as the owner's choice with the time and the reason
+  (`voice_engine_choice`). Local-only mode refuses the switch with its reason.
+* **Switch back, offered once.** After an "always", when a later re-assessment
+  finds local voice capable again with measured numbers, ONE card offers to
+  switch back (emitter LV7). It is remembered (`voice_switch_back`) and is not
+  made again until readiness has changed again; no answer changes nothing. In
+  cloud_only mode there is no local to go back to, so nothing is offered.
+* **Voice answers.** The `local_voice_readiness` tool asks the question and takes
+  the answers ("just this call", "always", "switch back", "keep cloud"), only on
+  the owner's own words in the turn (services/local_voice_tools).
 
 Nothing here measures anything itself: `_measure_voice` is the one call to
 `footprint_measure`, run only inside the idle job. Nothing leaves the machine.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -59,6 +75,25 @@ REASON_NOT_READY = "local_not_ready"
 REASON_NOT_MEASURED = "local_not_measured"
 
 CAPABLE, UNKNOWN, REFUSED = "capable", "unknown", "refused"
+
+# Cloud voice is asked, never assumed: "just this call" or "always".
+CHOICE_KEY = "voice_engine_choice"          # the owner's recorded switch to cloud voice
+SWITCHBACK_KEY = "voice_switch_back"        # where the one switch-back offer stands
+SCOPE_CALL, SCOPE_ALWAYS = "call", "always"
+RECOMMENDED_SCOPE = SCOPE_CALL              # keeps local voice the default
+SB_PENDING, SB_SWITCHED, SB_KEPT = "pending", "switched", "kept"
+SCOPE_DEDUPE_KEY = "cloud-voice-scope"
+CALL_END_DEDUPE_KEY = "cloud-voice-call-ended"
+#: A "just this call" that no cloud call ever used goes back after this long, said aloud.
+CALL_SCOPE_TTL_S = 6 * 3600.0
+#: A local voice start that failed this recently is the reason a switch to cloud gives.
+FAILURE_WINDOW_S = 3 * 3600.0
+
+SWITCH_REASONS = {
+    "local_voice_failed": "Local voice did not start",
+    "your_choice": "Your choice",
+}
+CLOUD_ENGINES = ("gemini", "gemini-live")
 
 _LOCK = threading.RLock()
 _RUN_LOCK = threading.Lock()
@@ -443,9 +478,14 @@ def run_pending() -> dict:
             offered = maybe_offer_switch(snap)
         except Exception as e:  # pragma: no cover - defensive
             _log.debug("switch offer skipped: %s", e)
+        offered_back = False
+        try:
+            offered_back = maybe_offer_switch_back(snap, assessed_at=st["assessed_at"])
+        except Exception as e:  # pragma: no cover - defensive
+            _log.debug("switch-back offer skipped: %s", e)
         _set_job(state="done", ok=True, phase="Done", finished_at=time.time(), error="")
         return {"ran": True, "measured": measured, "state": (snap or {}).get("state"),
-                "offered": offered}
+                "offered": offered, "offered_back": offered_back}
     except Exception as e:
         _log.warning("local capability job failed: %s", e)
         _set_job(state="failed", ok=False, phase="Could not finish", finished_at=time.time(),
@@ -474,9 +514,28 @@ def tick(now: Optional[float] = None) -> dict:
     if last is None or now - float(last) >= WEEK_S:
         legacy = _cc().snapshot_is_legacy(_cc().stored_snapshot())
         reasons.append("out_of_date" if legacy else "weekly")
+    elif _watching_for_switch_back() and now - float(last) >= SWITCH_BACK_RECHECK_S:
+        reasons.append("switch_back_check")
     for r in reasons[:1]:
         request_reassess(r)
+    try:
+        expire_unused_call_scope(now)
+    except Exception as e:  # pragma: no cover - defensive
+        _log.debug("call scope expiry skipped: %s", e)
     return run_pending()
+
+
+#: After an "always", how often an idle re-assessment looks again for local voice
+#: being ready (the weekly check alone would leave the owner on cloud for days).
+SWITCH_BACK_RECHECK_S = 24 * 3600.0
+
+
+def _watching_for_switch_back() -> bool:
+    """True while the owner is on cloud voice by an "always" and no switch-back
+    offer has been made yet."""
+    s = _settings()
+    return (_record(s).get("scope") == SCOPE_ALWAYS and _is_cloud(s.get("voice_engine"))
+            and not _record(s, SWITCHBACK_KEY) and _mode_of(s) not in ("cloud_only", "local_only"))
 
 
 def loop(interval_s: float = 300.0, busy_interval_s: float = 20.0) -> None:  # pragma: no cover - thread body
@@ -534,6 +593,8 @@ def maybe_offer_switch(snapshot: Optional[dict] = None) -> bool:
             s = _settings()
             if str(s.get(OFFER_KEY) or "") != "":
                 return False
+            if _record(s):
+                return False        # a cloud choice was recorded: its own switch-back offer owns this
             if str(s.get("voice_engine") or "local").strip().lower() not in ("gemini", "gemini-live"):
                 return False
             if voice_state(snapshot) != CAPABLE:
@@ -584,6 +645,404 @@ def decide_offer(choice: str) -> dict:
                         else "Staying on cloud voice. I will not ask again.")}
 
 
+# ── cloud voice: asked, never assumed ────────────────────────────────────────
+
+def _is_cloud(engine: Any) -> bool:
+    return str(engine or "").strip().lower() in CLOUD_ENGINES
+
+
+def _mode_of(s: dict) -> str:
+    """The routing mode in the owner's settings: local_only, local_preferred,
+    cloud_preferred or cloud_only (a blank mode reads as the factory default)."""
+    mr = (s or {}).get("model_routing")
+    raw = mr.get("mode") if isinstance(mr, dict) else None
+    try:
+        from agent_friday.services import cloud_intent
+        return cloud_intent.normalize_mode(raw)
+    except Exception:
+        return str(raw or "cloud_only").strip().lower() or "cloud_only"
+
+
+def _now() -> float:
+    return time.time()
+
+
+def _save(patch: dict) -> None:
+    from agent_friday.core import _save_settings
+    _save_settings(patch)
+
+
+def _resolve_card(key: str) -> None:
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.resolve(key)
+    except Exception:
+        pass
+
+
+def _record(s: Optional[dict] = None, key: str = CHOICE_KEY) -> dict:
+    v = (s if s is not None else _settings()).get(key)
+    return dict(v) if isinstance(v, dict) and v else {}
+
+
+def note_local_voice_failed() -> None:
+    """A local voice session could not start. Remembered for a few hours so the
+    switch to cloud voice can say why. Never raises."""
+    try:
+        with _LOCK:
+            st = _load_state()
+            st["local_failed_at"] = _now()
+            _save_state(st)
+    except Exception:
+        pass
+
+
+def _switch_reason(requested: str = "") -> str:
+    if requested in SWITCH_REASONS:
+        return requested
+    failed = _load_state().get("local_failed_at")
+    if failed is not None and _now() - float(failed) <= FAILURE_WINDOW_S:
+        return "local_voice_failed"
+    return "your_choice"
+
+
+def scope_choices() -> List[dict]:
+    """The two choices, in the order shown. Exactly one is marked recommended,
+    and none is selected: the owner always picks."""
+    return [
+        {"id": SCOPE_CALL, "label": "Just this call",
+         "recommended": RECOMMENDED_SCOPE == SCOPE_CALL,
+         "detail": "Cloud voice for one call, then back to local voice. Local voice stays your default."},
+        {"id": SCOPE_ALWAYS, "label": "Always",
+         "recommended": RECOMMENDED_SCOPE == SCOPE_ALWAYS,
+         "detail": "Cloud voice until you change it. I will tell you once if local voice is ready again."},
+    ]
+
+
+QUESTION = "Use cloud voice for just this call, or always?"
+
+
+def spoken_question() -> str:
+    return ("%s I would suggest just this call, because it keeps local voice as your default. "
+            "Which do you want?" % QUESTION)
+
+
+def local_only_refusal() -> dict:
+    return {"ok": False, "refused": True, "reason": "local_only",
+            "message": ("Local only mode is on, so voice stays on this PC and cloud voice is not "
+                        "allowed. Change the routing mode in Settings first if you want it.")}
+
+
+def cloud_question_card(settings: Optional[dict] = None) -> Optional[dict]:
+    """The question the panel renders while one is waiting, else None."""
+    s = settings if settings is not None else _settings()
+    q = _load_state().get("cloud_question")
+    if not isinstance(q, dict) or _is_cloud(s.get("voice_engine")) or _mode_of(s) == "local_only":
+        return None
+    return {"question": QUESTION, "choices": scope_choices(), "preselected": None,
+            "reason": q.get("reason"), "reason_text": SWITCH_REASONS.get(q.get("reason"), ""),
+            "source": q.get("source"), "asked_at": q.get("asked_at")}
+
+
+def _digest(words: str) -> str:
+    t = " ".join(str(words or "").lower().split())
+    return hashlib.sha1(t.encode("utf-8")).hexdigest()[:16] if t else ""
+
+
+def asked_in_these_words(words: str) -> bool:
+    """True when the waiting cloud voice question was asked in this very
+    utterance. An answer must be a LATER thing the owner says: "use cloud voice
+    for this call" asks, it does not answer."""
+    q = _load_state().get("cloud_question")
+    d = _digest(words)
+    return bool(isinstance(q, dict) and d and q.get("words") == d)
+
+
+def ask_cloud_switch(source: str = "settings", reason: str = "", words: str = "") -> dict:
+    """Start a switch to cloud voice: ask, do not switch. Whatever the source
+    (Settings, the voice, the offer after a local voice failure) the answer is
+    the owner's "just this call" or "always". Local-only mode refuses with its
+    reason. A screen card is raised for the sources that do not already have the
+    panel in front of the owner. `words` is the utterance that started it, if
+    any (see `asked_in_these_words`)."""
+    s = _settings()
+    if _mode_of(s) == "local_only":
+        return local_only_refusal()
+    if _is_cloud(s.get("voice_engine")):
+        return {"ok": True, "asked": False, "already": True,
+                "message": "Voice is already on the cloud."}
+    src = source if source in ("settings", "voice", "failure") else "settings"
+    why = _switch_reason(reason)
+    with _LOCK:
+        st = _load_state()
+        st["cloud_question"] = {"source": src, "reason": why, "asked_at": _now(),
+                                "words": _digest(words)}
+        _save_state(st)
+    if src != "settings":
+        try:
+            import agent_friday.notifications_engine as ne
+            ne.push(title="Use cloud voice for just this call, or always?",
+                    body=("%s. Just this call keeps local voice your default (Recommended). "
+                          "Nothing changes until you choose." % SWITCH_REASONS[why]),
+                    priority="medium", source="local-voice", kind="cloud_voice_scope_question",
+                    emitter="LV8", dedupe_key=SCOPE_DEDUPE_KEY, resolve_key=SCOPE_DEDUPE_KEY,
+                    actions=[{"label": "See the choice", "workspace": "settings", "tab": "voice"}],
+                    target={"workspace": "settings", "tab": "voice"})
+        except Exception as e:
+            _log.warning("cloud voice question card not pushed: %s", e)
+    return {"ok": True, "asked": True, "question": cloud_question_card(s), "message": spoken_question()}
+
+
+def gate_settings_write(new_settings: dict) -> Optional[dict]:
+    """Called by the generic settings write. A write that would move voice from
+    local to cloud does not go through: it becomes the question (or, in
+    local-only mode, a refusal). Returns None when the write may proceed, else
+    {"http": status, "body": {...}}."""
+    if not isinstance(new_settings, dict) or "voice_engine" not in new_settings:
+        return None
+    s = _settings()
+    if not _is_cloud(new_settings.get("voice_engine")) or _is_cloud(s.get("voice_engine")):
+        return None
+    out = ask_cloud_switch(source="settings")
+    if out.get("refused"):
+        return {"http": 409, "body": {"status": "refused", "reason": out["reason"],
+                                      "message": out["message"]}}
+    return {"http": 409, "body": {"status": "needs_choice",
+                                  "message": QUESTION + " Nothing has changed. Choose in Settings, Voice.",
+                                  "question": out.get("question")}}
+
+
+def answer_cloud_switch(choice: str) -> dict:
+    """The owner's answer: `call`, `always` or `cancel`. Only a waiting question
+    can be answered. This (with the settings write it replaces) is the only code
+    that moves the engine to the cloud."""
+    choice = str(choice or "").strip().lower()
+    if choice not in (SCOPE_CALL, SCOPE_ALWAYS, "cancel"):
+        return {"ok": False, "message": "Say just this call, or always."}
+    s = _settings()
+    q = _load_state().get("cloud_question")
+    if not isinstance(q, dict):
+        return {"ok": False, "message": "There is no cloud voice question waiting."}
+    with _LOCK:
+        st = _load_state()
+        st.pop("cloud_question", None)
+        _save_state(st)
+    _resolve_card(SCOPE_DEDUPE_KEY)
+    if _mode_of(s) == "local_only":
+        return local_only_refusal()
+    if choice == "cancel":
+        return {"ok": True, "choice": "cancel", "message": "Staying on local voice."}
+    prev = str(s.get("voice_engine") or "local").strip() or "local"
+    if _is_cloud(prev):
+        prev = "local"
+    rec = {"scope": choice, "engine": "gemini", "previous": prev, "at": _now(),
+           "reason": q.get("reason") or "your_choice", "source": q.get("source") or "settings"}
+    _save({"voice_engine": "gemini", CHOICE_KEY: rec, SWITCHBACK_KEY: {}})
+    if choice == SCOPE_CALL:
+        msg = "Cloud voice for this call. I will go back to local voice when it ends."
+    else:
+        msg = "Cloud voice, always. I will tell you once if local voice is ready again."
+    return {"ok": True, "choice": choice, "message": msg}
+
+
+def call_ended() -> bool:
+    """A cloud voice call ended. If the owner chose "just this call", the engine
+    goes back to what it was, and a line in Updates says so. Never raises."""
+    try:
+        s = _settings()
+        rec = _record(s)
+        if rec.get("scope") != SCOPE_CALL or not _is_cloud(s.get("voice_engine")):
+            return False
+        return _revert_call_scope(rec, "That cloud call has ended, so voice is back on local, as you chose.")
+    except Exception as e:  # pragma: no cover - defensive
+        _log.debug("call end revert skipped: %s", e)
+        return False
+
+
+def _revert_call_scope(rec: dict, said: str) -> bool:
+    prev = str(rec.get("previous") or "local")
+    _save({"voice_engine": prev, CHOICE_KEY: {}})
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.push(title="Back on local voice", body=said, priority="low", source="local-voice",
+                kind="cloud_voice_call_ended", emitter="LV9", dedupe_key=CALL_END_DEDUPE_KEY)
+    except Exception as e:
+        _log.warning("call end notice not pushed: %s", e)
+    return True
+
+
+def expire_unused_call_scope(now: Optional[float] = None) -> bool:
+    """A "just this call" that no cloud call ever used must not hold the engine
+    on the cloud for good: after CALL_SCOPE_TTL_S, with no voice session open, it
+    goes back, and says so."""
+    s = _settings()
+    rec = _record(s)
+    if rec.get("scope") != SCOPE_CALL or not _is_cloud(s.get("voice_engine")):
+        return False
+    now = _now() if now is None else float(now)
+    if now - float(rec.get("at") or now) < CALL_SCOPE_TTL_S:
+        return False
+    try:
+        from agent_friday.services import voice_live_channel
+        if voice_live_channel.any_live():
+            return False
+    except Exception:
+        pass
+    return _revert_call_scope(rec, "No cloud call was started, so voice is back on local, as you chose.")
+
+
+def note_engine_written(engine: Any) -> None:
+    """The owner set the engine by hand. A move off the cloud ends the record of
+    a cloud choice (and its switch-back offer): there is nothing to go back to."""
+    try:
+        if _is_cloud(engine):
+            return
+        s = _settings()
+        if _record(s) or _record(s, SWITCHBACK_KEY):
+            _save({CHOICE_KEY: {}, SWITCHBACK_KEY: {}})
+            _resolve_card(OFFER_DEDUPE_KEY)
+    except Exception:
+        pass
+
+
+# ── switch back, offered once ────────────────────────────────────────────────
+
+def switch_back_card(settings: Optional[dict] = None) -> Optional[dict]:
+    s = settings if settings is not None else _settings()
+    sb = _record(s, SWITCHBACK_KEY)
+    if sb.get("state") != SB_PENDING or not _is_cloud(s.get("voice_engine")):
+        return None
+    nums = measured_numbers()
+    said = _numbers_sentence(nums)
+    body = "Local voice is ready again on this PC"
+    if said:
+        body += ". Measured here: " + said
+    body += ". Switch back? Your call; nothing changes until you say."
+    return {"title": "Local voice is ready again", "body": body, "numbers": nums, "preselected": None,
+            "choices": [{"id": "switch_back", "label": "Switch back to local voice", "recommended": True},
+                        {"id": "keep_cloud", "label": "Keep cloud voice", "recommended": False}]}
+
+
+def maybe_offer_switch_back(snapshot: Optional[dict] = None, *,
+                            assessed_at: Optional[float] = None) -> bool:
+    """Offer, ONCE, to switch back to local voice. Never raises, never switches.
+
+    Due when: the owner chose "always" for cloud voice; the engine is still on
+    the cloud; the routing mode is not cloud_only (no local to go back to) and
+    not local_only; a re-assessment AFTER that choice finds local voice capable
+    with measured numbers; and no offer has been made since readiness last
+    changed. The state is set to pending BEFORE the push, so a second pass finds
+    it taken. When readiness drops out of capable, a past offer is forgotten, so
+    the next time it is capable again it is offered once more. No answer leaves
+    everything as it was."""
+    try:
+        with _OFFER_LOCK:
+            s = _settings()
+            rec = _record(s)
+            sb = _record(s, SWITCHBACK_KEY)
+            if rec.get("scope") != SCOPE_ALWAYS:
+                return False
+            if not _is_cloud(s.get("voice_engine")):
+                _save({CHOICE_KEY: {}, SWITCHBACK_KEY: {}})       # the owner already moved
+                _resolve_card(OFFER_DEDUPE_KEY)
+                return False
+            if _mode_of(s) in ("cloud_only", "local_only"):
+                return False
+            snap_state = voice_state(snapshot)
+            if snap_state != CAPABLE:
+                if sb:
+                    _save({SWITCHBACK_KEY: {}})                  # readiness changed: a later "capable" is news again
+                    if sb.get("state") == SB_PENDING:
+                        _resolve_card(OFFER_DEDUPE_KEY)
+                return False
+            if sb:
+                return False
+            when = assessed_at if assessed_at is not None else _load_state().get("assessed_at")
+            if when is None or float(when) <= float(rec.get("at") or 0):
+                return False                                     # not re-assessed since the switch
+            nums = measured_numbers()
+            if not nums.get("measured"):
+                return False
+            _save({SWITCHBACK_KEY: {"state": SB_PENDING, "made_at": _now(), "choice_at": rec.get("at")}})
+            body = switch_back_card(_settings())
+        text = (body or {}).get("body") or "Local voice is ready again. Switch back?"
+        try:
+            import agent_friday.notifications_engine as ne
+            ne.push(title="Local voice is ready again", body=text,
+                    priority="medium", source="local-voice", kind="local_voice_switch_offer",
+                    emitter="LV7", dedupe_key=OFFER_DEDUPE_KEY,
+                    resolve_key=OFFER_DEDUPE_KEY,
+                    actions=[{"label": "See the choice", "workspace": "settings", "tab": "voice"}],
+                    target={"workspace": "settings", "tab": "voice"})
+        except Exception as e:
+            _log.warning("switch-back offer card not pushed: %s", e)
+        _say_in_calls(text + " Say switch back, or keep cloud.")
+        return True
+    except Exception as e:  # pragma: no cover - defensive
+        _log.debug("switch-back offer skipped: %s", e)
+        return False
+
+
+def _say_in_calls(text: str) -> None:
+    """Hand the offer to any open voice session, so a call hears it too."""
+    try:
+        from agent_friday.services import notice_registry as nr
+        from agent_friday.services import voice_live_channel as vlc
+        for cid in list(getattr(vlc, "_CHANNELS", {}) or {}):
+            nr.voice_say("LV7", cid, text, kind="offer")
+    except Exception:
+        pass
+
+
+def decide_switch_back(choice: str) -> dict:
+    """The owner's answer to the switch-back card: `switch_back` or `keep_cloud`.
+    Only a pending offer can be answered. Keeping cloud leaves the offer made, so
+    it is not asked again until readiness has changed."""
+    choice = str(choice or "").strip().lower()
+    if choice not in ("switch_back", "keep_cloud"):
+        return {"ok": False, "message": "Say switch back, or keep cloud."}
+    s = _settings()
+    sb = _record(s, SWITCHBACK_KEY)
+    if sb.get("state") != SB_PENDING:
+        return {"ok": False, "message": "There is no switch-back offer waiting."}
+    rec = _record(s)
+    if choice == "switch_back":
+        prev = str(rec.get("previous") or "local")
+        _save({"voice_engine": prev, CHOICE_KEY: {},
+               SWITCHBACK_KEY: dict(sb, state=SB_SWITCHED, answered_at=_now())})
+        msg = "Switched back to local voice."
+    else:
+        _save({SWITCHBACK_KEY: dict(sb, state=SB_KEPT, answered_at=_now())})
+        msg = "Keeping cloud voice. I will not ask again unless local voice changes."
+    _resolve_card(OFFER_DEDUPE_KEY)
+    return {"ok": True, "choice": choice, "message": msg}
+
+
+# ── the owner's words, for the voice answers ─────────────────────────────────
+
+_ANSWER_WORDS = (
+    ("keep_cloud", ("keep cloud", "keep the cloud", "stay on cloud", "stay on the cloud", "stay with cloud",
+                    "keep it on cloud", "not yet")),
+    ("switch_back", ("switch back", "go back to local", "back to local", "switch to local", "use local")),
+    (SCOPE_CALL, ("just this call", "this call only", "only this call", "for this call", "just for this call",
+                  "this call")),
+    (SCOPE_ALWAYS, ("always", "permanently", "from now on", "every call")),
+    ("cancel", ("never mind", "nevermind", "cancel", "stay on local", "keep local", "stay local")),
+)
+
+
+def classify_answer(words: str) -> Optional[str]:
+    """Which answer the owner's words give: `call`, `always`, `switch_back`,
+    `keep_cloud` or `cancel`. None when the words give none, or give two ("always,
+    no, just this call"): then Friday asks again rather than guess. Matched on the
+    owner's own utterance, never on a model's paraphrase."""
+    t = " ".join(str(words or "").lower().replace(",", " ").replace(".", " ").split())
+    if not t:
+        return None
+    hits = [cid for cid, needles in _ANSWER_WORDS if any(n in t for n in needles)]
+    return hits[0] if len(hits) == 1 else None
+
+
 # ── one status for the panel, the tool and session-info ──────────────────────
 
 def panel_status(*, engine: Optional[str] = None) -> dict:
@@ -593,7 +1052,21 @@ def panel_status(*, engine: Optional[str] = None) -> dict:
             "assessed_at": (snap or {}).get("assessed_at"),
             "why_cloud": why_cloud(engine=engine, settings=s, snapshot=snap),
             "job": job_status(), "offer": offer_card(s),
-            "numbers": measured_numbers()}
+            "numbers": measured_numbers(),
+            "cloud_question": cloud_question_card(s),
+            "switch_back": switch_back_card(s),
+            "cloud_choice": cloud_choice_summary(s)}
+
+
+def cloud_choice_summary(settings: Optional[dict] = None) -> Optional[dict]:
+    """The owner's recorded switch to cloud voice, for the panel: scope, when,
+    and why. None when voice is not on the cloud by a recorded choice."""
+    s = settings if settings is not None else _settings()
+    rec = _record(s)
+    if not rec or not _is_cloud(s.get("voice_engine")):
+        return None
+    return {"scope": rec.get("scope"), "at": rec.get("at"), "reason": rec.get("reason"),
+            "reason_text": SWITCH_REASONS.get(rec.get("reason"), ""), "source": rec.get("source")}
 
 
 def reset_for_tests() -> None:

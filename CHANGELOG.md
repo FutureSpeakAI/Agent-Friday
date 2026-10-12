@@ -73,6 +73,17 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   screen by rules. When it cannot tell which rows you mean it asks one short
   question (you answer it by saying what you want again; a spoken "yes" does not
   answer it). Changes still go to the model and its approval card.
+
+- **Cloud voice is asked for, and offered back once** (Settings > Voice). Moving
+  voice to the cloud, from Settings, by voice, or after local voice fails to
+  start, asks "just this call, or always?": two choices, "just this call"
+  marked Recommended because it keeps local voice your default, nothing
+  preselected. Just this call returns to local voice when the call ends;
+  always is kept with the time and the reason. After an always, when local
+  voice is measured and ready again, Friday offers once to switch back; no
+  answer changes nothing, and nothing switches silently in either direction.
+  You can answer by voice ("just this call", "always", "switch back", "keep
+  cloud"). Local-only mode refuses the switch and says why.
 - **What Laya learns about you** (on by default; Settings > Privacy & Data).
   When you correct her, or answer a question she asks, in a local voice call on
   this PC, or typed on Friday's own page while Laya picks the tool for typed chat

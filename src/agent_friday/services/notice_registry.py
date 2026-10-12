@@ -254,6 +254,14 @@ _ALL = [
     # capable (services/local_voice_readiness). Declined means never again.
     _e("LV7", "services/local_voice_readiness.py:maybe_offer_switch", "local_voice_switch_offer",
        NEEDS_YOU, "local-voice-switch-offer", source="local-voice"),
+    # Cloud voice is asked, never assumed: the question "just this call, or always?" when a switch
+    # to cloud voice starts from the voice or after a local voice failure (the screen card; the
+    # Settings row already has the panel in front of the owner), and the line that says a "just this
+    # call" has ended and voice is back on local. The switch-back offer is LV7 above.
+    _e("LV8", "services/local_voice_readiness.py:ask_cloud_switch", "cloud_voice_scope_question",
+       NEEDS_YOU, "cloud-voice-scope", source="local-voice"),
+    _e("LV9", "services/local_voice_readiness.py:_revert_call_scope", "cloud_voice_call_ended",
+       UPDATES, "cloud-voice-call-ended", source="local-voice"),
     # Laya's personal learning (services/laya_personal.notify): the one-time "Laya learns from your
     # corrections" notice, and the confirmations of forget / reset / go back / wipe. Never carries the
     # owner's words.
