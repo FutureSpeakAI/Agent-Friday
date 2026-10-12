@@ -350,10 +350,19 @@ def test_laya_absent_degrades_to_the_normal_turn(monkeypatch):
         "elapsed_ms": 0.1, "engine": None})
     ran = []
     monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "navigate_to", lambda inp: ran.append(inp))
-    out = rc.open_turn("open the go-live checklist", {}, session_id=SID, conversation_id=CONV,
+    out = rc.open_turn("open the go-live checklist", dict(PAGE), session_id=SID, conversation_id=CONV,
                        turn_id=TURN, settings=OPEN_ON, local=True)
     assert out is None and not ran
     assert rc.stats() == {"open_degraded": 1}
+
+
+def test_a_line_without_the_pages_own_source_is_never_resolved():
+    """No page source is no trusted surface: the resolver is never asked and nothing is counted."""
+    asked = []
+    out = rc.open_turn("open the go-live checklist", {}, session_id=SID, conversation_id=CONV,
+                       turn_id=TURN, settings=OPEN_ON, local=True,
+                       resolve=lambda text: asked.append(text))
+    assert out is None and asked == [] and rc.stats() == {}
 
 
 def test_a_resolver_that_raises_takes_the_normal_turn():
@@ -405,7 +414,7 @@ def test_a_point_and_act_question_disarms_an_older_pending_send(monkeypatch):
     monkeypatch.setattr(point_act, "looks_like", lambda m: True)
     monkeypatch.setattr(laya, "point_act_turn", lambda *a, **k: lr.Route(
         "ask", question="Did you mean the one from Mara?", layer="point_act"))
-    out = rc.open_turn("open the second one", {}, session_id=SID, conversation_id=CONV, turn_id=TURN,
+    out = rc.open_turn("open the second one", dict(PAGE), session_id=SID, conversation_id=CONV, turn_id=TURN,
                        settings=OPEN_ON, local=True)
     assert out["outcome"] == "ask"
     assert not _armed()
