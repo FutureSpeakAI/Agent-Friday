@@ -19,7 +19,8 @@ def _eval():
 
 def test_every_native_tool_has_a_case_and_the_set_is_big_enough():
     ev = _eval()
-    native = {t[0] for t in ve._VOICE_LIVE_TOOLS}
+    # The eval judges the local voice front; CLOUD_LIVE_ONLY tools are never in its contract.
+    native = {t[0] for t in ve._VOICE_LIVE_TOOLS} - ve.CLOUD_LIVE_ONLY
     covered = {want for _u, want, _r in ev.CASES if want}
     assert native - covered == set(), "native tools with no eval case"
     assert len(ev.CASES) >= 60

@@ -557,7 +557,9 @@ class TestReturnPolicy:
         blob = json.dumps(b)
         assert set(a) == set(b) == UNIFORM and a["status"] == b["status"] == "finished"
         assert FAKE_PATH not in blob and "example" not in blob and "not found" not in blob.lower()
-        assert "Wiki file not found" in wo.get(bad)["cp"]["ctx"]["items"][0]["error"]      # the detail stays local
+        # The detail stays local: the failed reads are noted on this PC (the filter step then
+        # drops the unread items, so the per-item error does not outlive the step).
+        assert any("could not be read" in n for n in wo.get(bad)["cp"]["ctx"]["notes"])
 
     def test_a_model_that_errors_answers_nothing_or_answers_off_form_ends_like_one_that_worked(self):
         def boom(task, goal, docs):
@@ -670,9 +672,10 @@ class TestReceipt:
         for x in h:
             H.metadata(x, CONV, provider=CLOUD, turn_id="turn-1")
         oid = _done(_order(inputs=h))
-        wo.status(oid, CONV, provider=CLOUD, turn_id="turn-1")
+        st = wo.status(oid, CONV, provider=CLOUD, turn_id="turn-1")
         sec = wo.receipt_section("turn-1")
-        assert sec["handles_seen"] == sorted(h)
+        # The inputs the cloud was shown, and the result handle the status handed it.
+        assert st["result_handle"] and sec["handles_seen"] == sorted(h + [st["result_handle"]])
         kinds = {(r["kind"], r["class"]) for r in sec["returns"]}
         assert ("aggregate", "P1_aggregate") in kinds and ("status", "P1_aggregate") in kinds
         assert all(set(r) == {"order_id", "kind", "size", "class"} for r in sec["returns"])
@@ -683,11 +686,11 @@ class TestReceipt:
         h = _handles()
         H.metadata(h[0], CONV, provider=CLOUD, turn_id="turn-2")
         oid = _done(_order(inputs=h))
-        wo.status(oid, CONV, provider=CLOUD, turn_id="turn-2")
+        st = wo.status(oid, CONV, provider=CLOUD, turn_id="turn-2")
         r = turn_receipt.build("turn-2")
-        assert r["work_orders"]["handles_seen"] == [h[0]] and r["found"] is True
+        assert r["work_orders"]["handles_seen"] == sorted([h[0], st["result_handle"]]) and r["found"] is True
         text = slice_head.describe_receipt(r, names=False)
-        assert "1 handle" in text and "aggregate" in text and CANARY not in text
+        assert "2 handles" in text and "aggregate" in text and CANARY not in text
         assert "work_orders" not in turn_receipt.build("turn-none")
 
     def test_a_turn_with_no_work_order_has_no_section(self):
@@ -952,8 +955,11 @@ class TestStore:
 
     def test_the_saved_snapshot_holds_no_document_text_and_a_stale_record_is_dropped(self):
         oid = _submit()
-        ex.run(oid, tool_fn=Tools(), model_fn=_model(""))                   # fails at summarise, text in memory
-        assert any(it["text"] for it in wo.get(oid)["cp"]["ctx"]["items"])
+        ex.run(oid, tool_fn=Tools(), model_fn=_model(""))                   # the model says nothing
+        items = wo.get(oid)["cp"]["ctx"]["items"]
+        # The order is over, so the documents' text left memory too; the handles stay.
+        assert wo.get(oid)["status"] in wo.ENDED_STATES
+        assert items and all(it["handle"] and not it["text"] for it in items)
         assert CANARY not in json.dumps(wo.snapshot())
         wo.update(oid, ended=time.time() - wo.RECORD_TTL_S - 5)
         assert wo.sweep() == 1 and wo.get(oid) is None

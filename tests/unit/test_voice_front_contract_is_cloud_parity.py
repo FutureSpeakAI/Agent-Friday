@@ -16,9 +16,15 @@ from agent_friday.services import voice_engine as ve
 
 def test_the_curated_contract_names_exactly_what_cloud_voice_declares():
     c = ve.build_voice_tool_contract()
-    assert c["names"] == ve._voice_tool_names(), (
+    # CLOUD_LIVE_ONLY (more_tools, call_cost) are declared to the Live API alone: they
+    # widen a Laya-chosen cloud kit and price a cloud call, and the local front has no
+    # use for them. Every other name is shared, in the same order.
+    assert ve.CLOUD_LIVE_ONLY == {"more_tools", "call_cost"}
+    cloud = ve._voice_tool_names()
+    assert c["names"] == [n for n in cloud if n not in ve.CLOUD_LIVE_ONLY], (
         "the local front and Gemini Live must hold the same tool names in the "
         "same order")
+    assert not set(c["names"]) & ve.CLOUD_LIVE_ONLY
     assert len(c["names"]) == len(set(c["names"])), "a name is declared twice"
 
 
