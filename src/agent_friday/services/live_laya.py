@@ -621,7 +621,7 @@ class LiveLaya:
     def _route(self, text: str):
         if self.route_fn is not None:
             return self.route_fn(text)
-        from agent_friday.services import laya_router as lr
+        from agent_friday.services import laya, laya_router as lr
         kw = {"tools": self.held, "surface": SURFACE, "log": False}
         # This router may not take the owner-trust and quiet flags (they arrive
         # with point-and-act); pass only what it accepts, never fail the call.
@@ -632,7 +632,9 @@ class LiveLaya:
             # the owner's stage, run the item resolver or open/select rows. `self.trusted` says the call is
             # the owner's for the call's other checks; it does not widen the router.
             kw["trusted"] = False
-        return lr.route(text, **kw)
+        # Through the contract (services/laya), like every other Laya decision: one deadline, a receipt,
+        # and the router's sealed rules when the router does not answer in time.
+        return laya.route_turn(text, caller="voice.live", **kw)
 
     def _decide(self, text: str, execute: bool = True) -> None:
         try:
