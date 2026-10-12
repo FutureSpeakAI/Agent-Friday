@@ -168,8 +168,15 @@ def test_the_wait_for_room_is_bounded(machine, monkeypatch):
 @pytest.mark.parametrize("refusal,said", [
     ("display", "the graphics card has no room to spare for the display"),
     ("held", "another job is using the local models"),
+    ("queued", "another job is using the local models"),
 ])
 def test_a_refused_park_says_why(machine, monkeypatch, refusal, said):
+    # `held`: no lease queue, the grant is refused at once ("already held").
+    # `queued`: the local scheduler's lease queue waits its allowance out behind
+    # the held lease ("waiting for the voice call to finish"); the owner is told
+    # the same true reason either way.
+    from agent_friday.services import local_scheduler as ls
+    monkeypatch.setattr(ls, "lease_wait_s", lambda: 0.01 if refusal == "queued" else 0.0)
     arb, _room = machine
     if refusal == "display":
         from agent_friday.services import hardware_profile
