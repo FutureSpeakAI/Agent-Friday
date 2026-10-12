@@ -144,7 +144,7 @@ def test_local_socket_carries_admission_origin_to_both_minds(app, monkeypatch, t
     def generate(*a, session_ctx, **kw):
         return admit("ask_crew", session_ctx) or "accepted", []
 
-    def bounded(name, args, send, session):
+    def bounded(name, args, send, session, runner=None, **kw):
         return admit(name, voice_engine._voice_ctx(session)) or "accepted"
 
     class Front:
