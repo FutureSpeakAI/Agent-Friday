@@ -2191,10 +2191,18 @@ def chat():
                 _om = get_manager((settings.get('model_routing') or {}).get(
                     'ollama_url', 'http://localhost:11434'))
                 # '-cloud' / ':cloud' tags are relayed to ollama.com, so they
-                # are never an on-device candidate, even as a last resort.
+                # are never an on-device candidate. They are a last resort only
+                # where the cloud is already open for this turn: a cloud mode
+                # (cloud_only refused above), or a recorded intent that opens
+                # local_preferred. Never in local_only. A real local model
+                # always wins (`_real` below), and a cloud tag picked here is
+                # prepared AS CLOUD (_prep_for: vault withheld, PII scrubbed);
+                # the transport's own require() still gates the call.
                 from agent_friday.services.local_only_guard import is_cloud_model_tag as _is_cloud_tag
+                _cloud_tags_ok = (_mode != 'local_only' and (
+                    _cloud_intent.is_cloud_mode(_mode) or _cloud_intent.opens_cloud(_mode)))
                 _om_models = ([m for m in (_om.list_models() or [])
-                               if not _is_cloud_tag(m.get('name'))]
+                               if _cloud_tags_ok or not _is_cloud_tag(m.get('name'))]
                               if _om.is_available() else [])
                 if _om_models:
                     # Prefer a real on-device model; skip ':cloud' passthrough stubs.
@@ -2220,8 +2228,10 @@ def chat():
                     _route_info['is_local'] = True
                     # Rebuild the prompt for local (vault content allowed, no PII scrub).
                     system_prompt, sources, pii_lookup = _prep_for('local', model=_local_pick)
-                    if _outage_fallback.may_fall_back(_mode, no_key=True):
-                        # cloud_preferred: the local answer is said out loud.
+                    if (_outage_fallback.may_fall_back(_mode, no_key=True)
+                            and not is_cloud_model_tag(str(_local_pick))):
+                        # cloud_preferred: the local answer is said out loud
+                        # (a cloud tag is not a local answer, so not here).
                         _outage_local = {"provider": _outage_fallback.provider_label('cloud')}
             except Exception as _safe_e:
                 print(f"  [ROUTER] local safety-net routing failed: {_safe_e}")
