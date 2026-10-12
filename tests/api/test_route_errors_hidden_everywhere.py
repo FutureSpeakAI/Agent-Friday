@@ -195,6 +195,37 @@ def test_a_tool_that_raises_gives_the_model_the_text_and_marks_it(monkeypatch):
     assert INTERNAL in out and isinstance(out, ExceptionText)
 
 
+def test_an_instant_open_whose_tool_raises_hides_the_text_from_the_page(client, monkeypatch):
+    # The "open the X" reflex runs one command with no model; its trace and its refusal line
+    # go straight to the page through routes/chat._instant_response.
+    from agent_friday.governance import action_gate
+    from agent_friday.routes import chat as chat_routes
+    from agent_friday.services import agent, reflex_chat
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "zz_boom_probe", _boom)
+    monkeypatch.setitem(agent.TOOL_RINGS, "zz_boom_probe", 0)
+    monkeypatch.setattr(action_gate, "INTERNAL_TOOLS",
+                        action_gate.INTERNAL_TOOLS | {"zz_boom_probe"})
+    monkeypatch.setattr(chat_routes, "_persist_turn", lambda *a, **k: None)
+    monkeypatch.setattr(chat_routes, "_save_chat_history", lambda *a, **k: None)
+
+    class _Res:
+        command = {"tool": "zz_boom_probe", "input": {}}
+
+        class chosen:
+            title = "Go-live checklist"
+
+    out = reflex_chat._run_command(_Res(), "open the go-live checklist", session_id="s-hidden",
+                                   conversation_id="c-hidden", turn_id=None, authenticated=True)
+    assert out["outcome"] == "refused"
+    with client.application.test_request_context("/api/chat", method="POST"):
+        resp = chat_routes._instant_response("open the go-live checklist", out, "c-hidden")
+    data = _hidden(resp)
+    assert data["error_id"] and data["instant"] is True
+    # The text is still there for the service's own reader; only the page's copy is swapped.
+    assert isinstance(out["tool_trace"][0]["result"], ExceptionText)
+    assert isinstance(out["reply"], ExceptionText) and INTERNAL in out["reply"]
+
+
 # ── services whose results routes return ─────────────────────────────────────
 
 def test_the_phone_ingress_port_failure_is_marked(monkeypatch):

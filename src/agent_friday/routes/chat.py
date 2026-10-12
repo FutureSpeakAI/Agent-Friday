@@ -406,10 +406,14 @@ def _instant_response(message, result, conversation_id):
     `result` is services/reflex_chat's {"reply", "tool_trace", "actions",
     "outcome"}. The exchange is written to the conversation like any other.
     """
-    reply = str(result.get("reply") or "")
+    reply = result.get("reply") or ""
+    # A str reply is kept as it is: one that quotes a tool's exception text is marked, and
+    # public_result below swaps it. str() would drop the mark.
+    reply = reply if isinstance(reply, str) else str(reply)
     # A reply that names rows from the owner's screen (a title, a sender) is shown to them live, but the
     # conversation keeps a neutral line: the next turn's model may be a cloud model that reads the history.
-    kept = str(result.get("history_text") or reply)
+    kept = result.get("history_text") or reply
+    kept = kept if isinstance(kept, str) else str(kept)
     user_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                 'role': 'user', 'text': message, 'pinned': False, 'sources': []}
     friday_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
