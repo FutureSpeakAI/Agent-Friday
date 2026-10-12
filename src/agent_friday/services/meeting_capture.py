@@ -790,16 +790,18 @@ class MeetingManager:
         try:
             # Only the names that were forgotten while THIS meeting was being made, stored against its id: a
             # name like "Will" or "May" must never rewrite a meeting that was recorded later.
-            names = _pending_forget_take(m.get("id"))
+            names = _pending_forget_peek(m.get("id"))
             pat = _name_pattern(names)
             if pat is None:
-                return
+                return False
             new, n = _redact_value(m, pat)
             if n:
                 m.clear()
                 m.update(new)
+            return True                  # the entry is dropped only after the record is written
         except Exception as e:  # noqa: BLE001 - never blocks a save
             log.info("meeting %s: forgotten names not applied (%s)", m.get("id"), type(e).__name__)
+            return False
 
     def _save(self, m: dict) -> None:
         with self._io:
@@ -809,10 +811,16 @@ class MeetingManager:
             if gone:
                 m["keep_audio"] = False
                 m["audio_deleted_at"] = gone
+            applied = False
             if m.get("state") not in ("recording", "transcribing"):
-                self._apply_forgotten(m)
+                applied = self._apply_forgotten(m)
             _write_enc(_dir(m["id"]) / "meeting.json.enc",
                        json.dumps(m, ensure_ascii=False).encode("utf-8"))
+            if applied:
+                try:
+                    _pending_forget_drop(m["id"])
+                except Exception as e:  # noqa: BLE001 - the record is written; the entry is used again harmlessly
+                    log.info("meeting %s: pending names not dropped (%s)", m["id"], type(e).__name__)
 
     # -- status ------------------------------------------------------------
     def status(self) -> dict:
@@ -1562,6 +1570,10 @@ class MeetingManager:
                                    "right now. Try deleting it again.", 500)
             self._deleted.add(mid)
         try:
+            _pending_forget_drop(mid)       # nothing is left to redact in a meeting that is gone
+        except Exception as e:  # noqa: BLE001
+            log.info("meeting %s: pending names not dropped (%s)", mid, type(e).__name__)
+        try:
             self.archive_remove(mid)       # its Library documents go with it
         except Exception as e:  # noqa: BLE001 - the archive never blocks a deletion
             log.info("meeting %s: archive not cleared: %s", mid, e)
@@ -2112,23 +2124,21 @@ _PENDING_LOCK = threading.Lock()
 
 
 def _pending_path() -> Path:
-    return _root() / "_forget_pending.json"
+    return _root() / "_forget_pending.enc"
 
 
 def _pending_read() -> dict:
+    """The pending names, sealed with the meetings keystore like the records they belong to: the file would
+    otherwise tie a forgotten person's name to the meetings they were in."""
     try:
-        d = json.loads(_pending_path().read_text(encoding="utf-8"))
+        d = json.loads(_unprotect(_pending_path().read_bytes()).decode("utf-8"))
         return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    except (FileNotFoundError, ValueError):
+        return {}                    # no list yet; a locked keystore raises, so a list is never overwritten blind
 
 
 def _pending_write(d: dict) -> None:
-    p = _pending_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(d), encoding="utf-8")
-    os.replace(tmp, p)
+    _write_enc(_pending_path(), json.dumps(d).encode("utf-8"))
 
 
 def _pending_forget_add(mid: str, names) -> None:
@@ -2139,16 +2149,19 @@ def _pending_forget_add(mid: str, names) -> None:
         _pending_write(d)
 
 
-def _pending_forget_take(mid) -> list:
-    """The names waiting for this meeting (and forgotten from the list)."""
+def _pending_forget_peek(mid) -> list:
+    """The names waiting for this meeting (they stay until its record is written)."""
     if not mid:
         return []
     with _PENDING_LOCK:
+        return list(_pending_read().get(mid) or [])
+
+
+def _pending_forget_drop(mid) -> None:
+    with _PENDING_LOCK:
         d = _pending_read()
-        names = d.pop(mid, None)
-        if names:
+        if d.pop(mid, None) is not None:
             _pending_write(d)
-    return list(names or [])
 
 
 def _meetings_naming(names, redact: bool) -> int:
@@ -2162,6 +2175,13 @@ def _meetings_naming(names, redact: bool) -> int:
         if mid and row.get("state") in ("recording", "transcribing"):
             if redact:
                 _pending_forget_add(mid, names)      # redacted when this meeting first saves settled
+                try:
+                    with mgr._io:
+                        again = _load(mid)
+                        if again.get("state") not in ("recording", "transcribing"):
+                            mgr._save(again)         # it settled in between: redacted now, not at some later save
+                except Exception as e:  # noqa: BLE001
+                    log.info("meeting %s: not settled yet (%s)", mid, type(e).__name__)
             continue
         if not mid or row.get("state") == "unreadable":
             continue

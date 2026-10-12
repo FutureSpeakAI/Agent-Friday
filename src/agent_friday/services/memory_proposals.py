@@ -487,7 +487,10 @@ def pending(day: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]
     out = []
     for r in rows:
         d = dict(zip(cols, r[:8]))
+        was_sealed = isinstance(d.get("text"), str) and d["text"].startswith(_SEALED)
         d["text"], d["evidence"] = _open(d.get("text")), _open(d.get("evidence"))
+        if was_sealed and not d["text"]:
+            d["text"] = "(locked)"           # sealed and the keystore cannot open it: not a blank line
         if r[8]:
             try:
                 d["provenance"] = json.loads(r[8])
@@ -652,17 +655,29 @@ def purge_meeting(meeting_id: Optional[str] = None) -> int:
         conn.close()
 
 
-def _name_rows(conn, names) -> List[str]:
+LOCKED_MESSAGE = ("could not check meeting suggestions: the keystore that seals them is not available, so some "
+                  "were not looked at")
+
+
+class SuggestionsLocked(RuntimeError):
+    pass
+
+
+def _name_rows(conn, names) -> tuple:
     wanted = [n for n in {" ".join(str(x or "").split()).lower() for x in (names or [])} if len(n) >= 3]
     if not wanted:
-        return []
+        return [], 0
     pats = [re.compile(r"\b" + r"\s+".join(re.escape(w) for w in n.split(" ")) + r"\b", re.IGNORECASE) for n in wanted]
-    out = []
+    out, locked = [], 0
     for fid, text, evidence in conn.execute("SELECT fact_id, text, evidence FROM proposed_facts").fetchall():
-        hay = "%s %s" % (_open(text), _open(evidence))
+        opened = _open(text)
+        if isinstance(text, str) and text.startswith(_SEALED) and not opened:
+            locked += 1                      # sealed and not openable: unknown, never "does not name them"
+            continue
+        hay = "%s %s" % (opened, _open(evidence))
         if any(p.search(hay) for p in pats):
             out.append(fid)
-    return out
+    return out, locked
 
 
 def _already_from_meeting(conn, meeting_id: str, text: str) -> bool:
@@ -677,7 +692,10 @@ def people_find(names, emails) -> int:
     """forget-person: how many proposals name the person (any status)."""
     conn = _connect()
     try:
-        return len(_name_rows(conn, set(names or ()) | set(emails or ())))
+        ids, locked = _name_rows(conn, set(names or ()) | set(emails or ()))
+        if locked:
+            raise SuggestionsLocked(LOCKED_MESSAGE)
+        return len(ids)
     finally:
         conn.close()
 
@@ -685,10 +703,12 @@ def people_find(names, emails) -> int:
 def people_purge(names, emails) -> int:
     conn = _connect()
     try:
-        ids = _name_rows(conn, set(names or ()) | set(emails or ()))
+        ids, locked = _name_rows(conn, set(names or ()) | set(emails or ()))
         for fid in ids:
             conn.execute("DELETE FROM proposed_facts WHERE fact_id=?", (fid,))
         conn.commit()
+        if locked:
+            raise SuggestionsLocked(LOCKED_MESSAGE)      # what could be opened is purged; the rest is reported
         return len(ids)
     finally:
         conn.close()

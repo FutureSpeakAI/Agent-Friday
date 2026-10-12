@@ -182,7 +182,7 @@
         loadProps();
       }).catch(() => { setBusy(''); setMsg('That could not be done just now.'); });
     };
-    const decide = (id, keep) => post('/api/memory/proposals/' + (keep ? 'approve' : 'reject'), { fact_ids: [id] }).then(loadProps).catch(() => {});
+    const decide = (id, keep) => post('/api/memory/proposals/' + (keep ? 'approve' : 'reject'), { fact_ids: [id] }).then(d => { if (d && d.message) setMsg(d.message); else if (d && d.reason) setMsg(d.reason); loadProps(); }).catch(() => {});
     const attach = () => {
       setBusy('calendar'); setMsg('');
       post('/api/meetings/' + m.id + '/calendar').then(d => { setBusy(''); setMsg(say(d) || 'Done.'); }).catch(() => { setBusy(''); setMsg('That could not be done just now.'); });

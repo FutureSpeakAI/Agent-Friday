@@ -214,11 +214,9 @@ POLL_S = 2.0
 _sleep = time.sleep
 
 
-def _redact(text: str) -> str:
-    """A name the owner asked Friday to forget is not read into the archive again from the meeting's own
-    record (forget-person writes a tombstone, and the indexer consults it on every run)."""
-    from agent_friday.services import forget_person
-    return forget_person.redact_forgotten_names(text)
+# The archive reads the meeting's own record. A name the owner asked Friday to forget is redacted there (per
+# meeting: capture.people_purge, and capture._apply_forgotten for a meeting still being made), so no global list of
+# forgotten names is applied here: a common word forgotten as a name must not rewrite other meetings' passages.
 
 
 def _index_one(store, mid: str, part: str, title: str, blocks: list, force: bool = False) -> str:
@@ -226,11 +224,6 @@ def _index_one(store, mid: str, part: str, title: str, blocks: list, force: bool
     from agent_friday.services.library.store import INDEX_VERSION
     from agent_friday.services.library.textclean import safe_title
     path = str(path_for(mid, part))
-    try:
-        title = _redact(title)
-        blocks = [dict(b, text=_redact(b["text"])) for b in blocks]
-    except Exception:  # noqa: BLE001 - a forgotten name that cannot be checked for is not left in
-        return "failed"
     sha = hashlib.sha256(json.dumps([title, [b["text"] for b in blocks]], ensure_ascii=False)
                          .encode("utf-8")).hexdigest()
     if store.tombstoned(sha, path):

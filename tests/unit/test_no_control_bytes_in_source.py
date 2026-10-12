@@ -13,7 +13,7 @@ SUFFIXES = {".py", ".js", ".json", ".html"}
 
 def test_no_source_or_test_file_carries_a_stray_control_byte():
     found = []
-    for base in ("src", "tests", "static", "scripts", "tools"):
+    for base in ("src", "tests", "static", "scripts", "tools", "ui_parts"):
         for path in (ROOT / base).rglob("*"):
             if path.suffix not in SUFFIXES or not path.is_file() or "vendor" in path.parts:
                 continue
@@ -21,4 +21,7 @@ def test_no_source_or_test_file_carries_a_stray_control_byte():
             for byte, name in BAD.items():
                 if bytes([byte]) in data:
                     found.append("%s: %s" % (path.relative_to(ROOT), name))
+    for name in ("index.html",):
+        data = (ROOT / name).read_bytes()
+        found += ["%s: %s" % (name, label) for byte, label in BAD.items() if bytes([byte]) in data]
     assert not found, found
