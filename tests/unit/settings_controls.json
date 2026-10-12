@@ -541,7 +541,7 @@
   ],
   "route": "POST /api/settings",
   "reader_file": "src/agent_friday/routing/model_router.py",
-  "reader_needle": "return self.config.get(\"mode\", \"cloud_only\")",
+  "reader_needle": "mode = self.config.get(\"mode\", \"cloud_only\")",
   "status": "ok",
   "note": "core._save_settings drops any mode change that does not carry owner_routing_change, and this is the only caller that sets it. Also written by setup chat/wizard (not Settings). Read on every turn by routing/model_router.ModelRouter.mode."
  },

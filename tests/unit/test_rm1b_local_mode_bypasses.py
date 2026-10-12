@@ -575,7 +575,8 @@ class TestF19Migration:
     def home(self, tmp_path, monkeypatch):
         monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
         monkeypatch.setattr(core, "SETTINGS_FILE", tmp_path / "settings.json")
-        monkeypatch.setitem(core._SMART_MIGRATION_TRIED, 0, False)
+        # The flag is a one-item list; monkeypatch.setitem needs a mapping.
+        monkeypatch.setattr(core, "_SMART_MIGRATION_TRIED", [False])
         core._invalidate_settings_cache()
         yield tmp_path
         core._invalidate_settings_cache()
