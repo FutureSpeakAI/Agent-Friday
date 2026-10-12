@@ -3301,7 +3301,8 @@ def _tool_navigate_to(inp):
     from agent_friday.services.desktop_targets import open_on_desktop
     new_tab = bool(inp.get('new_tab'))
     name_items = not _cloud_voice()
-    if name_items and str(inp.get('kind') or '').strip().lower() == 'meeting':
+    from agent_friday.services.desktop_targets import _norm_kind
+    if name_items and _norm_kind(inp.get('kind') or '') == 'meeting':      # "call" and "meetings" are the same kind
         # a meeting's title is named only to a reader that may hear the meetings (a local loop speaking here)
         try:
             from agent_friday.services.library import tools as _lt
