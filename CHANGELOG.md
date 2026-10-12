@@ -18,7 +18,8 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 ## [1.1.0-beta.1] - Agent Friday Beta 1.1 (⟨DATE⟩)
 
 Agent Friday™ Beta 1.1 (version `1.1.0b1`, tag `v1.1.0-beta.1`, build
-sequence 101010001) follows Beta 1.0.2. It installs over Beta 1.0.2, Beta 1.0.1,
+sequence 101010001) follows Beta 1.0.1; Beta 1.0.2 was prepared but never
+published, and its changes ship here. It installs over Beta 1.0.2, Beta 1.0.1,
 Beta 1.0 and 5.x in place, with the data backed up first.
 
 ### Added

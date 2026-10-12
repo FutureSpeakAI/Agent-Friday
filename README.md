@@ -11,7 +11,7 @@ sends nothing about you anywhere.
 
 ![The Friday desktop](docs/images/desktop.png)
 
-Agent Friday™ Beta 1.1 follows Beta 1.0.2, Beta 1.0.1 and Beta 1.0, the first release of the app. It is a pre-release:
+Agent Friday™ Beta 1.1 follows Beta 1.0.1 and Beta 1.0, the first release of the app. It is a pre-release:
 it is meant to be tried, and it has rough edges. They are listed in
 [Known issues](KNOWN_ISSUES.md).
 

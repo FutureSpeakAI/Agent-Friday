@@ -3,7 +3,7 @@
 *FutureSpeak.AI™*
 
 Agent Friday™ is a private AI agent that runs on your own Windows PC. Beta 1.1
-follows Beta 1.0.2, Beta 1.0.1 and Beta 1.0, the first release of the app. It
+follows Beta 1.0.1 and Beta 1.0, the first release of the app. It
 is a **pre-release**: it is meant to be tried, and it has rough edges, listed
 below.
 
@@ -88,7 +88,7 @@ upgrades in place. Before it changes anything, setup stops Friday and backs up
 your data folder to a dated folder under `.friday-backups` in your user folder,
 and your vault is part of that backup. When it finishes, it checks that your
 data folder has every file it had before and that your vault's key files are
-unchanged. Upgrades from 5.14.3, Beta 1.0, Beta 1.0.1 and Beta 1.0.2 are tested
+unchanged. Upgrades from 5.14.3, Beta 1.0 and Beta 1.0.1 are tested
 before each release. Details are in [Upgrading from 5.x](#upgrading-from-5x)
 below.
 

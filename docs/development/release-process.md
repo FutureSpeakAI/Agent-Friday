@@ -43,8 +43,8 @@ The full matrix, with what each path can and cannot do, is in
    checks `/api/health` and first run (no login on localhost, the consent flow,
    scheduled jobs on a local seat, the phone off, agent.<name> once its hosts
    entry exists), uninstalls keeping the data, verifies the data is
-   byte-identical, and reinstalls; `upgrade` runs once for each previous line, v5.14.3, v1.0.0-beta.1, v1.0.1-beta.1 and v1.0.2-beta.1:
-   it installs that published release the way it ships (a zip for 5.x, the setup program for Beta 1.0, 1.0.1 and 1.0.2), creates a vault, upgrades in
+   byte-identical, and reinstalls; `upgrade` runs once for each previous published line, v5.14.3, v1.0.0-beta.1 and v1.0.1-beta.1:
+   it installs that published release the way it ships (a zip for 5.x, the setup program for Beta 1.0 and 1.0.1), creates a vault, upgrades in
    place with the new exe, and requires the passphrase and data to survive, a
    backup to exist, and the shortcuts to land. The release waits for every leg. Both jobs upload their evidence.
    Certificate trust raises a Windows security dialog and is checked by hand on
