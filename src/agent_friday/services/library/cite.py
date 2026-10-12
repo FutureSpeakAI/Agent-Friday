@@ -158,6 +158,46 @@ def _digest(text: str) -> str:
     return hashlib.sha1(" ".join(text.split()).encode("utf-8")).hexdigest()
 
 
+_MEETING_FILE_LOCK = threading.Lock()
+_MEETING_REPLIES: "set[str] | None" = None
+_THREAD = threading.local()
+
+
+def _meeting_file() -> Path:
+    from agent_friday import paths
+    return paths.friday_home() / "library" / "meeting_replies.enc"
+
+
+def _load_meeting_replies() -> set:
+    global _MEETING_REPLIES
+    if _MEETING_REPLIES is None:
+        out: set = set()
+        try:
+            from agent_friday.services import credential_store as cs
+            out = set(json.loads(cs.unprotect(_meeting_file().read_bytes()).decode("utf-8")))
+        except Exception:
+            out = set()
+        _MEETING_REPLIES = out
+    return _MEETING_REPLIES
+
+
+def _save_meeting_replies() -> None:
+    try:
+        from agent_friday.services import credential_store as cs
+        keep = sorted(_MEETING_REPLIES or ())[-4000:]
+        blob, _m = cs.protect(json.dumps(keep).encode("utf-8"))
+        p = _meeting_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(blob)
+    except Exception:
+        pass                               # memory still holds it for this run
+
+
+def note_meeting_turn(on: bool = True) -> None:
+    """The reply this thread saves next read a meeting (see usage.mark_meeting)."""
+    _THREAD.meeting = bool(on)
+
+
 def remember_library_reply(text) -> None:
     """A saved assistant reply that used the Library (see is_library_reply)."""
     if not isinstance(text, str) or not text.strip():
@@ -167,6 +207,11 @@ def remember_library_reply(text) -> None:
         _REPLIES.move_to_end(_digest(text))
         while len(_REPLIES) > _REPLIES_MAX:
             _REPLIES.popitem(last=False)
+    if getattr(_THREAD, "meeting", False):
+        _THREAD.meeting = False
+        with _MEETING_FILE_LOCK:
+            _load_meeting_replies().add(_digest(text))
+            _save_meeting_replies()
 
 
 def is_library_reply(text) -> bool:
@@ -175,6 +220,8 @@ def is_library_reply(text) -> bool:
     if not isinstance(text, str) or not text:
         return False
     if "[lib:" in text or "[unverified-lib:" in text or "<evidence-" in text:
+        return True
+    if quotes_a_meeting(text):
         return True
     with _REPLIES_LOCK:
         return _digest(text) in _REPLIES
@@ -189,6 +236,8 @@ def turn_used_library(tool_trace, conversation_id: str | None = None) -> bool:
     """Did this turn read Library text? Its tool trace says for a chat turn; a spoken turn and a read_file
     of a Library document left a mark on the conversation instead. The mark is always taken."""
     read = usage.consume(conversation_id)
+    if usage.consume_meeting(conversation_id):
+        note_meeting_turn(True)
     return bool(used_library(tool_trace) or read)
 
 
@@ -196,6 +245,9 @@ def quotes_a_meeting(text) -> bool:
     """Does this saved reply cite a passage of a meeting's transcript or notes (a footnote [lib:<doc>#<block>] of an
     archive document)? Such a reply never rides a later cloud turn, whatever the Library cloud setting says."""
     try:
+        with _MEETING_FILE_LOCK:
+            if _digest(str(text or "")) in _load_meeting_replies():
+                return True
         ids = {int(i) for i in re.findall(r"lib:(\d+)#\d+", str(text or ""))}
         if not ids:
             return False

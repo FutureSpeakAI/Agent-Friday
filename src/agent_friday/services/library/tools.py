@@ -217,6 +217,8 @@ def record_use(principal: str, doc_id: int, block_id: int, res: dict | None = No
         cid = _ag._CURRENT_CONVERSATION.get() or MAIN_ID
         from agent_friday.services.library import usage
         usage.mark(cid)
+        if meeting_archive.is_archive_doc(store_for(principal).get_document(int(doc_id))):
+            usage.mark_meeting(cid)          # the reply saved from this turn is a meeting reply, footnote or not
         res = res or {}
         store_for(principal).add_citation(int(block_id), int(doc_id), cid, None,
                                           versions.compact(res.get("stamp")), res.get("receipt"))
