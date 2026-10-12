@@ -945,14 +945,16 @@ def _ROUTE_PARAMS(lr) -> frozenset:
 
 
 def _has_write_intent(lr, t: str) -> bool:
-    """The router's own check when it has one; else any clause that is an
-    imperative that changes something (its _ACT list plus _MORE_ACT)."""
-    fn = getattr(lr, "_has_write_intent", None)
+    """The router's own check for this guard when it has one (``_has_live_write_intent``: the narrower verb
+    list, because a write intent switches this guard off); else any clause that is an imperative that changes
+    something (its _ACT_LIVE or _ACT list plus _MORE_ACT)."""
+    fn = getattr(lr, "_has_live_write_intent", None)
     if fn is not None:
         return bool(fn(t))
+    act = getattr(lr, "_ACT_LIVE", None) or lr._ACT
     polite = re.compile(getattr(lr, "_POLITE", "^") + _MORE_ACT.pattern, re.I)
     for c in [t] + [c.strip() for c in _CLAUSES.split(t) if c and c.strip()]:
-        if lr._ACT.search(c) or polite.search(c):
+        if act.search(c) or polite.search(c):
             return True
     return False
 

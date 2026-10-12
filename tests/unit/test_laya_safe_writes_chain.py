@@ -360,7 +360,8 @@ def test_n8_off_untrusted_and_shadow_typed_lines_take_the_ordinary_turn(chat, gm
 # ── N1: a refusal never hands rows to the deeper mind for a verb that runs with no card ───────────
 
 @pytest.mark.parametrize("text,n", [("label these as <b>x</b>", 3), ("star these", 26), ("mark these as read", 26),
-                                    ("unstar these", 26), ("label these as x" + "y" * 60, 3)])
+                                    ("unstar these", 26), ("label these as x" + "y" * 60, 3),
+                                    ("label these as Reply Now", 3), ("label these as Bora Bora", 3)])
 def test_n1_a_refused_no_card_verb_goes_to_the_deeper_mind_with_the_words_alone(gmail, monkeypatch, text, n):
     """Fails on DA-3's ordering fix, which attached rule-picked rows after Laya refused: the deeper mind
     then ran organize_email(star|read|label) at once with no card."""
@@ -373,6 +374,18 @@ def test_n1_a_refused_no_card_verb_goes_to_the_deeper_mind_with_the_words_alone(
     assert not r.args.get("refs"), "no Laya-resolved rows ride along for a verb that raises no card"
     assert rv._deferred_request(text, r, local=True) == text
     assert not sw._TICKETS and not _cards()
+
+
+def test_a_label_is_the_whole_phrase_the_owner_said_after_as_or_to():
+    """Fails on 3869afe37: the label only had to appear somewhere in the words, so "Reply Now" (normalised to
+    "reply", a trailing filler dropped) or "Bora Bora" (a doubled word collapsed) carded a shorter label."""
+    said = sw._said_as_written
+    assert not said("Reply", "label these as Reply Now")
+    assert not said("Bora", "label these as Bora Bora")
+    assert not said("b x b", "label these as <b>x</b>")
+    assert not said("receipts", "label the receipts as taxes")                  # in the words, but not the label
+    assert said("Receipts", "label these as Receipts.") and said("Reply Now", "label these as  reply now!")
+    assert said("Trips to Rome", "move these to Trips to Rome") and said("receipts", "move these into receipts")
 
 
 def test_n1_a_card_verb_keeps_its_rows_because_the_model_path_raises_a_card_for_it(gmail, monkeypatch):
@@ -1868,7 +1881,7 @@ def test_fn_md1_a_card_free_change_on_a_spoken_turn_reaches_that_turns_receipt(c
     assert "DONE" in out or "starred" in out.lower(), out
     got = turn_receipt.build("voice-abc123")
     (change,) = got["card_free_changes"]
-    # the count is conversations (one was named), as the receipt and the docs say
+    # the count is conversations (one was named), as the receipt's summary says; message ids are listed apart
     assert change["action"] == "star" and change["count"] == 1 and change["undoable"] is True
 
 

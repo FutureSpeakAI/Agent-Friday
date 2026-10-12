@@ -278,11 +278,15 @@ def _clean_label(raw: Any) -> str:
 
 
 def _said_as_written(label: str, text: Any) -> bool:
-    """True when ``label`` is in the owner's words as a whole phrase (case and runs of spaces aside), so a
-    label point_act rebuilt from normalised words is never put on a card in place of what was said."""
-    said = " ".join(str(text or "").replace("’", "'").split()).lower()
+    """True only when ``label`` is the WHOLE phrase that follows as / to / into / in / under / with at the end of
+    the owner's words (case, runs of spaces and closing punctuation aside). point_act reads normalised words, which
+    drop trailing fillers and doubled words and rewrite symbols, so "label these as Reply Now" reads as "reply";
+    the card must never name a label shorter than, or other than, the one that was said. Anything else is False,
+    and the words go to the deeper mind alone."""
+    said = " ".join(str(text or "").replace("’", "'").split()).lower().rstrip(" .,!?")
     want = " ".join(label.split()).lower()
-    return bool(want) and re.search(r"(?<![A-Za-z0-9])" + re.escape(want) + r"(?![A-Za-z0-9])", said) is not None
+    return bool(want) and re.search(r"(?:^|\s)(?:as|to|into|in|under|with)\s+" + re.escape(want) + r"$",
+                                    said) is not None
 
 
 #: The only ways point_act may have chosen the rows for a safe write: the deictic rules, the
@@ -349,8 +353,8 @@ def build(pa: Any, *, stage: Optional[dict] = None, text: Any = None) -> Tuple[O
         if not label:
             return None, "no usable label in the owner's words"
         if text is not None and not _said_as_written(label, text):
-            # point_act reads normalised words: "<b>x</b>" or "R&D" comes out as another name. The card names
-            # only a label the owner actually said.
+            # point_act reads normalised words: "<b>x</b>", "R&D" or "Reply Now" comes out as another name. The
+            # card names only the label the owner actually said, in full.
             return None, "the label is not in the owner's words as written"
     elif a.get("destination") and verb.action not in ("read", "unread"):
         return None, "a destination on a verb that takes none"          # (mark ... as read: the word is the verb's)
