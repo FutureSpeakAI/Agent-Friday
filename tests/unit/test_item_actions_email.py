@@ -44,11 +44,11 @@ class FakeGmail:
     def heads(self, acct, tids):
         return {t: {"subject": "Subject %s" % t, "sender": "LinkedIn Jobs", "date": ""} for t in tids}
 
-    def apply_action(self, acct, tids, action):
+    def apply_action(self, acct, tids, action, only=None, exact_only=False):
         self.calls.append(("apply", acct, tuple(tids), action))
         return {"changed": {t: {"added": [], "removed": ["INBOX"]} for t in tids}, "failed": {}}
 
-    def modify_threads(self, acct, tids, add=(), remove=(), _allow=()):
+    def modify_threads(self, acct, tids, add=(), remove=(), _allow=(), only=None, exact_only=False):
         self.calls.append(("modify", acct, tuple(tids), tuple(add), tuple(remove)))
         return {"changed": {t: {"added": list(add), "removed": list(remove)} for t in tids}, "failed": {}}
 

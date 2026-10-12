@@ -82,6 +82,14 @@ class FakeGmail:
         self.senders = {}             # message id -> From header (default: Sender <sender@example.test>)
         self.ts = {}                  # message id -> arrival time in ms (default: long ago)
         self.last_kw = {}
+        self.label_empty = True       # whether a label this fake created is empty when Undo asks to delete it
+
+    def delete_label_if_empty(self, acct, label_id):
+        self.calls.append(("delete_label", acct, label_id))
+        if not self.label_empty:
+            return False
+        self.labels[acct] = [l for l in self.labels.get(acct, []) if l.get("id") != label_id]
+        return True
 
     def snapshot_messages(self, acct, tids):
         self.calls.append(("snapshot", acct, tuple(tids)))
@@ -143,7 +151,8 @@ def install_fake_gmail(tmp_path, monkeypatch):
     monkeypatch.setattr(gm, "can_modify", lambda acct: True)
     monkeypatch.setattr(ia, "_search_threads", fake.search)
     monkeypatch.setattr(ia, "_thread_heads", fake.heads)
-    for name in ("apply_action", "modify_threads", "undo", "list_labels", "create_label", "snapshot_messages"):
+    for name in ("apply_action", "modify_threads", "undo", "list_labels", "create_label", "snapshot_messages",
+                 "delete_label_if_empty"):
         monkeypatch.setattr(gm, name, getattr(fake, name))
     monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")

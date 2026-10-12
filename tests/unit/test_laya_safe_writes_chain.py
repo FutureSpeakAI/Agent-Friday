@@ -951,7 +951,7 @@ def test_l4_the_card_shows_the_sender_of_each_listed_message_not_the_first(real_
     MAIL["m1"]["from"] = "Alice <alice@a.example>"
     MAIL["m2"]["from"] = "Me <me@work.example>"
     MAIL["m3"]["from"] = "Bob <bob@b.example>"
-    r, out = _go("archive these", stage)
+    r, out = _go("archive this", stage)
     pay = _pending()[0]["payload"]
     line = pay["lines"][0]
     assert "Alice <alice@a.example>" in line and "Bob <bob@b.example>" in line and "Me <me@work.example>" in line, line
@@ -1275,7 +1275,7 @@ def test_mn1_a_display_name_that_is_an_address_shows_its_local_part_only(real_ma
     report(stage)
     Page(monkeypatch)
     MAIL["m1"]["from"] = '"bob@evil.example" <bob@evil.example>'
-    r, out = _go("archive these", stage)
+    r, out = _go("archive this", stage)
     pay = _pending()[0]["payload"]
     assert "@" not in str(pay["preview"]) and "@" not in out
     assert "bob <bob@evil.example>" in pay["lines"][0], "the card on screen still shows the address"
@@ -1715,8 +1715,8 @@ def test_md2_a_line_that_never_played_is_not_enough_even_when_the_action_is_name
     c.say("what's on my calendar")                      # the next turn works out which cards were voiced
     voiced = c.tool_session.get("voiced_cards") or []
     assert cid not in voiced
-    assert _voice_answer(cid, "yes archive them", voiced) == ia.UNVOICED_CARD
-    assert _voice_answer(cid, "yes", voiced) == ia.UNVOICED_CARD
+    assert _voice_answer(cid, "yes archive them", voiced) == ia.UNVOICED_LAYA_CARD
+    assert _voice_answer(cid, "yes", voiced) == ia.UNVOICED_LAYA_CARD
     assert ap.get_approval(cid)["status"] == "pending"
 
 
@@ -1740,7 +1740,7 @@ def test_md2_a_line_read_in_another_conversation_does_not_count(safe_call, monke
     c.say("yes")
     voiced = c.tool_session.get("voiced_cards") or []
     assert cid in voiced
-    assert _voice_answer(cid, "yes", voiced, conv="another-call") == ia.UNVOICED_CARD
+    assert _voice_answer(cid, "yes", voiced, conv="another-call") == ia.UNVOICED_LAYA_CARD
     assert ap.get_approval(cid)["status"] == "pending"
 
 
@@ -1824,7 +1824,7 @@ def test_mj4_a_card_that_was_approved_is_not_listed_as_card_free(real_mail, monk
     Page(monkeypatch)
     turn_plan.begin_turn("turn-with-card")
     try:
-        _go("archive these", stage)
+        _go("archive this", stage)
         cid = _pending()[0]["approval_id"]
         ap.decide(cid, "approve", decided_by="owner:ui")
         ia.wait_for(cid, 10)
@@ -1842,3 +1842,254 @@ def test_mj4_the_docs_call_it_a_rule_not_a_known_issue():
     assert "run with no card when a model asks" in section and "This is your rule" in section
     assert "Open in Beta 1.1" in known and "model path still runs star" not in known
     assert "only if Friday actually read that card's line aloud in this conversation" in mail
+
+
+# ══ Final review (cfcc5d6d1) ══
+
+# ── FN-MD-1: every path names its turn, so a card-free change reaches a receipt ───────────────────
+
+def _card_free_star(session_ctx, tid=None):
+    from agent_friday.services import turn_plan
+    if tid:
+        turn_plan.begin_turn(tid)
+    try:
+        return agent._execute_tool("organize_email", {"action": "star", "thread_ids": ["acct_work:t1"]},
+                                   session_ctx=session_ctx)
+    finally:
+        turn_plan.begin_turn(None)
+
+
+def test_fn_md1_a_card_free_change_on_a_spoken_turn_reaches_that_turns_receipt(chat, gmail, monkeypatch):
+    """Fails on cfcc5d6d1: a spoken turn had no turn id, so the change was in no turn receipt."""
+    from agent_friday.services import turn_receipt, voice_engine as ve
+    ctx = ve._voice_ctx({"engine": "local", "conversation_id": CALL, "turn_id": "voice-abc123"})
+    out = _card_free_star(ctx)
+    assert "DONE" in out or "starred" in out.lower(), out
+    got = turn_receipt.build("voice-abc123")
+    (change,) = got["card_free_changes"]
+    assert change["action"] == "star" and change["count"] == 2 and change["undoable"] is True
+
+
+def test_fn_md1_a_live_tool_call_and_a_background_task_get_their_own_ids(chat, gmail, monkeypatch):
+    from agent_friday.services import action_journal, turn_receipt, voice_engine as ve
+    _card_free_star(ve._voice_ctx({"conversation_id": CALL}))                        # Gemini Live: not a local session
+    live = [r for r in action_journal.recent(20) if r.get("card_free")]
+    assert live and str(live[0]["turn_id"]).startswith("live-")
+    assert turn_receipt.build(live[0]["turn_id"])["card_free_changes"]
+    gmail.calls.clear()
+    _card_free_star({"authenticated": True, "is_background_task": True, "task_id": "t42", "conversation_id": CONV})
+    assert turn_receipt.build("task-t42")["card_free_changes"], "a delegated task's change is in its own receipt"
+
+
+def test_fn_md1_a_routed_voice_turn_names_itself_in_the_tool_session_and_the_route_frame(monkeypatch):
+    frames = []
+    plan = {"tool": None, "args": None, "ack": "", "label": "", "question": "",
+            "receipt": {"layer": "rule", "decision": "no_tool"}}
+    monkeypatch.setattr(rv, "_voice_route_plan", lambda *a, **k: plan)
+    ts = {"conversation_id": CALL, "spoken": []}
+    rv._run_routed_front_turn("hello", lambda s: None, front={"contract": {"names": []}}, tool_session=ts,
+                              seat_turn=lambda u, od, p, rt, cl=None: "hi", send=frames.append,
+                              session=lambda: None, owner_voice=True)
+    assert ts["turn_id"].startswith("voice-") and frames[0]["turn_id"] == ts["turn_id"]
+
+
+# ── FN-MD-2: a card-free change is exact or refused; the label it makes is accounted for ──────────
+
+def test_fn_md2_a_conversation_that_cannot_be_read_is_refused_not_changed_inexactly(real_mail, monkeypatch):
+    """Fails on cfcc5d6d1: the card-free path ran the thread-level fallback and marked it inexact."""
+    before = _snap()
+    FAIL_GET.add("t2")
+    out = agent._tool_organize_email({"action": "star", "thread_ids": ["acct_work:t1", "acct_work:t2", "acct_work:t3"]})
+    assert "could not be changed" in out or out.startswith("PARTLY"), out
+    assert MAIL["m4"]["labels"] == before["m4"] and MAIL["m5"]["labels"] == before["m5"], "t2 was not touched"
+    assert ("thread_modify", "t2") not in CALLS
+    assert "STARRED" in MAIL["m1"]["labels"] and "STARRED" in MAIL["m6"]["labels"], "the readable ones were changed"
+
+
+def test_fn_md2_a_label_the_change_created_is_removed_by_undo_when_it_is_empty(chat, gmail, monkeypatch):
+    from agent_friday.services import action_journal as journal
+    out = ia.propose_email("label", thread_ids=["acct_work:t1"], label="Taxes 2026")
+    rec = journal.get(out["receipt_id"])
+    assert rec["labels_created"] == ["Taxes 2026"] and rec["undo"]["created_labels"] == {"acct_work": "Label_new"}
+    undo = ia.undo(out["receipt_id"], conversation_id=CONV)
+    ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
+    done = ia.wait_for(undo["approval_id"], 10)
+    assert ("delete_label", "acct_work", "Label_new") in gmail.calls and "removed the label" in done["summary"]
+    assert not [l for l in gmail.labels["acct_work"] if l["name"] == "Taxes 2026"]
+
+
+def test_fn_md2_a_label_that_still_holds_mail_stays_and_undo_says_so(chat, gmail, monkeypatch):
+    gmail.label_empty = False
+    out = ia.propose_email("label", thread_ids=["acct_work:t1"], label="Taxes 2026")
+    undo = ia.undo(out["receipt_id"], conversation_id=CONV)
+    ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
+    done = ia.wait_for(undo["approval_id"], 10)
+    assert "left in place" in done["summary"] and [l for l in gmail.labels["acct_work"] if l["name"] == "Taxes 2026"]
+
+
+def test_fn_md2_undoable_in_the_turn_receipt_reflects_the_truth():
+    from agent_friday.services import action_journal as journal
+    from agent_friday.services import turn_receipt
+    def rec(tid, inexact):
+        ch = {"added": ["STARRED"], "removed": [], "messages": {"m1": {"added": ["STARRED"], "removed": []}}}
+        if inexact:
+            ch = {"added": [], "removed": [], "messages": {}, "inexact": "the read failed"}
+        journal.record("organize_email", "star", "email", items=[], summary="x", status="complete",
+                       undo={"email": {"acct_work": {"t1": ch}}},
+                       extra={"card_free": True, "turn_id": tid, "count": 1, "message_ids": {}})
+    rec("turn-exact", False)
+    rec("turn-inexact", True)
+    assert turn_receipt.build("turn-exact")["card_free_changes"][0]["undoable"] is True
+    assert turn_receipt.build("turn-inexact")["card_free_changes"][0]["undoable"] is False
+
+
+# ── FN-mn-1 / FN-mn-2: the voice label is the server's; the caption and the route say it plainly ──
+
+def test_fn_mn1_a_body_claimed_voice_label_is_the_plain_owner(gmail):
+    """Fails on cfcc5d6d1: any other claimed label passed through, so an HTTP body could claim 'owner:/voice/'."""
+    from flask import Flask, request
+    from agent_friday.services import screen_click
+    with Flask(__name__).test_request_context("/x", method="POST", json={}):
+        assert screen_click.decided_by(request, "owner:/voice/") == "owner"
+        assert screen_click.decided_by(request, "owner:ui") == "owner"
+        assert screen_click.decided_by(request, "owner:caption") == "owner:caption"
+
+
+def test_fn_mn2_the_decide_route_refuses_a_laya_approval_with_a_clear_message(chat, gmail, monkeypatch):
+    import json
+    from flask import Flask
+    from agent_friday.routes import goals
+    cid = _arm(gmail, monkeypatch)
+    fn = getattr(goals.decide_approval_route, "__wrapped__", goals.decide_approval_route)
+    for who in ("owner:caption", "owner:/voice/", "owner:sms"):
+        body = {"decision": "approve", "decided_by": who}
+        with Flask(__name__).test_request_context("/x", method="POST", json=body):
+            resp = fn(cid)
+        resp, status = resp if isinstance(resp, tuple) else (resp, 200)
+        data = json.loads(resp.get_data(as_text=True))
+        assert status == 403 and data["error"] == "needs_approve_button" and "Approve button" in data["message"], who
+        assert "already_decided" not in data
+    assert ap.get_approval(cid)["status"] == "pending"
+    with Flask(__name__).test_request_context("/x", method="POST", json={"decision": "deny", "decided_by": "owner:caption"}):
+        resp = fn(cid)
+    assert json.loads((resp[0] if isinstance(resp, tuple) else resp).get_data(as_text=True))["ok"] is True
+
+
+def test_fn_mn2_the_caption_never_offers_a_laya_card():
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "index.html").read_text(encoding="utf-8")
+    start = text.index("var CAPTION_NEVER_DECIDES")
+    assert "x.payload.origin === 'laya_safe_write'" in text[start:start + 1200]
+
+
+# ── FN-mn-3 / FN-mn-4: a removed record cannot come back; no settings stall ──────────────────────
+
+def test_fn_mn3_removing_a_record_advances_the_anchor_so_a_restored_file_cannot_verify(settings_file, owner_record):
+    """Fails on cfcc5d6d1: the anchor stayed at the removed record's counter, so a restored copy verified."""
+    core = settings_file
+    _click(core, "on")
+    old = gs._record_path().read_text(encoding="utf-8")
+    before = _ANCHOR["laya_safe_writes"]
+    assert gs._remove_record("laya_safe_writes") is True
+    assert _ANCHOR["laya_safe_writes"] > before
+    gs._record_path().write_text(old, encoding="utf-8")        # a backup tool puts it back
+    _hand_edit(core, "on")
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off" and sw.mode() == "off"
+
+
+def test_fn_mn3_with_the_keychain_down_a_tombstone_still_retires_the_counter(settings_file, owner_record, monkeypatch):
+    core = settings_file
+    _click(core, "on")
+    old = gs._record_path().read_text(encoding="utf-8")
+    real = gs._anchor_set
+
+    def down(key, n):
+        raise OSError("the keychain did not answer")
+    monkeypatch.setattr(gs, "_anchor_set", down)
+    assert gs._remove_record("laya_safe_writes") is True
+    monkeypatch.setattr(gs, "_anchor_set", real)               # the keychain recovers; the anchor never moved
+    gs._record_path().write_text(old, encoding="utf-8")
+    gs.invalidate()
+    _hand_edit(core, "on")
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off" and sw.mode() == "off"
+    _click(core, "on")                                         # a fresh click still works
+    assert gs.owner_choice("laya_safe_writes", block=True) == "on"
+
+
+def test_fn_mn4_a_click_does_not_stall_behind_a_stuck_boot_worker(settings_file, owner_record, monkeypatch):
+    """Fails on cfcc5d6d1: record_owner_choice waited on the write lock for as long as the keychain hung."""
+    import threading
+    core = settings_file
+    monkeypatch.setattr(gs, "LOCK_TIMEOUT_S", 0.2)
+    holding, release = threading.Event(), threading.Event()
+
+    def hold():
+        with gs._WRITE_LOCK:
+            holding.set()
+            release.wait(5.0)
+    t = threading.Thread(target=hold, daemon=True)
+    t.start()
+    assert holding.wait(2.0)
+    done = []
+    c = threading.Thread(target=lambda: done.append(gs.record_owner_choice("laya_safe_writes", "on")), daemon=True)
+    c.start()
+    c.join(2.0)
+    release.set()
+    assert not c.is_alive() and done == [False], "the click failed closed instead of waiting"
+    assert sw.mode() == "off"
+
+
+# ── FN-mn-5, FN-mn-7: one row is asked even with no numbers; the pointed argument is honoured ─────
+
+def test_fn_mn5_these_that_finds_one_row_is_asked_even_with_no_numbers_on_screen(gmail, monkeypatch):
+    """Fails on cfcc5d6d1: the one-row plural was asked only when Friday's numbers were on screen."""
+    stage = _stage(selected=(1,))
+    report(stage)
+    Page(monkeypatch)
+    r = lr.route("archive these", trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+    assert (r.decision, r.layer, r.question) == ("ask", "safe_write", sw.ONE_ROW_QUESTION) and not sw._TICKETS
+    r = lr.route("archive this", trusted=True, stage=stage, log=False, conversation_id=CONV, rung_budget_ms=5000)
+    assert r.layer == "safe_write" and r.decision == "tool", "the singular is still a card"
+
+
+def test_fn_mn7_the_pointed_argument_decides_whether_friday_numbers_are_on_screen(gmail, monkeypatch):
+    """Fails on cfcc5d6d1: the check read the bus and ignored the argument."""
+    stage = _stage(selected=())
+    report(stage)
+    numbers = {"refs": [ref(4), ref(5), ref(6)], "at": time.time()}
+    r = lr.safe_write_route("archive the second one", stage=stage, pointed=numbers, conversation_id=CONV)
+    assert r is not None and r.decision == "ask" and r.question == sw.ORDINAL_QUESTION
+    _friday_pointed(monkeypatch)                                  # the bus has numbers, the caller says there are none
+    r = lr.safe_write_route("archive the second one", stage=stage, pointed=None, conversation_id=CONV)
+    assert r is not None and r.decision == "tool"
+    r = lr.safe_write_route("archive the second one", stage=stage, conversation_id=CONV)     # none given: the bus
+    assert r is not None and r.decision == "ask"
+
+
+# ── FN-mn-6, Gemini Live: the unheard-card text, and no Laya card id on a Live turn ───────────────
+
+def test_fn_mn6_the_refusal_for_an_unheard_laya_card_says_what_works(safe_call, monkeypatch):
+    """Fails on cfcc5d6d1: it told the owner to name the action, which no longer works for a Laya card."""
+    c = safe_call()
+    monkeypatch.setattr(c.mouth, "synthesize_stream", lambda text, cancel=None: iter(()))
+    c.say("archive these")
+    cid = _pending()[0]["approval_id"]
+    res = _voice_answer(cid, "yes archive them", [])
+    assert res == ia.UNVOICED_LAYA_CARD and "Approve" in res and "say what the card does" not in res
+    assert ia.UNVOICED_CARD != res
+
+
+def test_live_never_speaks_approves_or_arms_a_laya_card(chat, gmail, monkeypatch):
+    import asyncio
+    cid = _arm(gmail, monkeypatch)
+    session = {"conversation_id": CONV}
+
+    async def fake_limit(fname, fargs, send, sess, runner=None):
+        return "CARD_RAISED: nothing has changed yet. Read this back and ask: x (card_id=%s)" % cid
+    monkeypatch.setattr(rv, "_voice_tool_with_limit", fake_limit)
+    out = asyncio.run(rv._live_card_tool("organize_email", {}, lambda f: None, session))
+    assert out.endswith("(card_id=%s)" % cid) and "Subject" not in out and "Sender" not in out
+    assert rv._LIVE_CARD_ASK not in out, "no line was handed to the cloud voice"
+    res = asyncio.run(rv._live_card_tool("answer_card", {"card_id": cid}, lambda f: None, session))
+    assert res == ia.LAYA_CARD_NOT_ON_LIVE and "Subject" not in res and "Sender" not in res
+    assert ap.get_approval(cid)["status"] == "pending"
