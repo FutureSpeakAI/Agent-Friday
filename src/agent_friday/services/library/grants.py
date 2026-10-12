@@ -239,8 +239,12 @@ def active_scopes(principal: str, *, expand: bool = True) -> list[dict]:
 def scope_covered(principal: str, scope) -> bool:
     """Is this folder (or file) still one the owner's consent covers? Read live. A grant with a glob such as
     `*.md` covers its folder: the glob judges each FILE (`allowed`), never the folder's own name. False while
-    the ledger is suspended, for a never-send path and for a credential place."""
+    the ledger is suspended, for a never-send path and for a credential place. A meeting archive document
+    is never a folder consent's to cover: the archive has its own yes (`meeting_archive`), per document."""
     if suspended():
+        return False
+    from agent_friday.services import meeting_archive
+    if meeting_archive.is_archive_path(scope) or str(scope) == meeting_archive.SCOPE:
         return False
     fg = _fg()
     p = Path(scope)
@@ -274,8 +278,26 @@ def suspended() -> bool:
     return bool(_fg()._load_state().suspended)
 
 
+def _archive_verdict(principal: str, path) -> bool | None:
+    """None for an ordinary path. For the path of a meeting's transcript or notes, whether the Library
+    may show it right now: only the owner's Library holds them, only while the owner has said yes to a
+    searchable meetings archive, only for a meeting that still exists, and never while the consent
+    ledger is suspended or the path carries a never-send mark. No folder consent covers these paths and
+    none can: a grant, the tracked consent and a glob are not an answer for a meeting. Read live."""
+    from agent_friday.services import meeting_archive
+    if not meeting_archive.is_archive_path(path):
+        return None
+    if principal != meeting_archive.OWNER or suspended():
+        return False
+    return meeting_archive.covers(path)
+
+
 def _allowed_uncached(principal: str, path: Path) -> bool:
     """The whole consent check, worked out from scratch. `allowed` must always agree with it."""
+    path = Path(path)
+    verdict = _archive_verdict(principal, path)
+    if verdict is not None:
+        return verdict
     fg = _fg()
     if fg.check_grant(path).state == "denied":
         return False
@@ -487,6 +509,10 @@ class Allower:
 
     def __call__(self, path) -> bool:
         path = Path(path)
+        verdict = _archive_verdict(self.principal, path)
+        if verdict is not None:
+            # A meeting's transcript or notes: nothing is kept for these and no folder consent covers them.
+            return verdict
         text = str(path)
         if not self._fresh() or not self._eligible(path, text):
             return _allowed_uncached(self.principal, path)
@@ -512,5 +538,8 @@ def allowed(principal: str, path: Path) -> bool:
 
     False while the ledger is suspended (no add is trusted), for a denied path,
     and for a path no active add of the principal covers. Read on every call,
-    so a removal takes effect before the next purge pass."""
+    so a removal takes effect before the next purge pass.
+
+    The path of a meeting's transcript or notes is the exception: it is shown only while the owner has
+    said yes to a searchable meetings archive and the meeting still exists (`_archive_verdict`)."""
     return Allower(principal)(path)

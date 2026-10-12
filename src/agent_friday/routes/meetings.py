@@ -26,6 +26,17 @@
     GET    /api/meetings/<id>/follow-up    ?kind=thank_you|follow_up -> a draft
     POST   /api/meetings/<id>/follow-up    {to, subject, body} -> approval card
     GET    /api/meetings/<id>/audio        WAV, only when the owner kept audio
+    GET    /api/meetings/<id>/lines        the numbered transcript (the spans notes cite)
+    GET    /api/meetings/<id>/actions      each action item and the transcript line it traces to
+    GET    /api/meetings/<id>/pad          the owner's shorthand bullets
+    POST   /api/meetings/<id>/pad          {text} -> one more bullet (also while recording)
+    DELETE /api/meetings/<id>/pad/<n>      take one bullet away
+    POST   /api/meetings/<id>/polish       expand the bullets into notes (local model only)
+    GET    /api/meetings/<id>/memory       what was proposed from this meeting and is waiting
+    POST   /api/meetings/<id>/memory       propose people, decisions, projects (nothing is kept)
+    POST   /api/meetings/<id>/calendar     ask to add the summary to the calendar event (a card)
+    GET    /api/meetings/archive           whether meetings are searchable from the Library
+    POST   /api/meetings/archive           {choice: on|off}
 
 LOCAL ONLY. Starting a recording turns on this machine's microphone, and a
 transcript holds what other people said. Both stay with the person sitting at
@@ -43,9 +54,14 @@ import hashlib
 
 from flask import Blueprint, Response, jsonify, request
 
+import threading
+
+from agent_friday.services import meeting_archive as ma
+from agent_friday.services import meeting_calendar as mcal
 from agent_friday.services import meeting_capture as mc
 from agent_friday.services import screen_click
 from agent_friday.services import meeting_policy as mp
+from agent_friday.services import meeting_workspace as mw
 from agent_friday.routes._errors import api_error, public_result
 
 meetings_bp = Blueprint('meetings', __name__)
@@ -280,3 +296,92 @@ def meetings_audio(mid):
                     headers={"Content-Disposition":
                              "attachment; filename=meeting-%s.wav" % mid,
                              "Cache-Control": "no-store"})
+
+
+# -- the Meetings workspace -------------------------------------------------
+
+@meetings_bp.route('/api/meetings/archive', methods=['GET', 'POST'])
+def meetings_archive():
+    if request.method == 'GET':
+        return jsonify({"status": "ok"} | ma.status())
+    d = request.get_json(silent=True) or {}
+    try:
+        out = ma.set_choice(d.get("choice"))
+    except (ValueError, TypeError):
+        return jsonify(_BAD[0]), _BAD[1]
+    if out["choice"] == "on":
+        # reading each finished meeting into the Library takes a while: off the request's thread
+        manager = mc.get_manager()
+        worker = threading.Thread(target=ma.reindex_all, args=(manager,), name="meeting-archive", daemon=True)
+        worker.start()
+    return jsonify({"status": "ok"} | out)
+
+
+@meetings_bp.route('/api/meetings/<mid>/lines')
+def meetings_lines(mid):
+    try:
+        m = mc.get_manager().get(mid)
+    except mc.MeetingError as e:
+        return _fail(e)
+    return jsonify({"status": "ok", "lines": [dict(ln, clock=mw.clock(ln["t"])) for ln in mw.spoken(m)]})
+
+
+@meetings_bp.route('/api/meetings/<mid>/actions')
+def meetings_actions(mid):
+    try:
+        return jsonify({"status": "ok", "items": mc.get_manager().action_item_check(mid)})
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/pad', methods=['GET', 'POST'])
+def meetings_pad(mid):
+    mgr = mc.get_manager()
+    try:
+        if request.method == 'GET':
+            return jsonify({"status": "ok", "pad": mgr.pad_get(mid)})
+        d = request.get_json(silent=True) or {}
+        return jsonify({"status": "ok", "item": mgr.pad_add(mid, d.get("text"))})
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/pad/<int:pad_id>', methods=['DELETE'])
+def meetings_pad_one(mid, pad_id):
+    try:
+        return jsonify({"status": "ok"} | mc.get_manager().pad_remove(mid, pad_id))
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/polish', methods=['POST'])
+def meetings_polish(mid):
+    try:
+        return jsonify({"status": "ok", "polished": mc.get_manager().expand_notes(mid)})
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/memory', methods=['GET', 'POST'])
+def meetings_memory(mid):
+    try:
+        if request.method == 'GET':
+            mc.get_manager().get(mid)          # a meeting that does not exist has no proposals
+            from agent_friday.services import memory_proposals
+            mine = [r for r in memory_proposals.pending(limit=1000)
+                    if (r.get("provenance") or {}).get("meeting_id") == mid]
+            return jsonify({"status": "ok", "proposals": mine})
+        return jsonify({"status": "ok"} | mc.get_manager().propose_memory(mid))
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/calendar', methods=['POST'])
+def meetings_calendar(mid):
+    try:
+        m = mc.get_manager().get(mid)
+    except mc.MeetingError as e:
+        return _fail(e)
+    out = mcal.request(m, requested_by="meetings")
+    code = 200 if out.get("status") in ("pending_approval", "done", "nothing") else 409
+    return jsonify({"ok": code == 200} | out), code

@@ -68,19 +68,10 @@
   ],
   "calendar": [
    {"id": "calendar.view", "group": "read", "label": "view day / week / agenda", "audit_status": "L"},
-   {"id": "calendar.meeting_notes", "group": "read", "label": "meeting transcript / notes", "audit_status": "N"},
    {"id": "calendar.open_event", "group": "navigate", "label": "open event / pick day", "audit_status": "M"},
    {"id": "calendar.select_events", "group": "select", "label": "tick events", "audit_status": "M"},
    {"id": "calendar.quick_add", "group": "create", "label": "quick add event", "audit_status": "M"},
    {"id": "calendar.meeting_prep", "group": "create", "label": "generate meeting prep", "audit_status": "M"},
-   {
-    "id": "calendar.record_meeting",
-    "group": "create",
-    "label": "record meeting start/stop / redo notes / consent line / keep or delete audio",
-    "audit_status": "N"
-   },
-   {"id": "calendar.follow_up_draft", "group": "create", "label": "draft thank-you / follow-up", "audit_status": "M"},
-   {"id": "calendar.action_items", "group": "create", "label": "add action items to Tasks", "audit_status": "M"},
    {"id": "calendar.delete_event", "group": "organize", "label": "delete event / meeting", "audit_status": "N"},
    {"id": "calendar.move_event", "group": "organize", "label": "move / shift event", "audit_status": "M"}
   ],
@@ -198,6 +189,23 @@
    {"id": "library.index_status", "group": "read", "label": "indexing progress", "audit_status": "new"},
    {"id": "library.index_pause_resume", "group": "settings", "label": "pause / resume reading", "audit_status": "new"},
    {"id": "library.tracked_reindex", "group": "settings", "label": "tracked / reindex", "audit_status": "N"}
+  ],
+  "meetings": [
+   {"id": "meetings.start_recording", "group": "create", "label": "record start/stop / consent line / start card", "audit_status": "new"},
+   {"id": "meetings.open_meeting", "group": "navigate", "label": "open a past meeting", "audit_status": "new"},
+   {"id": "meetings.open_latest", "group": "navigate", "label": "open the latest meeting", "audit_status": "new"},
+   {"id": "meetings.select_meetings", "group": "select", "label": "tick meetings", "audit_status": "new"},
+   {"id": "meetings.ask_meetings", "group": "read", "label": "ask your meetings (decisions, action items) with citations", "audit_status": "new"},
+   {"id": "meetings.read_notes", "group": "read", "label": "open a meeting by name / read its notes and transcript", "audit_status": "new"},
+   {"id": "meetings.jot_note", "group": "create", "label": "jot a bullet in the notes pad", "audit_status": "new"},
+   {"id": "meetings.expand_notes", "group": "create", "label": "write notes again / expand the bullets into notes", "audit_status": "new"},
+   {"id": "meetings.make_tasks", "group": "create", "label": "add action items to Tasks", "audit_status": "new"},
+   {"id": "meetings.remember", "group": "create", "label": "propose people, decisions and projects to memory", "audit_status": "new"},
+   {"id": "meetings.follow_up_draft", "group": "create", "label": "draft thank-you / follow-up", "audit_status": "new"},
+   {"id": "meetings.attach_to_event", "group": "organize", "label": "add the summary to the calendar event", "audit_status": "new"},
+   {"id": "meetings.copy_notes", "group": "read", "label": "copy the notes", "audit_status": "new"},
+   {"id": "meetings.archive_choice", "group": "settings", "label": "make meetings searchable from the Library, or not", "audit_status": "new"},
+   {"id": "meetings.delete_meeting", "group": "organize", "label": "delete meeting / delete audio only / keeping and deleting", "audit_status": "new"}
   ],
   "knowledge": [
    {"id": "knowledge.search", "group": "read", "label": "search pages / graph", "audit_status": "L"},

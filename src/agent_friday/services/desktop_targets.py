@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 KINDS = ("workspace", "email", "mail_search", "file", "wiki_page", "graph_node",
-         "settings", "calendar", "contact", "content_post", "news_article", "creation", "card")
+         "settings", "calendar", "contact", "content_post", "news_article", "creation", "card", "meeting")
 
 #: Words that say what kind of thing is meant, not which one.
 _FILLER = {
@@ -725,6 +725,58 @@ def resolve_creation(query: str = "", id: str = "") -> dict:
 
 #: Other names for a kind, as the model and the desktop say them.
 
+_MEETING_WORDS = {"meeting", "meetings", "call", "calls", "recording", "recordings", "notes", "standup", "sync", "record"}
+_LAST_WORDS = {"last", "latest", "recent", "newest", "previous", "final"}
+_MEETING_ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7,
+                     "eighth": 8, "ninth": 9, "tenth": 10}
+
+
+def resolve_meeting(query: str = "", id: str = "") -> dict:
+    """A recorded meeting, by its id, by "last", or by words from its title. Opening one only shows it
+    in the Meetings workspace; "start recording" opens the start card and starts nothing."""
+    ident = (id or "").strip()
+    text = (query or ident or "").lower()
+    if re.search(r"\b(start recording|record this|record (?:a|the|my) (?:meeting|call)|take notes)\b", text):
+        return _ok({"workspace": "meetings", "start": "confirm"},
+                   "the recording start card; nothing is recorded until you confirm it on screen")
+    from agent_friday.services import meeting_workspace as mw
+    try:
+        rows = mw.recorded()
+    except Exception:
+        rows = []
+    if re.fullmatch(r"[0-9a-f]{12}", ident):
+        row = next((r for r in rows if r.get("id") == ident), None)
+        if row is None:
+            return _fail("no recorded meeting has that id")
+        return _ok({"workspace": "meetings", "meeting_id": ident}, row.get("title") or "that meeting",
+                   verify=("meeting_id", ident))
+    if not rows:
+        return _fail("no meetings have been recorded yet")
+    words = set(_tokens(text))
+    q = [w for w in _tokens(text) if w not in _FILLER and w not in _MEETING_WORDS and w not in _LAST_WORDS]
+    ordinal = [_MEETING_ORDINALS[w] for w in q if w in _MEETING_ORDINALS]
+    if len(q) == 1 and ordinal:
+        # "the second meeting": the second in the list on screen, which is newest first
+        if ordinal[0] > len(rows):
+            return _fail("only %d meetings have been recorded" % len(rows))
+        row = rows[ordinal[0] - 1]
+        return _ok({"workspace": "meetings", "meeting_id": row["id"]}, row.get("title") or "that meeting",
+                   verify=("meeting_id", row["id"]))
+    if not q and (words & _LAST_WORDS or ident.lower() in _LAST_WORDS or not words - _MEETING_WORDS):
+        row = rows[0]
+        return _ok({"workspace": "meetings", "meeting_id": row["id"]}, row.get("title") or "your last meeting",
+                   verify=("meeting_id", row["id"]))
+    scored = sorted(((_score(q, (r.get("title") or "").lower()), i, r) for i, r in enumerate(rows)),
+                    key=lambda x: (-x[0], x[1]))
+    if not scored or scored[0][0] < 0.99:
+        return _fail("no meeting matches %r" % " ".join(q),
+                     [r.get("title") for _s, _i, r in scored[:3] if r.get("title")])
+    top = scored[0][2]
+    also = [{"id": r["id"], "label": r.get("title")} for s, _i, r in scored[1:4] if s >= 0.99]
+    return _ok({"workspace": "meetings", "meeting_id": top["id"]}, top.get("title") or "that meeting",
+               verify=("meeting_id", top["id"]), also=also)
+
+
 def resolve_card(query: str = "", id: str = "") -> dict:
     """A Media card: anything the owner made or is making, by id or by title."""
     from agent_friday.services import media_index as mi
@@ -744,7 +796,7 @@ def resolve_card(query: str = "", id: str = "") -> dict:
     also = [{"id": x["id"], "label": x["title"]} for x in cards[1:4]]
     return _ok({"workspace": "media", "card": c["id"]}, c["title"], verify=("card", c["id"]), also=also)
 
-_KIND_ALIASES = {"media": "card", "media_card": "card", "piece": "card", "wiki": "wiki_page", "page": "wiki_page", "node": "graph_node",
+_KIND_ALIASES = {"meetings": "meeting", "call": "meeting", "media": "card", "media_card": "card", "piece": "card", "wiki": "wiki_page", "page": "wiki_page", "node": "graph_node",
                  "graph": "graph_node", "emails": "mail_search", "article": "news_article",
                  "story": "news_article", "news": "news_article",
                  "studio_creation": "creation"}
@@ -782,6 +834,8 @@ def resolve(kind: str, query: str = "", id: str = "", workspace: str = "",
         return resolve_content_post(query, id)
     if kind == "card":
         return resolve_card(query, id)
+    if kind == "meeting":
+        return resolve_meeting(query, id)
     return _fail("kind must be one of: " + ", ".join(KINDS))
 
 
@@ -789,7 +843,7 @@ def resolve(kind: str, query: str = "", id: str = "", workspace: str = "",
 #: A result bound for the cloud voice model carries no subject, sender, file,
 #: page, person or creation name (docs/reference/voice-tool-contract.md §5);
 #: the screen shows the item itself. News stories are public and keep theirs.
-UNNAMED = {"email": "the email", "file": "the file", "wiki_page": "the wiki page",
+UNNAMED = {"meeting": "the meeting", "email": "the email", "file": "the file", "wiki_page": "the wiki page",
            "graph_node": "the wiki entry", "contact": "the contact card",
            "creation": "the creation", "card": "the Media card"}
 

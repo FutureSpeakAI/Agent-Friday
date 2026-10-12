@@ -3,7 +3,7 @@
  "workspaces": {
   "news": {"laya": 4, "pct": 28.6},
   "messages": {"laya": 11, "pct": 68.8},
-  "calendar": {"laya": 3, "pct": 30.0},
+  "calendar": {"laya": 3, "pct": 42.9},
   "family": {"laya": 0, "pct": 0.0},
   "health": {"laya": 0, "pct": 0.0},
   "finance": {"laya": 0, "pct": 0.0},
@@ -14,6 +14,7 @@
   "futurespeak": {"laya": 0, "pct": 0.0},
   "media": {"laya": 5, "pct": 38.5},
   "library": {"laya": 2, "pct": 22.2},
+  "meetings": {"laya": 3, "pct": 25.0},
   "knowledge": {"laya": 2, "pct": 25.0},
   "trust": {"laya": 0, "pct": 0.0},
   "marketplace": {"laya": 0, "pct": 0.0},
@@ -21,5 +22,5 @@
   "system": {"laya": 6, "pct": 60.0},
   "settings": {"laya": 2, "pct": 40.0}
  },
- "overall": {"laya": 37, "pct": 27.2}
+ "overall": {"laya": 40, "pct": 27.6}
 }

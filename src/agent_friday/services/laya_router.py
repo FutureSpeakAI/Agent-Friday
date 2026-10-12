@@ -178,10 +178,16 @@ def _news_args(text: str, m=None) -> dict:
 _WORKSPACE_WORDS = {"podcasts": "media", "podcast": "media"}
 
 
+_LAST_MEETING = re.compile(r"^(?:last|latest|most recent|previous|newest)\s+(?:meeting|call|recording)$")
+
+
 def _nav_args(text: str, m=None) -> dict:
     q = re.sub(r"\s+", " ", (m.group("q") if m is not None else "").strip().lower()).replace("e-mail", "email")
     if not q:
         return {}
+    if _LAST_MEETING.match(q):
+        # a recorded meeting, not a workspace; `query` is the tool's required argument and carries the words
+        return {"kind": "meeting", "id": "last", "query": q}
     return {"kind": "workspace", "query": _WORKSPACE_WORDS.get(q) or _ws_registry.resolve(q) or q}
 
 
@@ -407,6 +413,9 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
     ("navigate_to",
      _POLITE + r"(?:open|show(?: me)?|go to|switch to|bring up|take me to|pull up)\s+(?:up\s+)?(?:my\s+|the\s+)?"
      r"(?P<q>" + _WORKSPACES + r")(?:\s+(?:workspace|page|tab|screen|app))?" + _END),
+    ("navigate_to",
+     _POLITE + r"(?:open|show(?: me)?|go to|pull up|bring up|take me to)\s+(?:up\s+)?(?:my|the)\s+"
+     r"(?P<q>(?:last|latest|most recent|previous|newest)\s+(?:meeting|call|recording))" + _END),
 ]]
 
 #: A spoken answer to a card: a yes or a no and nothing else.

@@ -3773,6 +3773,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
     <script src="/static/library_reader.js"></script>
     <script src="/static/library_ws.js"></script>
+    <!-- Meetings: the notes pad, polished notes with their transcript lines, the meetings archive (defines window.MeetingsExtras). -->
+    <script src="/static/meetings_ws.js"></script>
     <!-- Library shelves: the 3D view of the Library (defines window.LibraryShelves3D). -->
     <script src="/static/library_shelves.js"></script>
     <!-- The one 3D file browser: every workspace's 3D view (defines window.FridayFiles3D). -->
@@ -12053,6 +12055,13 @@ function fridayWorkspaceId(id) {
   return a ? a.workspace : id;
 }
 function fridayResolveTarget(t) {
+  if (t && t.workspace === 'calendar' && t.view === 'meetings') {
+    // Meetings has a workspace of its own; Calendar keeps a link to it.
+    t = Object.assign({}, t, {
+      workspace: 'meetings'
+    });
+    delete t.view;
+  }
   if (!t || !t.workspace || !WS_ALIASES[t.workspace]) return t;
   const a = WS_ALIASES[t.workspace];
   return Object.assign({}, t, {
@@ -13855,6 +13864,7 @@ function ConnectorDot({
 // side by side.
 const FWIN_FIRST_SIZE = {
   library: {w:1040,h:720,v:1,firstOnly:true},
+  meetings: {w:920,h:700,v:1,firstOnly:true},
   settings: {w:980,h:760,v:1,firstOnly:true},
   media: {w:1040,h:720,v:1,firstOnly:true},
   code: {w:1100,h:760,v:1,firstOnly:true},
@@ -39087,7 +39097,7 @@ function CalendarWS() {
     className: "btn active",
     onClick: quickAdd,
     disabled: adding
-  }, adding ? 'Parsing…' : '✨ Add')), /*#__PURE__*/React.createElement(MeetingsPanel, null), /*#__PURE__*/React.createElement("div", {
+  }, adding ? 'Parsing…' : '✨ Add')), /*#__PURE__*/React.createElement(MeetingsLink, null), /*#__PURE__*/React.createElement("div", {
     className: "cal-layers"
   }, /*#__PURE__*/React.createElement("button", {
     className: 'btn' + (showMedia ? ' active' : ''),
@@ -39305,6 +39315,15 @@ function meetingsChanged() {
     window.dispatchEvent(new Event('friday-meetings'));
   } catch (_) {}
 }
+// What a meeting row may say to the stage: its state, whether it has notes and kept audio, and when. Never a word of what was said.
+function meetingFacets(m) {
+  return {
+    state: m.state === 'recording' ? 'recording' : 'done',
+    notes: m.summary_status || 'pending',
+    audio: !!m.keep_audio,
+    when: fridayWhen(m.started_at)
+  };
+}
 function meetingClock(s) {
   s = Math.max(0, Math.floor(s || 0));
   const h = Math.floor(s / 3600),
@@ -39410,15 +39429,19 @@ function MeetingRecIndicator() {
     }
   }, stopping ? 'Stopping…' : '■ Stop'));
 }
-function MeetingsPanel() {
+function MeetingsPanel(props) {
   const [st, elapsed, reloadSt] = useMeetingStatus(3000);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!(props && props.inWorkspace));
   const [list, setList] = useState([]);
   const [asking, setAsking] = useState(false);
   const [title, setTitle] = useState('');
   const [keepAudio, setKeepAudio] = useState(false);
   const [maxH, setMaxH] = useState(2);
   const [sel, setSel] = useState(null);
+  // What its own tab opens on, and how the desktop confirms "open that meeting" landed on that one.
+  useTabState('meetings', () => ({
+    meeting_id: sel ? sel.id : ''
+  }));
   const [picked, setPicked] = useState({});
   const [fu, setFu] = useState(null);
   // See & Touch: the follow-up draft's three fields, while it is open.
@@ -39473,7 +39496,7 @@ function MeetingsPanel() {
   // Reads the deep-link target without consuming it: CalendarWS reads the same one.
   useEffect(() => {
     const apply = t => {
-      if (t && t.workspace === 'calendar' && t.view === 'meetings') {
+      if (t && (t.workspace === 'meetings' || t.workspace === 'calendar' && t.view === 'meetings')) {
         setOpen(true);
         loadList();
         if (t.meeting_id) openMeeting(t.meeting_id);
@@ -39753,6 +39776,14 @@ function MeetingsPanel() {
     color: '#8a93a6'
   };
   const s = sel && sel.summary || {};
+  // The newest finished meeting, for "Open the latest" (and "open my last meeting" by voice).
+  const latest = list.find(x => x.state !== 'recording' && x.state !== 'unreadable');
+  const openLatest = () => {
+    if (latest) {
+      setOpen(true);
+      openMeeting(latest.id);
+    }
+  };
   return /*#__PURE__*/React.createElement("div", {
     className: "meetings-panel",
     style: box
@@ -39806,7 +39837,10 @@ function MeetingsPanel() {
       setOpen(!open);
       if (!open) loadList();
     }
-  }, open ? 'Hide past meetings' : 'Past meetings (' + list.length + ')')), finishing.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, open ? 'Hide past meetings' : 'Past meetings (' + list.length + ')'), latest && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: openLatest
+  }, "Open the latest")), finishing.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       ...small,
       marginTop: 6
@@ -39827,7 +39861,9 @@ function MeetingsPanel() {
     key: k
   }, /*#__PURE__*/React.createElement("span", {
     style: small
-  }, k ? k + ': ' : ''), liveTx[k]))), sugg && !rec && !asking && /*#__PURE__*/React.createElement("div", {
+  }, k ? k + ': ' : ''), liveTx[k]))), rec && window.MeetingsExtras && /*#__PURE__*/React.createElement(window.MeetingsExtras.Pad, {
+    meetingId: st.id
+  }), sugg && !rec && !asking && /*#__PURE__*/React.createElement("div", {
     id: "meeting-suggestion-card",
     role: "region",
     "aria-label": "Take notes?",
@@ -40074,6 +40110,7 @@ function MeetingsPanel() {
     style: small
   }, "No recorded meetings."), list.map(m => /*#__PURE__*/React.createElement("div", {
     key: m.id,
+    ...fridayRow('meeting', m.id, m.title, meetingFacets(m)),
     onClick: () => openMeeting(m.id),
     style: {
       display: 'flex',
@@ -40207,7 +40244,10 @@ function MeetingsPanel() {
     style: {
       marginLeft: 8
     }
-  }, "Write notes again")), fu && /*#__PURE__*/React.createElement("div", {
+  }, "Write notes again")), window.MeetingsExtras && sel.state !== 'recording' && /*#__PURE__*/React.createElement(window.MeetingsExtras.After, {
+    meeting: sel,
+    reload: () => openMeeting(sel.id)
+  }), fu && /*#__PURE__*/React.createElement("div", {
     style: {
       ...box,
       marginTop: 8
@@ -40293,6 +40333,56 @@ function MeetingsPanel() {
       color: '#8a93a6'
     }
   }, meetingClock(g.t), " "), g.speaker ? /*#__PURE__*/React.createElement("b", null, g.speaker, ": ") : null, g.text)))));
+}
+
+fridayDeclareNav('meetings', {
+  keys: ['meeting_id', 'start'],
+  sections: []
+});
+// The Meetings workspace: the recorder and past meetings, then the question box over their archive.
+function MeetingsWS() {
+  const Ex = window.MeetingsExtras;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ws-fill meetings-ws",
+    style: {
+      overflowY: 'auto',
+      padding: 12
+    }
+  }, /*#__PURE__*/React.createElement(MeetingsPanel, {
+    inWorkspace: true
+  }), Ex ? /*#__PURE__*/React.createElement(Ex.Archive, null) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#8a93a6'
+    }
+  }, "The meetings search did not load."));
+}
+// Calendar's link to the workspace that holds the recorder and the notes.
+function MeetingsLink() {
+  const go = () => {
+    const nav = {
+      workspace: 'meetings'
+    };
+    if (window.fridayOpenWorkspace) window.fridayOpenWorkspace(nav);else fridayNavigate(nav);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "meetings-link",
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: '#8a93a6'
+    }
+  }, "Recording, notes and past meetings have a place of their own now."), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: go
+  }, "Open Meetings"));
 }
 
 // ═══ DRAFT PREVIEW HELPERS ═══
@@ -69154,6 +69244,7 @@ function App() {
     // The Gmail-grade inbox (static/friday_mail.js); the older view stays as the fallback.
     messages: with3D('messages', 'messages', window.FridayMailPanel ? /*#__PURE__*/React.createElement(window.FridayMailPanel, null) : /*#__PURE__*/React.createElement(MessagesWS, null)),
     calendar: with3D('calendar', 'calendar', /*#__PURE__*/React.createElement(CalendarWS, null)),
+    meetings: /*#__PURE__*/React.createElement(MeetingsWS, null),
     marketplace: fridayHeldOn('federation') ? /*#__PURE__*/React.createElement(MarketplaceWS, null) : null,
     workflows: /*#__PURE__*/React.createElement(WorkflowsWS, null),
     settings: /*#__PURE__*/React.createElement(SettingsWS, null)

@@ -76,7 +76,7 @@ TEXT_DAYS_MAX = 3650
 SETTING_KEYS = ("meeting_consent_line", "meeting_consent_mode",
                 "meeting_speak_consent", "meeting_suggestions",
                 "meeting_audio_retention", "meeting_text_retention",
-                "meeting_text_retention_days")
+                "meeting_text_retention_days", "meeting_archive")
 
 # ── Suggestions ─────────────────────────────────────────────────────────────
 

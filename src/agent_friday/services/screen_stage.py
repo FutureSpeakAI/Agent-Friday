@@ -51,6 +51,9 @@ STAGE_FACETS: dict[str, frozenset[str]] = {
     # P7: the workspaces that were open-only. What a row may say about itself is a kind, a state, a day: never a
     # name, an amount, a diagnosis or a date of birth.
     "calendar": frozenset({"kind", "when", "recurring", "all_day", "has_guests"}),
+    # What a meeting row may say about itself: its state, whether notes and kept audio exist, and when. Never
+    # a word of what was said.
+    "meetings": frozenset({"state", "notes", "audio", "when"}),
     "workflows": frozenset({"status", "scheduled", "steps"}),
     "contacts": frozenset({"kind", "has_follow_up"}),
     "career": frozenset({"kind", "stage"}),
@@ -84,12 +87,12 @@ FILTER_KEYS: dict[str, dict[str, frozenset | None]] = {
 }
 #: What each workspace calls one of its rows, for what a cloud voice may hear.
 NOUNS = {"messages": "conversations", "news": "stories", "media": "cards", "library": "documents", "files": "files",
-         "calendar": "events", "workflows": "workflows", "contacts": "people", "career": "entries", "trust": "entries",
+         "calendar": "events", "meetings": "meetings", "workflows": "workflows", "contacts": "people", "career": "entries", "trust": "entries",
          "futurespeak": "sites", "system": "items", "chat": "chats", "health": "records", "finance": "records", "family": "entries"}
 
 #: The kinds of row a ref may name: a conversation, a story, a Media card, a Library document, a file.
 ROW_KINDS = ("mail", "news", "media", "lib", "file", "event", "wf", "person", "job", "trust", "site", "card", "convo",
-             "health", "fin", "fam")
+             "health", "fin", "fam", "meeting")
 _REF = re.compile(r"^(?:%s):[^\s]{1,160}$" % "|".join(ROW_KINDS))
 
 

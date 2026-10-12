@@ -621,6 +621,10 @@ function fridayWhen(iso) {
 }
 function fridayWorkspaceId(id){const a=WS_ALIASES[id];return a?a.workspace:id}
 function fridayResolveTarget(t){
+  if(t&&t.workspace==='calendar'&&t.view==='meetings'){
+    // Meetings has a workspace of its own; Calendar keeps a link to it.
+    t=Object.assign({},t,{workspace:'meetings'});delete t.view;
+  }
   if(!t||!t.workspace||!WS_ALIASES[t.workspace])return t;
   const a=WS_ALIASES[t.workspace];
   return Object.assign({},t,{workspace:a.workspace,view:t.view||a.view});
@@ -2391,7 +2395,7 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
 // Workspaces that need more room than the default 660x460 window, with a
 // version for that size (see FWin). Knowledge shows its galaxy and a page
 // side by side.
-const FWIN_FIRST_SIZE={library:{w:1040,h:720,v:1,firstOnly:true},settings:{w:980,h:760,v:1,firstOnly:true},media:{w:1040,h:720,v:1,firstOnly:true},code:{w:1100,h:760,v:1,firstOnly:true},knowledge:{w:1180,h:760,v:1}};
+const FWIN_FIRST_SIZE={library:{w:1040,h:720,v:1,firstOnly:true},meetings:{w:920,h:700,v:1,firstOnly:true},settings:{w:980,h:760,v:1,firstOnly:true},media:{w:1040,h:720,v:1,firstOnly:true},code:{w:1100,h:760,v:1,firstOnly:true},knowledge:{w:1180,h:760,v:1}};
 /* A WORKSPACE'S MARK: its SVG from the registry, or its glyph when the image
    cannot load; the window title, the command palette and a tab's header all
    show the mark the dock shows. */
@@ -12096,7 +12100,7 @@ function CalendarWS(){
       <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Parsing…':'✨ Add'}</button>
     </div>
     
-    <MeetingsPanel/>
+    <MeetingsLink/>
 
     <div className="cal-layers"><button className={'btn'+(showMedia?' active':'')} aria-pressed={showMedia} onClick={()=>setShowMedia(v=>{const n=!v;try{localStorage.setItem('friday_cal_media',n?'1':'0');}catch(_){}return n;})}>Media</button><span className="cal-layer-note">{showMedia?mediaCards.length+' timed card'+(mediaCards.length===1?'':'s')+' this week':'Media cards hidden'}</span></div>
     {/* Week strip */}
@@ -12182,6 +12186,8 @@ function CalendarWS(){
 // Nothing here starts a recording by itself: only the start card's own button
 // does, and it sends the owner's confirmation with it.
 function meetingsChanged(){try{window.dispatchEvent(new Event('friday-meetings'));}catch(_){}}
+// What a meeting row may say to the stage: its state, whether it has notes and kept audio, and when. Never a word of what was said.
+function meetingFacets(m){return {state:m.state==='recording'?'recording':'done',notes:m.summary_status||'pending',audio:!!m.keep_audio,when:fridayWhen(m.started_at)};}
 function meetingClock(s){s=Math.max(0,Math.floor(s||0));const h=Math.floor(s/3600),m=Math.floor(s/60)%60,x=s%60;return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');}
 function useMeetingStatus(ms){
   const [st,setSt]=useState(null);
@@ -12207,15 +12213,17 @@ function MeetingRecIndicator(){
     <button onClick={stop} disabled={stopping} aria-label="Stop recording" style={{background:'#ef4444',color:'#fff',border:'none',borderRadius:999,padding:'3px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>{stopping?'Stopping…':'■ Stop'}</button>
   </div>);
 }
-function MeetingsPanel(){
+function MeetingsPanel(props){
   const [st,elapsed,reloadSt]=useMeetingStatus(3000);
-  const [open,setOpen]=useState(false);
+  const [open,setOpen]=useState(!!(props&&props.inWorkspace));
   const [list,setList]=useState([]);
   const [asking,setAsking]=useState(false);
   const [title,setTitle]=useState('');
   const [keepAudio,setKeepAudio]=useState(false);
   const [maxH,setMaxH]=useState(2);
   const [sel,setSel]=useState(null);
+  // What its own tab opens on, and how the desktop confirms "open that meeting" landed on that one.
+  useTabState('meetings',()=>({meeting_id:sel?sel.id:''}));
   const [picked,setPicked]=useState({});
   const [fu,setFu]=useState(null);
   const [showTx,setShowTx]=useState(false);
@@ -12239,7 +12247,7 @@ function MeetingsPanel(){
   const openMeeting=id=>fetch('/api/meetings/'+id).then(r=>r.json()).then(d=>{if(d.meeting){setSel(d.meeting);setPicked({});setFu(null);setShowTx(false);}else setMsg(d.error||'Could not open that meeting.');}).catch(()=>setMsg('Could not open that meeting.'));
   // Reads the deep-link target without consuming it: CalendarWS reads the same one.
   useEffect(()=>{
-    const apply=t=>{if(t&&t.workspace==='calendar'&&t.view==='meetings'){setOpen(true);loadList();if(t.meeting_id)openMeeting(t.meeting_id);if(t.start==='confirm')ask();}};
+    const apply=t=>{if(t&&(t.workspace==='meetings'||t.workspace==='calendar'&&t.view==='meetings')){setOpen(true);loadList();if(t.meeting_id)openMeeting(t.meeting_id);if(t.start==='confirm')ask();}};
     apply(window.__fridayNavTarget);
     const on=e=>apply(e.detail||{});
     window.addEventListener('friday-nav',on);
@@ -12281,6 +12289,9 @@ function MeetingsPanel(){
   const box={border:'1px solid rgba(255,255,255,0.1)',borderRadius:10,padding:10,marginBottom:10,background:'rgba(255,255,255,0.03)'};
   const small={fontSize:11,color:'#8a93a6'};
   const s=sel&&sel.summary||{};
+  // The newest finished meeting, for "Open the latest" (and "open my last meeting" by voice).
+  const latest=list.find(x=>x.state!=='recording'&&x.state!=='unreadable');
+  const openLatest=()=>{if(latest){setOpen(true);openMeeting(latest.id);}};
   return(<div className="meetings-panel" style={box}>
     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
       <span style={{fontWeight:700,fontSize:13,color:'#eef1f6'}}>Meetings</span>
@@ -12291,10 +12302,12 @@ function MeetingsPanel(){
       </>:<button className="btn active" onClick={ask} disabled={asking}>● Record a meeting</button>}
       <span style={{flex:1}}></span>
       <button className="btn" onClick={()=>{setOpen(!open);if(!open)loadList();}}>{open?'Hide past meetings':'Past meetings ('+list.length+')'}</button>
+      {latest&&<button className="btn" onClick={openLatest}>Open the latest</button>}
     </div>
     {finishing.length>0&&<div style={{...small,marginTop:6}}>Finishing the transcript and notes…</div>}
     {rec&&<div style={{...small,marginTop:6}}>{(st.system_audio&&st.system_audio.reason)||''}{st.vad?' Speech detection: '+(st.vad==='silero'?'Silero.':'volume gate.'):''}</div>}
     {rec&&Object.keys(liveTx).length>0&&<div aria-live="off" style={{marginTop:6,fontSize:12,color:'#cfd6e4'}}>{Object.keys(liveTx).map(k=><div key={k}><span style={small}>{k?k+': ':''}</span>{liveTx[k]}</div>)}</div>}
+    {rec&&window.MeetingsExtras&&<window.MeetingsExtras.Pad meetingId={st.id}/>}
     {sugg&&!rec&&!asking&&<div id="meeting-suggestion-card" role="region" aria-label="Take notes?" style={{...box,marginTop:8,borderColor:'rgba(0,212,255,0.4)'}}>
       <div style={{fontSize:13,color:'#eef1f6',marginBottom:6}}>{sugg.text}</div>
       <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -12339,7 +12352,7 @@ function MeetingsPanel(){
     </div>}
     {open&&<div style={{marginTop:8}}>
       {list.length===0&&<div style={small}>No recorded meetings.</div>}
-      {list.map(m=><div key={m.id} onClick={()=>openMeeting(m.id)} style={{display:'flex',gap:8,padding:'5px 4px',cursor:'pointer',borderTop:'1px solid rgba(255,255,255,0.06)',background:sel&&sel.id===m.id?'rgba(0,212,255,0.08)':'transparent'}}>
+      {list.map(m=><div key={m.id} {...fridayRow('meeting',m.id,m.title,meetingFacets(m))} onClick={()=>openMeeting(m.id)} style={{display:'flex',gap:8,padding:'5px 4px',cursor:'pointer',borderTop:'1px solid rgba(255,255,255,0.06)',background:sel&&sel.id===m.id?'rgba(0,212,255,0.08)':'transparent'}}>
         <span style={{fontSize:12,color:'#eef1f6',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.title}</span>
         <span style={small}>{(m.started_at||'').replace('T',' ').slice(0,16)}</span>
         <span style={small}>{meetingClock(m.duration_s)}</span>
@@ -12369,6 +12382,7 @@ function MeetingsPanel(){
         {s.status==='running'?'Writing notes on the local model…':s.reason||'Notes are written after the transcript is finished.'}
         {(s.status==='skipped'||s.status==='failed')&&<button className="btn" onClick={renotes} disabled={busy} style={{marginLeft:8}}>Write notes again</button>}
       </div>}
+      {window.MeetingsExtras&&sel.state!=='recording'&&<window.MeetingsExtras.After meeting={sel} reload={()=>openMeeting(sel.id)}/>}
       {fu&&<div style={{...box,marginTop:8}}>
         <input className="input" style={{width:'100%',marginBottom:4}} value={fu.to} onChange={e=>setFu({...fu,to:e.target.value})} placeholder="To (email address)"/>
         <input className="input" style={{width:'100%',marginBottom:4}} value={fu.subject} onChange={e=>setFu({...fu,subject:e.target.value})}/>
@@ -12385,6 +12399,24 @@ function MeetingsPanel(){
       </div>}
     </div>}
   </div>);
+}
+
+fridayDeclareNav('meetings',{keys:['meeting_id','start'],sections:[]});
+// The Meetings workspace: the recorder and past meetings, then the question box over their archive.
+function MeetingsWS(){
+  const Ex=window.MeetingsExtras;
+  return <div className="ws-fill meetings-ws" style={{overflowY:'auto',padding:12}}>
+    <MeetingsPanel inWorkspace/>
+    {Ex?<Ex.Archive/>:<div style={{fontSize:12,color:'#8a93a6'}}>The meetings search did not load.</div>}
+  </div>;
+}
+// Calendar's link to the workspace that holds the recorder and the notes.
+function MeetingsLink(){
+  const go=()=>{const nav={workspace:'meetings'};if(window.fridayOpenWorkspace)window.fridayOpenWorkspace(nav);else fridayNavigate(nav);};
+  return <div className="meetings-link" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:10}}>
+    <span style={{fontSize:12,color:'#8a93a6'}}>Recording, notes and past meetings have a place of their own now.</span>
+    <button className="btn" onClick={go}>Open Meetings</button>
+  </div>;
 }
 
 // ═══ DRAFT PREVIEW HELPERS ═══
@@ -26961,7 +26993,7 @@ function App(){
       : Promise.reject(new Error('Open the Code workspace before switching conversations.')),
     surface: codeChatActive ? React.createElement(ChatSurface, {...nativeChatProps, mode:'code', setChatMsgs:ownedChatUpdate(setChatMsgs)}) : null
   };
-  const wsMap={crew:<CrewWS active={STANDALONE_WS==='crew'||(!experienceDesktop&&focusWin==='crew')}/>,career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,library:window.LibraryWS?<window.LibraryWS/>:<div style={{color:'#888',fontSize:12,padding:20}}>The Library did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:<CodeWS chat={codeChat}/>,news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
+  const wsMap={crew:<CrewWS active={STANDALONE_WS==='crew'||(!experienceDesktop&&focusWin==='crew')}/>,career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,library:window.LibraryWS?<window.LibraryWS/>:<div style={{color:'#888',fontSize:12,padding:20}}>The Library did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:<CodeWS chat={codeChat}/>,news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),meetings:<MeetingsWS/>,marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   // A bundle workspace (installed from the salon) has no React component of its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
 const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id].bundle)?<window.FridayBundleFrame wsId={id}/>:<div>Coming soon</div>;
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});

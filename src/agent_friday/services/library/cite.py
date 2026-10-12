@@ -94,6 +94,9 @@ def _still_valid(principal: str, doc_id: int, block_id: int) -> bool:
         return False
     if doc["shelf"] == "vault" and not st.vault_open():
         return False
+    from agent_friday.services import meeting_archive
+    if meeting_archive.is_archive_path(p):
+        return True              # made from the meeting's record, not a file: the index row is the source
     try:
         s = p.stat()
     except OSError:

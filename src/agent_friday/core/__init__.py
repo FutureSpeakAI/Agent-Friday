@@ -2778,6 +2778,9 @@ DEFAULT_SETTINGS = {
     # Retention is offered with nothing preselected: "" means nothing is
     # deleted on a timer. Audio: delete_after_notes (the Recommended label),
     # 30_days or keep. Transcripts and notes: keep, or days (+ _days).
+    # meeting_archive (the Meetings workspace): "" until the owner chooses, then
+    # "on" (transcripts and notes are searchable from the Library, in a scope of
+    # their own, on this PC) or "off" (nothing is indexed; what was is removed).
     "meeting_consent_line": "",
     "meeting_consent_mode": "ask_everyone",
     "meeting_speak_consent": False,
@@ -2785,6 +2788,7 @@ DEFAULT_SETTINGS = {
     "meeting_audio_retention": "",
     "meeting_text_retention": "",
     "meeting_text_retention_days": 90,
+    "meeting_archive": "",
     "tracking": {
         "parallax_strength": 1.0,
         "depth_strength": 1.0,

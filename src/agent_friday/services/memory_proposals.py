@@ -308,6 +308,11 @@ def _connect() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_pf_day ON proposed_facts(day);
         """
     )
+    # Where a proposal came from, when it came from more than a day of chat: a
+    # meeting's id, the transcript span and the model that read it (JSON).
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(proposed_facts)")}
+    if "provenance" not in cols:
+        conn.execute("ALTER TABLE proposed_facts ADD COLUMN provenance TEXT")
     conn.commit()
     return conn
 
@@ -417,12 +422,57 @@ def propose(day: Optional[str] = None, *, memory=None,
             "capped": capped, "took_ms": took_ms, "summary": summary}
 
 
+#: What a meeting may propose. A decision is not one of the day-review
+#: categories above (those stay as they were); it is stored under its own word.
+MEETING_CATEGORIES = ("relationship", "project", "decision")
+
+
+def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day: str,
+                         model: str) -> int:
+    """Store people, decisions and projects from a meeting as PENDING proposals.
+
+    The same table, review and confidence as every other proposal
+    (``MODEL_CONFIDENCE``, under the 0.6 durability gate): nothing here reaches
+    ``user_model`` or the knowledge graph; only ``approve()`` does, on the
+    owner's word. Each carries provenance: the meeting id, the transcript span
+    it traces to and the model that read it. A candidate with no span is not
+    stored, because a proposal that cannot be traced is not worth a review.
+    Returns how many were stored.
+    """
+    stored = 0
+    conn = _connect()
+    try:
+        for c in (candidates or [])[:MAX_FACTS]:
+            text = str(c.get("text") or "").strip()[:400]
+            cat = str(c.get("category") or "").strip().lower()
+            span = c.get("span") if isinstance(c.get("span"), dict) else None
+            if len(text) < 4 or cat not in MEETING_CATEGORIES or not span:
+                continue
+            if _already_proposed(conn, text):
+                continue
+            executing = str(c.get("model") or model)
+            prov = json.dumps({"meeting_id": str(meeting_id),
+                               "span": {"segment": int(span.get("i")), "t": float(span.get("t") or 0)},
+                               "model": executing}, ensure_ascii=False)
+            conn.execute(
+                "INSERT INTO proposed_facts (fact_id, ts, day, category, "
+                "text, evidence, confidence, model, status, provenance) "
+                "VALUES (?,?,?,?,?,?,?,?,'pending',?)",
+                (uuid.uuid4().hex[:16], time.time(), str(day), cat, text,
+                 str(c.get("evidence") or "")[:400], MODEL_CONFIDENCE, executing, prov))
+            stored += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return stored
+
+
 def pending(day: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     """Facts proposed and not yet decided. Nothing here is in memory."""
     conn = _connect()
     try:
         sql = ("SELECT fact_id, ts, day, category, text, evidence, confidence, "
-               "model FROM proposed_facts WHERE status='pending'")
+               "model, provenance FROM proposed_facts WHERE status='pending'")
         args: List[Any] = []
         if day:
             sql += " AND day=?"
@@ -434,7 +484,16 @@ def pending(day: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]
         conn.close()
     cols = ("fact_id", "ts", "day", "category", "text", "evidence",
             "confidence", "model")
-    return [dict(zip(cols, r)) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(zip(cols, r[:8]))
+        if r[8]:
+            try:
+                d["provenance"] = json.loads(r[8])
+            except ValueError:
+                pass
+        out.append(d)
+    return out
 
 
 def approve(fact_ids: List[str]) -> Dict[str, Any]:
@@ -451,14 +510,20 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
     try:
         marks = ",".join("?" * len(ids))
         rows = conn.execute(
-            f"SELECT fact_id, day, category, text FROM proposed_facts "
+            f"SELECT fact_id, day, category, text, provenance FROM proposed_facts "
             f"WHERE fact_id IN ({marks}) AND status='pending'", ids).fetchall()
-        for fact_id, day, category, text in rows:
+        for fact_id, day, category, text, prov in rows:
+            origin = f"proposed:{day}"
+            if prov:
+                try:
+                    origin = "meeting:%s" % json.loads(prov).get("meeting_id")
+                except ValueError:
+                    pass
             try:
                 from agent_friday.services import user_model
                 user_model.note_fact(category, text,
                                      confidence=APPROVED_CONFIDENCE,
-                                     source=f"proposed:{day}")
+                                     source=origin)
             except Exception as exc:                        # noqa: BLE001
                 _log.warning("approve(%s): user_model rejected it: %s",
                              fact_id, exc)
@@ -467,7 +532,7 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
                 from agent_friday.services.knowledge_graph.integration import (
                     ingest_fact)
                 ingest_fact(text, source_kind="conversation",
-                            source_key=f"proposed:{day}", category=category)
+                            source_key=origin, category=category)
             except Exception:                               # noqa: BLE001
                 pass
             conn.execute("UPDATE proposed_facts SET status='approved', "

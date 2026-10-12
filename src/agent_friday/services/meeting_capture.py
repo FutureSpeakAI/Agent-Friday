@@ -91,6 +91,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from agent_friday.paths import contained
+from agent_friday.services import meeting_workspace as mw
 from agent_friday.user_errors import ExceptionText, UserFacingError, log_failure
 from agent_friday.services.visible_jobs import visible_job
 
@@ -654,6 +655,21 @@ def _default_email_requester(**kw):
     return gmail_send.request_send(**kw)
 
 
+def _default_archive_index(m: dict):
+    from agent_friday.services import meeting_archive
+    return meeting_archive.index_meeting(m)
+
+
+def _default_archive_remove(mid: str):
+    from agent_friday.services import meeting_archive
+    return meeting_archive.remove_meeting(mid)
+
+
+def _default_proposer(candidates, meeting_id, day, model):
+    from agent_friday.services import memory_proposals
+    return memory_proposals.propose_from_meeting(candidates, meeting_id, day, model)
+
+
 def _notes_work():
     """The notes run is work the owner asked for: the scheduler admits it as a
     `user_job`, not as background work that would wait for them to be idle."""
@@ -720,6 +736,7 @@ class MeetingManager:
                  todo_writer=None, email_requester=None,
                  speech_gate=None, partials_factory=None, scheduler=None,
                  speaker=None, ledger=None, retention=None,
+                 archive_index=None, archive_remove=None, proposer=None,
                  clock=time.monotonic, wall=time.time, tick_s=TICK_S,
                  chunk_s=CHUNK_S, auto_notes=True):
         self.source_factory = source_factory or _default_source_factory
@@ -738,6 +755,9 @@ class MeetingManager:
         self.speaker = speaker or _default_speaker
         self.ledger = ledger or _default_ledger
         self.retention = retention or _default_retention
+        self.archive_index = archive_index or _default_archive_index
+        self.archive_remove = archive_remove or _default_archive_remove
+        self.proposer = proposer or _default_proposer
         self.vad_backend = ""
         self.clock = clock
         self.wall = wall
@@ -1394,8 +1414,7 @@ class MeetingManager:
             import agent_friday.notifications_engine as ne
             ne.push(title="Meeting recording stopped", body=msg,
                     priority="high", source="meetings", kind="meeting", emitter="E51",
-                    target={"workspace": "calendar", "view": "meetings",
-                            "meeting_id": m["id"]},
+                    target={"workspace": "meetings", "meeting_id": m["id"]},
                     dedupe_key="meeting-stop:" + m["id"])
         except Exception as e:
             log.info("meeting stop notification failed: %s", e)
@@ -1496,6 +1515,14 @@ class MeetingManager:
         removed, not hidden."""
         d = _dir(mid)
         self._refuse_if_recording(mid, "it")
+        if d.exists():
+            # Out of search first, before anything else is removed: a meeting being deleted is never
+            # an answer. (The archive also refuses a meeting whose folder is gone, and the clear below
+            # runs again once the folder is.)
+            try:
+                self.archive_remove(mid)
+            except Exception as e:  # noqa: BLE001 - the archive never blocks a deletion
+                log.info("meeting %s: archive not cleared: %s", mid, e)
         with self._io:
             if not d.exists():
                 raise MeetingError("not_found", "No such meeting.", 404)
@@ -1508,6 +1535,10 @@ class MeetingManager:
                                    "Some of this meeting could not be removed "
                                    "right now. Try deleting it again.", 500)
             self._deleted.add(mid)
+        try:
+            self.archive_remove(mid)       # its Library documents go with it
+        except Exception as e:  # noqa: BLE001 - the archive never blocks a deletion
+            log.info("meeting %s: archive not cleared: %s", mid, e)
         self._count("meeting", reason, n_audio, 1)
         return {"deleted": mid, "exists": d.exists()}
 
@@ -1617,7 +1648,15 @@ class MeetingManager:
             self._save(m)
         if summary.get("status") == "done":
             self._apply_audio_retention(m["id"])
+            self._index_archive(m)
         return summary
+
+    def _index_archive(self, m: dict) -> None:
+        """Make the finished meeting searchable from the Library, when the owner said yes."""
+        try:
+            self.archive_index(m)
+        except Exception as e:  # noqa: BLE001 - a search index never spoils the notes
+            log.info("meeting %s: not indexed for search: %s", m.get("id"), e)
 
     def _apply_audio_retention(self, mid: str) -> None:
         """The owner's "delete the audio once the notes are made" choice. With
@@ -1754,6 +1793,198 @@ class MeetingManager:
         if fixed:
             log.info("%d unfinished meeting(s) marked interrupted", fixed)
         return fixed
+
+    # -- the Meetings workspace -------------------------------------------
+    def _live(self, mid: str):
+        with self._lock:
+            r = self._active
+            return r if (r is not None and r.meeting["id"] == mid) else None
+
+    def pad_get(self, mid: str) -> list:
+        """The owner's shorthand bullets for this meeting."""
+        r = self._live(mid)
+        if r is not None:
+            with self._io:
+                return [dict(b) for b in r.meeting.get("pad") or []]
+        return [dict(b) for b in self.get(mid).get("pad") or []]
+
+    def pad_add(self, mid: str, text) -> dict:
+        """Add a shorthand bullet. While the meeting records it goes into the live record, stamped
+        with how far into the call it was jotted; afterwards into the stored one."""
+        text = " ".join(str(text or "").split())[:mw.PAD_MAX_CHARS]
+        if not text:
+            raise MeetingError("empty", "Write a few words first.", 400)
+        r = self._live(mid)
+        if r is None:
+            self._refuse_while_busy(mid)
+        with self._io:
+            if r is not None:
+                m, t = r.meeting, round(self.clock() - r.t0, 1)
+            else:
+                m, t = _load(mid), None
+            pad = m.setdefault("pad", [])
+            if len(pad) >= mw.PAD_MAX_BULLETS:
+                raise MeetingError("pad_full", "That is a lot of bullets. Expand these before adding more.", 409)
+            item = {"id": max([b.get("id", 0) for b in pad], default=0) + 1, "t": t, "text": text}
+            pad.append(item)
+            self._save(m)
+        return item
+
+    def pad_remove(self, mid: str, pad_id) -> dict:
+        r = self._live(mid)
+        if r is None:
+            self._refuse_while_busy(mid)
+        try:
+            pad_id = int(pad_id)
+        except (TypeError, ValueError):
+            raise MeetingError("not_found", "No such bullet.", 404)
+        with self._io:
+            m = r.meeting if r is not None else _load(mid)
+            before = len(m.get("pad") or [])
+            m["pad"] = [b for b in m.get("pad") or [] if b.get("id") != pad_id]
+            if len(m["pad"]) == before:
+                raise MeetingError("not_found", "No such bullet.", 404)
+            self._save(m)
+        return {"removed": pad_id}
+
+    def _seat(self):
+        try:
+            return self.seat_resolver()
+        except Exception as e:
+            log.info("local seat resolution failed: %s", e)
+            return None
+
+    def _notes_seat(self):
+        """(seat, why not): the model that may read a transcript. A cloud-tagged Ollama model is served
+        by the daemon but runs on ollama.com, so it is never a seat for what was said in a meeting."""
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        seat = self._seat()
+        if seat and is_cloud_model_tag(seat):
+            log.warning("meeting notes: the local seat is a cloud-tagged model; the transcript was not sent")
+            return None, NO_LOCAL_SEAT_CLOUD
+        return (seat, "") if seat else (None, NO_LOCAL_SEAT)
+
+    def expand_notes(self, mid: str) -> dict:
+        """Turn the owner's shorthand bullets into polished notes, by a local model only.
+
+        Each expanded line cites the transcript lines it rests on (segment index and time). A line
+        that cites nothing real, or names something neither the transcript nor its bullet says, is
+        left out and counted. The run is `user_job` work in the local queue, inside the local-only
+        guard, so no path from here reaches a paid provider."""
+        from agent_friday.services.local_only_guard import local_only
+        self._refuse_while_busy(mid)
+        m = self.get(mid)
+        lines = mw.spoken(m)
+        pad = list(m.get("pad") or [])
+        base = {"at": _now_iso(), "bullets": len(pad)}
+        if not pad:
+            out = base | {"status": "skipped", "reason": "Jot a few bullets during the call, then ask for the notes."}
+        elif not lines:
+            out = base | {"status": "skipped", "reason": "Nothing was transcribed, so there is nothing to expand from."}
+        else:
+            seat, why = self._notes_seat()
+            if not seat:
+                out = base | {"status": "skipped", "reason": why}
+            else:
+                transcript = "\n".join(ln["text"] for ln in lines)
+                kept, left_out, failed, seen = [], 0, False, set()
+                with self._job("Meeting notes", "meeting_notes", self.notes_call is _default_notes_call,
+                               queued=True), local_only("Meeting notes"), _notes_work():
+                    for chunk in mw.numbered_chunks(lines, NOTES_CHARS_PER_CALL):
+                        try:
+                            got = self.notes_call(mw.EXPAND_SYSTEM, mw.expansion_user(m.get("title"), pad, chunk), seat)
+                        except Exception as e:
+                            log.warning("meeting notes expansion failed: %s", e)
+                            got = None
+                        if got is None:
+                            failed = True
+                            break
+                        ok, bad = mw.validate_expansion(mw.parse_expansion(got), lines, pad, transcript)
+                        left_out += len(bad)
+                        for k in ok:
+                            if k["text"].lower() not in seen:
+                                seen.add(k["text"].lower())
+                                kept.append(k)
+                if failed:
+                    out = base | {"status": "failed", "model": seat, "local": True,
+                                  "reason": "The local model did not return usable notes. Try again."}
+                else:
+                    kept.sort(key=lambda k: (k["bullet"] is None, k["bullet"] or 0, k["spans"][0]["i"]))
+                    out = base | {"status": "done", "model": seat, "local": True, "lines": kept,
+                                  "left_out": left_out}
+        with self._io:
+            if mid in self._deleted:
+                return out
+            m = _load(mid)
+            m["polished"] = out
+            self._save(m)
+        if out["status"] == "done":
+            self._index_archive(m)
+        return out
+
+    def action_item_check(self, mid: str) -> list:
+        """Each action item of the notes, with the transcript line it traces to, or none. Read on demand
+        and never stored: an item that traces to nothing is one to check before it becomes a task."""
+        m = self.get(mid)
+        lines = mw.spoken(m)
+        out = []
+        for i, a in enumerate((m.get("summary") or {}).get("action_items") or []):
+            sp = mw.ground(a.get("task") or "", lines)
+            out.append({"index": i, "task": a.get("task"), "owner": a.get("owner"), "due": a.get("due"),
+                        "span": sp, "traced": sp is not None})
+        return out
+
+    def propose_memory(self, mid: str) -> dict:
+        """Offer the people, projects and decisions of a meeting to memory, as proposals to review.
+
+        Nothing is written to the knowledge graph or to what Friday knows about the owner: each
+        proposal waits in memory_proposals with where it came from (the meeting, the transcript line
+        and the model that read it), and only the owner's approval there keeps it. Decisions come
+        from the notes already written; people and projects need the local model."""
+        from agent_friday.services.local_only_guard import local_only
+        self._refuse_while_busy(mid)
+        m = self.get(mid)
+        lines = mw.spoken(m)
+        if not lines:
+            return {"proposed": 0, "considered": 0, "reason": "Nothing was transcribed."}
+        seat, why = self._notes_seat()
+        found, note = {"people": [], "projects": []}, ""
+        if seat:
+            seen = {"people": set(), "projects": set()}
+            with self._job("Meeting notes", "meeting_notes", self.notes_call is _default_notes_call,
+                           queued=True), local_only("Meeting notes"), _notes_work():
+                for chunk in mw.numbered_chunks(lines, NOTES_CHARS_PER_CALL):
+                    try:
+                        got = self.notes_call(mw.ENTITIES_SYSTEM, mw.entities_user(m.get("title"), chunk), seat)
+                    except Exception as e:
+                        log.warning("meeting people and projects failed: %s", e)
+                        got = None
+                    if got is None:
+                        note = "The local model did not answer, so only decisions were considered."
+                        break
+                    for key, rows in mw.parse_entities(got).items():
+                        for r in rows:
+                            if r["name"].lower() not in seen[key]:
+                                seen[key].add(r["name"].lower())
+                                found[key].append(r)
+        else:
+            note = ("The model chosen for local work is a cloud model, so only decisions were considered."
+                    if why == NO_LOCAL_SEAT_CLOUD else
+                    "No local model is running, so only decisions were considered.")
+        cands, left_out = mw.proposal_candidates(m, found, lines)
+        day = (m.get("started_at") or "")[:10] or _now_iso()[:10]
+        decisions_model = (m.get("summary") or {}).get("model") or seat or "unknown"
+        stored = 0
+        for group, model in (([c for c in cands if c["category"] != "decision"], seat or ""),
+                             ([c for c in cands if c["category"] == "decision"], decisions_model)):
+            if group and model:
+                stored += self.proposer(group, mid, day, model)
+        with self._io:
+            if mid not in self._deleted:
+                m = _load(mid)
+                m["memory_proposals"] = {"at": _now_iso(), "proposed": stored, "considered": len(cands)}
+                self._save(m)
+        return {"proposed": stored, "considered": len(cands), "left_out": len(left_out), "note": note}
 
     def shutdown(self) -> None:
         try:

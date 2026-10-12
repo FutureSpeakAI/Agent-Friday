@@ -477,7 +477,7 @@ def _ask(p: Parsed, st: dict, question: str, method: str, reason: str) -> PointA
 #: The rows a ref prefix names, and the navigate_to kind that opens exactly that row. `card:` is not here:
 #: it is a System approval card (answered, never opened), not a Media card (`media:`).
 _OPEN_KIND = {"mail": "email", "media": "card", "file": "file", "news": "news_article",
-              "event": "calendar", "person": "contact"}
+              "event": "calendar", "person": "contact", "meeting": "meeting"}
 #: Rows with nothing to open: they stay a defer, with the reason (never an open of the workspace they sit in,
 #: which would look like success and do nothing). A row-level target moves the kind to _OPEN_KIND.
 _NO_OPEN = {"card": "an approval card is answered, yes or no, not opened",

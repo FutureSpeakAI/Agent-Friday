@@ -108,38 +108,6 @@
    "eval": []
   },
   {
-   "id": "calendar.follow_up_draft",
-   "action": "calendar.follow_up_draft",
-   "group": "create",
-   "ui": {"control": "draft thank-you / follow-up"},
-   "tool": "draft_email",
-   "also_tools": [],
-   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
-   "laya_tier": "model_only",
-   "phrasings": ["draft a thank-you to everyone from that meeting"],
-   "deictic": [],
-   "undo": null,
-   "voice": {"live": false, "shared": false},
-   "quiet_result": null,
-   "eval": []
-  },
-  {
-   "id": "calendar.action_items",
-   "action": "calendar.action_items",
-   "group": "create",
-   "ui": {"control": "add action items to Tasks"},
-   "tool": "create_task",
-   "also_tools": [],
-   "gate": {"class": "internal", "ring": 2, "card": "none"},
-   "laya_tier": "model_only",
-   "phrasings": ["add those action items to my tasks"],
-   "deictic": [],
-   "undo": null,
-   "voice": {"live": false, "shared": false},
-   "quiet_result": null,
-   "eval": []
-  },
-  {
    "id": "calendar.move_event",
    "action": "calendar.move_event",
    "group": "organize",
@@ -205,17 +173,6 @@
   }
  ],
  "not_for_laya": [
-  {
-   "action": "calendar.meeting_notes",
-   "kind": "gap",
-   "reason": "No tool reads a meeting transcript or its notes.",
-   "wave": "WS-2"
-  },
-  {
-   "action": "calendar.record_meeting",
-   "kind": "by_design",
-   "reason": "Recording is the owner's own press and confirm; \"start recording\" by voice only opens the on-screen start card."
-  },
   {
    "action": "calendar.delete_event",
    "kind": "gap",

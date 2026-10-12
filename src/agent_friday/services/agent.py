@@ -868,7 +868,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "navigate_to", "description": "Open a workspace tab, mail thread/search, Studio file, creation, news story, Knowledge page/node, Settings section, calendar day/meeting, contact, post or Media card (kind=card). Pass the user's words as query or a known exact id. new_tab opens a maximized Chrome tab; max fills the desktop. No approval. NAV_OK confirms display; NAV_PARTIAL opened something else; NAV_FAIL gives the reason and closest matches.",
      "input_schema": {"type": "object", "properties": {
-         "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post", "card"]},
+         "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post", "card", "meeting"]},
          "new_tab": {"type": "boolean", "description": "Open it in its own Chrome tab, maximized."},
          "max": {"type": "boolean", "description": "Fill the whole window or tab with it."},
          "query": {"type": "string", "description": "The user's words for the thing."},
@@ -3849,7 +3849,7 @@ def _mail_select_all(match: dict):
 
 
 #: The lists that can show Friday's ticks.
-_TICKABLE = ("messages", "media", "library", "files", "calendar", "chat", "news")
+_TICKABLE = ("messages", "media", "library", "files", "calendar", "meetings", "chat", "news")
 
 #: The keys of a request that name what to match, flat (voice) or nested in `match` (chat).
 _MATCH_KEYS = ("when", "stage", "level", "scheduled", "pinned", "archived", "category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic",
