@@ -622,16 +622,14 @@ class LiveLaya:
         if self.route_fn is not None:
             return self.route_fn(text)
         from agent_friday.services import laya, laya_router as lr
-        kw = {"tools": self.held, "surface": SURFACE, "log": False}
-        # This router may not take the owner-trust and quiet flags (they arrive
-        # with point-and-act); pass only what it accepts, never fail the call.
+        # Never the screen rungs: a Gemini Live transcript (cloud ASR, any voice in the room) must not read
+        # the owner's stage, run the item resolver or open/select rows. `self.trusted` says the call is
+        # the owner's for the call's other checks; it does not widen the router. Always passed, explicitly:
+        # the contract (laya.route_turn) accepts `trusted` for every router it fronts.
+        kw = {"tools": self.held, "surface": SURFACE, "log": False, "trusted": False}
+        # The quiet flag arrives with point-and-act; pass it only when the router takes it.
         if "quiet" in _ROUTE_PARAMS(lr):
             kw["quiet"] = True
-        if "trusted" in _ROUTE_PARAMS(lr):
-            # Never the screen rungs: a Gemini Live transcript (cloud ASR, any voice in the room) must not read
-            # the owner's stage, run the item resolver or open/select rows. `self.trusted` says the call is
-            # the owner's for the call's other checks; it does not widen the router.
-            kw["trusted"] = False
         # Through the contract (services/laya), like every other Laya decision: one deadline, a receipt,
         # and the router's sealed rules when the router does not answer in time.
         return laya.route_turn(text, caller="voice.live", **kw)
