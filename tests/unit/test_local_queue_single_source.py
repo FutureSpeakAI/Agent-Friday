@@ -253,11 +253,19 @@ def test_the_voice_contract_still_fits():
 def test_queue_status_speaks_what_the_chip_shows(world):
     from agent_friday.services import agent
     sup, _away = world
-    assert agent._tool_queue_status({}) == "Nothing is waiting for the local AI."
-    sup.wire_spawn(_job("a", label="the first"))
-    sup.wire_spawn(_job("b", label="the second"))
-    said = agent._tool_queue_status({})
-    assert "the first" in said and "the second" in said
+    # A model of unknown place is a cloud model: it hears counts, never a task's name.
+    assert agent._tool_queue_status({}) == "Nothing is waiting for the local models."
+    tok = agent._CURRENT_PROVIDER.set("ollama")      # a model on this computer hears what the chip shows
+    try:
+        assert agent._tool_queue_status({}) == "Nothing is waiting for the local AI."
+        sup.wire_spawn(_job("a", label="the first"))
+        sup.wire_spawn(_job("b", label="the second"))
+        said = agent._tool_queue_status({})
+        assert "the first" in said and "the second" in said
+    finally:
+        agent._CURRENT_PROVIDER.reset(tok)
+    counted = agent._tool_queue_status({})
+    assert "the first" not in counted and "the second" not in counted
 
 
 def test_an_unlabelled_background_call_while_you_are_here_waits_and_shows_in_the_queue(world, monkeypatch):

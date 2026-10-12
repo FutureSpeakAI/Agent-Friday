@@ -433,8 +433,12 @@ def test_queue_status_is_a_read_only_voice_and_text_tool():
     assert "queue_status" in c["names"] and c["fits"]
     r = laya_router.route("What's in your queue?", log=False)
     assert r.tool == "queue_status"
-    assert ag._tool_queue_status({}) in ("Nothing is waiting for the local AI.",) or \
-        "queued" in ag._tool_queue_status({}) or "Running" in ag._tool_queue_status({})
+    tok = ag._CURRENT_PROVIDER.set("ollama")         # the wording a model on this computer hears
+    try:
+        said = ag._tool_queue_status({})
+    finally:
+        ag._CURRENT_PROVIDER.reset(tok)
+    assert said in ("Nothing is waiting for the local AI.",) or "queued" in said or "Running" in said
 
 
 def test_both_local_transports_pass_the_choke_point():
