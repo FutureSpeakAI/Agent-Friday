@@ -322,7 +322,8 @@ def routing_mode() -> str:
     except Exception:
         return "local_only"
     try:
-        return str(_stored_mode() or DEFAULT_MODE).strip().lower()
+        # Blank after stripping (whitespace only) is unset too: the factory default.
+        return str(_stored_mode() or "").strip().lower() or DEFAULT_MODE
     except Exception:
         return "local_only"
 
@@ -366,12 +367,14 @@ def outage_local_allowed(mode: str | None = None) -> bool:
     return normalize_mode(mode if mode is not None else routing_mode()) == "cloud_preferred"
 
 
-def local_voice_label(mode, default: str) -> str:
+def local_voice_label(mode, default: str, tier: str = "cpu") -> str:
     """How the voice panel names the local engine. In a cloud mode (cloud_only,
     cloud_preferred) a local voice is the owner's own engine choice, and the
-    label says so; in a local mode (or ``default`` for anything else) it keeps
-    ``default``."""
-    return "Local voice (your choice)" if normalize_mode(mode) in CLOUD_MODES else default
+    label says so, still naming the GPU tier when that is what runs; in a local
+    mode (or ``default`` for anything else) it keeps ``default``."""
+    if normalize_mode(mode) not in CLOUD_MODES:
+        return default
+    return "Local GPU voice (your choice)" if tier == "gpu" else "Local voice (your choice)"
 
 
 def outage_notice(provider: str):
