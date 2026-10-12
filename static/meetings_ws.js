@@ -234,7 +234,7 @@
     const load = useCallback(() => json('/api/meetings/archive').then(setSt).catch(() => {}), []);
     useEffect(() => { load(); return () => { if (ctl.current) ctl.current.abort(); }; }, [load]);
     const choose = c => {
-      if (c === 'off' && st && st.documents > 0 && !window.confirm('Stop making your meetings searchable? What was read into the Library from them is removed. The meetings themselves stay.')) return;
+      if (c === 'off' && st && st.documents > 0 && !window.confirm('Stop making your meetings searchable? What was read into the Library from them is removed, and so are the memory suggestions made from them and the lines your saved chats quoted from them (the quotation is taken out of those replies, nothing else in your chats). The meetings themselves stay.')) return;
       post('/api/meetings/archive', { choice: c }).then(d => {
         if (d.status === 'ok') {
           setSt(d); setRun(null);

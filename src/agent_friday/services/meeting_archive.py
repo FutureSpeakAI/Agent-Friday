@@ -427,7 +427,19 @@ def _index_when_free(m: dict, hold=None) -> None:
 
 
 
-def set_choice(value: str, *, store=None) -> dict:
+def _clear_after_off(store=None) -> None:
+    """Take the archive out of the Library and its suggestions out of memory proposals: one visible job."""
+    with visible_job("Removing your meetings from search", kind="meeting_archive", workspace="meetings", queued=False,
+                     deferrable=False, key=JOB_KIND + ":off"):
+        remove_all(store=store)
+        try:
+            from agent_friday.services import memory_proposals
+            memory_proposals.purge_meeting(None)      # suggestions made from meetings go with the archive
+        except Exception as e:  # noqa: BLE001
+            log.info("meeting suggestions not cleared: %s", type(e).__name__)
+
+
+def set_choice(value: str, *, store=None, background: bool = False) -> dict:
     if value not in CHOICES:
         raise ValueError("unknown archive choice")
     from agent_friday.core import _save_settings
@@ -437,12 +449,12 @@ def set_choice(value: str, *, store=None) -> dict:
             return status(store=store) | {"refused": why}
     _save_settings({"meeting_archive": value})
     if value == "off":
-        remove_all(store=store)
-        try:
-            from agent_friday.services import memory_proposals
-            memory_proposals.purge_meeting(None)      # suggestions made from meetings go with the archive
-        except Exception as e:  # noqa: BLE001
-            log.info("meeting suggestions not cleared: %s", type(e).__name__)
+        # Nothing is an answer from this moment (the choice is read afresh on every ask); the rows are removed
+        # next, off the request's thread when asked to.
+        if background:
+            threading.Thread(target=_clear_after_off, args=(store,), name="meeting-archive-off", daemon=True).start()
+        else:
+            _clear_after_off(store)
     return status(store=store)
 
 
