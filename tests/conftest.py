@@ -502,6 +502,20 @@ def _forget_live_duplicates() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _laya_writes_finish_inside_their_test():
+    """Laya's writer thread appends rows after the turn. A row an earlier test
+    queued is written before this test starts, and this test's rows are written
+    before it ends, so none lands in another test's home or fake writer."""
+    laya = sys.modules.get("agent_friday.services.laya")
+    if laya is not None:
+        laya.flush()
+    yield
+    laya = sys.modules.get("agent_friday.services.laya")
+    if laya is not None:
+        laya.flush()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_live_duplicate_window():
     """Each test starts with no remembered Live call and leaves none behind."""
     _forget_live_duplicates()
